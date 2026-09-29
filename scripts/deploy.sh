@@ -18,7 +18,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)"
 cd "$ROOT"
 
-DEST="${TINE_DEPLOY_DEST:-$HOME/research/tine}"
+# The default destination follows the app identity switch (docs/app-identity.md):
+# an experiment build deploys beside the released binary, never over it.
+DEPLOY_NAME="$(node -e 'const s=require("./src-tauri/app-identity.json");process.stdout.write(s.identities[s.ship].deployName)')"
+DEST="${TINE_DEPLOY_DEST:-$HOME/research/$DEPLOY_NAME}"
 BIN="$ROOT/target/release/tine"
 RECEIPT="$BIN.build.json"
 SNAPSHOT="$BIN.build.before.json"
