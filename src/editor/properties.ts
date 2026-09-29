@@ -1,7 +1,7 @@
 // Pure helpers for reading/editing `key:: value` property lines — a block's
 // continuation lines or a page's pre-block. No store/DOM, so unit-testable.
 
-import { transitionFence, type FenceState } from "./fences";
+import { transitionFence, displayMathOpenAfter, closesDisplayMath, type FenceState } from "./fences";
 
 /** Ordinary `key:: value` lines share the page-header key class at column zero. */
 export const PROP_LINE = /^([\p{L}\p{M}\p{N}_./-]+):: ?(.*)$/u;
@@ -137,7 +137,7 @@ function propLineKey(line: string): string | null {
 export function multilineExitTrim(
   text: string,
   caret: number,
-  kind: "calc" | "fence" | "properties"
+  kind: "calc" | "fence" | "math" | "properties"
 ): string | null {
   const c = Math.max(0, Math.min(caret, text.length));
   const lineStart = text.lastIndexOf("\n", c - 1) + 1;
@@ -153,11 +153,16 @@ export function multilineExitTrim(
   const after = text.slice(lineEnd + 1);
   const nextNewline = after.indexOf("\n");
   const nextLine = nextNewline === -1 ? after : after.slice(0, nextNewline);
-  let fence: FenceState | null = null;
-  for (const line of text.slice(0, lineStart).split("\n")) {
-    fence = transitionFence(fence, line).next;
+  const before = text.slice(0, lineStart);
+  if (kind === "math") {
+    if (!displayMathOpenAfter(before) || !closesDisplayMath(nextLine)) return null;
+  } else {
+    let fence: FenceState | null = null;
+    for (const line of before.split("\n")) {
+      fence = transitionFence(fence, line).next;
+    }
+    if (!fence || !transitionFence(fence, nextLine).closes) return null;
   }
-  if (!fence || !transitionFence(fence, nextLine).closes) return null;
   const afterClosing = nextNewline === -1 ? "" : after.slice(nextNewline + 1);
   if (afterClosing.trim() !== "") return null;
   return text.slice(0, lineStart - 1) + text.slice(lineEnd);
