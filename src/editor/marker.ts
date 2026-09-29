@@ -4,9 +4,13 @@
 //   (none) -> LATER (":now" workflow) or TODO (":todo" workflow)
 // Bound to mod+enter (Ctrl+Enter on Linux/Windows) in the editor, like OG.
 
-import { MARKERS } from "../markers";
+import { matchLeadingMarker } from "../markers";
 
 export type Workflow = "now" | "todo";
+
+/** Re-export the one shared recognizer (src/markers.ts) so existing importers
+ *  keep working. DUP-7: a second copy here had drifted from lsdoc/the renderer. */
+export { leadingMarker } from "../markers";
 
 export function nextMarker(marker: string | null, workflow: Workflow): string | null {
   switch (marker) {
@@ -25,43 +29,33 @@ export function nextMarker(marker: string | null, workflow: Workflow): string | 
   }
 }
 
-/** Leading task marker of a block's first line, if any. */
-export function leadingMarker(raw: string): string | null {
-  const first = raw.split("\n", 1)[0];
-  for (const m of MARKERS) {
-    if (first === m || first.startsWith(m + " ")) return m;
-  }
-  return null;
-}
-
 /** Cycle the marker on `raw`; returns the new raw and the caret delta (change
- *  in length of the leading marker, so the editor can keep the caret put). */
+ *  in length of the leading marker, so the editor can keep the caret put). The
+ *  marker is spliced at its exact recognized offsets, so leading whitespace /
+ *  blank lines it follows are preserved rather than gaining a second marker. */
 export function cycleMarker(raw: string, workflow: Workflow): { raw: string; delta: number } {
-  const lines = raw.split("\n");
-  const first = lines[0];
-  const cur = leadingMarker(raw);
-  const next = nextMarker(cur, workflow);
+  const cur = matchLeadingMarker(raw);
+  const next = nextMarker(cur?.marker ?? null, workflow);
 
-  // strip current marker prefix
-  let rest = first;
-  if (cur) rest = first.slice(cur.length).replace(/^ /, "");
-  const oldPrefixLen = first.length - rest.length;
+  // Text after the marker (one separating space stripped), as before — but taken
+  // from the recognized offsets so an indented marker also desugars to one splice.
+  let rest = raw;
+  if (cur) rest = raw.slice(cur.end).replace(/^ /, "");
+  const oldPrefixLen = raw.length - rest.length;
 
-  const newFirst = next ? `${next} ${rest}` : rest;
-  const newPrefixLen = newFirst.length - rest.length;
+  const head = cur ? raw.slice(0, cur.start) : "";
+  const newRaw = next ? `${head}${next} ${rest}` : `${head}${rest}`;
+  const newPrefixLen = newRaw.length - rest.length;
 
-  lines[0] = newFirst;
-  return { raw: lines.join("\n"), delta: newPrefixLen - oldPrefixLen };
+  return { raw: newRaw, delta: newPrefixLen - oldPrefixLen };
 }
 
-/** Set the leading task marker explicitly, using the same first-line anchoring
- *  as cycleMarker. `null` removes any existing marker. */
+/** Set the leading task marker explicitly, using the same recognized-offset
+ *  splice as cycleMarker. `null` removes any existing marker. */
 export function setMarker(raw: string, marker: string | null): string {
-  const lines = raw.split("\n");
-  const first = lines[0] ?? "";
-  const cur = leadingMarker(raw);
-  let rest = first;
-  if (cur) rest = first.slice(cur.length).replace(/^ /, "");
-  lines[0] = marker ? (rest ? `${marker} ${rest}` : marker) : rest;
-  return lines.join("\n");
+  const cur = matchLeadingMarker(raw);
+  let rest = raw;
+  if (cur) rest = raw.slice(cur.end).replace(/^ /, "");
+  const head = cur ? raw.slice(0, cur.start) : "";
+  return marker ? (rest ? `${head}${marker} ${rest}` : `${head}${marker}`) : `${head}${rest}`;
 }

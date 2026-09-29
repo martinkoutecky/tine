@@ -3,8 +3,7 @@ import { facetsFromDto, facetsOf, inlineText, parseBody, tagIdentityKey, type Fa
 import { isRenderHiddenProp } from "../render/block";
 import { leadingMarker, nextMarker, setMarker } from "../editor/marker";
 import { cycleMarkerSmart } from "../editor/repeat";
-import { MARKERS } from "../markers";
-import { MARKER_RE } from "../markers";
+import { MARKERS, matchLeadingMarker } from "../markers";
 import { workflow, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
 import type { Inline } from "../render/ast";
 import { rebulletedSourceByteToRawByte, utf8ByteLength, utf8ByteToUtf16Offset } from "../render/spans";
@@ -381,10 +380,12 @@ export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: Gr
 function setPriorityRaw(raw: string, level: "A" | "B" | "C" | null): string {
   const lines = raw.split("\n");
   const first = lines[0] ?? "";
-  const m = MARKER_RE.exec(first);
-  const markerEnd = m ? m[0].length : 0;
-  const head = first.slice(0, markerEnd);
-  let rest = first.slice(markerEnd).replace(/^\s+/, "");
+  // The shared recognizer decides whether the marker is on this first line at
+  // all (a bare marker with continuation lines is NOT a marker to lsdoc).
+  const m = matchLeadingMarker(raw);
+  const onFirstLine = m && m.end <= first.length;
+  const head = onFirstLine ? first.slice(0, m.end) : "";
+  let rest = first.slice(onFirstLine ? m.end : 0).replace(/^\s+/, "");
   rest = rest.replace(/^\[#[ABC]\]\s*/, "");
   const prefix = head ? `${head} ` : "";
   lines[0] = level ? (rest ? `${prefix}[#${level}] ${rest}` : `${prefix}[#${level}]`) : `${prefix}${rest}`;

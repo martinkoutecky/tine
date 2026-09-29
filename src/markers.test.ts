@@ -1,6 +1,9 @@
-import { describe, it, expect } from "vitest";
-import { MARKERS, OPEN_MARKERS, DONE_MARKERS, MARKER_RE, taskCheckboxState } from "./markers";
-import { leadingMarker } from "./editor/marker";
+import { beforeAll, describe, it, expect } from "vitest";
+import { initParser } from "./render/parse";
+import { clearSeededFacets, facetsOf } from "./render/facets";
+import { MARKERS, OPEN_MARKERS, DONE_MARKERS, matchLeadingMarker, leadingMarker, taskCheckboxState } from "./markers";
+import { cycleMarker, leadingMarker as leadingMarkerViaEditor, setMarker } from "./editor/marker";
+import { setPriority } from "./editor/format";
 
 describe("task markers (single source of truth)", () => {
   it("matches the backend set (crates/tine-core/src/doc.rs MARKERS) — keep in sync", () => {
@@ -39,24 +42,83 @@ describe("task markers (single source of truth)", () => {
     expect(taskCheckboxState(undefined)).toBeNull();
   });
 
-  it("MARKER_RE anchors every marker as a whole word, prefix-safe (WAITING vs WAIT)", () => {
+  it("the one recognizer anchors every marker as a whole word, prefix-safe (WAITING vs WAIT)", () => {
     for (const m of MARKERS) {
-      expect(MARKER_RE.exec(`${m} do the thing`)?.[1]).toBe(m);
+      expect(matchLeadingMarker(`${m} do the thing`)?.marker).toBe(m);
       expect(leadingMarker(`${m} do the thing`)).toBe(m);
     }
     // "WAITING" must not be read as "WAIT".
-    expect(MARKER_RE.exec("WAITING x")?.[1]).toBe("WAITING");
+    expect(matchLeadingMarker("WAITING x")?.marker).toBe("WAITING");
     // A non-marker word isn't matched.
-    expect(MARKER_RE.exec("TODOLIST x")).toBeNull();
+    expect(matchLeadingMarker("TODOLIST x")).toBeNull();
   });
 
   it("does NOT match a marker word followed by punctuation — audit C2 (carry overmatch)", () => {
     // `\b` matched these (lsdoc marks none); the carry `isOpenTask` would move non-task
     // prose. The marker must be followed by whitespace or end-of-line.
-    expect(MARKER_RE.exec("TODO: not a task")).toBeNull();
-    expect(MARKER_RE.exec("DONE. a sentence")).toBeNull();
-    expect(MARKER_RE.exec("WAIT-LIST item")).toBeNull();
-    expect(MARKER_RE.exec("TODO real task")?.[1]).toBe("TODO");
-    expect(MARKER_RE.exec("DONE")?.[1]).toBe("DONE"); // bare marker at end-of-line
+    expect(matchLeadingMarker("TODO: not a task")).toBeNull();
+    expect(matchLeadingMarker("DONE. a sentence")).toBeNull();
+    expect(matchLeadingMarker("WAIT-LIST item")).toBeNull();
+    expect(matchLeadingMarker("TODO real task")?.marker).toBe("TODO");
+    expect(matchLeadingMarker("DONE")?.marker).toBe("DONE"); // bare marker at end-of-input
+  });
+
+  // lsdoc parity (DUP-7, 2026-08-25 duplication audit). Every case is
+  // byte-verified against the vendored lsdoc v0.5.5 wasm (`parse_block_json`,
+  // the SAME one-block boundary the rendered checkbox derives from): leading
+  // whitespace is skipped, then the marker needs a LITERAL ASCII space or must
+  // be the entire rest of the input (`marker_eof`).
+  describe("lsdoc marker parity (DUP-7)", () => {
+    const cases: [string, string | null][] = [
+      ["TODO x", "TODO"],
+      ["TODO\tx", null], // a tab after the marker is NOT a marker (chip absent)
+      ["TODO", "TODO"], // bare marker only at absolute end of input
+      ["TODO\nbody line", null], // bare marker with a continuation line: NO marker
+      ["TODO\n", null], // trailing newline is not end of input
+      ["TODO \nbody", "TODO"], // marker with an empty (space-only) title
+      ["\nTODO x", "TODO"], // the boundary trim skips leading newlines too
+      ["  TODO x", "TODO"], // leading space skipped (trim_start)
+      ["\tTODO x", "TODO"], // leading tab skipped
+      ["\fTODO x", "TODO"], // form feed is an lsdoc parser space
+      ["TODO  x", "TODO"],
+      ["todo x", null], // case-sensitive
+      ["DONE", "DONE"],
+      ["WAITING x", "WAITING"], // prefix-safe: not WAIT
+      ["TODOLIST x", null],
+      ["TODO: not a task", null],
+    ];
+    it.each(cases)("matchLeadingMarker %j -> %s", (raw, want) => {
+      expect(matchLeadingMarker(raw)?.marker ?? null).toBe(want);
+      // leadingMarker is the same recognizer's name-only view, twice over.
+      expect(leadingMarker(raw)).toBe(want);
+      expect(leadingMarkerViaEditor(raw)).toBe(want);
+    });
+
+    // The table above is a claim about lsdoc; hold it against the wasm this
+    // build actually ships (the renderer's own marker projection).
+    beforeAll(() => initParser());
+    it.each(cases)("vendored lsdoc agrees: %j -> %s", (raw, want) => {
+      clearSeededFacets();
+      expect(facetsOf(raw, "md").marker).toBe(want);
+    });
+
+    it("exposes splice-safe marker offsets (start/end) for editor splices", () => {
+      expect(matchLeadingMarker("TODO x")).toEqual({ marker: "TODO", start: 0, end: 4 });
+      expect(matchLeadingMarker("  TODO x")).toEqual({ marker: "TODO", start: 2, end: 6 });
+      // Offsets of an indented marker point at the marker itself, so cycling
+      // preserves the indent instead of prepending a second marker.
+      expect(matchLeadingMarker("\n\nWAITING x")?.start).toBe(2);
+      expect(matchLeadingMarker("\n\nWAITING x")?.end).toBe(9);
+    });
+  });
+
+  // DUP-7 consumers splice at the recognized offsets: an indented or
+  // blank-line-led task gets its marker replaced, never a second one prepended,
+  // and a tab-separated word that renders no checkbox is not treated as a task.
+  it("marker writers splice at the shared recognizer's offsets", () => {
+    expect(cycleMarker("  TODO x", "todo").raw).toBe("  DOING x");
+    expect(setMarker("\nTODO x", "DONE")).toBe("\nDONE x");
+    expect(setMarker("TODO\tx", "DONE")).toBe("DONE TODO\tx");
+    expect(setPriority("TODO\tx", "A")).toBe("[#A] TODO\tx");
   });
 });

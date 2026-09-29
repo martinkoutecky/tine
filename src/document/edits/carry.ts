@@ -1,4 +1,4 @@
-import { MARKER_RE, OPEN_MARKERS } from "../../markers";
+import { leadingMarker, OPEN_MARKERS } from "../../markers";
 import { doc, pageByName, setDoc, freshId } from "../model";
 import { journalTitle } from "../../journal";
 import { pageWritable } from "./properties";
@@ -14,7 +14,7 @@ import { persistTogether, refuseConflictedMove } from "../save/engine";
 function isOpenTask(id: string): boolean {
   // Leading task marker via the one markers.ts recognizer (vocabulary == lsdoc's, so
   // no disagreement) — parser-free, so carry works without the wasm renderer up.
-  const m = MARKER_RE.exec((doc.byId[id]?.raw ?? "").trimStart())?.[1];
+  const m = leadingMarker(doc.byId[id]?.raw ?? "");
   return !!m && OPEN_MARKERS.has(m);
 }
 function subtreeHasOpenTask(id: string): boolean {

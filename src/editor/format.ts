@@ -3,7 +3,7 @@
 // the raw text + selection and returns the new text + selection, so Block.tsx
 // just applies the result to the textarea. Unit-testable.
 
-import { MARKER_RE } from "../markers";
+import { matchLeadingMarker } from "../markers";
 
 export interface Edit {
   text: string;
@@ -218,15 +218,14 @@ export function killWordBackward(text: string, caret: number): Edit {
 }
 
 // --- priority (sets/replaces `[#A]` after a leading task marker) ---
-// MARKER_RE is the shared anchor (src/markers.ts).
+// The shared leading-marker recognizer (src/markers.ts) is the marker anchor.
 
 /** Set (or replace) the `[#X]` priority on a block's first line, placed after
  *  any task marker. Mirrors OG's add-or-update-priority. */
 export function setPriority(firstLine: string, level: "A" | "B" | "C"): string {
-  const m = MARKER_RE.exec(firstLine);
-  const markerEnd = m ? m[0].length : 0;
-  const head = firstLine.slice(0, markerEnd); // "TODO" or ""
-  let rest = firstLine.slice(markerEnd).replace(/^\s+/, ""); // body after marker
+  const m = matchLeadingMarker(firstLine);
+  const head = m ? firstLine.slice(0, m.end) : ""; // "TODO" (plus any lead ws)
+  let rest = firstLine.slice(m?.end ?? 0).replace(/^\s+/, ""); // body after marker
   rest = rest.replace(/^\[#[ABC]\]\s*/, ""); // drop an existing priority token
   const prefix = head ? `${head} ` : "";
   return rest ? `${prefix}[#${level}] ${rest}` : `${prefix}[#${level}]`;

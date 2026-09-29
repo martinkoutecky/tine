@@ -7,7 +7,7 @@ import { mockQueryCommands } from "./mockQuery";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
-import { MARKER_RE } from "./markers";
+import { leadingMarker } from "./markers";
 import { fuzzyScore } from "./editor/autocomplete";
 import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
 import { searchFold } from "./editor/searchFold";
@@ -50,10 +50,8 @@ function blockRefIds(raw: string): string[] {
   while ((m = bare.exec(rest))) push(m[1]);
   return out;
 }
-function leadingMarker(raw: string): string | null {
-  const m = MARKER_RE.exec(raw);
-  return m ? m[1] : null;
-}
+// Marker recognition comes from the one shared recognizer (imported above), so
+// the demo graph facet synthesis agrees with the real (lsdoc) one.
 function priorityOf(raw: string): string | undefined {
   const m = /(?:^|\s)\[#([ABC])\]/.exec(raw.split("\n", 1)[0] ?? "");
   return m?.[1];

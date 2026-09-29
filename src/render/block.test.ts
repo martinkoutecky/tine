@@ -5,6 +5,12 @@ import type { Format } from "../types";
 const aliasNames = (text: string | null, format?: Format) => aliasNamesOf(pageProperties(text, format));
 
 describe("visibleBody (body text for labels / reference render)", () => {
+  it("uses whole-block task recognition before extracting the first visible line", () => {
+    expect(visibleBody("\n\nTODO buy milk")).toEqual(["buy milk"]);
+    expect(visibleBody("TODO\nmore detail")).toEqual(["TODO", "more detail"]);
+    expect(visibleBody("TODO TODO buy milk")).toEqual(["TODO buy milk"]);
+    expect(visibleBody("id:: example\nTODO buy milk")).toEqual(["TODO buy milk"]);
+  });
   it("drops real property lines but keeps a fenced key:: as code content", () => {
     const body = visibleBody("title:: Real\n```\nlang:: rust\nlet x = 1;\n```\nfoo:: bar").join("\n");
     expect(body).not.toContain("title:: Real"); // real block property → not body text
