@@ -32,12 +32,11 @@ use tine_core::doc::{self, DocBlock, Document};
 #[cfg(test)]
 use tine_core::model::AssetInfo;
 use tine_core::model::{
-    is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, BlockDto,
-    BoundedRefGroups, Format, PageDto, PageEntry, PageKind, ReferenceKind,
+    is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, BoundedRefGroups, Format, PageDto, PageEntry, PageKind, ReferenceKind,
 };
 #[cfg(test)]
 use tine_core::model::{
-    sync_conflict_base, GraphMeta, JournalConflict, JournalFile, RefGroup, SyncConflict,
+    sync_conflict_base, BlockDto, GraphMeta, JournalConflict, JournalFile, RefGroup, SyncConflict,
 };
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use unicode_normalization::UnicodeNormalization;
@@ -4239,14 +4238,7 @@ impl Graph {
         // `:journal/file-name-format` — so custom-format graphs create the correct
         // file for the day instead of a misplaced default-named duplicate.)
         let dto_is_org = matches!(Format::from_path(path), Format::Org);
-        let mut doc = Document {
-            pre_block: page.pre_block.clone(),
-            roots: page
-                .blocks
-                .iter()
-                .map(|b| dto_to_doc(b, dto_is_org))
-                .collect(),
-        };
+        let mut doc = tine_core::projection::page_dto_document(page, dto_is_org);
         // Data-preservation firewall for page-header properties (GH #163).
         // A frontend/store bug once reclassified a suffix of the page pre-block
         // as the first outline block (`A::` stayed in the header while `B::` and
@@ -4757,16 +4749,6 @@ fn carry_saved_runtime_ids(parsed: &mut [DocBlock], saved: &[DocBlock]) {
         }
         carry_saved_runtime_ids(&mut parsed.children, &saved.children);
     }
-}
-
-/// Convert a frontend DTO subtree back to a doc block, preserving the frontend's
-/// block id as the node uuid so the cache and the frontend agree on identity.
-fn dto_to_doc(b: &BlockDto, is_org: bool) -> DocBlock {
-    let mut block = DocBlock::new(&b.raw);
-    block.children = b.children.iter().map(|c| dto_to_doc(c, is_org)).collect();
-    block.uuid = b.id.clone();
-    block.set_org(is_org);
-    block
 }
 
 /// Build a page DTO from a cached document. `read_only` is left false here (the

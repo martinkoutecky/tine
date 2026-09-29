@@ -162,3 +162,82 @@ pub(crate) async fn resolve_vcs_marker_conflict(
     .await
     .map_err(|error| error.to_string())?
 }
+
+/// The Concord ledger's retained texts of one page: the candidates a live-draft
+/// review looks up its base in (by the draft's revision). Empty when there is
+/// no ledger or it cannot answer (2-way review).
+pub(crate) fn page_bases(slot: &GraphSlot, path: &str) -> Vec<String> {
+    slot.concord_ledger
+        .get()
+        .map(|ledger| ledger.page_bases(path))
+        .unwrap_or_default()
+}
+
+/// Review a live editor draft whose guarded save was refused against the file
+/// at `path` as it is now (og 8e). `base_rev` is the revision the editor
+/// loaded; the ledger text with that revision makes the review 3-way. The
+/// answer's `conflict_rev` is the disk revision shown (`"absent"` for a missing
+/// file). Read-only.
+#[tauri::command]
+pub(crate) async fn live_conflict_diff(
+    path: String,
+    page: tine_core::model::PageDto,
+    base_rev: Option<String>,
+    state: GraphContext<'_>,
+) -> Result<tine_core::sync_diff::SyncConflictDiff, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let bases = page_bases(&slot, &path);
+        tine_graph_features::live_conflict::live_conflict_diff(
+            &slot.store,
+            &path,
+            &page,
+            base_rev.as_deref(),
+            &bases,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Resolve a reviewed live-draft conflict: recompute the review from the same
+/// draft and the disk at `conflict_rev`, apply `decisions`, and write the page
+/// in one guarded transaction. Returns the written page (with its revision)
+/// for the editor to install; "conflict" when the disk or the reviewed base
+/// moved since the review (nothing written).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn resolve_live_conflict(
+    path: String,
+    page: tine_core::model::PageDto,
+    base_rev: Option<String>,
+    conflict_rev: String,
+    merge_base_rev: Option<String>,
+    decisions: std::collections::HashMap<String, String>,
+    pre_choice: Option<String>,
+    state: GraphContext<'_>,
+) -> Result<tine_core::model::PageDto, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let bases = if merge_base_rev.is_some() {
+            page_bases(&slot, &path)
+        } else {
+            Vec::new()
+        };
+        tine_graph_features::live_conflict::resolve_live_conflict(
+            &slot.store,
+            &path,
+            &page,
+            base_rev.as_deref(),
+            &conflict_rev,
+            merge_base_rev.as_deref(),
+            &bases,
+            &decisions,
+            pre_choice.as_deref().unwrap_or("union"),
+        )
+        .map_err(sync_conflict_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}

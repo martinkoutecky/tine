@@ -71,7 +71,7 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
         "src-tauri/src/commands/concord.rs",
         "spawn_blocking(",
-        4,
+        6,
         "command future",
         "caller awaits blocking result",
     ),

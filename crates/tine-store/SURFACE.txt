@@ -96,6 +96,8 @@ field store::FileMeta.len
 field store::FileMeta.mtime
 field store::Listing.files
 field store::Listing.unreadable
+# og 21a: a live-conflict review finds its Concord-ledger base by the draft's revision.
+fn store::FileRev::from_bytes
 fn store::Store::as_page
 fn store::Store::file_id
 fn store::Store::config

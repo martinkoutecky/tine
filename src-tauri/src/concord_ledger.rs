@@ -126,6 +126,12 @@ impl ConcordLedger {
         out
     }
 
+    /// Every retained text of `page` (graph-relative), newest first. Verified;
+    /// empty on any failure. A live-draft review picks its base among these.
+    pub(crate) fn page_bases(&self, page: &str) -> Vec<String> {
+        self.files().retained(page)
+    }
+
     /// Wait until every job queued so far ran, or `deadline` passed; answers
     /// whether they all ran. Never starts the worker.
     pub(crate) fn drain_for_exit(&self, deadline: Instant) -> bool {

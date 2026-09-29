@@ -698,3 +698,62 @@ fn a_master_layout_ledger_tree_is_byte_identical_after_og_opens_saves_and_prunes
     drop(slot);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// og 8e through the ledger the commands read: the editor loaded "Desktop 5"
+/// (a Tine save the ledger recorded) and deleted " 5"; another editor appended
+/// " kk" on disk. The live review finds the editor's base by revision, is
+/// 3-way with a `merged` proposal, and the resolve writes the composed body at
+/// the reviewed disk revision. With an unusable ledger the same review is
+/// 2-way and still resolves (the ledger never blocks a resolve).
+#[test]
+fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
+    use tine_graph_features::live_conflict::{live_conflict_diff, resolve_live_conflict};
+    for (label, usable) in [("live-ledger", true), ("live-no-ledger", false)] {
+        let dir = scratch(label);
+        std::fs::write(dir.join("graph/pages/Desk.md"), body("seed")).unwrap();
+        let app_data = if usable {
+            dir.join("appdata")
+        } else {
+            std::fs::write(dir.join("appdata-file"), "not a directory").unwrap();
+            dir.join("appdata-file")
+        };
+        let (slot, sub) = open_slot(&dir, app_data);
+        save(&slot, "pages/Desk.md", "Desktop 5");
+        pump(&slot, &sub);
+        let read = slot.store.page(&PageId::from("pages/Desk.md")).unwrap();
+        let base_rev: String = read.rev.into();
+        let mut draft = read.doc;
+        draft.blocks[1].raw = format!("Desktop\nid:: {ID}");
+        external(&slot, "pages/Desk.md", &body("Desktop 5 kk"));
+        pump(&slot, &sub);
+        let bases = crate::concord::page_bases(&slot, "pages/Desk.md");
+        let diff = live_conflict_diff(&slot.store, "pages/Desk.md", &draft, Some(&base_rev), &bases)
+            .unwrap();
+        assert_eq!(diff.three_way, usable, "{label}");
+        let decisions = preselected(&diff);
+        assert_eq!(decisions.values().any(|d| d == "merged"), usable, "{label}");
+        let resolved = resolve_live_conflict(
+            &slot.store,
+            "pages/Desk.md",
+            &draft,
+            Some(&base_rev),
+            &diff.conflict_rev,
+            diff.merge_base_rev.as_deref(),
+            &bases,
+            &decisions,
+            "union",
+        )
+        .unwrap();
+        let written = std::fs::read_to_string(dir.join("graph/pages/Desk.md")).unwrap();
+        if usable {
+            assert_eq!(written, body("Desktop kk"));
+        } else {
+            for text in ["- Desktop\n", "Desktop 5 kk"] {
+                assert!(written.contains(text), "{text:?} lost: {written}");
+            }
+        }
+        assert!(resolved.rev.is_some());
+        drop(slot);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
