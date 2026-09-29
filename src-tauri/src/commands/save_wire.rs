@@ -1,5 +1,5 @@
 use super::{SavePagesFailure, SavePagesWire};
-use tine_store::{SaveOutcome, SavePagesOutcome};
+use tine_store::{SaveOutcome, SavePagesOutcome, StoreError};
 
 /// Encode Saved and Unchanged as file-revision strings. On failure, encode
 /// a fixed family and a disk revision only for Conflict; any publication
@@ -57,4 +57,41 @@ pub(super) fn save_outcome_to_wire(outcome: SaveOutcome) -> Result<String, Strin
         SaveOutcome::Closed => Err("closed".into()),
         SaveOutcome::GuideEphemeral => Err("invalid-target".into()),
     }
+}
+
+/// Encode a Store error raised before the page transaction as a Failed wire
+/// value at `index`: a fixed family, no disk revision, no undo or publication
+/// lists. Pure; O(1).
+pub(super) fn store_failure_to_wire(index: usize, error: StoreError) -> SavePagesWire {
+    let family = match error {
+        StoreError::NotFound => "deleted".into(),
+        StoreError::InvalidTarget(_)
+        | StoreError::PageSource(_)
+        | StoreError::StreamSymlink(_)
+        | StoreError::Undecodable
+        | StoreError::Unparseable(_) => "invalid-target".into(),
+        StoreError::TooLarge { .. } => "asset-too-large".into(),
+        StoreError::Io(error) => format!("io:{:?}", error.kind()),
+        StoreError::Closed => "closed".into(),
+    };
+    SavePagesWire::Failed {
+        failed: SavePagesFailure {
+            index,
+            family,
+            disk_rev: None,
+            undo_failed: Vec::new(),
+            publication_errors: Vec::new(),
+        },
+    }
+}
+
+/// Hand one finished `save_pages` result to the diagnostic recorder: only its
+/// fixed failure family, the page count and the duration (GH #343, I-5).
+/// Does no I/O; O(1).
+pub(super) fn record_save_wire(wire: &SavePagesWire, pages: usize, elapsed: std::time::Duration) {
+    let failure = match wire {
+        SavePagesWire::Ok { .. } => None,
+        SavePagesWire::Failed { failed } => Some(failed.family.as_str()),
+    };
+    crate::flight::record_save(failure, pages, elapsed);
 }

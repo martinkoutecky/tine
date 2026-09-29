@@ -40,8 +40,8 @@ import { applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./gra
 import { installPageIndex } from "./pageIndex";
 import { checkForUpdate } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
-import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type QueryRoute } from "./router";
-import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, pdfTarget, pdfPaneWidth, setPdfPaneWidth, persistPdfPaneWidth, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer } from "./ui";
+import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
+import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer } from "./ui";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
@@ -50,7 +50,7 @@ import { pushToast } from "./toasts";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { flushAll, appendToTodayJournal, captureToPage } from "./document";
+import { flushAll, appendToTodayJournal, captureToPage, unsavedPageCount } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
@@ -67,7 +67,7 @@ import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
-import { initDebug, dbg } from "./debug";
+import { initDebug, dbg, recordDiagnostic } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls } from "./nativeChrome";
 import {
@@ -79,6 +79,7 @@ import {
   layoutRoot,
   visibleLayoutNode,
   paneRouter,
+  openPdfNotes,
   layoutPaneIds,
   setSplitRatio,
   type LayoutNode,
@@ -88,7 +89,9 @@ import { SurfaceContext } from "./components/Block";
 import { endEdit } from "./editorController";
 import { exitAndroidActivity, installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
 import { createSafeCloseCoordinator } from "./safeClose";
-import { drainPdfWork } from "./pdfOwnership";
+import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
+import { hlsPageName } from "./pdf";
+import type { InvalidRoute } from "./routeTypes";
 import { installBackgroundFlush } from "./backgroundFlush";
 import { initSettingsLayout } from "./settingsLayout";
 
@@ -110,6 +113,7 @@ const safeClose = createSafeCloseCoordinator({
     "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nClose this window anyway and lose them?",
     "Unsaved changes",
   ),
+  recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
   flushSession,
   setTransition: setGraphTransitioning,
   notifyPdfFailure: () => {
@@ -262,6 +266,44 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
   );
 }
 
+function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClass?: string }): JSX.Element {
+  const route = () => props.router.route();
+  createEffect(() => {
+    if (route().kind === "pdf" || route().kind === "invalid") props.router.setScrollerElement(null);
+  });
+  return (
+    <Show when={route().kind === "pdf" ? route() as PdfRoute : null} fallback={
+      <Show when={route().kind === "invalid" ? route() as InvalidRoute : null} fallback={
+        <main class={`main-content ${props.scrollerClass ?? ""}`} tabindex="-1"
+          data-pane-id={props.scrollerClass ? undefined : props.paneId}
+          ref={(el) => props.router.setScrollerElement(el)}>
+          <div class="main-content-inner"><PaneContent router={props.router} /></div>
+        </main>
+      }>
+        {(invalid) => <div class="pane-route-error" role="alert">
+          <h2>{invalid().title}</h2>
+          <p>{invalid().message}</p>
+          <button type="button" onClick={() => { void props.router.closeTab(props.router.activeId()); }}>Close tab</button>
+        </div>}
+      </Show>
+    }>
+      {(pdf) => <div class="pdf-pane pdf-route-pane" classList={{ "pdf-pane-mobile": isMobilePlatform }}
+        data-pane-id={props.scrollerClass ? undefined : props.paneId} data-pdf-view-id={pdf().viewId}>
+        <Suspense fallback={<div class="pdf-loading" />}>
+          <KeyedPdfViewer route={() => props.router.route() as PdfRoute} owner={currentPdfOwnership}
+            focused={() => focusedPaneId() === props.paneId}
+            onClose={() => { void props.router.closePdf(); }}
+            onOpenNotes={(block) => {
+              const current = props.router.route();
+              if (current.kind === "pdf") openPdfNotes(props.paneId, hlsPageName(current.filename), block);
+            }}
+            onViewState={(state) => props.router.updateActivePdfViewState(state)} />
+        </Suspense>
+      </div>}
+    </Show>
+  );
+}
+
 function PaneLeaf(props: { paneId: string }): JSX.Element {
   const router = paneRouter(props.paneId);
   const multi = () => layoutHasMultiplePanes();
@@ -290,16 +332,7 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
             >
               <PaneTabSplitPreview paneId={props.paneId} />
               <PaneEdgeSegHighlight paneId={props.paneId} />
-              <main
-                class="main-content"
-                tabindex="-1"
-                data-pane-id={props.paneId}
-                ref={(el) => router.setScrollerElement(el)}
-              >
-                <div class="main-content-inner">
-                  <PaneContent router={router} />
-                </div>
-              </main>
+              <PaneRouteBody paneId={props.paneId} router={router} />
             </div>
           }
         >
@@ -321,11 +354,7 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
               paneStrip
               focused={focusedPaneId() === props.paneId}
             />
-            <main class="main-content pane-main-content" tabindex="-1" ref={(el) => router.setScrollerElement(el)}>
-              <div class="main-content-inner">
-                <PaneContent router={router} />
-              </div>
-            </main>
+            <PaneRouteBody paneId={props.paneId} router={router} scrollerClass="pane-main-content" />
           </div>
         </Show>
       </SurfaceContext.Provider>
@@ -1066,38 +1095,6 @@ export function App(): JSX.Element {
           <PaneEdgeHighlights />
           <PaneSelectHint />
           <PaneTree node={visibleLayoutNode()} path={[]} />
-          <Show when={pdfTarget()}>
-        <div
-          class="pdf-pane"
-          classList={{ "pdf-pane-mobile": isMobilePlatform }}
-          data-pane-id="pdf"
-          style={{
-            flex: isMobilePlatform ? "1 1 100%" : `0 0 ${pdfPaneWidth()}px`,
-            width: isMobilePlatform ? "100%" : `${pdfPaneWidth()}px`,
-          }}
-        >
-          <div
-            class="pdf-pane-resizer"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              const startX = e.clientX;
-              const startW = pdfPaneWidth();
-              const onMove = (ev: MouseEvent) =>
-                setPdfPaneWidth(Math.min(1200, Math.max(320, startW + (startX - ev.clientX))));
-              const onUp = () => {
-                window.removeEventListener("mousemove", onMove);
-                window.removeEventListener("mouseup", onUp);
-                persistPdfPaneWidth();
-              };
-              window.addEventListener("mousemove", onMove);
-              window.addEventListener("mouseup", onUp);
-            }}
-          />
-          <Suspense fallback={<div class="pdf-loading" />}>
-            <KeyedPdfViewer target={pdfTarget} />
-          </Suspense>
-        </div>
-          </Show>
           </DrawerBackground>
           <RightSidebar />
         </div>

@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { initParser } from "./render/parse";
-import { resetStore } from "./document";
+import { resetStore, setRaw } from "./document";
+import { doc } from "./document/model";
 import { loadSingle } from "./document/workingSet";
-import { pageToDto } from "./document/convert";
+import { BLOCK_SCOPED_PROPERTY_KEYS, pageToDto } from "./document/convert";
 import type { PageDto } from "./types";
 
 interface GoldenCase {
@@ -36,5 +37,23 @@ describe("I-12 JS and Rust page-header save boundary", () => {
     const expected = { pre_block: "tags:: books", blocks: [] };
     const planted = { pre_block: null, blocks: ["tags:: books"] };
     expect(() => assertDifferential(expected, planted)).toThrow(/I-12:.*exemplar tine_core::model/s);
+  });
+
+  it("keeps the block-scoped property list identical to the Rust promotion rule (GH #540)", () => {
+    const rust = readFileSync("crates/tine-store/src/model.rs", "utf8");
+    const body = /BLOCK_SCOPED_PROPERTY_KEYS: &\[&str\] = &\[([^\]]*)\]/.exec(rust)?.[1] ?? "";
+    const rustKeys = [...body.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect(rustKeys.length).toBeGreaterThan(0);
+    expect([...BLOCK_SCOPED_PROPERTY_KEYS]).toEqual(rustKeys);
+  });
+
+  it("keeps an empty numbered first bullet a list item once its text is typed (GH #540)", () => {
+    loadSingle({ name: "Dosa", kind: "page", title: "Dosa", pre_block: null, format: "md",
+      blocks: [{ id: "b1", raw: "logseq.order-list-type:: number", collapsed: false, children: [] }] } as PageDto);
+    expect(pageToDto("Dosa")!.pre_block ?? null).toBeNull();
+    setRaw(doc.pages[0].roots[0], "Dosa\nlogseq.order-list-type:: number");
+    const dto = pageToDto("Dosa")!;
+    expect(dto.pre_block ?? null).toBeNull();
+    expect(dto.blocks.map((b) => b.raw)).toEqual(["Dosa\nlogseq.order-list-type:: number"]);
   });
 });

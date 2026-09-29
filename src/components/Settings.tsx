@@ -1,5 +1,5 @@
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
-import { ImproveTab } from "./ImproveTab";
+import { DiagnosticsTab } from "./DiagnosticsTab";
 import { errorFamily } from "../errorFamily";
 import { AboutTab } from "./AboutTab";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
@@ -98,7 +98,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "backups", label: "Backups & recovery" },
   { id: "graph", label: "Graph" },
   { id: "plugins", label: "Plugins" },
-  { id: "improve", label: "Help improve Tine" },
+  { id: "diagnostics", label: "Help & diagnostics" },
   { id: "shortcuts", label: "Keyboard shortcuts" },
   { id: "about", label: "About" },
 ];
@@ -264,8 +264,8 @@ export function Settings(): JSX.Element {
               <Show when={tab() === "plugins"}>
                 <PluginsTab />
               </Show>
-              <Show when={tab() === "improve"}>
-                <ImproveTab />
+              <Show when={tab() === "diagnostics"}>
+                <DiagnosticsTab />
               </Show>
               <Show when={tab() === "shortcuts"}>
                 <ShortcutsSettingsPane

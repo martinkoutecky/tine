@@ -195,6 +195,62 @@ describe("multiline paste into editor-visible empty blocks", () => {
     }
   });
 
+  it("keeps blank-line-separated LaTeX literal inside a display-math block", async () => {
+    const block: BlockDto = {
+      id: "abababab-abab-4bab-8bab-abababababab",
+      raw: "$$\n\n$$",
+      collapsed: false,
+      children: [],
+    };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 3);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      textarea.setSelectionRange(3, 3);
+      const latex = "\\begin{align}\n\n\\end{align}";
+      const event = paste(textarea, latex);
+      await Promise.resolve();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(pageByName("Paste")!.roots).toEqual([block.id]);
+      expect(doc.byId[block.id].raw).toBe(`$$\n${latex}\n$$`);
+      expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([
+        3 + latex.length,
+        3 + latex.length,
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("replaces a selection with multiline LaTeX without splitting display math", () => {
+    const block: BlockDto = {
+      id: "bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc",
+      raw: "$$\nREPLACE\n$$",
+      collapsed: false,
+      children: [],
+    };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });
+    startEditing(block.id, 3);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea") as HTMLTextAreaElement;
+      textarea.setSelectionRange(3, 10);
+      const latex = "\\begin{align}\n\n\\end{align}";
+      paste(textarea, latex);
+
+      expect(pageByName("Paste")!.roots).toEqual([block.id]);
+      expect(doc.byId[block.id].raw).toBe(`$$\n${latex}\n$$`);
+    } finally {
+      dispose();
+    }
+  });
+
   it("keeps indented unbulleted lines literal inside the current block", () => {
     const block: BlockDto = { id: "ffffffff-ffff-4fff-8fff-ffffffffffff", raw: "before after", collapsed: false, children: [] };
     loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, blocks: [block] });

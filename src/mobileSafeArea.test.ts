@@ -46,7 +46,9 @@ describe("mobile safe-area insets", () => {
       ".lightbox-overlay",
       ".sync-merge-overlay",
     ]) {
-      const rule = block(css, selector);
+      // Rules may live in any split sheet (e.g. .welcome-overlay moved to
+      // pdf-workspace.css); allCss joins every src/styles sheet.
+      const rule = block(allCss, selector);
       for (const side of ["top", "right", "bottom", "left"]) {
         expect(rule, `${selector} ${side}`).toContain(`var(--overlay-inset-${side})`);
       }

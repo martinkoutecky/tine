@@ -2477,7 +2477,9 @@ pub fn publish_graph(
             .unwrap_or(0)
             != 1
         {
-            eprintln!("tine export: refusing ambiguous public page identity");
+            tine_core::diag_line::diagnostic_line(
+                "tine export: refusing ambiguous public page identity",
+            );
             continue;
         }
         public.push((e.name.as_str(), e.kind, Arc::clone(&parsed)));
@@ -2490,7 +2492,7 @@ pub fn publish_graph(
     let names: Vec<&str> = public.iter().map(|(n, _, _)| *n).collect();
     let (mut slugs, collisions) = build_slug_map(&names);
     for _ in &collisions {
-        eprintln!("tine export: page slug collision resolved");
+        tine_core::diag_line::diagnostic_line("tine export: page slug collision resolved");
     }
     let mut exported_ids = HashMap::with_capacity(public.len());
     for (name, kind, _) in &public {

@@ -96,6 +96,19 @@ describe("orderAcItems (autocomplete default action)", () => {
     expect(orderAcItems([{ name: "MATCH", item: "exact" }], create, { query: "match", policy: "typed" })).toEqual(["exact"]);
   });
 
+  it("keeps prefix and substring pages after an exact CJK match without offering Create", () => {
+    const cjk = [
+      { name: "我是小明", item: "substring" },
+      { name: "小明", item: "exact" },
+      { name: "小明的家", item: "prefix" },
+    ];
+    const createCjk = { name: "小明", item: "CREATE" };
+    for (const policy of ["adaptive", "existing", "typed"] as const) {
+      expect(orderAcItems(cjk, createCjk, { query: "小明", policy }))
+        .toEqual(["exact", "prefix", "substring"]);
+    }
+  });
+
   it("keeps blank page/tag lifecycles row-free and deterministically orders reverse backend input", () => {
     expect(orderAcItems(matches, create, { query: "", policy: "adaptive" })).toEqual([]);
     const reversed = [

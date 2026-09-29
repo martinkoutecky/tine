@@ -762,7 +762,13 @@ function formatValue(env: CalcEnvironment, value: Decimal): string {
  * have null output. Invalid/oversized expressions become error rows. */
 export function evalCalc(src: string): CalcLine[] {
   const env: CalcEnvironment = { values: new Map() };
-  return src.split("\n").map((line) => {
+  // Trailing blank lines never mint rows (GH #339): a committed ```calc block's
+  // code ends with a newline, which rendered one phantom empty row. Interior
+  // blanks keep their position; blanks never touch the environment.
+  const lines = src.split("\n");
+  let end = lines.length;
+  while (end > 0 && /^\s*$/.test(lines[end - 1])) end--;
+  return lines.slice(0, end).map((line) => {
     const noComment = line.split("#")[0];
     if (!noComment.trim()) return { input: line, output: null };
     try {

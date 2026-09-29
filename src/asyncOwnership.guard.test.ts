@@ -19,7 +19,7 @@ function check(file: string, start: string, end: string, rules: RegExp[]) {
 describe("async ownership guard", () => {
   it("pins graph-bound component and module continuations", () => {
     check("src/components/ContextMenu.tsx", "function MakeTemplate(", "function PageMenu(", [/graphOwner\(\)/, /readOwned\(owner, backend\(\)\.listTemplates/, /existing\.kind === "stale"\) return/]);
-    check("src/components/Block.tsx", "function beginDrag(", "export interface CaptureApi", [/captureBinding\(\)/, /stillBound\(binding\) && dragMoved/]);
+    check("src/components/blockGestures.ts", "export function beginDrag(", "// --- Click / drag gesture", [/captureBinding\(\)/, /stillBound\(binding\) && dragMoved/]);
     // Every panel write (Field, bool, Remove, AddRow) goes through writeOne: graph session + subject instance.
     check("src/components/PageProps.tsx", "function writeOne(", "function scopeWritable(", [/stillBound\(binding\)/, /subjectOf\(scope\) !== subject/]);
     check("src/components/WorkspaceSwitcher.tsx", "  const remove = async", "  return (", [/graphOwner\(\)/, /confirmed\.kind === "stale"/, /writeOwned\(owner, deleteWorkspace/]);
