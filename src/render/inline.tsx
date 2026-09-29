@@ -2,6 +2,7 @@
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
+import { createExpansionGate, MACRO_EXPANSION_LIMIT_LABEL } from "./expansionBudget";
 import { leadingMarker, matchLeadingMarker } from "../markers";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
@@ -1220,12 +1221,13 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
   );
 }
 
-// Recursion depth guard for user `:macros` expansion. renderSegs uses <For>, which
-// evaluates synchronously on creation, so a macro that expands to itself (or a
-// mutually-recursive pair) would render forever. We cap nesting and bail to a grey
-// literal past the cap — cheap and bulletproof against both direct and mutual loops.
-let userMacroDepth = 0;
-const MAX_USER_MACRO_DEPTH = 12;
+// Expansion guard for user `:macros`. renderSegs uses <For>, which evaluates
+// synchronously on creation, so a macro that expands to itself (or a mutually
+// recursive pair) would render forever, and one that expands to itself several
+// times would branch exponentially inside the depth cap. The shared gate caps
+// nesting (grey literal) and each top-level tree's expansions/bytes (visible
+// limit marker) — I-22, one budget with renderedText.ts.
+const userMacroGate = createExpansionGate();
 
 export function expandTemplate(template: string, args: string[]): string {
   return template.replace(/\$(\d+)/g, (m, d) => args[Number(d) - 1] ?? m);
@@ -1254,24 +1256,27 @@ function expansionHeadingLevel(expanded: string, fmt?: Format): number | null {
 // the args. Single-paragraph expansions stay inline; block-level expansions render
 // through the block renderer, matching OG's macro parse/render split.
 function UserMacroView(props: { name: string; template: string; args: string[]; blockId?: string }): JSX.Element {
-  if (userMacroDepth >= MAX_USER_MACRO_DEPTH) {
-    return <span class="macro">{`{{${props.name}}}`}</span>;
-  }
   const expanded = expandTemplate(props.template, props.args);
-  userMacroDepth++;
-  try {
-    const fmt = formatForBlock(props.blockId);
-    if (parserReady() && expansionIsBlockLevel(expanded, fmt)) {
-      return (
-        <div class="macro-blocks">
-          <AstBody raw={expanded} blockId={props.blockId} format={fmt} headingLevel={expansionHeadingLevel(expanded, fmt)} macroExpansion />
-        </div>
-      );
-    }
-    return <InlineText text={expanded} blockId={props.blockId} format={fmt} macroExpansion />;
-  } finally {
-    userMacroDepth--;
-  }
+  return userMacroGate.expand(
+    expanded.length,
+    () => <span class="macro">{`{{${props.name}}}`}</span>,
+    () => (
+      <span class="macro macro-expansion-limit" title={`{{${props.name}}}`}>
+        {`{{${props.name}}} (${MACRO_EXPANSION_LIMIT_LABEL})`}
+      </span>
+    ),
+    () => {
+      const fmt = formatForBlock(props.blockId);
+      if (parserReady() && expansionIsBlockLevel(expanded, fmt)) {
+        return (
+          <div class="macro-blocks">
+            <AstBody raw={expanded} blockId={props.blockId} format={fmt} headingLevel={expansionHeadingLevel(expanded, fmt)} macroExpansion />
+          </div>
+        );
+      }
+      return <InlineText text={expanded} blockId={props.blockId} format={fmt} macroExpansion />;
+    },
+  );
 }
 
 // Inline block reference. Bare `((uuid))` shows the referenced block's visible

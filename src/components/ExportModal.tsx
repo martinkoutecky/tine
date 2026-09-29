@@ -84,7 +84,6 @@ const TEXT_TOGGLES: ExportToggle[] = [
 ];
 
 const EMBED_EXPORT_NODE_LIMIT = 2_000;
-const ADVANCED_RE = /\[\s*:find|:where|:find/;
 
 const BUILT_IN_MACRO_NAMES = new Set([
   "query",
@@ -315,7 +314,6 @@ async function warmQueryMacros(
     return {
       key: macroKey(macro.name, macro.args),
       query: form,
-      advanced: ADVANCED_RE.test(form),
     };
   });
   try {

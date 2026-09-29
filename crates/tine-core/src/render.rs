@@ -42,6 +42,25 @@ pub fn parse_projection(raw: &str, is_org: bool) -> lsdoc::ast::Projection {
     lsdoc_block_parse::parse_projection(raw, is_org)
 }
 
+/// Free text that is not a block body (a property value), parsed without
+/// re-bulleting under the block boundary's depth bound; `None` when deeper
+/// (I-22). The one door for such reparses.
+pub fn parse_text_bounded(text: &str, is_org: bool) -> Option<lsdoc::ast::Projection> {
+    lsdoc_block_parse::parse_text_bounded(text, if is_org { "org" } else { "md" })
+}
+
+/// Quote-staircase markers opening one source line, as lsdoc recurses on
+/// them (`lsdoc-block-parse.rs::line_quote_depth`): the page admission's
+/// quote count, so the admission and the parser agree (I-22).
+pub fn line_quote_depth(line: &str) -> usize {
+    lsdoc_block_parse::line_quote_depth(line)
+}
+
+/// [`lsdoc::inline`] under the same depth bound; `None` when deeper (I-22).
+pub fn parse_inline_bounded(text: &str, format: &str) -> Option<Vec<lsdoc::ast::Inline>> {
+    lsdoc_block_parse::parse_inline_bounded(text, format)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

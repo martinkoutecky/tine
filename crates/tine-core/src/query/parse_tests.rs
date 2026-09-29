@@ -464,3 +464,32 @@ fn macro_argument_limit_applies_before_splitting_an_options_map() {
             .any(|d| d.kind == DiagnosticKind::Size));
     }
 }
+
+/// I-12 (og C3 L02): one answerer for "is this `{{query}}` datalog". A
+/// `:where`/`:find` inside an OG string or a page ref is text, so the macro
+/// discriminator says simple — and the simple parser must not then refuse it
+/// as advanced through a second, substring-matching answerer.
+#[test]
+fn a_datalog_keyword_inside_text_is_a_simple_query_at_every_answerer() {
+    for form in [
+        r#""meeting :where""#,
+        "(page [[a:find]])",
+        r#"(and "x :find" (task TODO))"#,
+    ] {
+        let (query, _) = super::parse_query_input(
+            form,
+            super::QueryInput::MacroQuery,
+            TODAY,
+            super::registry::Registry::none(),
+        );
+        assert!(
+            !matches!(query.source, Source::Advanced { .. }) && !query.is_invalid(),
+            "{form}: {:?}",
+            query.diagnostics
+        );
+        assert!(!parse_query_source(form, TODAY).0.is_invalid(), "{form}");
+        assert!(!is_advanced(form), "{form}");
+    }
+    assert!(is_advanced("[:find ?b :where [?b :block/marker]]"));
+    assert!(is_advanced("[ :find ?b ]"));
+}

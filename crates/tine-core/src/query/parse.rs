@@ -101,7 +101,7 @@ pub enum QueryInput {
 /// `:where` token inside an OG string or a page ref is text, not datalog — which
 /// is exactly the case the TypeScript regexes got wrong — so the scan protects
 /// both. There is **no speculative parse-and-fallback**: the token decides.
-fn advanced_form(form: &str) -> bool {
+pub(crate) fn advanced_form(form: &str) -> bool {
     let bytes = form.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {

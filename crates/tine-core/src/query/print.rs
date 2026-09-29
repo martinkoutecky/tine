@@ -323,10 +323,20 @@ fn tql_expr(filter: &Filter, context: Prec) -> String {
         // Below the root every `Off` prints inline as the function form, which
         // is legal TQL (§4.2.3) and is what the parser reads back.
         Filter::Off { inner } => format!("off({})", tql_expr(off_content(inner), Prec::Or)),
-        Filter::Not { inner } => parens(
-            format!("not {}", tql_expr(inner, Prec::Not)),
-            context > Prec::Not,
-        ),
+        Filter::Not { inner } => {
+            // sqlparser 0.62 reads `not value between …` / `not value in (…)`
+            // as a parse error, so a negated atom test keeps its parentheses.
+            let operand = match inner.as_ref() {
+                Filter::Leaf {
+                    leaf:
+                        Leaf::Attr {
+                            attr: Attr::Value, ..
+                        },
+                } => format!("({})", tql_expr(inner, Prec::Or)),
+                other => tql_expr(other, Prec::Not),
+            };
+            parens(format!("not {operand}"), context > Prec::Not)
+        }
         Filter::And { items } => {
             if items.is_empty() {
                 return "true".to_string();
@@ -404,59 +414,52 @@ fn tql_props(quant: Quant, pred: &Filter, through_page: bool) -> String {
     let call = if through_page { "page_prop" } else { "prop" };
     let spelled = format!("{call}({})", sql_string(&key));
     let atom = pred.props_atom_test();
-    match (quant, atom) {
-        (Quant::Any, None) => format!("{spelled} is not null"),
-        (Quant::None, None) => format!("{spelled} is null"),
-        (Quant::Any, Some(atom)) => match blank_test(&atom) {
-            true => format!("{spelled} = ''"),
-            false => {
-                // A `tags` property whose only test is an equality is the page's
-                // tag: the shorter spelling reads back as the same leaf.
-                if through_page && key == "tags" {
-                    if let Some(tag) = single_value_equality(&atom) {
-                        return format!("page_tag({})", sql_string(&tag));
-                    }
+    let shorthand = atom.as_ref().and_then(shorthand_comparison);
+    match (quant, &atom, shorthand) {
+        (Quant::Any, None, _) => format!("{spelled} is not null"),
+        (Quant::None, None, _) => format!("{spelled} is null"),
+        (quant, None, _) => format!("{}({spelled}, true)", quant_name(quant)),
+        (Quant::Any, Some(atom), _) if blank_test(atom) => format!("{spelled} = ''"),
+        (Quant::Any, Some(atom), Some((op, value))) => {
+            // A `tags` property whose only test is an equality is the page's
+            // tag: the shorter spelling reads back as the same leaf.
+            if through_page && key == "tags" {
+                if let Some(tag) = single_value_equality(atom) {
+                    return format!("page_tag({})", sql_string(&tag));
                 }
-                tql_atom_expr(&atom, &spelled)
             }
-        },
-        (quant, Some(atom)) => format!(
+            tql_comparison(&spelled, op, value)
+        }
+        // Every other atom test keeps its quantifier: `prop('k') > 1 and
+        // prop('k') < 5` would read back as two independent `any` leaves, and
+        // `not prop('k') = 'a'` as `not any(…)` (og C3 L02, I-4).
+        (quant, Some(atom), _) => format!(
             "{}({spelled}, {})",
             quant_name(quant),
-            tql_atom_expr(&atom, "value")
+            tql_expr(atom, Prec::Or)
         ),
-        (quant, None) => format!("{}({spelled}, true)", quant_name(quant)),
     }
 }
 
-/// An atom test printed against `subject`: at `Any` the subject is the whole
-/// `prop('k')` call (`prop('k') = 'x'`); under a quantifier it is the
-/// contextual identifier `value`.
-fn tql_atom_expr(atom: &Filter, subject: &str) -> String {
-    match atom {
-        Filter::Leaf {
-            leaf:
-                Leaf::Attr {
-                    attr: Attr::Value,
-                    op,
-                    value,
-                },
-        } => tql_comparison(subject, *op, value),
-        Filter::Not { inner } => format!("not {}", tql_atom_expr(inner, subject)),
-        Filter::And { items } => items
-            .iter()
-            .map(|item| tql_atom_expr(item, subject))
-            .collect::<Vec<_>>()
-            .join(" and "),
-        Filter::Or { items } => format!(
-            "({})",
-            items
-                .iter()
-                .map(|item| tql_atom_expr(item, subject))
-                .collect::<Vec<_>>()
-                .join(" or ")
-        ),
-        other => tql_expr(other, Prec::Or),
+/// The one atom-test shape the `prop('k') op v` shorthand reads back as: a
+/// single `value` comparison whose `prop(...)` spelling is not claimed by a
+/// property form (`= ''` is IsBlank, `is [not] null` is key presence).
+fn shorthand_comparison(atom: &Filter) -> Option<(CmpOp, &Value)> {
+    let Filter::Leaf {
+        leaf:
+            Leaf::Attr {
+                attr: Attr::Value,
+                op,
+                value,
+            },
+    } = atom
+    else {
+        return None;
+    };
+    match op {
+        CmpOp::IsSet | CmpOp::IsNotSet | CmpOp::IsBlank => None,
+        CmpOp::Eq if *value == Value::text("") => None,
+        _ => Some((*op, value)),
     }
 }
 
