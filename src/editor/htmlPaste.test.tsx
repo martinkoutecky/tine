@@ -99,3 +99,7 @@ describe("structuredHtmlOutline", () => {
     expect(structuredHtmlOutline(oversized, "x")).toBeNull();
   });
 });
+
+it("HTML paste keeps blank code lines", () => {
+  expect(structuredHtmlOutline("<pre><code>a\n\n\nb</code></pre>", "a\n\n\nb")).toEqual([{ raw: "```\na\n\n\nb\n```", children: [] }]);
+});

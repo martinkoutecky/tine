@@ -18,6 +18,7 @@ interface FlattenGroup {
   id: string;
   label: string;
   rows: string[];
+  retain: boolean;
 }
 
 function groupLabel(field: FieldId, key: string | null, sampleId: string): string {
@@ -31,7 +32,14 @@ function writable(field: FieldId): field is WritableGroupField {
 }
 
 function firstVisibleLine(id: string): string {
-  return (visibleBody(docNode(id)?.raw ?? "")[0] ?? "").trim();
+  const raw = docNode(id)?.raw ?? "";
+  // Marker/priority-only labels have no visible body. Read their existing
+  // parsed field rather than interpreting their source syntax again.
+  const state = readField(id, "state")?.text;
+  if (raw === state) return state;
+  const priority = readField(id, "priority")?.text;
+  if (priority && raw === `[#${priority}]`) return raw;
+  return (visibleBody(raw)[0] ?? "").trim();
 }
 
 function parseLabel(field: WritableGroupField, label: string): string | null | undefined {
@@ -140,23 +148,32 @@ export function flatten(parentId: string): boolean {
 
   const groups: FlattenGroup[] = [];
   const childless: string[] = [];
-  const nextParentOrder: string[] = [];
   for (const childId of parent.children) {
     const child = docNode(childId);
     if (!child || child.page !== parent.page) return false;
     if (!child.children.length) {
       childless.push(childId);
-      nextParentOrder.push(childId);
       continue;
     }
     const rows = [...child.children];
-    groups.push({ id: childId, label: firstVisibleLine(childId), rows });
-    nextParentOrder.push(...rows);
+    const label = firstVisibleLine(childId);
+    // Only a bare grouping label is disposable. Notes, properties, wrappers
+    // and authored whitespace remain as a row with the exact original raw.
+    const retain = child.raw !== label;
+    groups.push({ id: childId, label, rows, retain });
   }
   if (!groups.length) return false;
 
+  const field = inferFlattenField(parentId, groups, childless);
+  // A label that cannot become a row field is authored content too.
+  for (const group of groups) group.retain ||= field === null;
+  const byId = new Map(groups.map((group) => [group.id, group]));
+  const order = parent.children.flatMap((id) => {
+    const group = byId.get(id);
+    return group ? [...(group.retain ? [id] : []), ...group.rows] : [id];
+  });
+
   return withUndoUnit("sheet:flatten", [parent.page], () => {
-    const field = inferFlattenField(parentId, groups, childless);
     if (field) {
       for (const group of groups) {
         const value = parseLabel(field, group.label);
@@ -166,10 +183,10 @@ export function flatten(parentId: string): boolean {
         }
       }
     }
-    const orders: Record<string, readonly string[]> = { [parentId]: nextParentOrder };
+    const orders: Record<string, readonly string[]> = { [parentId]: order };
     for (const group of groups) orders[group.id] = [];
     if (!replaceChildOrders(orders)) throw new Error("failed to flatten rows");
-    for (const group of groups) deleteBlock(group.id);
+    for (const group of groups) if (!group.retain) deleteBlock(group.id);
     return true;
   });
 }

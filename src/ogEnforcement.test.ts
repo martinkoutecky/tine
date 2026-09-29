@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   PINNED_FORMAT_COUNT, PERSISTED_FORMATS,
@@ -49,4 +50,15 @@ describe("og campaign enforcement", () => {
     expect(() => checkWriterSites({ "src-tauri/src/flight_store.rs": 4 }, {})).toThrow(/3 → 4 writer sites/);
     expect(writerSiteCounts("#[cfg(test)]\nmod tests {\n fs::write(foo, bar);\n}\nfs::write(path, bytes);\n")).toBe(1);
   });
+});
+
+
+it("I-4/I-12: edit only addressed content; imitate queryBuilder.ts edit and removeAt", () => {
+  const source = (name: string) => readFileSync(path.join(root, "src", name), "utf8");
+  const query = source("editor/queryBuilder.ts");
+  expect(query, "Query edits must retain untouched groups; queryBuilder.ts edit is the answerer (I-4/I-12)").not.toContain("normalize(");
+  expect(query, "Query edits must not globally prune; imitate queryBuilder.ts removeAt (I-4)").not.toContain("children.map(prune)");
+  expect(source("editor/htmlPaste.ts"), "Preserve Turndown code bytes; imitate htmlPaste.ts (I-4)").toContain("service.turndown(doc.body).trim()");
+  expect(source("favorites.ts"), "Preserve disk preambles; imitate favorites.ts writeArrangementPage (I-4)").toContain("disk?.pre_block ?? markerFor(format)");
+  expect(source("sheet/restructure.ts"), "Keep group content unless represented; imitate restructure.ts flatten (I-4)").toContain("if (!group.retain) deleteBlock(group.id)");
 });

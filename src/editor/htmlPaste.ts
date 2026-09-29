@@ -75,7 +75,7 @@ export function structuredHtmlOutline(html: string, plain: string, format: Forma
   service.escape = (value: string) => value;
   let markdown: string;
   try {
-    markdown = service.turndown(doc.body).replace(/\n{3,}/g, "\n\n").trim();
+    markdown = service.turndown(doc.body).trim();
   } catch {
     return null;
   }

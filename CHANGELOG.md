@@ -101,6 +101,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Edits preserve unrelated authored content** (OG-K2). HTML paste keeps blank code lines; query-builder edits keep untouched empty boolean groups; sidebar arrangement edits keep the Favorites page preamble; sheet Flatten keeps group notes and properties as rows.
+
 - **A second file holding a page's name is never shown or written as that page** (master 7bd793bd0, og J1).
   When a duplicate journal day (left by sync or a date-format change) or a same-named page opened by path
   was open with unsaved input, the journals feed showed it as the requested day, so what was typed there

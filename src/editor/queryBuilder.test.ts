@@ -24,6 +24,7 @@ import {
   currentSort,
   encodePropertyLeaf,
   escapeLike,
+  filterChildren,
   filterLabel,
   filterValueLabel,
   filterPhrase,
@@ -1183,4 +1184,27 @@ describe("editing a group that sits inside a unary wrapper", () => {
     const root: Filter = { kind: "and", items: [A, { kind: "or", items: [child, kept, DEEP] }, C] };
     expect(unwrapAt(root, [1])).toEqual({ kind: "and", items: [A, child, kept, DEEP, C] });
   });
+});
+
+it("tree edits preserve pre-existing empty boolean siblings", () => {
+  const empty: Filter[] = [{ kind: "or", items: [] }, { kind: "and", items: [] }, { kind: "not", inner: { kind: "or", items: [] } }];
+  const a: Filter = { kind: "true" };
+  const tree: Filter = { kind: "and", items: [...empty, a] };
+  expect(replaceAt(tree, [3], { kind: "false" })).toEqual({ kind: "and", items: [...empty, { kind: "false" }] });
+  expect(removeAt(tree, [3])).toEqual({ kind: "and", items: empty });
+  expect(addChild(tree, [], a)).toEqual({ kind: "and", items: [...empty, a, a] });
+  expect(setOp(tree, [], "or")).toEqual({ kind: "or", items: [...empty, a] });
+});
+
+
+it("all query editing gestures retain authored empty siblings (I-4; queryBuilder.ts edit)", () => {
+  const empty: Filter = { kind: "or", items: [] };
+  const tree: Filter = { kind: "and", items: [empty, A, B, { kind: "and", items: [C] }] };
+  for (const next of [
+    wrapAt(tree, [1], "not"), toggleDisabledAt(tree, [1]),
+    groupSelected(tree, [[1], [2]], "any"), groupWithPrevious(tree, [2]),
+    moveSibling(tree, [1], 2), unwrapAt(tree, [3]), setOp(tree, [3], "or"),
+    removeAt(tree, [3, 0]),
+  ]) expect(filterChildren(next)?.[0]).toEqual(empty);
+  expect(tree.items).toEqual([empty, A, B, { kind: "and", items: [C] }]);
 });
