@@ -55,6 +55,15 @@ jobs:
 
       - run: npm ci
 
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.15.0
+
+      - name: F-Droid clean-source WASM rebuild is current
+        run: |
+          npm run build:wasm
+          git diff --exit-code -- src/render/wasm
+
       - name: Release and offline-source contract fixtures
         run: |
           node scripts/check-flatpak-node-sources.mjs
@@ -99,6 +108,15 @@ jobs:
           workspaces: ". -> target"
 
       - run: npm ci
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.15.0
+
+      - name: F-Droid clean-source WASM rebuild is current
+        run: |
+          npm run build:wasm
+          git diff --exit-code -- src/render/wasm
 
       - name: Flatpak offline npm sources are current
         run: node scripts/check-flatpak-node-sources.mjs
