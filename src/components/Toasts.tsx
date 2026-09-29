@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { toasts, dismissToast, pushToast } from "../toasts";
+import { writeClipboardText } from "../clipboard";
 import { lightbox, setLightbox } from "../ui";
 import { copyImageFromSrc as copyLightboxImage } from "../copyImage";
 import { registerTransientLayer } from "../transientLayers";
@@ -17,6 +18,9 @@ export function Toasts(): JSX.Element {
             onClick={() => !t.sticky && dismissToast(t.id)}
           >
             <span class="toast-msg">{t.message}</span>
+            <Show when={(t.count ?? 1) > 1}>
+              <span class="toast-count" aria-label={`shown ${t.count} times`}>×{t.count}</span>
+            </Show>
             <Show when={t.action}>
               <button
                 class="toast-action"
@@ -27,6 +31,22 @@ export function Toasts(): JSX.Element {
                 }}
               >
                 {t.action!.label}
+              </button>
+            </Show>
+            <Show when={t.kind === "error"}>
+              <button
+                class="toast-action toast-copy"
+                title="Copy the full message"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  // The error toast stays open; the copy result is a separate note.
+                  void writeClipboardText(t.message).then(
+                    () => pushToast("Error message copied", "success"),
+                    () => pushToast("Couldn't copy the message; select its text instead.", "warn"),
+                  );
+                }}
+              >
+                Copy
               </button>
             </Show>
             <button

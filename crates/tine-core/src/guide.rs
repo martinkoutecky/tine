@@ -679,6 +679,8 @@ mod og_20d_guide_tests {
             "**Copy details**",
             "**Retry**",
             "Changed on disk",
+            "A red error message appears",
+            "stays on screen until you close it",
         ] {
             assert!(
                 recovery.contains(detail),
