@@ -1,0 +1,240 @@
+[
+  {
+    "page": "Sheets",
+    "path": [
+      0
+    ],
+    "fp": "5035638010a09224",
+    "view": "table",
+    "columns": [
+      {
+        "label": "Block",
+        "formula": false
+      },
+      {
+        "label": "price",
+        "formula": false
+      },
+      {
+        "label": "qty",
+        "formula": false
+      },
+      {
+        "label": "total",
+        "formula": true
+      },
+      {
+        "label": "State",
+        "formula": false
+      },
+      {
+        "label": "Priority",
+        "formula": false
+      },
+      {
+        "label": "Tags",
+        "formula": false
+      }
+    ],
+    "rows": [
+      {
+        "ix": 0,
+        "title": "First #x",
+        "bg": null,
+        "cells": [
+          {
+            "k": "inline",
+            "text": "5"
+          },
+          {
+            "k": "inline",
+            "text": "2"
+          },
+          {
+            "k": "plain",
+            "text": "10"
+          },
+          {
+            "k": "marker",
+            "raw": "TODO",
+            "text": "TODO"
+          },
+          {
+            "k": "priority",
+            "raw": "A",
+            "text": "[#A]"
+          },
+          {
+            "k": "chips",
+            "values": [
+              "#x"
+            ]
+          }
+        ]
+      },
+      {
+        "ix": 1,
+        "title": "Second",
+        "bg": null,
+        "cells": [
+          {
+            "k": "inline",
+            "text": "1"
+          },
+          {
+            "k": "inline",
+            "text": "2"
+          },
+          {
+            "k": "plain",
+            "text": "2"
+          },
+          {
+            "k": "marker",
+            "raw": "DONE",
+            "text": "DONE"
+          },
+          {
+            "k": "none"
+          },
+          {
+            "k": "none"
+          }
+        ]
+      },
+      {
+        "ix": 2,
+        "title": "Third <script>alert(1)</script> row",
+        "bg": "rgba(251,230,158,0.45)",
+        "cells": [
+          {
+            "k": "inline",
+            "text": "3"
+          },
+          {
+            "k": "none"
+          },
+          {
+            "k": "error",
+            "message": "* expects number operands"
+          },
+          {
+            "k": "none"
+          },
+          {
+            "k": "none"
+          },
+          {
+            "k": "none"
+          }
+        ]
+      }
+    ],
+    "footer": [
+      {
+        "label": "Sum",
+        "text": "9"
+      },
+      null,
+      {
+        "label": "Sum",
+        "text": "12 (1 skipped)"
+      },
+      null,
+      null,
+      null
+    ],
+    "filterError": null,
+    "omitted": 0
+  },
+  {
+    "page": "Sheets",
+    "path": [
+      1
+    ],
+    "fp": "53580002d1eafb29",
+    "view": "board",
+    "columns": [
+      {
+        "label": "LATER",
+        "cards": []
+      },
+      {
+        "label": "NOW",
+        "cards": []
+      },
+      {
+        "label": "DONE",
+        "cards": []
+      },
+      {
+        "label": "TODO",
+        "cards": [
+          {
+            "ix": 0,
+            "title": "Write tests",
+            "bg": null,
+            "chips": {
+              "priority": "",
+              "scheduled": "",
+              "deadline": "",
+              "tags": []
+            }
+          }
+        ]
+      },
+      {
+        "label": "DOING",
+        "cards": [
+          {
+            "ix": 1,
+            "title": "Implement",
+            "bg": null,
+            "chips": {
+              "priority": "",
+              "scheduled": "",
+              "deadline": "",
+              "tags": []
+            }
+          }
+        ]
+      },
+      {
+        "label": "(none)",
+        "cards": [
+          {
+            "ix": 2,
+            "title": "Plain card",
+            "bg": null,
+            "chips": {
+              "priority": "",
+              "scheduled": "",
+              "deadline": "",
+              "tags": []
+            }
+          }
+        ]
+      }
+    ],
+    "filterError": null,
+    "omitted": 0
+  },
+  {
+    "page": "Sheets",
+    "path": [
+      2
+    ],
+    "fp": "4bb7ec994d086a41",
+    "view": "grid",
+    "cols": 2,
+    "header": true,
+    "footer": [
+      null,
+      {
+        "label": "Sum",
+        "text": "7"
+      }
+    ],
+    "omitted": 0
+  }
+]

@@ -945,6 +945,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
 export const PUBLISHED_REFUSED_METHODS = [
   "savePages",
   "publishLive",
+  "sheetExportInputs",
   "approveExternalAssets",
   "openGraphWindow",
   "forgetKnownGraph",

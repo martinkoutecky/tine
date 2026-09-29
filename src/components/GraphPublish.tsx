@@ -1,5 +1,6 @@
 import { Show, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { exportSheets } from "../sheet/exportSheets";
 import { graphMeta } from "../graphSession";
 import { switchGraph } from "../graph";
 import { graphOwner, readOwned, writeOwned } from "../owned";
@@ -20,7 +21,7 @@ export function GraphPublish(): JSX.Element {
     setBusy(true);
     setMessage("Exporting…");
     try {
-      const result = await writeOwned(owner, backend().publishLive(destination, name().trim() || "Tine graph", allPages()));
+      const result = await writeOwned(owner, backend().publishLive(destination, name().trim() || "Tine graph", allPages(), await exportSheets()));
       if (result.kind === "current") setMessage(`Exported ${result.value.pages} pages to ${result.value.path}`);
     } catch (error) {
       if (owner()) setMessage(`Export failed: ${String((error as Error)?.message ?? error)}`);

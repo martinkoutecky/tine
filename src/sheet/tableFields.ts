@@ -1,6 +1,6 @@
 import { formatForBlock } from "../document";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
-import { isRenderHiddenProp } from "../render/block";
+import { isRenderHiddenProp, visibleBody } from "../render/block";
 import { liveFormulaRowNode, type FormulaEvalRow } from "./formulaEval";
 import type { FieldId } from "./fields";
 
@@ -48,3 +48,28 @@ export function fieldIdsForRecords(rows: readonly FormulaEvalRow[], includePage:
   return out;
 }
 
+
+/** Table columns after the title: declared fields, then formulas, then inferred
+ *  (observed plus user-added) ones not already named. O(fields). */
+export function tableFieldOrder(
+  observed: readonly FieldId[],
+  extra: readonly FieldId[],
+  declared: readonly FieldId[],
+  formulas: readonly FieldId[]
+): FieldId[] {
+  const seen = new Set(observed);
+  const inferred = [...observed, ...extra.filter((f) => !seen.has(f))];
+  const named = new Set<FieldId>([...declared, ...formulas]);
+  return [...declared, ...formulas, ...inferred.filter((f) => !named.has(f))];
+}
+
+/** A row's raw text, live or from its DTO. O(1). */
+export function rowRaw(row: FormulaEvalRow): string {
+  return liveFormulaRowNode(row)?.raw ?? row.dto?.raw ?? "";
+}
+
+/** A table row's title cell text; an empty title over children reads as an em dash. */
+export function tableRowTitle(row: FormulaEvalRow): string {
+  const title = visibleBody(rowRaw(row)).join(" ");
+  return title.trim() === "" && (liveFormulaRowNode(row)?.children.length ?? row.dto?.children.length ?? 0) > 0 ? "—" : title;
+}

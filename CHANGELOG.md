@@ -19,6 +19,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **A live-draft conflict offers Review, not a blind overwrite.** Its banner opens
   the in-page comparison, and the Conflicts page lists such pages under
   **Unsaved drafts**.
+- **Sheets come out of Export as the tables, boards and grids you see in the app.**
+  Export HTML and read-only app, a query's Export and Export to PDF write each
+  `tine.view` table, board or grid with its rows, groups, formula columns and
+  aggregate footers. Tine computes them with the app's own sheet code and hands
+  the publisher plain data, so the export cannot disagree with the screen. The
+  command-line export has no app to compute them and keeps the plain outline; a
+  sheet that cannot be computed is written as the outline with a visible note
+  instead of failing the export.
 - **A "changed on disk" conflict can be merged block by block at the page.** The
   panel at the top of the page compares your unsaved edits with the file as it is
   now, pre-selecting each side's own change when Tine still has the version you
