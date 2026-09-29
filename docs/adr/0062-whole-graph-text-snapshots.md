@@ -91,12 +91,20 @@ Alternatives on the table:
 - og restores master's schema-3 snapshots.
 - Master restores og's schema-3 snapshots.
 
-**Scope reading differs from master's.**
-- og reads the recorded `hidden` list with its own prefix matching
-  (`configured_hidden`).
-- Master uses a portable-path-key trie, which also case-folds.
-- Where the two readings differ, og may retire a live file that master would
-  have left alone. That file goes to restore recovery and is not deleted.
+**Scope reading matches master's.**
+- og reads the recorded `hidden` list with `configured_hidden`, the one
+  `:hidden` reader that discovery, the watcher, snapshot capture and restore
+  share.
+- Master's `GraphTextScope` trie is also a byte-exact prefix match: neither
+  folds case, both ignore one trailing `/`, both treat malformed aliases as
+  inert, and an empty entry hides everything.
+  `store_read.rs::hidden_prefix_answers_match_master_for_listing_and_discovery`
+  pins these answers against master's own test cases.
+- Remaining edge: master treats an entry with leading or trailing Unicode
+  whitespace other than a space (for example a no-break space) as inert, while
+  og accepts it as a prefix. If the readings ever differ, og may retire a live
+  file that master would have left alone. That file goes to restore recovery
+  and is not deleted.
 - A snapshot file that og's reading puts outside the scope makes the restore
   refuse, not partly apply.
 

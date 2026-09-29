@@ -82,6 +82,91 @@ fn configured_hidden_paths_are_not_page_claimants_or_path_targets() {
     assert!(store.page(&PageId::from("pages/Private.md")).is_err());
 }
 
+/// `:hidden` has one reader in og (`configured_hidden`), shared by discovery,
+/// the watcher, snapshot capture (`Area::Graph`) and scoped restore. Its
+/// answers must match master's `GraphTextScope` (graph_text_scope.rs tests
+/// `one_trailing_hidden_separator_matches_the_unseparated_literal_prefix` and
+/// `empty_hidden_pattern_matches_og_hide_all_behavior`): a byte-exact prefix,
+/// so case differences do not hide; one trailing `/` is ignored; malformed
+/// aliases are inert; an empty entry hides everything.
+#[test]
+fn hidden_prefix_answers_match_master_for_listing_and_discovery() {
+    let paths = [
+        "archive/Page.md",
+        "archive-old/Old.md",
+        "elsewhere/archive/Else.md",
+        "pages/Kept.md",
+    ];
+    let cases: &[(&[&str], &[&str])] = &[
+        (
+            &["archive"],
+            &["elsewhere/archive/Else.md", "pages/Kept.md"],
+        ),
+        (
+            &["archive/"],
+            &["elsewhere/archive/Else.md", "pages/Kept.md"],
+        ),
+        (&["Archive"], &paths),
+        (&["ARCHIVE/"], &paths),
+        (
+            &[
+                "/",
+                "/archive",
+                "../archive",
+                "archive/../private",
+                "archive/./private",
+                "archive//",
+                "archive//nested",
+                "archive\\nested",
+                " archive",
+                "archive ",
+            ],
+            &paths,
+        ),
+        (&[""], &[]),
+    ];
+    for (hidden, visible) in cases {
+        let f = Fixture::new();
+        std::fs::remove_file(f.0.join("pages/Note.md")).unwrap();
+        std::fs::remove_file(f.0.join("pages/Bad.md")).unwrap();
+        std::fs::remove_file(f.0.join("pages/Org.org")).unwrap();
+        std::fs::create_dir_all(f.0.join("logseq")).unwrap();
+        for rel in paths {
+            std::fs::create_dir_all(f.0.join(rel).parent().unwrap()).unwrap();
+            std::fs::write(f.0.join(rel), "- x\n").unwrap();
+        }
+        std::fs::write(
+            f.0.join("logseq/config.edn"),
+            format!(
+                "{{:hidden {}}}",
+                serde_json::to_string(hidden).unwrap().replace(',', " ")
+            ),
+        )
+        .unwrap();
+        let store = f.store();
+        let mut listed: Vec<String> = store
+            .scan_area(Area::Graph, None)
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|file| file.rel.to_string())
+            .filter(|rel| rel.ends_with(".md"))
+            .collect();
+        listed.sort();
+        let mut expected = visible.to_vec();
+        expected.sort();
+        assert_eq!(listed, expected, "snapshot listing for {hidden:?}");
+        for rel in paths {
+            let stem = rel.rsplit('/').next().unwrap().trim_end_matches(".md");
+            assert_eq!(
+                store.page_named(stem, PageKind::Page).unwrap().is_some(),
+                visible.contains(&rel),
+                "discovery of {rel} for {hidden:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn page_reads_and_publishes_external_edit() {
     let f = Fixture::new();
