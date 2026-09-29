@@ -23,6 +23,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **The static HTML export shows a block's clocked time and the numbering of
+  numbered blocks.** A block with LOGBOOK clock rows keeps its elapsed-time badge
+  (the drawer itself stays hidden), and blocks marked as own-numbered lists show
+  their `1.` / `a.` / `i.` markers as the app does.
 - **Journal days and "Today" follow the calendar zone the backend uses**
   (GH #607). The frontend no longer trusts a WebView clock that can disagree
   with the system zone; it applies the measured backend offset, refreshed
