@@ -284,6 +284,24 @@ fn incremental_paths(event: &notify::Event) -> Option<Vec<PathBuf>> {
 struct Pending {
     paths: HashSet<PathBuf>,
     full: bool,
+    /// An event named `logseq/config.edn`; the next cycle re-checks it.
+    config: bool,
+}
+
+/// Whether `path` is the graph's `logseq/config.edn`, compared ASCII
+/// case-insensitively: a case-folding volume reports the on-disk spelling
+/// (`Logseq/Config.edn`) that the open path reaches. A false positive on a
+/// case-sensitive volume costs one config stamp that finds it unchanged.
+fn is_config_event_path(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut parts = relative.components().map(|part| part.as_os_str().to_str());
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(Some(dir)), Some(Some(file)), None)
+            if dir.eq_ignore_ascii_case("logseq") && file.eq_ignore_ascii_case("config.edn")
+    )
 }
 
 impl Pending {
@@ -304,6 +322,15 @@ impl Pending {
                     .iter()
                     .any(|path| dirs.iter().any(|dir| path.starts_with(dir)));
             return;
+        }
+        // config.edn is not graph text, so the page filters below would drop
+        // it (master contract §2); it has its own flag and costs no scan.
+        let is_config = |path: &PathBuf| is_config_event_path(&dirs[0], path);
+        if event.paths.iter().any(&is_config) {
+            self.config = true;
+            if event.paths.iter().all(&is_config) {
+                return;
+            }
         }
         if let Some(paths) = incremental_paths(&event) {
             self.paths.extend(
@@ -428,24 +455,39 @@ impl Core {
             if current.is_none() && previous.is_some() {
                 current = stamp(&path);
             }
-            if previous.as_ref().and_then(|value| value.rev.as_ref())
-                != current.as_ref().and_then(|value| value.rev.as_ref())
-            {
-                self.read_config(&path)?;
-                config_changed = true;
-                let kind = match (previous.as_ref(), current.as_ref()) {
-                    (None, Some(_)) => ChangeKind::Created,
-                    (Some(_), None) => ChangeKind::Removed,
-                    _ => ChangeKind::Modified,
-                };
-                config_file = Some((
-                    FileId::from("logseq/config.edn".to_owned()),
-                    kind,
-                    current.as_ref().and_then(|value| value.rev.clone()),
-                ));
+            // Byte-identity gate: taking in a config discards every parsed
+            // page, so only a changed revision is read.
+            let moved = previous.as_ref().and_then(|value| value.rev.as_ref())
+                != current.as_ref().and_then(|value| value.rev.as_ref());
+            match moved.then(|| self.read_config(&path)) {
+                None => *previous = current,
+                Some(Ok(())) => {
+                    config_changed = true;
+                    let kind = match (previous.as_ref(), current.as_ref()) {
+                        (None, Some(_)) => ChangeKind::Created,
+                        (Some(_), None) => ChangeKind::Removed,
+                        _ => ChangeKind::Modified,
+                    };
+                    config_file = Some((
+                        FileId::from("logseq/config.edn".to_owned()),
+                        kind,
+                        current.as_ref().and_then(|value| value.rev.clone()),
+                    ));
+                    *previous = current;
+                }
+                Some(Err(error)) if scan_semantics => return Err(error),
+                // Refusal (sync delivery / external-editor race): the delivered
+                // config names a page or journal directory that escapes the
+                // graph. A watcher cycle keeps serving the last good config,
+                // keeps the old stamp so a later cycle re-checks, and still
+                // observes page files: a bad config must not blind the
+                // watcher. Contract `docs/contracts/config-live-reload.md` §5.
+                Some(Err(_)) => {}
             }
-            *previous = current;
         }
+        // A changed config can change which files are graph text (`:hidden`,
+        // page and journal directories), so it takes a full scan.
+        let paths = if config_changed { None } else { paths };
         let dirs = self.dirs.read().unwrap().clone();
         let mut snapshot = self.snapshot.lock().unwrap();
         let (mut now, mut unreadable) = if let Some(paths) = paths {
@@ -940,7 +982,7 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
             if core.ready() {
                 // A recreated root can already contain files before its new
                 // backend watch is installed. Reconcile that gap once.
-                let _ = core.reconcile(None, false, false);
+                let _ = core.reconcile(None, true, false);
             }
         }
         if watcher.is_some() {
@@ -959,16 +1001,24 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
             }
             let mut pending = pending.lock().unwrap();
             let full = pending.full;
+            let config = std::mem::take(&mut pending.config);
             let paths = std::mem::take(&mut pending.paths);
             pending.full = false;
             drop(pending);
-            if full || !paths.is_empty() {
-                let _ = core.reconcile(if full { None } else { Some(&paths) }, false, false);
+            // A rescan or unusable event may hide a config write: re-check it.
+            if full || config || !paths.is_empty() {
+                let _ = core.reconcile(
+                    if full { None } else { Some(&paths) },
+                    full || config,
+                    false,
+                );
             }
         } else {
+            // Poll mode has no event paths: every cycle re-checks the config
+            // (one stat and one hash of a small file beside the full stat scan).
             let _ = rx.recv_timeout(Duration::from_secs(3));
             if core.ready() && !core.closed.load(Ordering::Acquire) {
-                let _ = core.reconcile(None, false, false);
+                let _ = core.reconcile(None, true, false);
             }
         }
     }
