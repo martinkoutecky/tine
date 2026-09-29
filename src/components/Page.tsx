@@ -34,6 +34,7 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
 import { PageConflictResolution } from "./ConflictResolution";
 import { conflictForPage } from "../conflictQueue";
+import { liveConflictForPage } from "../liveConflicts";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -562,6 +563,15 @@ export function PageView(): JSX.Element {
             Tine did not modify the file. Try reopening, or check the file on disk.
           </div>
         </div>
+        {/* GH #541: a draft kept for this page stays reviewable and resolvable
+            even when its file cannot be opened. */}
+        <Show when={(() => { const r = currentRoute(); return r.kind === "page" ? liveConflictForPage(r.name, undefined) : undefined; })()}>
+          {(conflict) => (
+            <FailureBoundary region="The conflict panel">
+              <PageConflictResolution conflict={conflict()} />
+            </FailureBoundary>
+          )}
+        </Show>
       </div>
     }>
     <Show when={contentReady()} fallback={
@@ -1001,7 +1011,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         </div>
       </Show>
       {/* Concord: a queued conflict is resolved AT the page, block by block. */}
-      <Show when={conflictForPage(props.page.id)}>
+      <Show when={conflictForPage(props.page.id) ?? liveConflictForPage(props.page.name, props.page.id)}>
         {(conflict) => (
           <FailureBoundary region="The conflict panel">
             <PageConflictResolution conflict={conflict()} />

@@ -89,7 +89,11 @@ fn block_runtime_id(b: &DocBlock) -> String {
 /// review both use it. O(subtree).
 pub fn dto_block_to_doc(b: &BlockDto, is_org: bool) -> DocBlock {
     let mut block = DocBlock::new(&b.raw);
-    block.children = b.children.iter().map(|c| dto_block_to_doc(c, is_org)).collect();
+    block.children = b
+        .children
+        .iter()
+        .map(|c| dto_block_to_doc(c, is_org))
+        .collect();
     block.uuid = b.id.clone();
     block.set_org(is_org);
     block

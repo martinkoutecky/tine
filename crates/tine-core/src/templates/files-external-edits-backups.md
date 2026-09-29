@@ -13,11 +13,12 @@ icon:: 🗄️
 	- You never press Save: edits are written automatically to the same file the page came from, a moment after you pause.
 	- Writes go through a guarded path: Tine checks that the file still matches what it read before it replaces it, and a save that would overwrite an outside change is refused rather than forced (see external edits below).
 	- A page **rename** is transactional: the file move and every page-link and tag rewrite that points at it commit together, or roll back.
+	- A page that still carries unresolved git or Fossil merge markers is never rewritten by a rename: its links keep the old name, and a message lists those pages so you can update them after resolving the merge.
 	- Tine saves pending edits before a rename. A page whose edits cannot be saved stops the rename only if the rename would change that page, or its unsaved text mentions the old name; the message names it. Other pages keep their unsaved edits through the rename.
 	- An Org file is rewritten only when Tine can reproduce it byte-for-byte; one it cannot round-trip opens **read-only** so the graph cannot be corrupted.
 - ## External edits
 	- Tine notices changes made outside it — Logseq, Syncthing, or another editor. Settings (**t s**) → **Files** → **Watch for external edits**: **Live (inotify)** (default, no idle wakeups) or **Poll (3s)** for filesystems where the OS watcher misses edits (some network mounts). Saved per device.
-	- A page you are not editing updates in place automatically. A page with unsaved edits is never overwritten: Tine shows a banner and skips that page in future saves until you choose **Use disk version** (re-read the file) or **Keep mine (overwrite)** (write your version).
+	- A page you are not editing updates in place automatically. A page with unsaved edits is never overwritten: Tine shows a banner and skips that page in future saves until you choose **Use disk version** (re-read the file) or **Keep mine (overwrite)** (write your version), or merge the two block by block in the panel at the top of the page.
 	- `logseq/config.edn` is live too. A change made in Logseq, a text editor, or delivered by a sync provider updates favorites, shortcuts, the home page, journal formats, and other shared settings during the session; reopening the graph is not required.
 	- For file sync between devices, run one app at a time on the graph where you can, and let conflict copies (below) catch the rest.
 - ## Snapshots — automatic backups

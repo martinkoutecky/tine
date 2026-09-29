@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **A "changed on disk" conflict can be merged block by block at the page.** The
+  panel at the top of the page compares your unsaved edits with the file as it is
+  now, pre-selecting each side's own change when Tine still has the version you
+  started from. Apply writes only if the file is still the version shown; a newer
+  change refreshes the comparison. If Tine closes first, the draft is kept and the
+  same comparison appears after the next start, even when the page cannot be
+  opened (GH #541).
 - **Alt+click opens an internal link in the other pane** (GH #438), and **Ctrl/Cmd+click opens a background tab** (GH #283), on page links, block references, reference headers, namespaces, the sidebars, zoom breadcrumbs and query results, next to Shift+click (right sidebar) and middle-click (background tab). Middle-button autoscroll and Shift range-selection are suppressed on every one of those surfaces (GH #207). Ctrl/Cmd+click no longer opens the other pane; that is now Alt+click.
 - **Ctrl+Y also redoes** on Windows and Linux (GH #491). It is a second default for the same Redo command, shown beside the binding in the shortcuts list; remapping or unbinding Redo replaces both chords.
 - **Dropping a block on the right of another block's text nests it** as that block's last child (GH #326), with a drop marker showing where it will land.
@@ -32,6 +39,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A page rename no longer rewrites links inside a file that still carries
+  unresolved git or Fossil merge markers; the file keeps its bytes and a message
+  lists it.
+- Tine's Concord ledger now lives in its own app-data folder, so it no longer
+  deletes, or is deleted by, the ledger of a mainline Tine build on the same machine.
 - **Dragging a block embed by its bullet moves the embed itself** (GH #514), not the source block it shows. Rows nested inside the embed still drag as the source's own outline.
 - **Arrow keys move between bullets inside linked references, block references, query results and embeds** (GH #341). Up/Down and Left/Right at a block edge now step through the blocks as rendered in that view instead of jumping the caret to the source page's outline, where the editor is usually not on screen; merges and indents there still act on the real page outline.
 - **Code blocks**: the caret no longer jumps when you click into a code block or leave it with the arrow keys, the language line and fence markers are editable as text, and clicking a code card places the caret where you clicked (GH #489).

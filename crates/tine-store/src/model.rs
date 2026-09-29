@@ -32,7 +32,8 @@ use tine_core::doc::{self, DocBlock, Document};
 #[cfg(test)]
 use tine_core::model::AssetInfo;
 use tine_core::model::{
-    is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, BoundedRefGroups, Format, PageDto, PageEntry, PageKind, ReferenceKind,
+    is_sync_conflict, path_is_sync_conflict, ref_groups_estimated_bytes, BoundedRefGroups, Format,
+    PageDto, PageEntry, PageKind, ReferenceKind,
 };
 #[cfg(test)]
 use tine_core::model::{

@@ -18,7 +18,11 @@ fn graph(label: &str, files: &[(&str, &str)]) -> (PathBuf, Store) {
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.join(dir)).unwrap();
     }
-    fs::write(root.join("logseq/config.edn"), "{:file/name-format :triple-lowbar}\n").unwrap();
+    fs::write(
+        root.join("logseq/config.edn"),
+        "{:file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
     for (rel, body) in files {
         fs::write(root.join(rel), body).unwrap();
     }
@@ -41,11 +45,23 @@ fn rename_skips_marker_bearing_referrers_and_reports_them() {
     );
     let report = pages::rename_or_merge_page(&store, "Alpha", "Beta", None, None, &[]).unwrap();
     assert_eq!(report.outcome, RenameOutcome::Renamed);
-    assert_eq!(fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(), CONFLICTED);
-    assert_eq!(fs::read_to_string(root.join("pages/Clean.md")).unwrap(), "- clean sees [[Beta]]\n");
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(),
+        CONFLICTED
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Clean.md")).unwrap(),
+        "- clean sees [[Beta]]\n"
+    );
     assert!(root.join("pages/Beta.md").exists() && !root.join("pages/Alpha.md").exists());
-    assert_eq!(report.skipped_conflicted_referrers, vec!["pages/Conflicted.md".to_owned()]);
-    assert!(report.touched.iter().all(|page| page.path != "pages/Conflicted.md"));
+    assert_eq!(
+        report.skipped_conflicted_referrers,
+        vec!["pages/Conflicted.md".to_owned()]
+    );
+    assert!(report
+        .touched
+        .iter()
+        .all(|page| page.path != "pages/Conflicted.md"));
     let _ = fs::remove_dir_all(root);
 }
 
@@ -64,13 +80,26 @@ fn namespace_rename_also_skips_marker_bearing_referrers_and_moves_them_verbatim(
             ("pages/Conflicted.md", conflicted),
         ],
     );
-    let report = pages::rename_or_merge_page(&store, "Parent", "Ancestor", None, None, &[]).unwrap();
-    assert_eq!(fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(), conflicted);
-    assert_eq!(fs::read_to_string(root.join("pages/Ancestor___Child.md")).unwrap(), child);
+    let report =
+        pages::rename_or_merge_page(&store, "Parent", "Ancestor", None, None, &[]).unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(),
+        conflicted
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Ancestor___Child.md")).unwrap(),
+        child
+    );
     assert!(!root.join("pages/Parent___Child.md").exists());
     let mut skipped = report.skipped_conflicted_referrers.clone();
     skipped.sort();
-    assert_eq!(skipped, vec!["pages/Conflicted.md".to_owned(), "pages/Parent___Child.md".to_owned()]);
+    assert_eq!(
+        skipped,
+        vec![
+            "pages/Conflicted.md".to_owned(),
+            "pages/Parent___Child.md".to_owned()
+        ]
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -84,6 +113,9 @@ fn the_store_refuses_a_reference_rewrite_inside_a_marker_bearing_file() {
     let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
     tx.rewrite_refs(&id, rev, &RenameMap(vec![("alpha".into(), "Beta".into())]));
     assert!(matches!(tx.commit(), TxOutcome::NotCommitted { .. }));
-    assert_eq!(fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(), CONFLICTED);
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(),
+        CONFLICTED
+    );
     let _ = fs::remove_dir_all(root);
 }

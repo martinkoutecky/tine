@@ -24,13 +24,18 @@ use tine_core::projection::page_dto_document;
 use tine_core::sync_diff::{self, SyncConflictDiff};
 use tine_store::{EditKind, FileId, FileRev, SaveBase, Store};
 
-use crate::conflicts::{choose_pre, dto, format, id, invalid_path, merge_refused, parse, read_text};
+use crate::conflicts::{
+    choose_pre, dto, format, id, invalid_path, merge_refused, parse, read_text,
+};
 
 /// The disk revision of a missing file.
 pub const ABSENT: &str = "absent";
 
 fn changed_on_disk() -> io::Error {
-    io::Error::new(io::ErrorKind::AlreadyExists, "live conflict changed on disk")
+    io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "live conflict changed on disk",
+    )
 }
 
 /// The file as it is now: its text and revision, or `None` when it is absent.
@@ -54,10 +59,17 @@ fn base_for<'a>(bases: &'a [String], base_rev: Option<&str>) -> Option<(&'a str,
     let base = bases
         .iter()
         .find(|text| String::from(FileRev::from_bytes(text.as_bytes())) == wanted)?;
-    Some((base.as_str(), format!("{:x}", Sha256::digest(base.as_bytes()))))
+    Some((
+        base.as_str(),
+        format!("{:x}", Sha256::digest(base.as_bytes())),
+    ))
 }
 
-fn sides(path: &FileId, draft: &PageDto, now: &Option<(String, FileRev)>) -> (Format, Document, Document) {
+fn sides(
+    path: &FileId,
+    draft: &PageDto,
+    now: &Option<(String, FileRev)>,
+) -> (Format, Document, Document) {
     let fmt = format(path);
     let mine = page_dto_document(draft, fmt == Format::Org);
     let theirs = now.as_ref().map_or_else(

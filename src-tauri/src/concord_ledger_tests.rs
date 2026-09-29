@@ -692,7 +692,9 @@ fn a_master_layout_ledger_tree_is_byte_identical_after_og_opens_saves_and_prunes
     let ledger = slot.concord_ledger.get().unwrap();
     assert!(ledger.files().prune(&slot.store).is_ok());
     assert_eq!(ledger.files().retained("pages/Desk.md")[0], body("mine"));
-    assert!(ledger.dir.starts_with(app_data.join(LEDGER_DIR).join(&root_id)));
+    assert!(ledger
+        .dir
+        .starts_with(app_data.join(LEDGER_DIR).join(&root_id)));
 
     assert_eq!(tree(&app_data.join("concord-ledger")), before);
     drop(slot);
@@ -727,8 +729,14 @@ fn a_live_draft_conflict_reviews_three_way_against_the_editors_ledger_base() {
         external(&slot, "pages/Desk.md", &body("Desktop 5 kk"));
         pump(&slot, &sub);
         let bases = crate::concord::page_bases(&slot, "pages/Desk.md");
-        let diff = live_conflict_diff(&slot.store, "pages/Desk.md", &draft, Some(&base_rev), &bases)
-            .unwrap();
+        let diff = live_conflict_diff(
+            &slot.store,
+            "pages/Desk.md",
+            &draft,
+            Some(&base_rev),
+            &bases,
+        )
+        .unwrap();
         assert_eq!(diff.three_way, usable, "{label}");
         let decisions = preselected(&diff);
         assert_eq!(decisions.values().any(|d| d == "merged"), usable, "{label}");

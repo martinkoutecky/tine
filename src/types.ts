@@ -102,7 +102,8 @@ export interface PageDto {
 
 /** One crash-surviving draft (og ADR 0061): the page as the editor held it when
  *  it could not be saved. `id` is `<session>:<page name>`; `kind` "live-conflict"
- *  is reserved for the Concord live-draft capsule (one store, not two). */
+ *  is the Concord live-draft capsule (og 21a): a draft whose save was refused
+ *  because its file changed on disk, restorable into the in-page resolver. */
 export interface DraftRecord {
   id: string;
   kind: "unsaved" | "live-conflict";
@@ -112,6 +113,10 @@ export interface DraftRecord {
   reason: "conflict" | "save-failed";
   saved_at: number;
   page: PageDto;
+  /** Revision the draft was edited from (its Concord-ledger base); live-conflict only. */
+  base_rev?: string | null;
+  /** Disk revision observed when the save was refused; live-conflict only. */
+  observed_rev?: string | null;
 }
 
 /** A page loaded from one concrete file. Its identity is returned unchanged on save. */
@@ -126,6 +131,9 @@ export interface PageRead extends PageDto {
 export interface RenameDone {
   outcome: "renamed" | "merged" | "unchanged";
   touched: RenameTouchedPage[];
+  /** Referrers left byte-identical because they carry VCS conflict markers
+   *  (og 21a, master a8fd4230d): their references still name the old page. */
+  skipped_conflicted_referrers?: string[];
 }
 
 /** One page file a rename or merge wrote. */
@@ -309,8 +317,23 @@ export interface SyncConflictDiff {
 /** A user's per-row merge decision. */
 export type MergeDecision = "mine" | "theirs" | "both" | "merged";
 
-/** Where a conflict object came from (og family 8 has no live-draft source yet). */
-export type ConflictSource = "sync-copy" | "vcs-markers";
+/** Where a conflict object came from: a sync tool's copy, VCS markers, or an
+ *  editor draft whose save was refused because the file changed (og 8e). */
+export type ConflictSource = "sync-copy" | "vcs-markers" | "live-save";
+
+/** The editor draft of a `live-save` conflict object. */
+export interface LiveConflictDraft {
+  /** The retained draft of a restored capsule; absent for an open editor's
+   *  draft, which the resolver reads from the editor at each review. */
+  page?: PageDto;
+  /** Revision a restored draft was edited from; selects the ledger base. */
+  base_rev: string | null;
+  /** True for a draft restored from an earlier session's capsule record: the
+   *  editor holds the disk version and the record is the only copy of the draft. */
+  restored: boolean;
+  /** The capsule record, for a restored draft. */
+  record_id?: string;
+}
 
 /** One version of a page participating in a conflict. */
 export interface ConflictSide {
@@ -335,6 +358,8 @@ export interface ConflictObject {
   block_conflicts?: number | null;
   /** Marker tokens present, for a `vcs-markers` object. */
   markers?: string[];
+  /** The draft, for a `live-save` object (derived from the editor or a capsule). */
+  live?: LiveConflictDraft;
 }
 
 /** A page file carrying unresolved VCS merge conflict markers. */

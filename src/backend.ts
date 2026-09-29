@@ -460,6 +460,16 @@ export interface Backend {
     kinds: EditKinds,
     preChoice?: "mine" | "theirs" | "union"
   ): Promise<void>;
+  /** Review an editor draft whose save was refused against the file as it is
+   *  now (og 8e); 3-way when the Concord ledger retains the draft's `baseRev`.
+   *  Read-only; `conflict_rev` is the disk revision shown, or "absent". */
+  liveConflictDiff(path: string, page: PageDto, baseRev: string | null): Promise<SyncConflictDiff>;
+  /** Write the reviewed live resolution in one guarded transaction at
+   *  `conflictRev` ("conflict" if the disk or the reviewed ledger base moved).
+   *  Returns the written page with its new revision. */
+  resolveLiveConflict(path: string, page: PageDto, baseRev: string | null, conflictRev: string,
+    mergeBaseRev: string | undefined, decisions: Record<string, MergeDecision>,
+    preChoice: "mine" | "theirs" | "union"): Promise<PageDto>;
   /** Subscribe to the backend's `conflicts-changed` event (the derived
    *  conflict queue changed). Returns an unlisten fn. */
   onConflictsChanged(cb: () => void): Promise<() => void>;
@@ -1231,6 +1241,13 @@ class TauriBackend implements Backend {
     preChoice?: "mine" | "theirs" | "union"
   ) {
     return this.call<void>("resolve_vcs_marker_conflict", { path, decisions, baseRev, preChoice: preChoice ?? "union" });
+  }
+  liveConflictDiff(path: string, page: PageDto, baseRev: string | null) {
+    return this.call<SyncConflictDiff>("live_conflict_diff", { path, page, baseRev });
+  }
+  resolveLiveConflict(path: string, page: PageDto, baseRev: string | null, conflictRev: string,
+    mergeBaseRev: string | undefined, decisions: Record<string, MergeDecision>, preChoice: "mine" | "theirs" | "union") {
+    return this.call<PageDto>("resolve_live_conflict", { path, page, baseRev, conflictRev, mergeBaseRev, decisions, preChoice });
   }
   async onConflictsChanged(cb: () => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");

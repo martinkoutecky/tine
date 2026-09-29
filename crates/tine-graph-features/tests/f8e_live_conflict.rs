@@ -53,7 +53,12 @@ fn external(root: &Path, text: &str) {
 fn preselected(rows: &[DiffRow], out: &mut HashMap<String, String>) {
     for row in rows {
         let choice = row.suggestion.clone().unwrap_or_else(|| {
-            if row.kind == RowKind::Unchanged { "mine" } else { "both" }.to_owned()
+            if row.kind == RowKind::Unchanged {
+                "mine"
+            } else {
+                "both"
+            }
+            .to_owned()
         });
         out.insert(row.id.clone(), choice);
         preselected(&row.children, out);
@@ -82,16 +87,27 @@ fn a_live_conflict_uses_the_editor_base_and_guarded_resolution() {
     assert!(diff.three_way);
     assert!(diff.merge_base_rev.is_some());
     assert_eq!(diff.base_rev, base_rev);
-    let disk_rev: String = FileRev::from_bytes(fs::read(root.join(PAGE)).unwrap().as_slice()).into();
+    let disk_rev: String =
+        FileRev::from_bytes(fs::read(root.join(PAGE)).unwrap().as_slice()).into();
     assert_eq!(diff.conflict_rev, disk_rev);
     let chosen = decisions(&diff);
     let resolved = resolve_live_conflict(
-        &store, PAGE, &page, Some(&base_rev), &diff.conflict_rev,
-        diff.merge_base_rev.as_deref(), &bases, &chosen, "union",
+        &store,
+        PAGE,
+        &page,
+        Some(&base_rev),
+        &diff.conflict_rev,
+        diff.merge_base_rev.as_deref(),
+        &bases,
+        &chosen,
+        "union",
     )
     .unwrap();
     let written = fs::read_to_string(root.join(PAGE)).unwrap();
-    assert_eq!(written, "- the shared intro lines\n- the plan for tomorrow\n");
+    assert_eq!(
+        written,
+        "- the shared intro lines\n- the plan for tomorrow\n"
+    );
     let written_rev: String = FileRev::from_bytes(written.as_bytes()).into();
     assert_eq!(resolved.rev.as_deref(), Some(written_rev.as_str()));
     let _ = fs::remove_dir_all(root);
@@ -115,15 +131,35 @@ fn without_the_editor_base_the_review_is_two_way_and_keeps_both() {
         *value = "merged".into();
     }
     assert!(resolve_live_conflict(
-        &store, PAGE, &page, Some(&base_rev), &diff.conflict_rev, None, &foreign, &forged, "union",
+        &store,
+        PAGE,
+        &page,
+        Some(&base_rev),
+        &diff.conflict_rev,
+        None,
+        &foreign,
+        &forged,
+        "union",
     )
     .is_err());
     resolve_live_conflict(
-        &store, PAGE, &page, Some(&base_rev), &diff.conflict_rev, None, &foreign, &chosen, "union",
+        &store,
+        PAGE,
+        &page,
+        Some(&base_rev),
+        &diff.conflict_rev,
+        None,
+        &foreign,
+        &chosen,
+        "union",
     )
     .unwrap();
     let written = fs::read_to_string(root.join(PAGE)).unwrap();
-    for text in ["the plan, revised here", "the plan, revised there", "shared intro"] {
+    for text in [
+        "the plan, revised here",
+        "the plan, revised there",
+        "shared intro",
+    ] {
         assert!(written.contains(text), "{text:?} lost: {written}");
     }
     let _ = fs::remove_dir_all(root);
@@ -141,19 +177,41 @@ fn a_newer_external_write_refuses_and_writes_nothing_until_rereviewed() {
     let diff = live_conflict_diff(&store, PAGE, &page, Some(&base_rev), &[]).unwrap();
     external(&root, "- shared intro\n- second outside edit\n");
     let err = resolve_live_conflict(
-        &store, PAGE, &page, Some(&base_rev), &diff.conflict_rev, None, &[], &decisions(&diff), "union",
+        &store,
+        PAGE,
+        &page,
+        Some(&base_rev),
+        &diff.conflict_rev,
+        None,
+        &[],
+        &decisions(&diff),
+        "union",
     )
     .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
-    assert_eq!(fs::read_to_string(root.join(PAGE)).unwrap(), "- shared intro\n- second outside edit\n");
+    assert_eq!(
+        fs::read_to_string(root.join(PAGE)).unwrap(),
+        "- shared intro\n- second outside edit\n"
+    );
     let fresh = live_conflict_diff(&store, PAGE, &page, Some(&base_rev), &[]).unwrap();
     assert_ne!(fresh.conflict_rev, diff.conflict_rev);
     resolve_live_conflict(
-        &store, PAGE, &page, Some(&base_rev), &fresh.conflict_rev, None, &[], &decisions(&fresh), "union",
+        &store,
+        PAGE,
+        &page,
+        Some(&base_rev),
+        &fresh.conflict_rev,
+        None,
+        &[],
+        &decisions(&fresh),
+        "union",
     )
     .unwrap();
     let written = fs::read_to_string(root.join(PAGE)).unwrap();
-    assert!(written.contains("second outside edit") && written.contains("the plan, revised here"), "{written}");
+    assert!(
+        written.contains("second outside edit") && written.contains("the plan, revised here"),
+        "{written}"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -176,20 +234,40 @@ fn a_stale_ledger_base_refuses_a_merged_row_and_loses_nothing() {
     assert!(chosen.values().any(|d| d == "merged"), "{:?}", diff.rows);
     for moved in [vec![], vec!["- shared intro\n- other\n".to_owned()]] {
         let err = resolve_live_conflict(
-            &store, PAGE, &page, Some(&base_rev), &diff.conflict_rev,
-            diff.merge_base_rev.as_deref(), &moved, &chosen, "union",
+            &store,
+            PAGE,
+            &page,
+            Some(&base_rev),
+            &diff.conflict_rev,
+            diff.merge_base_rev.as_deref(),
+            &moved,
+            &chosen,
+            "union",
         )
         .unwrap_err();
         assert!(err.to_string().contains("merge base changed"), "{err}");
     }
-    assert_eq!(fs::read_to_string(root.join(PAGE)).unwrap(), body("Desktop 5 kk"));
+    assert_eq!(
+        fs::read_to_string(root.join(PAGE)).unwrap(),
+        body("Desktop 5 kk")
+    );
     assert!(page.blocks[1].raw.starts_with("Desktop\n"));
     resolve_live_conflict(
-        &store, PAGE, &page, Some(&base_rev), &diff.conflict_rev,
-        diff.merge_base_rev.as_deref(), &bases, &chosen, "union",
+        &store,
+        PAGE,
+        &page,
+        Some(&base_rev),
+        &diff.conflict_rev,
+        diff.merge_base_rev.as_deref(),
+        &bases,
+        &chosen,
+        "union",
     )
     .unwrap();
-    assert_eq!(fs::read_to_string(root.join(PAGE)).unwrap(), body("Desktop kk"));
+    assert_eq!(
+        fs::read_to_string(root.join(PAGE)).unwrap(),
+        body("Desktop kk")
+    );
     let _ = fs::remove_dir_all(root);
 }
 
@@ -204,20 +282,41 @@ fn an_absent_file_review_is_read_only_and_apply_recreates_only_if_still_absent()
     fs::remove_file(root.join(PAGE)).unwrap();
     let diff = live_conflict_diff(&store, PAGE, &page, Some(&base_rev), &[]).unwrap();
     assert_eq!(diff.conflict_rev, ABSENT);
-    assert!(!root.join(PAGE).exists(), "the review must not recreate the file");
+    assert!(
+        !root.join(PAGE).exists(),
+        "the review must not recreate the file"
+    );
     fs::write(root.join(PAGE), "").unwrap();
     let err = resolve_live_conflict(
-        &store, PAGE, &page, Some(&base_rev), ABSENT, None, &[], &decisions(&diff), "mine",
+        &store,
+        PAGE,
+        &page,
+        Some(&base_rev),
+        ABSENT,
+        None,
+        &[],
+        &decisions(&diff),
+        "mine",
     )
     .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
     assert_eq!(fs::read_to_string(root.join(PAGE)).unwrap(), "");
     fs::remove_file(root.join(PAGE)).unwrap();
     let resolved = resolve_live_conflict(
-        &store, PAGE, &page, Some(&base_rev), ABSENT, None, &[], &decisions(&diff), "mine",
+        &store,
+        PAGE,
+        &page,
+        Some(&base_rev),
+        ABSENT,
+        None,
+        &[],
+        &decisions(&diff),
+        "mine",
     )
     .unwrap();
-    assert!(fs::read_to_string(root.join(PAGE)).unwrap().contains("retained draft"));
+    assert!(fs::read_to_string(root.join(PAGE))
+        .unwrap()
+        .contains("retained draft"));
     assert!(resolved.rev.is_some());
     let _ = fs::remove_dir_all(root);
 }

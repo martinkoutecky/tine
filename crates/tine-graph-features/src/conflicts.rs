@@ -288,7 +288,12 @@ fn union_pre(mine: Option<&str>, theirs: Option<&str>) -> Option<String> {
     Some(output)
 }
 
-pub(crate) fn choose_pre(choice: &str, fmt: Format, mine: &Document, theirs: &Document) -> Option<String> {
+pub(crate) fn choose_pre(
+    choice: &str,
+    fmt: Format,
+    mine: &Document,
+    theirs: &Document,
+) -> Option<String> {
     match choice {
         "theirs" => theirs.pre_block.clone(),
         "mine" => mine.pre_block.clone(),

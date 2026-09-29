@@ -43,12 +43,17 @@ export async function writeAtRisk(): Promise<void> {
     if (!stillBound(kept.binding)) { atRisk.delete(name); continue; }
     const draft = current.get(name);
     if (!draft?.page) continue;
-    const text = JSON.stringify(draft.page);
+    // A disk-changed conflict is a live-conflict capsule (og 8e): it also keeps
+    // the revisions the in-page resolver needs after a restart. One record id
+    // per page either way, so a kind change replaces rather than duplicates.
+    const live = draft.state === "Conflict" && draft.live;
+    const text = JSON.stringify([draft.page, live, draft.baseRev, draft.observedRev]);
     if (text === kept.written) continue;
     const record: DraftRecord = {
-      id: idFor(name), kind: "unsaved", session, page_name: name, path: draft.path,
+      id: idFor(name), kind: live ? "live-conflict" : "unsaved", session, page_name: name, path: draft.path,
       reason: draft.state === "Conflict" ? "conflict" : "save-failed",
       saved_at: Date.now(), page: draft.page,
+      ...(live ? { base_rev: draft.baseRev, observed_rev: draft.observedRev } : {}),
     };
     try {
       const written = await writeOwned(graphOwner(), backend().storeDraft?.(record) ?? Promise.resolve());
@@ -74,7 +79,10 @@ async function retire(name: string, kept: Kept) {
 
 function keep(name: string, risky: boolean) {
   if (risky) {
-    if (!atRisk.has(name)) atRisk.set(name, { binding: captureBinding(), written: null });
+    // An entry left from another graph binding (a switch while it was at risk)
+    // is not this page: start a fresh one, or this draft would never be kept.
+    const kept = atRisk.get(name);
+    if (!kept || !stillBound(kept.binding)) atRisk.set(name, { binding: captureBinding(), written: null });
     schedule();
     return;
   }
@@ -107,7 +115,7 @@ async function offerEarlier() {
     return;
   }
   if (result.kind === "stale") return;
-  const mine = result.value.filter((r) => r.kind === "unsaved" && r.session !== session)
+  const mine = result.value.filter((r) => r.session !== session)
     .sort((a, b) => b.saved_at - a.saved_at);
   setEarlier(mine);
   if (mine.length === 0) return;

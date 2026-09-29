@@ -631,4 +631,16 @@ mod og_20d_guide_tests {
             }
         }
     }
+
+    /// og 21a: a live-draft conflict is merged at the page and survives a
+    /// restart; a rename leaves a mid-merge referrer alone and says so.
+    #[test]
+    fn guide_describes_live_conflict_review_and_marker_referrers() {
+        let recovery = include_str!("templates/troubleshooting-recovery.md");
+        assert!(recovery.contains("compares **Your unsaved edits** with **The file on disk now**"));
+        assert!(recovery.contains("If the file changes again before you apply, nothing is written"));
+        assert!(recovery.contains("the same comparison appears on that page after the next start"));
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("never rewritten by a rename"));
+    }
 }

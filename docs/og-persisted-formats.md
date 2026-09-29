@@ -45,8 +45,10 @@ scheduled session save without replacing newer live work.
 
 The draft store holds a page's editor draft only while that page's edits cannot
 be saved (a conflict or a failed save); an ordinary save never writes it. Its
-`live-conflict` record kind is reserved for the Concord live-draft capsule, so
-that capsule is a record in this store rather than a second store (ADR 0061).
+`live-conflict` record kind is the Concord live-draft capsule (og 21a): the
+same record plus `base_rev` / `observed_rev`, a record in this store rather
+than a second store, with the envelope still `version: 1` (no new format; ADR
+0061 amendment).
 Restore recovery contains the original file bytes, not a new syntax.
 
 The count test pins the vocabulary and compares low-level writer-site counts
