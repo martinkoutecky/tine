@@ -170,7 +170,7 @@ pub fn resolve_live_conflict(
         decisions,
     )
     .map_err(merge_refused)?;
-    let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs);
+    let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
     let mut merged = dto(store, &page, Document { pre_block, roots });
     let (kind, base) = match &now {
         Some((_, rev)) => (EditKind::ReplacePage, SaveBase::Existing(rev.clone())),
