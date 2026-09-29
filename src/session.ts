@@ -366,6 +366,13 @@ export function applyParsedSession(parsed: NonNullable<ReturnType<typeof parsePe
 
 let sessionSaveFailure: { id: number; message: string } | null = null;
 
+/** A window whose graph binding does not exist yet (Welcome screen, or the
+ *  launch load still running) has no session file to write: `save_session`
+ *  would refuse with `no graph loaded for window …`/`missing-graph-binding`,
+ *  a transient startup state rather than a failure (OG-TOAST T2 sweep). The
+ *  bound graph's first save carries the live state. */
+const windowUnbound = () => backend().graphBindingGeneration() === 0;
+
 function reportSessionSaveFailure(error: unknown): void {
   const message = `Could not save session: ${String(error)}`;
   const priorMessage = sessionSaveFailure?.message;
@@ -388,6 +395,7 @@ export async function flushSession(): Promise<void> {
   sessionIntentRevision++;
   const owner = graphOwner();
   clearTimeout(saveTimer);
+  if (windowUnbound()) return;
   try {
     const result = await writeOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())));
     if (result.kind !== "current") throw new Error("Graph changed during session save");
@@ -403,7 +411,7 @@ export function scheduleSessionSave() {
   const owner = graphOwner();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    if (!owner()) return;
+    if (!owner() || windowUnbound()) return;
     void writeOwned(owner, backend().saveSession(JSON.stringify(buildPersistedSession())))
       .then((result) => { if (result.kind === "current") { clearLegacyRecentSource(); clearSessionSaveFailure(); } })
       .catch(reportSessionSaveFailure);
