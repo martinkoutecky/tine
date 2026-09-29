@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **A conflict can no longer scroll out of sight** (master 61ea6600c, og A).
+  Once the in-page review scrolls above the window, a slim bar pins to the top
+  of the pane; tapping it unrolls the same review in place, with your choices
+  kept. Tap again, press Escape, or scroll back up to fold it away.
 - **A duplicate journal day resolves on the day itself** (master 9dc54e4a7, og A).
   A day with two files (a date-named one and a title-named one) joins the
   conflict badge and the Conflicts page, and its page compares the two files

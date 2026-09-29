@@ -15,11 +15,12 @@ describe("Concord review width", () => {
   it("uses the pane's wide content cap whenever the resolver is mounted", () => {
     const wide = maxWidth(app, /^\.wide-mode \.main-content-inner\s*\{([^}]*)\}/m);
     expect(wide).toBeTruthy();
-    expect(maxWidth(conflicts, /^\.main-content-inner:has\(\.page-conflict\)\s*\{([^}]*)\}/m)).toBe(wide);
+    expect(maxWidth(conflicts, /^\.main-content-inner:has\(\.page-conflict-slot\)\s*\{([^}]*)\}/m)).toBe(wide);
   });
 
   it("the width rule keys on the class the resolver actually renders", () => {
     const source = fs.readFileSync(path.join(root, "src/components/ConflictResolution.tsx"), "utf8");
-    expect(source).toContain('class="page-conflict"');
+    // The slot, not the panel: the dock reparents the panel into its sheet.
+    expect(source).toContain('class="page-conflict-slot"');
   });
 });

@@ -19,7 +19,7 @@
 // through `resolve_sync_conflict` / `resolve_vcs_marker_conflict`: one tine-store
 // transaction guarded by the diff's `base_rev`, which stages the replaced bytes
 // (the copy, or the marker file) in the recoverable trash in the same commit.
-import { Show, For, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { Show, For, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
 import { graphOwner, readOwned, writeOwned } from "../owned";
@@ -118,6 +118,61 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   const [busy, setBusy] = createSignal(false);
   const [cursor, setCursor] = createSignal(0);
   let root: HTMLDivElement | undefined;
+
+  // Dock (master 61ea6600c): the panel scrolls away with the top of the page,
+  // which on a phone hid a conflict until the user happened to scroll up. Once
+  // the panel is ENTIRELY above the viewport a slim bar pins to this pane's
+  // scroller; tapping it moves the SAME panel node (decisions and DOM state
+  // survive) into a pinned sheet. Fixed, not sticky: WebKitGTK has no scroll
+  // anchoring, so an in-flow height swap would jump the content.
+  const [docked, setDocked] = createSignal(false);
+  const [expanded, setExpanded] = createSignal(false);
+  const [dockRect, setDockRect] = createSignal<{ left: number; top: number; width: number } | null>(null);
+  let inlineSlot: HTMLDivElement | undefined;
+  let sentinel: HTMLDivElement | undefined;
+  let sheetEl: HTMLDivElement | undefined;
+  const measureDock = () => {
+    const r = inlineSlot?.closest(".main-content")?.getBoundingClientRect();
+    setDockRect(r ? { left: r.left, top: r.top, width: r.width } : null);
+  };
+  onMount(() => {
+    // The sentinel sits directly below the panel: a half-visible tall panel,
+    // or one still below the fold on a short window, does not dock.
+    if (!sentinel || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (!entry) return;
+      const above = !entry.isIntersecting && entry.boundingClientRect.top < 0;
+      setDocked(above);
+      if (!above) setExpanded(false);
+    });
+    io.observe(sentinel);
+    onCleanup(() => io.disconnect());
+  });
+  createEffect(() => {
+    if (!docked()) return;
+    measureDock();
+    window.addEventListener("resize", measureDock);
+    const scroller = inlineSlot?.closest(".main-content");
+    const ro = typeof ResizeObserver !== "undefined" && scroller ? new ResizeObserver(measureDock) : undefined;
+    if (ro && scroller) ro.observe(scroller);
+    onCleanup(() => {
+      window.removeEventListener("resize", measureDock);
+      ro?.disconnect();
+    });
+  });
+  // One panel node, moved; the vacated slot keeps its height so nothing jumps.
+  createEffect(() => {
+    const panel = root;
+    if (!panel || !inlineSlot) return;
+    if (docked() && expanded() && sheetEl) {
+      inlineSlot.style.minHeight = `${panel.offsetHeight}px`;
+      sheetEl.appendChild(panel);
+    } else if (panel.parentElement !== inlineSlot) {
+      inlineSlot.appendChild(panel);
+      inlineSlot.style.minHeight = "";
+    }
+  });
 
   // A live conflict re-reviews when a newer refused save observed another disk
   // revision; every source re-reviews after a refused Apply.
@@ -322,15 +377,16 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   };
 
   const markers = () => conflict().source === "vcs-markers";
+  const conflictTitle = () => markers() ? "Unresolved merge from your version-control tool"
+    : conflict().source === "live-save" ? "Your edits and a newer version on disk"
+    : conflict().source === "duplicate-journal" ? "This day has more than one file"
+    : "Two versions of this page arrived";
   return (
+    <>
+    <div class="page-conflict-slot" ref={inlineSlot}>
     <div class="page-conflict" ref={root} data-source={conflict().source}>
       <div class="page-conflict-head">
-        <span class="page-conflict-title">
-          {markers() ? "Unresolved merge from your version-control tool"
-          : conflict().source === "live-save" ? "Your edits and a newer version on disk"
-          : conflict().source === "duplicate-journal" ? "This day has more than one file"
-          : "Two versions of this page arrived"}
-        </span>
+        <span class="page-conflict-title">{conflictTitle()}</span>
         <span class="page-conflict-nav">
           <Show when={pending().length}>
             <span class="page-conflict-count">{pending().length} conflict{pending().length === 1 ? "" : "s"}</span>
@@ -481,5 +537,33 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         )}
       </Show>
     </div>
+    </div>
+    <div class="page-conflict-sentinel" ref={sentinel} aria-hidden="true" />
+    <Show when={docked()}>
+      <div
+        class="page-conflict-dock"
+        classList={{ expanded: expanded() }}
+        style={dockRect() ? { left: `${dockRect()!.left}px`, top: `${dockRect()!.top}px`, width: `${dockRect()!.width}px` } : undefined}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && expanded()) {
+            e.stopPropagation();
+            setExpanded(false);
+          }
+        }}
+      >
+        <button class="page-conflict-dockbar" aria-expanded={expanded()} onClick={() => setExpanded(!expanded())}>
+          <span class="page-conflict-dockbar-icon" aria-hidden="true">⚠</span>
+          <span class="page-conflict-dockbar-title">{conflictTitle()}</span>
+          <Show when={pending().length}>
+            <span class="page-conflict-dockbar-count">{pending().length} to review</span>
+          </Show>
+          <span class="page-conflict-dockbar-chevron" aria-hidden="true">{expanded() ? "▴" : "▾"}</span>
+        </button>
+        <Show when={expanded()}>
+          <div class="page-conflict-sheet" ref={(el) => (sheetEl = el)} />
+        </Show>
+      </div>
+    </Show>
+    </>
   );
 }

@@ -461,6 +461,13 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn the_conflict_review_stays_reachable_while_scrolling_in_the_guide() {
+        // Master 61ea6600c: a pinned bar unrolls the review in place.
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("A pinned notice keeps the review reachable while you scroll"));
+    }
+
+    #[test]
     fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide() {
         let tips = include_str!("templates/tips.md");
         for control in [
