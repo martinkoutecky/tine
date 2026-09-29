@@ -307,3 +307,25 @@ fn every_config_setter_goes_through_the_one_guarded_update() {
         );
     }
 }
+
+/// Living contract: every test docs/contracts/config-live-reload.md cites
+/// exists, so the contract cannot outlive its evidence.
+#[test]
+fn the_config_contract_cites_only_existing_tests() {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../");
+    let contract =
+        std::fs::read_to_string(format!("{root}docs/contracts/config-live-reload.md")).unwrap();
+    let cited: Vec<&str> = contract
+        .lines()
+        .filter_map(|line| line.strip_prefix("- crates/"))
+        .collect();
+    assert!(cited.len() >= 10, "the contract's Tests list went missing");
+    for entry in cited {
+        let (file, name) = entry.split_once("::").unwrap();
+        let source = std::fs::read_to_string(format!("{root}crates/{file}")).unwrap();
+        assert!(
+            source.contains(&format!("fn {name}(")),
+            "docs/contracts/config-live-reload.md cites missing test {file}::{name}"
+        );
+    }
+}

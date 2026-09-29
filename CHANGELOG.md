@@ -39,6 +39,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **An outside edit to `logseq/config.edn` now applies while the graph is open**
+  (og 22b). A change made in Logseq, a text editor or delivered by a sync
+  provider was taken in only after a rename or a reopen; the store watcher now
+  reloads it in both notify and poll modes, only when its bytes changed.
+- **A settings change edits only its own top-level entry of `config.edn`** and is
+  refused, leaving the file untouched, when the file is half-written or not a map;
+  a key nested inside another setting is never overwritten (og 22b).
+- **Renaming the home page keeps it the home page**, as in Logseq; merging it
+  into another page does not (og 22b).
 - **Hostile content cannot crash a table formula or navigate the app away** (I-22): formulas that nest past 128 levels, counting references, show an error in the cell instead of overflowing the stack, video and tweet macro links open in the system browser, and on Android and iOS a link with any other scheme (for example `intent:` or `javascript:`) no longer navigates the app.
 - **A save that fails on the disk now says which step failed** (GH #538, #590): the message names the platform call (for example the no-replace rename, or syncing the temporary file) and its OS error number, so a report can be acted on. Diagnosis only; it does not make such a save succeed.
 - **The vendored parser WASM matches a clean source rebuild again** (GH #392), so F-Droid's from-source build reproduces the shipped parser; CI now rebuilds it and fails on any difference.
