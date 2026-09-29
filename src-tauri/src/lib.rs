@@ -13,6 +13,7 @@ mod command_surface;
 mod commands;
 #[path = "commands/concord.rs"]
 mod concord;
+mod concord_ledger;
 mod debug;
 mod device_io;
 #[cfg(test)]
@@ -956,8 +957,11 @@ pub fn run() {
         ])
         .build(context)
         .expect("error while building tauri application")
-        .run(|_app, event| {
+        .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                // Queued Concord base-ledger updates get one bounded drain
+                // (`EXIT_DRAIN_BUDGET`); the ledger is never a save authority.
+                concord_ledger::drain_all_for_exit(&app.state::<AppState>());
                 // `App::run` never returns, so the orderly end of a run is
                 // here: clear the unclean-exit marker (master d9763603).
                 flight::mark_clean_shutdown();
@@ -966,7 +970,7 @@ pub fn run() {
                 // receives WM_QUIT nor switches to an exiting ControlFlow.
                 // Returning would leave Tine alive until Windows names it on the
                 // "app is preventing shutdown" screen and force-terminates it
-                // (GH #455). Nothing remains to flush here: page saves are
+                // (GH #455). Nothing else remains to flush: page saves are
                 // already durable when they report success, so terminate.
                 #[cfg(target_os = "windows")]
                 std::process::exit(0);
@@ -1092,7 +1096,7 @@ mod platform_lifecycle_guard_tests {
     #[test]
     fn windows_session_end_exit_terminates_the_process() {
         let source = lib_source();
-        let run = &source[source.find(".run(|_app, event|").expect("the event loop")..];
+        let run = &source[source.find(".run(|app, event|").expect("the event loop")..];
         let run = &run[..run.find("});").expect("the end of the event loop")];
         assert!(
             run.contains("tauri::RunEvent::Exit")
@@ -1110,7 +1114,7 @@ mod platform_lifecycle_guard_tests {
     #[test]
     fn the_exit_arm_clears_the_unclean_exit_marker_before_terminating() {
         let source = lib_source();
-        let run = &source[source.find(".run(|_app, event|").expect("the event loop")..];
+        let run = &source[source.find(".run(|app, event|").expect("the event loop")..];
         let run = &run[..run.find("});").expect("the end of the event loop")];
         let clean = run
             .find("flight::mark_clean_shutdown();")

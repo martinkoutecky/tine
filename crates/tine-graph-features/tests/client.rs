@@ -413,7 +413,7 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
         "sync_conflicts",
     );
     let conflict = format!("pages/{conflict_name}");
-    let new_diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", &conflict)
+    let new_diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", &conflict, &[])
         .unwrap()
         .unwrap();
     assert_json_value(
@@ -428,6 +428,8 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
         &HashMap::new(),
         &new_diff.base_rev,
         &new_diff.conflict_rev,
+        None,
+        &[],
         "union",
     )
     .unwrap();
@@ -510,7 +512,7 @@ fn external_write_during_resolve_rolls_back_winner_and_keeps_external_copy() {
     fs::write(root.join("pages/Foo.md"), "- mine\n").unwrap();
     let conflict = "pages/Foo.sync-conflict-20260705-120000-ABCDEFG.md";
     fs::write(root.join(conflict), "- theirs\n").unwrap();
-    let diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", conflict)
+    let diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", conflict, &[])
         .unwrap()
         .unwrap();
     store.inject_fault(FaultPoint::Stage2MismatchAt(1));
@@ -521,6 +523,8 @@ fn external_write_during_resolve_rolls_back_winner_and_keeps_external_copy() {
         &HashMap::new(),
         &diff.base_rev,
         &diff.conflict_rev,
+        None,
+        &[],
         "union"
     )
     .is_err());
@@ -537,7 +541,7 @@ fn resolve_preblock_keep_choices_match_legacy_bytes() {
         fs::write(new_root.join("pages/Foo.md"), "alias:: mine\n- shared\n").unwrap();
         fs::write(new_root.join(conflict), "alias:: theirs\n- shared\n").unwrap();
         store.scan_refresh().unwrap();
-        let diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", conflict)
+        let diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", conflict, &[])
             .unwrap()
             .unwrap();
         conflicts::resolve_sync_conflict(
@@ -547,6 +551,8 @@ fn resolve_preblock_keep_choices_match_legacy_bytes() {
             &HashMap::new(),
             &diff.base_rev,
             &diff.conflict_rev,
+            None,
+            &[],
             choice,
         )
         .unwrap();
