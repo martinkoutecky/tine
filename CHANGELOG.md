@@ -95,6 +95,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **A `file:` link opens the file** (GH #444, master c817fb150, og I3). A link written
+  `[Test](file://D:\test.txt)` (Logseq) or `[Test](<file:///D:\test.txt>)` (Obsidian) rendered
+  as a link and did nothing; it now opens that file or folder in the application your system uses
+  for it, on desktop. A file that is gone, a link that names no local file, and any other refused
+  link now show an error message instead of doing nothing. Other schemes stay refused.
+- **Clicking or dragging a code block's own scrollbar no longer starts editing it** (master
+  8d404e9c1, og I3). Scrolling a wide code block by its native horizontal scrollbar entered edit
+  mode on press.
+- **Published exports ask for no refused writes; the workspace name field survives typing**
+  (GH #549 siblings and GH #498, master 4aadb1407, og I3). A read-only published export no longer
+  attempts the tag-table toggle query or the PDF view-position save it must refuse, and the
+  workspace name field is no longer rebuilt on every keystroke, so an input-method composition
+  is not dropped.
+- **Unlinked References: the highlighted mention is the jump control** (GH #200, master
+  552d988c9 and 54c00e2d6, og I3). Clicking the highlighted mention opens its page with that
+  mention selected; the numbered jump row appears only for mentions beyond the excerpt, and Show
+  full block marks every mention.
+- **Faster large pages and lists** (master a2789cc0f, 0350c00b6, 023c986b0, ce9a796fb, b3fc9c813,
+  8c495c1ce, og I3). The All Pages list labels its rows in one pass; each block derives its
+  heading, task and macro state once and only enters the marker/priority chip groups when it has
+  one; leaf blocks skip plugin thread-line subscriptions; indenting or outdenting a selection, and
+  redoing or pasting cut blocks that keep their ids, do one pass of work instead of one per block.
+
 - **Ctrl+F scrolls to the exact occurrence, not just its block** (GH #253, master
   46a5290a2, og H). In a block taller than the window, in-page find used to center
   only the block, leaving the match off-screen; it now centers the active occurrence
