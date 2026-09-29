@@ -2,7 +2,8 @@
 //!
 //! **Question answered.** [`load_drafts`]: which drafts did an earlier session
 //! of this graph keep because they could not be saved?
-//! **Operations accepted.** [`store_draft`] replaces one record;
+//! **Operations accepted.** [`store_draft`] replaces one record (in the
+//! window's graph, or at a graph switch in the old graph it names);
 //! [`retire_draft`] removes one.
 //!
 //! **Layout.** One file per graph, `<app data>/drafts/<graph-id>.v1.json`, never
@@ -170,10 +171,19 @@ fn drafts_path(
     state: &crate::state::GraphContext<'_>,
 ) -> Result<PathBuf, String> {
     let slot = crate::state::slot_for_context(state)?;
+    drafts_path_for(app, &slot.root_key)
+}
+
+fn drafts_path_for(app: &tauri::AppHandle, root: &Path) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let id = crate::settings::session_id(&slot.root_key);
+    Ok(dir.join("drafts").join(drafts_file_name(root)))
+}
+
+/// The store file of the graph whose root key is `root`.
+fn drafts_file_name(root: &Path) -> String {
+    let id = crate::settings::session_id(root);
     let stem = id.strip_suffix(".json").unwrap_or(&id);
-    Ok(dir.join("drafts").join(format!("{stem}.v1.json")))
+    format!("{stem}.v1.json")
 }
 
 #[tauri::command]
@@ -184,13 +194,25 @@ pub(crate) fn load_drafts(
     load_at(&drafts_path(&app, &state)?)
 }
 
+/// With `graph_root`, the record goes to that graph's store, not the window's
+/// current one: a graph switch keeps an edit typed while the next graph was
+/// loading, after the window's binding has already moved (og T4). The caller
+/// must still be a bound graph window; the root only picks the app-data file.
 #[tauri::command]
 pub(crate) fn store_draft(
     record: Value,
+    graph_root: Option<String>,
     app: tauri::AppHandle,
     state: crate::state::GraphContext<'_>,
 ) -> Result<(), String> {
-    store_at(&drafts_path(&app, &state)?, record)
+    let path = match graph_root {
+        Some(root) => {
+            crate::state::slot_for_context(&state)?;
+            drafts_path_for(&app, Path::new(&root))?
+        }
+        None => drafts_path(&app, &state)?,
+    };
+    store_at(&path, record)
 }
 
 #[tauri::command]
@@ -264,6 +286,16 @@ mod tests {
         assert!(store_at(&path, record("s:0", &"y".repeat(MAX_BYTES))).is_err());
         assert_eq!(load_at(&path).unwrap().len(), MAX_RECORDS);
         assert_eq!(load_at(&path).unwrap()[0], record("s:0", "x"));
+    }
+
+    #[test]
+    fn the_root_the_frontend_names_picks_that_graphs_own_store() {
+        // The frontend names a graph by `graph_meta`'s root, `root_key.display()`.
+        let a = PathBuf::from("/home/u/graphs/notes");
+        let b = PathBuf::from("/home/u/other/notes");
+        let named = |root: &Path| drafts_file_name(Path::new(&root.display().to_string()));
+        assert_eq!(named(&a), drafts_file_name(&a));
+        assert_ne!(named(&a), named(&b));
     }
 
     #[test]

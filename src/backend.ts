@@ -671,8 +671,9 @@ export interface Backend {
   /** This graph's crash-surviving draft records (og ADR 0061). A corrupt store
    *  loads empty; absent where drafts cannot be kept (published export). */
   loadDrafts?(): Promise<DraftRecord[]>;
-  /** Replace one draft record; refused past the store's bound. */
-  storeDraft?(record: DraftRecord): Promise<void>;
+  /** Replace one draft record; refused past the store's bound. `graphRoot`
+   *  names another graph's store (a graph switch keeping the old graph's edit). */
+  storeDraft?(record: DraftRecord, graphRoot?: string): Promise<void>;
   /** Remove one draft record by id; a missing id is not an error. */
   retireDraft?(id: string): Promise<void>;
   /** Load the current graph's device-local named-workspace registry JSON. */
@@ -1403,8 +1404,8 @@ class TauriBackend implements Backend {
   loadDrafts() {
     return this.call<DraftRecord[]>("load_drafts");
   }
-  storeDraft(record: DraftRecord) {
-    return this.call<void>("store_draft", { record });
+  storeDraft(record: DraftRecord, graphRoot?: string) {
+    return this.call<void>("store_draft", graphRoot === undefined ? { record } : { record, graphRoot });
   }
   retireDraft(id: string) {
     return this.call<void>("retire_draft", { id });

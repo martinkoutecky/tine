@@ -6,7 +6,7 @@ import { backend, type Backend } from "./backend";
 import { initParser } from "./render/parse";
 import { flushAll, isDirty, loadFeed, resetStore, resolveConflict, setRaw } from "./document";
 import { markConflict } from "./document/save/engine";
-import { dismissEarlierDraft, earlierDrafts, installDraftStore, REFRESH_MS, writeAtRisk } from "./draftStore";
+import { dismissEarlierDraft, earlierDrafts, installDraftStore, keepAtSwitch, REFRESH_MS, writeAtRisk } from "./draftStore";
 import { bumpGraphEpoch, setGraphMeta } from "./graphSession";
 import { setToasts, toasts } from "./toasts";
 import type { BlockDto, DraftRecord, GraphMeta } from "./types";
@@ -94,6 +94,19 @@ describe("crash-surviving drafts (og ADR 0061)", () => {
     await dismissEarlierDraft("earlier:P");
     expect(store.has("earlier:P")).toBe(false);
     expect(earlierDrafts()).toEqual([]);
+    setGraphMeta(null);
+  });
+
+  it("a draft kept at a graph switch is offered when that graph reopens in this window (og T4)", async () => {
+    setRaw("p1", "typed while the next graph loaded");
+    const kept = keepAtSwitch("/g");
+    resetStore();
+    expect(await kept).toEqual([]);
+    expect(vi.mocked(backend().storeDraft!).mock.calls.map((c) => c[1])).toEqual(["/g"]);
+    setGraphMeta({ root: "/g", name: "g" } as unknown as GraphMeta);
+    bumpGraphEpoch();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(earlierDrafts().map((r) => r.page.blocks[0].raw)).toEqual(["typed while the next graph loaded"]);
     setGraphMeta(null);
   });
 

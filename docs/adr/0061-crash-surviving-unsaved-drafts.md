@@ -53,7 +53,11 @@ engine marks it conflicted or reports a failed save, until the page saves, the
 user resolves the conflict (Keep mine or Use disk), or the page leaves this
 window. While at risk, the draft is rewritten at most every 500 ms, and only
 when it changed. It is also written at close before a window that keeps unsaved
-pages closes. An ordinary save never writes here.
+pages closes. An ordinary save never writes here. At a graph switch, a page
+edited while the next graph was loading (after the last flush) is written to
+the old graph's store, named by its root because the window's binding has
+already moved, under a session tag of its own, so reopening that graph in the
+same window offers it (og T4).
 
 **When it is read.** Once per graph open. Records from an earlier session are
 offered by a sticky toast ("Tine kept unsaved drafts of … from an earlier
