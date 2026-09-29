@@ -95,6 +95,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **The preview build never offers the released Tine as an update** (og J3). The updater and the
+  Check for updates button read only the fixed-tag `og-preview` release (`releases/tags/og-preview`, and
+  `releases/download/og-preview/latest.json` for the installer), never `releases/latest`, whose higher
+  version number would have offered to replace the preview with the shipped app. With no `og-preview`
+  release, or nothing newer, there is no toast and About says it could not check. The release's
+  name must carry the build's version (the tag has none).
+- **Plugin settings: an operation finishing no longer re-enables controls under a later one.** The Plugins
+  tab's busy state is held per operation (also while the uninstall confirmation is open) and released only by
+  its owner (master cdd0eda4b).
 - **A `file:` link opens the file** (GH #444, master c817fb150, og I3). A link written
   `[Test](file://D:\test.txt)` (Logseq) or `[Test](<file:///D:\test.txt>)` (Obsidian) rendered
   as a link and did nothing; it now opens that file or folder in the application your system uses
