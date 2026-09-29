@@ -258,7 +258,10 @@ function createPeekBridge(disabled: () => boolean) {
       closeT = undefined;
     }
   };
-  const anchorEnter = () => {
+  const anchorEnter = (event: PointerEvent) => {
+    // Touch WebViews synthesize mouse hover around a hold. Only a real mouse
+    // may arm a hover preview; hybrid devices keep their mouse behavior.
+    if (event.pointerType !== "mouse") { dismiss(); return; }
     if (disabled()) return;
     clearClose();
     clearOpen();
@@ -333,8 +336,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         // selected as a side effect (GH #42).
         onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
         onClick={open}
-        onMouseEnter={peek.anchorEnter}
-        onMouseLeave={peek.anchorLeave}
+        onPointerEnter={peek.anchorEnter}
+        onPointerLeave={peek.anchorLeave}
         onAuxClick={(e) => {
           if (e.button === 1) {
             e.preventDefault();
@@ -1244,8 +1247,8 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           : "Click to go to the block; shift-click → sidebar; right-click for more"}
         // Suppress native shift-range-selection when shift+click opens the sidebar (GH #42).
         onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
-        onMouseEnter={peek.anchorEnter}
-        onMouseLeave={peek.anchorLeave}
+        onPointerEnter={peek.anchorEnter}
+        onPointerLeave={peek.anchorLeave}
         onContextMenu={(e) => {
           const g = grp();
           if (!g) return; // missing target → let the default menu through
