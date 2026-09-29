@@ -1,0 +1,33 @@
+/* Touch long-press (GH #231, #452) — see src/render/longPress.ts. */
+
+/* A menu is chrome, never text. On iOS the menu is portalled under a finger
+   that is still down, and the platform's own long-press selection latched onto
+   the first item's label — the reporter saw "Copy / Look Up" raised over Tine's
+   menu with an action highlighted as selected text (GH #452). Native menus on
+   every platform are unselectable; so is this one. */
+.ctx-overlay,
+.ctx-menu,
+.ctx-item {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Touch long-press raises Tine's own context menu (GH #231); keep iOS's
+   native link callout bubble from stacking on top of it. */
+.page-ref,
+.tag {
+  -webkit-touch-callout: none;
+}
+
+/* On a touch platform the SAME hold that opens Tine's menu is also the OS's
+   text-selection gesture, and that gesture is owned by a native recognizer:
+   preventDefault() on our synthetic `contextmenu` cannot cancel it, and iOS
+   does not fire `contextmenu` for touch at all. The only thing that stops the
+   selection is refusing to be selectable (GH #452). Desktop keeps ordinary
+   selection — a mouse user can still drag across a link's text. */
+html[data-platform="ios"] :is(.page-ref, .tag),
+html[data-platform="android"] :is(.page-ref, .tag) {
+  user-select: none;
+  -webkit-user-select: none;
+}

@@ -1,4 +1,5 @@
 import { isMobilePlatform } from "./nativeChrome";
+import { isLongPressContextMenu } from "./render/longPress";
 
 function editableTarget(target: EventTarget | null): boolean {
   const element = target instanceof Element ? target : null;
@@ -20,8 +21,13 @@ export function shouldOpenBlockContextMenu(
  * WebView uses `contextmenu` to begin text selection, so leave the event wholly
  * native there. Desktop right-click remains unchanged. */
 export function shouldOpenTextContextMenu(
-  target: EventTarget | null,
+  targetOrEvent: EventTarget | MouseEvent | null,
   mobile = isMobilePlatform,
 ): boolean {
+  const event = targetOrEvent instanceof MouseEvent ? targetOrEvent : null;
+  const target: EventTarget | null = event
+    ? event.target
+    : targetOrEvent as EventTarget | null;
+  if (event && isLongPressContextMenu(event)) return !editableTarget(target);
   return !mobile && !editableTarget(target);
 }

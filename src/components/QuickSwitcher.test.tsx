@@ -797,3 +797,30 @@ describe("QuickSwitcher search syntax help", () => {
     dispose();
   });
 });
+
+describe("QuickSwitcher page-result long-press (GH #207)", () => {
+  it("opens a page result's context menu on a still touch hold and keeps Search open", async () => {
+    const { contextMenu, closeContextMenu, switcherOpen } = await import("../ui");
+    const { LONG_PRESS_DELAY } = await import("../render/longPress");
+    setRecentPages([{ name: "Alpha", kind: "page", path: "pages/Alpha.md" }]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    try {
+      openSwitcher();
+      await vi.waitFor(() => expect(root.querySelector(".switcher-row")).not.toBeNull());
+      const row = root.querySelector<HTMLElement>(".switcher-row")!;
+      vi.useFakeTimers();
+      row.dispatchEvent(new PointerEvent("pointerdown", {
+        bubbles: true, cancelable: true, pointerType: "touch", isPrimary: true, pointerId: 7, clientX: 12, clientY: 24,
+      }));
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "Alpha" });
+      expect(switcherOpen()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      closeContextMenu();
+      dispose();
+    }
+  });
+});

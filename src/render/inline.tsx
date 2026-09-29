@@ -45,6 +45,7 @@ import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
 import { annotationInfoForBlock, pdfFileFromPreBlock } from "../editor/annotation";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
+import { createLongPress } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 
@@ -308,6 +309,11 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   const icon = () => (isGuidePageName(targetName()) ? null : pageIcon(targetName()));
   const kind = (): PageKind => (isGuidePageName(targetName()) ? "page" : isJournalTitle(targetName()) ? "journal" : "page");
   const open = (e: MouseEvent) => {
+    if (longPress.consumeClick(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     e.stopPropagation();
     if (e.ctrlKey || e.metaKey)
       openRouteInOtherPane({ kind: "page", name: targetName(), pageKind: kind() }, pane?.paneId ?? focusedPaneId());
@@ -319,6 +325,12 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:
   // guide pages and links already inside a peek never arm another preview.
   const peek = createPeekBridge(() => insidePeek || isGuidePageName(targetName()));
+  // Mobile: a deliberate long-press raises the same context menu desktop
+  // right-click gives (GH #231). Quick tap, scroll, and text selection behave
+  // as before; the recognizer cancels on movement/release/cancel and only
+  // arms on primary touch/pen pointers.
+  const longPress = createLongPress(() => anchorEl);
+  onCleanup(longPress.dispose);
   const [preview] = createResource(
     () => (peek.open() && !isGuidePageName(targetName()) ? `${targetName()}\0${graphEpoch()}` : null),
     () => backend().getPage(targetName(), kind()),
@@ -338,6 +350,10 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         onClick={open}
         onPointerEnter={peek.anchorEnter}
         onPointerLeave={peek.anchorLeave}
+        onPointerDown={longPress.onPointerDown}
+        onPointerMove={longPress.onPointerMove}
+        onPointerUp={longPress.onPointerUp}
+        onPointerCancel={longPress.onPointerCancel}
         onAuxClick={(e) => {
           if (e.button === 1) {
             e.preventDefault();
@@ -350,7 +366,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           }
         }}
         onContextMenu={(e) => {
-          if (!shouldOpenTextContextMenu(e.target)) return;
+          if (!shouldOpenTextContextMenu(e)) return;
           e.preventDefault();
           e.stopPropagation();
           if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());

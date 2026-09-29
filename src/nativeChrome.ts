@@ -63,6 +63,15 @@ export const platformKind: PlatformKind = detectPlatformKind();
  *  True on iPad too; ask `isSinglePaneShell()` for phone-shaped layout. */
 export const isMobilePlatform: boolean = platformKind !== "desktop";
 
+/** Stamp the resolved platform on <html> so CSS can ask the same question the
+ *  TypeScript does. Styling that depends on touch input — suppressing the
+ *  native long-press selection under Tine's own long-press menu, GH #452 —
+ *  has no other way to reach it, and must not guess from a media query. */
+export function installPlatformAttribute(): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.setAttribute("data-platform", platformKind);
+}
+
 // macOS detection: WKWebView's UA contains "Macintosh"/"Mac OS X". navigator.platform
 // is deprecated but a reliable fallback. Evaluated once, and only on desktop,
 // because iPadOS reports both of those strings too.

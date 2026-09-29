@@ -81,7 +81,8 @@
 #sidebar-favorites-list .nav-page.row-drop-after {
   background-position: bottom left;
 }
-/* A move-drag is not a text gesture (see rowReorder.ts). */
+/* A move-drag is not a text gesture (see dragSelectionGuard.ts): favorites
+   reorder and the outline bullet drag (GH #424). */
 html.drag-selection-suppressed,
 html.drag-selection-suppressed * {
   user-select: none !important;

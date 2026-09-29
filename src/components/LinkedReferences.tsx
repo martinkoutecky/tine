@@ -8,6 +8,7 @@ import { graphMeta } from "../graphSession";
 import { LiveRefGroup } from "./LiveRefGroup";
 import type { BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, RefGroup } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
+import { createLongPress } from "../render/longPress";
 import { matcherMatches, parseSearchQuery } from "../editor/searchQuery";
 import { searchFold } from "../editor/searchFold";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
@@ -438,6 +439,9 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
           <For each={shown().map(groupKey)}>
             {(key) => {
               const group = () => shownByKey().get(key)!;
+              let pageButton: HTMLButtonElement | undefined;
+              const longPress = createLongPress(() => pageButton);
+              onCleanup(longPress.dispose);
               return (
               <div class="reference-group">
                 <div class="reference-group-header">
@@ -451,9 +455,15 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                     {groupCollapsed(group()) ? "▸" : "▾"}
                   </button>
                   <button
+                    ref={pageButton}
                     type="button"
                     class="reference-page"
                     onClick={(e) => {
+                      if (longPress.consumeClick(e)) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                      }
                       if (e.shiftKey) openPageInSidebar(group().page, group().kind);
                       else openPage(group().page, group().kind);
                     }}
@@ -463,8 +473,12 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                         openPageInNewTab(group().page, group().kind);
                       }
                     }}
+                    onPointerDown={longPress.onPointerDown}
+                    onPointerMove={longPress.onPointerMove}
+                    onPointerUp={longPress.onPointerUp}
+                    onPointerCancel={longPress.onPointerCancel}
                     onContextMenu={(e) => {
-                      if (!shouldOpenTextContextMenu(e.target)) return;
+                      if (!shouldOpenTextContextMenu(e)) return;
                       e.preventDefault();
                       openPageContextMenu(e.clientX, e.clientY, group().page, group().kind);
                     }}

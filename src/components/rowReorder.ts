@@ -3,9 +3,11 @@
 // a 4px move starts the drag, the drop row comes from elementFromPoint via
 // `data-row-index`, and the click that ends a drag is swallowed. While a drag
 // runs the document is unselectable (WebKit otherwise smears a text selection
-// across every row the pointer crosses).
+// across every row the pointer crosses) — see dragSelectionGuard.ts, which owns
+// the mechanism this and the outline bullet drag (GH #424) both use.
+import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
+
 const DRAG_THRESHOLD_PX = 4;
-const SELECTION_CLASS = "drag-selection-suppressed";
 let suppressClick = false;
 
 /** True for the click that ends a reorder drag; row click handlers bail. */
@@ -17,15 +19,6 @@ export interface RowDropTarget {
   /** Pointer x relative to where the drag STARTED (not the row's edge), so
    *  where the row was grabbed never decides a nesting depth. */
   dx: number;
-}
-
-function dropSelection(): void {
-  const selection = document.getSelection?.();
-  if (selection && selection.rangeCount > 0) selection.removeAllRanges();
-}
-function suppressSelection(on: boolean): void {
-  document.documentElement.classList.toggle(SELECTION_CLASS, on);
-  if (on) dropSelection();
 }
 
 /** Attach a reorder drag to a row's pointerdown. `onTarget` reports the live
@@ -45,7 +38,7 @@ export function beginRowReorderDrag(
     if (!dragging) {
       if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD_PX) return;
       dragging = true;
-      suppressSelection(true);
+      setDragSelectionSuppressed(true);
     }
     dropSelection(); // WebKit can re-anchor a selection mid-drag
     const row = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(rowSelector);
@@ -59,7 +52,7 @@ export function beginRowReorderDrag(
     document.removeEventListener("pointermove", onMove);
     document.removeEventListener("pointerup", onUp);
     document.removeEventListener("pointercancel", cleanup);
-    suppressSelection(false);
+    setDragSelectionSuppressed(false);
     onTarget(null);
   };
   const onUp = () => {

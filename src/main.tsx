@@ -21,6 +21,8 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import "./styles/theme.css";
 import "./lsShimInstall";
 import { installSystemInsetOwner } from "./systemInsets";
+import { installPlatformAttribute } from "./nativeChrome";
+import "./styles/touchGestures.css";
 import { installEditableEmojiPlatform } from "./editableEmoji";
 import "./styles/editableEmoji.css";
 import "./styles/app.css";
@@ -32,6 +34,7 @@ import "./styles/settingsControls.css";
 import "./styles/query.css";
 import "./styles/published.css";
 
+installPlatformAttribute();
 installSystemInsetOwner();
 installEditableEmojiPlatform();
 applyTheme();

@@ -423,3 +423,38 @@ describe("Linked References honor :ref/linked-references-collapsed-threshold (GH
     over.dispose();
   });
 });
+
+describe("Linked References page header long-press (GH #207)", () => {
+  it("opens the page context menu on a still touch hold and swallows the release click", async () => {
+    const { contextMenu, closeContextMenu } = await import("../ui");
+    const { route, openPage } = await import("../router");
+    const { LONG_PRESS_DELAY } = await import("../render/longPress");
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([
+      { page: "Backlink Owner", kind: "page", blocks: [block("a", "[[Target]]")] },
+    ]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <LinkedReferences name="Target" />, root);
+    try {
+      await tick(); await tick();
+      const header = root.querySelector<HTMLButtonElement>(".reference-page")!;
+      expect(header.textContent).toBe("Backlink Owner");
+      openPage("Elsewhere", "page");
+      vi.useFakeTimers();
+      const touch = (type: string) => new PointerEvent(type, {
+        bubbles: true, cancelable: true, pointerType: "touch", isPrimary: true, pointerId: 7, clientX: 20, clientY: 30,
+      });
+      header.dispatchEvent(touch("pointerdown"));
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "Backlink Owner" });
+      header.dispatchEvent(touch("pointerup"));
+      header.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+      const current = route();
+      expect(current.kind === "page" ? current.name : current.kind).toBe("Elsewhere");
+    } finally {
+      vi.useRealTimers();
+      closeContextMenu();
+      dispose();
+    }
+  });
+});

@@ -2,7 +2,9 @@ import { For, Show, createSignal, createResource, createEffect, createMemo, onCl
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
 import { graphOwner, readOwned, writeOwned } from "../owned";
-import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar } from "../ui";
+import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
+import { createLongPress } from "../render/longPress";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { openPage, openPageTarget, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route, type PageTarget } from "../router";
@@ -542,8 +544,12 @@ export function QuickSwitcher(): JSX.Element {
                   <For each={section.items}>
                     {(it, iIdx) => {
                       const idx = () => flatIndex(sIdx(), iIdx());
+                      let rowElement: HTMLDivElement | undefined;
+                      const longPress = createLongPress(() => rowElement);
+                      onCleanup(longPress.dispose);
                       return (
                         <div
+                          ref={rowElement}
                           class="switcher-row"
                           classList={{ active: idx() === sel(), "block-result": it.t === "block" }}
                           id={`switcher-option-${idx()}`}
@@ -551,6 +557,11 @@ export function QuickSwitcher(): JSX.Element {
                           aria-selected={idx() === sel()}
                           onMouseMove={() => setSel(idx())}
                           onMouseDown={(e) => {
+                            if (longPress.consumeClick(e)) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              return;
+                            }
                             // preventDefault keeps input focus (and kills the
                             // middle-click autoscroll). Left opens + closes;
                             // middle opens a background tab, switcher stays open.
@@ -571,6 +582,20 @@ export function QuickSwitcher(): JSX.Element {
                                 void chooseOther(it);
                               else void choose(it);
                             }
+                          }}
+                          onPointerDown={(e) => { if (it.t === "page") longPress.onPointerDown(e); }}
+                          onPointerMove={(e) => { if (it.t === "page") longPress.onPointerMove(e); }}
+                          onPointerUp={(e) => { if (it.t === "page") longPress.onPointerUp(e); }}
+                          onPointerCancel={(e) => { if (it.t === "page") longPress.onPointerCancel(e); }}
+                          onContextMenu={(e) => {
+                            if (it.t !== "page" || !shouldOpenTextContextMenu(e)) return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openPageContextMenu(e.clientX, e.clientY, {
+                              name: it.name,
+                              pageKind: it.pageKind,
+                              ...(it.path ? { path: it.path } : {}),
+                            });
                           }}
                         >
                           <Row item={it} />

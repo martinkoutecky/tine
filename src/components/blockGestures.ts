@@ -13,6 +13,7 @@ import { createSignal } from "solid-js";
 import { captureBinding, stillBound } from "../binding";
 import { clearSelection, extendSelectionTo, moveBlock, pageRoots, selectBlock, node as docNode, type OutlineScope } from "../document";
 import { endEdit, startEditing } from "../editorController";
+import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
 
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
@@ -49,7 +50,13 @@ export function beginDrag(id: string, e: MouseEvent) {
       dragMoved = true;
       setDragId(id);
       endEdit("drag-start");
+      // Moving a block is not a text gesture. WebKit otherwise runs its own
+      // selection drag from the bullet and paints every block the pointer
+      // crosses blue (GH #424, macOS; Chromium does not do this).
+      setDragSelectionSuppressed(true);
     }
+    // WebKit can re-anchor a selection mid-drag; the class alone is not enough.
+    dropSelection();
     const el = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest(
       ".ls-block"
     ) as HTMLElement | null;
@@ -64,6 +71,7 @@ export function beginDrag(id: string, e: MouseEvent) {
   const onUp = () => {
     document.removeEventListener("mousemove", onMove);
     document.removeEventListener("mouseup", onUp);
+    setDragSelectionSuppressed(false);
     const ind = dropInd();
     if (stillBound(binding) && dragMoved && ind && docNode(ind.id)) {
       const tgt = docNode(ind.id);
