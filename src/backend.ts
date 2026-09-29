@@ -436,12 +436,14 @@ export interface Backend {
     baseRev: string,
     conflictRev: string,
     kinds: EditKinds,
-    preChoice?: "mine" | "theirs" | "union"
+    preChoice?: "mine" | "theirs" | "union",
+    mergeBaseRev?: string
   ): Promise<void>;
   /** Discard a conflict copy without merging (move it to the recoverable trash). */
   trashSyncConflict(conflict: string, kind: "delete-page"): Promise<void>;
-  /** The conflict listings and the derived queue from ONE graph walk; never
-   *  stored. Cost: one bounded read of every page file (O(graph text bytes)). */
+  /** The conflict listings and the derived queue, one answer; never stored.
+   *  Cost: the first call per graph walks every page file (O(graph text
+   *  bytes)); later calls answer from the backend's change-fed queue. */
   conflictInventory(): Promise<ConflictInventory>;
   /** A marker-bearing page's own sides as a block diff (3-way when the markers
    *  carry a common ancestor). Read-only; null when it carries no markers. */
@@ -456,8 +458,8 @@ export interface Backend {
     kinds: EditKinds,
     preChoice?: "mine" | "theirs" | "union"
   ): Promise<void>;
-  /** Subscribe to the watcher's `conflicts-changed` event (a conflict copy
-   *  appeared or vanished). Returns an unlisten fn. */
+  /** Subscribe to the backend's `conflicts-changed` event (the derived
+   *  conflict queue changed). Returns an unlisten fn. */
   onConflictsChanged(cb: () => void): Promise<() => void>;
   search(query: string, limit: number, lane?: string): Promise<RefGroup[]>;
   /** One Rust-authoritative graph scan for bounded page and block hits. Page
@@ -1181,7 +1183,8 @@ class TauriBackend implements Backend {
     baseRev: string,
     conflictRev: string,
     _kinds: EditKinds,
-    preChoice?: "mine" | "theirs" | "union"
+    preChoice?: "mine" | "theirs" | "union",
+    mergeBaseRev?: string
   ) {
     return this.call<void>("resolve_sync_conflict", {
       winner,
@@ -1189,6 +1192,7 @@ class TauriBackend implements Backend {
       decisions,
       baseRev,
       conflictRev,
+      mergeBaseRev: mergeBaseRev ?? null,
       preChoice: preChoice ?? "union",
     });
   }

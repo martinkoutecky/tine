@@ -260,6 +260,7 @@ pub(crate) fn load_graph_for_label(
         .unwrap()
         .bind(window_label.to_string(), slot.clone())?;
     state.note_focused(window_label);
+    crate::concord_ledger::attach(app.path().app_data_dir().ok(), &slot);
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
     backup_async(app.clone(), slot.clone());
     remember_graph(app, &meta.root)?;

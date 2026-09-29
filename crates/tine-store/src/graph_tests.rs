@@ -2454,7 +2454,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
     let conf_rel = format!("pages/{conflict_name}");
 
     // Diff to discover the row ids.
-    let diff = conflicts::sync_conflict_diff(&store, win_rel, &conf_rel)
+    let diff = conflicts::sync_conflict_diff(&store, win_rel, &conf_rel, &[])
         .unwrap()
         .expect("a diff");
     let modified = diff
@@ -2479,6 +2479,8 @@ fn resolve_sync_conflict_merges_and_trashes() {
         &HashMap::new(),
         &diff.base_rev,
         &diff.conflict_rev,
+        None,
+        &[],
         "union",
     )
     .unwrap_err();
@@ -2505,6 +2507,8 @@ fn resolve_sync_conflict_merges_and_trashes() {
         &HashMap::new(),
         &diff.base_rev,
         &diff.conflict_rev,
+        None,
+        &[],
         "union",
     )
     .unwrap_err();
@@ -2533,6 +2537,8 @@ fn resolve_sync_conflict_merges_and_trashes() {
         &decisions,
         &base,
         &conflict_rev,
+        None,
+        &[],
         "union",
     )
     .unwrap();

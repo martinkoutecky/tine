@@ -582,7 +582,7 @@ fn a_sync_copy_resolve_refuses_a_forged_merged_decision() {
     fs::write(root.join("pages").join(COPY), "- the quick brown cat\n").unwrap();
     let store = open(&root);
     let copy = format!("pages/{COPY}");
-    let diff = conflicts::sync_conflict_diff(&store, "pages/Notes.md", &copy)
+    let diff = conflicts::sync_conflict_diff(&store, "pages/Notes.md", &copy, &[])
         .unwrap()
         .unwrap();
     assert!(!diff.three_way, "a conflict copy carries no ancestor");
@@ -593,6 +593,8 @@ fn a_sync_copy_resolve_refuses_a_forged_merged_decision() {
         &all(&diff.rows, "merged"),
         &diff.base_rev,
         &diff.conflict_rev,
+        None,
+        &[],
         "union",
     )
     .unwrap_err();
@@ -615,7 +617,7 @@ fn a_sync_copy_resolve_against_a_marker_winner_writes_nothing() {
     let copy = "pages/Merged.sync-conflict-20260817-101010-ABCDEFG.md";
     fs::write(root.join(copy), "- copy\n").unwrap();
     let store = open(&root);
-    let diff = conflicts::sync_conflict_diff(&store, "pages/Merged.md", copy)
+    let diff = conflicts::sync_conflict_diff(&store, "pages/Merged.md", copy, &[])
         .unwrap()
         .unwrap();
     let err = conflicts::resolve_sync_conflict(
@@ -625,6 +627,8 @@ fn a_sync_copy_resolve_against_a_marker_winner_writes_nothing() {
         &HashMap::new(),
         &diff.base_rev,
         &diff.conflict_rev,
+        None,
+        &[],
         "union",
     )
     .unwrap_err();
@@ -754,7 +758,7 @@ fn end_to_end_marker_file_and_syncthing_copy_fixtures() {
     .unwrap();
 
     let copy = format!("pages/{COPY}");
-    let sync = conflicts::sync_conflict_diff(&store, "pages/Notes.md", &copy)
+    let sync = conflicts::sync_conflict_diff(&store, "pages/Notes.md", &copy, &[])
         .unwrap()
         .unwrap();
     conflicts::resolve_sync_conflict(
@@ -764,6 +768,8 @@ fn end_to_end_marker_file_and_syncthing_copy_fixtures() {
         &all(&sync.rows, "both"),
         &sync.base_rev,
         &sync.conflict_rev,
+        None,
+        &[],
         "union",
     )
     .unwrap();
@@ -798,5 +804,56 @@ fn end_to_end_marker_file_and_syncthing_copy_fixtures() {
     );
     let inventory = conflicts::conflict_inventory(&store);
     assert!(inventory.queue.is_empty() && inventory.sync_conflicts.is_empty());
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// Master 3c18d0e (family 8): re-saving highlights must not churn the
+/// annotation files. An identical highlight set rewrites neither the sidecar
+/// nor the `hls__` page (bytes and mtimes unchanged, so Syncthing sees no
+/// edit to conflict on), and a recolour keeps a hand-written child note under
+/// the highlight byte-for-byte, with its indentation.
+#[test]
+fn resaving_highlights_leaves_unchanged_files_and_hand_notes_alone() {
+    let root = scratch("hls-churn");
+    let store = open(&root);
+    let h = highlight("11111111-1111-1111-1111-111111111111", 1);
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[h.clone()], &[]).unwrap();
+    let page = root.join("pages/hls__paper.md");
+    let sidecar = root.join("assets/paper.edn");
+    let stamp = |path: &Path| {
+        (
+            fs::read(path).unwrap(),
+            fs::metadata(path).unwrap().modified().unwrap(),
+        )
+    };
+    let (page_before, sidecar_before) = (stamp(&page), stamp(&sidecar));
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[h.clone()], &[h.clone()]).unwrap();
+    assert_eq!(
+        stamp(&page),
+        page_before,
+        "identical set: hls page untouched"
+    );
+    assert_eq!(
+        stamp(&sidecar),
+        sidecar_before,
+        "identical set: sidecar untouched"
+    );
+
+    let written = String::from_utf8(page_before.0).unwrap();
+    let with_note = format!(
+        "{}\n  - my own note\n    second line of it\n",
+        written.trim_end()
+    );
+    fs::write(&page, &with_note).unwrap();
+    store.scan_refresh().unwrap();
+    let mut recoloured = h.clone();
+    recoloured.color = "green".into();
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[recoloured], &[h]).unwrap();
+    let after = fs::read_to_string(&page).unwrap();
+    assert!(
+        after.contains("\n  - my own note\n    second line of it\n"),
+        "the hand-written child keeps its bytes and indentation:\n{after}"
+    );
     let _ = fs::remove_dir_all(&root);
 }

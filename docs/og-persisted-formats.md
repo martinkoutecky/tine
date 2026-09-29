@@ -1,6 +1,6 @@
 # og persisted-format census (batch 5b)
 
-The pinned count is **24 durable layouts** in `scripts/lib/og-enforcement.mjs`.
+The pinned count is **25 durable layouts** in `scripts/lib/og-enforcement.mjs`.
 Several rows share a low-level writer. A format means a byte layout or durable
 directory convention, not each JSON key or filename. Temporary files used for
 atomic publication have the same payload as their final name.
@@ -31,6 +31,7 @@ atomic publication have the same payload as their final name.
 | Diagnostic history JSONL | app data `diagnostics/history.jsonl`, fixed-shape events, ≤ 1 MiB (ADR 0058) | `src-tauri/src/flight_store.rs` `write_history` |
 | Diagnostic session marker | app data `diagnostics/session-active` and `diagnostics/process.lock`, empty files (ADR 0058) | `src-tauri/src/flight_store.rs` `set_session_active`, `open` |
 | Diagnostic report JSON | a user-chosen file from Settings → Help & diagnostics → Save report (ADR 0058) | `src-tauri/src/flight_store.rs` `save_report` |
+| Concord base ledger | app data `concord-ledger/<graph-id>/`: per page `pages/<sha(path)>/index.json` + ≤ 2 text blobs, per sync copy `pins/<sha(path)>.{json,blob}`; disposable, never under the graph root (ADR 0056) | `src-tauri/src/concord_ledger.rs` `LedgerFiles::write` (via `device_io::atomic_write`) |
 
 The graph session JSON may carry `workspaceId`, the ID of the workspace that
 produced it. On startup, a matching live session is fresher than the registry's

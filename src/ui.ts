@@ -11,7 +11,7 @@ import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "./
 import { graphOwner, latestOwner, readOwned, writeOwned } from "./owned";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave, openPageTarget } from "./routerBridge";
-import { beginConflictRefresh, conflictQueue, conflictRefreshCurrent, queueTouchedBy, setConflictInventory } from "./conflictQueue";
+import { beginConflictRefresh, conflictQueue, conflictRefreshCurrent, setConflictInventory } from "./conflictQueue";
 export { conflictQueue, settleArtifactConflict, syncConflicts, setSyncConflicts } from "./conflictQueue";
 import type { PageTarget } from "./routeTypes";
 import { PaneContext } from "./paneContext";
@@ -267,7 +267,7 @@ export async function refreshJournalConflicts(notify = false): Promise<void> {
 // copies, marker-bearing pages, and the derived queue over both. The calm
 // sidebar badge, the Conflicts route and the in-page resolver carry the standing
 // inventory; like master, only a copy that ARRIVES mid-session is announced. ---
-/** Re-derive the conflict inventory from disk (one walk; never stored). With
+/** Fetch the backend's derived conflict inventory (never stored). With
  *  `notify === "new"`, toast for sync copies that newly arrived. A failed read
  *  empties it: no badge, never a broken app, and no refusal. */
 export async function refreshSyncConflicts(notify: "new" | false = false): Promise<void> {
@@ -290,11 +290,6 @@ export async function refreshSyncConflicts(notify: "new" | false = false): Promi
   } catch {
     if (conflictRefreshCurrent(episode)) setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [] });
   }
-}
-
-/** Re-derive the queue when a watcher change touched a page that is in it. */
-export async function refreshConflictQueueIfTouched(changes: { name: string; kind: PageKind; path?: string }[]): Promise<void> {
-  if (queueTouchedBy(changes)) await refreshSyncConflicts();
 }
 
 // --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole

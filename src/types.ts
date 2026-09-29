@@ -286,6 +286,10 @@ export interface SyncConflictDiff {
   blocks_identical: boolean;
   /** True when rows carry 3-way verdicts against a real base (absent = false). */
   three_way?: boolean;
+  /** Identity of the Concord-ledger base a sync-copy 3-way diff used; the
+   *  resolve sends it back so a "merged" row is applied only against the base
+   *  the user reviewed. Absent on 2-way and marker diffs. */
+  merge_base_rev?: string;
 }
 
 /** A user's per-row merge decision. */

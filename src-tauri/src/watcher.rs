@@ -86,6 +86,16 @@ fn window_events(change: &Change) -> (Vec<GraphChange>, bool) {
     (events, conflicts_dirty)
 }
 
+/// Concord's share of one publication: the base ledger records it
+/// off-thread (one channel send here) and the derived conflict queue
+/// re-derives the entries it can affect. Returns whether the queue changed.
+pub(crate) fn concord_observe(slot: &GraphSlot, change: &Change) -> bool {
+    if let Some(ledger) = slot.concord_ledger.get() {
+        ledger.observe(change);
+    }
+    slot.conflict_queue.refresh_change(&slot.store, change)
+}
+
 /// Emit one publication's window events; an external publication is also
 /// recorded as a fixed-shape `watcher.batch` diagnostic event (counts only).
 fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Change) {
@@ -95,7 +105,8 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Chang
             .files
             .iter()
             .any(|(id, _, _)| id.as_str() == "logseq/config.edn");
-    let (events, conflicts_dirty) = window_events(&change);
+    let (events, copies_changed) = window_events(&change);
+    let conflicts_dirty = concord_observe(slot, &change) || copies_changed;
     if !events.is_empty() || conflicts_dirty {
         crate::flight::record_watcher_batch(events.len(), conflicts_dirty);
     }
@@ -384,6 +395,89 @@ mod tests {
             }]
         );
         drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Concord incremental marker check (Martin-approved, og 20a): a marker
+    /// page written while the graph is open reaches the derived queue through
+    /// the real device watcher's next external event, re-deriving only the
+    /// changed file (the one full walk happened at open), and leaves it when
+    /// an outside tool resolves the markers. The answer equals a full walk.
+    #[test]
+    fn a_marker_written_while_open_enters_the_queue_on_its_next_external_event() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-watch-markers-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        std::fs::write(root.join("pages/Plain.md"), "- plain\n").unwrap();
+        let store = tine_store::Store::open(
+            &root,
+            tine_store::OpenOptions {
+                approved_external_assets: None,
+                watch: WatchMode::Notify,
+            },
+        )
+        .unwrap()
+        .0;
+        let slot = GraphSlot::new(store, root.clone());
+        slot.store.whole_graph().unwrap();
+        assert!(slot.conflict_queue.inventory(&slot.store).queue.is_empty());
+        let subscription = slot.store.subscribe();
+        // Deliver external changes as the dispatch thread does until `rel`
+        // was among them; answers whether the queue changed.
+        let deliver = |rel: &str| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            let mut dirty = false;
+            loop {
+                match subscription.try_recv().unwrap() {
+                    Some(change) => {
+                        assert_eq!(change.origin, tine_store::Origin::External);
+                        dirty |= concord_observe(&slot, &change);
+                        if change.files.iter().any(|(id, _, _)| id.as_str() == rel) {
+                            return dirty;
+                        }
+                    }
+                    None if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(20))
+                    }
+                    None => panic!("the watcher never published {rel}"),
+                }
+            }
+        };
+        let marked = "- before\n<<<<<<< HEAD\n- mine\n=======\n- theirs\n>>>>>>> other\n";
+        atomic_write(&root, "pages/Marked.md", marked);
+        assert!(deliver("pages/Marked.md"), "the queue changed");
+        let queued = slot.conflict_queue.inventory(&slot.store);
+        assert_eq!(
+            queued
+                .vcs_markers
+                .iter()
+                .map(|m| m.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["pages/Marked.md"]
+        );
+        assert_eq!(queued.queue.len(), 1);
+        assert_eq!(
+            serde_json::to_string(&queued).unwrap(),
+            serde_json::to_string(&tine_graph_features::conflicts::conflict_inventory(
+                &slot.store
+            ))
+            .unwrap(),
+            "the incremental answer equals a full walk"
+        );
+        // An unrelated external edit re-derives only itself: no change.
+        atomic_write(&root, "pages/Plain.md", "- plain edited\n");
+        assert!(!deliver("pages/Plain.md"));
+        // git resolved the markers outside Tine: the entry leaves.
+        atomic_write(&root, "pages/Marked.md", "- before\n- merged\n");
+        assert!(deliver("pages/Marked.md"));
+        assert!(slot.conflict_queue.inventory(&slot.store).queue.is_empty());
+        drop(subscription);
+        drop(slot);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

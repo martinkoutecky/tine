@@ -165,7 +165,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
       const write = source === "vcs-markers"
         ? backend().resolveVcsMarkerConflict(pagePath, decisions(), current.base_rev, ["replace-page"], preChoice())
         : copy
-          ? backend().resolveSyncConflict(pagePath, copy, decisions(), current.base_rev, current.conflict_rev, ["replace-page", "delete-page"], preChoice())
+          ? backend().resolveSyncConflict(pagePath, copy, decisions(), current.base_rev, current.conflict_rev, ["replace-page", "delete-page"], preChoice(), current.merge_base_rev)
           : null;
       if (!write) return;
       const result = await writeOwned(owner, write);

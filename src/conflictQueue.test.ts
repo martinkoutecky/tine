@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { toasts, setToasts } from "./toasts";
 import { conflictInventory, conflictQueue, setConflictInventory, settleArtifactConflict, syncConflicts } from "./conflictQueue";
-import { refreshConflictQueueIfTouched, refreshSyncConflicts } from "./ui";
+import { refreshSyncConflicts } from "./ui";
 import type { ConflictInventory, ConflictObject } from "./types";
 
 // og 8c: the derived conflict queue. Recomputed from disk, never persisted.
@@ -45,16 +45,6 @@ describe("the derived conflict queue", () => {
     vi.spyOn(backend(), "conflictInventory").mockRejectedValue(new Error("io:PermissionDenied"));
     await expect(refreshSyncConflicts()).resolves.toBeUndefined();
     expect(conflictInventory()).toEqual(EMPTY);
-  });
-
-  it("re-derives only when a watcher change touches a queued page", async () => {
-    setConflictInventory(inventoryOf("A"));
-    const read = vi.spyOn(backend(), "conflictInventory").mockResolvedValue(EMPTY);
-    await refreshConflictQueueIfTouched([{ name: "Other", kind: "page", path: "pages/Other.md" }]);
-    expect(read).not.toHaveBeenCalled();
-    await refreshConflictQueueIfTouched([{ name: "A", kind: "page", path: "pages/A.md" }]);
-    expect(read).toHaveBeenCalledTimes(1);
-    expect(conflictQueue()).toEqual([]);
   });
 
   it("settles a resolved object at once, and an older walk cannot resurrect it", async () => {

@@ -77,12 +77,14 @@ export const PERSISTED_FORMATS = Object.freeze([
   "pdf-highlights-edn", "published-site", "restore-recovery",
   "plugin-package", "desktop-launcher", "debug-log",
   "diagnostic-history-jsonl", "diagnostic-session-marker", "diagnostic-report-json",
+  "concord-base-ledger",
 ]);
-export const PINNED_FORMAT_COUNT = 24;
+export const PINNED_FORMAT_COUNT = 25;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({
   "src-tauri/src/flight_store.rs": { sites: 3, approval: "og QUESTIONS Q5 2026-09-29; docs/adr/0058" },
+  "src-tauri/src/concord_ledger.rs": { sites: 1, approval: "og QUESTIONS Q4 2026-09-29; docs/adr/0056" },
 });
 
 export function checkFormatCount(formats = PERSISTED_FORMATS) {
