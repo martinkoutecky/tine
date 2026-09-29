@@ -21,8 +21,13 @@ import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
 import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
 import { journalTitle } from "./journal";
-import { isMobilePlatform } from "./nativeChrome";
-import { nearestPane, takeBlockSelectionForPaneReturn } from "./paneSelect";
+import { isSinglePaneShell } from "./nativeChrome";
+import {
+  nearestPane,
+  nearestPaneInDirection,
+  takeBlockSelectionForPaneReturn,
+  type PaneDirection,
+} from "./paneSelect";
 import { graphScopedSignal } from "./binding";
 
 export type LayoutNode =
@@ -70,7 +75,14 @@ function commitLayout(node: LayoutNode) {
 const [focusedPaneIdAccessor, writeFocusedPaneId] = createSignal("main");
 export const focusedPaneId = focusedPaneIdAccessor;
 
+/**
+ * The one focus-state boundary: records `paneId` as the focused pane, clearing
+ * block/cell selection when focus moves, and un-maximizes any other pane so the
+ * focused pane is always visible (history/session adapters call this directly).
+ * Does not validate that the pane exists or activate its route; see focusPane.
+ */
 export function setFocusedPaneId(paneId: string) {
+  if (maximizedPaneId() && maximizedPaneId() !== paneId) setMaximizedPaneId(null);
   if (focusedPaneId() !== paneId) {
     clearSelection();
     setCellSel(null);
@@ -242,7 +254,7 @@ export function splitPane(
   dir: "row" | "col" = "row",
   opts: { focusNew?: boolean; position?: "before" | "after"; snapshot?: PaneSnapshot } = {}
 ): string | null {
-  if (isMobilePlatform) return null;
+  if (isSinglePaneShell()) return null;
   if (!layoutPaneIds().includes(paneId)) return null;
   const newPaneId = freshPaneId();
   const source = paneRouter(paneId);
@@ -298,7 +310,7 @@ export function splitRootAtEdge(
   sourcePaneId = focusedPaneId(),
   opts: { focusNew?: boolean; snapshot?: PaneSnapshot } = {}
 ): string | null {
-  if (isMobilePlatform) return null;
+  if (isSinglePaneShell()) return null;
   const ids = layoutPaneIds();
   const sourceId = ids.includes(sourcePaneId) ? sourcePaneId : ids[0];
   if (!sourceId) return null;
@@ -337,7 +349,6 @@ export function closePane(paneId = focusedPaneId()): boolean {
 
 export function focusPane(paneId: string) {
   if (!layoutPaneIds().includes(paneId) || focusedPaneId() === paneId) return;
-  if (maximizedPaneId() && maximizedPaneId() !== paneId) setMaximizedPaneId(null);
   setFocusedPaneId(paneId);
   paneRouter(paneId).activateCurrentRoute();
 }
@@ -380,6 +391,30 @@ export function moveActiveTabToPane(sourcePaneId: string, targetPaneId: string):
   return moveTabToPane(sourcePaneId, paneRouter(sourcePaneId).activeId(), targetPaneId);
 }
 
+/**
+ * Directional "Move tab to pane" (GH #282). When a pane lies in `dir` from
+ * `sourcePaneId`, moves the source's active tab into it. With no neighbor the
+ * layout grows in that direction: a multi-tab source donates its active tab to
+ * the new pane; a one-tab source cannot be emptied (there is no empty-pane
+ * route), so the new pane opens as a mirror of the current tab and the original
+ * stays. Returns the pane that received the tab, or null when nothing changed
+ * (unknown source, a refused move, or a platform without split panes). O(panes).
+ */
+export function moveActiveTabInDirection(sourcePaneId: string, dir: PaneDirection): string | null {
+  if (!layoutPaneIds().includes(sourcePaneId)) return null;
+  const target = nearestPaneInDirection(layoutRoot(), sourcePaneId, dir);
+  if (target) return moveActiveTabToPane(sourcePaneId, target) ? target : null;
+  const side: "left" | "right" | "top" | "bottom" =
+    dir === "up" ? "top" : dir === "down" ? "bottom" : dir;
+  const source = paneRouter(sourcePaneId);
+  if (source.tabs().length > 1) {
+    return moveTabToSplitPane(sourcePaneId, source.activeId(), sourcePaneId, side);
+  }
+  return splitPane(sourcePaneId, side === "left" || side === "right" ? "row" : "col", {
+    position: side === "left" || side === "top" ? "before" : "after",
+  });
+}
+
 export function moveTabToSplitPane(
   sourcePaneId: string,
   tabId: string,
@@ -387,7 +422,7 @@ export function moveTabToSplitPane(
   side: "left" | "right" | "top" | "bottom"
 ): string | null {
   const ids = layoutPaneIds();
-  if (isMobilePlatform || !ids.includes(sourcePaneId) || !ids.includes(targetPaneId)) return null;
+  if (isSinglePaneShell() || !ids.includes(sourcePaneId) || !ids.includes(targetPaneId)) return null;
   const source = paneRouter(sourcePaneId);
   if (!source.tabs().some((t) => t.id === tabId)) return null;
   const moved = source.extractTabForAdoption(tabId);
@@ -404,7 +439,7 @@ export function moveTabToSplitPane(
 export function moveTabToSeamSplit(sourcePaneId: string, tabId: string, path: number[]): string | null {
   const ids = layoutPaneIds();
   const split = nodeAtPath(layoutRoot(), path);
-  if (isMobilePlatform || !ids.includes(sourcePaneId) || !split || split.kind === "pane") return null;
+  if (isSinglePaneShell() || !ids.includes(sourcePaneId) || !split || split.kind === "pane") return null;
   const source = paneRouter(sourcePaneId);
   if (!source.tabs().some((t) => t.id === tabId)) return null;
   const moved = source.extractTabForAdoption(tabId);
@@ -423,7 +458,7 @@ export function moveTabToRootEdge(
   side: "left" | "right" | "top" | "bottom"
 ): string | null {
   const ids = layoutPaneIds();
-  if (isMobilePlatform || !ids.includes(sourcePaneId)) return null;
+  if (isSinglePaneShell() || !ids.includes(sourcePaneId)) return null;
   const source = paneRouter(sourcePaneId);
   if (!source.tabs().some((t) => t.id === tabId)) return null;
   const moved = source.extractTabForAdoption(tabId);
@@ -540,7 +575,7 @@ export function openPdf(filename: string, label: string, page?: number,
   if (options.anotherView) return null;
   const route = makePdfRoute(filename, label, { page });
   publishPdfNavigationIntent(route.viewId, { page, highlightId });
-  if (isMobilePlatform || options.inPlace) {
+  if (isSinglePaneShell() || options.inPlace) {
     paneRouter(sourcePaneId).openPdf(route);
     return route;
   }
@@ -558,7 +593,7 @@ export function openPdf(filename: string, label: string, page?: number,
 /** Open a PDF's notes in the companion pane, reusing its existing page tab.
  * On mobile the notes enter the current route history. Cost O(open tabs). */
 export function openPdfNotes(sourcePaneId: string, notesPage: string, block?: string): string | null {
-  if (isMobilePlatform) {
+  if (isSinglePaneShell()) {
     const router = paneRouter(sourcePaneId);
     if (block) router.openPageAtBlock(notesPage, "page", block);
     else router.openPage(notesPage, "page");

@@ -215,6 +215,9 @@ mod parity_guide_tests {
             "Settings → Appearance",
             "Toggle maximize active pane",
             "Open in new tab",
+            "Settings → Help & diagnostics",
+            "**Copy report**, or on desktop **Save report…**; nothing is uploaded",
+            "If Tine did not close cleanly last time, it says so",
         ] {
             assert!(tips.contains(phrase), "Tips missing {phrase}");
         }
@@ -447,5 +450,18 @@ mod query_guide_tests {
                 "missing Q4b Guide control: {control}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod theme_presentation_guide_tests {
+    /// Theme API 0.2 (master 1488588b8/c8b18f327, ADR 0059) is documented where
+    /// users meet themes: bounded presentation, and a Today summary Tine renders.
+    #[test]
+    fn declarative_theme_presentation_is_documented_in_the_bundled_guide() {
+        let plugins = include_str!("templates/plugins.md");
+        assert!(plugins.contains("bounded Tine-owned presentation styles"));
+        assert!(plugins.contains("The theme receives neither those tasks"));
+        assert!(!plugins.contains("Token themes live under"));
     }
 }

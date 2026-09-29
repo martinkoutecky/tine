@@ -76,8 +76,14 @@ export const PERSISTED_FORMATS = Object.freeze([
   "backup-page-copy", "backup-config-copy", "backup-asset-copy", "backup-snapshot-json",
   "pdf-highlights-edn", "published-site", "restore-recovery",
   "plugin-package", "desktop-launcher", "debug-log",
+  "diagnostic-history-jsonl", "diagnostic-session-marker", "diagnostic-report-json",
 ]);
-export const PINNED_FORMAT_COUNT = 21;
+export const PINNED_FORMAT_COUNT = 24;
+// Writer sites Martin approved after the base, each with its ADR. Only an
+// approved format may add sites here; the count is exact, not a budget.
+export const APPROVED_WRITER_SITES = Object.freeze({
+  "src-tauri/src/flight_store.rs": { sites: 3, approval: "og QUESTIONS Q5 2026-09-29; docs/adr/0058" },
+});
 
 export function checkFormatCount(formats = PERSISTED_FORMATS) {
   if (formats.length !== PINNED_FORMAT_COUNT || new Set(formats).size !== formats.length) {
@@ -93,10 +99,11 @@ export function writerSiteCounts(source) {
   return [...productionSource(source).matchAll(writePattern)].length;
 }
 
-export function checkWriterSites(current, baseline) {
+export function checkWriterSites(current, baseline, approved = APPROVED_WRITER_SITES) {
   const failures = [];
   for (const [file, count] of Object.entries(current)) {
-    if (count > (baseline[file] ?? 0)) failures.push(`${file}: ${baseline[file] ?? 0} → ${count} writer sites`);
+    const allowed = (baseline[file] ?? 0) + (approved[file]?.sites ?? 0);
+    if (count > allowed) failures.push(`${file}: ${allowed} → ${count} writer sites`);
   }
   if (failures.length) throw new Error(`OG-RULES Rule 8: a new format needs an ADR and Martin's approval. Review new writer sites and the persisted-format census:\n${failures.join("\n")}`);
 }

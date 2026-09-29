@@ -9,6 +9,7 @@ mod app_identity;
 mod backup;
 #[cfg(desktop)]
 mod cli;
+mod command_surface;
 mod commands;
 #[path = "commands/concord.rs"]
 mod concord;
@@ -16,6 +17,8 @@ mod debug;
 mod device_io;
 #[cfg(test)]
 mod edit_kind_guard_tests;
+mod flight;
+mod flight_store;
 mod graph;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
@@ -424,6 +427,7 @@ pub fn run() {
     // Bring up debug logging FIRST (TINE_DEBUG=1 / --debug), so every later
     // milestone — and any panic — is captured to the log file from the very start.
     debug_init();
+    flight::flight_init();
     install_panic_logger();
     debug_header();
     diag("main() entered");
@@ -537,6 +541,18 @@ pub fn run() {
             media_protocol::respond(ctx, request)
         });
 
+    // The frontend's platform identity. It cannot be derived from the WebView's
+    // user agent: iPadOS 13+ serves a desktop-class `Macintosh; Intel Mac OS X`
+    // UA from a stock WKWebView, so UA sniffing reported an iPad as a Mac
+    // desktop and every mobile affordance stayed hidden (GH #446). The build
+    // knows the truth, so hand it over before frontend code runs -- the same
+    // idiom as `__TINE_NATIVE_FRAME__`, and synchronous for the same reason:
+    // an async `app_platform` round-trip would flash desktop-only chrome.
+    let builder = builder.append_invoke_initialization_script(format!(
+        "globalThis.__TINE_PLATFORM__ = {:?};",
+        crate::graph::app_platform()
+    ));
+
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let builder = builder.append_invoke_initialization_script(format!(
         "globalThis.__TINE_NATIVE_FRAME__ = {native_frame_active};"
@@ -648,6 +664,12 @@ pub fn run() {
             next_window: AtomicU64::new(1),
         })
         .setup(|app| {
+            // After the single-instance plugin: a forwarded second launch has
+            // already exited and cannot rotate the primary's diagnostics.
+            // Tauri's app-data path is the sandbox-private home on mobile too.
+            if let Ok(dir) = app.path().app_data_dir() {
+                flight::persist_init(dir.join("diagnostics"));
+            }
             diag("setup() begin");
             #[cfg(target_os = "linux")]
             {
@@ -913,12 +935,35 @@ pub fn run() {
             list_spellcheck_dictionaries,
             debug_info,
             debug_log,
+            flight::app_architecture,
+            flight::clear_diagnostics,
+            flight::diagnostic_frontend_event,
+            flight::diagnostic_ipc_event,
+            flight::diagnostic_report,
+            flight::diagnostic_session_active,
+            flight::save_diagnostic_report,
             tine_quit,
             close_graph_window,
             tine_open_devtools
         ])
-        .run(context)
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                // `App::run` never returns, so the orderly end of a run is
+                // here: clear the unclean-exit marker (master d9763603).
+                flight::mark_clean_shutdown();
+                // tao delivers this callback for WM_ENDSESSION (Windows sign-out,
+                // restart, shutdown), but on that path its message loop neither
+                // receives WM_QUIT nor switches to an exiting ControlFlow.
+                // Returning would leave Tine alive until Windows names it on the
+                // "app is preventing shutdown" screen and force-terminates it
+                // (GH #455). Nothing remains to flush here: page saves are
+                // already durable when they report success, so terminate.
+                #[cfg(target_os = "windows")]
+                std::process::exit(0);
+            }
+        });
 }
 
 #[cfg(test)]
@@ -1023,5 +1068,128 @@ mod mobile_drawer_policy_tests {
             .additional_browser_args
             .as_deref()
             .is_some_and(|args| args.contains("--remote-debugging-port=9222"))));
+    }
+}
+
+#[cfg(test)]
+mod platform_lifecycle_guard_tests {
+    fn lib_source() -> String {
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
+            .expect("read src-tauri/src/lib.rs")
+    }
+
+    /// GH #455: on Windows sign-out/shutdown tao runs the `RunEvent::Exit`
+    /// callback for WM_ENDSESSION but never leaves its message loop, so the
+    /// event loop must terminate the process itself on Windows.
+    #[test]
+    fn windows_session_end_exit_terminates_the_process() {
+        let source = lib_source();
+        let run = &source[source.find(".run(|_app, event|").expect("the event loop")..];
+        let run = &run[..run.find("});").expect("the end of the event loop")];
+        assert!(
+            run.contains("tauri::RunEvent::Exit")
+                && run.contains(
+                    "#[cfg(target_os = \"windows\")]\n                std::process::exit(0);"
+                ),
+            "GH #455: the RunEvent::Exit arm must call std::process::exit(0) on Windows, \
+             because WM_ENDSESSION does not break tao's message loop"
+        );
+    }
+
+    /// Master d9763603: `App::run` never returns, so a clean-shutdown call
+    /// placed after it never runs and every relaunch reports an unclean exit.
+    /// The orderly end is the `RunEvent::Exit` arm, before Windows' exit(0).
+    #[test]
+    fn the_exit_arm_clears_the_unclean_exit_marker_before_terminating() {
+        let source = lib_source();
+        let run = &source[source.find(".run(|_app, event|").expect("the event loop")..];
+        let run = &run[..run.find("});").expect("the end of the event loop")];
+        let clean = run
+            .find("flight::mark_clean_shutdown();")
+            .expect("RunEvent::Exit must call flight::mark_clean_shutdown()");
+        assert!(clean < run.find("std::process::exit(0)").unwrap());
+        assert!(source.contains("flight::persist_init(dir.join(\"diagnostics\"))"));
+    }
+
+    /// GH #446: the frontend's platform identity comes from the build
+    /// (`graph::app_platform`), injected before any frontend code runs, never
+    /// from the WebView user agent (iPadOS reports a Mac UA).
+    #[test]
+    fn frontend_platform_identity_is_injected_from_the_build() {
+        let source = lib_source();
+        assert!(
+            source.contains(
+                "\"globalThis.__TINE_PLATFORM__ = {:?};\",\n        crate::graph::app_platform()"
+            ),
+            "GH #446: lib.rs must inject __TINE_PLATFORM__ from crate::graph::app_platform()"
+        );
+    }
+
+    /// GH #572: apps get the WebKit that shipped with macOS (a Safari update
+    /// does not change it), and Tine needs the Safari 15.4 engine, which first
+    /// shipped in macOS 12.3. The bundle declares that floor so an older Mac is
+    /// refused at install/launch instead of running a half-working app.
+    #[test]
+    fn macos_bundle_declares_the_webkit_floor() {
+        let config: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tauri.macos.conf.json"
+            ))
+            .expect("read src-tauri/tauri.macos.conf.json"),
+        )
+        .expect("tauri.macos.conf.json is JSON");
+        assert_eq!(
+            config["bundle"]["macOS"]["minimumSystemVersion"], "12.3",
+            "GH #572: macOS bundles must require 12.3 (the Safari 15.4 engine)"
+        );
+    }
+
+    /// GH #241: the updater ships on every desktop target (Windows, Linux,
+    /// macOS) and on no mobile target (Android, iOS). Windows uses native-tls
+    /// (Schannel) plus Reqwest's system-proxy reader; Linux/macOS keep rustls.
+    /// This pins the exact target sections so a cfg edit cannot silently drop
+    /// a platform's updater or its transport.
+    #[test]
+    fn updater_transport_is_declared_for_every_desktop_target() {
+        let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+            .expect("read src-tauri/Cargo.toml");
+        let mut section = "";
+        let mut updater_sections = Vec::new();
+        let mut windows_lines = Vec::new();
+        for line in manifest.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                section = line;
+                continue;
+            }
+            if line.starts_with("tauri-plugin-updater") {
+                updater_sections.push((section, line));
+            }
+            if section == "[target.'cfg(windows)'.dependencies]" && !line.starts_with('#') {
+                windows_lines.push(line);
+            }
+        }
+        assert_eq!(
+            updater_sections,
+            vec![
+                (
+                    "[target.'cfg(windows)'.dependencies]",
+                    "tauri-plugin-updater = { version = \"2\", default-features = false, features = [\"native-tls\", \"zip\"] }",
+                ),
+                (
+                    "[target.'cfg(all(not(target_os = \"android\"), not(target_os = \"ios\"), not(target_os = \"windows\")))'.dependencies]",
+                    "tauri-plugin-updater = \"2\"",
+                ),
+            ],
+            "GH #241: the updater must be declared once for Windows (native-tls) and once for \
+             Linux/macOS (rustls), and never for Android/iOS"
+        );
+        assert!(
+            windows_lines.contains(
+                &"reqwest = { version = \"0.13\", default-features = false, features = [\"system-proxy\"] }"
+            ),
+            "GH #241: the Windows updater must follow the system proxy via reqwest's system-proxy feature"
+        );
     }
 }

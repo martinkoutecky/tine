@@ -1,5 +1,5 @@
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
-import { ImproveTab } from "./ImproveTab";
+import { DiagnosticsTab } from "./DiagnosticsTab";
 import { AboutTab } from "./AboutTab";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
 import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, theme, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, syncConflicts, refreshSyncConflicts, conflictQueue, type SettingsTabId } from "../ui";
@@ -97,7 +97,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "backups", label: "Backups & recovery" },
   { id: "graph", label: "Graph" },
   { id: "plugins", label: "Plugins" },
-  { id: "improve", label: "Help improve Tine" },
+  { id: "diagnostics", label: "Help & diagnostics" },
   { id: "shortcuts", label: "Keyboard shortcuts" },
   { id: "about", label: "About" },
 ];
@@ -263,8 +263,8 @@ export function Settings(): JSX.Element {
               <Show when={tab() === "plugins"}>
                 <PluginsTab />
               </Show>
-              <Show when={tab() === "improve"}>
-                <ImproveTab />
+              <Show when={tab() === "diagnostics"}>
+                <DiagnosticsTab />
               </Show>
               <Show when={tab() === "shortcuts"}>
                 <ShortcutsSettingsPane
@@ -1244,7 +1244,7 @@ function AppearanceTab(props: { search: string }): JSX.Element {
 
       <Field
         label="Auto-pair brackets & quotes"
-        hint="Typing ( [ { &quot; ` inserts the matching closer with the caret between, wraps a selection, types through a closer, and Backspace on an empty pair clears both. (Page-ref `[[ ]]` always auto-closes.) Off by default — turn it on if you like it."
+        hint="Typing ( [ { &quot; ` inserts the matching closer with the caret between, wraps a selection, types through a closer, and Backspace on an empty pair clears both. (Page-ref `[[ ]]` always auto-closes.) On by default, as in Logseq."
       >
         <Toggle on={autoPairing()} onClick={() => setAutoPairing(!autoPairing())} />
       </Field>

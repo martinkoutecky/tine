@@ -163,6 +163,22 @@ afterEach(() => {
 });
 
 describe("default journal template graph bind", () => {
+  // Master 5bb8ce020 (GH #266): graph open does not await the optional
+  // default-journal template (a getPage + listTemplates that can wait for the
+  // whole-graph parse). The visible Journals surface owns materialization and
+  // awaits it before its first feed read (Page.tsx), preserving #73.
+  it("opens the graph without awaiting the default-journal template's page read", async () => {
+    const { loadGraphPath, api } = await loadHarness(null);
+    api.getPage.mockImplementation(() => new Promise(() => {}));
+    const outcome = await Promise.race([
+      loadGraphPath(META.root),
+      new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 200)),
+    ]);
+    expect(outcome).toMatchObject({ kind: "loaded" });
+    expect(api.getPage).not.toHaveBeenCalled();
+    expect(api.savePages).not.toHaveBeenCalled();
+  });
+
   it("shares one template write across simultaneous feed refreshes", async () => {
     const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(null);
     await loadGraphPath(META.root);
@@ -173,7 +189,7 @@ describe("default journal template graph bind", () => {
     const second = ensureJournalTemplateForDay(new Date());
     finishRead(null);
     expect(await Promise.all([first, second])).toEqual(["ready", "ready"]);
-    expect(api.getPage).toHaveBeenCalledTimes(2); // one on graph bind, one shared refresh
+    expect(api.getPage).toHaveBeenCalledTimes(1); // graph bind reads none; one shared refresh
     expect(api.savePages).toHaveBeenCalledTimes(1);
   });
   it("returns a typed template read failure for the feed to surface and retry", async () => {
@@ -237,24 +253,27 @@ describe("default journal template graph bind", () => {
   });
 
   it("drops template insertion when its page read lands after a graph switch (I-20)", async () => {
-    const { loadGraphPath, api } = await loadHarness(null);
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(null);
     let finish!: (page: PageRead | null) => void;
     api.getPage.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-    const opening = loadGraphPath(META.root);
+    await loadGraphPath(META.root);
+    const materializing = ensureJournalTemplateForDay(new Date());
     await vi.waitFor(() => expect(api.getPage).toHaveBeenCalled());
     const { invalidateBinding } = await import("./binding");
     invalidateBinding();
     finish(null);
-    await opening;
+    await materializing;
     expect(api.savePages).not.toHaveBeenCalled();
   });
 
   it("drops demo seed and Welcome navigation when its page read lands after a graph switch (I-20)", async () => {
     const { createNewGraph, api, openPage } = await loadHarness(null);
     let finish!: (page: PageRead | null) => void;
-    api.getPage.mockResolvedValueOnce(null).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    // Graph open no longer reads today's journal (master 5bb8ce020), so the
+    // demo seed's page read is the first one.
+    api.getPage.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     const creating = createNewGraph();
-    await vi.waitFor(() => expect(api.getPage).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(api.getPage).toHaveBeenCalledTimes(1));
     const before = api.savePages.mock.calls.length;
     const { invalidateBinding } = await import("./binding");
     invalidateBinding();
@@ -289,23 +308,25 @@ describe("default journal template graph bind", () => {
     expect(events).toEqual(["bump-epoch"]);
   });
 
-  it("invalidates stale loads before awaiting template work, then refreshes after save", async () => {
-    const { loadGraphPath, events } = await loadHarness(null);
+  it("invalidates stale loads on bind; the visible-journal request materializes the template", async () => {
+    const { loadGraphPath, ensureJournalTemplateForDay, events } = await loadHarness(null);
 
     await loadGraphPath(META.root);
+    expect(events).toEqual([`activate-pdf:${META.root}`, "bump-epoch"]);
+    await ensureJournalTemplateForDay(new Date());
 
     expect(events).toEqual([
       `activate-pdf:${META.root}`,
       "bump-epoch",
       "save-template",
-      "bump-epoch",
     ]);
   });
 
   it("routes default-journal template blocks through the shared variable expander", async () => {
-    const { loadGraphPath, api, applyTemplateVars, prepareTemplateVars } = await loadHarness(null);
+    const { loadGraphPath, ensureJournalTemplateForDay, api, applyTemplateVars, prepareTemplateVars } = await loadHarness(null);
 
     await loadGraphPath(META.root);
+    await ensureJournalTemplateForDay(new Date());
 
     expect(prepareTemplateVars).toHaveBeenCalledOnce();
     expect(applyTemplateVars).toHaveBeenCalledWith("Template body", "Jul 10th, 2026");
@@ -332,9 +353,10 @@ describe("default journal template graph bind", () => {
       rev: "empty-journal-rev",
       id: "journals/Jul 10th, 2026.org",
     };
-    const { loadGraphPath, api } = await loadHarness(existing);
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(existing);
 
     await loadGraphPath(META.root);
+    await ensureJournalTemplateForDay(new Date());
 
     // The empty journal's own file (its id), with its rev as the baseline; no
     // name lookup.
@@ -349,16 +371,18 @@ describe("default journal template graph bind", () => {
         children: [{ id: "child", raw: "A real note", collapsed: false, children: [] }] }],
       rev: "existing-rev", id: "journals/2026_07_10.md",
     };
-    const { loadGraphPath, api } = await loadHarness(existing);
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(existing);
     await loadGraphPath(META.root);
+    await ensureJournalTemplateForDay(new Date());
     expect(api.savePages).not.toHaveBeenCalled();
   });
 
   it("refuses to write a template journal onto an alias name (B15b)", async () => {
-    const { loadGraphPath, api } = await loadHarness(null);
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(null);
     api.resolvePage.mockResolvedValue({ kind: "alias", owners: ["pages/Owner.md"] } as never);
 
     await loadGraphPath(META.root);
+    await ensureJournalTemplateForDay(new Date());
 
     expect(api.resolvePage).toHaveBeenCalledWith("Jul 10th, 2026", "journal");
     expect(api.savePages).not.toHaveBeenCalled();

@@ -9,7 +9,7 @@ import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
 import { ensurePageLoaded, pageByName, resolveBlockRef, node as docNode } from "../document";
 import { visibleBody } from "../render/block";
-import { Block, SurfaceContext } from "./Block";
+import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { endEditForSurface } from "../editorController";
@@ -350,7 +350,13 @@ function BlockItem(props: {
         >
           {(n) => (
             <div id={bodyId} class="rs-item-body">
-              <Block id={n().id} />
+              {/* GH #358: a block parked here is the root of this view, like a
+                  zoom root: its children render regardless of the source
+                  outline's collapsed flag (collapsed:: is not mutated), while
+                  descendants keep their own collapse state. */}
+              <OutlineScopeContext.Provider value={{ roots: [n().id], forceExpandedRoot: n().id }}>
+                <Block id={n().id} forceExpanded />
+              </OutlineScopeContext.Provider>
             </div>
           )}
         </Show>

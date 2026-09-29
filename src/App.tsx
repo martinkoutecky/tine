@@ -1,4 +1,4 @@
-import { Match, Show, Suspense, Switch, createEffect, lazy, onCleanup, onMount, type JSX } from "solid-js";
+import { Match, Show, Suspense, Switch, createEffect, createSignal, lazy, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
@@ -51,7 +51,7 @@ import { pushToast } from "./toasts";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { flushAll, appendToTodayJournal, captureToPage } from "./document";
+import { flushAll, appendToTodayJournal, captureToPage, unsavedPageCount } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
@@ -68,7 +68,7 @@ import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
-import { initDebug, dbg } from "./debug";
+import { initDebug, dbg, recordDiagnostic, recordSessionActive } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls } from "./nativeChrome";
 import {
@@ -88,12 +88,13 @@ import {
 import { paneSel, samePaneTarget } from "./paneSelect";
 import { SurfaceContext } from "./components/Block";
 import { endEdit } from "./editorController";
-import { installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
+import { exitAndroidActivity, installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
 import { createSafeCloseCoordinator } from "./safeClose";
 import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
 import { hlsPageName } from "./pdf";
 import type { InvalidRoute } from "./routeTypes";
 import { installBackgroundFlush } from "./backgroundFlush";
+import { installSessionActivity } from "./sessionActivity";
 import { initSettingsLayout } from "./settingsLayout";
 
 const Settings = lazy(() => import("./components/Settings").then((module) => ({ default: module.Settings })));
@@ -114,6 +115,7 @@ const safeClose = createSafeCloseCoordinator({
     "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nClose this window anyway and lose them?",
     "Unsaved changes",
   ),
+  recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
   flushSession,
   setTransition: setGraphTransitioning,
   notifyPdfFailure: () => {
@@ -128,10 +130,7 @@ const safeClose = createSafeCloseCoordinator({
 async function closeAndroidRootSafely(): Promise<void> {
   await requestAndroidRootClose(
     safeClose,
-    async () => {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("plugin:app|exit");
-    },
+    () => exitAndroidActivity(),
     () => pushToast("Couldn't close the app. Your graph remains open.", "error"),
   );
 }
@@ -271,6 +270,58 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
   );
 }
 
+/** A pane's `.main-content` scroller and its page column.
+ *  Contract: `natural-content-overflow` is set exactly while the column's
+ *  natural height exceeds the scroller's, re-measured on either one resizing.
+ *  The end-of-page slack keys off that (app.css), so long pages keep 40% tail
+ *  room through read/edit transitions and fitting panes never scroll (GH #369,
+ *  #390). `identifyPane: false` omits `data-pane-id` (the multi-pane leaf
+ *  carries it on its wrapper). */
+function PaneScroller(props: {
+  paneId: string;
+  router: PaneRouter;
+  class?: string;
+  identifyPane?: boolean;
+  children: JSX.Element;
+}): JSX.Element {
+  let scroller!: HTMLElement;
+  let inner!: HTMLDivElement;
+  const [naturalOverflow, setNaturalOverflow] = createSignal(false);
+  const measure = () => {
+    if (!scroller?.isConnected || !inner?.isConnected) return;
+    setNaturalOverflow(inner.scrollHeight > scroller.clientHeight + 1);
+  };
+  onMount(() => {
+    measure();
+    const frame = requestAnimationFrame(measure);
+    if (typeof ResizeObserver === "undefined") {
+      onCleanup(() => cancelAnimationFrame(frame));
+      return;
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroller);
+    observer.observe(inner);
+    onCleanup(() => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    });
+  });
+  return (
+    <main
+      class={`main-content${props.class ? ` ${props.class}` : ""}`}
+      classList={{ "natural-content-overflow": naturalOverflow() }}
+      tabindex="-1"
+      data-pane-id={props.identifyPane === false ? undefined : props.paneId}
+      ref={(el) => {
+        scroller = el;
+        props.router.setScrollerElement(el);
+      }}
+    >
+      <div class="main-content-inner" ref={inner}>{props.children}</div>
+    </main>
+  );
+}
+
 function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClass?: string }): JSX.Element {
   const route = () => props.router.route();
   createEffect(() => {
@@ -279,11 +330,10 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
   return (
     <Show when={route().kind === "pdf" ? route() as PdfRoute : null} fallback={
       <Show when={route().kind === "invalid" ? route() as InvalidRoute : null} fallback={
-        <main class={`main-content ${props.scrollerClass ?? ""}`} tabindex="-1"
-          data-pane-id={props.scrollerClass ? undefined : props.paneId}
-          ref={(el) => props.router.setScrollerElement(el)}>
-          <div class="main-content-inner"><PaneContent router={props.router} /></div>
-        </main>
+        <PaneScroller paneId={props.paneId} router={props.router} class={props.scrollerClass}
+          identifyPane={!props.scrollerClass}>
+          <PaneContent router={props.router} />
+        </PaneScroller>
       }>
         {(invalid) => <div class="pane-route-error" role="alert">
           <h2>{invalid().title}</h2>
@@ -467,6 +517,11 @@ export function App(): JSX.Element {
     flushAll,
     closeInFlight: safeClose.inFlight,
   })));
+  // GH #426: on mobile an OS reap of a hidden app is not an unclean exit.
+  onMount(() => onCleanup(installSessionActivity({
+    isMobile: isMobilePlatform,
+    setActive: (active) => void recordSessionActive(active),
+  })));
   let openCalendarJump = () => {};
   const topbarActions = {
     calendar: () => openCalendarJump(),
@@ -493,7 +548,11 @@ export function App(): JSX.Element {
       dismissTransient: () => dismissTopTransient("back"),
       dismissDrawer: () => dismissMobileDrawer("back"),
       restoreDrawerFocus: () => restoreDrawerFocus("back"),
-      historyBack: () => window.history.back(),
+      historyBack: () => {
+        if (!canGoBack()) return false;
+        goBack();
+        return true;
+      },
       closeRoot: () => { void closeAndroidRootSafely(); },
       // No JS listener means the inspected AppPlugin retains its native WebView
       // history/activity fallback. Do not install a competing recovery owner.
@@ -1042,7 +1101,7 @@ export function App(): JSX.Element {
               </Show>
             </button>
             <button
-              class="icon-btn topbar-optional-action"
+              class="icon-btn topbar-sidebar-action"
               classList={{ active: rightSidebarOpen() }}
               title="Toggle right sidebar (t r)"
               onClick={(event) => topbarActions.rightSidebar(event.currentTarget)}

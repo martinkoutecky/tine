@@ -161,15 +161,15 @@ export function setTypographyMode(m: TypographyMode) {
   bumpGraphEpoch(); // re-render open pages so the change is immediate
 }
 
-// --- editor auto-pairing (a Tine convenience, OFF by default): typing `(`/`[`/
+// --- editor auto-pairing (ON by default, OG parity, GH #291): typing `(`/`[`/
 // `{`/`"`/backtick inserts the matching closer (caret between), wraps a selection,
 // types-through a closer, and Backspace deletes an empty pair. The always-on
 // OG-style `[[`→`[[]]` page-ref pairing is separate (autoPairEdit) and unaffected.
-// Local editor pref, persisted like the others. ---
+// Local editor pref: only an explicit opt-out is stored ("0"). ---
 const AUTOPAIR_KEY = "logseq-claude.autopair";
-export const [autoPairing, setAutoPairingSig] = createSignal(loadStr(AUTOPAIR_KEY) === "1");
+export const [autoPairing, setAutoPairingSig] = createSignal(loadStr(AUTOPAIR_KEY) !== "0");
 export function setAutoPairing(v: boolean) {
-  if (!saveStr(AUTOPAIR_KEY, v ? "1" : null)) return;
+  if (!saveStr(AUTOPAIR_KEY, v ? null : "0")) return;
   setAutoPairingSig(v);
 }
 
@@ -1333,7 +1333,7 @@ export function requestBlockReferences(id: string) {
   setBlockReferencesRequest({ id, token: ++blockReferencesRequestToken });
 }
 
-export type SettingsTabId = "appearance" | "editor" | "journals" | "files" | "backups" | "graph" | "plugins" | "improve" | "shortcuts" | "about";
+export type SettingsTabId = "appearance" | "editor" | "journals" | "files" | "backups" | "graph" | "plugins" | "diagnostics" | "shortcuts" | "about";
 
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 

@@ -35,8 +35,8 @@ import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallb
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
-import { resolveBlockBatched } from "../resolveBatch";
-import { setRaw, formatForPage, formatForBlock, blockRef, node as docNode } from "../document";
+import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
+import { setRaw, formatForPage, formatForBlock, node as docNode } from "../document";
 import { PaneContext, focusedPaneId, openRouteInOtherPane, openPdf } from "../panes";
 import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
@@ -258,7 +258,10 @@ function createPeekBridge(disabled: () => boolean) {
       closeT = undefined;
     }
   };
-  const anchorEnter = () => {
+  const anchorEnter = (event: PointerEvent) => {
+    // Touch WebViews synthesize mouse hover around a hold. Only a real mouse
+    // may arm a hover preview; hybrid devices keep their mouse behavior.
+    if (event.pointerType !== "mouse") { dismiss(); return; }
     if (disabled()) return;
     clearClose();
     clearOpen();
@@ -333,8 +336,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         // selected as a side effect (GH #42).
         onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
         onClick={open}
-        onMouseEnter={peek.anchorEnter}
-        onMouseLeave={peek.anchorLeave}
+        onPointerEnter={peek.anchorEnter}
+        onPointerLeave={peek.anchorLeave}
         onAuxClick={(e) => {
           if (e.button === 1) {
             e.preventDefault();
@@ -462,7 +465,14 @@ function renderLink(
         class="external-link"
         href={unsafeHref ? undefined : dest}
         {...(spanAttrs ?? {})}
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); if (!unsafeHref) void backend().openExternal(dest); }}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (unsafeHref) return;
+          const rel = assetLinkRel(dest);
+          if (rel !== null) void backend().openAsset(rel, backend().graphBindingGeneration());
+          else void backend().openExternal(dest);
+        }}
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
       </a>
@@ -657,6 +667,24 @@ function assetRelPath(url: string): string | null {
   const normalized = url.replace(/\\/g, "/");
   const i = normalized.toLowerCase().indexOf("assets/");
   return i === -1 ? null : normalized.slice(i + "assets/".length);
+}
+
+// A clicked link into `assets/` (file, nested directory, or the assets root)
+// decoded for the OS opener (GH #367); the root is "" (`[p](./assets/)` or bare
+// `./assets`). Null for anything else: a scheme URL such as
+// `https://host/assets/x` stays on the external route. Trailing slashes are
+// dropped so `./assets/dir/` names `dir`. The backend re-validates the name.
+function assetLinkRel(dest: string): string | null {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(dest)) return null;
+  const normalized = dest.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (/(^|\/)assets$/i.test(normalized)) return "";
+  const rel = assetRelPath(normalized);
+  if (rel === null) return null;
+  try {
+    return decodeURIComponent(rel);
+  } catch {
+    return rel;
+  }
 }
 
 // The width `%` CSS resolves against is the nearest BLOCK-level ancestor's
@@ -1245,14 +1273,12 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           : "Click to go to the block; shift-click → sidebar; right-click for more"}
         // Suppress native shift-range-selection when shift+click opens the sidebar (GH #42).
         onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
-        onMouseEnter={peek.anchorEnter}
-        onMouseLeave={peek.anchorLeave}
+        onPointerEnter={peek.anchorEnter}
+        onPointerLeave={peek.anchorLeave}
         onContextMenu={(e) => {
           const g = grp();
           if (!g) return; // missing target → let the default menu through
-          const ref = docNode(props.id)
-            ? blockRef(props.id)
-            : { uuid: props.id, page: g.page, pageKind: g.kind };
+          const ref = blockRefTarget(props.id, g);
           if (!shouldOpenTextContextMenu(e.target)) return;
           e.preventDefault();
           e.stopPropagation();
@@ -1262,9 +1288,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           e.stopPropagation();
           const g = grp();
           if (!g) return;
-          const ref = docNode(props.id)
-            ? blockRef(props.id)
-            : { uuid: props.id, page: g.page, pageKind: g.kind };
+          const ref = blockRefTarget(props.id, g);
           const ann = annotation();
           // OG opens a referenced PDF annotation at its source page. Modifier
           // clicks retain Tine's existing pane/sidebar navigation semantics.

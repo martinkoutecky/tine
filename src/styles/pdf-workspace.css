@@ -629,7 +629,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  box-sizing: border-box;
+  padding: calc(var(--overlay-inset-top) + 24px)
+    calc(var(--overlay-inset-right) + 24px)
+    calc(var(--overlay-inset-bottom) + 24px)
+    calc(var(--overlay-inset-left) + 24px);
   background: var(--bg-primary);
   overflow: auto;
 }

@@ -767,6 +767,45 @@ describe("zoomed block view", () => {
     }
   });
 
+  it("zooms to the unique authored ID rather than a sibling's matching runtime locator (GH #373)", async () => {
+    const claimed = "12345678-1234-8234-8234-123456789abc";
+    const intendedRuntime = "87654321-4321-8321-8321-cba987654321";
+    const pageName = "Preserved zoom identity";
+    const path = "pages/Preserved zoom identity.md";
+    setDoc({
+      byId: {
+        [claimed]: node(claimed, "Wrong structural sibling", pageName),
+        [intendedRuntime]: node(intendedRuntime, `Intended preserved block\nid:: ${claimed}`, pageName),
+      },
+      pages: [{ ...page(pageName, "page", [claimed, intendedRuntime]), id: path }],
+      feed: [],
+      loaded: true,
+    });
+    // og's routed-page door re-reads the path owner (master reuses the loaded
+    // one); serve the same blocks so the assertion stays on identity.
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue({
+      name: pageName, kind: "page", title: pageName, pre_block: null, id: path,
+      blocks: [
+        { id: claimed, raw: "Wrong structural sibling", collapsed: false, children: [] },
+        { id: intendedRuntime, raw: `Intended preserved block\nid:: ${claimed}`, collapsed: false, children: [] },
+      ],
+    });
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name: pageName, pageKind: "page", path, block: claimed });
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      expect(root.querySelector(".zoomed-page")).not.toBeNull();
+      expect(root.querySelector(`[data-block-id="${intendedRuntime}"]`)).not.toBeNull();
+      expect(root.querySelector(`[data-block-id="${claimed}"]`)).toBeNull();
+      expect(root.textContent).toContain("Intended preserved block");
+      expect(root.textContent).not.toContain("Wrong structural sibling");
+    } finally {
+      dispose();
+    }
+  });
+
   it("reveals a collapsed root's children without changing its stored collapse state", async () => {
     const parent = "11111111-1111-4111-8111-111111111111";
     const child = "22222222-2222-4222-8222-222222222222";
@@ -1323,6 +1362,38 @@ describe("page actions entry point", () => {
 });
 
 describe("page route loading", () => {
+  it("keeps a visible readiness status while the requested page is still loading", async () => {
+    // master 51185bbe3 (GH #299): the loading fallback was an empty box.
+    const dto: PageRead = {
+      id: "pages/Patient page.md",
+      name: "Patient page",
+      kind: "page",
+      title: "Patient page",
+      pre_block: null,
+      blocks: [{ id: "patient-page", raw: "Loaded body", collapsed: false, children: [] }],
+    };
+    let resolvePage!: (value: PageRead) => void;
+    vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => {
+      resolvePage = resolve;
+    }));
+    mainPaneRouter.openPage(dto.name, dto.kind, { inPlace: true });
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      const loading = root.querySelector<HTMLElement>(".page-loading");
+      expect(loading?.getAttribute("role")).toBe("status");
+      expect(loading?.getAttribute("aria-live")).toBe("polite");
+      expect(loading?.textContent).toContain("Loading page");
+
+      resolvePage(dto);
+      await vi.waitFor(() => expect(root.querySelector(".page-loading")).toBeNull());
+      expect(root.textContent).toContain("Loaded body");
+    } finally {
+      dispose();
+    }
+  });
+
   it("rekeys a pinned page route and Recent entry to the disk spelling", async () => {
     const dto: PageRead = {
       name: "contents", title: "contents", kind: "page", id: "pages/contents.md",
@@ -1782,6 +1853,70 @@ describe("Markdown preamble content", () => {
       expect(root.querySelector(`[data-block-id="${promoted}"] textarea`)).not.toBeNull();
     } finally {
       dispose();
+    }
+  });
+});
+
+describe("theme API 0.2 presentation on the journal title row", () => {
+  it("marks only today's journal and shows its compact task summary while the style theme selects it", async () => {
+    // master 1488588b8 / 670cf75bb (ADR 0059).
+    vi.stubGlobal("IntersectionObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const { applyTheme } = await import("../themeGallery");
+    const { installThemePackage, uninstallThemePackage } = await import("../themes/manager");
+    const { currentDayKey, localDateFromDayKey } = await import("../journal");
+    const todayDate = localDateFromDayKey(currentDayKey());
+    const today = journalTitle(todayDate);
+    const yesterday = journalTitle(new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate() - 1));
+    // The backend ships each block's marker facet (BlockDto); seed it as it would.
+    const todayDto = journalDto(today, "DOING Draft the summary");
+    todayDto.blocks[0].marker = "DOING";
+    const yesterdayDto = journalDto(yesterday, "TODO Older task");
+    yesterdayDto.blocks[0].marker = "TODO";
+    vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () => feedResponse([todayDto, yesterdayDto]));
+    const installed = await installThemePackage({
+      schemaVersion: 1,
+      id: "page.tine.theme.page-summary",
+      name: "Page summary",
+      version: "1.0.0",
+      apiVersion: "0.2",
+      description: "A bounded presentation fixture.",
+      author: "Tine",
+      license: "MIT",
+      source: "https://example.invalid/theme",
+      modes: { light: { "--ls-primary-background-color": "#fefefe" } },
+      presentation: { journalHeader: "editorial", todayTaskSummary: "compact" },
+      screenshots: [],
+    });
+    const mounted = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(mounted.root.textContent).toContain("Older task"));
+      const sections = () => Array.from(mounted.root.querySelectorAll<HTMLElement>(".page-section"));
+      const sectionFor = (name: string) => sections().find((section) =>
+        section.querySelector(".page-title")?.textContent?.includes(name))!;
+      expect(sectionFor(today).querySelector(".page-title-row.journal-today")).not.toBeNull();
+      expect(sectionFor(yesterday).querySelector(".journal-today")).toBeNull();
+      expect(mounted.root.querySelector(".today-task-summary")).toBeNull();
+
+      applyTheme(installed.key);
+      await tick();
+      const summary = sectionFor(today).querySelector(".today-task-summary");
+      expect(summary?.textContent).toBe("1 task today, 1 in progress");
+      expect(sectionFor(yesterday).querySelector(".today-task-summary")).toBeNull();
+      expect(sectionFor(today).querySelector(".page-title-main .page-title")).not.toBeNull();
+      expect(sectionFor(today).querySelector(".page-title-actions .fav-star")).not.toBeNull();
+
+      applyTheme("");
+      await tick();
+      expect(mounted.root.querySelector(".today-task-summary")).toBeNull();
+    } finally {
+      mounted.dispose();
+      applyTheme("");
+      await uninstallThemePackage(installed.key);
+      vi.unstubAllGlobals();
     }
   });
 });

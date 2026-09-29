@@ -12,8 +12,9 @@ icon:: 🧩
 	- Disable a plugin at any time without removing it. **Uninstall** removes only that app-local package version and never changes your graph or notes.
 	- Signed revocations are checked before saved plugins start. A revoked version stays disabled even when the live catalogue is temporarily unavailable.
 - ## Themes
-	- Token themes live under **Settings → Appearance → Themes**, separately from executable plugins. They contain validated color tokens rather than code.
-	- A selected token theme remains subordinate to your graph's `logseq/custom.css`, so your own CSS still wins.
+	- Declarative themes live under **Settings → Appearance → Themes**, separately from executable plugins. They contain validated colors and may select bounded Tine-owned presentation styles rather than running code: editorial reading type, a larger journal header, or a compact Today task count. They contain no scripts, selectors, imports, downloaded fonts, or remote assets, and no theme ever reads or writes your graph.
+	- A Today summary, when selected, is rendered by Tine from the journal page already on screen: it counts open task markers there and calls the `DOING`, `NOW`, `STARTED`, and `IN-PROGRESS` subset “in progress.” The theme receives neither those tasks nor a query interface.
+	- A selected theme remains subordinate to your graph's `logseq/custom.css`, so your own CSS still wins.
 - ## Create one yourself
 	- 1. Open **Settings → Plugins → Browse**.
 	- 2. Inspect a plugin's capabilities and safety report, then install it.

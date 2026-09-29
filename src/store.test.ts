@@ -5,9 +5,9 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
-import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, persistentBlockRef, resolveBlockRef } from "./document";
+import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, persistentBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
 import { reloadPage, forgetPage } from "./document/workingSet";
-import { setBlockMoving } from "./document/edits/moves";
+import { setBlockMoving, isBlockMoving } from "./document/edits/moves";
 import { loadSingle, reloadDisposition } from "./document/workingSet";
 import { trailingVisibleEmptyLeaf } from "./document/tree";
 import { pageToDto } from "./document/convert";
@@ -488,6 +488,26 @@ describe("outdent (Shift+Tab)", () => {
   });
 });
 
+describe("reparenting editor move ownership", () => {
+  it("retains an already active move on another page across indent and outdent", () => {
+    const first = blk("first");
+    const second = blk("second");
+    load([first, second]);
+    setBlockMoving(true, "Other page");
+    try {
+      indentBlock(second.id, 0);
+      expect(doc.byId[second.id].parent).toBe(first.id);
+      expect(isBlockMoving("Other page")).toBe(true);
+      expect(isBlockMoving("Test")).toBe(false);
+      outdentBlock(second.id, 0);
+      expect(doc.byId[second.id].parent).toBeNull();
+      expect(isBlockMoving("Other page")).toBe(true);
+    } finally {
+      setBlockMoving(false);
+    }
+  });
+});
+
 describe("move selection (mod+up/down in block-select)", () => {
   it("is a no-op at the top boundary (doesn't wrap the trailing blocks)", () => {
     const dto = load([blk("A"), blk("B"), blk("C")]);
@@ -635,6 +655,55 @@ describe("cross-day move (journal feed as one list)", () => {
     const res = await moveBlockFeed(today.blocks[0].id, -1);
     expect(res).toBe("none");
     expect(raws("Today")).toEqual(["t1"]);
+  });
+});
+
+describe("OG structural block move parity", () => {
+  it("moves a last child down into the next parent sibling and reverses upward", async () => {
+    const moving = blk("moving", [blk("moving child")]);
+    const first = blk("first", [blk("first child"), moving]);
+    const second = blk("second", [blk("second child")]);
+    load([first, second]);
+
+    await expect(moveBlockFeed(moving.id, 1)).resolves.toBe("within");
+    expect(doc.byId[first.id].children.map((id) => doc.byId[id].raw)).toEqual(["first child"]);
+    expect(doc.byId[second.id].children.map((id) => doc.byId[id].raw)).toEqual([
+      "moving",
+      "second child",
+    ]);
+    expect(doc.byId[moving.id].parent).toBe(second.id);
+    expect(doc.byId[moving.children[0].id].parent).toBe(moving.id);
+
+    await expect(moveBlockFeed(moving.id, -1)).resolves.toBe("within");
+    expect(doc.byId[first.id].children.map((id) => doc.byId[id].raw)).toEqual([
+      "first child",
+      "moving",
+    ]);
+    expect(doc.byId[second.id].children.map((id) => doc.byId[id].raw)).toEqual(["second child"]);
+    expect(doc.byId[moving.id].parent).toBe(first.id);
+  });
+
+  it("keeps ordinary sibling swaps and undo/redo atomic", async () => {
+    const parent = blk("parent", [blk("a"), blk("b"), blk("c")]);
+    load([parent]);
+    const b = parent.children[1].id;
+
+    await expect(moveBlockFeed(b, -1)).resolves.toBe("within");
+    expect(doc.byId[parent.id].children.map((id) => doc.byId[id].raw)).toEqual(["b", "a", "c"]);
+    undo();
+    expect(doc.byId[parent.id].children.map((id) => doc.byId[id].raw)).toEqual(["a", "b", "c"]);
+    redo();
+    expect(doc.byId[parent.id].children.map((id) => doc.byId[id].raw)).toEqual(["b", "a", "c"]);
+  });
+
+  it("does not cross above the first child when its parent has no previous sibling", async () => {
+    const child = blk("child");
+    const first = blk("first", [child]);
+    load([first, blk("second")]);
+
+    await expect(moveBlockFeed(child.id, -1)).resolves.toBe("none");
+    expect(doc.byId[child.id].parent).toBe(first.id);
+    expect(doc.byId[first.id].children).toEqual([child.id]);
   });
 });
 
@@ -837,6 +906,55 @@ describe("cross-page duplicate id::", () => {
       pageKind: "page",
       path: "pages/client-a/B.md",
     })).toBeNull();
+  });
+
+  it("prefers the unique authored Org id over a sibling runtime locator with the same UUID (GH #373)", () => {
+    const claimed = "12345678-1234-8234-8234-123456789abc";
+    const targetRuntime = "87654321-4321-8321-8321-cba987654321";
+    loadSingle({
+      name: "Org Identity", kind: "page", title: "Org Identity", pre_block: null, format: "org",
+      id: "pages/Org Identity.org",
+      blocks: [
+        { id: claimed, raw: "Wrong earlier heading", collapsed: false, children: [] },
+        { id: targetRuntime, raw: `Intended heading\n:PROPERTIES:\n:id: ${claimed}\n:END:`, collapsed: false, children: [] },
+      ],
+    });
+    expect(resolveBlockRef({ uuid: claimed, page: "Org Identity", pageKind: "page" })).toBe(targetRuntime);
+  });
+
+  it.each([
+    ["Markdown", "md" as const, (uuid: string) => `one\nid:: ${uuid}`],
+    ["Org", "org" as const, (uuid: string) => `one\n:PROPERTIES:\n:id: ${uuid}\n:END:`],
+  ])("fails closed for duplicate authored IDs within one %s page (GH #373)", (_label, format, raw) => {
+    const duplicate = "12345678-1234-4234-8234-123456789abc";
+    loadSingle({
+      name: "Duplicate", kind: "page", title: "Duplicate", pre_block: null, format,
+      blocks: [
+        { id: "runtime-one", raw: raw(duplicate), collapsed: false, children: [] },
+        { id: "runtime-two", raw: raw(duplicate).replace("one", "two"), collapsed: false, children: [] },
+      ],
+    });
+    expect(resolveBlockRef({ uuid: duplicate, page: "Duplicate", pageKind: "page" })).toBeNull();
+  });
+
+  it("keeps an ID-less runtime locator resolvable when no authored ID claims it (GH #373)", () => {
+    const runtime = "12345678-1234-8234-8234-123456789abc";
+    loadSingle({
+      name: "Runtime only", kind: "page", title: "Runtime only", pre_block: null,
+      blocks: [{ id: runtime, raw: "No authored id", collapsed: false, children: [] }],
+    });
+    expect(resolveBlockRef({ uuid: runtime, page: "Runtime only", pageKind: "page" })).toBe(runtime);
+  });
+
+  it("does not treat a runtime locator as a second identity after that block gains another authored ID (GH #373)", () => {
+    const runtime = "12345678-1234-8234-8234-123456789abc";
+    const authored = "87654321-4321-4321-8321-cba987654321";
+    loadSingle({
+      name: "Authored identity wins", kind: "page", title: "Authored identity wins", pre_block: null,
+      blocks: [{ id: runtime, raw: `Only one external identity\nid:: ${authored}`, collapsed: false, children: [] }],
+    });
+    expect(resolveBlockRef({ uuid: runtime, page: "Authored identity wins", pageKind: "page" })).toBeNull();
+    expect(resolveBlockRef({ uuid: authored, page: "Authored identity wins", pageKind: "page" })).toBe(runtime);
   });
 });
 
@@ -1244,6 +1362,56 @@ describe("merge (Backspace at 0)", () => {
     const after = pageByName("·capture·")!;
     expect(after.roots.length).toBe(1);
     expect(doc.byId[after.roots[0]].raw).toBe("firstsecond");
+  });
+});
+
+describe("merge forward (Delete at end)", () => {
+  it("merges the next visible block in, caret at the join point in the current block", () => {
+    const dto = load([blk("foo"), blk("bar")]);
+    const foo = dto.blocks[0].id;
+    const ok = mergeWithNext(foo);
+    expect(ok).toBe(true);
+    expect(shape()).toEqual([["foobar"]]);
+    expect(editingId()).toBe(foo);
+    expect(takeCaretFor(foo)).toBe(3);
+  });
+
+  it("represents the absorbed next block's children under the survivor", () => {
+    const dto = load([blk("a"), blk("b", [blk("b1")])]);
+    const a = dto.blocks[0].id;
+    mergeWithNext(a);
+    expect(shape()).toEqual([["ab", [["b1"]]]]);
+  });
+
+  it("keeps the survivor's id:: and drops the absorbed next block's", () => {
+    const dto = load([
+      blk("foo\nid:: 11111111-1111-4111-8111-111111111111"),
+      blk("bar\nid:: 22222222-2222-4222-8222-222222222222"),
+    ]);
+    const foo = dto.blocks[0].id;
+    mergeWithNext(foo);
+    expect(doc.byId[foo].raw).toBe("foobar\nid:: 11111111-1111-4111-8111-111111111111");
+  });
+
+  it("adopts the absorbed next block's id:: when the survivor has none", () => {
+    const dto = load([blk("foo"), blk("bar\nid:: 22222222-2222-4222-8222-222222222222")]);
+    const foo = dto.blocks[0].id;
+    mergeWithNext(foo);
+    expect(doc.byId[foo].raw).toBe("foobar\nid:: 22222222-2222-4222-8222-222222222222");
+  });
+
+  it("last block cannot merge forward", () => {
+    const dto = load([blk("only")]);
+    expect(mergeWithNext(dto.blocks[0].id)).toBe(false);
+  });
+
+  it("one undo restores both blocks and the original text", () => {
+    const dto = load([blk("foo"), blk("bar")]);
+    const foo = dto.blocks[0].id;
+    mergeWithNext(foo);
+    expect(shape()).toEqual([["foobar"]]);
+    undo();
+    expect(shape()).toEqual([["foo"], ["bar"]]);
   });
 });
 
@@ -1835,6 +2003,44 @@ describe("save engine (persistence)", () => {
     expect(doc.byId[storeKey].raw).toBe(`Fresh target\nid:: ${uuid}`);
     expect(await ensureBlockId(storeKey)).toBe(uuid);
     expect(doc.byId[storeKey].raw.match(/(?:^|\n)id::/g)).toHaveLength(1);
+  });
+
+  it("never persists a UUID-shaped runtime locator as a fresh block's external identity (GH #373)", async () => {
+    const runtime = "12345678-1234-8234-8234-123456789abc";
+    const external = "87654321-4321-4321-8321-cba987654321";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(external);
+    load([{ id: runtime, raw: "Fresh deterministic runtime target", collapsed: false, children: [] }]);
+
+    const ref = await persistentBlockRef(runtime);
+
+    expect(ref?.uuid).toBe(external);
+    expect(doc.byId[runtime].raw).toBe(`Fresh deterministic runtime target\nid:: ${external}`);
+  });
+
+  it("mints the same fresh external identity boundary for a UUID-shaped Org runtime locator (GH #373)", async () => {
+    const runtime = "12345678-1234-8234-8234-123456789abc";
+    const external = "87654321-4321-4321-8321-cba987654321";
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(external);
+    loadSingle({
+      name: "Org target", kind: "page", title: "Org target", pre_block: null, format: "org",
+      blocks: [{ id: runtime, raw: "Fresh Org runtime target", collapsed: false, children: [] }],
+    });
+
+    const ref = await persistentBlockRef(runtime);
+
+    expect(ref?.uuid).toBe(external);
+    expect(doc.byId[runtime].raw).toBe(`Fresh Org runtime target\n:PROPERTIES:\n:id: ${external}\n:END:`);
+  });
+
+  it("preserves the exact external ID of an already-committed block reference (GH #373)", async () => {
+    const committed = "12345678-1234-8234-8234-123456789abc";
+    const random = vi.spyOn(crypto, "randomUUID").mockReturnValue("87654321-4321-4321-8321-cba987654321");
+    load([{ id: committed, raw: "Already referenced target", collapsed: false, children: [] }]);
+
+    expect(await persistBlockRefTarget(committed, "Test", "page")).toBe(true);
+
+    expect(doc.byId[committed].raw).toBe(`Already referenced target\nid:: ${committed}`);
+    expect(random).not.toHaveBeenCalled();
   });
 
   it("derives a fresh Org journal's persistent identity from its format-aware drawer", async () => {

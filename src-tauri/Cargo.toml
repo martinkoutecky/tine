@@ -60,6 +60,14 @@ tauri-plugin-opener = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
+# Windows uses Schannel through native-tls: the default rustls transport does
+# not inherit every Windows network/certificate policy and failed before
+# fetching latest.json on an otherwise-online Windows 11 system (GH #241).
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }
+# The updater disables Reqwest defaults; opt back into Reqwest's Windows
+# system-proxy reader so it follows the same route as WebView2 and the browser
+# instead of consulting only proxy environment variables (GH #241).
+reqwest = { version = "0.13", default-features = false, features = ["system-proxy"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-window-state = "2"
@@ -70,6 +78,12 @@ clipboard-rs = { version = "0.3.5", default-features = false }
 # In-app self-update (Win/Linux; macOS stays manual — unsigned). The updater
 # verifies each artifact against `plugins.updater.pubkey` (minisign); process lets
 # the frontend relaunch after `downloadAndInstall()`. See docs/adr + release.yml.
+# The updater itself is declared per transport below; the guard test
+# `updater_transport_is_declared_for_every_desktop_target` (src/lib.rs) pins it.
+
+# Linux/macOS keep the established rustls transport. Mobile does not compile
+# or expose the updater.
+[target.'cfg(all(not(target_os = "android"), not(target_os = "ios"), not(target_os = "windows")))'.dependencies]
 tauri-plugin-updater = "2"
 
 # Linux/WebKitGTK only: enable the webview's native spell checker (enchant +

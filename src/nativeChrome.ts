@@ -27,21 +27,67 @@ declare global {
   // Set by Tauri before frontend code runs. Unlike the saved preference, this
   // describes the decorations actually applied to this process's windows.
   var __TINE_NATIVE_FRAME__: boolean | undefined;
+  // Set by Tauri before frontend code runs (src-tauri/src/lib.rs), from the
+  // build's own `app_platform()`. See platformKind below.
+  var __TINE_PLATFORM__: "android" | "ios" | "desktop" | undefined;
 }
 
+export type PlatformKind = "android" | "ios" | "desktop";
+
+// The user agent cannot answer "what am I running on". iPadOS 13+ serves a
+// desktop-class `Macintosh; Intel Mac OS X` UA from a stock WKWebView, so an
+// iPad both FAILED the mobile test and PASSED the Mac test and rendered as a
+// Mac desktop throughout (GH #446: no editing toolbar on iPad).
+//
+// So the build tells us instead. Rust injects `__TINE_PLATFORM__` from the same
+// `app_platform()` that answers the async backend command (platform.ts), before
+// any frontend code runs, which keeps this synchronous: a one-frame async
+// round-trip would flash desktop-only chrome.
+//
+// The UA branch is the fallback for contexts Tauri never initializes: the
+// browser dev server, the mock backend and unit tests.
+function detectPlatformKind(): PlatformKind {
+  const injected = typeof globalThis !== "undefined" ? globalThis.__TINE_PLATFORM__ : undefined;
+  if (injected === "android" || injected === "ios" || injected === "desktop") return injected;
+  const ua = typeof navigator !== "undefined" ? (navigator.userAgent ?? "") : "";
+  if (/Android/i.test(ua)) return "android";
+  if (/iPhone|iPad|iPod/i.test(ua)) return "ios";
+  return "desktop";
+}
+
+/** What the app runs on, decided by the build (UA only outside Tauri).
+ *  Evaluated once at module load; O(1). */
+export const platformKind: PlatformKind = detectPlatformKind();
+
+/** Android or iOS: a mobile OS that owns the window and drives touch input.
+ *  True on iPad too; ask `isSinglePaneShell()` for phone-shaped layout. */
+export const isMobilePlatform: boolean = platformKind !== "desktop";
+
 // macOS detection: WKWebView's UA contains "Macintosh"/"Mac OS X". navigator.platform
-// is deprecated but a reliable fallback. Evaluated once.
+// is deprecated but a reliable fallback. Evaluated once, and only on desktop,
+// because iPadOS reports both of those strings too.
 export const isMac: boolean =
+  platformKind === "desktop" &&
   typeof navigator !== "undefined" &&
   (/Mac/i.test(navigator.platform ?? "") || /Mac OS X|Macintosh/i.test(navigator.userAgent ?? ""));
 
-// Mobile (Android/iOS) detection: the Tauri WebView's UA carries the platform.
-// Evaluated once, same idiom as isMac above. The backend `app_platform` command
-// is the authoritative source for file-system logic (see platform.ts / graph.ts);
-// this synchronous UA constant is the instant client-side gate for layout/chrome,
-// where a one-frame async round-trip would flash desktop-only controls.
-export const isMobilePlatform: boolean =
-  typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent ?? "");
+/** Tablet-or-larger: the shorter viewport edge has room for two documents
+ *  side by side. iPad mini portrait is 744pt across; every iPhone in either
+ *  orientation is at most 430pt. Reads the current viewport; O(1). */
+export function isTabletViewport(
+  width = typeof window === "undefined" ? 0 : window.innerWidth,
+  height = typeof window === "undefined" ? 0 : window.innerHeight,
+): boolean {
+  return Math.min(width, height) >= 700;
+}
+
+/** Does this device present the single-pane mobile shell (no split panes,
+ *  PDFs open in place, no restored multi-pane layout)? A mobile OS on a
+ *  phone-shaped viewport. Split panes need screen room and a precise pointer,
+ *  which a tablet has, so an iPad keeps them (GH #446). O(1). */
+export function isSinglePaneShell(): boolean {
+  return isMobilePlatform && !isTabletViewport();
+}
 
 // Linux/Windows user preference: use the OS-native window frame instead of our
 // custom frameless chrome.

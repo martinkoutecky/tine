@@ -179,6 +179,28 @@ fn refreshed_view(store: &Store) -> io::Result<tine_store::WholeGraph> {
     view(store)
 }
 
+/// Whether a page FILENAME in the pages area that the view does not admit (a
+/// non-portable legacy name such as `pages/A:B.md`, written by OG on
+/// Linux/macOS) decodes to `name` (`refs::same_page`). Filename evidence only;
+/// no content is read. Unlistable entries are skipped rather than refusing
+/// (missing one yields at worst a duplicate-identity file, never data loss).
+/// Cost O(files under pages/). Master 46a0e8c27.
+fn retained_legacy_page_identity_exists(store: &Store, name: &str) -> io::Result<bool> {
+    let format = store.config().file_name_format;
+    let listing = store.scan_area(Area::Pages, None).map_err(store_error)?;
+    Ok(listing.files.iter().any(|file| {
+        let path = std::path::Path::new(&file.rel);
+        file.page.is_none()
+            && tine_store::is_graph_text(&file.id)
+            && path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| {
+                    refs::same_page(&tine_core::model::decode_page_name(stem, format), name)
+                })
+    }))
+}
+
 fn existing(target: Resolved) -> Vec<PageId> {
     match target {
         Resolved::Existing { id, mut others } => {
@@ -733,7 +755,12 @@ pub fn rename_file_to_page(store: &Store, src_rel: &str, new_name: &str) -> io::
     );
     let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
     crate::retry_on_conflict("page changed repeatedly during rescue", || {
-        if !existing(refreshed_view(store)?.resolve(name, false)).is_empty() {
+        // A retained non-portable legacy filename (`pages/A:B.md`) is not a view
+        // claimant but OG loads it as that page: refuse like a live claimant
+        // (external-editor / multi-device graph; master 46a0e8c27).
+        if !existing(refreshed_view(store)?.resolve(name, false)).is_empty()
+            || retained_legacy_page_identity_exists(store, name)?
+        {
             return Err(error(
                 io::ErrorKind::AlreadyExists,
                 "a page with that name already exists",

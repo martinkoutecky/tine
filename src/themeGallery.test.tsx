@@ -1,10 +1,16 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { backend } from "./backend";
 import { CUSTOM_CSS_STYLE_ID, LS_SHIM_STYLE_ID } from "./lsShim";
 import {
   THEME_GALLERY_STYLE_ID,
   applyTheme,
+  applyThemeColors,
+  applyThemeStyle,
   ensureThemeStyle,
   selectedGalleryTheme,
+  selectedThemeColors,
+  selectedThemePresentation,
+  selectedThemeStyle,
   initThemeGallery,
 } from "./themeGallery";
 import {
@@ -85,6 +91,79 @@ describe("theme gallery style layer", () => {
     applyTheme("");
   });
 
+  it("applies and clears API 0.2 host-owned presentation attributes", async () => {
+    const installed = await installThemePackage({
+      schemaVersion: 1,
+      id: "page.tine.theme.editorial",
+      name: "Editorial",
+      version: "1.0.0",
+      apiVersion: "0.2",
+      description: "A bounded presentation test.",
+      author: "Tine",
+      license: "MIT",
+      source: "https://example.invalid/theme",
+      modes: { light: { "--ls-primary-background-color": "#fefefe" } },
+      presentation: {
+        contentTypography: "editorial-serif",
+        journalHeader: "editorial",
+        todayTaskSummary: "compact",
+      },
+      screenshots: [],
+    });
+
+    applyTheme(installed.key);
+
+    expect(selectedThemeStyle()).toBe(installed.key);
+    expect(selectedThemeColors()).toBe(installed.key);
+    expect(selectedThemePresentation()).toEqual(installed.manifest.presentation);
+    expect(document.documentElement.getAttribute("data-theme-content-typography")).toBe("editorial-serif");
+    expect(document.documentElement.getAttribute("data-theme-journal-header")).toBe("editorial");
+    expect(document.documentElement.getAttribute("data-theme-today-task-summary")).toBe("compact");
+
+    applyTheme("");
+    expect(selectedThemePresentation()).toEqual({});
+    expect(document.documentElement.hasAttribute("data-theme-content-typography")).toBe(false);
+    expect(document.documentElement.hasAttribute("data-theme-journal-header")).toBe(false);
+    expect(document.documentElement.hasAttribute("data-theme-today-task-summary")).toBe(false);
+    await uninstallThemePackage(installed.key);
+  });
+
+  it("composes an installed presentation with an independent bundled palette", async () => {
+    const installed = await installThemePackage({
+      schemaVersion: 1,
+      id: "page.tine.theme.composed",
+      name: "Composed editorial",
+      version: "1.0.0",
+      apiVersion: "0.2",
+      description: "A bounded composition test.",
+      author: "Tine",
+      license: "MIT",
+      source: "https://example.invalid/theme",
+      modes: { light: { "--ls-primary-background-color": "#fefefe" } },
+      presentation: {
+        contentTypography: "editorial-serif",
+        journalHeader: "editorial",
+      },
+      screenshots: [],
+    });
+
+    applyTheme(installed.key);
+    expect(document.getElementById(THEME_GALLERY_STYLE_ID)?.textContent).toContain("#fefefe");
+    applyThemeColors("gruvbox");
+
+    expect(selectedThemeStyle()).toBe(installed.key);
+    expect(selectedThemeColors()).toBe("gruvbox");
+    expect(document.documentElement.getAttribute("data-theme-content-typography")).toBe("editorial-serif");
+    expect(document.getElementById(THEME_GALLERY_STYLE_ID)?.textContent).not.toContain("#fefefe");
+
+    applyThemeStyle("");
+    expect(selectedThemeColors()).toBe("gruvbox");
+    expect(document.documentElement.hasAttribute("data-theme-content-typography")).toBe(false);
+    await uninstallThemePackage(installed.key);
+    applyTheme("");
+  });
+
+
   it("refuses to apply or reinstall a theme version revoked by the signed registry", async () => {
     const manifest = {
       schemaVersion: 1 as const,
@@ -133,5 +212,28 @@ describe("theme gallery style layer", () => {
     expect(selectedGalleryTheme()).toBe("");
     expect(document.getElementById(THEME_GALLERY_STYLE_ID)?.textContent).toBe("");
     await uninstallThemePackage(installed.key);
+  });
+
+  it("migrates the previous single theme setting into style and colors", async () => {
+    const get = vi.spyOn(backend(), "getAppString").mockImplementation(async (key, fallback) => {
+      if (key === "theme.composition.v1") return "";
+      if (key === "theme.gallery") return "nord";
+      return fallback;
+    });
+
+    await initThemeGallery();
+
+    expect(selectedThemeStyle()).toBe("");
+    expect(selectedThemeColors()).toBe("nord");
+    get.mockRestore();
+  });
+
+  it("persists the selection as one theme.composition.v1 record", async () => {
+    const set = vi.spyOn(backend(), "setAppString");
+    applyThemeColors("nord");
+    await vi.waitFor(() => expect(set).toHaveBeenCalledWith(
+      "theme.composition.v1", JSON.stringify({ style: "", colors: "nord" })));
+    expect(set.mock.calls.some(([key]) => key === "theme.gallery")).toBe(false);
+    set.mockRestore();
   });
 });

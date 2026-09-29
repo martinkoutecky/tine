@@ -31,6 +31,9 @@ fn debug_log_path() -> PathBuf {
 /// debug mode is off. Safe to call repeatedly.
 pub(crate) fn debug_init() {
     DEBUG_START.get_or_init(std::time::Instant::now);
+    // Crate lines already went to stderr; this adds them to the file, which is
+    // what a Windows reporter can actually send (GH #594).
+    tine_core::diag_line::set_diagnostic_line_sink(write_debug);
     DEBUG_LOG.get_or_init(|| {
         if !debug_enabled() {
             return None;
@@ -116,6 +119,7 @@ pub(crate) fn install_panic_logger() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
     std::panic::set_hook(Box::new(move |info| {
+        crate::flight::record_panic(info);
         let location = info
             .location()
             .map(|location| {
@@ -213,17 +217,24 @@ pub(crate) fn debug_log(line: String) {
 }
 
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct DebugInfo {
     enabled: bool,
     path: String,
+    recorder_active: bool,
+    previous_exit_unclean: bool,
 }
 
 /// Lets the frontend learn whether debug mode is on (so it can wire up its error
-/// forwarding) and where the log lives (to surface the path to the user).
+/// forwarding), where the log lives (to surface the path to the user), and
+/// whether the persisted flight recorder saw the previous run end uncleanly.
 #[tauri::command]
 pub(crate) fn debug_info() -> DebugInfo {
+    let (recorder_active, previous_exit_unclean) = crate::flight::persisted_state();
     DebugInfo {
         enabled: debug_enabled(),
         path: debug_log_path().display().to_string(),
+        recorder_active,
+        previous_exit_unclean,
     }
 }

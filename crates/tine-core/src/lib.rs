@@ -7,6 +7,7 @@ pub mod concord_queue;
 pub mod config;
 pub mod corpus;
 pub mod date;
+pub mod diag_line;
 pub mod doc;
 pub mod edn;
 pub mod guide;

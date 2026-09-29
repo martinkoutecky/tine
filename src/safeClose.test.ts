@@ -28,6 +28,37 @@ function harness(overrides: Partial<SafeCloseDeps> = {}) {
 }
 
 describe("GH #161 shared safe-close transaction", () => {
+  it("records a discard only when the user accepts losing work, and a failing record never blocks the close (GH #540)", async () => {
+    const declined = harness({ flushAll: vi.fn(async () => false), confirmDiscard: vi.fn(async () => false), recordDiscard: vi.fn(async () => {}) });
+    await expect(declined.safeClose.prepare()).resolves.toBe("rejected");
+    expect(declined.deps.recordDiscard).not.toHaveBeenCalled();
+
+    const accepted = harness({
+      flushAll: vi.fn(async () => false),
+      confirmDiscard: vi.fn(async () => true),
+      recordDiscard: vi.fn(async () => { throw new Error("backend gone"); }),
+    });
+    await expect(accepted.safeClose.prepare()).resolves.toBe("accepted");
+    expect(accepted.deps.recordDiscard).toHaveBeenCalledExactlyOnceWith("failed");
+    expect(accepted.deps.flushSession).toHaveBeenCalledOnce();
+
+    const saved = harness({ recordDiscard: vi.fn(async () => {}) });
+    await expect(saved.safeClose.prepare()).resolves.toBe("accepted");
+    expect(saved.deps.recordDiscard).not.toHaveBeenCalled();
+  });
+
+  it("records still-saving when the page flush is still running at its bound (GH #540)", async () => {
+    const stuck = harness({
+      flushAll: vi.fn(() => new Promise<boolean>(() => {})),
+      confirmDiscard: vi.fn(async () => true),
+      recordDiscard: vi.fn(async () => {}),
+      runBounded: (operation, timeoutMs, fallback) =>
+        timeoutMs === 4000 && fallback !== false ? Promise.resolve(fallback) : operation,
+    });
+    await expect(stuck.safeClose.prepare()).resolves.toBe("accepted");
+    expect(stuck.deps.recordDiscard).toHaveBeenCalledExactlyOnceWith("still-saving");
+  });
+
   it("does not accept a retired close after reset starts a new transaction", async () => {
     const oldDrain = deferred<boolean>();
     const flushPdfWork = vi.fn()

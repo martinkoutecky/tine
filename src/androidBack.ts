@@ -9,20 +9,39 @@ export interface AndroidBackListener {
   unregister(): Promise<void> | void;
 }
 
+type AndroidProcessApi = { exit(code?: number): Promise<void> };
+
+/** Exit only after the safe-close coordinator has made graph state durable.
+ * Tauri exposes Activity/process exit through plugin-process (capability
+ * `process:allow-exit`); plugin:app has no exit command on the Rust side, so
+ * `invoke("plugin:app|exit")` never closed the app (master cb7a10fd3). */
+export async function exitAndroidActivity(
+  loadProcess: () => Promise<AndroidProcessApi> = () => import("@tauri-apps/plugin-process"),
+): Promise<void> {
+  const { exit } = await loadProcess();
+  await exit(0);
+}
+
 export interface AndroidBackDispatchDeps {
   dismissTransient(): boolean;
   dismissDrawer(): boolean;
   restoreDrawerFocus(): void;
-  historyBack(): void;
+  /** Whether Tine actually went back. The WebView's own `canGoBack` cannot
+   * answer this: the mobile router pushes same-URL entries, so its history
+   * moves without the address or the entry count changing, and entries that
+   * are not Tine's can sit in the same stack. Only the router knows. */
+  historyBack(): boolean;
   closeRoot(): void;
 }
 
 export type AndroidBackDisposition = "transient" | "drawer" | "history" | "root";
 
 /** Synchronous ordering matters: a hardware Back gesture selects exactly one
- * rung and never synthesizes a KeyboardEvent or a second router back action. */
+ * rung and never synthesizes a KeyboardEvent or a second router back action.
+ * The history rung is taken iff the router moved (master 07cb27262); the
+ * native `canGoBack` payload is not consulted. */
 export function dispatchAndroidBack(
-  payload: AndroidBackPayload,
+  _payload: AndroidBackPayload,
   deps: AndroidBackDispatchDeps,
 ): AndroidBackDisposition {
   if (deps.dismissTransient()) return "transient";
@@ -30,10 +49,9 @@ export function dispatchAndroidBack(
     deps.restoreDrawerFocus();
     return "drawer";
   }
-  if (payload.canGoBack) {
-    deps.historyBack();
-    return "history";
-  }
+  // `canGoBack` was true on a phone whose router had nothing to pop, so Back
+  // landed on the history rung and silently did nothing, forever.
+  if (deps.historyBack()) return "history";
   deps.closeRoot();
   return "root";
 }
@@ -45,7 +63,7 @@ export interface AndroidBackInstallDeps extends AndroidBackDispatchDeps {
 }
 
 /** On Android, register one AppPlugin Back listener for this installation.
- * Dispatch dismisses a transient, then a drawer, then WebView history, then
+ * Dispatch dismisses a transient, then a drawer, then router history, then
  * requests root close. Other platforms install nothing. Setup failures call
  * setupFailed when supplied and do not reject through the returned cleanup
  * function. Cleanup unregisters an installed listener; dispatch is O(1). */

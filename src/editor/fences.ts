@@ -29,6 +29,74 @@ export function transitionFence(state: FenceState | null, line: string): FenceTr
   return { opens: false, closes: false, next: state };
 }
 
+const MATH_DELIM = "$$";
+
+/** Advance display-math state across text known not to be inside a code fence.
+ * Every `$$` toggles, so `$$x$$` on one line opens and closes again (net
+ * outside) while a lone `$$` opens a multi-line environment. */
+function toggleDisplayMath(open: boolean, text: string): boolean {
+  let at = text.indexOf(MATH_DELIM);
+  while (at !== -1) {
+    open = !open;
+    at = text.indexOf(MATH_DELIM, at + MATH_DELIM.length);
+  }
+  return open;
+}
+
+/** Whether a caret offset sits inside an open `$$ … $$` display-math environment.
+ *
+ * This is a DELIBERATE DIVERGENCE FROM OG, not a parity fix (GH #278, Martin's
+ * call). OG's Enter dwim recognises only ``` and `#+BEGIN_`
+ * (`frontend/util/thingatpt.cljs` `admonition&src-at-point`), so pressing Enter
+ * inside `$$ … $$` splits the bullet and breaks the environment there too. A
+ * multi-line display-math block is one piece of content, so Tine keeps Enter
+ * inside it the way it does for a code fence.
+ *
+ * Confined to the editor's Enter decision on purpose: the parser, the bytes on
+ * disk, and property classification (`classifyLines`) are untouched, so nothing
+ * about how a block is stored or read changes. `$$` inside a code fence is
+ * literal text and opens nothing. */
+export function caretInDisplayMath(raw: string, offset: number): boolean {
+  const target = Math.max(0, Math.min(offset, raw.length));
+  let fence: FenceState | null = null;
+  let open = false;
+  let pos = 0;
+  while (pos <= raw.length) {
+    const nl = raw.indexOf("\n", pos);
+    const end = nl === -1 ? raw.length : nl;
+    const line = raw.slice(pos, end);
+    const transition = transitionFence(fence, line);
+    const insideFence = fence !== null || transition.opens;
+    if (target <= end) {
+      // Only what precedes the caret on its own line can change the state.
+      return insideFence ? false : toggleDisplayMath(open, line.slice(0, target - pos));
+    }
+    if (!insideFence) open = toggleDisplayMath(open, line);
+    fence = transition.next;
+    if (nl === -1) break;
+    pos = end + 1;
+  }
+  return open;
+}
+
+/** Display-math state after consuming `text` whole — for the double-Enter exit,
+ * which asks "was the environment open before this blank line?". */
+export function displayMathOpenAfter(text: string): boolean {
+  let fence: FenceState | null = null;
+  let open = false;
+  for (const line of text.split("\n")) {
+    const transition = transitionFence(fence, line);
+    if (fence === null && !transition.opens) open = toggleDisplayMath(open, line);
+    fence = transition.next;
+  }
+  return open;
+}
+
+/** Whether a line closes an open display-math environment. */
+export function closesDisplayMath(line: string): boolean {
+  return line.includes(MATH_DELIM);
+}
+
 /** Whether the caret is on an opening delimiter line after the delimiter run.
  * The delimiter line is outside `caretInFence` by design, but Enter/paste there
  * must continue the source block instead of splitting the outline (OG's

@@ -2,7 +2,7 @@
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
 
-import type { Backend, GpuEnv, DebugInfo, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
+import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
 import { mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
@@ -63,12 +63,12 @@ function planningOf(raw: string, tag: "SCHEDULED" | "DEADLINE"): string | undefi
   const m = new RegExp(`^${tag}:\\s*<([^>]+)>`, "m").exec(raw);
   return m?.[1];
 }
-function tagsOf(raw: string): string[] {
+/** Tags in `raw`: first-seen, case-insensitively deduped, `[#A]` excluded. No lookbehind: pre-16.4 WebKit (GH #256). */
+export function tagsOf(raw: string): string[] {
   const out: string[] = [];
-  // (?<!\[) keeps the [#A] priority token from leaking a fake #A tag.
-  const re = /#\[\[([^\]]+)\]\]|(?<!\[)#([\w/_.-]+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(raw))) {
+  const re = /#\[\[([^\]]+)\]\]|#([\w/_.-]+)/g;
+  for (let m: RegExpExecArray | null; (m = re.exec(raw)); ) {
+    if (m[2] !== undefined && m.index > 0 && raw[m.index - 1] === "[") continue;
     const tag = (m[1] ?? m[2]).trim();
     if (tag && !out.some((t) => t.toLowerCase() === tag.toLowerCase())) out.push(tag);
   }
@@ -119,6 +119,7 @@ function mockReferencedPageNames(pages: PageDto[]): string[] {
 let _id = 0;
 const nid = () => `mock-${_id++}`;
 const mockPlugins: InstalledPluginRecord[] = [];
+const mockDiagnostics: DiagnosticFrontendKind[] = [];
 const mockPluginEntries = new Map<string, Uint8Array>();
 let mockPluginRegistryCache: PluginRegistryCacheEnvelope | null = null;
 
@@ -795,29 +796,10 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
       if (mockPluginRegistryCache) {
         return { kind: "envelope" as const, envelope: { ...mockPluginRegistryCache } };
       }
-      const hasIndex = Object.prototype.hasOwnProperty.call(mockAppStrings, "plugin-registry-index");
-      const hasSignature = Object.prototype.hasOwnProperty.call(mockAppStrings, "plugin-registry-signature");
-      if (!hasIndex && !hasSignature) return { kind: "absent" as const };
-      if (!hasIndex || !hasSignature || !mockAppStrings["plugin-registry-index"] || !mockAppStrings["plugin-registry-signature"]?.trim()) {
-        return { kind: "unsafe" as const, reason: "legacy registry cache is torn" };
-      }
-      return {
-        kind: "legacy" as const,
-        indexJson: mockAppStrings["plugin-registry-index"],
-        signature: mockAppStrings["plugin-registry-signature"],
-      };
+      return { kind: "absent" as const };
     },
-    async storePluginRegistryCache(indexJson, signature, expectedLegacy) {
-      if (expectedLegacy && (
-        mockPluginRegistryCache !== null
-        || mockAppStrings["plugin-registry-index"] !== expectedLegacy.indexJson
-        || mockAppStrings["plugin-registry-signature"] !== expectedLegacy.signature
-      )) {
-        throw new Error("legacy registry cache changed during migration");
-      }
+    async storePluginRegistryCache(indexJson, signature) {
       mockPluginRegistryCache = { schemaVersion: 1, indexJson, signature: signature.trim() };
-      delete mockAppStrings["plugin-registry-index"];
-      delete mockAppStrings["plugin-registry-signature"];
     },
     async setSystemBarAppearance(): Promise<void> {},
     async quit(): Promise<void> {
@@ -1584,19 +1566,17 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
     async setAppString(key: string, value: string): Promise<void> {
       mockAppStrings[key] = value;
     },
-    async applySpellcheck(): Promise<void> {
-      /* no native webview in the mock */
-    },
-    async listSpellcheckDictionaries(): Promise<string[]> {
-      // A representative set so the picker renders in the browser mock / harness.
-      return ["cs_CZ", "de_DE", "en_GB", "en_US", "fr_FR", "sk_SK"];
-    },
-    async debugInfo(): Promise<DebugInfo> {
-      return { enabled: false, path: "" };
-    },
-    async debugLog(_line: string): Promise<void> {
-      // no-op in the browser mock
-    },
+    async applySpellcheck(): Promise<void> { /* no native webview in the mock */ },
+    // A representative set so the picker renders in the browser mock / harness.
+    async listSpellcheckDictionaries(): Promise<string[]> { return ["cs_CZ", "de_DE", "en_GB", "en_US", "fr_FR", "sk_SK"]; },
+    async debugInfo(): Promise<DebugInfo> { return { enabled: false, path: "", recorderActive: false, previousExitUnclean: false }; },
+    async debugLog(_line: string): Promise<void> { /* no-op in the browser mock */ },
+    async diagnosticReport(): Promise<DiagnosticReport> { return { text: JSON.stringify({ schemaVersion: 1, sessions: { current: mockDiagnostics.map((kind) => ({ event: "frontend", kind })) } }, null, 2), suggestedFileName: "tine-diagnostics.json" }; },
+    async saveDiagnosticReport(): Promise<boolean> { return false; },
+    async clearDiagnostics(): Promise<void> { mockDiagnostics.length = 0; },
+    async diagnosticSessionActive(): Promise<void> { /* no session marker in the mock */ },
+    async diagnosticFrontendEvent(kind: DiagnosticFrontendKind): Promise<void> { mockDiagnostics.push(kind); },
+    async appArchitecture(): Promise<string> { return "x86_64"; },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },

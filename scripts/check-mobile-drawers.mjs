@@ -27,6 +27,7 @@ const productionInputs = [
   "src/ui.ts",
   "src/styles/theme.css",
   "src/styles/app.css",
+  "src/styles/topbar.css",
 ];
 
 function assert(condition, message, details) {
@@ -77,6 +78,7 @@ const entrySource = String.raw`
   } from "/src/ui.ts";
   import "/src/styles/theme.css";
   import "/src/styles/app.css";
+  import "/src/styles/topbar.css";
 
   const observations = {
     underActivations: { left: 0, right: 0 },

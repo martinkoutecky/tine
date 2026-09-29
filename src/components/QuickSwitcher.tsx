@@ -459,8 +459,12 @@ export function QuickSwitcher(): JSX.Element {
       e.preventDefault();
       const it = flat()[sel()];
       if (it) {
+        // GH #463: the keyboard ladder mirrors the row's mousedown ladder;
+        // Ctrl/Cmd+Enter opens a background tab and keeps Search open.
         const shiftOnly = e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+        const cmdCtrlOnly = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
         if (shiftOnly && !switcherEmbryo() && (it.t === "page" || it.t === "block")) void chooseSidebar(it);
+        else if (cmdCtrlOnly && (it.t === "page" || it.t === "block")) void openInBackground(it);
         else if (e.altKey && !switcherEmbryo()) void chooseOther(it);
         else void choose(it);
       }

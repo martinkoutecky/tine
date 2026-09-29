@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { isBuiltinHidden } from "../editor/properties";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
-import { editorOffsetFromRenderedRange } from "./spans";
+import { clickBeyondRenderedEnd, editorOffsetFromRenderedRange } from "./spans";
 import { PaneContext } from "../panes";
 import { createPaneRouter } from "../router";
 
@@ -99,6 +99,92 @@ describe("click-to-caret span mapping", () => {
         .toBe(raw.indexOf("[[xyz]]"));
     } finally {
       dispose();
+    }
+  });
+
+  // GH #465. This is the case that forced the geometric rule: unlike the
+  // trailing link above, the span map here answers, and answers plausibly, so
+  // no "mapping failed" fallback can rescue it. The block ends `…italics.*` and
+  // the caret lands on byte 22, one before the closing delimiter.
+  it("maps the end of trailing italic text to a spot BEFORE the invisible `*`", () => {
+    const raw = "*some text in italics.*";
+    const { root, dispose } = mountedBody(raw);
+    try {
+      const em = root.querySelector("em");
+      expect(em).toBeTruthy();
+      const end = editorOffsetFromRenderedRange(
+        root,
+        textRange(root, "some text in italics.", "some text in italics.".length),
+        raw,
+        isBuiltinHidden,
+      );
+      expect(end).toBe(raw.length - 1);
+      // ...which is why a click past the final glyph must be recognised by where
+      // it landed rather than by what the span map says. Interior precision has
+      // to survive that: a deliberate click inside the italic text still maps
+      // exactly, and must not be swept to the end.
+      expect(editorOffsetFromRenderedRange(root, textRange(root, "some", 2), raw, isBuiltinHidden))
+        .toBe(raw.indexOf("some") + 2);
+    } finally {
+      dispose();
+    }
+  });
+
+  // Regression: the GH #465 geometric probe called Range.getClientRects, which
+  // jsdom does not implement, so it THREW out of the click handler and took the
+  // whole rendered-block edit gesture with it. With no layout engine there are
+  // no line boxes to ask about, so it must decline and let the span mapping
+  // answer, exactly as before #465.
+  it("declines instead of throwing where the environment has no layout", () => {
+    const { root, dispose } = mountedBody("*some text in italics.*");
+    try {
+      expect(clickBeyondRenderedEnd(root, 10_000, 10)).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  // GH #465: a `{{img … right}}` wrapper is `float: right`, so it is drawn hard
+  // against the block's right edge, and being taller than the line it rides it
+  // owns the bottom band. A single range over the whole block picks that box up
+  // and then answers "where does the text end?" with the full content width,
+  // which killed the past-the-end caret in that block. Measured in the running
+  // app: wrapper right 1080 / bottom 545.2 against text right 665.5 / bottom
+  // 542.2. jsdom has no layout, so the geometry here is supplied in the same
+  // shape; what the test pins is that out-of-flow children are excluded.
+  it("ignores a floated decoration when deciding where the text ends", () => {
+    const root = document.createElement("div");
+    root.className = "block-content";
+    const badge = document.createElement("span");
+    badge.style.float = "right";
+    badge.textContent = "img";
+    root.append(badge, document.createTextNode("some text in italics."));
+    document.body.appendChild(root);
+
+    const rects = new Map<Node, DOMRect>([
+      [badge, new DOMRect(585.8, 10, 22.2, 26)],
+      [root.lastChild!, new DOMRect(8, 13, 156.6, 19)],
+    ]);
+    const original = Range.prototype.getClientRects;
+    // Only `selectNode` is used, so the range's start container/offset names the
+    // node being measured.
+    Range.prototype.getClientRects = function (this: Range) {
+      const node = this.startContainer.childNodes[this.startOffset];
+      const rect = rects.get(node);
+      return [rect ?? new DOMRect(0, 0, 0, 0)] as unknown as DOMRectList;
+    };
+    try {
+      // A click in the run-out after "italics." on the block's only line.
+      expect(clickBeyondRenderedEnd(root, 300, 22)).toBe(true);
+      // ...but a click still over the glyphs is not past the end.
+      expect(clickBeyondRenderedEnd(root, 100, 22)).toBe(false);
+      // Without the filter the float owns the bottom band and the same click is
+      // not past the end — the pre-fix behaviour, and the necessity control.
+      badge.style.float = "";
+      expect(clickBeyondRenderedEnd(root, 300, 22)).toBe(false);
+    } finally {
+      Range.prototype.getClientRects = original;
+      root.remove();
     }
   });
 

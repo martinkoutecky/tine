@@ -187,11 +187,12 @@ export async function loadGraphPath(
   }
   if (switching || !hadGraph) resetLeftSidebarSections();
   setGraphMeta(meta ?? null);
-  // Revoke every in-flight result from the previous binding NOW, before the
-  // awaited journal-template step. This is also required for same-root force
-  // refresh (restore): root equality cannot distinguish pre-restore DTOs from
-  // the freshly rebound graph. The second bump below refetches after a default
-  // template has been written, preserving #73's populated-first observation.
+  // Revoke every in-flight result from the previous binding NOW. This is also
+  // required for same-root force refresh (restore): root equality cannot
+  // distinguish pre-restore DTOs from the freshly rebound graph. A visible
+  // Journals surface materializes the default journal template before fetching
+  // its feed (Page.tsx), preserving #73's populated-first observation without
+  // blocking graph open.
   bumpGraphEpoch();
   setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
   setJournalTitleFormat(meta?.journal_page_title_format); // match this graph's journal titles
@@ -205,11 +206,10 @@ export async function loadGraphPath(
       // ignore
     }
   }
-  // A default journal template writes today's journal to disk. Do that before
-  // invalidating graph-backed resources so the first Journals refetch observes
-  // the populated file instead of caching the synthetic blank page (#73).
-  await ensureJournalTemplateForDay(new Date());
-  bumpGraphEpoch();
+  // The default journal template is not materialized here: the visible
+  // Journals surface owns that and awaits it before its feed read. Awaiting it
+  // here made every open pay getPage + listTemplates, which wait for the
+  // whole-graph parse (master 5bb8ce020, GH #266).
   void injectCustomCss();
   if (!switching) void pruneSidebarBlocks();
   maybeShowGuideAnnouncement();

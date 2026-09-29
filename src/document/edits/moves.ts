@@ -168,29 +168,81 @@ export async function withBlockMoving<T>(page: string, move: () => T | Promise<T
   }
 }
 
-export function moveItem(id: string, dir: 1 | -1) {
+interface OutlineStepPlan {
+  parent: string | null;
+  index: number;
+}
+
+/** OG's move-up/down is an outline-order operation, not merely a sibling swap.
+ * At a child-list edge it crosses into the adjacent parent sibling: moving down
+ * enters the next sibling as its first child; the inverse up move enters the
+ * previous sibling as its last child. Root edges remain available to the
+ * journal-feed cross-page route below (GH #312). */
+function outlineStepPlan(id: string, dir: 1 | -1): OutlineStepPlan | null {
   const node = doc.byId[id];
-  if (!node || !blockWritable(id)) return;
+  if (!node) return null;
   const sibs = rootsOf(id);
   const i = sibs.indexOf(id);
-  const ni = i + dir;
-  if (ni < 0 || ni >= sibs.length) return;
+  if (i < 0) return null;
+  const siblingIndex = i + dir;
+  if (siblingIndex >= 0 && siblingIndex < sibs.length) {
+    return { parent: node.parent, index: siblingIndex };
+  }
+  if (node.parent === null) return null;
+  const parent = doc.byId[node.parent];
+  if (!parent) return null;
+  const parentSiblings = rootsOf(node.parent);
+  const parentIndex = parentSiblings.indexOf(node.parent);
+  const adjacentParent = parentSiblings[parentIndex + dir];
+  if (!adjacentParent || !doc.byId[adjacentParent]) return null;
+  return {
+    parent: adjacentParent,
+    index: dir === -1 ? doc.byId[adjacentParent].children.length : 0,
+  };
+}
+
+/** Move a block one OG outline step (sibling swap, or across a child-list edge
+ *  into the adjacent parent sibling). One undo entry; returns false (no change)
+ *  when read-only or no step exists in `dir`. A reparented block inherits the
+ *  new parent's list numbering. */
+export function moveItem(id: string, dir: 1 | -1): boolean {
+  const node = doc.byId[id];
+  if (!node || !blockWritable(id)) return false;
+  const plan = outlineStepPlan(id, dir);
+  if (!plan) return false;
+  const movedRaw = plan.parent !== node.parent
+    ? rawWithInheritedOrderListType(node.raw, formatForPage(node.page), plan.parent)
+    : node.raw;
   pushUndo("move-item", [node.page]);
   setDoc(
     produce((s) => {
-      const arr =
+      const source =
         node.parent === null
           ? s.pages[s.pages.findIndex((p) => p.name === node.page)].roots
           : s.byId[node.parent!].children;
-      arr.splice(i, 1);
-      arr.splice(ni, 0, id);
+      const from = source.indexOf(id);
+      if (from < 0) return;
+      source.splice(from, 1);
+      const destination = plan.parent === null
+        ? s.pages[s.pages.findIndex((p) => p.name === node.page)].roots
+        : s.byId[plan.parent].children;
+      s.byId[id].parent = plan.parent;
+      s.byId[id].raw = movedRaw;
+      destination.splice(Math.max(0, Math.min(plan.index, destination.length)), 0, id);
     })
   );
-  markDirty(node.page, "move-blocks");
+  markDirty(node.page, plan.parent !== node.parent ? ["move-blocks", "save-block"] : "move-blocks");
+  return true;
 }
 
-/** Can a block move one slot in `dir` within its sibling list? */
+/** Can a block move one OG outline step in `dir`? */
 function canMoveItem(id: string, dir: 1 | -1): boolean {
+  return outlineStepPlan(id, dir) !== null;
+}
+
+/** Selection movement is still batched as sibling-array swaps. Structural edge
+ * crossing is handled separately from its root/day boundary below. */
+function canMoveSelectionWithinSiblings(id: string, dir: 1 | -1): boolean {
   const sibs = rootsOf(id);
   const ni = sibs.indexOf(id) + dir;
   return ni >= 0 && ni < sibs.length;
@@ -303,7 +355,7 @@ export async function moveSelectionItems(dir: 1 | -1) {
   const ids = topSelected(); // document order: ids[0] topmost, last bottommost
   if (!ids.length || ids.some((id) => !blockWritable(id))) return;
   const lead = dir === 1 ? ids[ids.length - 1] : ids[0];
-  if (canMoveItem(lead, dir)) {
+  if (canMoveSelectionWithinSiblings(lead, dir)) {
     // Batch the whole selection into ONE undo entry + ONE produce. Doing it
     // per-block (a moveItem call each) snapshots the entire working set K times —
     // a 15-block nudge became 15 full clones, the visible jank. Going down, move

@@ -17,6 +17,9 @@ export const FORBID_EDIT_SELECTOR = [
   // column. Letting the outer host arm an edit gesture on this mousedown removes
   // the control before the browser can deliver its click.
   ".block-controls",
+  // The embed owns its whole surface, including gaps between nested rows.
+  // Nested editors remain allowed: their own host does not contain this ancestor.
+  ".embed-block",
   ".block-marker",
   ".clock-badge",
   ".date-chip",

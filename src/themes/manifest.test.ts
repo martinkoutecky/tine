@@ -41,4 +41,43 @@ describe("theme manifests", () => {
     expect(() => parseThemeManifest({ ...valid, source: "file:///tmp/theme" })).toThrow(/https/);
     expect(() => parseThemeManifest({ ...valid, screenshots: ["data:text/html,bad"] })).toThrow(/https/);
   });
+
+  it("accepts bounded host-owned presentation presets in API 0.2", () => {
+    const manifest = parseThemeManifest({
+      ...valid,
+      apiVersion: "0.2",
+      presentation: {
+        contentTypography: "editorial-serif",
+        journalHeader: "editorial",
+        todayTaskSummary: "compact",
+      },
+    });
+
+    expect(manifest.presentation).toEqual({
+      contentTypography: "editorial-serif",
+      journalHeader: "editorial",
+      todayTaskSummary: "compact",
+    });
+  });
+
+  it("keeps API 0.1 themes compatible but presentation-free", () => {
+    expect(parseThemeManifest(valid).apiVersion).toBe("0.1");
+    expect(() => parseThemeManifest({
+      ...valid,
+      presentation: { journalHeader: "editorial" },
+    })).toThrow(/requires theme API 0.2/);
+  });
+
+  it("rejects unknown presentation fields and values", () => {
+    expect(() => parseThemeManifest({
+      ...valid,
+      apiVersion: "0.2",
+      presentation: { journalHeader: "floating" },
+    })).toThrow(/unsupported/);
+    expect(() => parseThemeManifest({
+      ...valid,
+      apiVersion: "0.2",
+      presentation: { rawCss: "body { display: none }" },
+    })).toThrow(/unknown field/);
+  });
 });

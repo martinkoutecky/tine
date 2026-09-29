@@ -3,7 +3,7 @@ import { normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
 import type { QueryPresentation } from "./routeTypes";
 import { graphOwner, readOwned, writeOwned } from "./owned";
 import { dismissToast, pushToastUnique } from "./toasts";
-import { isMobilePlatform } from "./nativeChrome";
+import { isSinglePaneShell } from "./nativeChrome";
 import {
   installSessionPersistence,
   mintPdfViewId,
@@ -301,8 +301,9 @@ export function parsePersistedSession(raw: string): {
       recentExpanded: s.recentSectionExpanded,
     };
     const recent = s.recentPages === undefined ? legacyRecentPages() : sanitizeRecent(s.recentPages);
+    const singlePane = isSinglePaneShell();
     const seenViewIds = new Set<string>();
-    if (s.layout && !isMobilePlatform) {
+    if (s.layout && !singlePane) {
       const snapshots = new Map<string, PaneSnapshot>();
       const layout = parseLayoutNode(s.layout, snapshots, { value: false }, seenViewIds);
       if (layout && snapshots.size) {
@@ -315,7 +316,7 @@ export function parsePersistedSession(raw: string): {
         };
       }
     }
-    if (s.layout && isMobilePlatform) {
+    if (s.layout && singlePane) {
       const snapshots = new Map<string, PaneSnapshot>();
       const parsed = parseLayoutNode(s.layout, snapshots, { value: false }, seenViewIds);
       if (parsed && snapshots.size) {

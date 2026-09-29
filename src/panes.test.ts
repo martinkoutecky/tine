@@ -14,6 +14,7 @@ import {
   moveTabToSplitPane,
   paneRouter,
   resetPaneLayoutToSingle,
+  setFocusedPaneId,
   splitLayoutNode,
   splitPane,
   togglePaneMaximize,
@@ -416,5 +417,23 @@ describe("openRouteInOtherPane", () => {
     openRouteInOtherPane({ kind: "page", name: "Dest", pageKind: "page" }, "main");
 
     expect(paneRouter(other).tabs().length).toBe(before + 1);
+  });
+});
+
+// Master 4fdb9253b (GH #285 follow-up): every focus route, including the
+// session/history adapters that call setFocusedPaneId directly, reveals the pane
+// it focuses; a hidden pane never becomes the logical target under a maximize.
+describe("pane maximize at the focus-state boundary", () => {
+  it("restores the full layout when a hidden pane is focused through setFocusedPaneId", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const right = splitPane("main", "row")!;
+    focusPane("main");
+    expect(togglePaneMaximize("main")).toBe(true);
+    expect(visibleLayoutNode()).toEqual({ kind: "pane", paneId: "main" });
+
+    setFocusedPaneId(right);
+
+    expect(visibleLayoutNode()).toEqual(layoutRoot());
+    expect(focusedPaneId()).toBe(right);
   });
 });

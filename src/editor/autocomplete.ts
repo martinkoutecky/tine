@@ -346,11 +346,16 @@ export function orderAcItems<T>(
   const foldedQuery = searchFold(opts.query.trim(), removeAccents);
   if (!query) return [];
   const exact = matches.filter((match) => canonicalName(match.name) === query).sort(canonicalCompare);
-  if (exact.length) return exact.map((match) => match.item);
+  const remaining = exact.length
+    ? matches.filter((match) => canonicalName(match.name) !== query)
+    : matches;
 
-  const prefix = matches.filter((match) => searchFold(match.name, removeAccents).startsWith(foldedQuery)).sort(canonicalCompare);
-  const fuzzy = matches.filter((match) => !searchFold(match.name, removeAccents).startsWith(foldedQuery)).sort(canonicalCompare);
+  const prefix = remaining.filter((match) => searchFold(match.name, removeAccents).startsWith(foldedQuery)).sort(canonicalCompare);
+  const fuzzy = remaining.filter((match) => !searchFold(match.name, removeAccents).startsWith(foldedQuery)).sort(canonicalCompare);
   const ordered = [...prefix, ...fuzzy];
+  // An existing exact page is always the default and makes Create redundant,
+  // but it must not hide other valid page matches (GH #186).
+  if (exact.length) return [...exact, ...ordered].map((match) => match.item);
   if (opts.policy === "typed") return [createItem.item, ...ordered.map((match) => match.item)];
   if (opts.policy === "existing") return [...ordered.map((match) => match.item), createItem.item];
   return prefix.length

@@ -23,8 +23,8 @@ const RULE = "I-20: module state naming graph content (block id, page name, sele
 // Module-level signals whose declared type can name graph content, and why each
 // cannot write into another graph. Shrink-only: fix an entry rather than add one.
 const CLASSIFIED: Record<string, string> = {
-  "src/components/Block.tsx#dragId": "drag state; a click ends the drag in the old graph first, and beginDrag commits only while stillBound (asyncOwnership guard)",
-  "src/components/Block.tsx#dropInd": "drop indicator of the same drag",
+  "src/components/blockGestures.ts#dragId": "drag state; a click ends the drag in the old graph first, and beginDrag commits only while stillBound (asyncOwnership guard)",
+  "src/components/blockGestures.ts#dropInd": "drop indicator of the same drag",
   "src/components/SidebarFavorites.tsx#dropTarget": "favorites drag state; a click ends the drag in the old graph first (K17b, no user path)",
   "src/components/TabBar.tsx#currentTabDropTarget": "tab drop target (pane/tab ids, not graph content)",
   "src/document/edits/selection.ts#selAnchor": "cleared by clearOnBindingInvalidated",

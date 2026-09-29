@@ -435,31 +435,71 @@ pub(crate) fn warm_cache_async(
             return; // the graph was switched while we slept — a newer warm owns it
         }
         // Serialize these post-open readiness waits process-wide. Store::open
-        // may already have started a parse worker for each open slot.
+        // may already have started a parse worker for each open slot. The lock
+        // guards no data, so a warm that panicked while holding it must not
+        // poison every later graph's warm.
         static WARM_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
         let _worker = WARM_WORK
             .get_or_init(|| std::sync::Mutex::new(()))
             .lock()
-            .unwrap();
-        if slot.background_cancelled.load(Ordering::Acquire)
-            || slot.warm_generation.load(Ordering::Acquire) != warm_generation
-        {
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let cancelled = || {
+            slot.background_cancelled.load(Ordering::Acquire)
+                || slot.warm_generation.load(Ordering::Acquire) != warm_generation
+        };
+        if cancelled() {
             return;
         }
-        if slot.store.whole_graph().is_err() {
-            return;
-        }
-        let state: State<'_, AppState> = app.state();
-        let current = state.graphs.read().unwrap().slot(&window_label);
-        let still_current = current.as_ref().is_some_and(|current| {
-            current.binding_generation == slot.binding_generation
-                && current.root_key == slot.root_key
-        });
-        if still_current && slot.warm_generation.load(Ordering::Acquire) == warm_generation {
-            current.unwrap().warm_done.store(true, Ordering::Release);
-            let _ = app.emit_to(&window_label, "warm-cache-done", ());
-        }
+        settle_launch_warm(
+            || {
+                // A failed whole-graph read still settles: the waiting reads
+                // then take their ordinary (error-reporting) route.
+                let _ = slot.store.whole_graph();
+            },
+            cancelled,
+            || {
+                let state: State<'_, AppState> = app.state();
+                let current = state.graphs.read().unwrap().slot(&window_label);
+                let still_current = current.as_ref().is_some_and(|current| {
+                    current.binding_generation == slot.binding_generation
+                        && current.root_key == slot.root_key
+                });
+                if still_current && slot.warm_generation.load(Ordering::Acquire) == warm_generation
+                {
+                    current.unwrap().warm_done.store(true, Ordering::Release);
+                    let _ = app.emit_to(&window_label, "warm-cache-done", ());
+                }
+            },
+        );
     });
+}
+
+/// Run a launch warm's `work` and then send its completion signal (`finish`)
+/// exactly once, however the work ended: normally, with a failed read, or by
+/// panicking. The frontend's alias and block-ref-count fetches wait for
+/// `warm-cache-done` and nothing else ends that wait, so a silent end left them
+/// empty for the session (master 39b88bd69, GH #543). Only a cancelled warm
+/// (`cancelled()` true: graph switched or closed, a newer warm owns the window)
+/// stays silent. O(1) beyond `work`.
+fn settle_launch_warm(work: impl FnOnce(), cancelled: impl Fn() -> bool, finish: impl FnOnce()) {
+    struct Settle<C: Fn() -> bool, F: FnOnce()> {
+        cancelled: C,
+        finish: Option<F>,
+    }
+    impl<C: Fn() -> bool, F: FnOnce()> Drop for Settle<C, F> {
+        fn drop(&mut self) {
+            if !(self.cancelled)() {
+                if let Some(finish) = self.finish.take() {
+                    finish();
+                }
+            }
+        }
+    }
+    let _settle = Settle {
+        cancelled,
+        finish: Some(finish),
+    };
+    work();
 }
 
 /// "Have the whole-graph derived caches finished warming for the current graph?"
@@ -477,6 +517,41 @@ pub(crate) fn warm_done(
 
 #[cfg(test)]
 mod tests {
+
+    /// Master 39b88bd69 (GH #543): a launch warm that ended without being
+    /// cancelled always sends its completion signal exactly once -- on success,
+    /// after a failed read, and after a panic; a cancelled warm stays silent.
+    #[test]
+    fn a_launch_warm_that_ends_uncancelled_always_signals_completion() {
+        let signalled = std::cell::Cell::new(0);
+        settle_launch_warm(|| {}, || false, || signalled.set(signalled.get() + 1));
+        assert_eq!(
+            signalled.get(),
+            1,
+            "ended: not exactly one completion signal"
+        );
+
+        let signalled = std::sync::atomic::AtomicBool::new(false);
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            settle_launch_warm(
+                || panic!("warm panicked"),
+                || false,
+                || signalled.store(true, Ordering::Release),
+            )
+        }));
+        assert!(panicked.is_err());
+        assert!(
+            signalled.load(Ordering::Acquire),
+            "panicked: no completion signal"
+        );
+
+        let signalled = std::cell::Cell::new(false);
+        settle_launch_warm(|| {}, || true, || signalled.set(true));
+        assert!(
+            !signalled.get(),
+            "cancelled: a newer warm owns the window's signal"
+        );
+    }
     use super::*;
     use std::path::{Path, PathBuf};
 
