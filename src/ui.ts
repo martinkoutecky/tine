@@ -17,6 +17,7 @@ import type { PageTarget } from "./routeTypes";
 import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
 import { setJournalTitleFormat } from "./journal";
+import { pageIdentityKey } from "./pageIdentity";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { navigationName } from "./pageIndex";
 import { forgetDeletedFavorite, renameFavorite } from "./favorites";
@@ -681,16 +682,16 @@ export function removeDeletedPageFromNavigation(targetOrName: PageTarget | strin
  * deduplicating destinations even if source is absent. Only changed stores
  * schedule persistence; writes need not finish before a later openPage. Does
  * not rename or open a page. O(favorites + recents² + sidebar items). */
-export function renamePageInNavigation(from: PageTarget, to: PageTarget): void;
-export function renamePageInNavigation(from: string, to: string): void;
-export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string) {
+export function renamePageInNavigation(from: PageTarget, to: PageTarget, opts?: { favorites?: boolean }): void;
+export function renamePageInNavigation(from: string, to: string, opts?: { favorites?: boolean }): void;
+export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName: PageTarget | string, opts: { favorites?: boolean } = {}) {
   const from: PageTarget = typeof fromOrName === "string"
     ? { name: fromOrName, pageKind: "page" }
     : fromOrName;
   const to: PageTarget = typeof toOrName === "string"
     ? { name: toOrName, pageKind: from.pageKind }
     : toOrName;
-  renameFavorite(from, to);
+  if (opts.favorites !== false) renameFavorite(from, to);
 
   const nextRecents = recentPages().reduce<RecentItem[]>((out, item) => {
     const matches = item.kind === from.pageKind && item.name === from.name
@@ -723,6 +724,14 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
   if (nextSidebar.some((item, i) => item !== rightSidebar()[i]) || nextSidebar.length !== rightSidebar().length) {
     setRightSidebar(nextSidebar);
   }
+}
+/** A load resolved the requested page name `from` to the backend's page `to`.
+ * A true case variant (same page identity) is the same page: every store adopts
+ * the canonical spelling. An alias resolves to a DIFFERENT page (its owner):
+ * only the views (Recent, sidebar) follow, and the durable favorites config is
+ * never rewritten by merely opening it (I-9). */
+export function adoptResolvedPageName(from: string, to: string): void {
+  renamePageInNavigation(from, to, { favorites: pageIdentityKey(from) === pageIdentityKey(to) });
 }
 // Recently-visited pages (navigation history), newest first. Unlike Favorites,
 // Recent is graph-scoped session state and may retain one exact physical owner.
@@ -1389,7 +1398,7 @@ export const [lightbox, setLightbox] = createSignal<string | null>(null);
 export const [audioPlayer, setAudioPlayer] =
   createSignal<{ url: string; name: string } | null>(null);
 
-export { pageIdentityKey } from "./pageIdentity";
+export { pageIdentityKey };
 
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);
 export const [switcherPluginBlock, setSwitcherPluginBlock] = createSignal<OwnedPluginBlockSnapshot | null>(null);
