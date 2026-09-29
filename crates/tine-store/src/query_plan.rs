@@ -10,6 +10,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use tine_core::doc::DocBlock;
 use tine_core::model::{PageEntry, PageKind};
 use tine_core::query::ir::FriendlyPageMatchScope;
+use tine_core::query::ir::{SortDir, ViewSettings};
 use tine_core::query_plan::{
     ExplainNode, MatchEvidence, MatchSpan, ObjectiveMatchClass, QueryDiagnostic, QueryExecution,
     QueryExplanation, QueryHasMore, QueryHit, TextField, TextMatchMode,
@@ -83,6 +84,8 @@ pub(crate) struct QueryPlan {
     regexes: HashMap<u32, Regex>,
     remove_accents: bool,
     page_match_scope: FriendlyPageMatchScope,
+    page_view: Option<ViewSettings>,
+    block_view: Option<ViewSettings>,
 }
 
 impl QueryPlan {
@@ -180,6 +183,8 @@ impl QueryPlan {
             regexes,
             remove_accents,
             page_match_scope,
+            page_view: None,
+            block_view: None,
         }
     }
 
@@ -246,6 +251,8 @@ impl QueryPlan {
             regexes: HashMap::new(),
             remove_accents,
             page_match_scope: FriendlyPageMatchScope::Names,
+            page_view: None,
+            block_view: None,
         }
     }
 
@@ -298,6 +305,8 @@ impl QueryPlan {
             regexes,
             remove_accents,
             page_match_scope: FriendlyPageMatchScope::Names,
+            page_view: None,
+            block_view: None,
         }
     }
 
@@ -334,6 +343,8 @@ impl QueryPlan {
             regexes: HashMap::new(),
             remove_accents,
             page_match_scope: FriendlyPageMatchScope::Names,
+            page_view: None,
+            block_view: None,
         }
     }
 
@@ -372,6 +383,28 @@ impl QueryPlan {
                 })
                 .collect(),
         }
+    }
+
+    /// Apply independent Display sections before search admission. Sampling
+    /// caps each section's own limit; a missing view retains relevance order.
+    /// Cost O(view fields); unsupported recency fields are ignored by execution.
+    pub(crate) fn with_display(
+        mut self,
+        page: Option<ViewSettings>,
+        block: Option<ViewSettings>,
+    ) -> Self {
+        for branch in &mut self.branches {
+            let view = match branch.target {
+                QueryTarget::Pages => page.as_ref(),
+                QueryTarget::Blocks => block.as_ref(),
+            };
+            if let Some(sample) = view.and_then(|view| view.sample) {
+                branch.limit = branch.limit.min(sample as usize);
+            }
+        }
+        self.page_view = page;
+        self.block_view = block;
+        self
     }
 
     /// Execute all graph-backed branches.  Cancellation is checked between page
@@ -443,6 +476,22 @@ fn cancelled_execution(plan: &QueryPlan, explanation: QueryExplanation) -> Query
         has_more: QueryHasMore::default(),
         cancelled: true,
     }
+}
+
+/// Supported Friendly sort fields, with authored directions. The master's
+/// Friendly reader omits recency because its snapshot carries no recency axis.
+fn friendly_sort_fields(view: Option<&ViewSettings>) -> Vec<(&str, bool)> {
+    view.into_iter()
+        .flat_map(|view| &view.sort)
+        .filter_map(|(field, direction)| {
+            let field = field.as_str();
+            (!matches!(
+                field.to_ascii_lowercase().as_str(),
+                "modified" | "updated" | "updated-at" | "date"
+            ))
+            .then_some((field, *direction == SortDir::Asc))
+        })
+        .collect()
 }
 
 fn take_id(next: &mut u32) -> u32 {
@@ -660,8 +709,10 @@ fn match_text(plan: &QueryPlan, pred: &TextPredicate, original: &str) -> Option<
 #[path = "query_plan/fold.rs"]
 mod fold;
 use fold::{casefold_substring_spans, fuzzy_evidence};
+mod blocks;
 #[path = "query_plan/pages.rs"]
 mod pages;
+use blocks::execute_blocks;
 #[cfg(test)]
 use pages::best_page_match;
 use pages::execute_pages;
@@ -982,113 +1033,6 @@ fn walk_blocks<'a>(
     true
 }
 
-fn execute_blocks(
-    plan: &QueryPlan,
-    graph: &impl GraphRead,
-    branch: &QueryBranch,
-    cancelled: &impl Fn() -> bool,
-) -> Option<(Vec<QueryHit>, bool)> {
-    if branch.limit == 0 {
-        return Some((Vec::new(), false));
-    }
-    graph.with_pages(|pages| {
-        let mut heap = BinaryHeap::new();
-        let mut has_more = false;
-        let mut index = 0usize;
-        for (entry, doc) in pages {
-            if cancelled() {
-                return None;
-            }
-            if let Some(scope) = &plan.page_scope {
-                let selected = match scope.path.as_deref() {
-                    Some(path) => entry.rel_path_str() == path,
-                    None => {
-                        entry.kind == scope.page_kind && refs::same_page(&entry.name, &scope.name)
-                    }
-                };
-                if !selected {
-                    continue;
-                }
-            }
-            let mut ancestors = Vec::new();
-            walk_blocks(&doc.roots, &mut ancestors, &mut |block, path| {
-                if cancelled() {
-                    return false;
-                }
-                let candidate_index = index;
-                index = index.saturating_add(1);
-                let projection = block.projection();
-                let visible = &projection.visible;
-                let lower = projection.visible_folded(plan.remove_accents);
-                if let Some(relevance) = block_relevance(plan, &branch.predicate, visible, lower) {
-                    has_more |= heap.len() >= branch.limit;
-                    let retain = heap.len() < branch.limit
-                        || heap.peek().is_some_and(|worst: &ScoredBlock<'_>| {
-                            relevance.cmp_quality(&worst.relevance) == Ordering::Greater
-                                || (relevance.cmp_quality(&worst.relevance) == Ordering::Equal
-                                    && (entry.rel_path_str(), candidate_index)
-                                        < (worst.page.rel_path_str(), worst.index))
-                        });
-                    if retain {
-                        push_block(
-                            &mut heap,
-                            branch.limit,
-                            ScoredBlock {
-                                relevance,
-                                index: candidate_index,
-                                page: entry,
-                                block,
-                                breadcrumb: path
-                                    .iter()
-                                    .map(|ancestor| crate::query::crumb_line(ancestor))
-                                    .collect(),
-                            },
-                        );
-                    }
-                }
-                true
-            });
-            if cancelled() {
-                return None;
-            }
-        }
-        let mut winners = heap.into_vec();
-        winners.sort_by(|a, b| {
-            b.relevance.cmp_quality(&a.relevance).then_with(|| {
-                (a.page.rel_path_str(), a.index).cmp(&(b.page.rel_path_str(), b.index))
-            })
-        });
-        Some((
-            winners
-                .into_iter()
-                .map(|winner| {
-                    let projection = winner.block.projection();
-                    let lower = projection.visible_folded(plan.remove_accents);
-                    let matched =
-                        eval_ranked_block_expr(plan, &branch.predicate, &projection.visible, lower)
-                            .expect("rank and evidence evaluators must agree");
-                    // Search hits are result identities, not independent copies
-                    // of their entire descendant trees. The source page owns the
-                    // hierarchy and live consumers hydrate it once per page.
-                    let mut dto = tine_core::projection::block_to_shallow_dto(winner.block);
-                    dto.breadcrumb = winner.breadcrumb;
-                    QueryHit::Block {
-                        page: winner.page.name.clone(),
-                        kind: winner.page.kind,
-                        path: winner.page.rel_path.clone().unwrap(),
-                        block: dto,
-                        display_text: projection.visible.clone(),
-                        evidence: matched.evidence,
-                        score: winner.relevance.score(),
-                        match_class: winner.relevance.match_class,
-                    }
-                })
-                .collect(),
-            has_more,
-        ))
-    })
-}
-
 /// Convert typed block hits back to the exact grouped shape used by existing
 /// search/query consumers. Hits arrive in global relevance order; only contiguous
 /// hits from the same page are coalesced, so flattening the groups preserves that
@@ -1156,6 +1100,8 @@ mod tests {
                 None,
                 false,
                 FriendlyPageMatchScope::Names,
+                None,
+                None,
             )
         };
         let default = run(snapshot_for_dir(&dir), "cafe");

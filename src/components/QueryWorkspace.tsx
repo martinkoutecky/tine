@@ -71,8 +71,9 @@ export interface MaterializeQueryDependencies {
   savePages(entries: SavePageEntry[], bindingGeneration?: number): Promise<SavePagesResult>;
   /** Rust-authoritative friendly-search validation; required before every nonblank friendly save. */
   /** One graph-scale search; optional page membership is independent of the
-   * physical-page restriction. Native refusal rejects; callers show the error. */
-  runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane: string, explain: boolean, scope?: QueryPageScope, pageMatchScope?: FriendlyPageMatchScope): Promise<QueryExecution>;
+   * physical-page restriction. Effective views order and sample their own
+   * sections before bounding. Native refusal rejects; callers show the error. */
+  runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane: string, explain: boolean, scope?: QueryPageScope, pageMatchScope?: FriendlyPageMatchScope, views?: { page: ViewSettings; block: ViewSettings }): Promise<QueryExecution>;
 }
 
 export type MaterializeQueryResult =
@@ -220,8 +221,8 @@ function defaultDependencies(): QueryWorkspaceDependencies {
       const entry = entries[0];
       return { ok: [await createPage(entry.page.name, entry.page, { id: entry.id, baseRev: entry.baseRev, bindingGeneration })] };
     },
-    runGraphSearch: (source, pageLimit, blockLimit, lane, explain, scope, pageMatchScope) =>
-      api.runGraphSearch(source, pageLimit, blockLimit, lane, explain, scope, pageMatchScope),
+    runGraphSearch: (source, pageLimit, blockLimit, lane, explain, scope, pageMatchScope, views) =>
+      api.runGraphSearch(source, pageLimit, blockLimit, lane, explain, scope, pageMatchScope, views),
     parseQuery: (source, dialect) => api.parseQuery(source, dialect),
     queryRun: (query, view) => api.queryRun(query, view),
     queryExplainEmpty: (query, view) => api.queryExplainEmpty(query, view),
@@ -680,6 +681,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     });
   });
 
+  const pageView = createMemo(() => queryDisplaySettings(pageDisplay(), {}, pagePresentation() ?? presentation()));
+  const blockView = createMemo(() => queryDisplaySettings(blockDisplay(), {}, blockPresentation() ?? presentation()));
   const [execution] = createResource(
     () => ({
       id: props.route.id,
@@ -687,6 +690,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       sourceKind: sourceKind(),
       explain: explain(),
       pageMatchScope: pageMatchScope(),
+      pageView: pageView(),
+      blockView: blockView(),
     }),
     async (request): Promise<QueryExecution> => {
       if (!request.source) {
@@ -700,7 +705,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           `query-workspace:${request.id}`,
           request.explain,
           undefined,
-          request.pageMatchScope
+          request.pageMatchScope,
+          { page: request.pageView, block: request.blockView }
         );
       }
       const parsed = await deps().parseQuery(request.source, "macro_query");
@@ -716,17 +722,15 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const pageHits = () => hits().filter((hit): hit is QueryPageHit => hit.entity === "page");
   const blockHits = () => hits().filter((hit): hit is Extract<QueryHit, { entity: "block" }> => hit.entity === "block");
   const boardGroups = createMemo(() => {
-    const grouped = new Map<string, QueryHit[]>();
+    const grouped: [string, QueryHit[]][] = [];
     for (const hit of blockHits()) {
       const page = hitPage(hit);
-      const group = grouped.get(page);
-      if (group) group.push(hit);
-      else grouped.set(page, [hit]);
+      const last = grouped[grouped.length - 1];
+      if (last && last[0] === page) last[1].push(hit);
+      else grouped.push([page, [hit]]);
     }
-    return [...grouped.entries()];
+    return grouped;
   });
-  const pageView = createMemo(() => queryDisplaySettings(pageDisplay(), {}, pagePresentation() ?? presentation()));
-  const blockView = createMemo(() => queryDisplaySettings(blockDisplay(), {}, blockPresentation() ?? presentation()));
   const [pageDisplayOpen, setPageDisplayOpen] = createSignal(false);
   const [blockDisplayOpen, setBlockDisplayOpen] = createSignal(false);
   const registry = createQueryRegistryAccess(() => pageDisplayOpen() || blockDisplayOpen());

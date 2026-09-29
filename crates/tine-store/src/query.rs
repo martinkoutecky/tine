@@ -3185,6 +3185,8 @@ mod tests {
             }),
             false,
             tine_core::query::ir::FriendlyPageMatchScope::Names,
+            None,
+            None,
         ));
         assert_eq!(scoped, ["foo safe"]);
     }

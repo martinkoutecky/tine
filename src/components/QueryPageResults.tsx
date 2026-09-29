@@ -1,7 +1,7 @@
 /** Page half of a friendly-search result. It receives already bounded and
  * ordered hits from graph search, renders O(returned rows), and only navigates.
  * The caller supplies the route operation; no file write or lookup occurs here. */
-import { For, Match, Show, Switch, type JSX } from "solid-js";
+import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
 import type { QueryHit } from "../types";
 import type { QueryPresentation } from "../router";
 import type { ViewSettings } from "../editor/queryIr";
@@ -36,7 +36,8 @@ function PageText(props: { hit: QueryPageHit }): JSX.Element {
 
 /** Navigation-only page rows. Alias evidence labels its physical owner, and
  * content membership shows the matched block excerpt under that owner's name.
- * Order and bounds come from graph search. Rendering costs O(returned rows and
+ * Order and bounds come from graph search; a Board groups adjacent values of
+ * the selected field without reordering. Rendering costs O(returned rows and
  * their displayed text); navigation failures belong to `onOpen`. */
 export function QueryPageResults(props: {
   hits: QueryPageHit[];
@@ -62,6 +63,18 @@ export function QueryPageResults(props: {
     </Show>
     <Show when={hit.matched_alias}><span class="query-page-alias">matched alias {hit.matched_alias}</span></Show>
   </span></button>;
+  // Group adjacent rows so authored sort order remains authoritative.
+  const boardGroups = createMemo(() => {
+    const field = props.view?.group_by;
+    const groups: [string, QueryPageHit[]][] = [];
+    for (const hit of props.hits) {
+      const value = field ? pageFieldValue(hit, field) : "";
+      const last = groups[groups.length - 1];
+      if (last && last[0] === value) last[1].push(hit);
+      else groups.push([value, [hit]]);
+    }
+    return groups;
+  });
   return <Switch>
     <Match when={props.presentation === "table"}>
       <div class="query-results-table-wrap"><table class="query-results-table">
@@ -76,7 +89,12 @@ export function QueryPageResults(props: {
     </Match>
     <Match when={props.presentation === "board"}>
       <div class="query-results-board" aria-label="Page results grouped">
-        <For each={props.hits}>{(hit) => <div class="query-board-card" data-page-key={pageHitKey(hit)}>{link(hit)}</div>}</For>
+        <For each={boardGroups()}>{([value, hits]) => <section class="query-board-column" aria-label={value || "No value"}>
+          <h4>{value || "No value"}<span class="query-board-count">{hits.length}</span></h4>
+          <div role="list" aria-label="Page results"><For each={hits}>{(hit) =>
+            <div role="listitem" class="query-board-card" data-page-key={pageHitKey(hit)}>{link(hit)}</div>
+          }</For></div>
+        </section>}</For>
       </div>
     </Match>
     <Match when={props.presentation === "list"}>
