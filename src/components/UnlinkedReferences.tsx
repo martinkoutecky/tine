@@ -1,5 +1,6 @@
 import { For, Show, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { errorFamily } from "../errorFamily";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage } from "../router";
 import { ReferenceExcerptBlocks } from "./ReferenceEvidence";
@@ -35,11 +36,12 @@ function mergeReferenceGroups(groups: RefGroup[]): RefGroup[] {
 type ReferenceLoadError = "bounded" | "backend";
 
 function classifyReferenceLoadError(error: unknown): ReferenceLoadError {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.startsWith("result-too-large:") ? "bounded" : "backend";
+  return errorFamily(error) === "result-too-large" ? "bounded" : "backend";
 }
 
 // "Unlinked References" — plain-text mentions of the page, collapsed by default.
+/** Show bounded plain-text mentions for one page. One backend read per target;
+ * only the fixed result-limit token selects the bounded failure alert. */
 export function UnlinkedReferences(props: { name: string }): JSX.Element {
   const readScope = {};
   let alive = true;

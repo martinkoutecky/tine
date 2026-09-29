@@ -34,6 +34,20 @@ pub(super) fn query_error(error: QueryError) -> String {
     }
 }
 
+/// Report a reference-read failure: a fixed budget family crosses the wire,
+/// while full query detail is written only to the opt-in private debug log.
+/// Cost is O(1); callers display their own fixed text for this family.
+pub(super) fn reference_error(error: QueryError) -> String {
+    let bounded = matches!(&error, QueryError::ResultTooLarge { .. });
+    let detail = query_error(error);
+    crate::debug::diag_private("reference-load-failed", &detail);
+    if bounded {
+        "result-too-large".into()
+    } else {
+        detail
+    }
+}
+
 fn budget_text(what: Budget) -> &'static str {
     match what {
         Budget::BacklinkFilterRoots => "backlink filter roots",
@@ -45,5 +59,23 @@ fn budget_text(what: Budget) -> &'static str {
         Budget::PropertyFacets => "property facets",
         Budget::AdvancedQueryMatches => "advanced-query matches",
         Budget::SearchHits => "search hits",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reference_budget_crosses_wire_as_fixed_family() {
+        let bounded = QueryError::ResultTooLarge {
+            what: Budget::MatchingBlocks,
+            count: 20_001,
+            limit: 20_000,
+            bytes: None,
+            byte_limit: 32 * 1024 * 1024,
+        };
+        assert_eq!(reference_error(bounded), "result-too-large");
+        assert_eq!(reference_error(QueryError::Cancelled), "cancelled");
     }
 }

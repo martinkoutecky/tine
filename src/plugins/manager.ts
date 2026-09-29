@@ -119,7 +119,7 @@ export class PluginManager {
 
   private async enqueuePersistence<T>(key: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.persistenceChains.get(key) ?? Promise.resolve();
-    const result = previous.catch(() => {}).then(operation);
+    const result = previous.then(operation);
     const tail = result.then(() => undefined, () => undefined);
     this.persistenceChains.set(key, tail);
     try {

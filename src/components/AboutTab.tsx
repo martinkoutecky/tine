@@ -6,6 +6,7 @@ import { createSignal, onMount, Show, type JSX } from "solid-js";
 import { backend, isTauri } from "../backend";
 import { platformKind } from "../platform";
 import { checkForUpdateNow, openReleasesPage } from "../update";
+import { reportUiFailure } from "../uiFailure";
 
 const WEBSITE = "https://tine.page";
 const REPO = "https://github.com/martinkoutecky/tine";
@@ -14,7 +15,7 @@ const CHANGELOG = "https://github.com/martinkoutecky/tine/blob/HEAD/CHANGELOG.md
 const KOFI = "https://ko-fi.com/martinkoutecky";
 
 function openExternal(url: string) {
-  void backend().openExternal(url).catch(() => {});
+  void backend().openExternal(url).catch((error) => reportUiFailure("external-link", error));
 }
 
 // Build-time constants (vite.config.ts). __GIT_COMMIT__ is "" outside a git
@@ -27,6 +28,8 @@ function buildStamp(): string {
   }
 }
 
+/** Render read-only build and project information. Each link opens through the
+ * backend once per click; a failed open shows fixed text without error detail. */
 export function AboutTab(): JSX.Element {
   const [version, setVersion] = createSignal("");
   const [status, setStatus] = createSignal("");

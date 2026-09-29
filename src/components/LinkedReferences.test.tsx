@@ -85,7 +85,7 @@ describe("Linked References filters", () => {
   });
 
   it("renders a bounded bridge error instead of an empty panel", async () => {
-    vi.spyOn(backend(), "getBacklinks").mockRejectedValue(new Error("result-too-large: 20001 matches"));
+    vi.spyOn(backend(), "getBacklinks").mockRejectedValue(new Error("result-too-large"));
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <LinkedReferences name="Target" />, root);
@@ -99,7 +99,7 @@ describe("Linked References filters", () => {
   });
 
   it("does not mislabel an ordinary backend failure as a bounded bridge error", async () => {
-    vi.spyOn(backend(), "getBacklinks").mockRejectedValue(new Error("database unavailable"));
+    vi.spyOn(backend(), "getBacklinks").mockRejectedValue(new Error("result-too-large: prose from another failure"));
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <LinkedReferences name="Target" />, root);

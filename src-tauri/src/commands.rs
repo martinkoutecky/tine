@@ -249,7 +249,7 @@ fn refuse_bound_graph_path(
 }
 
 mod query_error_wire;
-use query_error_wire::query_error;
+use query_error_wire::{query_error, reference_error};
 
 #[tauri::command]
 pub(crate) fn load_workspaces(
@@ -873,7 +873,7 @@ pub(crate) async fn get_backlinks(
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        view.backlinks(&name).map_err(query_error)
+        view.backlinks(&name).map_err(reference_error)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -909,7 +909,7 @@ pub(crate) async fn get_unlinked_refs(
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        view.unlinked_references(&name).map_err(query_error)
+        view.unlinked_references(&name).map_err(reference_error)
     })
     .await
     .map_err(|error| error.to_string())?

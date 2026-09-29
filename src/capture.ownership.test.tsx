@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
+import { setToasts, toasts } from "./toasts";
 
 const h = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload?: unknown }) => void>(),
@@ -40,6 +41,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 describe("capture preference request ownership", () => {
   it("keeps the newer enter-files setting when an older read finishes last", async () => {
+    setToasts([]);
     vi.spyOn(backend(), "bindCaptureGraph").mockImplementation(() => new Promise(() => {}));
     let first!: (value: boolean) => void;
     let second!: (value: boolean) => void;
@@ -60,6 +62,10 @@ describe("capture preference request ownership", () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(h.captureApi?.enterFiles()).toBe(true);
+    read.mockRejectedValueOnce(new Error("private capture preference detail"));
+    h.listeners.get("capture-shown")!({});
+    await vi.waitFor(() => expect(toasts().some((toast) => toast.message === "Couldn't load the capture setting.")).toBe(true));
+    expect(toasts().map((toast) => toast.message).join(" ")).not.toContain("private capture preference detail");
     read.mockRestore();
   });
 });

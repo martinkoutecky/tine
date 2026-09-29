@@ -3,6 +3,7 @@ import { graphOwner, readOwned } from "../owned";
 import { ensurePageLoaded, pageByName } from "../document";
 import type { RefGroup } from "../types";
 import { graphEpoch, graphMeta } from "../graphSession";
+import { reportUiFailure } from "../uiFailure";
 
 export const SHEET_RENDER_PAGE = 200;
 const HYDRATE_CONCURRENCY = 4;
@@ -230,7 +231,9 @@ function limited(scope: string, task: () => Promise<void>): Promise<void> {
     const item: QueuedHydration = {
       scope,
       start: () => {
-        void task().catch(() => {}).finally(() => {
+        void task().then(undefined, (error) => {
+          if (!item.stale) reportUiFailure("query-hydration", error);
+        }).finally(() => {
           finishRunningHydration(item);
           finish();
           runNextHydration();
@@ -256,8 +259,9 @@ function releaseClaim(claimKey: string, identity: string): void {
 }
 
 /** Hydrate only pages represented in the currently rendered query-result window.
- * Query DTOs are sufficient for read-only display; full pages are needed only to
- * enable editing. A small worker pool prevents an IPC/file-load stampede. */
+ * Cost O(visible pages), with at most four concurrent IPC reads in a graph scope.
+ * DTOs still display if a read fails; the failure gets a fixed toast, and this
+ * promise resolves after all tasks settle. Callers need not manage the pool. */
 export async function hydrateVisibleQueryPages(
   rows: readonly { id: string; page: string }[],
   groups: readonly RefGroup[] | undefined,
