@@ -6,6 +6,8 @@ import { For, Show, createUniqueId, type JSX } from "solid-js";
 
 export interface ResultFamily {
   kind: "page" | "block";
+  /** Remains available when this family has no rows. */
+  control?: JSX.Element;
   hits: number;
   hasMore: boolean;
   body: JSX.Element;
@@ -26,9 +28,9 @@ export function QueryResultSections(props: {
       aria-labelledby={`query-results-${mount}-${family.kind}`}
       aria-busy={props.pending ? "true" : "false"}
     >
-      <h3 id={`query-results-${mount}-${family.kind}`}>
+      <header class="query-result-section-header"><h3 id={`query-results-${mount}-${family.kind}`}>
         {family.kind === "page" ? "Pages" : "Blocks"} <span class="query-result-section-count">{family.hits}</span>
-      </h3>
+      </h3>{family.control}</header>
       <Show when={props.failure}><p role="alert">{props.failure}</p></Show>
       <Show when={!props.failure && props.pending}><p role="status">Searching…</p></Show>
       <Show when={!props.failure && !props.pending}>
