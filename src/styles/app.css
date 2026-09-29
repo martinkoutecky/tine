@@ -617,12 +617,7 @@ textarea {
   right: -3px;
 }
 
-.tab-title {
-  flex: 1 1 auto; /* close control pinned right; min-width lets titles ellipsize */
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+.tab-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; } /* close pinned right; titles ellipsize */
 
 .tab-pin {
   flex: none;
@@ -632,23 +627,10 @@ textarea {
   font-size: 13px;
 }
 
-.tab-close {
-  flex: none;
-  opacity: 0;
-  padding: 0 3px;
-  border: 0;
-  border-radius: 3px;
-  background: none;
-  color: inherit;
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
+.tab-close { flex: none; opacity: 0; padding: 0 3px; border: 0; border-radius: 3px; cursor: pointer;
+  background: none; color: inherit; font: inherit; font-size: 11px; }
 
-.tab:hover .tab-close,
-.tab-close:focus-visible {
-  opacity: 0.6;
-}
+.tab:hover .tab-close, .tab-close:focus-visible { opacity: 0.6; }
 
 .tab-close:hover {
   opacity: 1;
@@ -816,17 +798,12 @@ textarea {
   flex: 1;
   min-width: 0; /* shrink horizontally when the right sidebar/PDF pane is open */
   overflow-y: auto;
-  display: flex; /* column context for the ::after slack below (GH #369) */
-  flex-direction: column;
+  display: flex; flex-direction: column; /* column context for the ::after slack (GH #369) */
 }
 
-/* GH #345: the tabindex=-1 scroller must not paint the UA focus frame; the
-   .pane-selected ring and controls' :focus-visible cues are separate. */
-.main-content:focus { outline: none; }
-
-/* End-of-page slack (GH #369/#390): a spacer in the scroller's column flex,
-   so it is pane-relative; only naturally overflowing pages keep 40% room
-   (PaneScroller in App.tsx measures that), fitting panes never scroll. */
+.main-content:focus { outline: none; } /* GH #345: no UA frame on the tabindex=-1 scroller */
+/* End-of-page slack (GH #369/#390): a pane-relative spacer; only naturally
+   overflowing pages (PaneScroller, App.tsx) keep 40% room, fitting panes never scroll. */
 .main-content::after { content: ""; flex: 1 1 0; }
 .main-content.natural-content-overflow::after { flex: 1 0 40%; }
 
@@ -1102,8 +1079,7 @@ textarea {
 }
 
 .main-content-inner {
-  flex: 0 0 auto; /* natural height: only real overflow scrolls (GH #369) */
-  width: 100%; /* a flex item would otherwise shrink-wrap its content (GH #382) */
+  flex: 0 0 auto; width: 100%; /* natural height, full width as a flex item (GH #369, #382) */
   max-width: var(--ls-main-content-max-width);
   margin: 0 auto;
   padding: 12px 48px 0;
