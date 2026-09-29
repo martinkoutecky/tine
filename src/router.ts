@@ -8,7 +8,7 @@
 import { createSignal, type Accessor } from "solid-js";
 import { pushRecent } from "./ui";
 import { navigationName } from "./pageIndex";
-import { persistentBlockRef, resolveBlockRef, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
+import { persistentBlockRef, resolveBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
 import { graphOwner, readOwned } from "./owned";
@@ -682,7 +682,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     const tick = () => {
       if (!current()) return;
       const id = liveId();
-      if (id) renderedBlocks.add(id);
+      if (id) {
+        renderedBlocks.add(id);
+        // A collapsed parent renders no children at all, so without this the
+        // query below can never match and the poll times out silently (GH #258).
+        // Inside the poll because the page load is async.
+        expandAncestors(id);
+      }
       const scroller = mainScroller();
       const el = id
         ? scroller?.querySelector(`.ls-block[data-block-id="${id}"]`)

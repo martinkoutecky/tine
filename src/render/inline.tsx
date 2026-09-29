@@ -35,8 +35,8 @@ import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallb
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
-import { resolveBlockBatched } from "../resolveBatch";
-import { setRaw, formatForPage, formatForBlock, blockRef, node as docNode } from "../document";
+import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
+import { setRaw, formatForPage, formatForBlock, node as docNode } from "../document";
 import { PaneContext, focusedPaneId, openRouteInOtherPane, openPdf } from "../panes";
 import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
@@ -1250,9 +1250,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         onContextMenu={(e) => {
           const g = grp();
           if (!g) return; // missing target → let the default menu through
-          const ref = docNode(props.id)
-            ? blockRef(props.id)
-            : { uuid: props.id, page: g.page, pageKind: g.kind };
+          const ref = blockRefTarget(props.id, g);
           if (!shouldOpenTextContextMenu(e.target)) return;
           e.preventDefault();
           e.stopPropagation();
@@ -1262,9 +1260,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           e.stopPropagation();
           const g = grp();
           if (!g) return;
-          const ref = docNode(props.id)
-            ? blockRef(props.id)
-            : { uuid: props.id, page: g.page, pageKind: g.kind };
+          const ref = blockRefTarget(props.id, g);
           const ann = annotation();
           // OG opens a referenced PDF annotation at its source page. Modifier
           // clicks retain Tine's existing pane/sidebar navigation semantics.

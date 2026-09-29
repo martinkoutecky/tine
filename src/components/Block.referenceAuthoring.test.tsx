@@ -128,6 +128,29 @@ describe("reference authoring", () => {
     }
   });
 
+  it("keeps other CJK page matches visible after the exact page without a Create row", async () => {
+    vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+      entry("我是小明"),
+      entry("小明"),
+      entry("小明的家"),
+    ]);
+    loadSingle(page("[[小明]]"));
+    startEditing("reference-authoring", 4);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "[[小明]]", 4);
+      await vi.waitFor(() => expect(
+        [...document.body.querySelectorAll(".autocomplete .ac-label")].map((row) => row.textContent),
+      ).toEqual(["小明", "小明的家", "我是小明"]));
+      expect(document.body.textContent).not.toContain('Create "小明"');
+    } finally {
+      dispose();
+    }
+  });
+
   it("requests OG's 20-result inline block-reference pool", async () => {
     const search = vi.spyOn(backend(), "search").mockResolvedValue([{
       page: "Source",

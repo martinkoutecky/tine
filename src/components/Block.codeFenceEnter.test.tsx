@@ -182,7 +182,11 @@ describe("Double Enter exits a trailing code or calculator block", () => {
       const ta = root.querySelector("textarea") as HTMLTextAreaElement;
       pressEnter(ta, ta.value.length);
       expect(pageByName("Plain blank")!.roots).toHaveLength(2);
-      expect(doc.byId[id].raw).toBe("hello\n");
+      // Still no special-block exit (a new ordinary block follows). The first
+      // block drops the boundary newline itself: GH #361's unified rule —
+      // Enter immediately after an in-block newline consumes that break as the
+      // structural separator instead of leaving it as an empty line.
+      expect(doc.byId[id].raw).toBe("hello");
     } finally {
       dispose();
     }

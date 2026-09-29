@@ -12,7 +12,7 @@ const ONE_PAGE = new Map([
   ["src/document/edits/properties.ts::setBlockProperty", "both branches change the block's one page"],
   ["src/document/edits/properties.ts::setPageProperty", "both branches change one named page"],
   ["src/document/edits/identity.ts::ensureBlockId", "stamps one block's page"],
-  ["src/document/edits/identity.ts::ensureStableBlockId", "stamps one block's page"],
+  ["src/document/edits/identity.ts::stampBlockId", "stamps one block's page (ensureStableBlockId body, GH #373)"],
 ]);
 
 function sourceFiles(dir: string): string[] {

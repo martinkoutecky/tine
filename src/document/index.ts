@@ -85,14 +85,14 @@ export { depthOf, nextVisible, pageVisibleOrder, prevVisible, visibleOrder } fro
 export type { OutlineScope } from "./tree";
 export { installHistoryRouteContextAdapter, redo, toggleUndoRedoMode, undo, undoTopTag, withUndoUnit } from "./history";
 export type { HistoryRouteContext } from "./history";
-export { deleteBlock, ensureEmptyBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineChildren, mergeWithPrev, outdentBlock, outlineFits, replaceChildOrders, replaceEmptyBlockWithOutline, revealNode, setCollapsed, setRaw, splitBlock, toggleCollapse } from "./edits/blocks";
+export { deleteBlock, ensureEmptyBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, mergeWithNext, mergeWithPrev, outdentBlock, outlineFits, replaceChildOrders, replaceEmptyBlockWithOutline, revealNode, setCollapsed, setRaw, splitBlock, toggleCollapse } from "./edits/blocks";
 export { pasteClipboardPayload, sanitizeOutlineIdsForPaste } from "./edits/paste";
 export { appendToTodayJournal, captureToPage } from "./edits/capture";
-export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, collapsibleDescendantIds, finishPageHeaderEdit, makeOwnNumberedList, orderedListMarker, pageHeaderProperties, promotePagePreamble, readPageProperties, readPageProperty, readSchedule, removeOwnNumberedList, setBlockProperty, setCollapsedDeep, setCollapsedDescendants, setHeading, setPageProperty, setSchedule, stopOwnNumberedListOnEmptyEnter, toggleBlockProperty, toggleListItemAtIndex, toggleOwnNumberedList } from "./edits/properties";
+export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, collapsibleDescendantIds, expandAncestors, finishPageHeaderEdit, makeOwnNumberedList, orderedListMarker, pageHeaderProperties, promotePagePreamble, readPageProperties, readPageProperty, readSchedule, removeOwnNumberedList, setBlockProperty, setCollapsedDeep, setCollapsedDescendants, setHeading, setPageProperty, setSchedule, stopOwnNumberedListOnEmptyEnter, toggleBlockProperty, toggleListItemAtIndex, toggleOwnNumberedList } from "./edits/properties";
 export { ensurePagePropertyOnKeyPage } from "./edits/propertyDeclaration";
 export { blockExternalId, blockRef, ensureBlockId, persistBlockRefTarget, persistentBlockRef, resolveBlockRef } from "./edits/identity";
 export { blockSubtreeMarkdown, buildClipboardPayload, dtoSubtreeMarkdown, exportNodesFor } from "./edits/serialize";
-export { clearSelection, cycleSelectionTasks, deleteSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, moveSelection, outdentSelection, selectBlock, selectedIds, selectionMarkdown } from "./edits/selection";
+export { clearSelection, cycleSelectionTasks, deleteSelection, expandBlockSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, moveSelection, outdentSelection, selectBlock, selectBlockSubtree, selectedIds, selectionMarkdown } from "./edits/selection";
 export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, setFeedExtender, withBlockMoving } from "./edits/moves";
 export { installPageIdentityNavigation, rekeyPageIdentityByPath } from "./workingSet";
 export { carryUnfinished } from "./edits/carry";

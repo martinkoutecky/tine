@@ -42,16 +42,55 @@ function selectionOrder(id: string | null, scope: OutlineScope | null = activeSe
 const [selAnchor, setSelAnchor] = createSignal<string | null>(null);
 const [selFocus, setSelFocus] = createSignal<string | null>(null);
 
+/** True when `ancestor` is a strict ancestor of `id` in the block tree. */
+function isAncestorId(ancestor: string, id: string): boolean {
+  let p = doc.byId[id]?.parent ?? null;
+  while (p !== null) {
+    if (p === ancestor) return true;
+    p = doc.byId[p]?.parent ?? null;
+  }
+  return false;
+}
+
+/** Index of the last visible descendant of order[headIdx] within `order`.
+ *  (A subtree occupies one contiguous DFS slice of the visible order.) */
+function subtreeEndIndex(order: string[], headIdx: number): number {
+  const head = order[headIdx];
+  let end = headIdx;
+  for (let k = headIdx + 1; k < order.length && isAncestorId(head, order[k]); k++) end = k;
+  return end;
+}
+
+/** The selected block ids in visible order: the anchor..focus slice, where a
+ *  reverse (Shift+Up) slice also completes the visible subtree of every member
+ *  that is an ancestor of the anchor, so a selection never holds a parent
+ *  without its later children (GH #262). Cost O(slice · depth). */
 export function selectedIds(): string[] {
   const a = selAnchor();
   const f = selFocus();
   if (!a || !f) return [];
   const order = selectionOrder(a);
-  let i = order.indexOf(a);
-  let j = order.indexOf(f);
+  const i = order.indexOf(a);
+  const j = order.indexOf(f);
   if (i < 0 || j < 0) return [];
-  if (i > j) [i, j] = [j, i];
-  return order.slice(i, j + 1);
+  const lo = Math.min(i, j);
+  let hi = Math.max(i, j);
+  // GH #262 Shift+Up: extending UP from inside a subtree onto its parent left
+  // the slice [parent … anchor], omitting the parent's later children — a
+  // partial-subtree selection that copy/cut/move received as "parent without
+  // its children". (Shift+Down is the semantic reverse and never produces it:
+  // a parent's children all follow it in visible order.) In a reverse slice,
+  // any member that is an ancestor of the anchor may hold a partial subtree
+  // inside the slice; complete its visible subtree.
+  if (i > j) {
+    for (let k = lo; k <= hi; k++) {
+      if (isAncestorId(order[k], a)) {
+        const end = subtreeEndIndex(order, k);
+        if (end > hi) hi = end;
+      }
+    }
+  }
+  return order.slice(lo, hi + 1);
 }
 // Memoized set of selected ids. `isSelected` is read in the render of EVERY
 // block (Block.tsx classList), and selectedIds() rebuilds visibleOrder() each
@@ -61,10 +100,15 @@ const selectedSet = createRoot(() => createMemo(() => new Set(selectedIds())));
 export function isSelected(id: string): boolean {
   return selectedSet().has(id);
 }
+// Hierarchical Ctrl/Cmd+A (GH #262): the ancestor whose visible subtree the
+// current select-all sequence covers. Any other selection mutation resets it.
+let selectAllHead: string | null = null;
+
 export function selectBlock(id: string, scope: OutlineScope | null = null) {
   endEdit("select-block");
   notifyOutlineSelectionStarted(id);
   activeSelectionScope = scope;
+  selectAllHead = null;
   setSelAnchor(id);
   setSelFocus(id);
 }
@@ -72,6 +116,7 @@ export function clearSelection() {
   setSelAnchor(null);
   setSelFocus(null);
   activeSelectionScope = null;
+  selectAllHead = null;
 }
 /** Extend the current block selection's focus to `id` (mouse-drag / shift-click).
  *  Starts a fresh selection anchored at `id` if none is active. */
@@ -82,6 +127,7 @@ export function extendSelectionTo(id: string, scope: OutlineScope | null = activ
     setSelAnchor(id);
   }
   if (activeSelectionScope && !scopedVisibleOrder(activeSelectionScope).includes(id)) return;
+  selectAllHead = null;
   setSelFocus(id);
 }
 export function hasSelection(): boolean {
@@ -95,9 +141,59 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
   const ni = i + dir;
   if (ni < 0 || ni >= order.length) return;
   const next = order[ni];
+  selectAllHead = null;
   setSelFocus(next);
   if (!extend) setSelAnchor(next);
   scrollBlockRowIntoView(next);
+}
+
+/** Ctrl/Cmd+A while editing a block, with the block's text already fully
+ *  selected: escalate to a block selection covering the block's whole visible
+ *  subtree, and mark it the head of the hierarchy ladder (GH #262). */
+export function selectBlockSubtree(id: string, scope: OutlineScope | null = null) {
+  selectBlock(id, scope);
+  const order = selectionOrder(id);
+  const idx = order.indexOf(id);
+  if (idx < 0) return;
+  setSelFocus(order[subtreeEndIndex(order, idx)]);
+  selectAllHead = id;
+}
+
+/** Repeated Ctrl/Cmd+A in block-selection mode: widen the selection one
+ *  ancestor level at a time — subtree, parent subtree, …, the whole visible
+ *  outline, where it stays (idempotent) — or start the ladder at the current
+ *  selection's anchor when no select-all sequence is in progress (GH #262). */
+export function expandBlockSelection() {
+  const a = selAnchor();
+  const f = selFocus();
+  if (!a || !f) return;
+  const order = selectionOrder(a);
+  if (order.length < 2) return;
+  // Whole-outline selection is the top of the ladder; further presses no-op.
+  if (a === order[0] && f === order[order.length - 1]) return;
+  let head = selectAllHead;
+  if (head === null || !order.includes(head)) head = a;
+  let idx = order.indexOf(head);
+  if (idx < 0) return;
+  // A head whose subtree is fully inside the current selection (exactly or
+  // because the user extended past it) is covered: climb from there.
+  if (a === head && order.indexOf(f) >= subtreeEndIndex(order, idx)) {
+    // This subtree is already fully selected: climb to its parent, or to the
+    // whole outline when the head is already a root (within the active scope).
+    const parent = doc.byId[head]?.parent ?? null;
+    if (parent !== null && order.includes(parent)) {
+      head = parent;
+      idx = order.indexOf(head);
+    } else {
+      setSelAnchor(order[0]);
+      setSelFocus(order[order.length - 1]);
+      selectAllHead = null;
+      return;
+    }
+  }
+  setSelAnchor(head);
+  setSelFocus(order[subtreeEndIndex(order, idx)]);
+  selectAllHead = head;
 }
 
 /** Cycle every non-empty block in the active selection as one document

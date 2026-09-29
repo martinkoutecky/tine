@@ -12,8 +12,11 @@ import { markDirty, noteTitleIdentityIntent } from "../save/engine";
 import { produce } from "solid-js/store";
 import { OUTLINE_MAX_DEPTH, outlineDepth, type OutlineNode } from "../../editor/outline";
 import { splitProps, isBuiltinHidden, joinProps, isPropertiesOnly, readPropertyValue } from "../../editor/properties";
-import { startEditing, editingId, endEdit } from "../../editorController";
-import { depthOf, existingSubtreeFits, indexInSiblings, rootsOf, OutlineScope, prevVisible } from "../tree";
+import { startEditing, editingId, endEdit, type EditorSelection } from "../../editorController";
+import { batch } from "solid-js";
+import type { EditKind, EditKinds } from "../../editKind";
+import { isBlockMoving, setBlockMoving } from "./moves";
+import { depthOf, existingSubtreeFits, indexInSiblings, rootsOf, OutlineScope, prevVisible, nextVisible } from "../tree";
 import { existingBlockId } from "./identity";
 import { pushToast } from "../../toasts";
 
@@ -166,8 +169,15 @@ export function splitBlock(
   // The caret offset is in editor-visible space (hidden props aren't shown), so
   // split the visible text and keep the hidden props on the original block.
   const { visible, hidden } = splitProps(node.raw, isBuiltinHidden, fmt);
-  const before = visible.slice(0, offset);
-  const after = visible.slice(offset);
+  // GH #361: the caret can report either side of the same source-line boundary
+  // (end of line one or start of line two). In both cases that newline becomes
+  // the structural block separator instead of content in either block.
+  const boundaryBefore = offset < visible.length && visible[offset] === "\n";
+  const boundaryAfter = offset > 0 && visible[offset - 1] === "\n";
+  const splitBefore = boundaryAfter ? offset - 1 : offset;
+  const splitAfter = !boundaryAfter && boundaryBefore ? offset + 1 : offset;
+  const before = visible.slice(0, splitBefore);
+  const after = visible.slice(splitAfter);
   const childSplit = before.trim() === "" && after.trim() !== ""
     ? keepStartInScope
     : (node.children.length > 0 && !node.collapsed) || forceChild;
@@ -195,6 +205,10 @@ export function splitBlock(
     const emptyId = freshId();
     setDoc(
       produce((s) => {
+        // At offset zero the original block is untouched. At a later line
+        // boundary, however, the blank prefix and its separator become the new
+        // empty block, so the original must retain only the post-boundary text.
+        if (offset > 0) s.byId[id].raw = joinProps(after, hidden, fmt);
         s.byId[emptyId] = {
           id: emptyId,
           raw: orderedEmpty,
@@ -214,7 +228,7 @@ export function splitBlock(
       })
     );
     startEditing(emptyId, 0, null, editingSurface);
-    markDirty(pageName, "insert-blocks");
+    markDirty(pageName, offset > 0 ? ["insert-blocks", "save-block"] : "insert-blocks");
     return;
   }
 
@@ -246,7 +260,7 @@ export function splitBlock(
 
 /** Tab: make the block the last child of its previous sibling. Returns false
  *  when that would exceed the outline cap; the caller shows the refusal. */
-export function indentBlock(id: string, caretOffset: number) {
+export function indentBlock(id: string, caretOffset: number | EditorSelection) {
   if (!blockWritable(id)) return;
   const i = indexInSiblings(id);
   if (i <= 0) return;
@@ -255,27 +269,45 @@ export function indentBlock(id: string, caretOffset: number) {
   if (!existingSubtreeFits(id, newParent)) return false;
   pushUndo("indent", [doc.byId[id].page]);
   const pageName = doc.byId[id].page;
-  setDoc(
-    produce((s) => {
-      const arr = s.byId[id].parent === null
-        ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
-        : s.byId[s.byId[id].parent!].children;
-      arr.splice(arr.indexOf(id), 1);
-      s.byId[id].parent = newParent;
-      s.byId[newParent].children.push(id);
-      // Expand the new parent — and clear any persisted collapsed:: in its raw,
-      // else a reload would re-collapse it and hide the just-indented child.
-      const np = s.byId[newParent];
-      np.raw = rawWithCollapsed(np.raw, false, formatForBlock(newParent));
-      np.collapsed = false;
-    })
-  );
-  startEditing(id, caretOffset);
-  markDirty(pageName, ["move-blocks", "save-block"]);
+  // Reparenting remounts the editor. Publish its selection and ownership in the
+  // same reactive flush as the tree change, before the replacement can focus.
+  reparentEditingBlock(pageName, ["move-blocks", "save-block"], () => {
+    setDoc(
+      produce((s) => {
+        const arr = s.byId[id].parent === null
+          ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
+          : s.byId[s.byId[id].parent!].children;
+        arr.splice(arr.indexOf(id), 1);
+        s.byId[id].parent = newParent;
+        s.byId[newParent].children.push(id);
+        // Expand the new parent — and clear any persisted collapsed:: in its raw,
+        // else a reload would re-collapse it and hide the just-indented child.
+        const np = s.byId[newParent];
+        np.raw = rawWithCollapsed(np.raw, false, formatForBlock(newParent));
+        np.collapsed = false;
+      })
+    );
+    startEditing(id, caretOffset);
+  });
+}
+
+/** Run a reparenting tree update and the editor handoff in one reactive batch,
+ *  marked as a block move so the old editor's blur during the flush does not
+ *  end edit mode (#519, #495). An already active move (another page) is left
+ *  to its owner. */
+function reparentEditingBlock(page: string, kinds: EditKind | EditKinds, update: () => void): void {
+  const ownsMove = !isBlockMoving();
+  if (ownsMove) setBlockMoving(true, page);
+  try {
+    batch(update);
+    markDirty(page, kinds);
+  } finally {
+    if (ownsMove) setBlockMoving(false);
+  }
 }
 
 /** Shift+Tab: move the block out to be the next sibling of its parent. */
-export function outdentBlock(id: string, caretOffset: number) {
+export function outdentBlock(id: string, caretOffset: number | EditorSelection) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id) || node.parent === null) return;
   pushUndo("outdent", [node.page]);
@@ -283,31 +315,32 @@ export function outdentBlock(id: string, caretOffset: number) {
   const grandParent = doc.byId[parentId].parent;
   const pageName = node.page;
 
-  setDoc(
-    produce((s) => {
-      const parent = s.byId[parentId];
-      const idx = parent.children.indexOf(id);
-      // OG only reparents the following siblings for traditional outdenting;
-      // logical outdenting stops after moving this block (`src/main/frontend/modules/outliner/core.cljs:835-852`
-      // at `6e7afa8eb`). Keep this decision inside the shared store operation so
-      // keyboard, mobile, and any future caller all use the same mode.
-      if (logicalOutdenting()) {
-        parent.children.splice(idx, 1);
-      } else {
-        const following = parent.children.splice(idx);
-        following.shift(); // drop id
-        for (const f of following) s.byId[f].parent = id;
-        s.byId[id].children.push(...following);
-      }
-      s.byId[id].parent = grandParent;
-      const gArr = grandParent === null
-        ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
-        : s.byId[grandParent].children;
-      gArr.splice(gArr.indexOf(parentId) + 1, 0, id);
-    })
-  );
-  startEditing(id, caretOffset);
-  markDirty(pageName, "move-blocks");
+  reparentEditingBlock(pageName, "move-blocks", () => {
+    setDoc(
+      produce((s) => {
+        const parent = s.byId[parentId];
+        const idx = parent.children.indexOf(id);
+        // OG only reparents the following siblings for traditional outdenting;
+        // logical outdenting stops after moving this block (`src/main/frontend/modules/outliner/core.cljs:835-852`
+        // at `6e7afa8eb`). Keep this decision inside the shared store operation so
+        // keyboard, mobile, and any future caller all use the same mode.
+        if (logicalOutdenting()) {
+          parent.children.splice(idx, 1);
+        } else {
+          const following = parent.children.splice(idx);
+          following.shift(); // drop id
+          for (const f of following) s.byId[f].parent = id;
+          s.byId[id].children.push(...following);
+        }
+        s.byId[id].parent = grandParent;
+        const gArr = grandParent === null
+          ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
+          : s.byId[grandParent].children;
+        gArr.splice(gArr.indexOf(parentId) + 1, 0, id);
+      })
+    );
+    startEditing(id, caretOffset);
+  });
 }
 
 /** Backspace at offset 0: merge into the previous visible block (same page). */
@@ -319,44 +352,66 @@ export function mergeWithPrev(
   if (!blockWritable(id)) return false;
   const prev = prevVisible(id, scope);
   if (prev === null) return false;
-  const node = doc.byId[id];
-  if (doc.byId[prev].page !== node.page) return false; // don't merge across pages
+  return absorbInto(prev, id, editingSurface);
+}
+
+/** Delete at the END of a block: absorb the NEXT visible block into this one,
+ *  caret staying at the join (GH #213). Exact mirror of `mergeWithPrev` —
+ *  same page only, one "merge" undo, returns false when nothing merged. */
+export function mergeWithNext(
+  id: string,
+  scope: OutlineScope | null = null,
+  editingSurface: string | null = null,
+): boolean {
+  if (!blockWritable(id)) return false;
+  const next = nextVisible(id, scope);
+  if (next === null) return false;
+  return absorbInto(id, next, editingSurface);
+}
+
+/** The one merge answer for Backspace-at-start and Delete-at-end: `absorbed`'s
+ *  visible text is appended to `survivor` (no separator), its children are
+ *  appended to survivor's, and it is removed. The survivor keeps its identity
+ *  and hidden props; the absorbed `id::` is kept only when the survivor has
+ *  none. Refuses (false) across pages. */
+function absorbInto(survivor: string, absorbed: string, editingSurface: string | null): boolean {
+  const node = doc.byId[absorbed];
+  if (doc.byId[survivor].page !== node.page) return false; // don't merge across pages
   pushUndo("merge", [node.page]);
-  const fmt = formatForBlock(id); // prev is same page (checked above) → same format
-  // Merge visible content only; keep the previous block's hidden props (it keeps
-  // its identity) and drop the absorbed block's — otherwise the id::/collapsed::
+  const fmt = formatForBlock(absorbed); // same page (checked above) → same format
+  // Merge visible content only; keep the survivor's hidden props (it keeps its
+  // identity) and drop the absorbed block's — otherwise the id::/collapsed::
   // lines would be concatenated mid-line and a block could end up with two ids.
-  const prevSplit = splitProps(doc.byId[prev].raw, isBuiltinHidden, fmt);
-  const curSplit = splitProps(node.raw, isBuiltinHidden, fmt);
-  const curVisible = curSplit.visible;
-  const joinOffset = prevSplit.visible.length;
+  const keepSplit = splitProps(doc.byId[survivor].raw, isBuiltinHidden, fmt);
+  const goneSplit = splitProps(node.raw, isBuiltinHidden, fmt);
+  const joinOffset = keepSplit.visible.length;
   const pageName = node.page;
 
   // Preserve the absorbed block's id if the survivor has none — otherwise inbound
   // ((id)) references to the absorbed block would orphan on merge. Match the id
   // line in the block's on-disk syntax (md `id:: x` vs org drawer `:id: x`).
-  let hidden = prevSplit.hidden;
+  let hidden = keepSplit.hidden;
   const idPresent = fmt === "org" ? /(?:^|\n):id:\s/i : /(?:^|\n)id:: /i;
   const idLine = fmt === "org" ? /(?:^|\n)(:id:\s*\S+)/i : /(?:^|\n)(id:: \S+)/i;
-  const survivorHasId = idPresent.test(prevSplit.hidden);
-  const absorbedId = idLine.exec(curSplit.hidden)?.[1];
+  const survivorHasId = idPresent.test(keepSplit.hidden);
+  const absorbedId = idLine.exec(goneSplit.hidden)?.[1];
   if (!survivorHasId && absorbedId) {
     hidden = hidden ? `${hidden}\n${absorbedId}` : absorbedId;
   }
 
   setDoc(
     produce((s) => {
-      s.byId[prev].raw = joinProps(prevSplit.visible + curVisible, hidden, fmt);
-      for (const c of node.children) s.byId[c].parent = prev;
-      s.byId[prev].children.push(...node.children);
+      s.byId[survivor].raw = joinProps(keepSplit.visible + goneSplit.visible, hidden, fmt);
+      for (const c of node.children) s.byId[c].parent = survivor;
+      s.byId[survivor].children.push(...node.children);
       const arr = node.parent === null
         ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
         : s.byId[node.parent].children;
-      arr.splice(arr.indexOf(id), 1);
-      delete s.byId[id];
+      arr.splice(arr.indexOf(absorbed), 1);
+      delete s.byId[absorbed];
     })
   );
-  startEditing(prev, joinOffset, null, editingSurface);
+  startEditing(survivor, joinOffset, null, editingSurface);
   markDirty(pageName, ["save-block", "move-blocks", "delete-blocks"]);
   return true;
 }
@@ -364,17 +419,36 @@ export function mergeWithPrev(
 /** Insert parsed outline siblings after `afterId`. Returns the last inserted id
  *  for focus, or null for empty input, read-only, missing host or excess depth. */
 export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): string | null {
+  return insertOutlineBeside(afterId, nodes, "after", "paste");
+}
+
+/** Insert parsed outline siblings BEFORE `beforeId` — the only way to put a
+ *  block above one that owns its own Enter key (a code block first on a page,
+ *  GH #480). Returns the FIRST inserted id for focus, or null under the same
+ *  refusals as `insertOutlineAfter`. One "insert-block" undo. */
+export function insertOutlineBefore(beforeId: string, nodes: OutlineNode[]): string | null {
+  return insertOutlineBeside(beforeId, nodes, "before", "insert-block");
+}
+
+/** Shared body of insertOutlineAfter/Before. Focus answer: the inserted block
+ *  the reading order ends on beside the anchor — last after it, first before. */
+function insertOutlineBeside(
+  anchorId: string,
+  nodes: OutlineNode[],
+  side: "before" | "after",
+  undoLabel: string,
+): string | null {
   if (!nodes.length) return null;
   // Read-only gate at the choke point — file drops (and any future caller)
   // must not mutate a page the round-trip self-check marked read-only
   // (Phase-6 review finding, validated).
-  if (!blockWritable(afterId) || !outlineFits(afterId, nodes)) return null;
-  pushUndo("paste", [doc.byId[afterId].page]);
-  const parent = doc.byId[afterId].parent;
-  const pageName = doc.byId[afterId].page;
+  if (!blockWritable(anchorId) || !outlineFits(anchorId, nodes)) return null;
+  pushUndo(undoLabel, [doc.byId[anchorId].page]);
+  const parent = doc.byId[anchorId].parent;
+  const pageName = doc.byId[anchorId].page;
   const format = formatForPage(pageName);
   const incoming = new Set<string>();
-  let lastId = afterId;
+  let focusId = anchorId;
   setDoc(
     produce((s) => {
       const create = (n: OutlineNode, par: string | null): string => {
@@ -382,7 +456,7 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
         const childIds = n.children.map((c) => create(c, id));
         s.byId[id] = {
           id,
-          raw: rawWithInheritedOrderListType(outlineRaw(n.raw, format, incoming), format, afterId),
+          raw: rawWithInheritedOrderListType(outlineRaw(n.raw, format, incoming), format, anchorId),
           collapsed: false,
           parent: par,
           page: pageName,
@@ -395,12 +469,12 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
         parent === null
           ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
           : s.byId[parent].children;
-      sibs.splice(sibs.indexOf(afterId) + 1, 0, ...created);
-      lastId = created[created.length - 1];
+      sibs.splice(sibs.indexOf(anchorId) + (side === "after" ? 1 : 0), 0, ...created);
+      focusId = side === "after" ? created[created.length - 1] : created[0];
     })
   );
   markDirty(pageName, "insert-blocks");
-  return lastId;
+  return focusId;
 }
 
 /** Replace one empty leaf with a parsed outline in one transaction and undo

@@ -11,6 +11,12 @@ icon:: ⌨️
 	- Page-title matching keeps exact, prefix, substring, and fuzzy results in that order. Repeated choices may break ties inside one class using device-local history; disable or reset this under Search settings if you prefer fixed ordering.
 	- In the quick switcher, **Ctrl/Cmd-click** a result to open it in a background tab, **Shift-click** for the right sidebar, or **Alt-click** for another pane.
 	- The quick switcher, page search, suggestions, and find-in-page ignore accents, case, and compatibility-width differences by default: `cafe` finds `café`, `lodz` finds `Łódź`, and `Tine` finds `Ｔｉｎｅ`. Marks that form another letter stay significant (`か` and `が` differ). To require accents in these searches, set `:feature/enable-search-remove-accents? false` in `logseq/config.edn`. This changes matching only; page names and Markdown keep their original spelling.
+- ## Follow a link without the mouse — Ctrl+O
+	- With the caret inside a `[[link]]` or a `#tag`, **Ctrl+O** opens that page and **Ctrl+Shift+O** opens it in the right sidebar. This works while you are editing, so you can follow a name you just typed without reaching for the mouse.
+- ## Select whole blocks — Ctrl+A
+	- While editing, **Ctrl+A** first selects the block's text; press it again to select the block with its children, and keep pressing to widen the selection to each parent and finally the whole page. **Shift+Up** onto a parent always takes all of that parent's children with it.
+- ## Insert a block above
+	- To put a bullet *above* an existing one, press **Enter** with the caret at its very start. Some bullets keep Enter for themselves — inside a code block it adds a line of code — so for those, right-click the bullet's dot and choose **Insert block above**. That works on any bullet, including the first one on a page.
 - ## Create one yourself
 	- 1. Press **Ctrl+K**.
 	- 2. Type part of a page name, a block phrase, or a command such as `Open Guide`.
@@ -40,8 +46,9 @@ icon:: ⌨️
 	- **t b** (dim inactive blocks) fades everything except the bullet you're editing — a typewriter-style spotlight. Use it on its own, or let focus mode turn it on for you.
 - ## A few more worth knowing
 	- Use the **…** beside an ordinary page title for its complete actions menu: open the source file, copy/export, inspect properties, rename, carry tasks, or delete. It is the same menu as right-click and works from the keyboard and touch.
+	- In **Copy / Export**, choose **Plain text** for the text as displayed, without markup markers, or **Markdown** (**Org** on an Org page) to keep the original syntax: bold, highlighting, links, and properties.
 	- Right-click a block and choose **Open in new tab** to keep that block in its own tab.
-	- In **Settings → Shortcuts**, search by command or key and choose **Unbind** to remove a shortcut. **Settings → Appearance** offers Light, Dark, and System themes. The Settings window can be maximized; it remembers that choice on this device.
+	- In **Settings → Shortcuts**, search by command or key and choose **Unbind** to remove a shortcut; the command stays available from places such as the command palette, and **Reset** restores its default instead. **Settings → Appearance** offers Light, Dark, and System themes. The Settings window can be maximized; it remembers that choice on this device.
 	- **Settings → Help & diagnostics** creates a privacy-safe diagnostic report of this run to attach to a bug report: operation names, outcomes, timings, counts, platform and build, never page content, titles, file paths or queries. Review it and choose **Copy report**; nothing is uploaded, and nothing is kept after Tine quits. The same tab runs **Help improve Tine's parser**.
 	- Renaming a page to the name of another existing page offers to **merge** them, as Logseq does: the blocks move to the end of the page that remains, the aliases join, links to the old name point to it, and the merged file goes to the graph trash (recoverable).
 	- Tine saves pending edits before a rename. A page whose edits cannot be saved stops the rename only if the rename would change that page, or its unsaved text mentions the old name; the message names it. Other pages keep their unsaved edits through the rename. A page named by `title::`, or in Org by `#+TITLE:`, gets the new name in that line.
@@ -53,4 +60,4 @@ icon:: ⌨️
 	- **Hidden graph paths**: add `:hidden ["archive/private"]` to `logseq/config.edn` to exclude matching graph-relative path prefixes from pages and search. The files stay on disk. This also applies to pages outside the usual `pages/` and `journals/` folders.
 	- **Page icons**: add a property like `icon:: 📚` at the very top of a page — that's where the ⌨️ on this one comes from.
 	- **Page and block properties** are editable from a form, not only as raw `key:: value` lines: use **Page properties…** in the page menu (or `/page properties` while editing), or right-click a block for **Properties…**. The form lists every property the page or block really has; a page's form always offers Aliases, Tags, Display title, Icon and Public. Any other property can be changed or removed, and **Add a property** takes any key you like — it does not have to be plain ASCII. `id::`, `collapsed::` and `tine.` keys keep their own surfaces. Markdown writes `key:: value`, an Org page a `#+key: value` directive, and an Org block its `:PROPERTIES:` drawer. A read-only page offers no property editing at all.
-	- **Interface zoom** with **Ctrl + / - / 0**, and PDFs, images, and audio all have their own controls.
+	- **Interface zoom** with **Ctrl/Cmd + / - / 0** while the notes pane is focused. To return the whole interface to its default **100%**, open the command palette (**Ctrl/Cmd+Shift+P**) and choose **Reset interface zoom**. This leaves PDF/image zoom and block zoom unchanged; a focused PDF keeps its own **Ctrl/Cmd + / - / 0** controls.

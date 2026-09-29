@@ -18,6 +18,10 @@ function sources(): Sources {
   return new Map(sourceFiles().map((file) => [file, readFileSync(file, "utf8")]));
 }
 
+// Each check parses every production source; under a loaded full-suite run
+// that exceeds vitest's 5 s default, so scans get a budget, not an assertion.
+const SCAN_TIMEOUT_MS = 30_000;
+
 function production(file: string): boolean {
   return !file.startsWith(`${DOC}/`) && !file.endsWith("/mock.ts");
 }
@@ -175,14 +179,14 @@ it("I-11 document imports use the folder index", () => {
   expect(directImportViolations(all)).toEqual([]);
   all.set("src/__plant.ts", 'import { doc } from "./document/model";');
   expect(directImportViolations(all)[0]).toContain("I-11: import the document folder index only");
-});
+}, SCAN_TIMEOUT_MS);
 
 it("I-11 document containers stay private", () => {
   const all = sources();
   expect(containerImportViolations(all)).toEqual([]);
   all.set("src/__plant.ts", 'import { setDoc } from "./document";');
   expect(containerImportViolations(all)[0]).toContain("I-11: no doc/setDoc import");
-});
+}, SCAN_TIMEOUT_MS);
 
 it("I-1 backend page writes use the engine", () => {
   const all = sources();
@@ -191,14 +195,14 @@ it("I-1 backend page writes use the engine", () => {
   expect(backendWriteViolations(all)[0]).toContain("I-1: backend page writes belong");
   all.set("src/__plant.ts", 'backend().restoreBackup("stamp")');
   expect(backendWriteViolations(all)[0]).toContain("OG-RULES Rule 8");
-});
+}, SCAN_TIMEOUT_MS);
 
 it("I-12 PageDto construction stays in convert", () => {
   const all = sources();
   expect(dtoBuilderViolations(all)).toEqual([]);
   all.set("src/__plant.ts", "const x = { pre_block: null, blocks: [] };");
   expect(dtoBuilderViolations(all)[0]).toContain("I-12: build PageDto");
-});
+}, SCAN_TIMEOUT_MS);
 
 it("I-11 the document module has no import cycle", () => {
   const all = sources();
@@ -206,4 +210,4 @@ it("I-11 the document module has no import cycle", () => {
   all.set("src/document/__plant.ts", 'import "../__plant";');
   all.set("src/__plant.ts", 'import "./document";');
   expect(() => assertNoDocumentCycle(all)).toThrow("I-11: document must not join an import cycle; exemplar src/components/PageProps.tsx; src/document -> src/__plant.ts -> src/document");
-});
+}, SCAN_TIMEOUT_MS);
