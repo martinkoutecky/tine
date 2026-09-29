@@ -22,6 +22,7 @@ import { beginFreshnessBarrier, endFreshnessBarrier, installFreshnessInputGate }
 import { ownedWhen, readOwnedResource, type Owned } from "./owned";
 import { isPublishedExport } from "./publishedBackend";
 import { pushToast } from "./toasts";
+import { graphTransitioning } from "./ui";
 
 /** Minimum spacing between focus-driven rescans; below it, a return to the
  *  window is answered by the in-memory replay alone. */
@@ -79,6 +80,17 @@ function waitForCompletion(sequence: number): Promise<void> {
   });
 }
 
+/** Whether this window has a graph to rescan. Before the launch/switch load
+ *  has published its binding (Welcome screen, or load_graph still running or
+ *  its answer not yet received) the backend refuses the rescan with
+ *  `no graph loaded for window …` / `missing-graph-binding`. That is not a
+ *  failure: the load that installs the binding reads the disk itself, and its
+ *  watcher subscription starts at the revision it read. So the fallback is
+ *  sequenced after the binding, never reported against it (OG-TOAST T1). */
+function graphReadyForRescan(): boolean {
+  return captureBinding().backendGeneration !== 0 && !graphTransitioning();
+}
+
 function releaseActive(refresh: Promise<void>): void {
   if (active?.refresh === refresh) active = null;
 }
@@ -88,6 +100,7 @@ export function refreshOnReturnToWindow(now = Date.now()): Promise<void> {
   // A published export is an immutable snapshot with no watcher behind it.
   if (isPublishedExport()) return Promise.resolve();
   replayDeferredExternalReloads();
+  if (!graphReadyForRescan()) return Promise.resolve();
   const changed = retireChangedBinding();
   if (active) {
     if (!changed && stillBound(active.binding)) return active.refresh;
@@ -113,7 +126,9 @@ export function refreshOnReturnToWindow(now = Date.now()): Promise<void> {
       }
       replayDeferredExternalReloads();
     } catch (error) {
-      if (error instanceof StaleFocusRefresh) return;
+      // A refusal because the graph was switched or restored meanwhile is the
+      // stale case too: the new binding's load read the disk itself.
+      if (error instanceof StaleFocusRefresh || !stillBound(binding)) return;
       // The watcher stays primary; a failed fallback must release the gate.
       pushToast(`Tine couldn't finish checking for external changes. Editing is available, but reopen the page before relying on it being current. (${String(error)})`, "error");
     } finally {

@@ -7,6 +7,7 @@ import { backend } from "./backend";
 import { deferEditorStartUntilFresh, freshnessPending } from "./freshnessBarrier";
 import { refreshOnReturnToWindow, resetFocusRescanThrottle, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
 import { setToasts, toasts } from "./toasts";
+import { setGraphTransitioning } from "./ui";
 
 type Api = ReturnType<typeof backend>;
 // The completion listener subscribes once per app lifetime, as in production.
@@ -81,5 +82,48 @@ describe("reload on focus", () => {
     expect(toasts()[1].message).toBe("Live file notifications are back for this graph.");
     unsubscribe();
     delete api.onGraphWatchStatus;
+  });
+
+  // OG-TOAST T1 (Martin 2026-09-29): at launch the OS focus event reached the
+  // fallback before the window's graph binding existed; the backend refused the
+  // rescan (`missing-graph-binding` while load_graph's answer was in flight,
+  // `no graph loaded for window main` on the Welcome screen) and a red toast
+  // reported a transient startup state as a failure.
+  it("a return to a window whose graph is not bound yet rescans nothing and reports nothing", async () => {
+    const api = backend() as Api;
+    const unbound = vi.spyOn(api, "graphBindingGeneration").mockReturnValue(0);
+    api.rescanGraphNow = async () => { rescans++; throw new Error(api.graphBindingGeneration() ? "boom" : "missing-graph-binding"); };
+    try {
+      await refreshOnReturnToWindow(50_000);
+      expect(rescans).toBe(0);
+      expect(toasts()).toEqual([]);
+      expect(freshnessPending()).toBe(false);
+    } finally { unbound.mockRestore(); }
+  });
+
+  it("a return during a graph load or restore waits for it instead of rescanning", async () => {
+    setGraphTransitioning(true);
+    try {
+      await refreshOnReturnToWindow(60_000);
+      expect(rescans).toBe(0);
+      expect(toasts()).toEqual([]);
+    } finally { setGraphTransitioning(false); }
+    const after = refreshOnReturnToWindow(70_000);
+    await vi.waitFor(() => expect(rescans).toBe(1));
+    complete!(sequence);
+    await after;
+  });
+
+  it("a rescan refused because the graph was switched meanwhile is stale, not a failure", async () => {
+    const api = backend() as Api;
+    let generation = 1;
+    const spy = vi.spyOn(api, "graphBindingGeneration").mockImplementation(() => generation);
+    api.rescanGraphNow = async () => { rescans++; generation = 2; throw new Error("stale-graph-binding"); };
+    try {
+      await refreshOnReturnToWindow(80_000);
+      expect(rescans).toBe(1);
+      expect(toasts()).toEqual([]);
+      expect(freshnessPending()).toBe(false);
+    } finally { spy.mockRestore(); }
   });
 });
