@@ -12,6 +12,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { APP_ID } from "./lib/app-identity.mjs";
 import { openJournals, openPageByName } from "./lib/e2e-navigation.mjs";
+import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
+
+ensurePrivateSessionBus();
 
 const APP = process.env.TINE_APP || "/tmp/tine-multiprocess";
 const TD = process.env.TAURI_DRIVER || "/aux/koutecky/logseq/.toolchain/cargo/bin/tauri-driver";

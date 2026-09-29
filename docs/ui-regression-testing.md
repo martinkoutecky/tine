@@ -68,6 +68,19 @@ platform, IPC and persistence boundaries.
 
 ## Container prerequisites
 
+Linux native journeys need a private session bus as well as an X display.
+The single-instance plugin forwards CLI launches over D-Bus; without a shared
+bus, a second launch starts an independent process that WebDriver cannot see.
+`scripts/run-e2e.mjs` starts each native scenario under Xvfb and a private bus
+through `scripts/lib/e2e-session-bus.mjs`. Direct multigraph and Quick Capture
+journeys call `ensurePrivateSessionBus()` before creating fixtures or starting
+drivers, so `xvfb-run -a node scripts/e2e-multigraph.mjs` works too. The helper
+reuses a runner-owned bus and preserves child output and exit status. Install
+`dbus-run-session` (or set `DBUS_RUN_SESSION` to its path); missing it fails at
+setup. Windows and macOS keep their native forwarding transports. The guard
+`src/e2eSessionBus.guard.test.ts` requires this setup in every journey that
+spawns a second app, with the multigraph journey as its exemplar (I-12/I-21).
+
 For Debian/Ubuntu preload Rust stable, Node matching the lockfile, project npm
 dependencies, `tauri-driver`, `libwebkit2gtk-4.1-dev`, `webkit2gtk-driver`,
 `libayatana-appindicator3-dev`, `libgtk-3-dev`, `libsoup-3.0-dev`,

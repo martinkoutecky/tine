@@ -10,6 +10,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_ID } from "./lib/app-identity.mjs";
+import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
+
+ensurePrivateSessionBus();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
