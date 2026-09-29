@@ -3048,7 +3048,7 @@ export function Editor(props: { id: string }): JSX.Element {
     // commit — type-anywhere-while-editing, normalize-on-exit (M1c). The editor is
     // closing, so there is no caret to preserve.
     const calcExit = isCalc();
-    commit(calcExit ? ref.value : normalizePlanning(ref.value, pageFmt()), calcExit ? { calc: true } : undefined);
+    commit(calcExit || codeShown() ? ref.value : normalizePlanning(ref.value, pageFmt()), calcExit ? { calc: true } : undefined);
     finishPageHeaderEdit(props.id);
     // Only clear if no other block grabbed editing focus.
     if (editingId() === props.id) endEdit("blur");

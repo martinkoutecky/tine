@@ -15,12 +15,8 @@ import { Block } from "./Block";
 // `SCHEDULED:`/`DEADLINE:` line of the CODE up to line 2 before the wrapper is
 // re-attached — reordering code on disk with no edit by the user.
 //
-// PENDING Block.tsx (owned by lane 22d this wave): the blur commit must skip
-// normalizePlanning while the body-only code editor is shown, i.e. at the
-// onBlur commit
-//   commit(calcExit || codeShown() ? ref.value : normalizePlanning(ref.value, pageFmt()), …)
-// Until that line lands this test is `it.fails`; the Block.tsx change flips it,
-// and the flip must turn `it.fails` back into `it`.
+// Block.tsx's onBlur commit skips normalizePlanning while the body-only code
+// editor is shown (`calcExit || codeShown() ? ref.value : …`).
 
 beforeAll(async () => {
   await initParser();
@@ -49,7 +45,7 @@ describe("focus + blur of a whole-block code wrapper", () => {
     ["md", "```\nline1\nline2\nSCHEDULED: <2026-07-06 Mon>\n```"],
     ["org", "#+BEGIN_SRC text\nline1\nline2\nDEADLINE: <2026-07-06 Mon>\n#+END_SRC"],
   ] as const) {
-    it.fails(`${format}: leaves the code bytes unchanged`, () => {
+    it(`${format}: leaves the code bytes unchanged`, () => {
       const { blockId, textarea, dispose } = mountPage(raw, format);
       try {
         expect(textarea.value.startsWith("line1\nline2\n"), "the body-only code editor is shown").toBe(true);
