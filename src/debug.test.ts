@@ -6,8 +6,9 @@ import { afterEach, expect, it, vi } from "vitest";
 const diagnosticFrontendEvent = vi.fn(async () => {});
 const debugLog = vi.fn(async () => {});
 let previousExitUnclean = false;
+let debugEnabled = false;
 vi.mock("./backend", () => ({
-  backend: () => ({ diagnosticFrontendEvent, debugLog, debugInfo: async () => ({ enabled: false, path: "", previousExitUnclean }) }),
+  backend: () => ({ diagnosticFrontendEvent, debugLog, debugInfo: async () => ({ enabled: debugEnabled, path: "/log", previousExitUnclean }) }),
 }));
 const pushToast = vi.fn();
 vi.mock("./toasts", () => ({ pushToast, pushToastUnique: vi.fn() }));
@@ -78,4 +79,25 @@ it("offers the diagnostic report once when the previous run did not close cleanl
     }
   }
   previousExitUnclean = false;
+});
+
+// GH #446 (master 82b64dcb): the boot line names the identity the build
+// injected next to the UA, because an iPad's UA says Mac.
+it("logs the build-injected platform beside the user agent in the boot line", async () => {
+  vi.resetModules();
+  vi.stubGlobal("__TINE_PLATFORM__", "ios");
+  vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15" });
+  debugEnabled = true;
+  try {
+    const { initDebug, resetDebugForTests } = await import("./debug");
+    resetDebugForTests();
+    fakeWindow();
+    await initDebug();
+    await vi.waitFor(() => expect(debugLog).toHaveBeenCalledWith(expect.stringContaining("frontend booted")));
+    expect(debugLog).toHaveBeenCalledWith(
+      "frontend booted (platform=ios ua=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15)",
+    );
+  } finally {
+    debugEnabled = false;
+  }
 });

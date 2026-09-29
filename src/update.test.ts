@@ -22,7 +22,8 @@ async function loadUpdate(opts: {
     return opts.platform ?? "desktop";
   });
   const openExternalMock = vi.fn(async () => {});
-  const pushToastMock = vi.fn(() => 1);
+  let nextToastId = 40;
+  const pushToastMock = vi.fn(() => ++nextToastId);
   const dismissToastMock = vi.fn();
   const openSettingsMock = vi.fn();
   const diagnosticFrontendEventMock = vi.fn(async () => {});
@@ -59,6 +60,7 @@ async function loadUpdate(opts: {
     updaterCheckMock,
     openExternalMock,
     pushToastMock,
+    dismissToastMock,
     openSettingsMock,
     diagnosticFrontendEventMock,
   };
@@ -121,9 +123,47 @@ describe("update checks", () => {
       "info",
       expect.objectContaining({
         sticky: true,
-        action: expect.objectContaining({ label: "Download" }),
+        action: expect.objectContaining({ label: "Install update" }),
       })
     );
+  });
+
+  it("keeps one visible offer when the startup and manual checks find the same update", async () => {
+    mockLatest("v0.6.0");
+    const { update, pushToastMock, dismissToastMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
+
+    await update.checkForUpdate();
+    await expect(update.checkForUpdateNow()).resolves.toEqual({
+      kind: "available",
+      version: "0.6.0",
+      current: "0.5.3",
+    });
+
+    expect(pushToastMock).toHaveBeenCalledTimes(2);
+    expect(dismissToastMock).toHaveBeenCalledOnce();
+    expect(dismissToastMock).toHaveBeenCalledWith(41);
+  });
+
+  it("lets only the newest of two concurrent offers publish the sticky toast", async () => {
+    mockLatest("v0.6.0");
+    const { update, pushToastMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
+
+    await Promise.all([update.offerUpdate("0.6.0", "0.5.3"), update.offerUpdate("0.6.0", "0.5.3")]);
+
+    expect(pushToastMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks without installing: only the Install update action runs the updater (GH #241)", async () => {
+    mockLatest("v0.6.0");
+    const { update, pushToastMock, updaterCheckMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
+
+    await expect(update.checkForUpdateNow()).resolves.toMatchObject({ kind: "available" });
+    expect(updaterCheckMock).not.toHaveBeenCalled();
+    const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0 is available"));
+    expect(offer?.[2]).toMatchObject({ sticky: true, action: { label: "Install update" } });
+
+    offer?.[2]?.action?.run();
+    await vi.waitFor(() => expect(updaterCheckMock).toHaveBeenCalledOnce());
   });
 
   it("keeps the manual current-version result on desktop Tauri", async () => {
@@ -141,7 +181,7 @@ describe("update checks", () => {
     await update.checkForUpdate();
     const offer = toastCalls(pushToastMock).find(([message]) => message.includes("32-bit Windows"));
     expect(offer?.[2]).toMatchObject({ sticky: true, action: { label: "Download manually" } });
-    expect(toastCalls(pushToastMock).some(([, , options]) => options?.action?.label === "Download")).toBe(false);
+    expect(toastCalls(pushToastMock).some(([, , options]) => options?.action?.label === "Install update")).toBe(false);
     expect(diagnosticFrontendEventMock).toHaveBeenCalledWith("updater_manual_only", undefined);
     expect(diagnosticFrontendEventMock).not.toHaveBeenCalledWith("updater_failure", expect.anything());
 
@@ -164,6 +204,7 @@ describe("update checks", () => {
       await loadUpdate({ platform: "desktop", updaterReject: failure });
 
     await update.checkForUpdateNow();
+    toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0 is available"))?.[2]?.action?.run();
     await vi.waitFor(() => expect(diagnosticFrontendEventMock).toHaveBeenCalledWith(
       "updater_failure", { updaterStage: "manifest_fetch", updaterCause: "network" },
     ));

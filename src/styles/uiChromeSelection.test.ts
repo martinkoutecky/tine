@@ -9,7 +9,7 @@ function rule(selector: string): string {
 }
 
 describe("page-selection UI chrome (GH #328)", () => {
-  it.each([".page-trailing-block-target", ".references-header"])(
+  it.each([".page-trailing-block-target", ".references-header", ".references-header.clickable"])(
     "keeps %s out of native text selections",
     (selector) => {
       expect(rule(selector)).toMatch(/-webkit-user-select:\s*none/);

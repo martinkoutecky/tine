@@ -71,6 +71,7 @@ import {
   secondarySelectionActions,
   type SelectionAction,
 } from "../editor/selectionActions";
+import { DeferredStandaloneMacro } from "./DeferredStandaloneMacro";
 import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "../render/block";
 import { effectiveHeadingLevel, facetsOf } from "../render/facets";
 import { AstBody } from "../render/body";
@@ -617,14 +618,16 @@ function Rendered(props: {
       when={!macro()}
       fallback={
         <div class="block-content macro-host" onMouseDown={onMouseDown}>
-          <Switch>
-            <Match when={macro()!.kind === "query"}>
-              <QueryMacro body={macro()!.inner} blockId={props.id} sourceExtent={macro()!.sourceExtent} sourceRaw={macro()!.sourceExtent && node().raw.slice(macro()!.sourceExtent!.start, macro()!.sourceExtent!.end)} />
-            </Match>
-            <Match when={macro()!.kind === "embed"}>
-              <EmbedMacro body={macro()!.inner} blockId={props.id} />
-            </Match>
-          </Switch>
+          <DeferredStandaloneMacro blockId={props.id} raw={node().raw}>
+            <Switch>
+              <Match when={macro()!.kind === "query"}>
+                <QueryMacro body={macro()!.inner} blockId={props.id} sourceExtent={macro()!.sourceExtent} sourceRaw={macro()!.sourceExtent && node().raw.slice(macro()!.sourceExtent!.start, macro()!.sourceExtent!.end)} />
+              </Match>
+              <Match when={macro()!.kind === "embed"}>
+                <EmbedMacro body={macro()!.inner} blockId={props.id} />
+              </Match>
+            </Switch>
+          </DeferredStandaloneMacro>
         </div>
       }
     >
@@ -1498,15 +1501,20 @@ export function Editor(props: { id: string }): JSX.Element {
       }
     }
   };
+  // True while an external camera/file-picker activity covers the app (GH #493).
+  let nativeAssetPickerPending = false;
   // Mobile: take/pick a photo (Android camera plugin) → insert at the caret.
   const capturePhotoCmd = async () => {
     const editorToken = captureAssetEditorToken();
     let res;
+    nativeAssetPickerPending = true;
     try {
       res = await backend().capturePhoto();
     } catch (err) {
       if (stillBound(editorToken.binding)) pushToast(`Couldn’t capture a photo (${String(err)})`, "error");
       return;
+    } finally {
+      nativeAssetPickerPending = false;
     }
     if (res.status === "ok" && res.path) {
       const candidate = captureAssetFileName(res.ext || "jpg");
@@ -3031,6 +3039,16 @@ export function Editor(props: { id: string }): JSX.Element {
     // edit mode so Escape can restore the caret instead of remounting rendered
     // content underneath the user.
     if (inPageFindPreservesEditorBlur()) {
+      commit(ref.value);
+      savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
+      return;
+    }
+    // Android can blur the WebView editor before document.hasFocus() reflects
+    // that the external camera/file-picker activity covered the app. Still the
+    // same edit transaction: keep its identity and caret until the picker
+    // returns so the imported asset lands in the initiating block (GH #493).
+    // Graph/block changes stay guarded by assetEditorIsCurrent after the await.
+    if (nativeAssetPickerPending) {
       commit(ref.value);
       savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
       return;

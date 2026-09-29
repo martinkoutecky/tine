@@ -118,17 +118,24 @@ fn a_failed_move_names_the_rename_that_failed() {
     assert_eq!(step(error), Some("renameat2(RENAME_NOREPLACE)"));
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     assert_eq!(step(error), Some("renameatx_np(RENAME_EXCL)"));
-    let _refused = Refused::on();
-    let error =
-        crate::no_replace::move_file_noreplace(&missing, &root.join("pages/B.md")).unwrap_err();
-    assert_eq!(
-        error.kind(),
-        std::io::ErrorKind::NotFound,
-        "the kind survives the label"
-    );
-    assert_eq!(
-        step(error),
-        Some("renameat after the no-replace flag was refused")
-    );
+    // Windows has no flag-refused fallback: MoveFileExW without
+    // MOVEFILE_REPLACE_EXISTING is the no-replace move itself.
+    #[cfg(target_os = "windows")]
+    assert_eq!(step(error), Some("MoveFileExW(MOVEFILE_WRITE_THROUGH)"));
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _refused = Refused::on();
+        let error =
+            crate::no_replace::move_file_noreplace(&missing, &root.join("pages/B.md")).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::NotFound,
+            "the kind survives the label"
+        );
+        assert_eq!(
+            step(error),
+            Some("renameat after the no-replace flag was refused")
+        );
+    }
     let _ = fs::remove_dir_all(root);
 }
