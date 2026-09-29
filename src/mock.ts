@@ -4,7 +4,7 @@
 
 import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
-import { conflictDemoPages, mockConflictApi } from "./mockConflicts";
+import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, DraftRecord, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
@@ -639,7 +639,7 @@ type MockBackend = Backend & {
   runQuery(query: string): Promise<RefGroup[]>;
   runAdvancedQuery(query: string): Promise<{ groups: RefGroup[]; ran: string[]; ignored: string[]; supported: boolean }>;
 };
-export function mockBackend(extraPages: PageDto[] = conflictDemoPages(), removeAccents = true): MockBackend {
+export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((blocks): PageDto => ({ name: CONFLICT_DEMO_PAGE, kind: "page", title: CONFLICT_DEMO_PAGE, pre_block: "title:: Project Plan", blocks })), removeAccents = true): MockBackend {
   const all = [...PAGES, ...NAMED, ...extraPages];
   // Page ownership uses narrow identity; search membership uses the graph fold.
   const identity = (name: string) => name.toLowerCase().normalize("NFC");
