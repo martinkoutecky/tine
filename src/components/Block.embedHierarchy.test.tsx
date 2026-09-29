@@ -9,6 +9,7 @@ import { doc } from "../document/model";
 import type { BlockDto, PageDto, RefGroup } from "../types";
 import { Block } from "./Block";
 import { LiveRefGroup } from "./LiveRefGroup";
+import { dragId } from "./blockGestures";
 
 beforeAll(async () => {
   await initParser();
@@ -101,6 +102,47 @@ describe("block embed hierarchy", () => {
       mouseDownAndUp(gap);
       expect(editingId()).toBeNull();
       expect(root.querySelector(".embed-block")).not.toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  // Master GH #514: a whole-block embed shows the source root's bullet where the
+  // host's own would be, so dragging it moves the OCCURRENCE (the host). Nested
+  // rows inside the embed are the source's own outline and drag themselves.
+  function dragFrom(element: Element): string | null {
+    element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+    document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 10, clientY: 40 }));
+    const dragging = dragId();
+    document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0, clientX: 10, clientY: 40 }));
+    return dragging;
+  }
+
+  it("dragging the embedded root's bullet moves the host occurrence, not the source block", async () => {
+    const targetId = "embed-drag-root";
+    const { root, dispose, hostId } = renderFixture(targetId);
+    try {
+      const rootBullet = await vi.waitFor(() => {
+        const el = root.querySelector(`.embed-block [data-block-id="${targetId}"] > .block-main .bullet-container`);
+        expect(el).not.toBeNull();
+        return el!;
+      });
+      expect(dragFrom(rootBullet)).toBe(hostId);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("dragging a nested embedded row's bullet still moves that source row", async () => {
+    const targetId = "embed-drag-nested";
+    const { root, dispose } = renderFixture(targetId);
+    try {
+      const childBullet = await vi.waitFor(() => {
+        const el = root.querySelector(`.embed-block [data-block-id="${targetId}-child"] > .block-main .bullet-container`);
+        expect(el).not.toBeNull();
+        return el!;
+      });
+      expect(dragFrom(childBullet)).toBe(`${targetId}-child`);
     } finally {
       dispose();
     }

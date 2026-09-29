@@ -227,7 +227,7 @@ export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(n
 
 /** Render and edit one document block through the document door. Work scales
  * with its visible descendants; a failed structured paste shows fixed text. */
-export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean }): JSX.Element {
+export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean; dragHostId?: string }): JSX.Element {
   const node = () => docNode(props.id);
   // Unique per rendered instance, so when one block uuid appears in several
   // surfaces only the instance that was clicked mounts the editor (the rest stay
@@ -385,7 +385,13 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             classList={{ "bullet-closed": collapsed() && hasChildren(), ordered: !!orderMarker() }}
             title="Click to zoom; shift-click → sidebar; middle-click → new tab; drag to move"
             onMouseDown={(e) => {
-              if (e.button === 0 && !readOnly()) beginDrag(props.id, e);
+              // A transparent whole-block embed has only this root bullet. Its drag
+              // moves the occurrence; click/zoom still belongs to the source
+              // (master GH #514). Inline/page embeds keep ordinary source drag.
+              const host = e.currentTarget.closest<HTMLElement>(".block-embed-host");
+              const dragOwner = props.dragHostId && host?.dataset.blockId === props.dragHostId
+                ? props.dragHostId : props.id;
+              if (e.button === 0 && !blockPageReadOnly(dragOwner)) beginDrag(dragOwner, e);
             }}
             onClick={(e) => {
               e.stopPropagation();
