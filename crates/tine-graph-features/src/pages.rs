@@ -555,6 +555,7 @@ fn rename_page_after_inventory(
         candidates.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
         candidates.dedup();
         let mut edits = Vec::new();
+        let mut skipped = Vec::new();
         for id in candidates {
             let file = id.file();
             let (content, rev) = match read_text(store, &file) {
@@ -567,6 +568,19 @@ fn rename_page_after_inventory(
                 &lookup,
                 org,
             );
+            // Master a8fd4230d: a file carrying VCS conflict markers is not
+            // ours to rewrite (R-VCS-MARKERS; scenario: an external merge or a
+            // sync service left it mid-conflict). It stays byte-identical, a
+            // moved one moves verbatim, and the rename reports it.
+            if updated != content
+                && !tine_core::concord_queue::vcs_conflict_markers(&content).is_empty()
+            {
+                skipped.push(id.as_str().to_owned());
+                if moves.contains_key(&id) {
+                    edits.push((id, rev, false));
+                }
+                continue;
+            }
             if org && updated != content && !tine_core::org::org_editable(&content) {
                 let display = store
                     .path_for_os_handoff(&file, false)
@@ -581,7 +595,7 @@ fn rename_page_after_inventory(
             }
             if moves.contains_key(&id) || moved_titles_to_rebind.contains(&id) || updated != content
             {
-                edits.push((id, rev));
+                edits.push((id, rev, true));
             }
         }
         let merged = match &merge {
@@ -620,11 +634,14 @@ fn rename_page_after_inventory(
             RenameOutcome::Renamed
         };
         if edits.is_empty() && merged.is_none() {
-            return Ok(Some(RenameReport::unchanged()));
+            return Ok(Some(RenameReport {
+                skipped_conflicted_referrers: skipped,
+                ..RenameReport::unchanged()
+            }));
         }
         let touched: Vec<TouchedPage> = edits
             .iter()
-            .map(|(id, _)| (id, moves.contains_key(id)))
+            .map(|(id, _, _)| (id, moves.contains_key(id)))
             .chain(
                 merge
                     .iter()
@@ -675,21 +692,25 @@ fn rename_page_after_inventory(
         }
         let (moved, rewritten): (Vec<_>, Vec<_>) = edits
             .into_iter()
-            .partition(|(id, _)| moves.contains_key(id));
-        for (id, rev) in rewritten {
+            .partition(|(id, _, _)| moves.contains_key(id));
+        for (id, rev, _) in rewritten {
             if moved_titles_to_rebind.contains(&id) {
                 tx.move_file(&id.file(), rev, &id.file(), Some(&map));
             } else {
                 tx.rewrite_refs(&id, rev, &map);
             }
         }
-        for (id, rev) in moved {
-            tx.move_file(&id.file(), rev, &moves[&id], Some(&map));
+        for (id, rev, rewrite) in moved {
+            tx.move_file(&id.file(), rev, &moves[&id], rewrite.then_some(&map));
         }
         if let (Some((src, _)), Some(survivor)) = (&merge, merged) {
             tx.trash(&src.file(), survivor.src_rev);
         }
-        Ok(crate::commit_retry(tx.commit())?.then_some(RenameReport { outcome, touched }))
+        Ok(crate::commit_retry(tx.commit())?.then_some(RenameReport {
+            outcome,
+            touched,
+            skipped_conflicted_referrers: skipped,
+        }))
     })
 }
 
@@ -699,6 +720,10 @@ pub struct RenameReport {
     pub outcome: RenameOutcome,
     /// Every page file moved, trashed or rewritten; empty when `Unchanged`.
     pub touched: Vec<TouchedPage>,
+    /// Paths of referrers carrying VCS conflict markers whose references the
+    /// rename left untouched (R-VCS-MARKERS); the UI says so. Reported once
+    /// per file.
+    pub skipped_conflicted_referrers: Vec<String>,
 }
 
 impl RenameReport {
@@ -706,6 +731,7 @@ impl RenameReport {
         Self {
             outcome: RenameOutcome::Unchanged,
             touched: Vec::new(),
+            skipped_conflicted_referrers: Vec::new(),
         }
     }
 }
