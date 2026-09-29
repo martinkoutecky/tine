@@ -137,6 +137,12 @@
       "nonRequirements": ["Exact popup dimensions, suggestion order for unrelated items, or DOM structure."],
       "stability": "stable"
     },
+    "scripts/e2e-og-published-guide.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "The generated live Guide opens a reviewed page permalink in the read-only app, and a baked query block shows its rows without a backend.", "blocking": true }, { "class": "exact-safety-interoperability", "authority": "og published-export read-only contract: the published backend refuses every write verb (src/publishedBackend.ts)", "userOutcome": "The published Guide offers no New page or Settings control, and ?static=1 keeps the static site.", "blocking": true }],
+      "acceptableVariations": ["Guide page wording, layout and styling may change while the permalink, baked query rows, missing write controls and static fallback hold."],
+      "nonRequirements": ["No screenshots, geometry, row order, or bundle file names are asserted."],
+      "stability": "stable"
+    },
     "scripts/e2e-outline-guide.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "The outline guide toggles collapsible descendants in one accessible action and preserves the parent state.", "blocking": true }],
       "acceptableVariations": ["Guide visual treatment and control placement may evolve."],
