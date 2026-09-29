@@ -246,15 +246,20 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     return Object.entries(filters()).find(([candidate]) => norm(candidate) === key)?.[1];
   };
 
+  // A filter is asked for but the descendant index it needs is still in flight,
+  // so the list is deliberately UNFILTERED (descendant-only matches must not
+  // flash away) and the summary says so instead of reporting "N of N references".
+  // Once the index arrives, filtering is synchronous.
+  const filterPending = () => {
+    if (!nativeContextResource.loading) return false;
+    const parsed = parsedSearch();
+    return (parsed.kind !== "empty" && parsed.kind !== "invalid") || Object.keys(filters()).length > 0;
+  };
   const shown = createMemo<RefGroup[]>(() => {
     const f = filters();
     const ins = Object.keys(f).filter((k) => f[k] === "in").map(norm);
     const outs = Object.keys(f).filter((k) => f[k] === "out").map(norm);
-    const parsed = parsedSearch();
-    const searching = parsed.kind !== "empty" && parsed.kind !== "invalid";
-    // Do not flash descendant-only matches away while their on-demand native
-    // index is still in flight. Once it arrives, filtering is synchronous.
-    if ((searching || ins.length || outs.length) && nativeContextResource.loading) return mergedGroups();
+    if (filterPending()) return mergedGroups();
     if (!ins.length && !outs.length) return textMatchedGroups();
     return filterGroups(textMatchedGroups(), (group, block) => {
       const facets = new Set(rootEntry(group, block).facets.map(norm));
@@ -385,8 +390,17 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                 </button>
               </div>
               <div class="reference-filter-summary">
-                {count()} of {totalCount()} references
-                <Show when={nativeContextResource.loading}> · indexing…</Show>
+                <Show
+                  when={filterPending()}
+                  fallback={
+                    <>
+                      {count()} of {totalCount()} references
+                      <Show when={nativeContextResource.loading}> · indexing…</Show>
+                    </>
+                  }
+                >
+                  Indexing {totalCount()} references… the filter applies when this finishes
+                </Show>
               </div>
               <Show when={searchError()}>
                 {(error) => <div class="reference-filter-error">Invalid search: {error()}</div>}
