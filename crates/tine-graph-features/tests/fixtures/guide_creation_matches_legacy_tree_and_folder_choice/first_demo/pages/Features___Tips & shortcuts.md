@@ -15,6 +15,8 @@ icon:: ⌨️
 	- With the caret inside a `[[link]]` or a `#tag`, **Ctrl+O** opens that page and **Ctrl+Shift+O** opens it in the right sidebar. This works while you are editing, so you can follow a name you just typed without reaching for the mouse.
 - ## Select whole blocks — Ctrl+A
 	- While editing, **Ctrl+A** first selects the block's text; press it again to select the block with its children, and keep pressing to widen the selection to each parent and finally the whole page. **Shift+Up** onto a parent always takes all of that parent's children with it.
+- ## Copy a link to a block — Ctrl+C
+	- While editing with no text selected, **Ctrl/Cmd+C** copies a reference `((id))` to the block and **Ctrl/Cmd+Shift+C** copies an embed `{{embed ((id))}}`. With text selected, both keep their ordinary copy meaning.
 - ## Insert a block above
 	- To put a bullet *above* an existing one, press **Enter** with the caret at its very start. Some bullets keep Enter for themselves — inside a code block it adds a line of code — so for those, right-click the bullet's dot and choose **Insert block above**. That works on any bullet, including the first one on a page.
 - ## Create one yourself

@@ -380,6 +380,9 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/strike-through", binding: "mod+shift+s", label: "Strikethrough", scope: "editor" },
   { id: "editor/highlight", binding: "mod+shift+h", label: "Highlight", scope: "editor" },
   { id: "editor/insert-link", binding: "mod+l", label: "Insert link", scope: "editor" },
+  // GH #279: the embed counterpart of builtin Mod+C (copy block ref) — with a
+  // text selection the handler declines so the platform's ordinary copy runs.
+  { id: "editor/copy-embed", binding: "mod+shift+c", label: "Copy block embed when no text is selected", scope: "editor" },
   { id: "editor/clear-block", binding: "alt+l", label: "Clear block content", scope: "editor" },
   // Emacs-style cursor/kill motions.
   { id: "editor/kill-line-before", binding: "alt+u", label: "Delete to line start", scope: "editor" },
