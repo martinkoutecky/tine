@@ -75,7 +75,7 @@
  * rekeying refuses a name collision or an unsafe external reload. */
 export { blockIsGridView, node, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName } from "./model";
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
-export { conflictReason, conflicts, createPage, CreatePageRefusal, flushAll, flushPage, groupedPages, installAliasDraftRouteHandler, isConflicted, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, trackAssetWrite, unsavedDrafts, unsavedPageCount, waitingFor, waitingOn, type UnsavedState } from "./save/engine";
+export { conflictReason, conflicts, createPage, CreatePageRefusal, flushAll, flushPage, groupedPages, installAliasDraftRouteHandler, installDraftKeeper, isConflicted, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, trackAssetWrite, unsavedDrafts, unsavedPageCount, waitingFor, waitingOn, type UnsavedState } from "./save/engine";
 export { applyGraphChange, installExternalChangeUiHandler } from "./external";
 export { appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pinPageWhileDrafting, registerPaneRouteProvider, reloadHlsIfLoaded, resetStore, restoreTodayJournalInFeed } from "./workingSet";
 export { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";

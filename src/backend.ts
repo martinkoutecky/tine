@@ -44,6 +44,7 @@ import type {
   QueryPublicationRequest,
   QueryPublicationPlan,
   PublicationReceipt,
+  DraftRecord,
 } from "./types";
 import { dbg } from "./debug";
 import { assetFileName } from "./media";
@@ -627,6 +628,13 @@ export interface Backend {
   loadSession(): Promise<string | null>;
   /** Persist the UI session JSON. */
   saveSession(data: string): Promise<void>;
+  /** This graph's crash-surviving draft records (og ADR 0061). A corrupt store
+   *  loads empty; absent where drafts cannot be kept (published export). */
+  loadDrafts?(): Promise<DraftRecord[]>;
+  /** Replace one draft record; refused past the store's bound. */
+  storeDraft?(record: DraftRecord): Promise<void>;
+  /** Remove one draft record by id; a missing id is not an error. */
+  retireDraft?(id: string): Promise<void>;
   /** Load the current graph's device-local named-workspace registry JSON. */
   loadWorkspaces(): Promise<string>;
   /** Replace the registry atomically. A failed post-rename directory sync reports
@@ -1374,6 +1382,15 @@ class TauriBackend implements Backend {
   }
   saveSession(data: string) {
     return this.call<void>("save_session", { data });
+  }
+  loadDrafts() {
+    return this.call<DraftRecord[]>("load_drafts");
+  }
+  storeDraft(record: DraftRecord) {
+    return this.call<void>("store_draft", { record });
+  }
+  retireDraft(id: string) {
+    return this.call<void>("retire_draft", { id });
   }
   loadWorkspaces() {
     return this.call<string>("load_workspaces");

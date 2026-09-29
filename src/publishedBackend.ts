@@ -181,6 +181,9 @@ const OPTIONAL_METHODS = new Set([
   "retireConflictCapsule",
   "conflictCapsuleDiff",
   "resolveConflictCapsule",
+  "loadDrafts",
+  "storeDraft",
+  "retireDraft",
 ]);
 
 /** Build the snapshot backend. `load` is awaited lazily by every method. */

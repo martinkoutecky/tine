@@ -8,6 +8,7 @@ import { flushAll, unsavedDrafts } from "../document";
 import { mainPaneRouter } from "../router";
 import { writeClipboardText } from "../clipboard";
 import { closeUnsavedRecovery, unsavedRecoveryOpen } from "../unsavedRecovery";
+import { dismissEarlierDraft, earlierDrafts } from "../draftStore";
 import { registerTransientLayer } from "../transientLayers";
 import { DEFAULT_EXPORT_OPTIONS, exportOutline, type ExportNode } from "../editor/exportText";
 import type { PageDto } from "../types";
@@ -81,7 +82,7 @@ function RecoveryPanel(): JSX.Element {
       <button disabled={busy()} onClick={() => void retry()}>{busy() ? "Saving…" : "Retry saving"}</button>
       <button onClick={closeUnsavedRecovery}>Keep working</button>
       <p role="status">{message()}</p>
-      <Show when={pages().length === 0}><p>No pending page drafts. If closing still fails, check pending attachments and storage status.</p></Show>
+      <Show when={pages().length === 0 && earlierDrafts().length === 0}><p>No pending page drafts. If closing still fails, check pending attachments and storage status.</p></Show>
       <For each={pages()}>{(entry) => <section class="unsaved-recovery-entry">
         <h3>{entry.name} — {entry.state}</h3>
         <button onClick={() => {
@@ -93,6 +94,12 @@ function RecoveryPanel(): JSX.Element {
         <Show when={entry.page} fallback={<p>No page draft is available in this window.</p>}>
           {(page) => <RecoveryDraft page={page()} />}
         </Show>
+      </section>}</For>
+      <For each={earlierDrafts()}>{(record) => <section class="unsaved-recovery-entry">
+        <h3>{record.page_name} — kept from an earlier session ({new Date(record.saved_at).toLocaleString()})</h3>
+        <p>This draft was never saved to the page's file. Copy what you need into the page, then dismiss it.</p>
+        <RecoveryDraft page={record.page} />
+        <button onClick={() => void dismissEarlierDraft(record.id)}>Dismiss this draft</button>
       </section>}</For>
     </div>
   </div>;

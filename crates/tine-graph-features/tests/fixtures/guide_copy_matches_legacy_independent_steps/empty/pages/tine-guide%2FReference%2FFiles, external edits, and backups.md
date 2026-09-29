@@ -1,7 +1,8 @@
 icon:: 🗄️
 
 - # Files, external edits, and backups
-	- **If closing warns about unsaved changes:** Tine tries to save everything before the window closes. If a conflict or a stuck save prevents it, a prompt says so and asks whether to close anyway. Choose **No** to stay, then look for the conflict banner or the **N conflicts** badge (below) and resolve it before you close.
+	- **If closing warns about unsaved changes:** Tine tries to save everything before the window closes. If a conflict or a stuck save prevents it, a prompt says so and asks whether to close anyway. The prompt names each unsaved page. Choose **No** to stay: a panel lists those pages with **Retry saving**, open, and **Copy draft**. A failed save's message stays up with **Review unsaved**, which opens the same panel. For a conflict, look for the conflict banner or the **N conflicts** badge (below) and resolve it before you close.
+	- **If Tine crashes or quits while a page cannot be saved,** that page's unsaved text is kept in Tine's app data (never in your graph) and on the next start a message offers **Review**, which opens the same panel with that text to copy. Text that saved normally is not kept there.
 	- Your graph content stays in ordinary files shared with Logseq. Tine also keeps device settings and launch snapshots outside the graph. This page maps what is written where, and the safety nets around it.
 - ## What lands on disk
 	- **Pages and journals** — one Markdown or Org file per page. Existing files may live at the graph root or in nested folders; Tine saves each one back to its exact path. New files use the configured `pages/` and `journals/` folders.

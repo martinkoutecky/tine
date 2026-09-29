@@ -5,7 +5,7 @@
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
 import { mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, DraftRecord, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { leadingMarker } from "./markers";
@@ -470,6 +470,7 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
 const mockHighlights: Record<string, { label: string; highlights: Highlight[]; page?: number; scale?: number }> = {};
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
+const mockDrafts = new Map<string, DraftRecord>();
 let mockWorkspaces: string | null = null;
 let mockLinkFirstMatch = false;
 let mockGuideAnnounced = false;
@@ -1523,6 +1524,15 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
     },
     async saveSession(data: string): Promise<void> {
       mockSession = data;
+    },
+    async loadDrafts(): Promise<DraftRecord[]> {
+      return [...mockDrafts.values()].map((record) => structuredClone(record));
+    },
+    async storeDraft(record: DraftRecord): Promise<void> {
+      mockDrafts.set(record.id, structuredClone(record));
+    },
+    async retireDraft(id: string): Promise<void> {
+      mockDrafts.delete(id);
     },
     async loadWorkspaces(): Promise<string> {
       if (!mockWorkspaces) {

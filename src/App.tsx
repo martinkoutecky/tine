@@ -93,6 +93,7 @@ import { exitAndroidActivity, installAndroidBackHandler, requestAndroidRootClose
 import { createSafeCloseCoordinator } from "./safeClose";
 import { openUnsavedRecovery } from "./unsavedRecovery";
 import { UnsavedRecovery } from "./components/UnsavedRecovery";
+import { installDraftStore, writeAtRisk } from "./draftStore";
 import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
 import { hlsPageName } from "./pdf";
 import type { InvalidRoute } from "./routeTypes";
@@ -128,7 +129,8 @@ export const safeClose = createSafeCloseCoordinator({
   },
   onDiscardDeclined: openUnsavedRecovery,
   recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
-  flushSession,
+  // A close that keeps unsaved pages leaves their newest drafts in app data first.
+  flushSession: () => writeAtRisk().then(flushSession),
   setTransition: setGraphTransitioning,
   notifyPdfFailure: () => {
     pushToast("Couldn't save pending PDF changes. The graph remains open.", "error");
@@ -524,6 +526,7 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
 }
 
 export function App(): JSX.Element {
+  installDraftStore();
   // Every graph window mounts App and owns its own save engine. Split panes
   // share it; the capture mini-window owns only an unsaved scratch page.
   onMount(() => onCleanup(installBackgroundFlush({

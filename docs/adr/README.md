@@ -78,3 +78,4 @@ see the project `CLAUDE.md`.
 | [0056](0056-concord-base-ledger.md) | Concord base ledger: the last two agreed texts per page, in app data, feed 3-way sync-copy reviews; never an authority | Accepted |
 | [0058](0058-privacy-safe-diagnostic-flight-recorder.md) | Diagnostics are a privacy-safe flight recorder, persisted in app data (bounded, atomic, no graph bytes) | Accepted |
 | [0059](0059-bounded-theme-presentation-presets.md) | Theme API 0.2 adds bounded host-owned typography, journal-header, and Today-summary presets | Accepted |
+| [0061](0061-crash-surviving-unsaved-drafts.md) | Unsaved drafts survive a crash in one app-data draft store (only while a page cannot be saved; bounded; 8e capsule is a record in it) | Accepted |

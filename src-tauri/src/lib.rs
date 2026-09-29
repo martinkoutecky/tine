@@ -16,6 +16,7 @@ mod concord;
 mod concord_ledger;
 mod debug;
 mod device_io;
+mod drafts;
 #[cfg(test)]
 mod edit_kind_guard_tests;
 mod flight;
@@ -919,6 +920,9 @@ pub fn run() {
             list_backups,
             restore_backup,
             load_session,
+            drafts::load_drafts,
+            drafts::store_draft,
+            drafts::retire_draft,
             save_session,
             load_workspaces,
             save_workspaces,

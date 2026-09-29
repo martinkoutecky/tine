@@ -61,6 +61,7 @@ insertOutlineAfter
 insertOutlineBefore  # why: Insert block above any bullet (GH #480); batch17a
 insertOutlineChildren
 installAliasDraftRouteHandler
+installDraftKeeper  # why: the app-data draft store keeps a crash-surviving copy while a page's edits cannot be saved (og ADR 0061); batch20b
 installExternalChangeUiHandler
 installHistoryRouteContextAdapter
 installPageIdentityNavigation  # why: route/tab rekey must precede exact-path working-set identity adoption; batch11e

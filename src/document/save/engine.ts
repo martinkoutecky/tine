@@ -125,11 +125,22 @@ export function conflictReason(name: string): ConflictReason | undefined {
 }
 export function markConflict(name: string, reason: ConflictReason = { kind: "disk-changed" }, observedRev?: string | null) {
   setConflictReasons({ ...conflictReasons(), [name]: observedRev === undefined ? reason : { ...reason, observedRev } });
+  noteRisk(name);
 }
 export function clearConflict(name: string) {
   const next = { ...conflictReasons() };
   delete next[name];
   setConflictReasons(next);
+  noteRisk(name);
+}
+/** Told when a page starts or stops holding edits that cannot currently be saved
+ *  (a conflict or a failed save), so it can keep a crash-surviving copy (og ADR
+ *  0061). One keeper; installing replaces it. */
+type DraftKeeper = (name: string, atRisk: boolean) => void;
+let draftKeeper: DraftKeeper | null = null;
+export function installDraftKeeper(keeper: DraftKeeper | null) { draftKeeper = keeper; }
+function noteRisk(name: string) {
+  draftKeeper?.(name, !!conflictReasons()[name] || lastSaveFailure.has(name));
 }
 export function isConflicted(name: string): boolean {
   return !!conflictReasons()[name];
@@ -190,10 +201,11 @@ function reportSaveFailure(name: string, family: string, message: string) {
   if (lastSaveFailure.get(name) === family) return;
   forgetSaveFailure(name);
   lastSaveFailure.set(name, family);
+  noteRisk(name);
   saveFailureToasts.set(name, pushToast(message, "error", { sticky: true, action: { label: "Review unsaved", run: openUnsavedRecovery } }));
 }
 function forgetSaveFailure(name: string) {
-  lastSaveFailure.delete(name);
+  if (lastSaveFailure.delete(name)) noteRisk(name);
   const toast = saveFailureToasts.get(name);
   saveFailureToasts.delete(name);
   if (toast !== undefined) dismissToast(toast);
