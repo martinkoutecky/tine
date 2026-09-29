@@ -32,6 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Saving a search or query as a page in an Org graph writes its view properties where Org reads them** (a `:PROPERTIES:` drawer, not a body line that was never read back), and a save the workspace has since moved on from is refused instead of publishing an obsolete search: if the write had already begun, the page is kept and the workspace stays put with a note.
 - **Dragging a block embed by its bullet moves the embed itself** (GH #514), not the source block it shows. Rows nested inside the embed still drag as the source's own outline.
 - **Arrow keys move between bullets inside linked references, block references, query results and embeds** (GH #341). Up/Down and Left/Right at a block edge now step through the blocks as rendered in that view instead of jumping the caret to the source page's outline, where the editor is usually not on screen; merges and indents there still act on the real page outline.
 - **Code blocks**: the caret no longer jumps when you click into a code block or leave it with the arrow keys, the language line and fence markers are editable as text, and clicking a code card places the caret where you clicked (GH #489).
