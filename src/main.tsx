@@ -22,6 +22,7 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import "./styles/theme.css";
 import "./lsShimInstall";
 import "./styles/app.css";
+import "./styles/readiness.css";
 import "./styles/query.css";
 import "./styles/published.css";
 
@@ -51,7 +52,11 @@ async function revealMainWindowAfterStableFrame(): Promise<void> {
 }
 
 const mount = () => {
-  render(() => <App />, document.getElementById("root")!);
+  const root = document.getElementById("root")!;
+  // index.html owns the immediate, dependency-free readiness frame. Remove it
+  // only when Solid is ready to synchronously install the real application.
+  root.replaceChildren();
+  render(() => <App />, root);
   void revealMainWindowAfterStableFrame().catch((error) =>
     console.error("failed to reveal the main window")
   );

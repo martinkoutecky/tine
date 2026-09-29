@@ -558,7 +558,12 @@ export function PageView(): JSX.Element {
         </div>
       </div>
     }>
-    <Show when={contentReady()} fallback={<div class="page-loading" />}>
+    <Show when={contentReady()} fallback={
+      <div class="page-loading" role="status" aria-live="polite">
+        <span class="page-loading-spinner" aria-hidden="true" />
+        <span>Loading page…</span>
+      </div>
+    }>
       <Show when={zoomValid()} fallback={
         <div class="page">
           <For each={pagesToRender()}>
