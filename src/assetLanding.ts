@@ -4,6 +4,7 @@
 // Both checks are O(1); a stale binding rejects, while a stale editor reports a
 // stored but uninserted asset through reportStaleAsset.
 import { backend } from "./backend";
+import { errorFamily } from "./errorFamily";
 import { ownedWhen, writeOwned } from "./owned";
 import { captureBinding, stillBound, type Binding } from "./binding";
 import { editingId, editingOwner, editingSurface } from "./editorController";
@@ -76,7 +77,7 @@ export async function importCaptureToOrigin(token: AssetEditorToken, path: strin
       stored = result.value;
       break;
     } catch (error) {
-      if (origin === undefined || !String(error).includes("stale-graph-binding")) throw error;
+      if (origin === undefined || errorFamily(error) !== "stale-graph-binding") throw error;
       generation = await nextBindingGeneration(generation);
     }
   }
