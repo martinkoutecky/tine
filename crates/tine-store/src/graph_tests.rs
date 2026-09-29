@@ -61,6 +61,8 @@ fn search_count(store: &Store, query: &str) -> usize {
                 block_limit: 10,
                 explain: false,
                 page_match_scope: None,
+                page_view: None,
+                block_view: None,
             },
             &Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false))),
         )

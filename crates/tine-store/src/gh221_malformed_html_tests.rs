@@ -38,6 +38,8 @@ fn gh221_malformed_html_fragment_indexes_without_panic() {
                 block_limit: 100,
                 explain: false,
                 page_match_scope: None,
+                page_view: None,
+                block_view: None,
             },
             &Cancel(Arc::new(AtomicBool::new(false))),
         )

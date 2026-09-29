@@ -75,9 +75,11 @@ field store::PageRead.id
 field store::PageRead.read_only
 field store::PageRead.rev
 field store::SearchRequest.block_limit
+field store::SearchRequest.block_view
 field store::SearchRequest.page_match_scope
 field store::SearchRequest.explain
 field store::SearchRequest.page_limit
+field store::SearchRequest.page_view
 field store::SearchRequest.text
 field store::SearchRequest.within
 field store::InventoryEntry.name

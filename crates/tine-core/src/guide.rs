@@ -220,6 +220,10 @@ mod search_guide_tests {
         let queries = include_str!("templates/queries.md");
         assert!(queries.contains("An alias result opens its owner page"));
         assert!(queries.contains("authored page properties as columns"));
+        assert!(
+            queries.contains("Sample keeps the first N of that order, separately for each section")
+        );
+        assert!(queries.contains("Pages board groups adjacent results"));
     }
     #[test]
     fn search_fold_and_graph_opt_out_are_documented() {

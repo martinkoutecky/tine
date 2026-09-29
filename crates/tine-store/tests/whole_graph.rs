@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tine_core::model::{BacklinkFilterTarget, PageEntry, PageKind};
-use tine_core::query::ir::FriendlyPageMatchScope;
+use tine_core::query::ir::{Field, FriendlyPageMatchScope, SortDir, ViewSettings};
 use tine_core::query::QueryExportSpec;
 use tine_store::{
     Area, Cancel, FacetPolicy, PageId, QueryDialect, QueryError, QueryResult, Resolved,
@@ -271,6 +271,8 @@ fn query_and_scoped_search_use_page_identity() {
                 block_limit: 10,
                 explain: false,
                 page_match_scope: None,
+                page_view: None,
+                block_view: None,
             },
             &Cancel(Arc::new(AtomicBool::new(false))),
         )
@@ -287,6 +289,8 @@ fn query_and_scoped_search_use_page_identity() {
             block_limit: 10,
             explain: false,
             page_match_scope: None,
+            page_view: None,
+            block_view: None,
         },
         &Cancel(Arc::new(AtomicBool::new(true))),
     );
@@ -302,6 +306,8 @@ fn query_and_scoped_search_use_page_identity() {
                     block_limit: 1,
                     explain: false,
                     page_match_scope: None,
+                    page_view: None,
+                    block_view: None,
                 },
                 &Cancel(Arc::new(AtomicBool::new(false)))
             ),
@@ -327,6 +333,8 @@ fn scoped_search_keeps_block_allowance_when_page_limit_is_large() {
                 block_limit: 10,
                 explain: false,
                 page_match_scope: None,
+                page_view: None,
+                block_view: None,
             },
             &Cancel(Arc::new(AtomicBool::new(false))),
         )
@@ -348,6 +356,8 @@ fn public_search_request_routes_page_content_membership() {
                 block_limit: 0,
                 explain: false,
                 page_match_scope,
+                page_view: None,
+                block_view: None,
             },
             &cancel,
         )
@@ -384,6 +394,8 @@ fn public_search_hydrates_authored_properties_only_for_physical_pages() {
                 block_limit: 0,
                 explain: false,
                 page_match_scope: None,
+                page_view: None,
+                block_view: None,
             },
             &Cancel(Arc::new(AtomicBool::new(false))),
         )
@@ -392,6 +404,101 @@ fn public_search_hydrates_authored_properties_only_for_physical_pages() {
         tine_core::query_plan::QueryHit::Page { page, row: Some(row), .. }
         if page.rel_path_str() == "pages/Source.md" && row.path == "pages/Source.md"
             && row.properties.iter().any(|(key, value)| key == "owner" && value == "Mira"))));
+}
+
+#[test]
+fn public_search_sorts_complete_sections_then_samples_them_independently() {
+    let fixture = Fixture::new();
+    for (name, priority) in [("Alpha A", "C"), ("Alpha B", "B"), ("Alpha Z", "A")] {
+        std::fs::write(
+            fixture.0.join(format!("pages/{name}.md")),
+            format!("- TODO [#{priority}] alpha task\n"),
+        )
+        .unwrap();
+    }
+    let view = fixture.view();
+    let mut request = SearchRequest {
+        text: "alpha".into(),
+        within: None,
+        page_limit: 2,
+        block_limit: 3,
+        explain: false,
+        page_match_scope: None,
+        page_view: Some(ViewSettings {
+            sort: vec![(Field("name".into()), SortDir::Desc)],
+            sample: Some(1),
+            ..Default::default()
+        }),
+        block_view: Some(ViewSettings {
+            sort: vec![(Field("priority".into()), SortDir::Asc)],
+            sample: Some(2),
+            ..Default::default()
+        }),
+    };
+    let result = view
+        .search(&request, &Cancel(Arc::new(AtomicBool::new(false))))
+        .unwrap();
+    let pages: Vec<_> = result
+        .hits
+        .iter()
+        .filter_map(|hit| match hit {
+            tine_core::query_plan::QueryHit::Page { page, .. } => Some(page.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let blocks: Vec<_> = result
+        .hits
+        .iter()
+        .filter_map(|hit| match hit {
+            tine_core::query_plan::QueryHit::Block { block, .. } => Some(block.raw.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pages, ["Alpha Z"]);
+    assert_eq!(blocks, ["TODO [#A] alpha task", "TODO [#B] alpha task"]);
+    assert!(result.has_more.pages && result.has_more.blocks);
+
+    request.page_view.as_mut().unwrap().sample = Some(0);
+    let no_pages = view
+        .search(&request, &Cancel(Arc::new(AtomicBool::new(false))))
+        .unwrap();
+    assert_eq!(
+        no_pages
+            .hits
+            .iter()
+            .filter(|hit| matches!(hit, tine_core::query_plan::QueryHit::Page { .. }))
+            .count(),
+        0
+    );
+    assert_eq!(
+        no_pages
+            .hits
+            .iter()
+            .filter(|hit| matches!(hit, tine_core::query_plan::QueryHit::Block { .. }))
+            .count(),
+        2
+    );
+    request.page_view.as_mut().unwrap().sample = Some(1000);
+    request.block_view.as_mut().unwrap().sample = Some(1000);
+    let capped = view
+        .search(&request, &Cancel(Arc::new(AtomicBool::new(false))))
+        .unwrap();
+    assert_eq!(
+        capped
+            .hits
+            .iter()
+            .filter(|hit| matches!(hit, tine_core::query_plan::QueryHit::Page { .. }))
+            .count(),
+        2
+    );
+    assert_eq!(
+        capped
+            .hits
+            .iter()
+            .filter(|hit| matches!(hit, tine_core::query_plan::QueryHit::Block { .. }))
+            .count(),
+        3
+    );
 }
 
 #[test]

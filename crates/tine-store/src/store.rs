@@ -2321,6 +2321,10 @@ pub struct SearchRequest {
     /// Page membership: names/aliases, contained block text, or both. Defaults
     /// to names when absent; a file-scoped request remains block-only.
     pub page_match_scope: Option<tine_core::query::ir::FriendlyPageMatchScope>,
+    /// Effective Pages Display view; sort and sample apply before admission.
+    pub page_view: Option<tine_core::query::ir::ViewSettings>,
+    /// Effective Blocks Display view, independent of the Pages section.
+    pub block_view: Option<tine_core::query::ir::ViewSettings>,
 }
 /// Syntax used to evaluate a `{{query}}` expression.
 pub enum QueryDialect {
@@ -3016,7 +3020,9 @@ impl WholeGraph {
     /// API; the lower-level execution type also represents cancelled work.
     /// A cold search can scan O(P + B + text bytes); content page membership
     /// adds one block scan and keeps at most one candidate per matching physical
-    /// page before applying the requested hit limits.
+    /// page before applying the requested hit limits. An authored sort retains
+    /// all matching candidates in memory, O(matches) space and O(matches log
+    /// matches) ordering, before the independent section samples and bounds.
     pub fn search(
         &self,
         req: &SearchRequest,
@@ -3048,6 +3054,8 @@ impl WholeGraph {
             req.explain,
             req.page_match_scope
                 .unwrap_or(tine_core::query::ir::FriendlyPageMatchScope::Names),
+            req.page_view.clone(),
+            req.block_view.clone(),
         );
         if result.cancelled {
             Err(QueryError::Cancelled)
@@ -3855,6 +3863,8 @@ mod rev5_tests {
                     block_limit: 10,
                     explain: false,
                     page_match_scope: None,
+                    page_view: None,
+                    block_view: None,
                 },
                 &Cancel(Arc::new(AtomicBool::new(false))),
             )
@@ -5060,6 +5070,8 @@ mod rev5_tests {
                             block_limit: 10,
                             explain: false,
                             page_match_scope: None,
+                            page_view: None,
+                            block_view: None,
                         },
                         &cancel
                     )

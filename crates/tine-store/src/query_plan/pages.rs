@@ -246,6 +246,12 @@ pub(super) fn execute_pages(
     }
     let mut heap = BinaryHeap::new();
     let mut has_more = false;
+    let sort = friendly_sort_fields(plan.page_view.as_ref());
+    let selection_limit = if sort.is_empty() {
+        branch.limit
+    } else {
+        usize::MAX
+    };
     for (index, page) in file_pages.iter().enumerate() {
         if cancelled() {
             return None;
@@ -273,10 +279,10 @@ pub(super) fn execute_pages(
                     })
                 })
         {
-            has_more |= heap.len() >= branch.limit;
+            has_more |= heap.len() >= selection_limit;
             push_page(
                 &mut heap,
-                branch.limit,
+                selection_limit,
                 ScoredPage {
                     from_content: content_text.is_some(),
                     score: base_score - page.name.len() as i32,
@@ -309,11 +315,11 @@ pub(super) fn execute_pages(
         if let Some((base_score, match_class, matched_text, matched_alias)) =
             best_page_match(plan, &branch.predicate, &name, &[])
         {
-            has_more |= heap.len() >= branch.limit;
+            has_more |= heap.len() >= selection_limit;
             let score = base_score - name.len() as i32;
             push_page(
                 &mut heap,
-                branch.limit,
+                selection_limit,
                 ScoredPage {
                     from_content: false,
                     score,
@@ -334,13 +340,81 @@ pub(super) fn execute_pages(
         }
     }
     let mut winners = heap.into_vec();
-    winners.sort_by(|a, b| {
-        a.from_content
-            .cmp(&b.from_content)
-            .then_with(|| b.match_class.rank().cmp(&a.match_class.rank()))
-            .then_with(|| b.score.cmp(&a.score))
-            .then_with(|| a.tie_key.cmp(&b.tie_key))
-    });
+    if sort.is_empty() {
+        winners.sort_by(|a, b| {
+            a.from_content
+                .cmp(&b.from_content)
+                .then_with(|| b.match_class.rank().cmp(&a.match_class.rank()))
+                .then_with(|| b.score.cmp(&a.score))
+                .then_with(|| a.tie_key.cmp(&b.tie_key))
+        });
+    } else {
+        let wanted: HashSet<&str> = winners
+            .iter()
+            .filter_map(|winner| match winner.candidate {
+                PageCandidate::File(index) => Some(file_pages[index].rel_path_str()),
+                PageCandidate::Referenced(_) => None,
+            })
+            .collect();
+        let keys = graph.with_pages(|pages| {
+            let index = graph.query_index();
+            pages
+                .iter()
+                .filter(|(entry, _)| wanted.contains(entry.rel_path_str()))
+                .map(|(entry, doc)| {
+                    let facts = index.facts(entry, doc);
+                    (
+                        entry.rel_path_str().to_owned(),
+                        sort.iter()
+                            .map(|(field, _)| {
+                                crate::query::exec::page_sort_decor(
+                                    field,
+                                    entry,
+                                    facts.properties(),
+                                    0,
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        });
+        let ascending: Vec<bool> = sort.iter().map(|(_, asc)| *asc).collect();
+        let mut decorated: Vec<_> = winners
+            .into_iter()
+            .map(|winner| {
+                let key = match &winner.candidate {
+                    PageCandidate::File(index) => keys
+                        .get(file_pages[*index].rel_path_str())
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            sort.iter()
+                                .map(|(field, _)| {
+                                    crate::query::exec::page_sort_decor(
+                                        field,
+                                        &file_pages[*index],
+                                        &[],
+                                        0,
+                                    )
+                                })
+                                .collect()
+                        }),
+                    PageCandidate::Referenced(page) => sort
+                        .iter()
+                        .map(|(field, _)| crate::query::exec::page_sort_decor(field, page, &[], 0))
+                        .collect(),
+                };
+                (key, winner)
+            })
+            .collect();
+        decorated.sort_by(|a, b| {
+            tine_core::query::sort::compare_sort_decorations(&a.0, &b.0, &ascending)
+                .then_with(|| a.1.tie_key.cmp(&b.1.tie_key))
+        });
+        winners = decorated.into_iter().map(|(_, winner)| winner).collect();
+        has_more = winners.len() > branch.limit;
+        winners.truncate(branch.limit);
+    }
     // Hydrate only admitted physical pages. The query index owns the authored
     // property projection; matching and row construction share one graph snapshot.
     let wanted: HashSet<&str> = winners

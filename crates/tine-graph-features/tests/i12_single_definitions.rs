@@ -92,7 +92,16 @@ fn shared_answers_have_one_definition() {
         "crates/tine-graph-features/src/sources.rs",
         "crates/tine-graph-features/src/pdf.rs",
     ] {
-        assert_clean(file, &fs::read_to_string(root.join(file)).unwrap());
+        let mut source = fs::read_to_string(root.join(file)).unwrap();
+        if file.ends_with("query_plan.rs") {
+            // The block reader moved into a child module. Keep the breadcrumb
+            // check over the whole answerer, including that module.
+            source.push_str(
+                &fs::read_to_string(root.join("crates/tine-store/src/query_plan/blocks.rs"))
+                    .unwrap(),
+            );
+        }
+        assert_clean(file, &source);
     }
     let owner = fs::read_to_string(root.join("crates/tine-store/src/file_kind.rs")).unwrap();
     assert!(owner.contains("pub fn is_graph_text(") && owner.contains("pub fn is_asset_sidecar("),

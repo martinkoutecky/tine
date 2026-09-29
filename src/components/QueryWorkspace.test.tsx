@@ -292,6 +292,22 @@ async function waitFor(check: () => void): Promise<void> {
 }
 
 describe("QueryWorkspace", () => {
+  it("sends both effective Display views to live friendly search", async () => {
+    const route: QueryRoute = { kind: "query", id: "live-display", sourceKind: "search", source: "alpha",
+      presentation: "search", pagePresentation: "board", blockPresentation: "list",
+      pageDisplay: { sort: [["name", "desc"]], group_by: "prop:owner", sample: 2 },
+      blockDisplay: { sort: [["priority", "asc"]], sample: 1 } };
+    const deps = workspaceDeps();
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(deps.runGraphSearch).toHaveBeenCalledWith("alpha", 40, 100,
+        "query-workspace:live-display", false, undefined, "names", {
+          page: expect.objectContaining({ sort: [["name", "desc"]], group_by: "prop:owner", sample: 2 }),
+          block: expect.objectContaining({ sort: [["priority", "asc"]], sample: 1 }),
+        }));
+    } finally { dispose(); }
+  });
   it("keeps independent section Display choices and shows authored page columns", async () => {
     const route: QueryRoute = { kind: "query", id: "scoped-display", sourceKind: "search", source: "alpha",
       presentation: "search", pagePresentation: "table", blockPresentation: "list",
@@ -322,11 +338,11 @@ describe("QueryWorkspace", () => {
     const root = document.createElement("div"); document.body.append(root);
     const dispose = render(() => <QueryWorkspace route={route} router={router} deps={deps} />, root);
     try {
-      await waitFor(() => expect(deps.runGraphSearch).toHaveBeenCalledWith("alpha", 40, 100, "query-workspace:scope-test", false, undefined, "names"));
+      await waitFor(() => expect(deps.runGraphSearch).toHaveBeenCalledWith("alpha", 40, 100, "query-workspace:scope-test", false, undefined, "names", expect.any(Object)));
       const select = root.querySelector<HTMLSelectElement>('[aria-label="Pages match"]')!;
       select.value = "content";
       select.dispatchEvent(new Event("change", { bubbles: true }));
-      await waitFor(() => expect(deps.runGraphSearch).toHaveBeenCalledWith("alpha", 40, 100, "query-workspace:scope-test", false, undefined, "content"));
+      await waitFor(() => expect(deps.runGraphSearch).toHaveBeenCalledWith("alpha", 40, 100, "query-workspace:scope-test", false, undefined, "content", expect.any(Object)));
       expect(router.updateActiveQuery).toHaveBeenCalledWith({ pageMatchScope: "content" });
     } finally { dispose(); }
   });
@@ -549,15 +565,15 @@ describe("QueryWorkspace", () => {
       const button = [...root.querySelectorAll<HTMLButtonElement>(".query-presentations button")]
         .find((candidate) => candidate.textContent === label)!;
       button.click();
-      expect(root.querySelector(selector)).not.toBeNull();
-      expect([...root.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["Alpha", "alpha"]);
+      await waitFor(() => expect(root.querySelector(selector)).not.toBeNull());
+      await waitFor(() => expect([...root.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["Alpha", "alpha"]));
       expect(router.updateActiveQuery).toHaveBeenCalledWith({ presentation: label.toLowerCase() });
     }
 
     const explain = root.querySelector(".query-explain-toggle") as HTMLButtonElement;
     explain.click();
     await waitFor(() => expect(root.querySelector(".query-workspace-explanation")?.textContent).toContain("contains alpha"));
-    expect(deps.runGraphSearch).toHaveBeenLastCalledWith("alpha", 40, 100, "query-workspace:query-test", true, undefined, "names");
+    expect(deps.runGraphSearch).toHaveBeenLastCalledWith("alpha", 40, 100, "query-workspace:query-test", true, undefined, "names", expect.any(Object));
 
     dispose();
   });

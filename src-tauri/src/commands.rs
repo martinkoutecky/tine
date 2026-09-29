@@ -1091,6 +1091,8 @@ pub(crate) async fn run_graph_search(
     explain: bool,
     scope: Option<QueryPageScope>,
     page_match_scope: Option<tine_core::query::ir::FriendlyPageMatchScope>,
+    page_view: Option<tine_core::query::ir::ViewSettings>,
+    block_view: Option<tine_core::query::ir::ViewSettings>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query_plan::QueryExecution, String> {
     let slot = slot_for_context(&state)?;
@@ -1110,6 +1112,8 @@ pub(crate) async fn run_graph_search(
             explain,
             scope,
             page_match_scope,
+            page_view,
+            block_view,
         )
         .map_err(feature_search_error)
     })

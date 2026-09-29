@@ -336,7 +336,10 @@ fn statistics_keys(
     keys
 }
 
-fn block_sort_decor(
+/// Shared block sort meaning for IR and Friendly rows. Missing properties use
+/// visible first-line text; planning fields use their stable missing sentinel.
+/// Cost O(properties on one block); no failure for a parsed block.
+pub(crate) fn block_sort_decor(
     field: &str,
     entry: &PageEntry,
     block: &DocBlock,
@@ -364,10 +367,12 @@ fn block_sort_decor(
     }
 }
 
-fn page_sort_decor(
+/// Shared page sort meaning for IR and Friendly rows. Missing properties use
+/// the page name. Cost O(properties on one page); no failure for a page entry.
+pub(crate) fn page_sort_decor(
     field: &str,
     entry: &PageEntry,
-    facts: &PageFacts,
+    properties: &[(String, String)],
     page_recency: i64,
 ) -> SortDecor {
     match field.to_ascii_lowercase().as_str() {
@@ -382,8 +387,7 @@ fn page_sort_decor(
         "day" | "journal-day" | "journal_day" => SortDecor::Num(entry.date_key.unwrap_or(i64::MIN)),
         _ if is_recency_field(field) => SortDecor::Num(page_recency),
         _ => SortDecor::Text(lexical_property_sort_text(
-            facts
-                .properties()
+            properties
                 .iter()
                 .map(|(key, value)| (key.as_str(), value.as_str())),
             field,
@@ -573,7 +577,12 @@ pub(crate) fn execute(
                                     .sort
                                     .iter()
                                     .map(|(field, _)| {
-                                        page_sort_decor(field.as_str(), entry, &facts, page_recency)
+                                        page_sort_decor(
+                                            field.as_str(),
+                                            entry,
+                                            facts.properties(),
+                                            page_recency,
+                                        )
                                     })
                                     .collect();
                                 (keys, base, (entry, facts))
