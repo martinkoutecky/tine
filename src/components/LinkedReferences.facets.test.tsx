@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import type { BacklinkFilterContext, BlockDto, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
 import { resetReferenceSectionState } from "../referenceSectionState";
-import { setGraphMeta } from "../graphSession";
 
 vi.mock("./LiveRefGroup", () => ({
   LiveRefGroup: (props: { blocks: BlockDto[]; showBreadcrumb?: boolean }) => (

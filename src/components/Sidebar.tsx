@@ -20,6 +20,7 @@ import { writeClipboardText } from "../clipboard";
 import { isMobilePlatform } from "../nativeChrome";
 import { graphRowMenuActions } from "./graphRowMenu";
 import { readOr } from "../resourceRead";
+import { ResourceFailure } from "./ResourceFailure";
 
 // Cap the rendered "All pages" list. Beyond this, rendering every row (each
 // reading route() for its active state) makes both the initial render and every
@@ -328,8 +329,8 @@ export function GraphSwitcher(props: {
   let alive = true;
   onCleanup(() => { alive = false; });
   const [knownGraphsResource, { refetch }] = createResource(() => backend().listKnownGraphs());
-  // The switcher lists the graphs it can; a failed list is an empty menu, not a
-  // thrown render.
+  // A failed list never throws into render and never reads as "no other graphs":
+  // the menu says it could not load them and offers Retry (ResourceFailure).
   const knownGraphs = () => readOr(knownGraphsResource, undefined, "known graphs");
   const close = () => setOpen(false);
 
@@ -372,6 +373,7 @@ export function GraphSwitcher(props: {
           }}
         />
         <div class="ctx-menu graph-switch-menu">
+          <ResourceFailure of={knownGraphsResource} what="your other graphs" onRetry={() => void refetch()} />
           <For each={knownGraphs() ?? []}>
             {(graph) => (
               <div
