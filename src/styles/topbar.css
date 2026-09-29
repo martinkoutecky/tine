@@ -54,12 +54,46 @@
   background: var(--border-color);
 }
 
+/* The strip shrinks and scrolls, but its "Show all tabs" trigger does not:
+   keep room for it so it never draws over the next toolbar button. */
+.topbar .tab-bar {
+  min-width: 30px;
+}
+
+/* Two occupants reach the real fit boundary before a phone does: a frameless
+   desktop window's three window buttons, and a desktop tab strip (phones hide
+   it), which needs room for at least one readable tab pill. Only those topbars
+   collapse here, not every phone (GH #205, master a006f1308; og H). */
 @container topbar (max-width: 460px) {
+  .topbar:where(:has(.win-controls, .tab-bar)) .topbar-optional-action,
+  .topbar:has(.win-controls) .topbar-sidebar-action {
+    display: none;
+  }
+  .topbar:where(:has(.win-controls, .tab-bar)) .topbar-right {
+    margin-left: auto;
+  }
+  .topbar:where(:has(.win-controls, .tab-bar)) .topbar-overflow {
+    display: block;
+  }
+  .topbar:where(:has(.win-controls, .tab-bar)) .topbar-overflow [data-topbar-overflow-action="back"],
+  .topbar:where(:has(.win-controls, .tab-bar)) .topbar-overflow [data-topbar-overflow-action="forward"],
+  .topbar:where(:has(.win-controls, .tab-bar)) .topbar-overflow .topbar-overflow-sep {
+    display: none;
+  }
+  /* Without window controls the frequent right-sidebar action stays direct
+     until the 250px floor; hide its duplicate menu row (master 945337d03). */
+  .topbar:not(:has(.win-controls)) .topbar-overflow [data-topbar-overflow-action="right-sidebar"] {
+    display: none;
+  }
+}
+
+@container topbar (max-width: 345px) {
   /* The tab strip is the flexible middle (.tab-bar flex:1 1 auto, min-width:0;
      .tab-strip-scroll overflow-x:auto) — it shrinks and scrolls, so it never
      clips the fixed clusters and must stay reachable on a narrow desktop window.
      Only the fixed-width low-priority action buttons overflow into the "…" menu.
-     (Real mobile already hides tabs via the isMobilePlatform Show + spacer.) */
+     345px is the measured CONTENT-BOX fit boundary (28px of inline padding): at
+     a 390px phone every frequent action fits directly. */
   .topbar .topbar-optional-action {
     display: none;
   }
@@ -69,23 +103,26 @@
   .topbar .topbar-overflow {
     display: block;
   }
-  /* Back/Forward remain inline through the first tier, so do not duplicate
-     them in the overflow menu. The four optional actions keep it non-empty. */
+  /* Back/Forward remain inline through this tier; do not duplicate them. */
   .topbar .topbar-overflow [data-topbar-overflow-action="back"],
   .topbar .topbar-overflow [data-topbar-overflow-action="forward"],
   .topbar .topbar-overflow .topbar-overflow-sep {
     display: none;
   }
-  /* A frameless desktop window carries three window buttons in this row, so
-     the right-sidebar toggle joins the overflow menu here. A phone (no window
-     controls) has room for this frequent one-tap action after calendar/
-     journals/theme collapse: keep it direct and hide the duplicate menu row
-     until the last-resort tier below (GH #205, master 945337d03). */
-  .topbar:has(.win-controls) .topbar-sidebar-action {
+}
+
+/* A desktop tab strip needs one whole 112px pill beside the fixed clusters;
+   below a 440px window it would be squeezed to a couple of letters (og-f).
+   Desktop has Back/Forward shortcuts and mouse buttons, so the pair moves to
+   the menu here; phones (no tab strip) keep it inline until 300px (og H). */
+@container topbar (max-width: 411px) {
+  .topbar:where(:has(.tab-bar)) .topbar-navigation-action {
     display: none;
   }
-  .topbar:not(:has(.win-controls)) .topbar-overflow [data-topbar-overflow-action="right-sidebar"] {
-    display: none;
+  .topbar:where(:has(.tab-bar)) .topbar-overflow [data-topbar-overflow-action="back"],
+  .topbar:where(:has(.tab-bar)) .topbar-overflow [data-topbar-overflow-action="forward"],
+  .topbar:where(:has(.tab-bar)) .topbar-overflow .topbar-overflow-sep {
+    display: block;
   }
 }
 
@@ -107,6 +144,10 @@
    a 252px content box and still fits right-sidebar exactly once; only below
    that measured boundary does it join the overflow menu. */
 @container topbar (max-width: 250px) {
+  /* No room for even one tab here: the strip goes (keyboard tab switching stays). */
+  .topbar .tab-bar {
+    display: none;
+  }
   .topbar:not(:has(.win-controls)) .topbar-sidebar-action {
     display: none;
   }

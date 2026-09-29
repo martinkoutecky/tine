@@ -95,6 +95,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **A phone toolbar keeps calendar, journals and theme on the bar** (GH #205,
+  master a006f1308, og H). On a 390px phone they had moved into the "…" menu; they
+  now collapse only below a 345px toolbar. A narrow desktop window, whose tab strip
+  needs room, still collapses them at 460px and below a 440px window also moves
+  Back/Forward into "…", so the tab title stays readable instead of shrinking to a
+  couple of letters, and the "Show all tabs" button never covers the next button.
 - **The parser comparison no longer offers known intentional differences as bugs**
   (master c0c2ff11b, og H). Dollar math inside Markdown emphasis (`**…$x$…**`),
   which Tine keeps on purpose, is re-verified in isolation and listed under a
