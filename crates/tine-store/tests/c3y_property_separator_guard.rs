@@ -36,7 +36,8 @@ fn full_width_comma_separator_has_one_definition() {
                 .strip_prefix(&root)
                 .unwrap_or(path)
                 .display()
-                .to_string();
+                .to_string()
+                .replace('\\', "/");
             text.lines()
                 .enumerate()
                 .filter(|(_, line)| line.contains("'，'"))

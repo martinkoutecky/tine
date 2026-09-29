@@ -1565,7 +1565,9 @@ mod tests {
     /// limit reached by a second large graph, or a network mount.
     #[test]
     fn a_refused_watch_polls_reports_and_recovers() {
-        let root = temp_root("refused");
+        // The store watches the canonical root; on Windows the temp dir is an
+        // 8.3 short path, so the refusal hook must be keyed by the canonical one.
+        let root = crate::Store::canonical_root(&temp_root("refused")).unwrap();
         REFUSED_ROOTS.lock().unwrap().push(root.clone());
         let store = Store::open(
             &root,
