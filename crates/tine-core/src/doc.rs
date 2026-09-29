@@ -75,6 +75,8 @@ pub struct DocBlock {
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Default)]
 pub struct BlockProjection {
+    /// Parser-owned raw byte regions from the same cached single-block AST.
+    pub regions: crate::block_regions::BlockRegions,
     /// Visible (non-property) text, original case — the body the reader sees,
     /// for breadcrumb labels / display. `raw` minus the byte ranges lsdoc
     /// recognized as `Properties` blocks (see `visible_minus_properties`).
@@ -222,7 +224,10 @@ impl DocBlock {
             let (marker, priority, heading_level, properties) = header_facets(&proj.blocks);
             let (scheduled, deadline) = planning_dates(&proj.blocks, &self.raw);
             let tags = tags_from_blocks(&proj.blocks);
-            let visible = visible_minus_properties(&self.raw, &proj.blocks);
+            let regions = crate::block_regions::from_blocks(&self.raw, self.is_org, &proj.blocks);
+            let visible = regions
+                .apply(&self.raw, self.is_org, crate::block_regions::Edit::Visible)
+                .expect("parsed regions");
             let visible_lower = crate::search_query::canonical_fold(&visible);
             let refs_page = proj.refs.page;
             let refs_norm = refs_page
@@ -232,6 +237,7 @@ impl DocBlock {
             let reference_source =
                 crate::reference_evidence::project(&self.raw, self.is_org, &proj.blocks);
             BlockProjection {
+                regions,
                 visible,
                 visible_lower,
                 visible_literal: std::sync::OnceLock::new(),
@@ -610,55 +616,10 @@ fn angle_after(slice: &str, ts: &str) -> Option<String> {
 pub fn block_sort_facets(raw: &str) -> (Vec<(String, String)>, String) {
     let blocks = crate::render::parse_block(raw, false);
     let (_, _, _, properties) = header_facets(&blocks);
-    let visible = visible_minus_properties(raw, &blocks);
+    let visible = crate::block_regions::from_blocks(raw, false, &blocks)
+        .apply(raw, false, crate::block_regions::Edit::Visible)
+        .expect("parsed regions");
     (properties, visible)
-}
-
-/// `raw` with the byte ranges lsdoc recognized as `Properties` blocks removed,
-/// whole-line (so no blank line remains). The lsdoc input is `"{prefix} {raw_trimmed}"`
-/// where prefix is the 2-byte `"- "`/`"* "`, so `input[2..] == raw[lead..]` byte-for-byte
-/// (`lead` = leading whitespace trimmed) and a span `[s,e)` maps to raw `[s-2+lead, e-2+lead)`.
-/// Drawers (`:LOGBOOK:`) are intentionally KEPT (searchable, as before); only
-/// `Properties` (md `key::` / org `:PROPERTIES:`) are dropped — exactly the lines
-/// the old `visible_lines` dropped, now decided by the one property recognizer.
-fn visible_minus_properties(raw: &str, blocks: &[lsdoc::ast::Block]) -> String {
-    use lsdoc::ast::Block;
-    let lead = raw.len() - raw.trim_start().len();
-    let bytes = raw.as_bytes();
-    let mut cuts: Vec<(usize, usize)> = Vec::new();
-    for b in blocks {
-        if let Block::Properties { span: Some(sp), .. } = b {
-            let mut rs = (sp.0.saturating_sub(2) + lead).min(raw.len());
-            let mut re = (sp.1.saturating_sub(2) + lead).min(raw.len());
-            if rs >= re {
-                continue;
-            }
-            // Extend to whole lines (newlines are char boundaries → slices stay UTF-8 valid).
-            while rs > 0 && bytes[rs - 1] != b'\n' {
-                rs -= 1;
-            }
-            while re < raw.len() && bytes[re - 1] != b'\n' {
-                re += 1;
-            }
-            cuts.push((rs, re));
-        }
-    }
-    if cuts.is_empty() {
-        return raw.to_string();
-    }
-    cuts.sort_by_key(|c| c.0);
-    let mut out = String::with_capacity(raw.len());
-    let mut pos = 0usize;
-    for (s, e) in cuts {
-        if s < pos {
-            pos = pos.max(e); // overlapping/adjacent property ranges
-            continue;
-        }
-        out.push_str(&raw[pos..s]);
-        pos = e;
-    }
-    out.push_str(&raw[pos..]);
-    out.trim_end_matches('\n').to_string()
 }
 
 pub fn property_key_norm(key: &str) -> String {

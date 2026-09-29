@@ -7,6 +7,10 @@
 
 use wasm_bindgen::prelude::*;
 
+#[path = "../../tine-core/src/block_regions.rs"]
+mod block_regions;
+mod render { pub(crate) use crate::lsdoc_block_parse::parse_block; }
+
 #[path = "../../tine-core/src/logbook.rs"]
 mod logbook;
 #[path = "../../lsdoc-block-parse.rs"]
@@ -142,4 +146,17 @@ fn now_parts() -> logbook::TimestampParts {
 #[wasm_bindgen]
 pub fn lsdoc_tag() -> String {
     option_env!("LSDOC_TAG").unwrap_or("unknown").to_string()
+}
+
+#[wasm_bindgen]
+pub fn parse_block_bundle_json(raw: &str, is_org: bool) -> String {
+    let blocks = lsdoc_block_parse::parse_block(raw, is_org);
+    let regions = block_regions::from_blocks(raw, is_org, &blocks);
+    serde_json::json!({"blocks": blocks, "regions": regions}).to_string()
+}
+#[wasm_bindgen]
+pub fn edit_block_regions_json(raw: &str, is_org: bool, regions: &str, request: &str) -> Result<String, JsValue> {
+    let regions: block_regions::BlockRegions = serde_json::from_str(regions).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let edit: block_regions::Edit = serde_json::from_str(request).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    regions.apply(raw, is_org, edit).map_err(|e| JsValue::from_str(&e))
 }

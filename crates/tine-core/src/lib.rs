@@ -3,6 +3,7 @@
 //! belong to `tine-store`), no GUI dependencies — fully unit
 //! testable without the Tauri shell.
 
+pub mod block_regions;
 pub mod concord_queue;
 pub mod config;
 pub mod corpus;
