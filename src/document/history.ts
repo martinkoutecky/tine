@@ -1,4 +1,4 @@
-import { FeedPage, Node, doc, pageByName, setDoc, docHasBlockIdentity } from "./model";
+import { FeedPage, Node, doc, pageByName, setDoc, hasLoadedIdentityCollision } from "./model";
 import { addDirty, pageInstanceGeneration, pageInstanceGenerations, persistTogether, scheduleSave, type TransferEdge } from "./save/engine";
 import { type Route } from "../routeTypes";
 import { type HistorySidebarContext, captureHistorySidebarContext, restoreHistorySidebarContext } from "../ui";
@@ -519,7 +519,7 @@ export function redo() {
   if (!entry) return;
   const stale = staleInstances(entry);
   if (stale.length) { discardStaleHistory(stale); return; }
-  if (entry.preservedIds?.some(docHasBlockIdentity)) {
+  if (entry.preservedIds && hasLoadedIdentityCollision(entry.preservedIds)) {
     // The selected prerequisite is already popped. A later redo snapshot cannot
     // remain valid without it, including in page-only mode where the tagged
     // entry may have been selected from the middle of the global stack.

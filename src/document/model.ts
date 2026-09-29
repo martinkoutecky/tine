@@ -77,19 +77,50 @@ export function loadedPage(name: string): ReadonlyFeedPage | undefined { return 
 export function feedNames(): readonly string[] { return doc.feed; }
 export function isLoaded(name?: string): boolean { return name === undefined ? doc.loaded : !!pageByName(name); }
 
+// A Markdown `id::` line or an Org `:id:` property line. setRaw updates a loaded
+// node's raw synchronously without re-keying `byId` by a newly typed/pasted id, so
+// a raw id line counts as live ownership (the final paste/redo checks must fail
+// closed in that window). No Org drawer is required: any matching raw line counts.
+const RAW_BLOCK_ID_PROPERTY_RE = /(?:^|\r?\n)[ \t]*(?:id[ \t]*::|:id:)[ \t]*([^\r\n]*?)[ \t]*(?=\r?\n|$)/gi;
+
+/** Which of `incomingIds` collide with a live identity in the loaded document
+ *  (a `byId` key or a raw id property, case-insensitive)? ONE pass over the loaded
+ *  document however many candidates are asked about — the per-id predicate this
+ *  replaces re-scanned every key and raw for each candidate (master 8c495c1ce).
+ *  This is the only answer to "is this id live?". */
+export function loadedIdentityCollisions(incomingIds: readonly string[]): Set<string> {
+  const collisions = new Set<string>();
+  if (!incomingIds.length) return collisions;
+  const loaded = new Set<string>();
+  for (const [key, node] of Object.entries(doc.byId)) {
+    if (node) loaded.add(key.toLowerCase());
+    RAW_BLOCK_ID_PROPERTY_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while (node && (match = RAW_BLOCK_ID_PROPERTY_RE.exec(node.raw)) !== null) {
+      const identity = match[1].trim();
+      if (identity) loaded.add(identity.toLowerCase());
+    }
+  }
+  for (const id of incomingIds) if (loaded.has(id.toLowerCase())) collisions.add(id);
+  return collisions;
+}
+
+/** Does any candidate collide with a live identity, or with another candidate?
+ *  A moved payload that repeats an id (redo history can carry preserved ids from
+ *  an older snapshot) is refused just as a live collision is. */
+export function hasLoadedIdentityCollision(incomingIds: readonly string[]): boolean {
+  const seen = new Set<string>();
+  for (const id of incomingIds) {
+    const normalized = id.toLowerCase();
+    if (seen.has(normalized)) return true;
+    seen.add(normalized);
+  }
+  return loadedIdentityCollisions(incomingIds).size > 0;
+}
+
 export function docHasBlockIdentity(id: string): boolean {
   if (doc.byId[id]) return true;
-  const normalized = id.toLowerCase();
-  if (Object.keys(doc.byId).some((key) => key.toLowerCase() === normalized && !!doc.byId[key])) return true;
-  // setRaw updates a loaded node's raw synchronously without re-keying by a
-  // newly typed/pasted id property. Treat either Markdown or Org id syntax as
-  // live ownership so the final paste/redo checks fail closed in that window.
-  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const rawIdentity = new RegExp(
-    `(?:^|\\r?\\n)[ \\t]*(?:id[ \\t]*::|:id:)[ \\t]*${escaped}(?=[ \\t]*(?:\\r?\\n|$))`,
-    "i",
-  );
-  return Object.values(doc.byId).some((node) => rawIdentity.test(node.raw));
+  return loadedIdentityCollisions([id]).size > 0;
 }
 
 

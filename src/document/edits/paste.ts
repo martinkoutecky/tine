@@ -1,7 +1,7 @@
 import { type Format } from "../../types";
 import { splitProps, hideAll, joinProps, isBuiltinHidden } from "../../editor/properties";
 import { type ClipboardBlock, type ClipboardPayloadSlot, consumeCutGrant } from "../../clipboard";
-import { doc, Node, formatForPage, freshId, setDoc, docHasBlockIdentity } from "../model";
+import { doc, Node, formatForPage, freshId, setDoc, hasLoadedIdentityCollision, loadedIdentityCollisions } from "../model";
 import { graphTransitioning } from "../../ui";
 import { pageInstanceGeneration, markDirty, flushCutSourcePages, cutSourcePagesRetired } from "../save/engine";
 import { graphEpoch, graphMeta } from "../../graphSession";
@@ -84,7 +84,7 @@ export function sanitizeOutlineIdsForPaste(
       unique.forEach((id) => collisions.add(id));
     }
     if (!owner()) return null;
-    unique.filter(docHasBlockIdentity).forEach((id) => collisions.add(id));
+    loadedIdentityCollisions(unique).forEach((id) => collisions.add(id));
     const clean = (node: OutlineNode): OutlineNode => {
       const blockIds = clipboardIdsForBlock({ raw: node.raw, sourceFormat: format, children: [] });
       return {
@@ -288,7 +288,7 @@ export function pasteClipboardPayload(
     if (!owner()) return null;
     if (preserveIds) {
       preserveIds = cutSourcePagesRetired(grant!.sourcePages)
-        && normalizedIds.every((id) => !docHasBlockIdentity(id))
+        && !hasLoadedIdentityCollision(normalizedIds)
         && slot.blocks.every(function keysRetired(block): boolean {
           return (!block.key || !doc.byId[block.key]) && block.children.every(keysRetired);
         });
