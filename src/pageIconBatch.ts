@@ -34,6 +34,13 @@ function flush() {
   if (!pending.length) return;
   const batch = pending;
   pending = [];
+  // Before the window's graph is bound (a sidebar ref restored at launch)
+  // page_icons refuses with no-graph/missing-graph-binding: a transient state,
+  // not a failure. The binding bumps graphEpoch, which re-requests them.
+  if (backend().graphBindingGeneration() === 0) {
+    batch.forEach((name) => requested.delete(name));
+    return;
+  }
   const batchRev = cacheRev;
   const owner = graphOwner(() => cacheRev === batchRev);
   void readOwned(owner, backend().pageIcons(batch))
