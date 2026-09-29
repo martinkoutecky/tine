@@ -59,6 +59,21 @@ it("I-9 ratchets swallowed errors and prose branches; exemplar src/document/save
   }
 });
 
+// An empty-bodied function is a swallow once it is passed as a rejection
+// handler, so every one must be a named best-effort helper listed above.
+const EMPTY_FUNCTION = /\bfunction\s+(\w+)\s*\([^)]*\)\s*(?::\s*void)?\s*\{\s*\}/g;
+export function emptyFunctions(source: string): string[] {
+  return [...source.matchAll(EMPTY_FUNCTION)].map((m) => m[1]);
+}
+
+it("I-9: every empty-bodied function is a registered best-effort helper; exemplar src/assetCache.ts", () => {
+  const named = new Set(Object.values(NAMED_BEST_EFFORT_HELPERS).flat());
+  const unregistered = sources("src").flatMap((file) =>
+    emptyFunctions(readFileSync(file, "utf8")).filter((name) => !named.has(name)).map((name) => `${file}:${name}`));
+  expect(unregistered, "I-9: register a best-effort helper in NAMED_BEST_EFFORT_HELPERS with why its failure is harmless").toEqual([]);
+  expect(emptyFunctions("function ignoreIt(_e: unknown): void {}\nfunction real() { work(); }")).toEqual(["ignoreIt"]);
+});
+
 it("detects planted empty catches and error-prose branches", () => {
   expect(swallowViolations("src/planted.ts", "try {} catch {}\np.catch(() => undefined)\nif (message.startsWith('bad')) fail();\nif (e.message === 'bad') fail();"))
     .toHaveLength(4);
