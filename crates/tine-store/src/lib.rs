@@ -110,7 +110,8 @@ pub use store::{
     FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry, IrAnswer,
     IrRequest, Listing, LoadError, OpenError, OpenOptions, Origin, PageId, PageRead, QueryDialect,
     QueryError, QueryResult, Resolved, SaveBase, SaveOutcome, SavePagesOutcome, SearchRequest,
-    Store, StoreError, Subscription, SubscriptionEnd, TrashKind, WatchMode, WholeGraph,
+    Store, StoreError, Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode,
+    WatchStatus, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]
 pub use transaction::FaultPoint;

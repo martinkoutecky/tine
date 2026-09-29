@@ -146,8 +146,9 @@ pub struct OpenOptions {
 pub enum WatchMode {
     /// Default: use filesystem notifications with a 200 ms debounce. A
     /// notified file is hashed even if its length and mtime match the previous
-    /// observation. Failure to install notifications for either managed
-    /// directory silently falls back to three-second polling. Managed root
+    /// observation. Failure to install notifications for the graph root falls
+    /// back to three-second polling, retries the watch every cycle, and is
+    /// reported through [`Store::observe_watch_status`]. Managed root
     /// identity is checked every three seconds; a deleted and recreated root
     /// is watched again, with one full reconcile for edits made in the gap.
     /// A backend that
@@ -207,6 +208,36 @@ pub struct Change {
     /// they are excluded from parsed search, backlinks, and page inventory.
     pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
     pages: Vec<(FileId, PageKind, String)>,
+    /// The watcher batch that produced this publication, for latency
+    /// receipts (GH #337 diagnosis); `None` for every other publisher.
+    pub watch: Option<WatchBatch>,
+}
+
+/// How one watcher cycle observed a publication: monotonic stamps and counts
+/// only, no paths. The window adapter turns it into a latency receipt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WatchBatch {
+    /// First notification of the drained batch; `None` for a poll cycle.
+    pub first_event_at: Option<std::time::Instant>,
+    /// When reconciliation of the batch began.
+    pub reconcile_started: std::time::Instant,
+    /// The cycle ran without live notifications (poll mode or refused watch).
+    pub poll: bool,
+    /// The full stat-diff branch ran (poll, unclassifiable event, burst).
+    pub full_diff: bool,
+    /// Exact event paths the batch carried (0 for a pure full diff).
+    pub event_paths: usize,
+}
+
+/// Live-notification state of a store's watcher, reported to the observer
+/// installed with [`Store::observe_watch_status`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WatchStatus {
+    /// The OS refused live notifications for the graph root; the watcher polls
+    /// every three seconds and retries the watch each cycle.
+    Refused(String),
+    /// Live notifications work again after a refusal.
+    Restored,
 }
 
 impl Change {
@@ -470,6 +501,18 @@ impl ChangeFeed {
         pages: Vec<(FileId, PageKind, String)>,
         before_notify: impl FnOnce(),
     ) -> GraphRev {
+        self.publish_watched(origin, files, config_changed, pages, before_notify, None)
+    }
+
+    pub(crate) fn publish_watched(
+        &self,
+        origin: Origin,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        config_changed: bool,
+        pages: Vec<(FileId, PageKind, String)>,
+        before_notify: impl FnOnce(),
+        watch: Option<WatchBatch>,
+    ) -> GraphRev {
         let old = self.snapshot.read().unwrap().clone();
         let journals_dir = self.graph.current_config().journals_dir.clone();
         if old.is_none()
@@ -505,6 +548,7 @@ impl ChangeFeed {
                 origin,
                 files,
                 pages,
+                watch,
             });
             self.ready.notify_all();
         }
@@ -1194,6 +1238,14 @@ impl Store {
         if !self.is_closed() {
             self.watch.set_mode(mode);
         }
+    }
+
+    /// Install the one observer told when the OS refuses live notifications
+    /// for the graph root (the watcher then polls every three seconds and
+    /// retries the watch each cycle) and when they work again. A refusal
+    /// already in force is reported at once. Replaces any earlier observer.
+    pub fn observe_watch_status(&self, observer: impl Fn(WatchStatus) + Send + Sync + 'static) {
+        self.watch.observe_status(Arc::new(observer));
     }
 
     /// Wait for the initial graph parse, retrying it if it previously failed,
