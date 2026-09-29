@@ -69,6 +69,25 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn journal_content_days_preserves_prose_while_skipping_unicode_properties() {
+    let fixture = Fixture::new();
+    let journal = fixture.0.join("journals/2026_09_25.md");
+    for (raw, has_content) in [
+        ("- #tag:: prose\n", true),
+        ("- klíč:: hodnota\n", false),
+        ("- key::value\n", true),
+    ] {
+        std::fs::write(&journal, raw).unwrap();
+        let days = fixture.view().journal_content_days();
+        assert_eq!(
+            days.contains(&tine_store::Day(20260925)),
+            has_content,
+            "{raw}"
+        );
+    }
+}
+
+#[test]
 fn all_whole_graph_questions_use_the_public_view() {
     let fixture = Fixture::new();
     let view = fixture.view();

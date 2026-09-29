@@ -8,6 +8,7 @@ pub(super) fn page_property_lines(text: &str, is_org: bool) -> Vec<(String, Stri
         return text
             .lines()
             .filter_map(tine_core::doc::parse_property_line)
+            .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect();
     }
     let mut props = Vec::new();

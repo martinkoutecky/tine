@@ -666,20 +666,7 @@ pub fn property_key_norm(key: &str) -> String {
     key.trim().to_ascii_lowercase().replace([' ', '_'], "-")
 }
 
-pub fn parse_property_line(line: &str) -> Option<(String, String)> {
-    // `key:: value` — key is letters/digits/_/-/. and at least one char.
-    let idx = line.find("::")?;
-    let key = line[..idx].trim();
-    if key.is_empty()
-        || !key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
-    {
-        return None;
-    }
-    let value = line[idx + 2..].trim().to_string();
-    Some((key.to_string(), value))
-}
+pub use crate::property_line::parse_property_line;
 
 /// Number of leading whitespace characters (tabs and spaces). Used as an
 /// indent "column" for nesting. Tabs and spaces each count as one; within a
@@ -790,13 +777,7 @@ fn has_bounded_org_closer(following: &[&str], content_start: usize, name: &str) 
 }
 
 fn markdown_property_line(line: &str) -> bool {
-    let Some((key, _)) = line.trim().split_once("::") else {
-        return false;
-    };
-    !key.is_empty()
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'))
+    parse_property_line(line).is_some()
 }
 
 /// Recover a Logseq block shape emitted by some importers/plugins:

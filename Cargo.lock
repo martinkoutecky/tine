@@ -4845,6 +4845,7 @@ dependencies = [
  "sha2",
  "tine-core",
  "tine-store",
+ "unicode-normalization",
 ]
 
 [[package]]

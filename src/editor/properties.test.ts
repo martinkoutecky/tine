@@ -276,7 +276,7 @@ describe("non-ASCII property keys (GH #164)", () => {
   });
 
   it("the panel writes only keys every Tine reader finds again (full list: editablePropertyKeys.test.ts)", () => {
-    for (const ok of ["status", "my-key", "a_1"]) expect(isEditablePropertyKey(ok), ok).toBe(true);
-    for (const bad of ["", "klíč", "日本", "a/b", "a.b", "a b", "a::b", "a:b", "#tag", "k\nv"]) expect(isEditablePropertyKey(bad), bad).toBe(false);
+    for (const ok of ["status", "my-key", "a_1", "klíč", "日本", "a/b", "a.b"]) expect(isEditablePropertyKey(ok), ok).toBe(true);
+    for (const bad of ["", "a b", "a::b", "a:b", "#tag", "k\nv"]) expect(isEditablePropertyKey(bad), bad).toBe(false);
   });
 });

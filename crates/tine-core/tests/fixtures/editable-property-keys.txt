@@ -4,7 +4,7 @@
 # Rust readers `doc::parse_property_line` and `logbook::is_md_property_line`).
 # `+key` must be accepted and read back by every reader; `-key` must be refused
 # by the panel because at least one Tine reader would not find it again.
-# The rule: ASCII letters, digits, `-` and `_` only.
+# The rule: Unicode letters, marks and numbers, plus `_`, `.`, `/` and `-`.
 +status
 +Status
 +owner
@@ -16,13 +16,13 @@
 +my_key
 +ABC-def_09
 +x-y_z
++klíč
++日本
++é
++a/b
++a.b
++logseq.order-list-type
 -
--klíč
--日本
--é
--a/b
--a.b
--logseq.order-list-type
 -a b
 -a:b
 -a::b
