@@ -36,6 +36,42 @@ describe("QuickSwitcher search syntax help", () => {
     expect(root.querySelector(".switcher-overlay")).not.toBeNull();
     dispose();
   });
+  // GH #463 (master 60d157037): the keyboard half of the Ctrl/Cmd-click
+  // contract above. Ctrl/Cmd+Enter on the highlighted page row opens it in a
+  // background tab and keeps Search open; plain Enter still navigates in place.
+  it.each([
+    ["Ctrl", { ctrlKey: true }],
+    ["Command", { metaKey: true }],
+  ] as const)("%s+Enter opens the highlighted result in a background tab (GH #463)", async (_label, modifier) => {
+    setRecentPages([{ name: "Keyed", kind: "page", path: "pages/Keyed.md" }]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher();
+    await vi.waitFor(() => expect(root.querySelector(".switcher-row")).not.toBeNull());
+    root.querySelector<HTMLInputElement>(".switcher-input")!.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter", ...modifier, bubbles: true, cancelable: true,
+    }));
+    await vi.waitFor(() => expect(tabs()).toHaveLength(2));
+    expect(route()).toMatchObject({ kind: "journals" });
+    expect(root.querySelector(".switcher-overlay")).not.toBeNull();
+    dispose();
+  });
+  it("plain Enter still navigates in place and closes Search (GH #463 control)", async () => {
+    setRecentPages([{ name: "Keyed", kind: "page", path: "pages/Keyed.md" }]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher();
+    await vi.waitFor(() => expect(root.querySelector(".switcher-row")).not.toBeNull());
+    root.querySelector<HTMLInputElement>(".switcher-input")!.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter", bubbles: true, cancelable: true,
+    }));
+    await vi.waitFor(() => expect(root.querySelector(".switcher-overlay")).toBeNull());
+    expect(tabs()).toHaveLength(1);
+    expect(route()).toMatchObject({ kind: "page", name: "Keyed" });
+    dispose();
+  });
   it("does not create or navigate to a page after its resolve finishes in another graph (I-20)", async () => {
     let finish!: (result: { kind: "absent"; id: string }) => void;
     const resolve = vi.spyOn(backend(), "resolvePage").mockImplementationOnce(() =>
