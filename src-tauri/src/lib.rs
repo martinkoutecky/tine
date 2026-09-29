@@ -1068,7 +1068,9 @@ mod platform_lifecycle_guard_tests {
         let run = &run[..run.find("});").expect("the end of the event loop")];
         assert!(
             run.contains("tauri::RunEvent::Exit")
-                && run.contains("#[cfg(target_os = \"windows\")]\n                std::process::exit(0);"),
+                && run.contains(
+                    "#[cfg(target_os = \"windows\")]\n                std::process::exit(0);"
+                ),
             "GH #455: the RunEvent::Exit arm must call std::process::exit(0) on Windows, \
              because WM_ENDSESSION does not break tao's message loop"
         );
@@ -1081,7 +1083,9 @@ mod platform_lifecycle_guard_tests {
     fn frontend_platform_identity_is_injected_from_the_build() {
         let source = lib_source();
         assert!(
-            source.contains("\"globalThis.__TINE_PLATFORM__ = {:?};\",\n        crate::graph::app_platform()"),
+            source.contains(
+                "\"globalThis.__TINE_PLATFORM__ = {:?};\",\n        crate::graph::app_platform()"
+            ),
             "GH #446: lib.rs must inject __TINE_PLATFORM__ from crate::graph::app_platform()"
         );
     }
@@ -1093,8 +1097,11 @@ mod platform_lifecycle_guard_tests {
     #[test]
     fn macos_bundle_declares_the_webkit_floor() {
         let config: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.macos.conf.json"))
-                .expect("read src-tauri/tauri.macos.conf.json"),
+            &std::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tauri.macos.conf.json"
+            ))
+            .expect("read src-tauri/tauri.macos.conf.json"),
         )
         .expect("tauri.macos.conf.json is JSON");
         assert_eq!(
@@ -1110,9 +1117,8 @@ mod platform_lifecycle_guard_tests {
     /// a platform's updater or its transport.
     #[test]
     fn updater_transport_is_declared_for_every_desktop_target() {
-        let manifest =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
-                .expect("read src-tauri/Cargo.toml");
+        let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+            .expect("read src-tauri/Cargo.toml");
         let mut section = "";
         let mut updater_sections = Vec::new();
         let mut windows_lines = Vec::new();
