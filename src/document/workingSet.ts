@@ -175,8 +175,20 @@ export function forgetPage(name: string) {
  *  file), drop its dirty/baseline/conflict state, remove it from the working set
  *  and feed, then delete on disk. Routing deletion through the store — rather than
  *  calling the backend directly — is what prevents a queued baseRev=null save from
- *  resurrecting a just-typed, never-saved page. Returns backend success. */
-export async function deletePage(name: string, kind: PageKind, expectedPath?: string): Promise<boolean> {
+ *  resurrecting a just-typed, never-saved page. Returns backend success.
+ *
+ *  `retireRoutes`, when given, runs synchronously once the disk delete has
+ *  succeeded and before the page leaves the working set, so no pane can render
+ *  a route that names an already-purged page (GH #376: a black frame on
+ *  Android). It must do UI-only work such as closing pane routes; if it throws,
+ *  the delete still completes and the page is still retired. It never runs when
+ *  the delete is refused or fails. */
+export async function deletePage(
+  name: string,
+  kind: PageKind,
+  expectedPath?: string,
+  retireRoutes?: () => void,
+): Promise<boolean> {
   if (graphRewriteFrozen()) return false;
   const binding = captureBinding();
   const generation = pageInstanceGeneration(name);
@@ -237,6 +249,11 @@ export async function deletePage(name: string, kind: PageKind, expectedPath?: st
   }
   releaseReservation?.();
   if (!stillBound(binding)) return false;
+  try {
+    retireRoutes?.();
+  } catch {
+    // UI-only: a durable delete still retires the loaded page below.
+  }
   forgetPage(name); // success — now drop it from the working set + feed
   removeDeletedPageFromNavigation({ name, pageKind: kind, ...(expectedPath ? { path: expectedPath } : {}) });
   // A page delete changes every live query / backlink result (the backend already

@@ -806,7 +806,9 @@ function PageMenu(props: {
     // Route through the store (not backend directly) so it tombstones the page and
     // cancels any pending save — otherwise a just-typed, never-saved page could be
     // recreated by a queued save right after we delete it.
-    void writeOwned(owner, deletePage(name, kind, captured.path))
+    // Pane routes are retired inside the durable delete, before the page leaves
+    // the working set, so no pane renders a route to a purged page (GH #376).
+    void writeOwned(owner, deletePage(name, kind, captured.path, () => removePageTargetAcrossPanes(captured)))
       .then((result) => {
         if (result.kind === "stale") return;
         const ok = result.value;
@@ -814,7 +816,6 @@ function PageMenu(props: {
           pushToast("Delete failed", "error");
           return;
         }
-        removePageTargetAcrossPanes(captured);
         // Deleted a day IN the journals feed (in place, no navigation) → the feed
         // loader's withToday didn't re-run, so restore today's empty placeholder
         // here if it was the one deleted (#17). No-op for an older day.
