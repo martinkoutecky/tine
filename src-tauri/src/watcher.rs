@@ -86,8 +86,13 @@ fn window_events(change: &Change) -> (Vec<GraphChange>, bool) {
     (events, conflicts_dirty)
 }
 
+/// Emit one publication's window events; an external publication is also
+/// recorded as a fixed-shape `watcher.batch` diagnostic event (counts only).
 fn dispatch(app: &tauri::AppHandle, label: &str, binding_generation: u64, change: Change) {
     let (events, conflicts_dirty) = window_events(&change);
+    if !events.is_empty() || conflicts_dirty {
+        crate::flight::record_watcher_batch(events.len(), conflicts_dirty);
+    }
     for event in events {
         let _ = app.emit_to(
             label,

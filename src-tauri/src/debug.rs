@@ -116,6 +116,7 @@ pub(crate) fn install_panic_logger() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
     std::panic::set_hook(Box::new(move |info| {
+        crate::flight::record_panic(info);
         let location = info
             .location()
             .map(|location| {

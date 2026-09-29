@@ -9,11 +9,13 @@ mod app_identity;
 mod backup;
 #[cfg(desktop)]
 mod cli;
+mod command_surface;
 mod commands;
 mod debug;
 mod device_io;
 #[cfg(test)]
 mod edit_kind_guard_tests;
+mod flight;
 mod graph;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
@@ -419,6 +421,7 @@ pub fn run() {
     // Bring up debug logging FIRST (TINE_DEBUG=1 / --debug), so every later
     // milestone — and any panic — is captured to the log file from the very start.
     debug_init();
+    flight::flight_init();
     install_panic_logger();
     debug_header();
     diag("main() entered");
@@ -903,6 +906,11 @@ pub fn run() {
             list_spellcheck_dictionaries,
             debug_info,
             debug_log,
+            flight::app_architecture,
+            flight::clear_diagnostics,
+            flight::diagnostic_frontend_event,
+            flight::diagnostic_ipc_event,
+            flight::diagnostic_report,
             tine_quit,
             close_graph_window,
             tine_open_devtools
