@@ -1365,14 +1365,14 @@ html[data-system-insets="native-viewport"] {
   font-weight: 600;
   color: var(--text-title);
   margin: 8px 0 6px;
-  line-height: 1.2;
+  line-height: 1.5;
 }
 .page-title-input {
   font-size: var(--ls-page-title-size);
   font-weight: 600;
   color: var(--text-title);
   margin: 8px 0 6px;
-  line-height: 1.2;
+  line-height: 1.5;
   border: none;
   border-bottom: 2px solid var(--accent, #10b981);
   background: transparent;
@@ -3678,8 +3678,21 @@ html[data-system-insets="native-viewport"] {
 }
 
 .block-content.done {
-  color: var(--done-color);
+  color: var(--text-primary);
+  opacity: 0.5;
+  text-decoration: none;
+}
+/* Decorate content separately from its task controls: an ancestor decoration
+   cannot be canceled with text-decoration:none on the marker itself. */
+.block-content.done > :not(.block-marker):not(.block-task-checkbox):not(.block-refs-count) {
   text-decoration: line-through;
+}
+/* A block reference can contain its own task label (master #518). Its text keeps
+   the completion strike, while this atomic inline box keeps the label unstruck. */
+.block-content.done .block-ref .block-marker {
+  display: inline-block;
+  line-height: normal;
+  text-decoration: none;
 }
 
 /* headings — re-assert a ratio line-height (the block uses a fixed 26px; without this
@@ -4180,17 +4193,24 @@ html[data-system-insets="native-viewport"] {
   box-sizing: border-box;
   vertical-align: -1px;
   margin-right: 1px;
-  border: 1.5px solid color-mix(in srgb, currentColor 45%, transparent);
+  --task-checkbox-color: var(--marker-color);
+  border: 1.5px solid var(--task-checkbox-color);
   border-radius: 3px;
   cursor: pointer;
   position: relative;
 }
-.block-task-checkbox:hover {
-  border-color: var(--accent, #4c8bf5);
+.block-task-checkbox:has(+ .marker-todo) { --task-checkbox-color: var(--marker-todo); }
+.block-task-checkbox:has(+ .marker-doing) { --task-checkbox-color: var(--marker-doing); }
+.block-task-checkbox:has(+ .marker-now) { --task-checkbox-color: var(--marker-now); }
+.block-task-checkbox:has(+ .marker-later) { --task-checkbox-color: var(--marker-later); }
+.block-task-checkbox:has(+ .marker-waiting),
+.block-task-checkbox:has(+ .marker-in-progress) { --task-checkbox-color: var(--marker-waiting); }
+.block-task-checkbox:not(.checked):hover {
+  background: color-mix(in srgb, var(--task-checkbox-color) 20%, transparent);
 }
 .block-task-checkbox.checked {
-  background: var(--accent, #4c8bf5);
-  border-color: var(--accent, #4c8bf5);
+  background: var(--marker-done);
+  border: none;
 }
 .block-task-checkbox.checked::after {
   content: "";
