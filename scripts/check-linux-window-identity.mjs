@@ -38,11 +38,28 @@ const lib = fs.readFileSync(libPath, "utf8");
 const graph = fs.readFileSync(graphPath, "utf8");
 const cargo = fs.readFileSync(cargoPath, "utf8");
 
+// The Rust side never spells an identifier: the shell app ID is the compile-time
+// identity (src-tauri/app-identity.json -> build.rs -> TINE_APP_IDENTIFIER), and
+// `APP_ID` above is read from src-tauri/app-identity.json, the same switch that
+// build.rs and tauri.conf.json's `identifier` are checked against.
 requireMatch(
   identity,
-  /const APP_ID: &str = "page\.tine\.Tine";/,
-  `Linux shell app ID drifted from ${APP_ID}`,
+  /use crate::app_identity::\{APP_IDENTIFIER as APP_ID, PRODUCT_NAME\};/,
+  `Linux shell app ID drifted from ${APP_ID}: it must come from crate::app_identity`,
 );
+requireMatch(
+  fs.readFileSync(path.join(root, "src-tauri/src/app_identity.rs"), "utf8"),
+  /pub\(crate\) const APP_IDENTIFIER: &str = env!\("TINE_APP_IDENTIFIER"\);/,
+  `Linux shell app ID drifted from ${APP_ID}: app_identity must read TINE_APP_IDENTIFIER`,
+);
+requireMatch(
+  fs.readFileSync(path.join(root, "src-tauri/build.rs"), "utf8"),
+  /cargo:rustc-env=TINE_APP_IDENTIFIER=/,
+  `Linux shell app ID drifted from ${APP_ID}: build.rs must export TINE_APP_IDENTIFIER`,
+);
+if (/page\.tine\.Tine\b|page\.tine\.TineOG/.test(identity.replace(/\/\/.*$/gm, ""))) {
+  throw new Error(`linux_window_identity.rs spells an app ID literal; derive it from app_identity (${APP_ID})`);
+}
 requireMatch(
   identity,
   /gdk_wayland_window_set_application_id/,
@@ -60,7 +77,7 @@ requireMatch(
 );
 requireMatch(
   identity,
-  /page\.tine\.Tine\.desktop[\s\S]*Icon=page\.tine\.Tine/,
+  /DESKTOP_FILE: &str = concat!\(env!\("TINE_APP_IDENTIFIER"\), "\.desktop"\)[\s\S]*Icon=\{APP_ID\}/,
   "raw Linux runs do not provide the desktop entry used for Wayland icon lookup",
 );
 requireMatch(
