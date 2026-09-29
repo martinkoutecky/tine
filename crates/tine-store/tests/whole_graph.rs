@@ -348,6 +348,34 @@ fn public_search_request_routes_page_content_membership() {
 }
 
 #[test]
+fn public_search_hydrates_authored_properties_only_for_physical_pages() {
+    let fixture = Fixture::new();
+    std::fs::write(
+        fixture.0.join("pages/Source.md"),
+        "owner:: Mira\n\n- searchable\n",
+    )
+    .unwrap();
+    let view = fixture.view();
+    let result = view
+        .search(
+            &SearchRequest {
+                text: "Source".into(),
+                within: None,
+                page_limit: 10,
+                block_limit: 0,
+                explain: false,
+                page_match_scope: None,
+            },
+            &Cancel(Arc::new(AtomicBool::new(false))),
+        )
+        .unwrap();
+    assert!(result.hits.iter().any(|hit| matches!(hit,
+        tine_core::query_plan::QueryHit::Page { page, row: Some(row), .. }
+        if page.rel_path_str() == "pages/Source.md" && row.path == "pages/Source.md"
+            && row.properties.iter().any(|(key, value)| key == "owner" && value == "Mira"))));
+}
+
+#[test]
 fn simple_query_rejects_source_and_nesting_limits() {
     let fixture = Fixture::new();
     let graph = fixture.view();
