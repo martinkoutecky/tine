@@ -167,3 +167,101 @@ describe("editing/collapse boundary regressions", () => {
     expect(doc.byId[end].raw).toBe(":PROPERTIES:\n:logseq.order-list-type: number\n:END:");
   });
 });
+
+// GH #361: Enter at a source-line boundary (caret immediately after an
+// in-block newline) turns the new line into a new block WITHOUT retaining the
+// boundary break as an empty line in either block — Logseq's behavior. The
+// fix is in the editor's split calculation; parser/round-trip untouched.
+describe("splitBlock at an in-block line boundary (GH #361)", () => {
+  it("consumes the boundary newline when the caret is at the end of the first line", () => {
+    setDoc({
+      byId: { b: node("b", "line1\nline2", "M") },
+      pages: [page("M", ["b"])], feed: ["M"], loaded: true,
+    });
+    splitBlock("b", 5); // caret immediately before the in-block newline
+    expect(doc.byId.b.raw).toBe("line1");
+    const next = doc.pages[0].roots[1];
+    expect(doc.byId[next].raw).toBe("line2");
+  });
+
+  it("consumes the boundary newline: neither block keeps an empty line", () => {
+    setDoc({
+      byId: { b: node("b", "line1\nline2", "M") },
+      pages: [page("M", ["b"])], feed: ["M"], loaded: true,
+    });
+    splitBlock("b", 6); // caret exactly after the in-block newline
+    expect(doc.byId.b.raw).toBe("line1");
+    const next = doc.pages[0].roots[1];
+    expect(doc.byId[next].raw).toBe("line2");
+  });
+
+  it("keeps an intentional blank second line with the new block", () => {
+    setDoc({
+      byId: { b: node("b", "line1\n\nline2", "M") },
+      pages: [page("M", ["b"])], feed: ["M"], loaded: true,
+    });
+    splitBlock("b", 6); // caret on the blank line (right after the first \n)
+    expect(doc.byId.b.raw).toBe("line1");
+    const next = doc.pages[0].roots[1];
+    expect(doc.byId[next].raw).toBe("\nline2");
+  });
+
+  it("leaves ordinary mid-line splits untouched", () => {
+    setDoc({
+      byId: { b: node("b", "line1\nline2", "M") },
+      pages: [page("M", ["b"])], feed: ["M"], loaded: true,
+    });
+    splitBlock("b", 3);
+    expect(doc.byId.b.raw).toBe("lin");
+    const next = doc.pages[0].roots[1];
+    expect(doc.byId[next].raw).toBe("e1\nline2");
+  });
+
+  it("leaves the caret-at-very-start empty-block-before behavior untouched", () => {
+    setDoc({
+      byId: { b: node("b", "line1\nline2", "M") },
+      pages: [page("M", ["b"])], feed: ["M"], loaded: true,
+    });
+    splitBlock("b", 0);
+    expect(doc.pages[0].roots).toHaveLength(2);
+    const emptyId = doc.pages[0].roots[0];
+    expect(emptyId).not.toBe("b");
+    expect(doc.byId[emptyId].raw).toBe("");
+    expect(doc.byId.b.raw).toBe("line1\nline2");
+  });
+
+  it("consumes a blank prefix when the boundary is after the first newline", () => {
+    setDoc({
+      byId: { b: node("b", "\nline2", "M") },
+      pages: [page("M", ["b"])], feed: ["M"], loaded: true,
+    });
+    splitBlock("b", 1);
+    expect(doc.pages[0].roots).toHaveLength(2);
+    const emptyId = doc.pages[0].roots[0];
+    expect(emptyId).not.toBe("b");
+    expect(doc.byId[emptyId].raw).toBe("");
+    expect(doc.byId.b.raw).toBe("line2");
+  });
+
+  it("preserves hidden properties while consuming a whitespace-only prefix", () => {
+    setDoc({
+      byId: { b: node("b", "  \nline2\nid:: durable", "M") },
+      pages: [page("M", ["b"])], feed: ["M"], loaded: true,
+    });
+    splitBlock("b", 3);
+    expect(doc.pages[0].roots).toHaveLength(2);
+    expect(doc.byId[doc.pages[0].roots[0]].raw).toBe("");
+    expect(doc.byId.b.raw).toBe("line2\nid:: durable");
+  });
+
+  it("behaves identically in Org pages", () => {
+    setDoc({
+      byId: { b: node("b", "line1\nline2", "Org") },
+      pages: [page("Org", ["b"], "org")], feed: ["Org"], loaded: true,
+    });
+    splitBlock("b", 6);
+    expect(doc.byId.b.raw).toBe("line1");
+    const next = doc.pages[0].roots[1];
+    expect(doc.byId[next].raw).toBe("line2");
+  });
+});

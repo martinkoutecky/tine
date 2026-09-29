@@ -169,8 +169,15 @@ export function splitBlock(
   // The caret offset is in editor-visible space (hidden props aren't shown), so
   // split the visible text and keep the hidden props on the original block.
   const { visible, hidden } = splitProps(node.raw, isBuiltinHidden, fmt);
-  const before = visible.slice(0, offset);
-  const after = visible.slice(offset);
+  // GH #361: the caret can report either side of the same source-line boundary
+  // (end of line one or start of line two). In both cases that newline becomes
+  // the structural block separator instead of content in either block.
+  const boundaryBefore = offset < visible.length && visible[offset] === "\n";
+  const boundaryAfter = offset > 0 && visible[offset - 1] === "\n";
+  const splitBefore = boundaryAfter ? offset - 1 : offset;
+  const splitAfter = !boundaryAfter && boundaryBefore ? offset + 1 : offset;
+  const before = visible.slice(0, splitBefore);
+  const after = visible.slice(splitAfter);
   const childSplit = before.trim() === "" && after.trim() !== ""
     ? keepStartInScope
     : (node.children.length > 0 && !node.collapsed) || forceChild;
@@ -198,6 +205,10 @@ export function splitBlock(
     const emptyId = freshId();
     setDoc(
       produce((s) => {
+        // At offset zero the original block is untouched. At a later line
+        // boundary, however, the blank prefix and its separator become the new
+        // empty block, so the original must retain only the post-boundary text.
+        if (offset > 0) s.byId[id].raw = joinProps(after, hidden, fmt);
         s.byId[emptyId] = {
           id: emptyId,
           raw: orderedEmpty,
@@ -217,7 +228,7 @@ export function splitBlock(
       })
     );
     startEditing(emptyId, 0, null, editingSurface);
-    markDirty(pageName, "insert-blocks");
+    markDirty(pageName, offset > 0 ? ["insert-blocks", "save-block"] : "insert-blocks");
     return;
   }
 
