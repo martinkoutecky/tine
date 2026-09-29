@@ -64,3 +64,39 @@ export function isLegacyBareColumnList(value: string | null): boolean {
   const tokens = value.split(";").map((part) => part.trim()).filter(Boolean);
   return tokens.length > 0 && tokens.every((token) => !/[=\0\r\n]/.test(token));
 }
+
+/** Write one independent page or block display override. An absent display
+ * removes its recognized facts; an empty display keeps only the marker. Unknown
+ * properties and unsupported aggregate segments are preserved. */
+export function queryScopedDisplayPropertyPatch(input: {
+  scope: "page" | "block";
+  presentation?: ViewSettings["view"];
+  display?: Omit<ViewSettings, "view">;
+  properties: readonly (readonly [string, string])[];
+}): [string, string | null][] {
+  const prefix = `tine.${input.scope}-`;
+  const current = (key: string) => input.properties.find(([name]) => name.toLowerCase() === key)?.[1];
+  const writes: [string, string | null][] = [];
+  const set = (name: string, value: string | null | undefined) => {
+    const key = `${prefix}${name}`;
+    const prior = current(key);
+    if (value === undefined) { if (prior !== undefined) writes.push([key, null]); }
+    else if (prior !== value) writes.push([key, value]);
+  };
+  set("view", input.presentation);
+  set("display", input.display === undefined ? undefined : "1");
+  const display = input.display;
+  set("sort", display?.sort === undefined ? undefined : display.sort.map(([f, d]) => `${f} ${d}`).join(";"));
+  set("group-field", display?.group_by);
+  set("columns", display?.columns === undefined ? undefined : display.columns.join(";"));
+  const aggregateKey = `${prefix}col-aggregates`;
+  const rawAggregates = current(aggregateKey);
+  const merged = mergeQueryAggregateValue(rawAggregates ?? null, display?.aggregates ?? []);
+  if (display?.aggregates !== undefined) {
+    if (merged !== undefined || rawAggregates === undefined)
+      writes.push([aggregateKey, merged ?? (rawAggregates === undefined ? "" : null)]);
+  } else if (merged !== undefined) writes.push([aggregateKey, merged]);
+  else if (rawAggregates !== undefined && rawAggregates.trim() === "") writes.push([aggregateKey, null]);
+  set("sample", display?.sample === undefined ? undefined : String(display.sample));
+  return writes;
+}

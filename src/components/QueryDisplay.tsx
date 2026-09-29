@@ -77,8 +77,9 @@ export function QueryDisplay(props: {
   };
   return <div class="qd-root">
     <button ref={trigger} type="button" class="qd-trigger" aria-expanded={open()} aria-controls={id}
-      onClick={openPanel}>Display</button>
-    <Show when={open()}><div ref={panel} id={id} class="qd-panel" role="dialog" aria-label="Query display settings"
+      onClick={openPanel}>{props.rowKind() === "page" ? "Display pages" : "Display"}</button>
+    <Show when={open()}><div ref={panel} id={id} class="qd-panel" role="dialog"
+      aria-label={props.rowKind() === "page" ? "Page display" : "Block display"}
       onClick={(event) => event.stopPropagation()}>
       <section><h4>View</h4><div role="group" aria-label="Query view">
         <For each={["search", "list", "table", "board"] as const}>{(kind) =>
