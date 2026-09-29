@@ -82,6 +82,7 @@ export function historyPageOnlyMode(): boolean {
 
 export function toggleUndoRedoMode(): "Page only" | "Global" {
   pageOnlyHistoryMode = !pageOnlyHistoryMode;
+  bumpHistory(); // the toggle changes which entry Undo would take back (undoTopTag)
   return pageOnlyHistoryMode ? "Page only" : "Global";
 }
 
@@ -279,6 +280,32 @@ export function pushUndo(tag: string, affected?: string[], preservedIds?: readon
   redoStack = [];
   lastUndoTag = tag;
   bumpHistory();
+}
+
+/** A held Mod+Up/Down on a selection is one undo step (master 45279b9c9): a
+ *  repeat within 400 ms of the previous one, and 3 s of the first, reuses the
+ *  first nudge's snapshot while the entry is still the top of history, the
+ *  ordered selection roots are the same, and every page is the same loaded
+ *  instance. Anything else starts a new step. */
+let moveBurst: { entry: UndoEntry; roots: string[]; startedAt: number; lastAt: number } | null = null;
+const MOVE_BURST_IDLE_MS = 400, MOVE_BURST_MAX_MS = 3_000;
+
+/** Record the undo step for one selection nudge over `pages`, continuing the
+ *  current burst when it matches (see `moveBurst`). O(1) for a continued burst,
+ *  otherwise `pushUndo`'s O(blocks of those pages). */
+export function pushMoveSelectionUndo(roots: readonly string[], pages: string[]): void {
+  const now = Date.now();
+  const burst = moveBurst;
+  if (burst && undoSuppressionDepth === 0 && !redoStack.length && undoStack[undoStack.length - 1] === burst.entry
+      && burst.roots.length === roots.length && burst.roots.every((id, i) => id === roots[i])
+      && now - burst.lastAt < MOVE_BURST_IDLE_MS && now - burst.startedAt < MOVE_BURST_MAX_MS
+      && pages.every((name) => name in burst.entry.instances) && !staleInstances(burst.entry).length) {
+    burst.lastAt = now;
+    return;
+  }
+  pushUndo("move-sel", pages);
+  const entry = undoStack[undoStack.length - 1];
+  moveBurst = entry && undoSuppressionDepth === 0 ? { entry, roots: [...roots], startedAt: now, lastAt: now } : null;
 }
 
 /** Record an O(1) inverse patch for a single-block text edit (typing). A typing

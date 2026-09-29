@@ -3,7 +3,7 @@ import { blockWritable, pageWritable, orderListTypeFromRaw, rawWithInheritedOrde
 import { produce } from "solid-js/store";
 import { markDirty, persistTogether, refuseConflictedMove } from "../save/engine";
 import { captureBinding, stillBound } from "../../binding";
-import { pushUndo } from "../history";
+import { pushMoveSelectionUndo, pushUndo } from "../history";
 import { createSignal } from "solid-js";
 import { rootsOf, nextVisible, existingSubtreeFits } from "../tree";
 import { topSelected } from "./selection";
@@ -506,7 +506,7 @@ export async function moveSelectionItems(dir: 1 | -1) {
     const ordered = dir === 1 ? [...ids].reverse() : ids;
     const pages = [...new Set(ordered.map((id) => doc.byId[id]?.page).filter(Boolean) as string[])];
     if (pages.length > 1 && refuseConflictedMove(pages)) return;
-    pushUndo("move-sel", pages); // scope the undo to the touched pages, not the whole set
+    pushMoveSelectionUndo(ids, pages); // one step per held-key burst, scoped to the touched pages
     setDoc(
       produce((s) => {
         for (const id of ordered) {
