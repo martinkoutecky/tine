@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
-import type { PageRow, QueryStatistics } from "../editor/queryIr";
+import { pageRowFieldValue, type PageRow, type QueryStatistics } from "../editor/queryIr";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkDest } from "../linkGesture";
@@ -26,14 +26,7 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
     else openPageTarget(target(row));
   };
   const fieldName = (field: string) => field.replace(/^prop:/, "");
-  const value = (row: PageRow, field: string): string => {
-    const name = fieldName(field);
-    if (name === "name") return row.name;
-    if (name === "kind") return row.kind === "journal" ? "Journal" : "Page";
-    if (name === "day" || name === "journal-day") return row.journal_day != null ? String(row.journal_day) : "";
-    const key = name.trim().toLowerCase();
-    return row.properties.find(([property]) => property.trim().toLowerCase() === key)?.[1] ?? "";
-  };
+  const value = (row: PageRow, field: string): string => pageRowFieldValue(row, row, field);
   const columns = createMemo(() => props.columns?.length
     ? props.columns
     : [...new Set(props.rows.flatMap((row) => row.properties.map(([key]) => key)))]);

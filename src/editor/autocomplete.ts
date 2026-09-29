@@ -7,6 +7,7 @@ import { propertyKeyNorm } from "../render/block";
 import { QUERY_MACRO_SCAFFOLD, QUERY_MACRO_SCAFFOLD_CARET } from "./queryMacroName";
 import { searchFold } from "./searchFold";
 import { pageIdentityKey } from "../pageIdentity";
+import { isEditablePropertyKey } from "./properties";
 
 export type TriggerKind =
   | "page"
@@ -129,7 +130,7 @@ export function detectTrigger(
       if (delimiter > 0) {
         const sourceKey = before.slice(0, delimiter);
         if (
-          /^[A-Za-z0-9_./-]+$/.test(sourceKey) &&
+          isEditablePropertyKey(sourceKey) &&
           propertyKeyFold(sourceKey) === propertyKeyFold(propertyValueKey)
         ) {
           const afterDelimiter = delimiter + 2;
@@ -159,13 +160,14 @@ export function detectTrigger(
       }
     }
 
-    // Match the persisted parser's property-key alphabet. In particular, a
+    // The persisted parser's property-key alphabet (`isEditablePropertyKey`, the
+    // one answerer; Unicode letters included). In particular, a
     // whitespace-separated prose phrase ending in `::` is not property syntax.
-    const propertyName = /^([A-Za-z0-9_./-]*)::$/.exec(before);
-    if (propertyName) {
+    const nameBeforeDelimiter = before.endsWith("::") ? before.slice(0, -2) : null;
+    if (nameBeforeDelimiter !== null && (nameBeforeDelimiter === "" || isEditablePropertyKey(nameBeforeDelimiter))) {
       return {
         kind: "property-name",
-        query: propertyName[1],
+        query: nameBeforeDelimiter,
         start: lineStart,
         end: caret,
       };
@@ -175,7 +177,7 @@ export function detectTrigger(
     // lets the user type the property name to its left. Keep the replacement
     // span through the delimiter even though the caret is before it, so
     // `::` -> caret 0 -> type `alp` yields `alp|::` and accepts as `alpha:: `.
-    if (raw.slice(caret, caret + 2) === "::" && /^[A-Za-z0-9_./-]*$/.test(before)) {
+    if (raw.slice(caret, caret + 2) === "::" && (before === "" || isEditablePropertyKey(before))) {
       return {
         kind: "property-name",
         query: before,
@@ -256,11 +258,12 @@ export function propertyValueKeyAfterBoundary(
   if (typed !== " " && typed !== ",") return null;
   const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
   const before = raw.slice(lineStart, caret);
-  const match = /^([A-Za-z0-9_./-]+)::(.*)$/.exec(before);
-  if (!match) return null;
-  if (typed === " " && match[2] !== " ") return null;
-  if (typed === "," && !match[2].endsWith(",")) return null;
-  return propertyKeyFold(match[1]);
+  const delimiter = before.indexOf("::");
+  if (delimiter <= 0 || !isEditablePropertyKey(before.slice(0, delimiter))) return null;
+  const rest = before.slice(delimiter + 2);
+  if (typed === " " && rest !== " ") return null;
+  if (typed === "," && !rest.endsWith(",")) return null;
+  return propertyKeyFold(before.slice(0, delimiter));
 }
 
 /** OG-style bracket auto-pairing for page refs, run AFTER the browser has

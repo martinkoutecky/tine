@@ -29,7 +29,7 @@ import {
   groupKeysForBlock,
   isFormulaField,
   writeTagDelta,
-  writeField,
+  writeFieldVisibly,
   type FieldId,
 } from "../sheet/fields";
 import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
@@ -574,7 +574,7 @@ function formulaReferenceName(field: FieldId): string | null {
 
 function moveRowToColumn(row: RowRecord, from: string | null, target: string | null, field: FieldId): boolean {
   if (isFormulaField(field)) return false;
-  if (field !== "tags") return writeField(row.id, field, target ?? "");
+  if (field !== "tags") return writeFieldVisibly(row.id, field, target ?? "");
   const tags = groupKeysForBlock(row, "tags").filter((key): key is string => key !== null);
   if (from === null) return target !== null && writeTagDelta(row.id, { add: target });
   if (target === null) return tags.length === 1 && writeTagDelta(row.id, { remove: from });

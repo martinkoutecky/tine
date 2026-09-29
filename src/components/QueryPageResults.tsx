@@ -4,7 +4,7 @@
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
 import type { QueryHit } from "../types";
 import type { QueryPresentation } from "../router";
-import type { ViewSettings } from "../editor/queryIr";
+import { pageRowFieldValue, type ViewSettings } from "../editor/queryIr";
 import { buildSearchExcerpt } from "./SearchResultRow";
 
 export type QueryPageHit = Extract<QueryHit, { entity: "page" }>;
@@ -18,12 +18,7 @@ export function pageHitKey(hit: QueryPageHit): string {
 /** Resolve an authored page column from the hydrated physical row; virtual
  * pages have no authored properties. O(properties on one result page). */
 export function pageFieldValue(hit: QueryPageHit, field: string): string {
-  const name = field.startsWith("prop:") ? field.slice(5) : field;
-  if (name === "name") return hit.page.name;
-  if (name === "kind") return hit.page.kind === "journal" ? "Journal" : "Page";
-  if (name === "day" || name === "journal-day" || name === "journal_day")
-    return String(hit.row?.journal_day ?? hit.page.date_key ?? "");
-  return hit.row?.properties.find(([key]) => key.trim().toLowerCase() === name.trim().toLowerCase())?.[1] ?? "";
+  return pageRowFieldValue(hit.page, hit.row, field, hit.page.date_key);
 }
 
 function PageText(props: { hit: QueryPageHit }): JSX.Element {

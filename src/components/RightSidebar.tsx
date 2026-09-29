@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
-import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, setRightSidebarWidth, persistRightSidebarWidth, sidebarItemKey, renamePageInNavigation, registerRightSidebarClosePreparation, type SidebarItem } from "../ui";
+import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, setRightSidebarWidth, persistRightSidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, type SidebarItem } from "../ui";
 import { beginRowReorderDrag, rowReorderClickSuppressed, type RowDropTarget } from "./rowReorder";
 import "../styles/rightSidebarReorder.css";
 import { graphEpoch } from "../graphSession";
@@ -234,7 +234,7 @@ function useEnsurePage(
             // Alias-map warmup usually canonicalizes before the item is created.
             // A restored/early mixed-case item can race it; adopt the backend's
             // canonical page name before the exact-keyed store renders the body.
-            if (!p && k === "page" && dto.name !== n) renamePageInNavigation(n, dto.name);
+            if (!p && k === "page" && dto.name !== n) adoptResolvedPageName(n, dto.name);
             ensurePageLoaded(dto);
           }
         })

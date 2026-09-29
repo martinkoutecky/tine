@@ -191,6 +191,15 @@ describe("detectTrigger", () => {
     expect(detectTrigger("```\n::", 6)).toBeNull();
   });
 
+  // C3X X6 (L13): the trigger's key alphabet was ASCII while the persisted parser's is Unicode.
+  it("opens property completion for a Unicode key, the same alphabet the parser stores", () => {
+    expect(detectTrigger("stav_úkolu::", 12)).toEqual({ kind: "property-name", query: "stav_úkolu", start: 0, end: 12 });
+    expect(detectTrigger("статус:: ", 9, "статус")).toEqual({
+      kind: "property-value", query: "", start: 9, end: 9, property: "статус",
+    });
+    expect(detectTrigger("ordinary prose ::", 17)).toBeNull();
+  });
+
   it("keeps a chosen canonical property's value span separate from its key and delimiter", () => {
     expect(detectTrigger("alpha:: ", 8, "alpha")).toEqual({
       kind: "property-value", query: "", start: 8, end: 8, property: "alpha",

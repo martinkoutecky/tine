@@ -3,7 +3,7 @@ import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLo
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
-import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
+import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
 import { graphEpoch, dataRev, graphMeta } from "../graphSession";
 import { captureBinding } from "../binding";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
@@ -382,7 +382,7 @@ export function PageView(): JSX.Element {
           // exact-keyed working set, tab history, Recent, and editor all own the
           // backend's canonical display name instead of a phantom case variant.
           if (dto && !r.path && r.pageKind === "page" && dto.name !== r.name) {
-            renamePageInNavigation(r.name, dto.name);
+            adoptResolvedPageName(r.name, dto.name);
             router.replaceActiveRoute({ ...r, name: dto.name });
             return;
           }
