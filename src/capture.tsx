@@ -18,6 +18,7 @@ import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw
 import { startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
+import { reportUiFailure } from "./uiFailure";
 import { latestOwner, readOwned } from "./owned";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
@@ -261,7 +262,7 @@ function Capture() {
     const owner = latestOwner(captureScope, "enter-files", () => captureAlive);
     void readOwned(owner, backend().getCaptureEnterFiles())
       .then((result) => { if (result.kind === "current") setEnterFiles(result.value); })
-      .catch(() => {});
+      .catch((error) => { if (owner()) reportUiFailure("capture-preference", error); });
   };
 
   type PendingCapture = {

@@ -13,6 +13,13 @@ export interface CommunityExtensionStartup {
   liveRefresh: Promise<void>;
 }
 
+/** Observe the detached rejection while preserving it on the returned promise;
+ * main.tsx reports that failure to the user. No extra work is started. */
+function observePluginInitializationFailure(_error: unknown): void {}
+
+/** Seed verified extensions and return the initialization and refresh tasks.
+ * Cost O(installed extensions) plus one registry request. Initialization may
+ * reject on the returned promise; main.tsx reports that failure to the user. */
 export async function startCommunityExtensions(
   options: { cacheTimeoutMs?: number; networkTimeoutMs?: number } = {}
 ): Promise<CommunityExtensionStartup> {
@@ -26,7 +33,7 @@ export async function startCommunityExtensions(
   // starts immediately after initialize() yields and is not chained to whether
   // any persisted plugin later succeeds or fails.
   const pluginInitialization = pluginManager.initialize(initialRevocations, activationHeld);
-  void pluginInitialization.catch(() => {});
+  void pluginInitialization.then(undefined, observePluginInitializationFailure);
   const liveRefresh = refreshCommunityRegistry({ timeoutMs: options.networkTimeoutMs });
   await initThemePackages(initialRevocations);
   await initThemeGallery();

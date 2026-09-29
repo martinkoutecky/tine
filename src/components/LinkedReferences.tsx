@@ -1,5 +1,6 @@
 import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { errorFamily } from "../errorFamily";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, searchRemoveAccents } from "../ui";
@@ -40,8 +41,7 @@ function mergeReferenceGroups(groups: RefGroup[]): RefGroup[] {
 type ReferenceLoadError = "bounded" | "backend";
 
 function classifyReferenceLoadError(error: unknown): ReferenceLoadError {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.startsWith("result-too-large:") ? "bounded" : "backend";
+  return errorFamily(error) === "result-too-large" ? "bounded" : "backend";
 }
 
 // Persist the per-page include/exclude reference filter so it survives reload.
@@ -104,6 +104,8 @@ function fallbackFilterEntry(block: BlockDto): SearchableFilterEntry {
 // mirroring OG's reference filter.
 const OG_REFERENCE_COLLAPSE_THRESHOLD = 100;
 
+/** Show bounded backlinks for one page. One backend read per target; a fixed
+ * result-limit token selects the bounded alert, other failures a generic alert. */
 export function LinkedReferences(props: { name: string }): JSX.Element {
   const readScope = {};
   let alive = true;

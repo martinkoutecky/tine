@@ -42,6 +42,11 @@ const PDF_THEME_KEY = "ls-pdf-viewer-theme";
 const PDF_THEMES = ["light", "warm", "dark"] as const;
 type PdfTheme = (typeof PDF_THEMES)[number];
 
+/** Destroying a viewer document only releases transient pdf.js resources.
+ * A rejection cannot affect graph content; browser teardown reclaims them. */
+function ignorePdfDestroyFailure(_error: unknown): void {}
+function discardPdfDocument(doc: pdfjs.PDFDocumentProxy): void { void doc.destroy().then(undefined, ignorePdfDestroyFailure); }
+
 function storedPdfTheme(): PdfTheme {
   try {
     const stored = window.localStorage.getItem(PDF_THEME_KEY);
@@ -182,6 +187,8 @@ export function KeyedPdfViewer(props: { target: () => PdfTarget | null }): JSX.E
  * require a decision or confirmed discard. Failed crop cleanup blocks drain
  * until retry. Close and graph switch drain work; unmount starts any pending
  * view-state flush asynchronously. */
+/** Render the active PDF and its highlights through the owned document paths.
+ * PDF destruction only releases viewer resources; failed cleanup is harmless. */
 export function PdfViewer(props: {
   filename: string;
   label: string;
@@ -487,9 +494,8 @@ export function PdfViewer(props: {
       delete tasks[Number(k)];
     }
     scrollRef?.replaceChildren();
-    const doc = pdfDoc;
+    if (pdfDoc) discardPdfDocument(pdfDoc);
     pdfDoc = null;
-    if (doc) void doc.destroy().catch(() => {});
     setLoadError(message);
   }
 
@@ -990,7 +996,7 @@ export function PdfViewer(props: {
     try {
       const loaded = await pdfjs.getDocument({ data: bytes }).promise;
       if (disposed) {
-        void loaded.destroy().catch(() => {});
+        discardPdfDocument(loaded);
         return;
       }
       pdfDoc = loaded;
@@ -1053,9 +1059,8 @@ export function PdfViewer(props: {
     setOutlineReady(false);
     setExpandedOutlineIds(new Set<string>());
     releaseAllCanvases();
-    const doc = pdfDoc;
+    if (pdfDoc) discardPdfDocument(pdfDoc);
     pdfDoc = null;
-    if (doc) void doc.destroy().catch(() => {});
   });
 
   // Zoom changes: relayout + lazy re-raster of visible pages only.

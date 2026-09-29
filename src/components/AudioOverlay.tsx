@@ -11,6 +11,7 @@ import { backend, isTauri } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { registerTransientLayer } from "../transientLayers";
+import { reportUiFailure } from "../uiFailure";
 
 /** Bare `assets/`-relative path of a media URL (mirrors inline.tsx's helper). */
 function relOf(url: string): string | null {
@@ -61,6 +62,8 @@ function drawWave(canvas: HTMLCanvasElement | undefined, progress: number): void
   ctx.fillRect(Math.min(cssW - 2, p * cssW), 2, 2, cssH - 4);
 }
 
+/** Play the selected stream, acquiring a bounded blob only if streaming fails.
+ * Failed fallback or playback shows fixed text; stale reads are ignored. */
 export function AudioOverlay(): JSX.Element {
   let alive = true;
   onCleanup(() => { alive = false; });
@@ -114,7 +117,7 @@ export function AudioOverlay(): JSX.Element {
       }
       blobLease = lease;
       setBlobFallback(lease.url);
-    }).catch(() => {});
+    }).catch((error) => { if (owner()) reportUiFailure("audio-load", error); });
   };
   onCleanup(releaseBlobFallback);
 
@@ -151,7 +154,7 @@ export function AudioOverlay(): JSX.Element {
   });
   const togglePlay = () => {
     if (!audioEl) return;
-    if (audioEl.paused) void audioEl.play().catch(() => {});
+    if (audioEl.paused) void audioEl.play().catch((error) => reportUiFailure("audio-play", error));
     else audioEl.pause();
   };
   const skip = (d: number) => {
