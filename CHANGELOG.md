@@ -95,6 +95,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **An HTML export of 0 pages says why** (GH #560, master 350efef1f, og H). With no
+  `public:: true` page (and "Include every page" unticked), Settings → Graph →
+  **Export HTML and read-only app…** now reports "only pages with `public:: true` are
+  exported" instead of a bare "Exported 0 pages".
 - **A phone toolbar keeps calendar, journals and theme on the bar** (GH #205,
   master a006f1308, og H). On a 390px phone they had moved into the "…" menu; they
   now collapse only below a 345px toolbar. A narrow desktop window, whose tab strip

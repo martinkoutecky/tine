@@ -468,6 +468,13 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn empty_html_export_names_the_public_page_rule_in_the_guide() {
+        // GH #560 (master 350efef1f): a zero-page export is explained, not silent.
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("A graph with no `public:: true` page exports 0 pages"));
+    }
+
+    #[test]
     fn parser_comparison_guide_says_intentional_differences_are_not_bugs() {
         // Master c0c2ff11b: a known intentional lsdoc difference is suppressed,
         // not offered as a reportable parser bug.
