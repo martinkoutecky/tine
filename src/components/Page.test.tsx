@@ -1897,8 +1897,8 @@ describe("theme API 0.2 presentation on the journal title row", () => {
       const sections = () => Array.from(mounted.root.querySelectorAll<HTMLElement>(".page-section"));
       const sectionFor = (name: string) => sections().find((section) =>
         section.querySelector(".page-title")?.textContent?.includes(name))!;
-      expect(sectionFor(today).classList.contains("journal-today")).toBe(true);
-      expect(sectionFor(yesterday).classList.contains("journal-today")).toBe(false);
+      expect(sectionFor(today).querySelector(".page-title-row.journal-today")).not.toBeNull();
+      expect(sectionFor(yesterday).querySelector(".journal-today")).toBeNull();
       expect(mounted.root.querySelector(".today-task-summary")).toBeNull();
 
       applyTheme(installed.key);

@@ -810,15 +810,16 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
   };
 
   // Theme API 0.2 (master 1488588b8): the editorial header and the compact
-  // task summary apply to today's journal only.
+  // task summary apply to today's journal only. og marks the title row, not
+  // the section (whose opening tag the I-20 async-ownership guard anchors on).
   const isTodayJournal = () => props.page.kind === "journal"
     && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));
   return (
-    <div class="page-section" classList={{ "journal-today": isTodayJournal() }}>
+    <div class="page-section">
       <Show when={props.page.kind === "page"}>
         <NamespaceCrumb name={props.page.name} />
       </Show>
-      <div class="page-title-row">
+      <div class="page-title-row" classList={{ "journal-today": isTodayJournal() }}>
         <div class="page-title-main">
         <Show
           when={!renaming()}

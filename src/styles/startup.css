@@ -1,0 +1,45 @@
+/* Themed readiness surface painted before any application module loads
+ * (GH #299 / GH #401; master 51185bbe3 + fcb812397). Linked from index.html
+ * rather than inlined: an inline <style> makes Tauri add a style nonce, which
+ * disables style-src 'unsafe-inline' (I-22, src/csp.guard.test.ts). The
+ * fallbacks are og's own palette values so the built-in tokens win once
+ * theme.css loads. */
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+html,
+body {
+  background: var(--bg-primary, #ffffff);
+  color: var(--text-primary, #433f38);
+}
+html[data-theme="dark"],
+html[data-theme="dark"] body {
+  background: var(--bg-primary, #1a1b1e);
+  color: var(--text-primary, #c6c8cc);
+}
+.startup-shell {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font: 500 14px/1.4 system-ui, sans-serif;
+}
+.startup-shell-mark {
+  width: 15px;
+  height: 15px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: tine-startup-spin 0.8s linear infinite;
+}
+@keyframes tine-startup-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .startup-shell-mark { animation: none; }
+}

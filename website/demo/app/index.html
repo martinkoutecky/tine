@@ -7,61 +7,11 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <title>demo</title>
-    <style id="tine-startup-style">
-      html,
-      body,
-      #root {
-        width: 100%;
-        height: 100%;
-        margin: 0;
-      }
-      html,
-      body {
-        background: var(--bg-primary, #ffffff);
-        color: var(--text-primary, #433f38);
-      }
-      html[data-theme="dark"],
-      html[data-theme="dark"] body {
-        background: var(--bg-primary, #1a1b1e);
-        color: var(--text-primary, #c6c8cc);
-      }
-      .startup-shell {
-        display: flex;
-        height: 100%;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        font: 500 14px/1.4 system-ui, sans-serif;
-      }
-      .startup-shell-mark {
-        width: 15px;
-        height: 15px;
-        border: 2px solid currentColor;
-        border-right-color: transparent;
-        border-radius: 50%;
-        animation: tine-startup-spin 0.8s linear infinite;
-      }
-      @keyframes tine-startup-spin {
-        to { transform: rotate(360deg); }
-      }
-      @media (prefers-reduced-motion: reduce) {
-        .startup-shell-mark { animation: none; }
-      }
-    </style>
-    <script>
-      try {
-        const preference = localStorage.getItem("logseq-claude.theme");
-        const dark = preference === "dark" ||
-          (preference === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-        document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-      } catch (_) {
-        // The deterministic light default on <html> remains usable.
-      }
-    </script>
-    <script type="module" crossorigin src="./assets/main-k9LGbzR4.js"></script>
-    <link rel="modulepreload" crossorigin href="./assets/app-DqWkeYzb.js">
+    <script src="./assets/startup-theme.js"></script>
+    <script type="module" crossorigin src="./assets/main-D3KIg165.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/app-DXC2nkv7.js">
     <link rel="stylesheet" crossorigin href="./assets/app-DHBLiSu1.css">
-    <link rel="stylesheet" crossorigin href="./assets/main-BXNDU2QI.css">
+    <link rel="stylesheet" crossorigin href="./assets/main-CW22A__C.css">
   </head>
   <body>
     <div id="root">

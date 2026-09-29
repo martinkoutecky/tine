@@ -32,11 +32,11 @@ html[data-theme-journal-header="editorial"] .journal-title .title-cal {
   display: none;
 }
 
-html[data-theme-journal-header="editorial"] .page-section.journal-today .page-title-row {
+html[data-theme-journal-header="editorial"] .page-title-row.journal-today {
   display: block;
 }
 
-html[data-theme-journal-header="editorial"] .page-section.journal-today .page-title-main {
+html[data-theme-journal-header="editorial"] .page-title-row.journal-today .page-title-main {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -44,7 +44,7 @@ html[data-theme-journal-header="editorial"] .page-section.journal-today .page-ti
   padding: 0;
 }
 
-html[data-theme-journal-header="editorial"] .page-section.journal-today .journal-title {
+html[data-theme-journal-header="editorial"] .page-title-row.journal-today .journal-title {
   max-width: 100%;
   margin: 4px 0 8px;
   font-size: 46px;
@@ -52,7 +52,7 @@ html[data-theme-journal-header="editorial"] .page-section.journal-today .journal
   overflow-wrap: anywhere;
 }
 
-html[data-theme-journal-header="editorial"] .page-section.journal-today .page-title-actions {
+html[data-theme-journal-header="editorial"] .page-title-row.journal-today .page-title-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -60,7 +60,7 @@ html[data-theme-journal-header="editorial"] .page-section.journal-today .page-ti
   margin-top: 9px;
 }
 
-html[data-theme-journal-header="editorial"] .page-section.journal-today .page-carry-actions {
+html[data-theme-journal-header="editorial"] .page-title-row.journal-today .page-carry-actions {
   margin-left: 0;
 }
 
@@ -82,11 +82,11 @@ html[data-theme-journal-header="editorial"] .page-section.journal-today .page-ca
     font-size: 28px;
     line-height: 1.18;
   }
-  html[data-theme-journal-header="editorial"] .page-section.journal-today .journal-title {
+  html[data-theme-journal-header="editorial"] .page-title-row.journal-today .journal-title {
     font-size: 38px;
     white-space: normal;
   }
-  html[data-theme-journal-header="editorial"] .page-section.journal-today .page-title-actions {
+  html[data-theme-journal-header="editorial"] .page-title-row.journal-today .page-title-actions {
     margin-top: 7px;
   }
   .today-task-summary {

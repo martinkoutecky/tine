@@ -6,6 +6,7 @@ import { installedThemeByKey } from "./themes/manager";
 import type { ThemePresentation } from "./themes/manifest";
 import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
 import { pushToast } from "./toasts";
+import { readOwned, revisionOwner } from "./owned";
 
 export const THEME_GALLERY_STYLE_ID = "tine-theme";
 /** Pre-composition single-id key; read only when no composition is stored. */
@@ -155,26 +156,29 @@ function decodeComposition(text: string): ThemeComposition | null {
   }
 }
 
-async function loadComposition(): Promise<ThemeComposition> {
-  const stored = decodeComposition(await backend().getAppString(COMPOSITION_KEY, ""));
-  if (stored) return stored;
-  const legacy = await backend().getAppString(LEGACY_KEY, "");
-  return { style: legacy, colors: legacy };
-}
-
 /** Load the saved composition (or the pre-composition single id as both
  * roles); unknown ids resolve to the default. Read failure toasts and
  * resolves, and a later user selection wins. O(theme lookup and CSS size). */
 export async function initThemeGallery(): Promise<void> {
   ensureThemeStyle();
   const revision = preferenceRevision(composition);
+  // Current while no selection has advanced the revision or is still pending.
+  const owner = revisionOwner(composition, revision, () => preferenceReadCurrent(composition, revision));
   let stored: ThemeComposition = { style: "", colors: "" };
   try {
-    stored = await loadComposition();
+    const composed = await readOwned(owner, backend().getAppString(COMPOSITION_KEY, ""));
+    if (composed.kind === "stale") return;
+    const decoded = decodeComposition(composed.value);
+    if (decoded) stored = decoded;
+    else {
+      const legacy = await readOwned(owner, backend().getAppString(LEGACY_KEY, ""));
+      if (legacy.kind === "stale") return;
+      stored = { style: legacy.value, colors: legacy.value };
+    }
   } catch {
     pushToast("Could not load gallery theme.", "error");
   }
-  if (preferenceReadCurrent(composition, revision)) {
+  if (owner()) {
     applyCompositionLocally(stored);
     seedPreference(composition);
   }
