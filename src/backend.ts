@@ -21,7 +21,6 @@ import type {
   BacklinkFilterContext,
   BacklinkFilterTarget,
   AssetInfo,
-  GraphMeta,
   GuideCopyResult,
   GuidePage,
   Highlight,
@@ -48,6 +47,7 @@ import type {
   PublicationReceipt,
   DraftRecord,
 } from "./types";
+import type { GraphSourceFile, GraphFolderPickResult, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
 import { dbg } from "./debug";
 import { assetFileName } from "./media";
 import type { EditKinds } from "./editKind";
@@ -122,79 +122,6 @@ export async function clipboardImageToPng(img: ClipboardImage): Promise<Uint8Arr
   if (!blob || blob.size > ASSET_INGRESS_MAX_BYTES) return null;
   const encoded = await blob.arrayBuffer();
   return encoded.byteLength <= ASSET_INGRESS_MAX_BYTES ? new Uint8Array(encoded) : null;
-}
-
-/** One raw graph file, as returned by `graphSourceFiles` — the input to the
- *  in-app lsdoc↔mldoc diff panel. `text` is the file's bytes exactly as on disk. */
-export interface GraphSourceFile {
-  rel: string;
-  text: string;
-  format: "md" | "org";
-  bytes: number;
-}
-
-export type GraphFolderPickResult =
-  | { status: "picked"; path: string }
-  | { status: "permission-requested" | "permission-needed" | "cancelled"; path?: string };
-
-export interface ClipboardAssetFile {
-  path: string;
-  name: string;
-  size: number;
-}
-
-export interface ClipboardFileList {
-  files: ClipboardAssetFile[];
-  skipped: number;
-  truncated: boolean;
-}
-
-/** Result of an Android media-capture command. Successful photos and voice
- *  memos return a bounded native cache-file `path` which Rust streams directly
- *  into the graph. */
-export interface MediaCaptureResult {
-  status: "ok" | "recording" | "cancelled";
-  path?: string | null;
-  ext?: string | null;
-}
-
-export interface KnownGraph {
-  path: string;
-  name: string;
-}
-
-export interface InstalledPluginRecord {
-  id: string;
-  version: string;
-  manifest_json: string;
-  sha256: string;
-  selected: boolean;
-  enabled: boolean;
-}
-
-export interface PluginRegistryCacheEnvelope {
-  schemaVersion: 1;
-  indexJson: string;
-  signature: string;
-}
-
-export type PluginRegistryCacheLoad =
-  | { kind: "absent" }
-  | { kind: "envelope"; envelope: PluginRegistryCacheEnvelope }
-  | { kind: "unsafe"; reason: string };
-
-export type LoadGraphResult =
-  | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number }
-  | { kind: "focused_existing"; window_label: string };
-
-export interface CaptureGraphBindingResult {
-  binding_generation: number;
-}
-
-export interface GraphAccessInspection {
-  graph_root: string;
-  external_assets_path: string | null;
-  approved: boolean;
 }
 
 export interface Backend {
@@ -744,7 +671,7 @@ export interface Backend {
   watcherLatencyRecent(): Promise<unknown[]>;
 }
 
-export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, GraphConfigChange } from "./backendTypes";
+export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, GraphConfigChange, GraphSourceFile, GraphFolderPickResult, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, GraphConfigChange } from "./backendTypes";
 
 export function isTauri(): boolean {

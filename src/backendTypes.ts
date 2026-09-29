@@ -64,3 +64,76 @@ export interface GraphConfigChange {
   binding_generation: number;
   meta: GraphMeta;
 }
+
+/** One raw graph file, as returned by `graphSourceFiles` — the input to the
+ *  in-app lsdoc↔mldoc diff panel. `text` is the file's bytes exactly as on disk. */
+export interface GraphSourceFile {
+  rel: string;
+  text: string;
+  format: "md" | "org";
+  bytes: number;
+}
+
+export type GraphFolderPickResult =
+  | { status: "picked"; path: string }
+  | { status: "permission-requested" | "permission-needed" | "cancelled"; path?: string };
+
+export interface ClipboardAssetFile {
+  path: string;
+  name: string;
+  size: number;
+}
+
+export interface ClipboardFileList {
+  files: ClipboardAssetFile[];
+  skipped: number;
+  truncated: boolean;
+}
+
+/** Result of an Android media-capture command. Successful photos and voice
+ *  memos return a bounded native cache-file `path` which Rust streams directly
+ *  into the graph. */
+export interface MediaCaptureResult {
+  status: "ok" | "recording" | "cancelled";
+  path?: string | null;
+  ext?: string | null;
+}
+
+export interface KnownGraph {
+  path: string;
+  name: string;
+}
+
+export interface InstalledPluginRecord {
+  id: string;
+  version: string;
+  manifest_json: string;
+  sha256: string;
+  selected: boolean;
+  enabled: boolean;
+}
+
+export interface PluginRegistryCacheEnvelope {
+  schemaVersion: 1;
+  indexJson: string;
+  signature: string;
+}
+
+export type PluginRegistryCacheLoad =
+  | { kind: "absent" }
+  | { kind: "envelope"; envelope: PluginRegistryCacheEnvelope }
+  | { kind: "unsafe"; reason: string };
+
+export type LoadGraphResult =
+  | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number }
+  | { kind: "focused_existing"; window_label: string };
+
+export interface CaptureGraphBindingResult {
+  binding_generation: number;
+}
+
+export interface GraphAccessInspection {
+  graph_root: string;
+  external_assets_path: string | null;
+  approved: boolean;
+}
