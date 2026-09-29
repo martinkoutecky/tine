@@ -557,7 +557,16 @@ export function QuickSwitcher(): JSX.Element {
                               swallowNextPaste = true;
                               setTimeout(() => (swallowNextPaste = false), 200);
                               openInBackground(it);
-                            } else if (e.button === 0) choose(it);
+                            } else if (e.button === 0) {
+                              const mod = e.ctrlKey || e.metaKey;
+                              if (mod && !e.altKey && !e.shiftKey && (it.t === "page" || it.t === "block"))
+                                void openInBackground(it);
+                              else if (!switcherEmbryo() && e.shiftKey && !e.altKey && !mod && (it.t === "page" || it.t === "block"))
+                                void chooseSidebar(it);
+                              else if (!switcherEmbryo() && e.altKey)
+                                void chooseOther(it);
+                              else void choose(it);
+                            }
                           }}
                         >
                           <Row item={it} />

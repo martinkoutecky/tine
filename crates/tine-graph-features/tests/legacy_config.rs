@@ -26,6 +26,35 @@ fn content(dir: &PathBuf) -> String {
 }
 
 #[test]
+fn home_page_writer_changes_only_its_nested_page() {
+    let original = "{;; :default-home {:page \"Decoy\"}\n :default-home {:sidebar [\"Contents\"] :page \"Old\"}\n :start-of-week 2}\n";
+    let (dir, store) = fixture("home", original);
+    config::set_default_home_page(&store, Some("New \"Home\"")).unwrap();
+    let written = content(&dir);
+    assert!(written.contains(":sidebar [\"Contents\"]"));
+    assert!(written.contains(":page \"New \\\"Home\\\"\""));
+    assert!(written.contains(";; :default-home {:page \"Decoy\"}"));
+    assert_eq!(
+        Config::parse(&written).default_home.as_deref(),
+        Some("New \"Home\"")
+    );
+
+    config::set_default_home_page(&store, None).unwrap();
+    let cleared = content(&dir);
+    assert_eq!(Config::parse(&cleared).default_home, None);
+    assert!(cleared.contains(":sidebar [\"Contents\"]"));
+    assert!(cleared.contains(":start-of-week 2"));
+}
+
+#[test]
+fn home_page_writer_refuses_a_non_map_owner_without_changing_bytes() {
+    let input = "{:default-home \"Other shape\" :start-of-week 2}\n";
+    let (dir, store) = fixture("home-invalid", input);
+    assert!(config::set_default_home_page(&store, Some("Unsafe")).is_err());
+    assert_eq!(content(&dir), input);
+}
+
+#[test]
 fn set_timetracking_enabled_round_trips() {
     let (dir, store) = fixture(
         "ttrack",

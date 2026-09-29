@@ -203,6 +203,27 @@ pub(crate) fn forget_known_graph(path: String, app: tauri::AppHandle) -> Result<
     update_settings(&app, |json| forget_graph_json(json, &path))
 }
 
+/// Reveal a remembered graph root in the desktop file manager. Only paths
+/// already in the known-graph list are accepted; absent paths and mobile
+/// platforms return an error. Cost: O(known graphs) plus one OS handoff.
+#[tauri::command]
+pub(crate) fn reveal_known_graph(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    if !list_known_graphs(app)
+        .iter()
+        .any(|known| known.path == path)
+    {
+        return Err("that graph is not in the known-graph list".into());
+    }
+    #[cfg(desktop)]
+    {
+        crate::platform::reveal_page_source(std::path::Path::new(&path))
+    }
+    #[cfg(not(desktop))]
+    {
+        Err("showing a graph folder is available on desktop only".into())
+    }
+}
+
 pub(crate) fn last_graph_path(app: &tauri::AppHandle) -> Option<String> {
     settings_path(app)
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -767,4 +788,16 @@ pub(crate) fn set_favorites(
     let slot = slot_for_context(&state)?;
     tine_graph_features::config::set_favorites(&slot.store, &names, page.as_deref())
         .map_err(|e| e.to_string())
+}
+
+/// Persist or clear the graph home page through the guarded config transaction.
+/// Cost follows config.edn bytes; malformed map and I/O errors are returned.
+#[tauri::command]
+pub(crate) fn set_default_home(
+    name: Option<String>,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    tine_graph_features::config::set_default_home_page(&slot.store, name.as_deref())
+        .map_err(|error| error.to_string())
 }

@@ -76,9 +76,9 @@ use query_ir::{
 };
 use settings::{
     forget_known_graph, get_app_bool, get_app_string, get_capture_enter_files,
-    get_link_first_match, get_smooth_scroll, list_known_graphs, load_session, save_session,
-    set_app_bool, set_app_string, set_capture_enter_files, set_favorites, set_link_first_match,
-    set_smooth_scroll,
+    get_link_first_match, get_smooth_scroll, list_known_graphs, load_session, reveal_known_graph,
+    save_session, set_app_bool, set_app_string, set_capture_enter_files, set_default_home,
+    set_favorites, set_link_first_match, set_smooth_scroll,
 };
 use spellcheck::{
     apply_spellcheck, apply_spellcheck_all, list_spellcheck_dictionaries, parse_spellcheck_langs,
@@ -816,6 +816,7 @@ pub fn run() {
             query_explain_empty,
             page_icons,
             set_favorites,
+            set_default_home,
             set_preferred_workflow,
             set_timetracking_enabled,
             set_show_brackets,
@@ -887,6 +888,7 @@ pub fn run() {
             save_workspaces,
             list_known_graphs,
             forget_known_graph,
+            reveal_known_graph,
             install_plugin,
             uninstall_plugin,
             list_installed_plugins,
