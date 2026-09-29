@@ -1,6 +1,6 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
 import { untombstone, setBaseRev, activatePageInstance, forgetSaveState, rekeyPageSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, conflictReason, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations, deletePageOnDisk, group, groupedPages, savingPages, releaseGroup, reserveGroupMemberDeletion } from "./save/engine";
-import { doc, setDoc, FeedPage, pageByName } from "./model";
+import { clearCollapseEpochs, doc, setDoc, FeedPage, pageByName } from "./model";
 import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, emptyPage } from "./convert";
 import { invalidateAllMatrixDimensions, clearMatrixDimensionCache } from "../sheet/matrix";
@@ -388,6 +388,7 @@ export function resetStore() {
   resetReferenceSectionState();
   for (const name of pageInstanceGenerations.keys()) retirePageInstance(name);
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
+  clearCollapseEpochs();
   endEdit("graph-switch");
   notifyModeReset();
 }

@@ -1,4 +1,4 @@
-import { doc, formatForBlock, pageByName, setDoc, freshId, type ReadonlyFeedPage } from "../model";
+import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
@@ -561,6 +561,7 @@ export function writeCollapsed(id: string, collapsed: boolean) {
   const nextRaw = rawWithCollapsed(n.raw, collapsed, formatForBlock(id));
   setDoc("byId", id, "collapsed", collapsed);
   if (nextRaw !== n.raw) setDoc("byId", id, "raw", nextRaw);
+  bumpCollapseEpochs([id]);
 }
 
 /** Expand every collapsed ancestor of `id` so the block itself renders, as one
@@ -648,5 +649,6 @@ export function setCollapsedDescendants(id: string, collapsed: boolean) {
       }
     })
   );
+  bumpCollapseEpochs(changes.map((change) => change.id));
   markDirty(root.page, "save-block");
 }

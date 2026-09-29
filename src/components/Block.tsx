@@ -220,10 +220,11 @@ export interface CollapseSurfaceApi {
   toggle: (id: string, current: boolean) => void;
   setMany: (ids: readonly string[], collapsed: boolean) => void;
 }
-// Deliberate Tine divergence from OG Logseq: OG block embeds use the source
-// block's persisted collapsed state, while Tine lets a secondary/transcluded
-// rendering fold locally so interacting with a view cannot mutate its source.
-// Keep this surface-local contract explicit when changing collapse parity.
+// Deliberate Tine divergence from OG Logseq: a secondary/transcluded rendering
+// never mutates its source. A block embed follows the source until its macro
+// host records an explicit occurrence-owned collapse override; reference/query
+// surfaces keep their local presentation state. Keep the surface contract
+// explicit when changing collapse parity.
 export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(null);
 
 /** Render and edit one document block through the document door. Work scales

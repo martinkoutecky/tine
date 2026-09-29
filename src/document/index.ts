@@ -73,7 +73,7 @@
  * exact physical path to rekey navigation, loaded page ownership and its save
  * baseline in that order. The UI installs `installPageIdentityNavigation`;
  * rekeying refuses a name collision or an unsafe external reload. */
-export { blockIsGridView, node, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName } from "./model";
+export { blockIsGridView, collapseEpochOf, node, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName } from "./model";
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
 export { conflictReason, conflicts, createPage, CreatePageRefusal, flushAll, flushPage, groupedPages, installAliasDraftRouteHandler, installDraftKeeper, isConflicted, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, trackAssetWrite, unsavedDrafts, unsavedPageCount, waitingFor, waitingOn, type UnsavedState } from "./save/engine";
 export { applyGraphChange, installExternalChangeUiHandler } from "./external";
