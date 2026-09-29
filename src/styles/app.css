@@ -1754,6 +1754,7 @@ html[data-system-insets="native-viewport"] {
 
 .references-header.clickable {
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -6210,9 +6211,12 @@ body.file-drop-active::after {
     calc(var(--overlay-inset-bottom) + 8px)
     calc(var(--overlay-inset-left) + 8px);
 }
-.lightbox-img {
+.lightbox-overlay > img.lightbox-img {
+  width: auto;
+  height: auto;
   max-width: 92vw;
   max-height: 92vh;
+  object-fit: contain;
   border-radius: 6px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
   cursor: default;
