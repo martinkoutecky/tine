@@ -324,3 +324,30 @@ fn every_dash_form_lsdoc_accepts_keeps_its_bytes() {
     });
     assert_eq!(edited, format!("{source}!"));
 }
+
+#[test]
+fn an_edited_block_keeps_its_untouched_whitespace_only_lines() {
+    // og T5: a whitespace-only continuation line parses to an empty raw line,
+    // and an edit elsewhere in the block wrote it empty (bytes lost).
+    let edited = saved(SOURCE, EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = doc.blocks[0].raw.replacen("one", "ONE", 1);
+    });
+    assert_eq!(edited, SOURCE.replacen("one", "ONE", 1));
+    // Head and tail both survive a line inserted between them; CRLF keeps its terminator.
+    let source = "- a\r\n  \r\n  b\r\n   \r\n  c\r\n- d\r\n";
+    let edited = saved(source, EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = doc.blocks[0].raw.replacen("b", "b\nnew", 1);
+    });
+    assert_eq!(edited, "- a\r\n  \r\n  b\r\n  new\r\n   \r\n  c\r\n- d\r\n");
+    // A continuation indented less than the bullet's content column (its raw
+    // text carries no trace of that) keeps its bytes too.
+    let edited = saved("\t- a\n\tb\n", EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "A\nb".into();
+    });
+    assert_eq!(edited, "\t- A\n\tb\n");
+    // A blank line the user typed is new, so it is written empty.
+    let edited = saved("- a\n  b", EditKind::SaveBlock, |doc| {
+        doc.blocks[0].raw = "a\n\nb".into();
+    });
+    assert_eq!(edited, "- a\n\n  b");
+}

@@ -1532,7 +1532,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async loadDrafts(): Promise<DraftRecord[]> {
       return [...mockDrafts.values()].map((record) => structuredClone(record));
     },
-    async storeDraft(record: DraftRecord): Promise<void> {
+    async storeDraft(record: DraftRecord, _graphRoot?: string): Promise<void> {
       mockDrafts.set(record.id, structuredClone(record));
     },
     async retireDraft(id: string): Promise<void> {

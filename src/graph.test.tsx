@@ -54,6 +54,7 @@ async function loadHarness(
       return { ok: ["new-rev"] };
     }),
     readCustomCss: vi.fn(async () => ""),
+    storeDraft: vi.fn(async (_record: import("./types").DraftRecord, _graphRoot?: string) => {}),
   };
   // Records how many events preceded each reset (order without adding events).
   const resetPageIndex = vi.fn(() => { resetAt.push(events.length); });
@@ -70,6 +71,8 @@ async function loadHarness(
   const activatePdfOwnership = vi.fn((root: string) => { events.push(`activate-pdf:${root}`); });
   const resetTabsToJournals = vi.fn(() => { events.push("reset-tabs"); });
   const flushAll = vi.fn(async () => true);
+  const unsaved: { name: string; state: string; path: string | null; page: PageDto | null }[] = [];
+  const resetStore = vi.fn(() => { unsaved.length = 0; });
 
   vi.doMock("./backend", () => ({ backend: () => api }));
   vi.doMock("./ui", () => ({
@@ -104,7 +107,7 @@ async function loadHarness(
     activatePdfOwnership,
   }));
   vi.doMock("./document", () => ({
-    resetStore: vi.fn(), flushAll,
+    resetStore, flushAll, unsavedDrafts: () => unsaved, installDraftKeeper: vi.fn(),
     installRenameRefreshHandler: vi.fn(),
     favoritesArrangementPage: vi.fn(), favoritesArrangementBlocks: vi.fn(),
     reloadHlsIfLoaded: vi.fn(),
@@ -151,7 +154,7 @@ async function loadHarness(
   const { loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay } = await import("./graph");
   return {
     loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, api, events, resetPageIndex, resetAt, waitForWarmCache,
-    drainPdfWork, retirePdfOwnership, activatePdfOwnership, resetTabsToJournals, flushAll,
+    drainPdfWork, retirePdfOwnership, activatePdfOwnership, resetTabsToJournals, flushAll, resetStore, unsaved,
     applyTemplateVars, prepareTemplateVars, openPage,
   };
 }
@@ -201,6 +204,23 @@ describe("default journal template graph bind", () => {
     const result = await ensureJournalTemplateForDay(new Date());
     expect(result).toMatchObject({ kind: "error", error: expect.any(Error) });
     if (typeof result !== "string") expect(String(result.error)).toContain("template read denied");
+  });
+  it("keeps an edit typed while the next graph loads in the old graph's draft store (og T4)", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    const page = { name: "Typed", kind: "page", title: "Typed", pre_block: null,
+      blocks: [{ id: "b", raw: "typed during the load", collapsed: false, children: [] }] } as PageDto;
+    harness.api.loadGraph.mockImplementationOnce(async () => {
+      // The last flush already ran; this edit lands while load_graph is in flight.
+      harness.unsaved.push({ name: "Typed", state: "Not saved", path: "pages/Typed.md", page });
+      return { kind: "loaded" as const, meta: { ...META, root: "/tmp/next-graph" }, binding_generation: 2 };
+    });
+    await harness.loadGraphPath("/tmp/next-graph");
+    expect(harness.api.storeDraft).toHaveBeenCalledTimes(1);
+    const [record, root] = harness.api.storeDraft.mock.calls[0];
+    expect(root).toBe(META.root);
+    expect(record).toMatchObject({ kind: "unsaved", page_name: "Typed", path: "pages/Typed.md", page });
+    expect(harness.resetStore).toHaveBeenCalled(); // the reset drops the working set (harness)
   });
   it("still switches graph when the current session cannot be saved", async () => {
     const { loadGraphPath, api } = await loadHarness(null);

@@ -178,6 +178,8 @@ impl Store {
         let scope = graph_text.map(|hidden| {
             let mut config = (*self.graph.current_config()).clone();
             config.hidden = hidden.to_vec();
+            // The recorded list alone decides (`[""]` records a fail-closed scope).
+            config.hidden_parse_failed_closed = false;
             config
         });
         for file in &files {

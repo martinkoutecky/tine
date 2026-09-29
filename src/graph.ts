@@ -7,6 +7,7 @@ import { graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, bumpDataRev, graphMeta, graphEpoch } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer, pageIdentityKey } from "./ui";
 import { pushToast } from "./toasts";
+import { keepAtSwitch } from "./draftStore";
 import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
 import { clearAssetBlobCache } from "./assetCache";
@@ -206,7 +207,17 @@ export async function loadGraphPath(
     return { kind: "already_current", root: meta.root };
   }
   if (!hadGraph || rebindsPdfOwner) activatePdfOwnership(meta.root);
+  // An edit typed while load_graph ran missed the last flush, and the binding
+  // has moved: snapshot it into the old graph's draft store before resetStore
+  // drops it (no await in between, so no later edit can slip past).
+  const oldRoot = hadGraph ? graphMeta()?.root : undefined;
+  const kept = oldRoot ? keepAtSwitch(oldRoot) : null;
   resetStore();
+  void kept?.then((lost) => {
+    if (lost.length > 0) {
+      pushToast(`Couldn't keep unsaved edits to ${lost.map((n) => `“${n}”`).join(", ")} from the previous graph.`, "error", { sticky: true });
+    }
+  });
   clearWorkspaces();
   closePageProps();
   setAudioPlayer(null);

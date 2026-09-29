@@ -105,12 +105,76 @@ pub fn decode_page_name(stem: &str, fmt: crate::config::FileNameFormat) -> Strin
 }
 
 /// First nonempty `title::` in the preamble; Org also accepts `#+title:` and
-/// `:title:`. The scan stops at a trimmed `-` or `- ` line, and for Org at
-/// `* `. Other bullet spellings and deeper Org headlines do not stop it.
-/// Returns `None` when no supported title precedes that boundary. Cost
-/// O(scanned preamble bytes); no I/O or error.
+/// `:title:`. The preamble is exactly the page model's `pre_block`: the text
+/// before the first block-opening line as the outline authority
+/// (`crate::outline`, lsdoc) reads it. A leading unbulleted `# heading` is
+/// a block, so a `title::` under it is that block's property, not the page's
+/// (OG `extract.cljc` `get-page-name` takes `title` only from leading
+/// properties); a bullet-looking line inside a fence is not a boundary.
+/// `content` is the whole file or a prefix that [`preamble_read`] reported
+/// settled. `None` when no supported title precedes that boundary. Cost one
+/// lsdoc outline parse, O(content bytes); no I/O or error.
 pub fn page_title_from_preamble(content: &str, format: Format) -> Option<String> {
     page_title_line(content, format).map(|line| content[line.value].to_owned())
+}
+
+/// How much of a page [`page_title_from_preamble`] needs, for a reader that
+/// streams whole lines from the start of the file.
+#[deny(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreambleRead {
+    /// The prefix read so far already ends at the page's first block.
+    Settled,
+    /// Read the next line and ask again.
+    More,
+    /// Only the whole file decides where the preamble ends.
+    Whole,
+}
+
+/// Whether `prefix` (whole lines from the start of a page, the last one just
+/// read; called once per line) settles the preamble, so that
+/// [`page_title_from_preamble`] over it answers as over the whole file.
+/// Settled only while every line before the first block is blank, a property
+/// line or an Org directive/drawer line: those cannot open a literal region
+/// (fence, `#+BEGIN_…`) that a later line closes and that would hide the
+/// block line (an unclosed fence in a prefix does not hide it). Any other
+/// preamble line answers [`PreambleRead::Whole`]. Cost O(last line) per
+/// line; one lsdoc outline parse of the prefix at a line starting with `-`,
+/// `#` or `*`. Pure, infallible.
+pub fn preamble_read(prefix: &str, format: Format) -> PreambleRead {
+    let body = prefix.strip_suffix('\n').unwrap_or(prefix);
+    let body = body.strip_suffix('\r').unwrap_or(body);
+    let last = body.rsplit(['\r', '\n']).next().unwrap_or("");
+    let trimmed = last.trim_start();
+    if trimmed.starts_with(['-', '#', '*']) && preamble_end(prefix, format) < prefix.len() {
+        return PreambleRead::Settled;
+    }
+    let inert = trimmed.trim_end().is_empty()
+        || crate::doc::parse_property_line(last).is_some()
+        || (format == Format::Org && org_meta_line(trimmed));
+    if inert {
+        PreambleRead::More
+    } else {
+        PreambleRead::Whole
+    }
+}
+
+/// An Org `#+key: value` directive (not a `#+BEGIN_…` opener) or a `:key:`
+/// drawer line.
+fn org_meta_line(trimmed: &str) -> bool {
+    let directive = trimmed
+        .strip_prefix("#+")
+        .and_then(|rest| rest.split_once(':'))
+        .is_some_and(|(key, _)| {
+            !key.is_empty()
+                && !key.to_ascii_lowercase().starts_with("begin")
+                && !key.contains(char::is_whitespace)
+        });
+    let drawer = trimmed
+        .strip_prefix(':')
+        .and_then(|rest| rest.split_once(':'))
+        .is_some_and(|(key, _)| !key.is_empty() && !key.contains(char::is_whitespace));
+    directive || drawer
 }
 
 /// Rewrite the preamble title that [`page_title_from_preamble`] reads to
@@ -152,19 +216,27 @@ struct TitleLine {
     property: bool,
 }
 
+/// Byte length of the page's preamble: where the outline authority opens the
+/// first block, else the whole text (as `doc::parse`/`org::parse_org` read it).
+fn preamble_end(content: &str, format: Format) -> usize {
+    // Same length as `content` (a lone `\r` becomes `\n`), so offsets carry over.
+    let text = crate::org::lone_cr_to_lf(content);
+    let outline = match format {
+        Format::Md => crate::outline::OutlineFormat::Markdown,
+        Format::Org => crate::outline::OutlineFormat::Org,
+    };
+    crate::outline::first_header_start(&text, outline).unwrap_or(text.len())
+}
+
 fn page_title_line(content: &str, format: Format) -> Option<TitleLine> {
+    let text = crate::org::lone_cr_to_lf(content);
+    let end = preamble_end(content, format);
     let mut offset = 0;
-    for chunk in content.split_inclusive('\n') {
+    for chunk in text[..end].split_inclusive('\n') {
         let start = offset;
         offset += chunk.len();
         let line = chunk.trim_end_matches(['\r', '\n']);
         let trimmed = line.trim_start();
-        if trimmed.starts_with("- ")
-            || trimmed == "-"
-            || (format == Format::Org && trimmed.starts_with("* "))
-        {
-            break;
-        }
         let at = |value: &str| {
             // `value` is a subslice of `line`: locate it by address.
             let from = start + (value.as_ptr() as usize - line.as_ptr() as usize);

@@ -727,6 +727,14 @@ pub fn is_unbulleted_heading_line(line: &str) -> bool {
     outline::is_unbulleted_heading_line(line)
 }
 
+/// The raw text the outline parser reads from a continuation `line` of a block
+/// whose continuations dedent by `content_indent` bytes: up to that many
+/// leading tabs, spaces or form feeds removed. For a writer reusing a line's
+/// old bytes; the reparse stays the judge.
+pub fn continuation_raw(line: &str, content_indent: usize) -> &str {
+    outline::strip_layout_ws(line, content_indent)
+}
+
 /// Formatting knobs detected from a file so re-saving preserves its existing
 /// style (avoids gratuitous diffs / Syncthing churn). Logseq, for instance,
 /// writes files with NO trailing newline; imposing one would rewrite every file.

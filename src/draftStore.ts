@@ -10,15 +10,16 @@ import { backend } from "./backend";
 import { captureBinding, graphScopedSignal, refuseStaleWrite, stillBound, type Binding } from "./binding";
 import { installDraftKeeper, unsavedDrafts } from "./document";
 import { graphEpoch, graphMeta } from "./graphSession";
-import { graphOwner, readOwned, writeOwned } from "./owned";
+import { graphOwner, ownedWhen, readOwned, writeOwned } from "./owned";
 import { pushToast } from "./toasts";
 import { openUnsavedRecovery } from "./unsavedRecovery";
 import type { DraftRecord } from "./types";
 
 export const REFRESH_MS = 500;
-const session = typeof crypto !== "undefined" && "randomUUID" in crypto
+const newSessionId = () => typeof crypto !== "undefined" && "randomUUID" in crypto
   ? crypto.randomUUID()
   : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+const session = newSessionId();
 const idFor = (name: string) => `${session}:${name}`;
 
 type Kept = { binding: Binding; written: string | null };
@@ -90,6 +91,36 @@ function keep(name: string, risky: boolean) {
   if (!kept) return;
   atRisk.delete(name);
   void retire(name, kept);
+}
+
+/** Keep every page still unsaved at a graph switch in the store of the graph it
+ *  belongs to, `root`, before resetStore drops the working set: an edit typed
+ *  while the next graph was loading, after the last flush (og T4). The window's
+ *  binding has already moved, so the record names its graph explicitly and
+ *  cannot land in the next one. Each switch gets its own session tag, so
+ *  reopening that graph, even in this window, offers the drafts for review.
+ *  Takes the snapshot before returning; resolves to the names that could not
+ *  be kept (disk error or the store's bound). */
+export function keepAtSwitch(root: string): Promise<string[]> {
+  // Snapshot synchronously: the caller resets the working set right after.
+  const tag = `switch-${newSessionId()}`;
+  const records = unsavedDrafts().flatMap((draft): DraftRecord[] => draft.page ? [{
+    id: `${tag}:${draft.name}`, kind: "unsaved", session: tag, page_name: draft.name, path: draft.path,
+    reason: draft.state === "Conflict" ? "conflict" : "save-failed", saved_at: Date.now(), page: draft.page,
+  }] : []);
+  return (async () => {
+    const lost: string[] = [];
+    for (const record of records) {
+      try {
+        // The completion belongs to this switch, not to a graph binding (the
+        // window's binding has already moved on): nothing can retire it.
+        await writeOwned(ownedWhen(), backend().storeDraft?.(record, root) ?? Promise.resolve());
+      } catch {
+        lost.push(record.page_name);
+      }
+    }
+    return lost;
+  })();
 }
 
 /** Retire a record an earlier session kept: the user's explicit choice. */

@@ -371,6 +371,7 @@ mod tests {
             pages_dir: "pages".into(),
             assets_dir_name: "assets".into(),
             hidden: Vec::new(),
+            hidden_parse_failed_closed: false,
         };
         for dir in ["journals", "assets", "logseq"] {
             std::fs::create_dir_all(graph.join(dir)).unwrap();
@@ -714,6 +715,49 @@ mod tests {
             drop(store);
             let _ = std::fs::remove_dir_all(root);
         }
+    }
+
+    /// og-T2: a snapshot taken while `:hidden` failed to parse (torn or
+    /// hand-broken config.edn) holds no graph text and records the
+    /// fail-closed scope, so restoring it retires no live text.
+    #[test]
+    fn failed_closed_hidden_snapshot_records_scope_and_retires_nothing() {
+        let root = scratch("failed-closed-hidden");
+        let graph = root.join("graph");
+        let base = root.join("backups");
+        write(&graph.join("logseq/config.edn"), "{:hidden [\"private\"\n");
+        write(&graph.join("pages/A.md"), "- a\n");
+        for dir in ["journals", "assets"] {
+            std::fs::create_dir_all(graph.join(dir)).unwrap();
+        }
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        let outcome = write_snapshot(&base, &store, source.clone(), "", &|| false);
+        assert!(outcome.failure.is_none(), "{:?}", outcome.failure);
+        let stamp = std::fs::read_dir(&base)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .file_name();
+        let stamp = stamp.to_str().unwrap().to_owned();
+        let manifest = read_manifest(&base.join(&stamp)).unwrap();
+        assert!(
+            manifest
+                .graph_text_policy
+                .as_ref()
+                .unwrap()
+                .hidden_parse_failed_closed
+        );
+        assert!(manifest.files.iter().all(|f| !f.path.starts_with("graph/")));
+        write(&graph.join("pages/Later.md"), "- later\n");
+        restore_from_backup_source(&stamp, &base, &store, source, |_| BackupOutcome::success(1))
+            .unwrap();
+        for (rel, bytes) in [("pages/A.md", "- a\n"), ("pages/Later.md", "- later\n")] {
+            assert_eq!(std::fs::read_to_string(graph.join(rel)).unwrap(), bytes);
+        }
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// Differential with master ffb4cb3d7: master's own fixture

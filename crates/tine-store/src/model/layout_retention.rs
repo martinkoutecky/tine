@@ -6,7 +6,8 @@
 //! blocks the save never touched. Instead, every DTO block whose raw text equals
 //! an old block's raw (matched by a pre-order LCS, then by equal text for moved
 //! blocks) reuses that block's physical lines; only new or changed blocks, and
-//! the page-property preamble when it changed, are rendered. A reused block
+//! the page-property preamble when it changed, are rendered; a changed block
+//! still keeps the bytes of the continuation lines its edit did not touch. A reused block
 //! keeps its indentation unless the parse rule for its new position forbids it
 //! (it must be deeper than its parent and no deeper than its previous sibling);
 //! then its lines are re-based as a unit onto a valid prefix.
@@ -385,15 +386,61 @@ impl Emitter<'_> {
         } else {
             format!("{prefix}- {first}")
         };
+        let untouched = self.untouched_lines(raw, prefix, hint);
         let mut emitted = vec![(first, origin(0))];
         for (j, line) in lines.enumerate() {
-            let line = if line.is_empty() {
-                String::new()
-            } else {
-                format!("{prefix}  {line}")
-            };
-            emitted.push((line, origin(j + 1)));
+            let j = j + 1;
+            emitted.push(match untouched.get(&j) {
+                Some(&i) => (self.lines[i].to_string(), Some(i)),
+                None if line.is_empty() => (String::new(), origin(j)),
+                None => (format!("{prefix}  {line}"), origin(j)),
+            });
         }
         self.out.extend(emitted);
+    }
+
+    /// The physical continuation lines of a changed block that the edit did
+    /// not touch, keyed by their line in `raw`: a raw line in the common head or
+    /// tail of the old and new raw lines whose old bytes still dedent to it
+    /// under the rendered bullet. Rendering would rewrite such a line from its
+    /// raw text and lose layout the DTO cannot carry: a whitespace-only line
+    /// (raw empty) or a continuation indented less than the bullet's content
+    /// column. Only a block that keeps its old prefix reuses them (a re-based
+    /// block rewrites its lines anyway). O(block lines).
+    fn untouched_lines(
+        &self,
+        raw: &str,
+        prefix: &str,
+        hint: Option<usize>,
+    ) -> HashMap<usize, usize> {
+        let Some(old) = hint.filter(|&o| self.old_prefix(o) == prefix) else {
+            return HashMap::new();
+        };
+        let OldBlock {
+            raw: was, start, ..
+        } = self.olds[old];
+        let (a, b): (Vec<_>, Vec<_>) = (was.split('\n').collect(), raw.split('\n').collect());
+        let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+        let tail = a[head.min(a.len())..]
+            .iter()
+            .rev()
+            .zip(b[head.min(b.len())..].iter().rev())
+            .take_while(|(x, y)| x == y)
+            .count();
+        // `render` writes `{prefix}- …`, so continuations dedent by this much.
+        let indent = prefix.len() + 2;
+        (1..b.len())
+            .filter_map(|j| {
+                let k = if j < head {
+                    j
+                } else if j >= b.len() - tail {
+                    a.len() - (b.len() - j)
+                } else {
+                    return None;
+                };
+                let line = self.lines[start + k];
+                (doc::continuation_raw(line, indent) == b[j]).then_some((j, start + k))
+            })
+            .collect()
     }
 }

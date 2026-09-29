@@ -31,10 +31,16 @@ pub(crate) fn watch_mode(app: &tauri::AppHandle) -> WatchMode {
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|source| serde_json::from_str::<serde_json::Value>(&source).ok())
         .and_then(|settings| settings.get("watch_mode")?.as_str().map(str::to_owned));
-    match selected.as_deref() {
+    selected_watch_mode(selected.as_deref())
+}
+
+/// The device's `watch_mode` setting → mode. Unset (or unknown) means native
+/// events on every platform, Android included (master 7e1b6ec42, GH #337);
+/// "poll" stays the opt-in for filesystems without reliable events, and the
+/// store degrades to polling by itself when the OS refuses a watch.
+fn selected_watch_mode(selected: Option<&str>) -> WatchMode {
+    match selected {
         Some("poll") => WatchMode::Poll,
-        Some("inotify") => WatchMode::Notify,
-        _ if cfg!(target_os = "android") => WatchMode::Poll,
         _ => WatchMode::Notify,
     }
 }
@@ -431,6 +437,23 @@ mod tests {
             created: false,
             removed: false,
         }
+    }
+
+    /// og-T3 (master 7e1b6ec42): the default is native events on every
+    /// platform. The source check is the platform observer: a per-target
+    /// default compiles away on the Linux test host.
+    #[test]
+    fn unset_watch_mode_prefers_native_events_on_every_platform() {
+        assert_eq!(selected_watch_mode(None), WatchMode::Notify);
+        assert_eq!(selected_watch_mode(Some("inotify")), WatchMode::Notify);
+        assert_eq!(selected_watch_mode(Some("poll")), WatchMode::Poll);
+        let source = include_str!("watcher.rs");
+        let selection = &source[source.find("fn watch_mode(").unwrap()..];
+        let selection = &selection[..selection.find("#[tauri::command]").unwrap()];
+        assert!(
+            !selection.contains("target_os"),
+            "the watch-mode default must not vary by platform (master 7e1b6ec42)"
+        );
     }
 
     #[test]
