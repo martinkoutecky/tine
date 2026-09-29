@@ -1,6 +1,5 @@
 import { Show, Switch, Match, For, type JSX } from "solid-js";
-import { pageByName, blockPageReadOnly, blockExternalId, type OutlineScope } from "../document";
-import type { ReadonlyNode } from "../document/model";
+import { pageByName, blockPageReadOnly, blockExternalId, type OutlineScope, type Node as ReadonlyNode } from "../document";
 import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "../render/block";
 import type { Facets } from "../render/facets";
 import { AstBody } from "../render/body";

@@ -1,17 +1,16 @@
-import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf, indexInSiblings, existingSubtreeFits } from "../tree";
-import { doc, setDoc } from "../model";
+import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf, existingSubtreeFits } from "../tree";
+import { doc, setDoc, bumpCollapseEpochs, type DocState } from "../model";
 import { createSignal, createRoot, createMemo } from "solid-js";
 import { endEdit, editingId } from "../../editorController";
 import { installClearOutlineSelection, notifyOutlineSelectionStarted } from "../../modeHooks";
 import { clearOnBindingInvalidated } from "../../binding";
-import { blockWritable, rawWithHeading, writeCollapsed, type HeadingState } from "./properties";
+import { blockWritable, rawWithHeading, rawWithCollapsed, type HeadingState } from "./properties";
 import { formatForBlock } from "../model";
 import { pushUndo } from "../history";
 import { produce } from "solid-js/store";
 import { cycleMarkerSmart } from "../../editor/repeat";
 import { workflow } from "../../ui";
 import { markDirty, persistTogether } from "../save/engine";
-import { moveBlockInternal } from "./moves";
 import { copyStripCollapsed, copyIncludeSubtree } from "../../copySettings";
 import { blockSubtreeMarkdown } from "./serialize";
 import { pushToast } from "../../toasts";
@@ -264,6 +263,79 @@ function reselectSurvivingBlock(id: string | null) {
   else clearSelection();
 }
 
+/** The assumptions the old per-root move loop made, confirmed BEFORE the one-shot
+ *  mutation: a stale or malformed tree stays a guarded no-op instead of committing
+ *  a prefix of the selection (master b3fc9c813). */
+function canBatchMoveSelectionRoots(ids: readonly string[], destPage: string, newParent: string | null): boolean {
+  if (newParent !== null) {
+    const parent = doc.byId[newParent];
+    if (!parent || !blockWritable(newParent) || parent.page !== destPage) return false;
+  }
+  for (const id of ids) {
+    const node = doc.byId[id];
+    if (!node || !blockWritable(id) || node.page !== destPage || id === newParent) return false;
+    if (!rootsOf(id).includes(id)) return false;
+    // Never make a block its own ancestor; fail closed on a parent cycle.
+    const seen = new Set<string>();
+    let cursor = newParent;
+    while (cursor !== null) {
+      if (cursor === id || seen.has(cursor)) return false;
+      seen.add(cursor);
+      const ancestor = doc.byId[cursor];
+      if (!ancestor) return false;
+      cursor = ancestor.parent;
+    }
+    if (!existingSubtreeFits(id, newParent)) return false;
+  }
+  return true;
+}
+
+/** Remove every selected root from its own sibling array, then put them at one
+ *  destination in document order: ONE publication and ONE dirty mark for the
+ *  command (indent/outdent of a selection is one editor command, not N drags). */
+function moveSelectionRootsInOneMutation(
+  ids: readonly string[],
+  destPage: string,
+  destinationParent: string | null,
+  destinationIndex: (state: DocState) => number,
+  expandParent: string | null = null,
+) {
+  setDoc(
+    produce((state) => {
+      const siblingsFor = (id: string): string[] | null => {
+        const node = state.byId[id];
+        if (!node) return null;
+        if (node.parent === null) return state.pages.find((page) => page.name === node.page)?.roots ?? null;
+        return state.byId[node.parent]?.children ?? null;
+      };
+      // Check every removal before changing any array.
+      if (ids.some((id) => (siblingsFor(id)?.indexOf(id) ?? -1) < 0)) return;
+      // Re-read each index while removing: selected roots may share an array.
+      for (const id of ids) {
+        const siblings = siblingsFor(id)!;
+        siblings.splice(siblings.indexOf(id), 1);
+      }
+      const destination = destinationParent === null
+        ? state.pages.find((page) => page.name === destPage)?.roots
+        : state.byId[destinationParent]?.children;
+      if (!destination) return;
+      const at = destinationIndex(state);
+      if (at < 0) return;
+      for (const id of ids) state.byId[id].parent = destinationParent;
+      destination.splice(Math.min(at, destination.length), 0, ...ids);
+      if (expandParent !== null) {
+        const target = state.byId[expandParent];
+        if (!target) return;
+        // One raw rewrite in the same publication, not writeCollapsed() after the move.
+        target.raw = rawWithCollapsed(target.raw, false, formatForBlock(expandParent));
+        target.collapsed = false;
+      }
+    })
+  );
+  if (expandParent !== null) bumpCollapseEpochs([expandParent]);
+  markDirty(destPage, "move-blocks");
+}
+
 export function indentSelection() {
   const ids = topSelected();
   if (!ids.length || ids.some((id) => !blockWritable(id))) return;
@@ -285,9 +357,9 @@ export function indentSelection() {
     pushToast("Outline is too deep to indent", "error");
     return;
   }
+  if (!canBatchMoveSelectionRoots(same, destPage, newParent)) return;
   pushUndo("indent-sel", [destPage]);
-  for (const id of same) moveBlockInternal(id, newParent, doc.byId[newParent].children.length);
-  writeCollapsed(newParent, false);
+  moveSelectionRootsInOneMutation(same, destPage, newParent, (state) => state.byId[newParent].children.length, newParent);
 }
 
 export function outdentSelection() {
@@ -301,13 +373,14 @@ export function outdentSelection() {
   // ids[0]'s page — so restrict to the blocks already on that page.
   const destPage = doc.byId[parentId].page;
   const same = ids.filter((id) => doc.byId[id]?.page === destPage);
-  if (!same.length) return;
+  if (!same.length || !canBatchMoveSelectionRoots(same, destPage, grand)) return;
+  if (!rootsOf(parentId).includes(parentId)) return;
   pushUndo("outdent-sel", [destPage]);
-  let after = parentId;
-  for (const id of same) {
-    moveBlockInternal(id, grand, indexInSiblings(after) + 1);
-    after = id;
-  }
+  moveSelectionRootsInOneMutation(same, destPage, grand, (state) => {
+    const siblings = grand === null ? state.pages.find((page) => page.name === destPage)?.roots : state.byId[grand]?.children;
+    const parentIndex = siblings?.indexOf(parentId) ?? -1;
+    return parentIndex < 0 ? -1 : parentIndex + 1;
+  });
 }
 
 export function deleteSelection() {

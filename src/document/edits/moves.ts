@@ -9,53 +9,6 @@ import { rootsOf, nextVisible, existingSubtreeFits } from "../tree";
 import { topSelected } from "./selection";
 import { pushToast } from "../../toasts";
 
-/** Move without pushing an undo entry (for batched selection ops). A depth
- *  refusal returns false and shows a toast. */
-export function moveBlockInternal(id: string, newParent: string | null, index: number) {
-  const node = doc.byId[id];
-  if (!node || !blockWritable(id) || (newParent !== null && !blockWritable(newParent))) return;
-  let p = newParent;
-  while (p !== null) {
-    if (p === id) return;
-    p = doc.byId[p].parent;
-  }
-  if (!existingSubtreeFits(id, newParent)) {
-    pushToast("Outline is too deep to move", "error");
-    return false;
-  }
-  const oldPage = node.page;
-  const newPage = newParent ? doc.byId[newParent].page : oldPage;
-  if (newPage !== oldPage && refuseConflictedMove([oldPage, newPage])) return;
-  setDoc(
-    produce((s) => {
-      const oldArr =
-        node.parent === null
-          ? s.pages[s.pages.findIndex((x) => x.name === oldPage)].roots
-          : s.byId[node.parent!].children;
-      const from = oldArr.indexOf(id);
-      oldArr.splice(from, 1);
-      s.byId[id].parent = newParent;
-      const newArr =
-        newParent === null
-          ? s.pages[s.pages.findIndex((x) => x.name === newPage)].roots
-          : s.byId[newParent].children;
-      let idx = index;
-      if (oldArr === newArr && from < idx) idx -= 1;
-      newArr.splice(Math.max(0, Math.min(idx, newArr.length)), 0, id);
-      if (newPage !== oldPage) {
-        const reassign = (bid: string) => {
-          s.byId[bid].page = newPage;
-          s.byId[bid].children.forEach(reassign);
-        };
-        reassign(id);
-      }
-    })
-  );
-  if (newPage !== oldPage) void persistTogether([oldPage, newPage], "move-blocks", [[oldPage, newPage]]);
-  else markDirty(oldPage, "move-blocks");
-  return true;
-}
-
 /** Move a block under `newParent` (or, when `newParent` is null, to the roots of
  *  `targetPage` — pass the drop target's page so a root-to-root drop across pages
  *  lands on the RIGHT page instead of defaulting back to the source). A depth
