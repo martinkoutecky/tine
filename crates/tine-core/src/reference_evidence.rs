@@ -102,8 +102,11 @@ pub struct ProjectedPageRef {
 pub struct ReferenceSourceProjection {
     /// Explicit page references recognized by the parser.
     pub explicit: Vec<ProjectedPageRef>,
-    /// Byte ranges in the block's raw source eligible for plain-text matching.
+    /// Byte ranges in the raw source left after explicit links and structural
+    /// bookkeeping are removed; literal code, math, and HTML remain eligible.
     pub plain_ranges: Vec<Range<usize>>,
+    /// Structural source ranges excluded from plain-text matching.
+    pub withheld_ranges: Vec<Range<usize>>,
 }
 
 #[derive(Debug, Clone)]
@@ -290,16 +293,16 @@ fn walk_inlines(
 ) {
     for inline in inlines {
         match inline {
-            Inline::Plain {
-                span: Some(span), ..
-            } => {
-                if let Some(range) = mapper.map(span, raw_len) {
-                    projection.plain_ranges.push(range);
-                }
-            }
             Inline::Link {
                 url, label, span, ..
             } => {
+                // A block UUID link is parser-owned syntax. It does not name a
+                // page and must not become a plain page mention either.
+                if matches!(url, Url::BlockRef { .. }) {
+                    if let Some(range) = span.as_ref().and_then(|span| mapper.map(span, raw_len)) {
+                        projection.withheld_ranges.push(range);
+                    }
+                }
                 if let Some(name) = link_page_name(url, label, is_org) {
                     push_explicit(
                         projection,
@@ -537,11 +540,14 @@ fn walk_blocks(
                     );
                     let PropertySource {
                         key,
+                        key_range,
                         value_offset: offset,
                         value,
-                        ..
                     } = property;
                     if structural_property(&key, raw) {
+                        projection
+                            .withheld_ranges
+                            .push(key_range.start..offset + value.len());
                         continue;
                     }
                     let parsed = lsdoc::parse_format(&value, if is_org { "org" } else { "md" });
@@ -555,11 +561,48 @@ fn walk_blocks(
                     project_implicit_linkable_property(projection, &key, offset, &value, raw.len());
                 }
             }
+            Block::Drawer {
+                name,
+                span: Some(span),
+            } if name.eq_ignore_ascii_case("logbook") => {
+                if let Some(range) = mapper.map(span, raw.len()) {
+                    projection.withheld_ranges.push(range);
+                }
+            }
             _ => {}
         }
     }
 }
 
+fn plain_search_ranges(
+    raw_len: usize,
+    projection: &ReferenceSourceProjection,
+) -> Vec<Range<usize>> {
+    let mut claimed: Vec<_> = projection
+        .explicit
+        .iter()
+        .map(|reference| reference.range.clone())
+        .chain(projection.withheld_ranges.iter().cloned())
+        .filter(|range| range.start < range.end && range.end <= raw_len)
+        .collect();
+    claimed.sort_by_key(|range| (range.start, range.end));
+    let mut out = Vec::new();
+    let mut cursor = 0;
+    for range in claimed {
+        if range.start > cursor {
+            out.push(cursor..range.start);
+        }
+        cursor = cursor.max(range.end);
+    }
+    if cursor < raw_len {
+        out.push(cursor..raw_len);
+    }
+    out
+}
+
+/// Project parser-claimed references and the remaining plain-search spans for
+/// one block source. Work and allocation are bounded by that source's spans;
+/// malformed ranges are omitted, and no graph state or files are touched.
 pub fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSourceProjection {
     let mut projection = ReferenceSourceProjection::default();
     walk_blocks(blocks, SpanMapper::block(raw), raw, is_org, &mut projection);
@@ -571,10 +614,7 @@ pub fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSourceProj
             .then_with(|| a.name.cmp(&b.name))
     });
     projection.explicit.dedup();
-    projection
-        .plain_ranges
-        .sort_by_key(|range| (range.start, range.end));
-    projection.plain_ranges.dedup();
+    projection.plain_ranges = plain_search_ranges(raw.len(), &projection);
     projection
 }
 
@@ -586,6 +626,16 @@ fn byte_to_utf16(raw: &str, byte: usize) -> usize {
 
 fn is_og_edge_alphanumeric(ch: Option<char>) -> bool {
     ch.is_some_and(|ch| ch.is_ascii_alphanumeric())
+}
+
+fn og_prefix_allows(raw: &str, start: usize) -> bool {
+    let mut preceding = raw.get(..start).unwrap_or_default().chars().rev();
+    match preceding.next() {
+        None => true,
+        Some('[') => preceding.next() != Some('['),
+        Some('#') => false,
+        Some(_) => true,
+    }
 }
 
 fn overlaps(range: &Range<usize>, other: &Range<usize>) -> bool {
@@ -612,7 +662,17 @@ fn visit_plain_matches(
         .chars()
         .next_back()
         .is_some_and(|ch| ch.is_alphanumeric());
-    for (offset, _) in source.char_indices() {
+    let ascii_first = needle
+        .chars()
+        .next()
+        .filter(char::is_ascii)
+        .map(|ch| (ch.to_ascii_lowercase(), ch.to_ascii_uppercase()));
+    for (offset, first) in source.char_indices() {
+        if let Some((lower, upper)) = ascii_first {
+            if first.is_ascii() && first != lower && first != upper {
+                continue;
+            }
+        }
         let start = range.start + offset;
         let mut end = start;
         let mut candidate_raw = String::new();
@@ -643,7 +703,8 @@ fn visit_plain_matches(
         let after = raw.get(end..).and_then(|suffix| suffix.chars().next());
         // Exact OG edge semantics: only adjacent ASCII alphanumerics exclude
         // an unlinked match. `_` and continuous CJK are valid boundaries.
-        if (!first_requires_boundary || !is_og_edge_alphanumeric(before))
+        if og_prefix_allows(raw, start)
+            && (!first_requires_boundary || !is_og_edge_alphanumeric(before))
             && (!last_requires_boundary || !is_og_edge_alphanumeric(after))
             && !visit(start..end)
         {
@@ -909,17 +970,14 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(
-            got.iter()
-                .filter(|hit| hit.kind == ReferenceKind::Plain)
-                .count(),
-            1
-        );
-        let plain = got
+        let plains = got
             .iter()
-            .find(|hit| hit.kind == ReferenceKind::Plain)
-            .unwrap();
-        assert_eq!(&raw[plain.span.start..plain.span.end], "Target");
+            .filter(|hit| hit.kind == ReferenceKind::Plain)
+            .collect::<Vec<_>>();
+        assert_eq!(plains.len(), 2);
+        assert!(plains
+            .iter()
+            .all(|hit| &raw[hit.span.start..hit.span.end] == "Target"));
     }
 
     #[test]
@@ -933,10 +991,10 @@ mod tests {
     }
 
     #[test]
-    fn escaped_and_code_links_do_not_become_explicit_or_plain() {
+    fn escaped_link_is_not_plain_but_code_mentions_are() {
         let got = evidence("\\[[Target]] and `Target`\n```\nTarget\n```", &["Target"]);
-        assert_eq!(got.len(), 1, "{got:?}");
-        assert_eq!(got[0].kind, ReferenceKind::Plain);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(got.iter().all(|hit| hit.kind == ReferenceKind::Plain));
     }
 
     #[test]
@@ -1051,6 +1109,40 @@ mod tests {
             got.is_empty(),
             "structural id leaked into evidence: {got:?}"
         );
+    }
+
+    #[test]
+    fn block_reference_uuid_is_not_a_plain_page_mention() {
+        let got = evidence(
+            "((11111111-1111-4111-8111-111111111111))",
+            &["11111111-1111-4111-8111-111111111111"],
+        );
+        assert!(
+            got.is_empty(),
+            "block link leaked into page evidence: {got:?}"
+        );
+    }
+
+    #[test]
+    fn unlinked_mentions_include_literal_regions_without_counting_link_syntax() {
+        for raw in [
+            "`Target`",
+            "```\nTarget\n```",
+            "$$\nTarget\n$$",
+            "<div>Target</div>",
+        ] {
+            let got = evidence(raw, &["Target"]);
+            assert_eq!(
+                got.iter()
+                    .filter(|hit| hit.kind == ReferenceKind::Plain)
+                    .count(),
+                1,
+                "{raw}: {got:?}"
+            );
+        }
+        for raw in ["```\n[[Target]]\n```", "`#Target`", "\\[[Target]]"] {
+            assert!(evidence(raw, &["Target"]).is_empty(), "{raw}");
+        }
     }
 
     #[test]

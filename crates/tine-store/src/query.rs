@@ -3708,8 +3708,8 @@ mod tests {
         );
         assert_eq!(
             source.evidence[0].occurrences.len(),
-            2,
-            "alias + title; code excluded"
+            3,
+            "alias + title + inline code"
         );
         assert!(source.evidence[0]
             .occurrences
