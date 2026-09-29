@@ -98,14 +98,16 @@ export function applyThemeRevocations(revoked: ReadonlySet<string>): void {
   setRevokedThemeVersions(new Set(revoked));
 }
 
+const storedListTrusted = () => storedStatus === "ok";
+
 /** Run one read-modify-write of the stored list after every earlier one. A list
  * that failed to load is re-read first; if it still cannot be trusted the write
  * is refused rather than persisted over it. */
 function serialized<T>(work: () => Promise<T>): Promise<T> {
   const run = writeQueue.then(async () => {
-    if (storedStatus !== "ok") {
+    if (!storedListTrusted()) {
       await initThemePackages(revokedThemeVersions());
-      if (storedStatus !== "ok") {
+      if (!storedListTrusted()) {
         throw new Error("installed themes could not be read; not overwriting the stored list");
       }
     }
