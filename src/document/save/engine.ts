@@ -584,6 +584,11 @@ export function addDirty(name: string, kinds: IntentKinds) {
 export function dirtyPages(): Iterable<string> {
   return dirty;
 }
+/** How many pages hold edits that are pending or still being written — a
+ *  count only, for the close-discard diagnostic (GH #540). O(dirty + saving). */
+export function unsavedPageCount(): number {
+  return new Set([...dirty, ...saveChain.keys()]).size;
+}
 /** Is a save currently queued/in flight for this page? (a cross-page move must
  *  flush the source first so it isn't written after being emptied). */
 export function isSaving(name: string): boolean {

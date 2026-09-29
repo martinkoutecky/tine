@@ -637,11 +637,44 @@ export interface Backend {
   debugInfo(): Promise<DebugInfo>;
   /** Forward a frontend milestone / error into the backend debug log. */
   debugLog(line: string): Promise<void>;
+  /** The privacy-safe diagnostic report of this run (GH #343): fixed-shape
+   *  events only. Build commit/time that are not a hex commit and an ISO
+   *  timestamp are dropped by the backend. Never contains graph content. */
+  diagnosticReport(buildCommit: string, buildTime: string): Promise<DiagnosticReport>;
+  /** Drop every recorded diagnostic event of this run. */
+  clearDiagnostics(): Promise<void>;
+  /** Record one fixed-kind frontend event. The backend drops the event when a
+   *  token is outside its closed vocabulary; fields carry no free text. */
+  diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields?: DiagnosticFrontendFields): Promise<void>;
+  /** The CPU architecture of this binary (`x86`, `x86_64`, `aarch64`, …). */
+  appArchitecture(): Promise<string>;
 }
 
 export interface DebugInfo {
   enabled: boolean;
   path: string;
+}
+
+export interface DiagnosticReport {
+  text: string;
+  suggestedFileName: string;
+}
+
+export type DiagnosticFrontendKind =
+  | "uncaught_error" | "unhandled_rejection" | "heartbeat_delay"
+  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved";
+
+/** Why a close discarded drafts: a save failed, or saves were still running. */
+export type DiscardReason = "failed" | "still-saving";
+
+export interface DiagnosticFrontendFields {
+  line?: number;
+  column?: number;
+  delayMs?: number;
+  updaterStage?: string;
+  updaterCause?: string;
+  closeReason?: DiscardReason;
+  pages?: number;
 }
 
 /** Backend-visible rendering-environment facts (Linux-relevant; all false on
@@ -702,11 +735,19 @@ export function queryPrintRefusal(error: unknown): QueryPrintRefusedError | null
   return new QueryPrintRefusedError(match[1], diagnostic);
 }
 
+/** Commands whose timing would only describe the diagnostics channel. */
+const DIAGNOSTIC_COMMANDS = new Set([
+  "debug_info", "debug_log", "diagnostic_ipc_event", "diagnostic_frontend_event", "diagnostic_report", "clear_diagnostics",
+]);
+/** A command still running after this long is recorded as `slow`. */
+const SLOW_IPC_MS = 500;
+
 class TauriBackend implements Backend {
   private invoke!: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
   private convertFileSrc!: (path: string, protocol?: string) => string;
   private ready: Promise<void>;
   private bindingGeneration = 0;
+  private ipcDiagnosticsUnavailable = false;
 
   constructor() {
     this.ready = import("@tauri-apps/api/core").then((m) => {
@@ -722,7 +763,31 @@ class TauriBackend implements Backend {
     const leasedArgs = bindingGeneration
       ? { ...(args ?? {}), bindingGeneration }
       : args;
-    return this.invoke<T>(cmd, leasedArgs);
+    if (DIAGNOSTIC_COMMANDS.has(cmd)) return this.invoke<T>(cmd, leasedArgs);
+    const started = performance.now();
+    let slow = false;
+    const slowTimer = setTimeout(() => { slow = true; this.reportIpcPhase(cmd, "slow", started); }, SLOW_IPC_MS);
+    try {
+      const result = await this.invoke<T>(cmd, leasedArgs);
+      if (slow) this.reportIpcPhase(cmd, "completed", started);
+      return result;
+    } catch (error) {
+      this.reportIpcPhase(cmd, "failed", started);
+      throw error;
+    } finally {
+      clearTimeout(slowTimer);
+    }
+  }
+
+  /** GH #343: tell the flight recorder a command was slow, completed after
+   *  being slow, or failed — its registered name and duration only. A failed
+   *  report stops further reports for this run (the recorder is unavailable). */
+  private reportIpcPhase(command: string, phase: "slow" | "completed" | "failed", started: number) {
+    if (this.ipcDiagnosticsUnavailable) return;
+    const elapsedMs = Math.max(0, Math.round(performance.now() - started));
+    void this.invoke<void>("diagnostic_ipc_event", { command, phase, elapsedMs }).catch(() => {
+      this.ipcDiagnosticsUnavailable = true;
+    });
   }
 
   private assetCall<T>(cmd: string, args: Record<string, unknown> | undefined, bindingGeneration: number): Promise<T> {
@@ -1251,6 +1316,18 @@ class TauriBackend implements Backend {
   }
   debugLog(line: string) {
     return this.call<void>("debug_log", { line });
+  }
+  diagnosticReport(buildCommit: string, buildTime: string) {
+    return this.call<DiagnosticReport>("diagnostic_report", { buildCommit, buildTime });
+  }
+  clearDiagnostics() {
+    return this.call<void>("clear_diagnostics");
+  }
+  diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields: DiagnosticFrontendFields = {}) {
+    return this.call<void>("diagnostic_frontend_event", { kind, ...fields });
+  }
+  appArchitecture() {
+    return this.call<string>("app_architecture");
   }
   getSmoothScroll() {
     return this.call<boolean>("get_smooth_scroll");
