@@ -180,6 +180,26 @@ mod journal_guide_tests {
 }
 
 #[cfg(test)]
+mod pdf_workspace_guide_tests {
+    #[test]
+    fn bundled_pdf_guide_describes_tab_and_mobile_reader() {
+        let pdf = include_str!("templates/pdf.md");
+        for detail in [
+            "tab in a companion pane",
+            "same one-pane history",
+            "page and zoom are restored",
+            "visible page regions",
+            "long-press a highlight",
+            "use **Back**",
+        ] {
+            assert!(pdf.contains(detail), "missing PDF workspace Guide detail: {detail}");
+        }
+        assert!(super::GUIDE_TEMPLATES.iter().any(|page| page.title == "Features/PDF annotation"));
+        assert!(include_str!("templates/guide.md").contains("[[Features/PDF annotation]]"));
+    }
+}
+
+#[cfg(test)]
 mod search_guide_tests {
     #[test]
     fn friendly_search_sections_scope_and_save_are_documented() {
