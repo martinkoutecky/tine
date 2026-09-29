@@ -367,7 +367,9 @@ impl Emitter<'_> {
         // reads its first line, at this column, as one (OG writes a leading
         // heading so: og@6e7afa8 file/core.cljs `transform-content`).
         if hint.is_some_and(|o| !self.olds[o].bulleted)
-            && first.strip_prefix(prefix).is_some_and(|rest| !rest.starts_with([' ', '\t']))
+            && first
+                .strip_prefix(prefix)
+                .is_some_and(|rest| !rest.starts_with([' ', '\t']))
             && tine_core::doc::is_unbulleted_heading_line(first)
         {
             let emitted: Vec<_> = raw

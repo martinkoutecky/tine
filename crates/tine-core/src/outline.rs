@@ -92,8 +92,7 @@ pub(crate) fn headers(text: &str, format: OutlineFormat) -> Result<Vec<Header>, 
         let Ok(line) = line_starts.binary_search(&header.line.start) else {
             return Err(Refusal::Invalid { event });
         };
-        if header.header_start != header.line.start || out.last().is_some_and(|h| h.line >= line)
-        {
+        if header.header_start != header.line.start || out.last().is_some_and(|h| h.line >= line) {
             return Err(Refusal::NotOnePerLine { event });
         }
         let prefix_len = prefix.end - prefix.start;

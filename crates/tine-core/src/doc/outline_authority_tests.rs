@@ -146,7 +146,9 @@ fn a_deep_quote_staircase_degrades_instead_of_recursing() {
 
 #[test]
 fn a_deep_outline_parses_without_recursion() {
-    let deep: String = (0..3_000).map(|i| format!("{}- x\n", "\t".repeat(i))).collect();
+    let deep: String = (0..3_000)
+        .map(|i| format!("{}- x\n", "\t".repeat(i)))
+        .collect();
     let mut depth = 0;
     let mut level = &parse(&deep).roots;
     while let Some(first) = level.first() {
