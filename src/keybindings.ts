@@ -28,6 +28,7 @@ import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, moveSelec
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
+import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
 import { openInPageFind } from "./inpageFind";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
@@ -950,6 +951,16 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         resetSeq();
         return;
       }
+    }
+
+    // OG contenteditable parity: Delete/Backspace over a RENDERED (not-editing)
+    // text selection deletes that text from the block's source; without this the
+    // keypress reaches no editor and dies silently.
+    if (!editing && (e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+        && deleteRenderedTextSelection()) {
+      e.preventDefault();
+      resetSeq();
+      return;
     }
 
     // While typing, only modifier chords are eligible (so "g j" doesn't fire).
