@@ -100,6 +100,7 @@ fn save_and_restore_emit_parseable_page_trees() {
                 len: source.metadata().unwrap().len(),
                 source,
             }],
+            None,
         )
         .unwrap();
     let restored = fs::read_to_string(root.join("pages/Restored.md")).unwrap();

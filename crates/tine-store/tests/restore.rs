@@ -72,7 +72,7 @@ fn restore_recovery_roots_live_on_the_filesystems_they_detach_from() {
     fs::write(graph_root.join("pages/secret.md"), b"live").unwrap();
     fs::write(graph_root.join("assets/doc.edn"), b"live").unwrap();
     let report = store
-        .restore(tine_store::EditKind::ReplacePage, Vec::new())
+        .restore(tine_store::EditKind::ReplacePage, Vec::new(), None)
         .unwrap();
     assert_eq!(report.recovery.len(), 2);
     // Recovery roots are reported under the canonical root `Store::open`
@@ -105,7 +105,7 @@ fn restore_does_not_publish_recovery_sidecars_as_live_assets() {
     store.whole_graph().unwrap();
     let subscription = store.subscribe();
     store
-        .restore(tine_store::EditKind::ReplacePage, Vec::new())
+        .restore(tine_store::EditKind::ReplacePage, Vec::new(), None)
         .unwrap();
     let change = subscription
         .try_recv()
@@ -131,7 +131,8 @@ fn restore_refuses_config_with_unsafe_directories_before_retiring_pages() {
     assert!(store
         .restore(
             tine_store::EditKind::ReplacePage,
-            vec![input(&source, Area::Meta, "config.edn")]
+            vec![input(&source, Area::Meta, "config.edn")],
+            None
         )
         .is_err());
     assert_eq!(
@@ -156,6 +157,7 @@ fn restore_journal_updates_day_and_view() {
         .restore(
             tine_store::EditKind::ReplacePage,
             vec![input(&source, Area::Journals, "2026_09_25.org")],
+            None,
         )
         .unwrap();
     assert_eq!(
@@ -195,7 +197,7 @@ fn restore_recovery_symlink_cannot_redirect_or_replace_outside() {
     fs::write(&outside_target, b"outside sentinel").unwrap();
     symlink(&outside, graph_root.join("logseq/.tine-trash")).unwrap();
     assert!(store
-        .restore(tine_store::EditKind::ReplacePage, Vec::new())
+        .restore(tine_store::EditKind::ReplacePage, Vec::new(), None)
         .is_err());
     assert_eq!(fs::read(&live).unwrap(), b"live graph data");
     assert_eq!(fs::read(&outside_target).unwrap(), b"outside sentinel");
@@ -216,7 +218,8 @@ fn restore_recovery_path_swap_stays_on_the_bound_directory() {
     fs::write(outside.join("pages/secret.md"), b"outside sentinel").unwrap();
     fs::write(graph_root.join(".tine-restore-test-pause"), b"pause").unwrap();
     std::thread::scope(|scope| {
-        let task = scope.spawn(|| store.restore(tine_store::EditKind::ReplacePage, Vec::new()));
+        let task =
+            scope.spawn(|| store.restore(tine_store::EditKind::ReplacePage, Vec::new(), None));
         wait_paused(&graph_root);
         let recovery = recovery_dir(&graph_root);
         let displaced = recovery.with_extension("displaced");
@@ -258,6 +261,7 @@ fn restore_live_path_swap_cannot_move_or_publish_outside() {
             store.restore(
                 tine_store::EditKind::ReplacePage,
                 vec![input(&snapshot, Area::Pages, "new.md")],
+                None,
             )
         });
         wait_paused(&graph_root);
@@ -295,6 +299,7 @@ fn restore_recovery_never_replaces_an_existing_entry() {
             store.restore(
                 tine_store::EditKind::ReplacePage,
                 vec![input(&snapshot, Area::Pages, "secret.md")],
+                None,
             )
         });
         wait_paused(&graph_root);
@@ -333,6 +338,7 @@ fn partial_restore_reports_completed_files_and_preserves_the_failing_target() {
                     input(&first, Area::Pages, "First.md"),
                     input(&second, Area::Pages, "Second.md"),
                 ],
+                None,
             )
         });
         wait_paused(&graph_root);
@@ -388,6 +394,7 @@ fn restore_asset_sidecars_dir_restores_sidecars_and_leaves_binary_assets() {
                     "nested/hl.edn",
                 ),
             ],
+            None,
         )
         .unwrap();
     assert_eq!(report.restored, 2);
@@ -432,6 +439,7 @@ fn graph_text_backup_and_restore_include_nested_pages() {
                     "client-a/Deep.md",
                 ),
             ],
+            None,
         )
         .unwrap();
     assert_eq!(
@@ -509,6 +517,7 @@ fn complete_restore_crosses_from_app_data_to_a_distinct_live_filesystem() {
                     "config.edn",
                 ),
             ],
+            None,
         )
         .unwrap();
     assert_eq!(
@@ -569,6 +578,7 @@ fn approved_external_assets_restore_keeps_recovery_on_target() {
         .restore(
             tine_store::EditKind::ReplacePage,
             vec![input(&source, Area::Assets, "new.edn")],
+            None,
         )
         .unwrap();
     assert_eq!(fs::read(assets.join("new.edn")).unwrap(), b"new");
@@ -578,6 +588,105 @@ fn approved_external_assets_restore_keeps_recovery_on_target() {
         fs::read(report.recovery[1].join("old.edn")).unwrap(),
         b"old"
     );
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// og-B whole-graph restore (ADR 0062): text returns to its graph-relative
+/// path outside `pages/` and `journals/`, and the unlisted live text retired
+/// is decided by the scope recorded at snapshot time, not by today's
+/// `:hidden`. A page hidden when the snapshot was taken was never captured,
+/// so it must stay live.
+#[test]
+fn graph_restore_places_text_anywhere_and_retires_by_the_recorded_scope() {
+    let root = scratch("graph-wide");
+    let graph_root = root.join("graph");
+    let store = graph(&graph_root, None);
+    fs::create_dir_all(graph_root.join("archive/deep")).unwrap();
+    fs::create_dir_all(graph_root.join("private")).unwrap();
+    fs::write(graph_root.join("Root.md"), "old root").unwrap();
+    fs::write(graph_root.join("archive/Stale.md"), "stale").unwrap();
+    fs::write(graph_root.join("private/Secret.md"), "secret").unwrap();
+    fs::write(graph_root.join("pages/Kept.md"), "kept old").unwrap();
+    let snapshot = root.join("snapshot");
+    fs::create_dir_all(&snapshot).unwrap();
+    fs::write(snapshot.join("Root.md"), "new root").unwrap();
+    fs::write(snapshot.join("Deep.org"), "* deep").unwrap();
+    fs::write(snapshot.join("Kept.md"), "kept new").unwrap();
+    let recorded = ["private".to_owned()];
+    let report = store
+        .restore(
+            tine_store::EditKind::ReplacePage,
+            vec![
+                input(&snapshot.join("Root.md"), Area::Graph, "Root.md"),
+                input(
+                    &snapshot.join("Deep.org"),
+                    Area::Graph,
+                    "archive/deep/Deep.org",
+                ),
+                input(&snapshot.join("Kept.md"), Area::Graph, "pages/Kept.md"),
+            ],
+            Some(&recorded),
+        )
+        .unwrap();
+    assert_eq!(report.restored, 3);
+    assert_eq!(fs::read(graph_root.join("Root.md")).unwrap(), b"new root");
+    assert_eq!(
+        fs::read(graph_root.join("archive/deep/Deep.org")).unwrap(),
+        b"* deep"
+    );
+    assert_eq!(
+        fs::read(graph_root.join("pages/Kept.md")).unwrap(),
+        b"kept new"
+    );
+    assert!(!graph_root.join("archive/Stale.md").exists());
+    let recovery = recovery_dir(&graph_root);
+    assert_eq!(
+        fs::read(recovery.join("graph/archive/Stale.md")).unwrap(),
+        b"stale"
+    );
+    assert_eq!(
+        fs::read(recovery.join("graph/Root.md")).unwrap(),
+        b"old root"
+    );
+    assert_eq!(
+        fs::read(graph_root.join("private/Secret.md")).unwrap(),
+        b"secret",
+        "I-2: text outside the recorded scope was never captured and must stay live"
+    );
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Refusal (malformed snapshot content — a torn or mixed snapshot): a
+/// whole-graph restore takes graph text only as `Area::Graph` inside the
+/// recorded scope, and a configured-roots restore never takes `Area::Graph`.
+/// Either mismatch refuses before any live file moves.
+#[test]
+fn graph_restore_refuses_text_outside_its_recorded_scope() {
+    let root = scratch("graph-refuse");
+    let graph_root = root.join("graph");
+    let store = graph(&graph_root, None);
+    fs::write(graph_root.join("pages/Live.md"), "live").unwrap();
+    let source = root.join("New.md");
+    fs::write(&source, "new").unwrap();
+    let recorded = ["private".to_owned()];
+    for (area, rel, scope) in [
+        (Area::Pages, "New.md", Some(&recorded[..])),
+        (Area::Graph, "private/New.md", Some(&recorded[..])),
+        (Area::Graph, "assets/New.md", Some(&[][..])),
+        (Area::Graph, "logseq/.tine-trash/New.md", Some(&[][..])),
+        (Area::Graph, "New.md", None),
+    ] {
+        assert!(store
+            .restore(
+                tine_store::EditKind::ReplacePage,
+                vec![input(&source, area, rel)],
+                scope,
+            )
+            .is_err());
+        assert_eq!(fs::read(graph_root.join("pages/Live.md")).unwrap(), b"live");
+    }
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
