@@ -5,6 +5,7 @@ import { RefBlocks } from "./RefBlocks";
 import { initParser } from "../render/parse";
 import type { BlockDto } from "../types";
 import { rightSidebar, setRightSidebar, setRightSidebarOpen } from "../ui";
+import { layoutPaneIds, paneRouter, resetPaneLayoutToSingle } from "../panes";
 
 // RefBlocks is the read-only renderer for query results / linked references / embeds
 // (the lazy fallback in LiveRefGroup, and the permanent renderer for id-less result
@@ -18,9 +19,19 @@ beforeAll(async () => {
   await initParser();
 });
 
+const booksSnapshot = () => ({
+  tabs: [{
+    history: [{ kind: "page" as const, name: "Books", pageKind: "page" as const }],
+    pos: 0,
+    pinned: false,
+  }],
+  activeIndex: 0,
+});
+
 afterEach(() => {
   setRightSidebar([]);
   setRightSidebarOpen(false);
+  resetPaneLayoutToSingle(booksSnapshot());
   document.body.innerHTML = "";
 });
 
@@ -169,6 +180,80 @@ describe("RefBlocks external identity", () => {
       expect(rightSidebar()).toEqual([{
         kind: "block", uuid: authoredId, page: "Books", pageKind: "page",
       }]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+// GH #456: the same modifier ladder as the live outline's bullet. A reference
+// bullet answered only Shift, so Ctrl/Cmd and Alt did nothing here either.
+describe("reference bullet modified clicks (GH #456)", () => {
+  function mountRef(): { bullet: HTMLElement; dispose: () => void } {
+    resetPaneLayoutToSingle(booksSnapshot());
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => RefBlocks({
+      page: "Books",
+      blocks: [dto({ id: "runtime", raw: "Read this", properties: [["ID", "authored-ref"]] })],
+    }), root);
+    return { bullet: root.querySelector<HTMLElement>(".bullet-container")!, dispose };
+  }
+  function click(el: HTMLElement, init: MouseEventInit) {
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ...init }));
+  }
+
+  it("opens a background tab on Ctrl/Cmd+click", () => {
+    const { bullet, dispose } = mountRef();
+    try {
+      const before = paneRouter("main").tabs().length;
+      click(bullet, { ctrlKey: true });
+      const tabs = paneRouter("main").tabs();
+      expect(tabs.length).toBe(before + 1);
+      expect(tabs.some((t) => {
+        const r = t.history[t.pos];
+        return r.kind === "page" && r.name === "Books" && r.block === "authored-ref";
+      })).toBe(true);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("opens the other pane on Alt+click", () => {
+    const { bullet, dispose } = mountRef();
+    try {
+      expect(layoutPaneIds()).toEqual(["main"]);
+      click(bullet, { altKey: true });
+      expect(layoutPaneIds().length).toBe(2);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("suppresses the browser defaults those gestures replace (GH #207)", () => {
+    const { bullet, dispose } = mountRef();
+    try {
+      const press = (init: MouseEventInit) => {
+        const e = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, ...init });
+        bullet.dispatchEvent(e);
+        return e.defaultPrevented;
+      };
+      expect(press({ shiftKey: true })).toBe(true);
+      expect(press({ button: 1 })).toBe(true);
+      expect(press({})).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("leaves an unmodified click alone — a read-only reference has no in-place zoom", () => {
+    const { bullet, dispose } = mountRef();
+    try {
+      const before = paneRouter("main").tabs().length;
+      click(bullet, {});
+      expect(paneRouter("main").tabs().length).toBe(before);
+      expect(layoutPaneIds()).toEqual(["main"]);
+      expect(rightSidebar()).toEqual([]);
     } finally {
       dispose();
     }

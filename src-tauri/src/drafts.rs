@@ -8,9 +8,11 @@
 //! **Layout.** One file per graph, `<app data>/drafts/<graph-id>.v1.json`, never
 //! inside the graph: `{"version":1,"drafts":[record…]}`. A record is a JSON
 //! object with a unique non-empty `id` and a `kind` of `unsaved` (a page whose
-//! save failed or that is in conflict) or `live-conflict` (reserved for the
-//! Concord live-draft capsule, og 8e: one store, not two). The frontend owns the
-//! rest of the record's fields. Every write is `device_io::atomic_write` (temp +
+//! save failed or that is in conflict) or `live-conflict` (the Concord
+//! live-draft capsule, og 8e: a draft whose save was refused because its file
+//! changed on disk, which also carries `base_rev` / `observed_rev` so the
+//! in-page resolver can take it after a restart; one store, not two). The
+//! frontend owns the rest of the record's fields. Every write is `device_io::atomic_write` (temp +
 //! fsync + rename + directory sync).
 //!
 //! **Bounds.** At most [`MAX_RECORDS`] records and [`MAX_BYTES`] bytes.

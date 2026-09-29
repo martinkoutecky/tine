@@ -19,11 +19,11 @@ use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use tine_core::sync_diff::{self, SyncConflictDiff};
 use tine_store::{Area, FileId, FileRev, PageId, SaveBase, Store};
 
-fn invalid_path() -> io::Error {
+pub(crate) fn invalid_path() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "invalid file path")
 }
 
-fn id(store: &Store, rel: &str) -> io::Result<FileId> {
+pub(crate) fn id(store: &Store, rel: &str) -> io::Result<FileId> {
     let config = store.config();
     for (area, dir) in [
         (Area::Pages, &config.pages_dir),
@@ -39,11 +39,11 @@ fn id(store: &Store, rel: &str) -> io::Result<FileId> {
     Err(invalid_path())
 }
 
-fn read_text(store: &Store, id: &FileId) -> io::Result<(String, FileRev)> {
+pub(crate) fn read_text(store: &Store, id: &FileId) -> io::Result<(String, FileRev)> {
     crate::parsed_text::read(store, id)
 }
 
-fn format(id: &FileId) -> Format {
+pub(crate) fn format(id: &FileId) -> Format {
     if id.as_str().ends_with(".org") {
         Format::Org
     } else {
@@ -51,7 +51,7 @@ fn format(id: &FileId) -> Format {
     }
 }
 
-fn parse(raw: &str, fmt: Format) -> Document {
+pub(crate) fn parse(raw: &str, fmt: Format) -> Document {
     if fmt == Format::Org {
         tine_core::org::parse_org(raw)
     } else {
@@ -288,7 +288,12 @@ fn union_pre(mine: Option<&str>, theirs: Option<&str>) -> Option<String> {
     Some(output)
 }
 
-fn choose_pre(choice: &str, fmt: Format, mine: &Document, theirs: &Document) -> Option<String> {
+pub(crate) fn choose_pre(
+    choice: &str,
+    fmt: Format,
+    mine: &Document,
+    theirs: &Document,
+) -> Option<String> {
     match choice {
         "theirs" => theirs.pre_block.clone(),
         "mine" => mine.pre_block.clone(),
@@ -297,11 +302,11 @@ fn choose_pre(choice: &str, fmt: Format, mine: &Document, theirs: &Document) -> 
     }
 }
 
-fn merge_refused(refusal: sync_diff::MergeRefused) -> io::Error {
+pub(crate) fn merge_refused(refusal: sync_diff::MergeRefused) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, refusal.to_string())
 }
 
-fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
+pub(crate) fn dto(store: &Store, id: &PageId, mut doc: Document) -> PageDto {
     assign_doc_runtime_ids(&mut doc.roots, id.as_str());
     let config = store.config();
     let stem = id

@@ -9,6 +9,7 @@ pub mod config;
 pub mod conflicts;
 pub mod guide;
 pub mod journals;
+pub mod live_conflict;
 pub mod pages;
 mod parsed_text;
 pub mod pdf;

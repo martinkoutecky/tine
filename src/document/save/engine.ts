@@ -7,6 +7,7 @@ import { pageToDto, appendAliasDraft } from "../convert";
 import type { PageDto, PageKind } from "../../types";
 import { backend, saveOnePage, type SavePageEntry } from "../../backend";
 import { forgetPage, reloadPage, loadSingle, rekeyPageIdentityByPath } from "../workingSet";
+import { editingId } from "../../editorController";
 import { pagePropertyEntries } from "../../editor/properties";
 import { graphOwner, readOwned } from "../../owned";
 import { dismissToast, pushToast } from "../../toasts";
@@ -619,14 +620,22 @@ export type UnsavedState = "Saving" | "Conflict" | "Not saved";
 /** Every page whose edits are not yet on disk, with the loaded draft to recover
  *  (GH #540 recovery panel and close prompt). Read-only; O(dirty + saving +
  *  conflicts) plus one DTO conversion per page. */
-export function unsavedDrafts(): { name: string; state: UnsavedState; path: string | null; page: PageDto | null }[] {
+export function unsavedDrafts(): { name: string; state: UnsavedState; path: string | null; page: PageDto | null;
+  live: boolean; baseRev: string | null; observedRev: string | null }[] {
   const names = new Set([...dirty, ...saveChain.keys(), ...conflicts()]);
-  return [...names].map((name) => ({
-    name,
-    state: saveChain.has(name) ? "Saving" : conflictReasons()[name] ? "Conflict" : "Not saved",
-    path: pageByName(name)?.id ?? null,
-    page: pageToDto(name),
-  }));
+  return [...names].map((name) => {
+    const reason = conflictReasons()[name];
+    return {
+      name,
+      state: saveChain.has(name) ? "Saving" : reason ? "Conflict" : "Not saved",
+      path: pageByName(name)?.id ?? null,
+      page: pageToDto(name),
+      // A live-draft conflict (og 8e) the resolver can take after a restart.
+      live: reason?.kind === "disk-changed" && !group(name),
+      baseRev: baseRev.get(name) ?? null,
+      observedRev: reason?.observedRev ?? null,
+    };
+  });
 }
 /** Is a save currently queued/in flight for this page? (a cross-page move must
  *  flush the source first so it isn't written after being emptied). */
@@ -1087,4 +1096,57 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
   kindLedger.delete(name);
   clearConflict(name);
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Concord live-draft conflicts (og 8e)
+// ---------------------------------------------------------------------------
+
+/** The live-conflict draft of `name`: its editor DTO, the revision it was
+ *  edited from (selects the Concord-ledger base) and its exact loaded
+ *  instance. Only a plain `disk-changed` conflict outside any save group has
+ *  one; the group kinds (released / repeated / alias-owner-busy) stay on the
+ *  conflict bar. O(page). */
+export function liveConflictDraft(name: string): { page: PageDto; baseRev: string | null; generation: number } | null {
+  const reason = conflictReasons()[name];
+  if (reason?.kind !== "disk-changed" || group(name)) return null;
+  const page = pageToDto(name), generation = pageInstanceGeneration(name);
+  return page && generation !== null ? { page, baseRev: baseRev.get(name) ?? null, generation } : null;
+}
+
+/** True when two drafts carry the same editable content and identity (the
+ *  backend-populated revision is ignored). */
+export function sameLiveDraft(a: PageDto, b: PageDto): boolean {
+  const key = (p: PageDto) => JSON.stringify([p.name, p.kind, p.title, p.pre_block, p.blocks, p.format ?? "md"]);
+  return key(a) === key(b);
+}
+
+/** Install a live resolution the backend committed (master 7e1b6ec42 /
+ *  ba80a151e, on og's replacement gate): drain this page's save chain, then,
+ *  in one synchronous step, replace the loaded instance with `resolved` and
+ *  clear its dirty, kinds and conflict state; `resolved.rev` becomes the save
+ *  baseline, so nothing pre-merge can autosave over the result. Only when the
+ *  instance is the one reviewed (`generation`), its draft is still `reviewed`
+ *  and no block of it is being edited. Otherwise the newer draft is kept and
+ *  stays conflicted against the resolved revision: the user reviews again.
+ *  Returns what happened. O(page). */
+export async function installLiveResolution(name: string, generation: number, reviewed: PageDto,
+  resolved: PageDto & { id?: string }): Promise<"installed" | "kept" | "gone"> {
+  const binding = captureBinding(), token = graphToken;
+  const tail = saveChain.get(name);
+  if (tail) await tail.catch(() => false);
+  if (!stillBound(binding) || token !== graphToken) return "gone";
+  if (pageInstanceGeneration(name) !== generation) return "gone";
+  const now = pageToDto(name);
+  const ed = editingId();
+  if (!now || !sameLiveDraft(now, reviewed) || saveChain.has(name) || (ed && doc.byId[ed]?.page === name)) {
+    markConflict(name, { kind: "disk-changed" }, resolved.rev ?? null);
+    return "kept";
+  }
+  reloadPage(resolved);
+  dirty.delete(name);
+  kindLedger.delete(name);
+  forgetSaveFailure(name);
+  clearConflict(name);
+  return "installed";
 }

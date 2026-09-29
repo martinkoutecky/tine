@@ -22,6 +22,7 @@ carryTodayPage
 carryUnfinished
 childIds
 clearSelection
+collapseEpochOf  # why: embed occurrence folds compare the source collapse write epoch (GH #360); batch21c
 collapsibleDescendantIds
 conflictReason  # why: conflict bar reason text; batch03
 conflicts
@@ -64,6 +65,7 @@ installAliasDraftRouteHandler
 installDraftKeeper  # why: the app-data draft store keeps a crash-surviving copy while a page's edits cannot be saved (og ADR 0061); batch20b
 installExternalChangeUiHandler
 installHistoryRouteContextAdapter
+installLiveResolution  # why: the in-page resolver installs a committed live-conflict resolution only after the page's saves drain and only over the reviewed draft (og 8e; master 7e1b6ec42/ba80a151e); batch21a
 installPageIdentityNavigation  # why: route/tab rekey must precede exact-path working-set identity adoption; batch11e
 installRenameRefreshHandler
 isBlockMoving
@@ -74,6 +76,7 @@ isLoaded
 isSaving
 isSelected
 journalTemplatePage
+liveConflictDraft  # why: the in-page resolver reviews a disk-changed editor draft with the revision it was edited from (og 8e); batch21a
 loadFeed
 loadGuidePages
 loadRoutedPage  # why: route can be first graph load; arm saves without enabling capture scratch persistence; batch06d
@@ -126,6 +129,7 @@ resolveGuideBlockRef
 resolveGuidePageDto
 restoreTodayJournalInFeed
 revealNode
+sameLiveDraft  # why: a live resolution applies only to the exact draft the user reviewed (og 8e); batch21a
 sanitizeOutlineIdsForPaste  # why: prevent off-screen ID collisions in ordinary paste; batch05
 selectBlock
 selectBlockSubtree  # why: Ctrl/Cmd+A escalation from the editor (GH #262); batch17a

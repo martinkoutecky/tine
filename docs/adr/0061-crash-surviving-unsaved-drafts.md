@@ -29,6 +29,25 @@ and `reason` is `conflict` or `save-failed`.
 `live-conflict` is reserved for og's Concord live-draft capsule (slice 8e). That
 capsule is a record in this store with its own fields, not a second file.
 
+**Amendment 2026-09-29 (og 21a, slice 8e): the live-conflict capsule.** A page
+whose save was refused because its file changed on disk (a plain `disk-changed`
+conflict, outside any save group) is written with `kind: "live-conflict"` and
+two more fields: `base_rev`, the revision the draft was edited from, and
+`observed_rev`, the disk revision the refused save observed. Every other field,
+the id (`<session>:<page name>`, one record per page whichever kind), the
+bounds, the write cadence and the retirement rules are unchanged, so the
+envelope stays `version: 1` and this is no new format: a reader that knows only
+`unsaved` records still loads the file, and the Rust store already accepted
+both kinds. After a restart the in-page resolver offers the capsule for its
+page (also when the page itself cannot be opened, GH #541): it reviews the
+kept draft against the file as it is now, 3-way when the Concord ledger (ADR
+0056) retains `base_rev`, and Apply writes through the guarded
+`resolve_live_conflict` command. The record is retired only after that commit
+succeeds, and only in the graph it was read for; the recovery panel still
+lists it for Copy and Dismiss. The ledger base is looked up by revision, never
+copied into the record, so the capsule costs nothing beyond the `unsaved`
+record it replaces (two revision strings, ≤ 130 bytes).
+
 **When it is written.** Only while a page is at risk: from the moment the save
 engine marks it conflicted or reports a failed save, until the page saves, the
 user resolves the conflict (Keep mine or Use disk), or the page leaves this

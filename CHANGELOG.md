@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **A "changed on disk" conflict can be merged block by block at the page.** The
+  panel at the top of the page compares your unsaved edits with the file as it is
+  now, pre-selecting each side's own change when Tine still has the version you
+  started from. Apply writes only if the file is still the version shown; a newer
+  change refreshes the comparison. If Tine closes first, the draft is kept and the
+  same comparison appears after the next start, even when the page cannot be
+  opened (GH #541).
 - **Alt+click opens an internal link in the other pane** (GH #438), and **Ctrl/Cmd+click opens a background tab** (GH #283), on page links, block references, reference headers, namespaces, the sidebars, zoom breadcrumbs and query results, next to Shift+click (right sidebar) and middle-click (background tab). Middle-button autoscroll and Shift range-selection are suppressed on every one of those surfaces (GH #207). Ctrl/Cmd+click no longer opens the other pane; that is now Alt+click.
 - **Ctrl+Y also redoes** on Windows and Linux (GH #491). It is a second default for the same Redo command, shown beside the binding in the shortcuts list; remapping or unbinding Redo replaces both chords.
 - **Dropping a block on the right of another block's text nests it** as that block's last child (GH #326), with a drop marker showing where it will land.
@@ -32,9 +39,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- **Hostile content cannot crash a table formula or navigate the app away** (I-22): formulas that nest past 1280 levels through references show an error in the cell instead of overflowing the stack, video and tweet macro links open in the system browser, and on Android and iOS a link with any other scheme (for example `intent:` or `javascript:`) no longer navigates the app.
+- **Hostile content cannot crash a table formula or navigate the app away** (I-22): formulas that nest past 128 levels, counting references, show an error in the cell instead of overflowing the stack, video and tweet macro links open in the system browser, and on Android and iOS a link with any other scheme (for example `intent:` or `javascript:`) no longer navigates the app.
 - **A save that fails on the disk now says which step failed** (GH #538, #590): the message names the platform call (for example the no-replace rename, or syncing the temporary file) and its OS error number, so a report can be acted on. Diagnosis only; it does not make such a save succeed.
 - **The vendored parser WASM matches a clean source rebuild again** (GH #392), so F-Droid's from-source build reproduces the shipped parser; CI now rebuilds it and fails on any difference.
+- A page rename no longer rewrites links inside a file that still carries
+  unresolved git or Fossil merge markers; the file keeps its bytes and a message
+  lists it.
+- Tine's Concord ledger now lives in its own app-data folder, so it no longer
+  deletes, or is deleted by, the ledger of a mainline Tine build on the same machine.
+- **Middle-clicking a link opens a background tab without switching panes** (GH #87): the click no longer makes the pane under it the active one, so the tab opens where you are working.
+- **Ctrl/Cmd+click and Alt+click on an outline bullet** go where the same modifier on a link goes (GH #456): a background tab and the other pane. Bullets in linked references do the same.
+- **A split pane's only tab keeps its close button** (GH #207), unless that tab shows the journals; closing it closes the pane.
+- **A file change that arrives while you are editing that page is applied when you finish** (GH #337), instead of being dropped until the next change.
+- **Block embeds follow their source's fold state live** (GH #360). Folding the embedded block inside one embed is remembered by that embed alone, and folding rows inside an embed yields to the next fold of the source.
+- **Filter chips and groups in linked and unlinked references** treat differently-normalized spellings of one page name as the same page.
+- **Saving a search or query as a page in an Org graph writes its view properties where Org reads them** (a `:PROPERTIES:` drawer, not a body line that was never read back), and a save the workspace has since moved on from is refused instead of publishing an obsolete search: if the write had already begun, the page is kept and the workspace stays put with a note.
 - **Dragging a block embed by its bullet moves the embed itself** (GH #514), not the source block it shows. Rows nested inside the embed still drag as the source's own outline.
 - **Arrow keys move between bullets inside linked references, block references, query results and embeds** (GH #341). Up/Down and Left/Right at a block edge now step through the blocks as rendered in that view instead of jumping the caret to the source page's outline, where the editor is usually not on screen; merges and indents there still act on the real page outline.
 - **Code blocks**: the caret no longer jumps when you click into a code block or leave it with the arrow keys, the language line and fence markers are editable as text, and clicking a code card places the caret where you clicked (GH #489).

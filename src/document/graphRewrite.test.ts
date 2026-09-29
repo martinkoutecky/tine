@@ -84,3 +84,15 @@ it("refuses a page creation that started before the rename freeze", async () => 
   finishRename();
   expect(await renaming).toBe("renamed");
 });
+
+it("names the referrers a rename left untouched because they are mid-merge (og 21a, master a8fd4230d)", async () => {
+  setToasts([]);
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [],
+    skipped_conflicted_referrers: ["pages/Conflicted.md"] });
+  installRenameRefreshHandler(() => {});
+  expect(await renamePageOnDisk("A", "B")).toBe("renamed");
+  const note = toasts().find((toast) => toast.message.includes("pages/Conflicted.md"));
+  expect(note).toMatchObject({ kind: "warn", sticky: true });
+  expect(note!.message).toContain("“A”");
+  setToasts([]);
+});

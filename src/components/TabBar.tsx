@@ -1,11 +1,18 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
-import { routeTitle, type PaneRouter, type Route } from "../router";
+import { routeTitle, type PaneRouter, type Route, type Tab } from "../router";
 import { formatForBlock, node as docNode } from "../document";
 import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
-import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane } from "../panes";
+import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes } from "../panes";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
+
+/** One predicate for the strip's ✕ and the overview's close button: closing is
+ *  effective when another tab remains, or when this lone non-feed tab can close
+ *  its whole split pane (the router's closeTab hands it to the pane close). */
+function closeOffered(router: PaneRouter, t: Tab): boolean {
+  return router.tabs().length > 1 || (router.tabRoute(t).kind !== "journals" && layoutHasMultiplePanes());
+}
 
 const MAX_TITLE = 32;
 const DRAG_THRESHOLD_PX = 4;
@@ -622,10 +629,13 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
               </span>
             </Show>
             <span class="tab-title"><EmojiText text={tabTitle(router.tabRoute(t))} /></span>
-            {/* The last tab can't be closed (closeTab keeps one), so hide its ✕.
+            {/* Offer ✕ only when closing actually works: another tab remains, OR
+                this lone tab can close its whole split pane (GH #207 — closeTab
+                hands a lone non-feed tab to the pane's last-tab handler). The
+                window's very last tab and a feed pane's last tab stay unclosable.
                 A real button with its own title: keyboard-operable, and its hover
                 tooltip can't fall back to the tab's pin hint (GH #340). */}
-            <Show when={router.tabs().length > 1}>
+            <Show when={closeOffered(router, t)}>
               <button
                 class="tab-close"
                 type="button"
@@ -709,7 +719,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
                   <span class="tab-overview-active" aria-hidden="true">{tab.id === router.activeId() ? "✓" : ""}</span>
                   <Show when={tab.pinned}><span class="tab-overview-pin" title="Pinned"><EmojiText text="📌" /></span></Show>
                   <span class="tab-overview-title"><EmojiText text={tabFullTitle(router.tabRoute(tab))} /></span>
-                  <Show when={router.tabs().length > 1}>
+                  <Show when={closeOffered(router, tab)}>
                     <button
                       class="tab-overview-close"
                       type="button"

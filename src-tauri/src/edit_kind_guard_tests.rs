@@ -35,6 +35,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     const BACKUP: &str = include_str!("backup.rs");
     const PAGES: &str = include_str!("../../crates/tine-graph-features/src/pages.rs");
     const CONFLICTS: &str = include_str!("../../crates/tine-graph-features/src/conflicts.rs");
+    const LIVE: &str = include_str!("../../crates/tine-graph-features/src/live_conflict.rs");
     const PDF: &str = include_str!("../../crates/tine-graph-features/src/pdf.rs");
     const GUIDE: &str = include_str!("../../crates/tine-graph-features/src/guide.rs");
     const JOURNALS: &str = include_str!("../../crates/tine-graph-features/src/journals.rs");
@@ -86,10 +87,14 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "resolve_vcs_marker_conflict",
             "tine_graph_features::conflicts::resolve_vcs_marker_conflict",
         ),
+        (
+            "resolve_live_conflict",
+            "tine_graph_features::live_conflict::resolve_live_conflict",
+        ),
     ];
     assert_eq!(
         routes.len() + concord_routes.len(),
-        13,
+        14,
         "OG-RULES Rule 8: update the page-writer census; exemplar src-tauri/src/commands.rs"
     );
     for (name, route) in routes {
@@ -145,6 +150,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "resolve_vcs_marker_conflict",
             "tx.save_page(&[tine_store::EditKind::ReplacePage], &page, SaveBase::ResolvingMarkers(rev)",
         ),
+        (LIVE, "resolve_live_conflict", "tx.save_page(&[kind], &page, base"),
         (
             PDF,
             "write_highlights",

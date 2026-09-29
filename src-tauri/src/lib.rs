@@ -19,6 +19,8 @@ mod device_io;
 mod drafts;
 #[cfg(test)]
 mod edit_kind_guard_tests;
+#[cfg(desktop)]
+mod experiment_config_seed;
 mod flight;
 mod flight_store;
 mod graph;
@@ -60,8 +62,9 @@ use commands::{
     write_highlights, write_pdf_view_state,
 };
 use concord::{
-    conflict_inventory, list_sync_conflicts, resolve_sync_conflict, resolve_vcs_marker_conflict,
-    sync_conflict_diff, trash_sync_conflict, vcs_marker_conflict_diff,
+    conflict_inventory, list_sync_conflicts, live_conflict_diff, resolve_live_conflict,
+    resolve_sync_conflict, resolve_vcs_marker_conflict, sync_conflict_diff, trash_sync_conflict,
+    vcs_marker_conflict_diff,
 };
 use debug::{
     debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, diag_private,
@@ -497,6 +500,12 @@ pub fn run() {
         diag("TINE_GPU=0 → set WEBKIT_DISABLE_DMABUF_RENDERER=1 (software compositing)");
     }
 
+    // TEMPORARY (docs/app-identity.md): an experiment build with no graph of its
+    // own starts from the released Tine's config. Before the Builder, because
+    // WebKitGTK creates the app-data dir while the Builder is assembled.
+    #[cfg(desktop)]
+    experiment_config_seed::seed_from_release_once();
+
     // Wayland resolves the shell/titlebar icon by matching a window app ID to a
     // desktop-entry basename. Packages ship that identity themselves; the raw
     // binary Martin runs is self-contained, so publish its marker-owned entry
@@ -883,6 +892,8 @@ pub fn run() {
             conflict_inventory,
             vcs_marker_conflict_diff,
             resolve_vcs_marker_conflict,
+            live_conflict_diff,
+            resolve_live_conflict,
             trash_journal_file,
             read_journal_file,
             get_page_by_path,

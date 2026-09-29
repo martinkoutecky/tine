@@ -1,6 +1,6 @@
 // Browser-mock Concord surface: sync-conflict copies and the derived conflict
 // queue. Split out of mock.ts (over the size ratchet); nothing here writes.
-import type { ConflictInventory, ConflictObject, MarkerConflictDiff, SyncConflict, SyncConflictDiff } from "./types";
+import type { ConflictInventory, ConflictObject, MarkerConflictDiff, PageDto, SyncConflict, SyncConflictDiff } from "./types";
 
 // Gated on the `?conflicts` flag, like the journal-day demo, so the reconcile
 // surfaces stay out of the marketing screenshots by default.
@@ -78,5 +78,14 @@ export const mockConflictApi = {
   },
   async resolveVcsMarkerConflict(): Promise<void> {
     // no-op in the browser mock
+  },
+  // The browser mock never refuses a save, so a live conflict arises only in
+  // tests (which stub these): the review is 2-way and Apply echoes the draft.
+  async liveConflictDiff(_path: string, _page: PageDto, baseRev: string | null): Promise<SyncConflictDiff> {
+    return { base_rev: baseRev ?? "", conflict_rev: "absent", rows: [], mine_pre: null, theirs_pre: null,
+      pre_differs: false, blocks_identical: true };
+  },
+  async resolveLiveConflict(_path: string, page: PageDto): Promise<PageDto> {
+    return { ...page, rev: `mock-live-${Date.now()}` };
   },
 };

@@ -1030,6 +1030,14 @@ fn open_verified_restore_files(
 /// Page/journal text files Tine snapshots + restores: Markdown and Org. Asset
 /// `.edn` sidecars are handled separately under `assets`; binary asset bytes stay
 /// excluded from snapshots by design.
+fn is_foreign_snapshot(dir: &std::path::Path) -> bool {
+    std::fs::read(dir.join(SNAPSHOT_MANIFEST))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|manifest| manifest.get("schema").and_then(serde_json::Value::as_u64))
+        .is_some_and(|schema| schema != u64::from(SNAPSHOT_SCHEMA))
+}
+
 fn prune_backups(base: &std::path::Path, keep: usize) {
     let Ok(rd) = std::fs::read_dir(base) else {
         return;
@@ -1054,6 +1062,10 @@ fn prune_backups(base: &std::path::Path, keep: usize) {
                     .unwrap_or(false)
         })
         .collect();
+    // A snapshot whose manifest names another schema belongs to another Tine
+    // sharing this app-data dir (the released one reads and writes schema 3;
+    // docs/app-identity.md). It is not ours to count or delete.
+    dirs.retain(|dir| !is_foreign_snapshot(dir));
     dirs.sort(); // timestamp-named → chronological
     if dirs.len() > keep {
         for d in &dirs[..dirs.len() - keep] {
@@ -1071,6 +1083,47 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// A released Tine sharing this app-data dir (docs/app-identity.md) writes
+    /// schema-3 snapshots this build can neither list nor restore. The launch
+    /// keep-count must never delete them: they are that Tine's backups.
+    #[test]
+    fn prune_never_deletes_another_tines_snapshots() {
+        let base = scratch("backup-prune-foreign");
+        let snapshot = |name: &str, schema: u32| {
+            let dir = base.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join(SNAPSHOT_MANIFEST),
+                format!(r#"{{"schema":{schema},"root":"/g","journals_dir":"journals","pages_dir":"pages","files":[],"complete":true}}"#),
+            )
+            .unwrap();
+        };
+        snapshot("2026-09-01_00-00-00", 3);
+        snapshot("2026-09-02_00-00-00", SNAPSHOT_SCHEMA);
+        snapshot("2026-09-03_00-00-00", 3);
+        snapshot("2026-09-04_00-00-00", SNAPSHOT_SCHEMA);
+        snapshot("2026-09-05_00-00-00", SNAPSHOT_SCHEMA);
+
+        prune_backups(&base, 2);
+
+        let mut left: Vec<String> = std::fs::read_dir(&base)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "2026-09-01_00-00-00",
+                "2026-09-03_00-00-00",
+                "2026-09-04_00-00-00",
+                "2026-09-05_00-00-00"
+            ]
+        );
+        let _ = std::fs::remove_dir_all(base);
     }
 
     /// I-22: a snapshot mirrors the graph's directory depth. Linux caps a

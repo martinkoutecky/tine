@@ -83,6 +83,34 @@ fn block_runtime_id(b: &DocBlock) -> String {
     b.uuid.clone()
 }
 
+/// Convert a frontend DTO block back to a doc block, keeping the frontend's
+/// block id as the node uuid so the cache and the editor agree on identity.
+/// The one DTO-to-document answer: the store's save path and Concord's live
+/// review both use it. O(subtree).
+pub fn dto_block_to_doc(b: &BlockDto, is_org: bool) -> DocBlock {
+    let mut block = DocBlock::new(&b.raw);
+    block.children = b
+        .children
+        .iter()
+        .map(|c| dto_block_to_doc(c, is_org))
+        .collect();
+    block.uuid = b.id.clone();
+    block.set_org(is_org);
+    block
+}
+
+/// A whole editor draft as a document (see [`dto_block_to_doc`]).
+pub fn page_dto_document(page: &PageDto, is_org: bool) -> doc::Document {
+    doc::Document {
+        pre_block: page.pre_block.clone(),
+        roots: page
+            .blocks
+            .iter()
+            .map(|b| dto_block_to_doc(b, is_org))
+            .collect(),
+    }
+}
+
 /// Convert a parsed (cached) block to a DTO, carrying its stable uuid as the id.
 pub fn block_to_dto(b: &DocBlock) -> BlockDto {
     BlockDto {

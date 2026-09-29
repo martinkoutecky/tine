@@ -14,35 +14,20 @@ import { createLongPress } from "../render/longPress";
 import { matcherMatches, parseSearchQuery } from "../editor/searchQuery";
 import { searchFold } from "../editor/searchFold";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
+import { pageIdentityKey } from "../pageIdentity";
+import { mergeReferenceGroups } from "../referenceGroups";
 import { collapsedGroupsFor, sectionOverride, setCollapsedGroupsFor, setSectionOverride } from "../referenceSectionState";
 
-const norm = (s: string) => s.trim().toLowerCase();
-const pageIdentity = (s: string) => {
-  const lowered = s.trim().toLowerCase();
-  const withoutLeading = lowered.startsWith("/") ? lowered.slice(1) : lowered;
-  const withoutBoundaries = withoutLeading.endsWith("/") ? withoutLeading.slice(0, -1) : withoutLeading;
-  return withoutBoundaries.normalize("NFC");
-};
+// One identity fold for chips, filters and group merging: the old private `norm`
+// (trim + toLowerCase) split NFC/NFD and boundary-slash spellings of one page
+// into separate chips whose filters missed each other, and disagreed with the
+// backend, which keys the same request with refs::normalize.
+const norm = (s: string) => pageIdentityKey(s);
 
 type BoundedEvidence = NonNullable<RefGroup["evidence"]>[number] & {
   total?: number;
   truncated?: boolean;
 };
-
-function mergeReferenceGroups(groups: RefGroup[]): RefGroup[] {
-  const merged = new Map<string, RefGroup>();
-  for (const group of groups) {
-    const key = pageIdentity(group.page);
-    const existing = merged.get(key);
-    if (existing) {
-      existing.blocks.push(...group.blocks);
-      existing.evidence = [...(existing.evidence ?? []), ...(group.evidence ?? [])];
-    } else {
-      merged.set(key, { ...group, blocks: [...group.blocks], evidence: [...(group.evidence ?? [])] });
-    }
-  }
-  return [...merged.values()];
-}
 
 type ReferenceLoadError = "bounded" | "backend";
 
@@ -271,7 +256,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     });
   });
 
-  const groupKey = (group: RefGroup) => pageIdentity(group.page);
+  const groupKey = (group: RefGroup) => pageIdentityKey(group.page);
   const shownByKey = createMemo(() => new Map(shown().map((group) => [groupKey(group), group] as const)));
   const groupCollapsed = (group: RefGroup) => collapsedGroups().has(groupKey(group));
   const setGroupCollapsed = (group: RefGroup, value: boolean) => {

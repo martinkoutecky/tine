@@ -31,7 +31,7 @@ atomic publication have the same payload as their final name.
 | Diagnostic history JSONL | app data `diagnostics/history.jsonl`, fixed-shape events, ≤ 1 MiB (ADR 0058) | `src-tauri/src/flight_store.rs` `write_history` |
 | Diagnostic session marker | app data `diagnostics/session-active` and `diagnostics/process.lock`, empty files (ADR 0058) | `src-tauri/src/flight_store.rs` `set_session_active`, `open` |
 | Diagnostic report JSON | a user-chosen file from Settings → Help & diagnostics → Save report (ADR 0058) | `src-tauri/src/flight_store.rs` `save_report` |
-| Concord base ledger | app data `concord-ledger/<graph-id>/`: per page `pages/<sha(path)>/index.json` + ≤ 2 text blobs, per sync copy `pins/<sha(path)>.{json,blob}`; disposable, never under the graph root (ADR 0056) | `src-tauri/src/concord_ledger.rs` `LedgerFiles::write` (via `device_io::atomic_write`) |
+| Concord base ledger | app data `concord-ledger-og/<graph-id>/` (never master's `concord-ledger/`, whose layout differs; og never reads, prunes or writes it): per page `pages/<sha(path)>/index.json` + ≤ 2 text blobs, per sync copy `pins/<sha(path)>.{json,blob}`; disposable, never under the graph root (ADR 0056) | `src-tauri/src/concord_ledger.rs` `LedgerFiles::write` (via `device_io::atomic_write`) |
 | Draft store JSON | app data `drafts/<graph-id>.v1.json`, unsaved drafts of pages that could not be saved, ≤ 64 records and 8 MiB (ADR 0061) | `src-tauri/src/drafts.rs` `write_unlocked` |
 
 The graph session JSON may carry `workspaceId`, the ID of the workspace that
@@ -45,8 +45,10 @@ scheduled session save without replacing newer live work.
 
 The draft store holds a page's editor draft only while that page's edits cannot
 be saved (a conflict or a failed save); an ordinary save never writes it. Its
-`live-conflict` record kind is reserved for the Concord live-draft capsule, so
-that capsule is a record in this store rather than a second store (ADR 0061).
+`live-conflict` record kind is the Concord live-draft capsule (og 21a): the
+same record plus `base_rev` / `observed_rev`, a record in this store rather
+than a second store, with the envelope still `version: 1` (no new format; ADR
+0061 amendment).
 Restore recovery contains the original file bytes, not a new syntax.
 
 The count test pins the vocabulary and compares low-level writer-site counts
@@ -54,3 +56,10 @@ against `2d0349368` to catch uncensused new writes. A caller may still route a
 new name through an existing generic writer, so review of store entry points
 remains necessary. New formats require an ADR and Martin's approval under
 OG-RULES Rule 8; their writer sites are listed in `APPROVED_WRITER_SITES`.
+
+The experiment build's one-time config seed (`src-tauri/src/experiment_config_seed.rs`,
+temporary, `docs/app-identity.md`) adds **no format**. It copies census files
+byte for byte (device settings, graph sessions, workspace registry, plugin packages, the
+webview's own store) from the released Tine's app-data dir into the experiment's. Its
+writer sites are approved in `APPROVED_WRITER_SITES`. The same document classifies each
+app-data entry the released Tine writes as read as-is or master-only.

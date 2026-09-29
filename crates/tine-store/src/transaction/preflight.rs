@@ -238,6 +238,7 @@ impl<'a> Transaction<'a> {
                 } else {
                     rewrite(&old, &path, renames, self.store.config().file_name_format)?
                 };
+                refuse_marker_rewrite(&old, &new)?;
                 Ok(Prepared {
                     src: file,
                     dst: None,
@@ -279,6 +280,9 @@ impl<'a> Transaction<'a> {
                     (None, None) => None,
                     (None, Some(_)) => unreachable!(),
                 };
+                if let (Some(old), Some(new)) = (&old, &new) {
+                    refuse_marker_rewrite(old, new)?;
+                }
                 Ok(Prepared {
                     src: file.clone(),
                     dst: Some(to.clone()),
@@ -309,4 +313,26 @@ impl<'a> Transaction<'a> {
             }
         }
     }
+}
+
+/// Refusal R-VCS-MARKERS for reference rewrites (og 21a, master a8fd4230d).
+/// Threat scenario: an external VCS merge or a sync service left a referrer
+/// mid-conflict; rewriting `[[Old]]` inside it would edit one or both sides
+/// of a merge the user has not adjudicated. A caller (the rename) skips such
+/// files and reports them; this is the store's backstop for any caller that
+/// does not. A rewrite that changes nothing, or a byte-exact move, passes.
+fn refuse_marker_rewrite(old: &[u8], new: &[u8]) -> Result<(), Why> {
+    if old == new {
+        return Ok(());
+    }
+    let found = std::str::from_utf8(old)
+        .map(tine_core::concord_queue::vcs_conflict_markers)
+        .unwrap_or_default();
+    if found.is_empty() {
+        return Ok(());
+    }
+    Err(Why::Refused(Refusal::ReadOnly(format!(
+        "unresolved VCS merge conflict markers ({}); resolve them first",
+        found.join(" ")
+    ))))
 }

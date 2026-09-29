@@ -6,6 +6,14 @@
 // the file itself. They differ only in where the two sides come from and which
 // guarded backend command applies them; the rows are the shared `DiffRowView`.
 //
+// A third source is an editor draft whose save was refused because its file
+// changed on disk (`live-save`, og 8e): its "mine" is the draft itself (the open
+// editor's, or a capsule kept across a restart), "theirs" the file as it is
+// now, and the Concord ledger's copy of the revision it was edited from makes
+// the suggestions 3-way. Its Apply writes through `resolve_live_conflict` at
+// the reviewed disk revision and installs the result only over the exact draft
+// that was reviewed (`installLiveResolution`).
+//
 // Nothing here auto-applies. A base (the markers' own `|||||||` ancestor) only
 // decides which side arrives PRE-SELECTED. The write happens on the user's click
 // through `resolve_sync_conflict` / `resolve_vcs_marker_conflict`: one tine-store
@@ -17,7 +25,9 @@ import { errorFamily } from "../errorFamily";
 import { graphOwner, readOwned, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
 import { conflictQueue, refreshSyncConflicts, settleArtifactConflict } from "../ui";
-import { applyGraphChange, flushPage, isConflicted, isDirty, isSaving } from "../document";
+import { applyGraphChange, conflictReason, flushPage, installLiveResolution, isConflicted, isDirty, isSaving, liveConflictDraft, node, sameLiveDraft } from "../document";
+import { dismissEarlierDraft } from "../draftStore";
+import { editingId } from "../editorController";
 import {
   DiffRowView,
   collectRows,
@@ -27,7 +37,7 @@ import {
   seedSuggestedOrNoLoss,
   visibleDiffRows,
 } from "./DiffRows";
-import type { ConflictObject, MergeDecision, SyncConflictDiff } from "../types";
+import type { ConflictObject, MergeDecision, PageDto, SyncConflictDiff } from "../types";
 
 function errorDetail(error: unknown): string {
   // Tauri rejects a `Result<T, String>` with the bare string; keep its text.
@@ -48,6 +58,7 @@ export function sideLabels(conflict: ConflictObject): { mine: string; theirs: st
   const of = (role: "mine" | "theirs" | "base") => conflict.sides.find((s) => s.role === role)?.label ?? "";
   const markers = conflict.source === "vcs-markers";
   const theirs = humanizeSideLabel(of("theirs") || (markers ? "Merged-in side" : "Conflict copy"));
+  if (conflict.source === "live-save") return { mine: of("mine") || "Your unsaved edits", theirs: of("theirs") || "The file on disk now" };
   return {
     mine: of("mine") || (markers ? "Local side" : "This device"),
     theirs: theirs.text,
@@ -58,11 +69,20 @@ export function sideLabels(conflict: ConflictObject): { mine: string; theirs: st
 
 /** A diff read that never leaves an errored resource behind: reading an
  *  errored Solid resource throws inside rendering, which can blank the page. */
-type DiffRead = { diff: SyncConflictDiff | null; error?: string };
+type DiffRead = { diff: SyncConflictDiff | null; error?: string; draft?: PageDto; generation?: number | null };
 
 async function readDiff(c: ConflictObject, alive: () => boolean): Promise<DiffRead> {
   const owner = graphOwner(alive);
   try {
+    if (c.source === "live-save") {
+      // The exact draft this review shows: Apply writes it only while the
+      // editor still holds it, so later typing is never replaced unseen.
+      const open = c.live?.page ? null : liveConflictDraft(c.page_name);
+      const draft = c.live?.page ?? open?.page;
+      if (!c.live || !draft) return { diff: null };
+      const read = await readOwned(owner, backend().liveConflictDiff(c.page_path, draft, open ? open.baseRev : c.live.base_rev));
+      return read.kind === "current" ? { diff: read.value, draft, generation: open?.generation ?? null } : { diff: null };
+    }
     if (c.source === "vcs-markers") {
       const parsed = await readOwned(owner, backend().vcsMarkerConflictDiff(c.page_path));
       return { diff: parsed.kind === "current" ? parsed.value?.diff ?? null : null };
@@ -93,7 +113,12 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   const [cursor, setCursor] = createSignal(0);
   let root: HTMLDivElement | undefined;
 
-  const [read, { refetch }] = createResource(() => conflict().id, () => readDiff(conflict(), () => mounted));
+  // A live conflict re-reviews when a newer refused save observed another disk
+  // revision; every source re-reviews after a refused Apply.
+  const [read, { refetch }] = createResource(
+    () => `${conflict().id}\0${conflict().source === "live-save" ? conflictReason(conflict().page_name)?.observedRev ?? "" : ""}`,
+    () => readDiff(conflict(), () => mounted),
+  );
   const diffValue = (): SyncConflictDiff | null => read()?.diff ?? null;
 
   // Row decisions belong to ONE exact pair of texts: every fresh alignment
@@ -145,9 +170,54 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     const c = conflict();
     const { source, id, page_name: pageName, page_path: pagePath, kind } = c;
     const copy = c.sides.find((s) => s.role === "theirs")?.path ?? null;
+    const live = c.live;
+    const reviewed = read()?.draft, reviewedGeneration = read()?.generation ?? null;
     const owner = graphOwner();
     setBusy(true);
     try {
+      if (source === "live-save") {
+        if (!live || !reviewed) return;
+        const refresh = (message: string) => {
+          alignment = undefined;
+          void refetch();
+          pushToast(message, "info");
+        };
+        if (live.restored) {
+          // After a restart the editor holds the disk version and the capsule
+          // is the only copy of the draft: never resolve over newer edits.
+          if (isDirty(pageName) || isSaving(pageName) || isConflicted(pageName)) {
+            pushToast("This reopened page also has new edits. Let them save first, then resolve the kept draft.", "info");
+            return;
+          }
+          const result = await writeOwned(owner, backend().resolveLiveConflict(pagePath, reviewed, live.base_rev,
+            current.conflict_rev, current.merge_base_rev, decisions(), preChoice()));
+          if (result.kind === "stale") return;
+          // The guarded commit is the durable resolution; retire the capsule
+          // after it (a crash in between offers an already-resolved draft,
+          // never loses one), then show the result through the ordinary rule.
+          if (live.record_id) await dismissEarlierDraft(live.record_id);
+          await applyGraphChange({ path: pagePath, name: pageName, kind, created: false, removed: false });
+          pushToast(`Resolved your kept draft of “${pageName}”`, "success");
+          return;
+        }
+        const ed = editingId();
+        if (ed && node(ed)?.page === pageName) {
+          pushToast("Finish the current edit, then apply this resolution.", "info");
+          return;
+        }
+        const now = liveConflictDraft(pageName);
+        if (!now || now.generation !== reviewedGeneration || !sameLiveDraft(now.page, reviewed)) {
+          refresh("Your draft changed. Review the updated comparison, then apply it again.");
+          return;
+        }
+        const result = await writeOwned(owner, backend().resolveLiveConflict(pagePath, reviewed, now.baseRev,
+          current.conflict_rev, current.merge_base_rev, decisions(), preChoice()));
+        if (result.kind === "stale") return;
+        const installed = await installLiveResolution(pageName, now.generation, reviewed, { ...result.value, id: pagePath });
+        if (installed === "installed") pushToast(`Resolved the conflict in “${pageName}”`, "success");
+        else if (installed === "kept") pushToast(`The resolution was written, and your edits made since the review are kept. Review “${pageName}” again.`, "info");
+        return;
+      }
       // The open editor must not autosave its pre-merge text over the result.
       // Pending edits are saved first; the guarded write below then refuses
       // (`conflict`) if they changed the file the user reviewed.
@@ -203,7 +273,9 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     <div class="page-conflict" ref={root} data-source={conflict().source}>
       <div class="page-conflict-head">
         <span class="page-conflict-title">
-          {markers() ? "Unresolved merge from your version-control tool" : "Two versions of this page arrived"}
+          {markers() ? "Unresolved merge from your version-control tool"
+          : conflict().source === "live-save" ? "Your edits and a newer version on disk"
+          : "Two versions of this page arrived"}
         </span>
         <span class="page-conflict-nav">
           <Show when={pending().length}>
@@ -245,7 +317,10 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
             fallback={
               <div class="page-conflict-empty">
                 The two versions are identical — nothing to decide.
-                <Show when={!markers()}> The copy is safe to discard from the Conflicts overview.</Show>
+                <Show when={conflict().source === "sync-copy"}> The copy is safe to discard from the Conflicts overview.</Show>
+                <Show when={conflict().source === "live-save"}>
+                  {conflict().live?.restored ? " The kept draft can be dismissed from Unsaved changes." : " “Use disk version” above loses nothing."}
+                </Show>
               </div>
             }
           >
@@ -318,7 +393,9 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
               <span class="settings-hint">
                 {markers()
                   ? "Applying writes the merged page without any markers; the file as it was moves to the recoverable trash."
-                  : "The copy moves to the recoverable trash once this is applied."}
+                  : conflict().source === "live-save"
+                    ? "Applying writes the merged page only if the file is still the version shown; a newer change refreshes this comparison."
+                    : "The copy moves to the recoverable trash once this is applied."}
               </span>
               <button class="settings-btn settings-btn-primary" disabled={busy() || read.loading} onClick={() => void apply()}>
                 {busy() ? "Applying…" : "Apply resolution"}

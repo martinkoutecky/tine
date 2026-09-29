@@ -176,11 +176,6 @@ function firstMappedSpan(text: string, needle: string): { start: number; end: nu
 /** Methods declared optional on `Backend`; a published export leaves them
  *  absent so the browser fallbacks in `backend.ts` take over. */
 const OPTIONAL_METHODS = new Set([
-  "loadConflictCapsules",
-  "storeConflictCapsule",
-  "retireConflictCapsule",
-  "conflictCapsuleDiff",
-  "resolveConflictCapsule",
   "loadDrafts",
   "storeDraft",
   "retireDraft",
@@ -1003,11 +998,8 @@ export const PUBLISHED_REFUSED_METHODS = [
   "syncConflictDiff",
   "textBlockDiff",
   "textBlockDiff3",
-  "liveSaveConflictDiff",
-  "captureLiveSaveConflict",
-  "durableLiveSaveConflictDiff",
-  "resolveDurableLiveSaveConflict",
-  "resolveLiveSaveConflict",
+  "liveConflictDiff",
+  "resolveLiveConflict",
   "vcsMarkerConflictDiff",
   "resolveVcsMarkerConflict",
   "resolveSyncConflict",

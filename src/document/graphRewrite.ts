@@ -74,6 +74,9 @@ export async function renamePageOnDisk(
     }
     if (result.kind === "stale") return "uncertain";
     if (result.value.outcome === "unchanged") return "unchanged";
+    // og 21a (master a8fd4230d): files mid-merge keep their old references.
+    const skipped = result.value.skipped_conflicted_referrers ?? [];
+    if (skipped.length) pushToast(`${skipped.length === 1 ? "One page still mid-merge keeps" : `${skipped.length} pages still mid-merge keep`} ${skipped.length === 1 ? "its" : "their"} references to “${from}”: ${skipped.join(", ")}. Resolve the merge, then update them.`, "warn", { sticky: true });
     const reloads = forgetMovedPages(result.value.touched);
     refreshRenamedNavigation?.(from, to, target);
     onRefreshed?.(graphOwner());

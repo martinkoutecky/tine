@@ -20,8 +20,16 @@ suggestions, including a composed `merged` body. og had the 3-way engine
 `src-tauri/src/concord_ledger.rs` keeps, per graph, the last **K = 2 distinct**
 texts of every page that Tine saved or admitted from disk.
 
-**Where.** `<app data>/concord-ledger/<graph-id>/`, the same `<graph-id>` as
-backups (`backup::root_backup_id`). Never inside the graph root, never synced.
+**Where.** `<app data>/concord-ledger-og/<graph-id>/` (`LEDGER_DIR`), the same
+`<graph-id>` as backups (`backup::root_backup_id`). Never inside the graph
+root, never synced. Amended 2026-09-29 (og 21a): the folder was
+`concord-ledger/`, which is master Tine's folder with an incompatible layout
+under the same `<graph-id>`. Once og and master share one app-data directory
+(the planned identity flip, or a rollback) each build's prune would delete the
+other's entries. og now owns `concord-ledger-og/` and never reads, prunes or
+writes `concord-ledger/`; the ledger is disposable, so an old og tree is not
+migrated (the first 3-way review after the upgrade may fall back to 2-way).
+Test: `a_master_layout_ledger_tree_is_byte_identical_after_og_opens_saves_and_prunes`.
 
 | File | Contents |
 |---|---|
@@ -44,7 +52,8 @@ to the ledger's worker thread: one channel send. The worker, per change:
 3. drops the pin of each copy that left the graph (resolve, discard, external
    delete).
 
-At graph open the ledger prunes entries for pages and copies that are gone,
+At graph open the ledger prunes, inside its own `concord-ledger-og/<graph-id>/`
+only, entries for pages and copies that are gone,
 blobs no entry names, torn temps and corrupt entries. At `RunEvent::Exit`,
 queued updates get one shared 200 ms drain.
 
