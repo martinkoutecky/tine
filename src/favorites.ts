@@ -245,7 +245,7 @@ async function writeArrangementPage(next: FavLayout, text: string): Promise<stri
     // format, which is where the store puts it (pages/<name>.org in an Org graph).
     const format: Format = disk?.format ?? graphMeta()?.preferred_format ?? "md";
     ownWrites += 1;
-    await createPage(name, favoritesArrangementPage(name, markerFor(format), toBlocks(next), format), { baseRev: disk?.rev ?? null });
+    await createPage(name, favoritesArrangementPage(name, disk?.pre_block ?? markerFor(format), toBlocks(next), format), { baseRev: disk?.rev ?? null });
     if (!owner()) throw new Error("graph changed during the Favorites page write");
     arrangementPage = name;
     pageBase = text;

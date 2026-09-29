@@ -1196,29 +1196,6 @@ function nodeAt(root: Filter, loc: number[]): Filter | null {
   return node;
 }
 
-/** Drop empty `and`/`or` nodes anywhere except the root, so an edit never leaves
-*  a vacuous `and([])` behind that would match everything. */
-function prune(filter: Filter): Filter | null {
-  const children = filterChildren(filter);
-  if (!children) return filter;
-  if (filter.kind === "not" || filter.kind === "off") {
-    const inner = prune(children[0]);
-    return inner ? withChildren(filter, [inner]) : null;
-  }
-  const kids = children.map(prune).filter((x): x is Filter => x != null);
-  if (kids.length === 0) return null;
-  return withChildren(filter, kids);
-}
-
-function normalize(root: Filter): Filter {
-  const children = filterChildren(root);
-  if (!children) return root;
-  const kids = children.map(prune).filter((x): x is Filter => x != null);
-  // A `not`/`off` root has no enclosing position, so it becomes an `and` root holding what survived — the same …
-  if (root.kind === "not" || root.kind === "off") return { kind: "and", items: kids };
-  return withChildren(root, kids);
-}
-
 /** **Put `next` where `loc` points, whatever kind of node holds that place.**
 *
 *  `locate` above answers a LIST question — it hands back the child array a
@@ -1257,10 +1234,11 @@ function assignAt(draft: Filter, loc: number[], next: Filter): boolean {
 
 /** Mutating a node the path does not address is a no-op that returns the input
 *  unchanged, so a stale `loc` from a popover that outlived its tree cannot
-*  corrupt the query. */
+*  corrupt the query. I-4: only addressed nodes change; authored empty groups
+*  elsewhere carry meaning and must survive every operation. */
 function edit(root: Filter, apply: (draft: Filter) => boolean): Filter {
   const draft = clone(root);
-  return apply(draft) ? normalize(draft) : root;
+  return apply(draft) ? draft : root;
 }
 
 /** Append `filter` to the boolean node addressed by `opLoc` (`[]` = root). */
@@ -1275,12 +1253,18 @@ export function addChild(root: Filter, opLoc: number[], filter: Filter): Filter 
 }
 
 export function removeAt(root: Filter, loc: number[]): Filter {
-  return edit(root, (draft) => {
-    const at = locate(draft, loc);
-    if (!at || !at.children[at.idx]) return false;
-    at.children.splice(at.idx, 1);
-    return true;
-  });
+  if (loc.length === 0 || !nodeAt(root, loc)) return root;
+  // Prune only ancestors emptied by THIS deletion. Never visit siblings.
+  const remove = (node: Filter, depth: number): Filter | null => {
+    const children = [...filterChildren(node)!];
+    const index = loc[depth];
+    const next = depth === loc.length - 1 ? null : remove(children[index], depth + 1);
+    if (next) children[index] = next;
+    else children.splice(index, 1);
+    if (children.length === 0) return depth === 0 ? { kind: node.kind === "or" ? "or" : "and", items: [] } : null;
+    return withChildren(node, children);
+  };
+  return remove(root, 0)!;
 }
 
 export function replaceAt(root: Filter, loc: number[], filter: Filter): Filter {
@@ -1466,7 +1450,7 @@ export function unwrapAt(root: Filter, loc: number[]): Filter {
 export function setOp(root: Filter, loc: number[], op: "and" | "or"): Filter {
   if (loc.length === 0) {
     if (root.kind !== "and" && root.kind !== "or") return root;
-    return normalize({ kind: op, items: structuredClone(filterChildren(root) ?? []) });
+    return { kind: op, items: structuredClone(filterChildren(root) ?? []) };
   }
   return edit(root, (draft) => {
     const current = nodeAt(draft, loc);

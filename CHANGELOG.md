@@ -110,6 +110,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   Editing another query operand preserves rejected conditions inside `off(...)` byte for byte.
   Keeping both Org block versions and renaming an Org reference tolerate non-ASCII prefixes.
   An unchanged transaction step checks its revision before a merge can retire the source page.
+- **Edits preserve unrelated authored content** (OG-K2). HTML paste keeps blank code lines; query-builder edits keep untouched empty boolean groups; sidebar arrangement edits keep the Favorites page preamble; sheet Flatten keeps group notes and properties as rows.
 
 - **A second file holding a page's name is never shown or written as that page** (master 7bd793bd0, og J1).
   When a duplicate journal day (left by sync or a date-format change) or a same-named page opened by path

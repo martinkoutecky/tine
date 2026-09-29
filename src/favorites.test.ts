@@ -250,3 +250,14 @@ describe("favorites arrangement page", () => {
     expect(toasts()).toEqual([]);
   });
 });
+
+it.each(["md", "org"] as const)("arrangement edits preserve the %s page preamble verbatim", async (format) => {
+  const pre = format === "md" ? "tine/favorites:: true\nalias:: My links\n\nKEEP THIS NOTE" : "#+tine/favorites: true\n#+alias: My links\n\nKEEP THIS NOTE";
+  disk.set("Favs", { pre_block: pre, blocks: [b("[[A]]"), b("Work")], rev: 1, format });
+  seedFavorites(["A"], "Favs");
+  await settle();
+  addFavoriteGroup("Home");
+  await settle();
+  expect(disk.get("Favs")!.pre_block).toBe(pre);
+  expect(disk.get("Favs")!.blocks.map((x) => x.raw)).toEqual(["[[A]]", "Work", "Home"]);
+});
