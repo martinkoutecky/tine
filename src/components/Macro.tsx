@@ -53,6 +53,7 @@ import { QueryPrintRefusedError } from "../backend";
 import { focusedRouter, openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { pushToast, pushToastUnique } from "../toasts";
+import { ExternalLink } from "./ExternalLink";
 
 const QUERY_VIEWS: QueryView[] = ["search", "list", "table", "board"];
 const QUERY_VIEW_LABEL: Record<QueryView, string> = {
@@ -1345,7 +1346,7 @@ export function VideoMacro(props: { body: string }): JSX.Element {
         <Show
           when={safeUrl() && /\.(mp4|webm|ogg)(\?|$)/i.test(url())}
           fallback={safeUrl()
-            ? <a class="external-link" href={safeUrl()} target="_blank" rel="noreferrer">{url()}</a>
+            ? <ExternalLink dest={safeUrl()!}>{url()}</ExternalLink>
             : <span>{url()}</span>}
         >
           <video class="embed-video" src={safeUrl()} controls />
@@ -1366,9 +1367,7 @@ export function TweetMacro(props: { body: string }): JSX.Element {
   const safeUrl = () => httpUrl(url());
   return (
     <Show when={safeUrl()} fallback={<span>🐦 {url()}</span>}>
-      <a class="external-link tweet-link" href={safeUrl()} target="_blank" rel="noreferrer">
-        🐦 {url()}
-      </a>
+      <ExternalLink class="external-link tweet-link" dest={safeUrl()!}>🐦 {url()}</ExternalLink>
     </Show>
   );
 }

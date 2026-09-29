@@ -130,6 +130,24 @@ describe("mobile external link delegation", () => {
     }
   });
 
+  it("I-22: blocks WebView navigation for any other explicit scheme on Android and keeps component handlers", async () => {
+    vi.spyOn(backend(), "appPlatform").mockResolvedValue("android");
+    const openExternal = vi.spyOn(backend(), "openExternal").mockResolvedValue();
+    const uninstall = await installMobileExternalLinkHandler();
+    try {
+      for (const href of ["javascript:alert(1)", "intent://x#Intent;end", "file:///sdcard/a.pdf"]) {
+        const a = addAnchor(href);
+        const own = vi.fn();
+        a.addEventListener("click", own);
+        expect(click(a).defaultPrevented, href).toBe(true);
+        expect(own, href).toHaveBeenCalledOnce();
+      }
+      expect(openExternal).not.toHaveBeenCalled();
+    } finally {
+      uninstall();
+    }
+  });
+
   it("leaves internal hash links untouched on Android", async () => {
     vi.spyOn(backend(), "appPlatform").mockResolvedValue("android");
     const openExternal = vi.spyOn(backend(), "openExternal").mockResolvedValue();

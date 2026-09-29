@@ -42,6 +42,21 @@ it("bounds hostile nested formula references", () => {
   expect(evalExpr("formula.f0", {}, formulas)).toMatchObject({ kind: "error" });
 });
 
+it("I-22: hostile deep formulas chained by reference return an error value instead of overflowing the stack", () => {
+  const formulas: Record<string, Ast> = { f120: parseOk("1") };
+  for (let i = 0; i < 120; i++) formulas[`f${i}`] = parseOk("-".repeat(900) + `formula.f${i + 1}`);
+  expect(evalExpr("formula.f0", {}, formulas)).toEqual(errorValue("Formula depth exceeds 1280"));
+});
+
+it("I-22: the deepest formula the parser accepts still evaluates, even behind a reference", () => {
+  const deepest = parseOk("-".repeat(1024) + "7");
+  expect(evalExpr("formula.deep", {}, { deep: deepest })).toEqual(numberValue(7));
+  expect(evalExpr("1+(".repeat(512) + "1" + ")".repeat(512))).toEqual(numberValue(513));
+  const chain: Record<string, Ast> = { f100: parseOk("2") };
+  for (let i = 0; i < 100; i++) chain[`f${i}`] = parseOk(`formula.f${i + 1} + 0`);
+  expect(evalExpr("formula.f0", {}, chain)).toEqual(numberValue(2));
+});
+
 function binaryAst(op: BinaryOp): Ast {
   return { kind: "binary", op, left: { kind: "field", name: "left" }, right: { kind: "field", name: "right" } };
 }

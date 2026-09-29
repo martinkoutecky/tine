@@ -446,45 +446,61 @@ function evalMember(object: Ast, name: string, args: readonly Ast[] | null, ctx:
   return handler(target, evaluatedArgs, ctx);
 }
 
+/** I-22 (master b61bb9d25303): total evaluation nesting, counting every
+ *  formula a formula references. Malformed or hostile imported Markdown could
+ *  chain 128 references to formulas nested 1024 deep (the parser's own cap),
+ *  overflow the JS stack and throw out of rendering; past this bound the cell
+ *  shows an error value instead. It admits the deepest formula the parser
+ *  accepts, referenced from another; the iterative left spine keeps long sums
+ *  from counting. */
+export const MAX_FORMULA_EVAL_DEPTH = 1280;
+let evalDepth = 0;
+
 function evalAst(ast: Ast, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
-  switch (ast.kind) {
-    case "literal":
-      if (typeof ast.value === "string") return textValue(ast.value);
-      if (typeof ast.value === "number") return numberValue(ast.value);
-      if (typeof ast.value === "boolean") return booleanValue(ast.value);
-      return nullValue();
-    case "field":
-      return evalField(ast.name, ctx);
-    case "formulaRef":
-      return evalFormulaRef(ast.name, ctx, visited);
-    case "unary":
-      return evalUnary(ast.op, ast.expr, ctx, visited);
-    case "binary":
-      // Binary operators are left-associative. Walk the left spine iteratively:
-      // a normal 5000-cell sum must not consume 5000 JS stack frames.
-      {
-        const spine: Extract<Ast, { kind: "binary" }>[] = [];
-        let cursor: Ast = ast;
-        while (cursor.kind === "binary") {
-          spine.push(cursor);
-          cursor = cursor.left;
+  if (evalDepth >= MAX_FORMULA_EVAL_DEPTH) return errorValue(`Formula depth exceeds ${MAX_FORMULA_EVAL_DEPTH}`);
+  evalDepth++;
+  try {
+    switch (ast.kind) {
+      case "literal":
+        if (typeof ast.value === "string") return textValue(ast.value);
+        if (typeof ast.value === "number") return numberValue(ast.value);
+        if (typeof ast.value === "boolean") return booleanValue(ast.value);
+        return nullValue();
+      case "field":
+        return evalField(ast.name, ctx);
+      case "formulaRef":
+        return evalFormulaRef(ast.name, ctx, visited);
+      case "unary":
+        return evalUnary(ast.op, ast.expr, ctx, visited);
+      case "binary":
+        // Binary operators are left-associative. Walk the left spine iteratively:
+        // a normal 5000-cell sum must not consume 5000 JS stack frames.
+        {
+          const spine: Extract<Ast, { kind: "binary" }>[] = [];
+          let cursor: Ast = ast;
+          while (cursor.kind === "binary") {
+            spine.push(cursor);
+            cursor = cursor.left;
+          }
+          let value = evalAst(cursor, ctx, visited);
+          for (let i = spine.length - 1; i >= 0; i--) {
+            value = evalBinary(spine[i].op, value, spine[i].right, ctx, visited);
+          }
+          return value;
         }
-        let value = evalAst(cursor, ctx, visited);
-        for (let i = spine.length - 1; i >= 0; i--) {
-          value = evalBinary(spine[i].op, value, spine[i].right, ctx, visited);
-        }
-        return value;
-      }
-    case "call":
-      return evalCall(ast.name, ast.args, ctx, visited);
-    case "member":
-      return evalMember(ast.object, ast.name, ast.args, ctx, visited);
+      case "call":
+        return evalCall(ast.name, ast.args, ctx, visited);
+      case "member":
+        return evalMember(ast.object, ast.name, ast.args, ctx, visited);
+    }
+  } finally {
+    evalDepth--;
   }
 }
 
 /** Evaluate one formula AST. Cost: O(AST nodes plus referenced formulas);
  * long left-associative chains use an iterative walk, while excessive formula
- * reference nesting returns a FormulaErrorValue. Callers need no stack budget. */
+ * or reference nesting returns a FormulaErrorValue. Callers need no stack budget. */
 export function evaluate(ast: Ast, ctx: FormulaEvalContext): FormulaValue {
   return evalAst(ast, ctx, []);
 }

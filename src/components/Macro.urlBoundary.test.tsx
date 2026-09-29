@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { TweetMacro, VideoMacro } from "./Macro";
+import { backend } from "../backend";
 
 function mount(node: () => JSX.Element) {
   const root = document.createElement("div");
@@ -9,7 +10,7 @@ function mount(node: () => JSX.Element) {
   return { root, dispose: render(node, root) };
 }
 
-afterEach(() => { document.body.innerHTML = ""; });
+afterEach(() => { vi.restoreAllMocks(); document.body.innerHTML = ""; });
 
 describe("graph macro URL boundary", () => {
   it.each([
@@ -29,6 +30,19 @@ describe("graph macro URL boundary", () => {
     try {
       expect([...root.querySelectorAll("a")].map((anchor) => anchor.getAttribute("href")))
         .toEqual(["https://example.com/watch", "http://example.com/post"]);
+    } finally { dispose(); }
+  });
+
+  it("I-22: a macro link opens through the native opener, never by navigating the WebView", () => {
+    const openExternal = vi.spyOn(backend(), "openExternal").mockResolvedValue();
+    const { root, dispose } = mount(() => <><VideoMacro body="video https://example.com/watch" /><TweetMacro body="tweet http://example.com/post" /></>);
+    try {
+      for (const anchor of root.querySelectorAll("a")) {
+        const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+        anchor.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+      }
+      expect(openExternal.mock.calls).toEqual([["https://example.com/watch"], ["http://example.com/post"]]);
     } finally { dispose(); }
   });
 });

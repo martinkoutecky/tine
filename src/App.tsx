@@ -502,7 +502,7 @@ export function PaneEdgeHighlights(): JSX.Element {
 /** Read the platform and install click delegation on iOS/Android while owner
  * is current; desktop or retired ownership returns inert cleanup. Clicks on
  * http, https and mailto anchors are intercepted and sent to the native
- * external opener. The opener is fire-and-forget; its failure does not reject
+ * external opener; any other explicit scheme only loses its default navigation. The opener is fire-and-forget; its failure does not reject
  * installation. Platform-read failure rejects. Click work follows DOM
  * ancestor depth; cleanup removes the listener. */
 export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen()): Promise<() => void> {
@@ -514,9 +514,13 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
     const el = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
     const a = el?.closest?.("a[href]") as HTMLAnchorElement | null;
     const href = a?.getAttribute("href")?.trim() ?? "";
-    if (!a || !/^(https?:\/\/|mailto:)/i.test(href)) return;
-
+    const scheme = a ? /^([a-z][a-z0-9+.-]*):/i.exec(href)?.[1]?.toLowerCase() : undefined;
+    if (!a || !scheme) return; // graph-internal relative/hash navigation
+    // I-22 (master b61bb9d25303): an anchor in shared or imported content with
+    // any other explicit scheme (intent:, javascript:, tel:, …) must not
+    // navigate the WebView; its own handler (e.g. a file: asset link) still runs.
     e.preventDefault();
+    if (scheme !== "http" && scheme !== "https" && scheme !== "mailto") return;
     e.stopPropagation();
     void backend().openExternal(a.href);
   };

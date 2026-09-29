@@ -32,6 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Hostile content cannot crash a table formula or navigate the app away** (I-22): formulas that nest past 1280 levels through references show an error in the cell instead of overflowing the stack, video and tweet macro links open in the system browser, and on Android and iOS a link with any other scheme (for example `intent:` or `javascript:`) no longer navigates the app.
 - **A save that fails on the disk now says which step failed** (GH #538, #590): the message names the platform call (for example the no-replace rename, or syncing the temporary file) and its OS error number, so a report can be acted on. Diagnosis only; it does not make such a save succeed.
 - **The vendored parser WASM matches a clean source rebuild again** (GH #392), so F-Droid's from-source build reproduces the shipped parser; CI now rebuilds it and fails on any difference.
 - **Dragging a block embed by its bullet moves the embed itself** (GH #514), not the source block it shows. Rows nested inside the embed still drag as the source's own outline.
