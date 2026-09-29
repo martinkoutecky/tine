@@ -58,6 +58,14 @@ function touch(key: string, entry: CacheEntry) {
   cache.set(key, entry);
 }
 
+/** A failed evicted read has no URL to revoke; failed revocation cannot alter
+ * graph content and browser teardown reclaims the URL. Cost O(1). */
+function ignoreEvictedAssetCleanupFailure(_error: unknown): void {}
+
+function revokeEvictedUrl(promise: Promise<string>): void {
+  void promise.then((url) => { if (url) URL.revokeObjectURL(url); }).catch(ignoreEvictedAssetCleanupFailure);
+}
+
 function evictEntry(key: string, entry: CacheEntry, reusable = true) {
   if (cache.get(key) !== entry) return;
   cache.delete(key);
@@ -66,7 +74,7 @@ function evictEntry(key: string, entry: CacheEntry, reusable = true) {
   if (entry.leases > 0 && reusable) {
     liveEntries.set(key, entry);
   } else if (entry.leases === 0) {
-    void entry.promise.then((url) => url && URL.revokeObjectURL(url)).catch(() => {});
+    revokeEvictedUrl(entry.promise);
   }
 }
 
@@ -127,7 +135,7 @@ async function acquire(entry: CacheEntry): Promise<BlobLease> {
       for (const [key, candidate] of liveEntries) {
         if (candidate === entry) liveEntries.delete(key);
       }
-      void entry.promise.then((url) => url && URL.revokeObjectURL(url)).catch(() => {});
+      revokeEvictedUrl(entry.promise);
     }
   };
   const url = await entry.promise;
@@ -209,7 +217,7 @@ export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
     liveEntries.delete(rel);
     livePrior.evicted = true;
     if (livePrior.leases === 0) {
-      void livePrior.promise.then((old) => old && URL.revokeObjectURL(old)).catch(() => {});
+      revokeEvictedUrl(livePrior.promise);
     }
   }
   const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mimeFromExt(rel) }));
@@ -261,7 +269,7 @@ export function invalidateAsset(rel: string): void {
     liveEntries.delete(rel);
     live.evicted = true;
     if (live.leases === 0) {
-      void live.promise.then((url) => url && URL.revokeObjectURL(url)).catch(() => {});
+      revokeEvictedUrl(live.promise);
     }
   }
 }

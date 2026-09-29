@@ -310,6 +310,9 @@ mod query_guide_tests {
             "the queries page is in the Guide manifest"
         );
         assert!(include_str!("templates/guide.md").contains("[[Features/Queries]]"));
+        assert!(queries.contains("## Publish a query"));
+        assert!(queries.contains("whole owner page"));
+        assert!(queries.contains("Include all pages"));
     }
 
     /// og 14 Q4a: the query block's sentence, sheet, text pane, crossing

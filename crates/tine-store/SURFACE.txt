@@ -53,7 +53,10 @@ struct transaction::RenameMap
 struct transaction::Rollback
 struct transaction::Transaction
 use crate::transaction::{Content,IoError,Refusal,RenameMap,Rollback,StepResult,Transaction,TxOutcome,Why,}
-use crate::publish::{PublishFailed,PublishReceipt,SiteWriter}
+fn publish::publication_assets
+fn publish::publication_block_ref_counts
+fn publish::publish_site_external
+use crate::publish::{publication_assets,publication_block_ref_counts,publish_site_external,PublishFailed,PublishReceipt,SiteWriter,}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
 enum store::Budget
 enum store::FacetPolicy

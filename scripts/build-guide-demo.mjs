@@ -12,10 +12,18 @@ const check = process.argv.includes("--check");
 const temp = check ? fs.mkdtempSync(path.join(os.tmpdir(), "tine-guide-demo-")) : null;
 const output = check ? path.join(temp, "demo") : checkedIn;
 
+// The checked-in public demo is a reproducible artifact, independent of the
+// local build clock and the commit which happens to run this check.
+const guideBuildEnv = { ...process.env, SOURCE_DATE_EPOCH: "1790640000", TINE_BUILD_COMMIT: "" };
+const frontend = spawnSync("npx", ["--no-install", "vite", "build"],
+  { cwd: root, stdio: "inherit", env: guideBuildEnv });
+if (frontend.status !== 0) process.exit(frontend.status ?? 1);
+if (!check) fs.rmSync(output, { recursive: true, force: true });
+
 const built = spawnSync(
   "cargo",
   ["run", "--quiet", "-p", "tine-store", "--example", "build-demo-site", "--", output],
-  { cwd: root, stdio: "inherit" },
+  { cwd: root, stdio: "inherit", env: { ...guideBuildEnv, CARGO_INCREMENTAL: "0" } },
 );
 if (built.status !== 0) process.exit(built.status ?? 1);
 

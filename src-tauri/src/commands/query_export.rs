@@ -1,0 +1,93 @@
+//! Thin IPC for reviewed query and whole-graph live export. Heavy work runs on
+//! the blocking pool; a graph binding is checked before an export starts.
+
+use crate::state::{slot_for_context, GraphContext};
+use std::path::PathBuf;
+use tauri::Manager;
+use tine_graph_features::publish_query::{
+    self, ExportReceipt, QueryExportPlan, QueryExportRequest,
+};
+
+fn embedded_bundle(app: &tauri::AppHandle) -> Vec<(String, Vec<u8>)> {
+    let resolver = app.asset_resolver();
+    let mut files: Vec<_> = resolver
+        .iter()
+        .map(|(path, _)| path.into_owned())
+        .filter(|path| {
+            let name = path.trim_start_matches('/');
+            name == "index.html" || (name.starts_with("assets/") && !name.contains(".."))
+        })
+        .filter_map(|path| {
+            resolver
+                .get(path.clone())
+                .map(|asset| (path.trim_start_matches('/').to_owned(), asset.bytes))
+        })
+        .collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files
+}
+
+/// Resolve a query's owner pages without writing. Cost O(graph query plus
+/// selected source bytes); errors are surfaced as a refusal in the dialog.
+#[tauri::command]
+pub(crate) async fn publish_query_plan(
+    request: QueryExportRequest,
+    state: GraphContext<'_>,
+) -> Result<QueryExportPlan, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        publish_query::plan_query(&slot.store, &request).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Publish a reviewed query into a fresh leaf of a user-selected external
+/// folder. The source fingerprint is checked again before any output write.
+#[tauri::command]
+pub(crate) async fn publish_query(
+    request: QueryExportRequest,
+    fingerprint: String,
+    destination: String,
+    state: GraphContext<'_>,
+) -> Result<ExportReceipt, String> {
+    let slot = slot_for_context(&state)?;
+    let bundle = embedded_bundle(state.window.app_handle());
+    tauri::async_runtime::spawn_blocking(move || {
+        publish_query::publish_query(
+            &slot.store,
+            &request,
+            &fingerprint,
+            &PathBuf::from(destination),
+            &bundle,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Publish the public graph, or explicitly all pages, as a read-only browser
+/// app with static HTML fallback. Writes only to a user-selected destination.
+#[tauri::command]
+pub(crate) async fn publish_live(
+    destination: String,
+    name: String,
+    all_pages: bool,
+    state: GraphContext<'_>,
+) -> Result<ExportReceipt, String> {
+    let slot = slot_for_context(&state)?;
+    let bundle = embedded_bundle(state.window.app_handle());
+    tauri::async_runtime::spawn_blocking(move || {
+        publish_query::publish_live(
+            &slot.store,
+            &PathBuf::from(destination),
+            &name,
+            all_pages,
+            &bundle,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

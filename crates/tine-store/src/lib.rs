@@ -99,7 +99,10 @@ mod test_config_client;
 mod test_fixture_io;
 pub mod transaction;
 mod watch;
-pub use publish::{PublishFailed, PublishReceipt, SiteWriter};
+pub use publish::{
+    publication_assets, publication_block_ref_counts, publish_site_external, PublishFailed,
+    PublishReceipt, SiteWriter,
+};
 pub use restore::{RestoreFailed, RestoreFile, RestoreReport};
 pub use store::{
     Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, FacetPolicy, FileEntry, FileId,

@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { AboutTab } from "./AboutTab";
+import { setToasts, toasts } from "../toasts";
 
-const { isTauriMock, platformKindMock } = vi.hoisted(() => ({
+const { isTauriMock, platformKindMock, openExternalMock } = vi.hoisted(() => ({
   isTauriMock: vi.fn(() => false),
   platformKindMock: vi.fn(async (): Promise<"desktop" | "android" | "ios"> => "desktop"),
+  openExternalMock: vi.fn(async () => {}),
 }));
 
 vi.mock("../backend", () => ({
   isTauri: isTauriMock,
-  backend: () => ({ openExternal: async () => {} }),
+  backend: () => ({ openExternal: openExternalMock }),
 }));
 vi.mock("../platform", () => ({ platformKind: platformKindMock }));
 vi.mock("../update", () => ({
@@ -29,6 +31,8 @@ describe("AboutTab", () => {
     vi.clearAllMocks();
     isTauriMock.mockReturnValue(false);
     platformKindMock.mockResolvedValue("desktop");
+    openExternalMock.mockResolvedValue(undefined);
+    setToasts([]);
   });
 
   it("renders the role-based credits and project links", () => {
@@ -90,6 +94,22 @@ describe("AboutTab", () => {
       expect(host.textContent).not.toContain("distribution channel");
     } finally {
       dispose();
+    }
+  });
+
+  it("reports an external-link failure with fixed text", async () => {
+    openExternalMock.mockRejectedValue(new Error("private path /graph/secret"));
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <AboutTab />, host);
+    try {
+      (host.querySelector(".about-link") as HTMLButtonElement).click();
+      await flush();
+      expect(toasts().map((toast) => toast.message)).toContain("Couldn't open the link.");
+      expect(toasts().map((toast) => toast.message).join(" ")).not.toContain("/graph/secret");
+    } finally {
+      dispose();
+      host.remove();
     }
   });
 });

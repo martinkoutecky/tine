@@ -50,9 +50,10 @@ export function sharedQueryResult<T extends object>(
     return value;
   });
   inFlight.set(cacheKey, promise);
-  void promise.finally(() => {
+  const clearFlight = () => {
     if (inFlight.get(cacheKey) === promise) inFlight.delete(cacheKey);
-  }).catch(() => {});
+  };
+  void promise.then(clearFlight, clearFlight);
   return promise;
 }
 

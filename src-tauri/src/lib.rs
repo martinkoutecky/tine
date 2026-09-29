@@ -7,6 +7,8 @@ mod android_media;
 mod android_system_bars;
 mod app_identity;
 mod backup;
+#[cfg(desktop)]
+mod cli;
 mod commands;
 mod debug;
 mod device_io;
@@ -22,6 +24,8 @@ mod native_mouse_history;
 mod pdf_crop_rollback;
 mod platform;
 mod plugins;
+#[path = "commands/query_export.rs"]
+mod query_export;
 #[path = "commands/query_ir.rs"]
 mod query_ir;
 mod settings;
@@ -64,6 +68,7 @@ use plugins::{
     install_plugin, list_installed_plugins, load_plugin_registry_cache, read_plugin_entry,
     set_plugin_enabled, store_plugin_registry_cache, uninstall_plugin, verify_plugin_registry,
 };
+use query_export::{publish_live, publish_query, publish_query_plan};
 use query_ir::{
     query_explain_empty, query_og_expressible, query_parse, query_print, query_registry, query_run,
 };
@@ -400,6 +405,13 @@ mod multi_window_tests {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Dispatch a desktop command before GUI initialization. A returned exit code
+/// means the command already printed its outcome and no app should start.
+#[cfg(desktop)]
+pub fn cli_dispatch() -> Option<i32> {
+    cli::dispatch()
+}
+
 pub fn run() {
     #[cfg(target_os = "linux")]
     init_xlib_threads();
@@ -532,7 +544,7 @@ pub fn run() {
         // already-running instance with the new argv. `--capture` pops the
         // capture window; a plain re-launch just surfaces the main window.
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            if argv.iter().any(|a| a == "--capture") {
+            if argv.iter().any(|a| a == "--capture" || a == "capture") {
                 show_capture(app);
             } else if let Some(path) = forwarded_graph_path(&argv, &cwd) {
                 // WebView2 deadlocks if a WebviewWindow is built directly from
@@ -746,7 +758,7 @@ pub fn run() {
             // the capture window once we're up (the main window loads too).
             // Desktop-only: the capture window and `--capture` argv don't exist on mobile.
             #[cfg(desktop)]
-            if std::env::args().any(|a| a == "--capture") {
+            if std::env::args().any(|a| a == "--capture" || a == "capture") {
                 show_capture(app.handle());
             }
             Ok(())
@@ -786,6 +798,9 @@ pub fn run() {
             delete_page,
             rename_page,
             publish_html,
+            publish_query_plan,
+            publish_query,
+            publish_live,
             page_print_html,
             export_query_subtrees,
             run_graph_search,

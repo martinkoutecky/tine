@@ -7,7 +7,7 @@ The static landing page for Tine, served by **GitHub Pages** from this folder.
   works both at `https://<user>.github.io/tine/` and at a custom apex domain).
 - `img/` — screenshots, copied from `docs/img/` (the same curated set the README uses).
 - `demo/` — a **demo**: the onboarding demo graph published with Tine's *own*
-  HTML export (so the demo dogfoods the publish feature). Generated, not hand-edited —
+  live export and static fallback. Generated, not hand-edited —
   see "Regenerating the demo" below. Linked from the nav/hero as a relative `demo/`
   path so it works on either Pages domain.
 - `favicon.svg` — the app-icon mark.
@@ -42,18 +42,17 @@ by integration" failure), so this toggle must be flipped by hand once.
 ## Regenerating the demo
 
 `website/demo/` is built from the onboarding demo templates
-(`crates/tine-core/src/templates/`) via Tine's HTML export. Re-run after changing
-those templates:
+(`crates/tine-core/src/templates/`) via Tine's live exporter. Re-run after changing
+those templates or the frontend:
 
 ```sh
-source scripts/env.sh
-cargo run -q -p tine-store --example build-demo-site -- website/demo
+npm run docs:build
 ```
 
-The example scaffolds the demo graph in a temp dir, publishes **all** its pages
-(forcing all-pages-public in memory only — the shipped onboarding config stays
-private-by-default), rewrites asset paths to be self-contained, and writes the site
-into `website/demo/` (overwriting it).
+The build compiles the frontend, scaffolds a temporary demo graph, explicitly
+selects **all** its pages for this export, and writes a read-only browser app with
+static HTML fallback into `website/demo/`. The onboarding config stays
+private-by-default. `npm run docs:check` verifies the checked-in output.
 
 ## Regenerating screenshots
 

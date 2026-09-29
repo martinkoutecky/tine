@@ -5,13 +5,17 @@
 // startup + did-the-frontend-boot + any JS error) in one file the user sends back.
 
 import { backend } from "./backend";
-import { pushToast } from "./toasts";
+import { pushToast, pushToastUnique } from "./toasts";
 
 let enabled = false;
 
-/** Append a line to the backend debug log (no-op unless debug mode is on). */
+/** Append to the opt-in backend log. Cost O(line length); when disabled it is a
+ * no-op, and a write failure disables further attempts and shows one toast. */
 export function dbg(line: string): void {
-  if (enabled) void backend().debugLog(line).catch(() => {});
+  if (enabled) void backend().debugLog(line).catch(() => {
+    enabled = false;
+    pushToastUnique("Debug log unavailable.", "error");
+  });
 }
 
 /** Probe debug mode, and if on: forward errors, log that the frontend booted, and

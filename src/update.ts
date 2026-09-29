@@ -20,6 +20,7 @@
 import { isTauri, backend } from "./backend";
 import { platformKind } from "./platform";
 import { pushToast, dismissToast } from "./toasts";
+import { reportUiFailure } from "./uiFailure";
 
 const REPO = "martinkoutecky/tine";
 const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
@@ -58,7 +59,7 @@ async function updateMode(): Promise<UpdateMode> {
 
 /** Open the GitHub releases page in the system browser (the manual fallback). */
 function openReleases(): void {
-  void backend().openExternal(RELEASES_PAGE).catch(() => {});
+  void backend().openExternal(RELEASES_PAGE).catch((error) => reportUiFailure("external-link", error));
 }
 
 /** The toast's "Download" action. Win/Linux packaged app → run the Tauri updater

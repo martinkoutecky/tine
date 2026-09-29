@@ -223,7 +223,7 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
   });
 
   it("renders a bounded bridge error instead of an empty panel", async () => {
-    vi.spyOn(backend(), "getUnlinkedRefs").mockRejectedValue(new Error("result-too-large: 20001 matches"));
+    vi.spyOn(backend(), "getUnlinkedRefs").mockRejectedValue(new Error("result-too-large"));
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <UnlinkedReferences name="Target" />, root);
@@ -238,7 +238,7 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
   });
 
   it("does not mislabel an ordinary backend failure as a bounded bridge error", async () => {
-    vi.spyOn(backend(), "getUnlinkedRefs").mockRejectedValue(new Error("database unavailable"));
+    vi.spyOn(backend(), "getUnlinkedRefs").mockRejectedValue(new Error("result-too-large: prose from another failure"));
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <UnlinkedReferences name="Target" />, root);

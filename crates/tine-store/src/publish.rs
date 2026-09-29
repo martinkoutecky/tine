@@ -182,6 +182,162 @@ pub struct PublishReceipt {
 }
 
 impl Store {
+    /// Fold the existing per-document block-reference counter over exactly a
+    /// publication's selected pages. Cost O(selected blocks); no graph bytes
+    /// are read or written. Callers need no cache or index state.
+    pub(crate) fn publication_block_ref_counts(
+        &self,
+        corpus: &tine_core::Corpus,
+    ) -> std::collections::HashMap<String, usize> {
+        let mut counts = std::collections::HashMap::new();
+        for page in &corpus.pages {
+            for (id, count) in crate::model::document_block_ref_counts(&page.document) {
+                *counts.entry(id).or_default() += count;
+            }
+        }
+        counts
+    }
+
+    /// Read assets referenced by exactly the supplied parsed source pages for
+    /// an external publication. Candidate names use the store's one asset-ref
+    /// scanner and file-id validator. Missing files are omitted; malformed or
+    /// oversized live assets refuse. Cost O(selected text + asset bytes), with
+    /// a cumulative 32 MiB byte ceiling. No graph content is written.
+    pub(crate) fn publication_assets(
+        &self,
+        corpus: &tine_core::Corpus,
+    ) -> Result<Vec<(String, Vec<u8>)>, crate::StoreError> {
+        let mut names = std::collections::HashSet::new();
+        for page in &corpus.pages {
+            if let Some(pre) = &page.document.pre_block {
+                crate::model::collect_asset_refs(pre, &mut names);
+            }
+            for block in &page.document.roots {
+                crate::model::collect_block_asset_refs(block, &mut names);
+            }
+        }
+        // The orphan scanner keeps raw and decoded URL spellings. A browser
+        // decodes the URL, so copy only the decoded name when both were seen.
+        let encoded: Vec<_> = names
+            .iter()
+            .filter(|name| name.contains('%'))
+            .cloned()
+            .collect();
+        for name in encoded {
+            if crate::model::percent_decode(&name) != name {
+                names.remove(&name);
+            }
+        }
+        let mut names: Vec<_> = names.into_iter().collect();
+        names.sort();
+        let mut out = Vec::new();
+        let mut remaining = 32 * 1024 * 1024u64;
+        for name in names {
+            let id = self.file_id(crate::Area::Assets, &name)?;
+            match self.read(&id, Some(remaining)) {
+                Ok((bytes, _)) => {
+                    remaining = remaining.saturating_sub(bytes.len() as u64);
+                    out.push((format!("assets/{name}"), bytes));
+                }
+                Err(crate::StoreError::NotFound) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(out)
+    }
+
+    /// Publish a create-only site under a directory explicitly picked by the
+    /// user. The leaf must be a portable name. The parent must exist outside
+    /// the graph; even a symlink into the graph is refused. Files are fsynced
+    /// in an owned stage and the stage is moved without clobbering an existing
+    /// leaf. A failure after the rename can leave a complete but unsynced site;
+    /// inspect the named destination before retrying. Cost O(emitted bytes).
+    pub(crate) fn publish_site_external(
+        &self,
+        parent: &Path,
+        leaf: &str,
+        emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
+    ) -> Result<PublishReceipt, PublishFailed> {
+        let failed = |error: io::Error| PublishFailed {
+            cause: error.into(),
+            previous_kept: None,
+        };
+        if leaf.is_empty()
+            || leaf.len() > 80
+            || !leaf
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            || leaf.starts_with('-')
+            || leaf.ends_with('-')
+        {
+            return Err(failed(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid export folder",
+            )));
+        }
+        let parent = fs::canonicalize(parent).map_err(failed)?;
+        let graph_root = fs::canonicalize(&self.graph.root).map_err(failed)?;
+        if parent.starts_with(&graph_root) {
+            return Err(failed(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "export destination is inside the graph",
+            )));
+        }
+        let _writer = self.writer.lock().unwrap();
+        if self.is_closed() {
+            return Err(failed(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "store closed",
+            )));
+        }
+        let stage = reserve_publish_stage_at(&parent).map_err(failed)?;
+        let _cleanup = StageCleanup::new(&stage).map_err(failed)?;
+        let mut writer = SiteWriter { stage, files: 0 };
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| emit(&mut writer))) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                return Err(PublishFailed {
+                    cause: error,
+                    previous_kept: None,
+                })
+            }
+            Err(_) => return Err(failed(io::Error::other("export callback panicked"))),
+        }
+        let files = writer.files;
+        let out = parent.join(leaf);
+        let PublishStage {
+            path,
+            root,
+            dir,
+            identity,
+        } = writer.stage;
+        crate::directory_durability::sync_directory_entry(&path).map_err(failed)?;
+        drop(dir);
+        match root.symlink_metadata(leaf) {
+            Ok(_) => {
+                return Err(failed(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "export folder already exists",
+                )))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(failed(error)),
+        }
+        crate::model::move_file_noreplace(&path, &out).map_err(failed)?;
+        if !identity_from_path(&out).is_ok_and(|current| current == identity) {
+            return Err(failed(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "export stage changed during publication",
+            )));
+        }
+        crate::directory_durability::sync_directory_entry(&parent).map_err(failed)?;
+        Ok(PublishReceipt {
+            site: out,
+            files,
+            previous_kept: None,
+        })
+    }
+
     /// Export a static site to `<graph root>/publish`. Each emitted file is
     /// fsynced, then the previous site is retired and the new site is moved
     /// into place without replacing a concurrent winner. A concurrent
@@ -251,6 +407,36 @@ impl Store {
     }
 }
 
+/// Count projected block references over exactly the selected publication
+/// pages. Cost O(selected blocks); source pages are not changed.
+pub fn publication_block_ref_counts(
+    store: &Store,
+    corpus: &tine_core::Corpus,
+) -> std::collections::HashMap<String, usize> {
+    store.publication_block_ref_counts(corpus)
+}
+
+/// Read selected pages' referenced assets through Store's validated asset
+/// reader. Missing assets are omitted; the total read is capped at 32 MiB.
+pub fn publication_assets(
+    store: &Store,
+    corpus: &tine_core::Corpus,
+) -> Result<Vec<(String, Vec<u8>)>, crate::StoreError> {
+    store.publication_assets(corpus)
+}
+
+/// Publish a fresh site leaf below an existing user-picked OS directory. The
+/// parent must be outside the graph. Store stages and fsyncs files, then moves
+/// the stage create-only; a collision or changed stage refuses publication.
+pub fn publish_site_external(
+    store: &Store,
+    parent: &std::ffi::OsStr,
+    leaf: &str,
+    emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
+) -> Result<PublishReceipt, PublishFailed> {
+    store.publish_site_external(Path::new(parent), leaf, emit)
+}
+
 struct PublishRecovery {
     path: PathBuf,
     dir: Dir,
@@ -275,17 +461,20 @@ fn dir_identity(dir: &Dir, _path: &Path) -> io::Result<FileIdentity> {
 }
 
 fn reserve_publish_stage(graph: &Graph) -> io::Result<PublishStage> {
+    reserve_publish_stage_at(&graph.root)
+}
+
+fn reserve_publish_stage_at(parent: &Path) -> io::Result<PublishStage> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
-    let root = Dir::open_ambient_dir(&graph.root, ambient_authority())?;
+    let root = Dir::open_ambient_dir(parent, ambient_authority())?;
     for _ in 0..128 {
         let name = format!(
             ".tine-publish-stage-{}-{}",
             std::process::id(),
             SEQ.fetch_add(1, Ordering::Relaxed)
         );
-        let path = graph.root.join(&name);
-        graph.ensure_write_target(&path)?;
+        let path = parent.join(&name);
         match root.create_dir(&name) {
             Ok(()) => {
                 let dir = root.open_dir(&name)?;
@@ -581,6 +770,36 @@ mod tests {
         fs::create_dir_all(&base).unwrap();
         fs::create_dir_all(&outside).unwrap();
         (base, outside)
+    }
+
+    #[test]
+    fn external_publication_is_atomic_and_never_enters_the_graph() {
+        let (base, outside) = roots("external-destination");
+        let store = Store::open(&base, Default::default()).unwrap().0;
+        let first = store
+            .publish_site_external(&outside, "selected", &mut |writer| {
+                writer.write("index.html", b"first")
+            })
+            .unwrap();
+        assert_eq!(first.site, outside.join("selected"));
+        assert_eq!(fs::read(first.site.join("index.html")).unwrap(), b"first");
+        assert!(!base.join("selected").exists());
+        assert!(store
+            .publish_site_external(&outside, "selected", &mut |writer| {
+                writer.write("index.html", b"second")
+            })
+            .is_err());
+        assert_eq!(
+            fs::read(outside.join("selected/index.html")).unwrap(),
+            b"first"
+        );
+        assert!(store
+            .publish_site_external(&base, "inside", &mut |writer| {
+                writer.write("index.html", b"leak")
+            })
+            .is_err());
+        assert!(!base.join("inside").exists());
+        store.close();
     }
 
     #[test]

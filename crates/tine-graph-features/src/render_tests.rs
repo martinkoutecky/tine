@@ -1,4 +1,5 @@
 use super::*;
+use crate::render_query_cache::{QUERY_CACHE_MAX_BYTES, QUERY_CACHE_MAX_ENTRIES};
 use std::fs;
 
 fn no_refs() -> RefIndex {
@@ -76,9 +77,8 @@ mod tests {
             pages: None,
         };
         for _ in 0..5 {
-            assert!(
-                render_query(&graph, "(task TODO)", &ctx, 0).contains("repeated query memo target")
-            );
+            assert!(render_query(&graph, "(task TODO)", false, &ctx, 0)
+                .contains("repeated query memo target"));
         }
         assert_eq!(cache.borrow().entries.len(), 1);
         let _ = fs::remove_dir_all(&dir);
@@ -231,14 +231,14 @@ mod tests {
         };
 
         let oversized = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
-        assert!(render_query(&graph, &oversized, &ctx, 0).contains("publication limit"));
+        assert!(render_query(&graph, &oversized, false, &ctx, 0).contains("publication limit"));
         let nested = format!("{}(task TODO){}", "(and ".repeat(1_000), ")".repeat(1_000));
-        assert!(render_query(&graph, &nested, &ctx, 0).contains("nesting is too deep"));
+        assert!(render_query(&graph, &nested, false, &ctx, 0).contains("nesting is too deep"));
         assert!(cache.borrow().entries.is_empty());
 
         for index in 0..(QUERY_CACHE_MAX_ENTRIES + 20) {
             let source = format!("(and (task TODO) (content \"memo-{index}\"))");
-            let _ = render_query(&graph, &source, &ctx, 0);
+            let _ = render_query(&graph, &source, false, &ctx, 0);
         }
         let cache = cache.borrow();
         assert_eq!(cache.entries.len(), QUERY_CACHE_MAX_ENTRIES);

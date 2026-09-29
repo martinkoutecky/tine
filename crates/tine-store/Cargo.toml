@@ -25,6 +25,7 @@ notify = "6"
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
+tempfile = "3"
 tine-graph-features = { path = "../tine-graph-features" }
 syn = { version = "2", features = ["full", "visit"] }
 quote = "1"

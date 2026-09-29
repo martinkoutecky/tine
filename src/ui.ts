@@ -458,6 +458,10 @@ export function agendaQuery(): string {
 
 // Block id of a "/Query" block whose QueryBuilder opens its add-filter picker once on mount.
 export const [queryBuilderAutoOpen, setQueryBuilderAutoOpen] = graphScopedSignal<string>();
+/** One graph-bound reviewed query export; a graph switch closes the dialog. */
+export const [queryExportRequest, setQueryExportRequest] = graphScopedSignal<import("./types").QueryPublicationRequest>();
+export function openQueryExport(request: import("./types").QueryPublicationRequest): void { setQueryExportRequest(request); }
+export function closeQueryExport(): void { setQueryExportRequest(null); }
 
 export type PropsPanelScope = { kind: "page"; name: string } | { kind: "block"; id: string };
 /** The one open properties panel (GH #164) or null; page OR block scope despite the name (`name` = exact store page name, `id` = in-memory

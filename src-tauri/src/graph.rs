@@ -38,7 +38,12 @@ pub(crate) fn resolve_root(path: &str) -> Option<String> {
             }
         }
     }
-    std::env::args().skip(1).find(|arg| !arg.starts_with('-'))
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("open") => args.get(1).cloned(),
+        Some("capture") => None,
+        _ => args.into_iter().find(|arg| !arg.starts_with('-')),
+    }
 }
 
 /// A remembered path is optional startup state: a moved or deleted graph

@@ -14,7 +14,9 @@ mod parsed_text;
 pub mod pdf;
 pub mod print;
 pub mod publish;
+pub mod publish_query;
 mod render;
+mod render_query_cache;
 pub mod search;
 pub mod sources;
 
