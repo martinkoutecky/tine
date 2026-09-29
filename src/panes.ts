@@ -19,7 +19,12 @@ import { setCellSel } from "./sheet/selection";
 import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
 import { journalTitle } from "./journal";
 import { isMobilePlatform } from "./nativeChrome";
-import { nearestPane, takeBlockSelectionForPaneReturn } from "./paneSelect";
+import {
+  nearestPane,
+  nearestPaneInDirection,
+  takeBlockSelectionForPaneReturn,
+  type PaneDirection,
+} from "./paneSelect";
 import { graphScopedSignal } from "./binding";
 
 export type LayoutNode =
@@ -67,7 +72,14 @@ function commitLayout(node: LayoutNode) {
 const [focusedPaneIdAccessor, writeFocusedPaneId] = createSignal("main");
 export const focusedPaneId = focusedPaneIdAccessor;
 
+/**
+ * The one focus-state boundary: records `paneId` as the focused pane, clearing
+ * block/cell selection when focus moves, and un-maximizes any other pane so the
+ * focused pane is always visible (history/session adapters call this directly).
+ * Does not validate that the pane exists or activate its route; see focusPane.
+ */
 export function setFocusedPaneId(paneId: string) {
+  if (maximizedPaneId() && maximizedPaneId() !== paneId) setMaximizedPaneId(null);
   if (focusedPaneId() !== paneId) {
     clearSelection();
     setCellSel(null);
@@ -334,7 +346,6 @@ export function closePane(paneId = focusedPaneId()): boolean {
 
 export function focusPane(paneId: string) {
   if (!layoutPaneIds().includes(paneId) || focusedPaneId() === paneId) return;
-  if (maximizedPaneId() && maximizedPaneId() !== paneId) setMaximizedPaneId(null);
   setFocusedPaneId(paneId);
   paneRouter(paneId).activateCurrentRoute();
 }
@@ -375,6 +386,30 @@ export function moveTabToPane(
 export function moveActiveTabToPane(sourcePaneId: string, targetPaneId: string): boolean {
   if (sourcePaneId === targetPaneId) return false;
   return moveTabToPane(sourcePaneId, paneRouter(sourcePaneId).activeId(), targetPaneId);
+}
+
+/**
+ * Directional "Move tab to pane" (GH #282). When a pane lies in `dir` from
+ * `sourcePaneId`, moves the source's active tab into it. With no neighbor the
+ * layout grows in that direction: a multi-tab source donates its active tab to
+ * the new pane; a one-tab source cannot be emptied (there is no empty-pane
+ * route), so the new pane opens as a mirror of the current tab and the original
+ * stays. Returns the pane that received the tab, or null when nothing changed
+ * (unknown source, a refused move, or a platform without split panes). O(panes).
+ */
+export function moveActiveTabInDirection(sourcePaneId: string, dir: PaneDirection): string | null {
+  if (!layoutPaneIds().includes(sourcePaneId)) return null;
+  const target = nearestPaneInDirection(layoutRoot(), sourcePaneId, dir);
+  if (target) return moveActiveTabToPane(sourcePaneId, target) ? target : null;
+  const side: "left" | "right" | "top" | "bottom" =
+    dir === "up" ? "top" : dir === "down" ? "bottom" : dir;
+  const source = paneRouter(sourcePaneId);
+  if (source.tabs().length > 1) {
+    return moveTabToSplitPane(sourcePaneId, source.activeId(), sourcePaneId, side);
+  }
+  return splitPane(sourcePaneId, side === "left" || side === "right" ? "row" : "col", {
+    position: side === "left" || side === "top" ? "before" : "after",
+  });
 }
 
 export function moveTabToSplitPane(
