@@ -379,6 +379,16 @@ pub fn resolve_sync_conflict(
             "winner and conflict are the same file",
         ));
     }
+    // A copy is merged only into the page it shadows. Scenario: sync-service
+    // delivery of a copy whose base page does not exist (or a stale caller
+    // pairing) must never merge its content into another page and trash it
+    // (C3 L01; storage-contract refusal table).
+    if sync_copy_winner(conf.as_str()).as_deref() != Some(win.as_str()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the conflict copy does not shadow this page; not merging",
+        ));
+    }
     let page = store.as_page(&win).ok_or_else(invalid_path)?;
     crate::retry_on_conflict("conflict files changed repeatedly during merge", || {
         let (mine, win_rev) = read_text(store, &win)?;

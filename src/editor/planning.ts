@@ -13,7 +13,7 @@
 // out before and reattached after (joinProps), so they stay at the very end.
 import { parseBody } from "../render/facets";
 import type { Format } from "../render/ast";
-import { transitionFence, type FenceState } from "./fences";
+import { literalBlockOfLine } from "./literalLines";
 
 const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*<[^>]+>\s*$/;
 
@@ -34,22 +34,16 @@ export function normalizePlanning(visible: string, format: Format): string {
   );
   if (!hasTs) return visible;
 
-  // Pull out standalone planning lines (fence-aware), keep everything else in order.
-  let fence: FenceState | null = null;
+  // Pull out standalone planning lines, keep everything else in order. A line of
+  // a code/src/example block is content, never a planning line; and when the
+  // first line opens such a block there is no title to anchor after, so nothing
+  // moves (inserting after line 0 would put the schedule INTO the code; C3 L14).
+  const literal = literalBlockOfLine(visible, format);
+  if (literal[0] !== -1) return visible;
   const planning: string[] = [];
   const kept: string[] = [];
-  for (const line of lines) {
-    const transition = transitionFence(fence, line);
-    if (transition.opens || transition.closes) {
-      fence = transition.next;
-      kept.push(line);
-      continue;
-    }
-    if (fence !== null) {
-      kept.push(line); // inside a code fence — content, never a planning line
-      continue;
-    }
-    if (PLANNING_LINE.test(line)) {
+  for (const [i, line] of lines.entries()) {
+    if (literal[i] === -1 && PLANNING_LINE.test(line)) {
       planning.push(line.trim());
       continue;
     }

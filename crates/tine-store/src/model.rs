@@ -2524,15 +2524,15 @@ impl Graph {
     /// shadow is loaded fresh by path on demand instead (#21). Twins (two date-stem
     /// files of the same day in different extensions) are deliberately NOT shadows —
     /// that case keeps its existing `has_twin`/dedup handling.
+    /// A configured-format file (`24-06-2026.md` under `dd-MM-yyyy`) is canonical,
+    /// never its own shadow (else no reconcile, stale reload, clobbering save; C3 L05).
     fn is_shadow_journal(&self, path: &Path, date: tine_core::date::JournalDate) -> bool {
-        let is_date_stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .is_some_and(|s| tine_core::date::JournalDate::from_file_stem(s).is_some());
-        if is_date_stem {
+        let format = self.current_journal_format();
+        let stem = path.file_stem().and_then(|s| s.to_str());
+        if stem.is_none_or(|s| format.is_canonical_stem(s)) {
             return false;
         }
-        let canon = self.current_journal_format().file_stem(date);
+        let canon = format.file_stem(date);
         let dir = self.journals_path();
         dir.join(format!("{canon}.md")).is_file() || dir.join(format!("{canon}.org")).is_file()
     }
@@ -2634,7 +2634,7 @@ impl Graph {
                 return;
             };
             // A date-stem file is canonical; otherwise try to parse its title.
-            let canonical = JournalDate::from_file_stem(stem).is_some();
+            let canonical = self.current_journal_format().is_canonical_stem(stem);
             let date = JournalDate::from_file_stem(stem)
                 .or_else(|| self.current_journal_format().parse(stem));
             if let Some(d) = date {

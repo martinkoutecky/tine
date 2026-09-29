@@ -15,7 +15,7 @@ import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
-import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format } from "./ast";
+import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format, Span } from "./ast";
 import type { PageKind } from "../types";
 import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
@@ -23,7 +23,8 @@ import { sanitizeRawHtml, rawHtmlLocalImages } from "./htmlSanitize";
 import { allowLocalFileImages } from "../localFileSettings";
 import { pageIcon } from "../pageIconBatch";
 import { typographic } from "./typography";
-import { coarseSpanAttrs, literalSpanAttrs, plainSpanAttrs, typographicPlainSpanAttrs, type SpanDomAttrs } from "./spans";
+import { coarseSpanAttrs, literalSpanAttrs, plainSpanAttrs, rebulletedSourceByteToRawByte, typographicPlainSpanAttrs, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
+import { literalBlockOfLine } from "../editor/literalLines";
 import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { AstBody } from "./body";
@@ -438,9 +439,10 @@ function renderLink(
 ): JSX.Element {
   const url = s.url;
   const spanAttrs = spanMode ? coarseSpanAttrs(s.span) : undefined;
+  const token: MediaToken = { full: s.full, metadata: s.metadata, span: spanMode ? s.span : undefined };
   if (url.type === "page_ref") {
     if (format === "org" && isOgOrgPageRefImageTarget(url.v)) {
-      return <AssetImage url={url.v} alt="" blockId={blockId} spanAttrs={spanAttrs} />;
+      return <AssetImage url={url.v} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
     }
     const alias = s.label && s.label.length ? renderInlines(s.label, blockId, spanMode, macroExpansion, format) : undefined;
     return <PageRef name={url.v} alias={alias} blockId={blockId} spanAttrs={spanAttrs} />;
@@ -457,8 +459,8 @@ function renderLink(
     if (!remotePdf && /\.pdf$/i.test(dest)) return <PdfAssetLink dest={dest} label={alt} spanAttrs={spanAttrs} />;
     const k = mediaKind(dest);
     if (k === "video" || k === "audio")
-      return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} spanAttrs={spanAttrs} />;
-    if (!remotePdf) return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} spanAttrs={spanAttrs} />;
+      return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
+    if (!remotePdf) return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
   if (!remotePdf && /\.pdf$/i.test(dest)) {
     const labelStr = s.label && s.label.length ? astText(s.label) : pdfFilenameFromDest(dest);
@@ -471,9 +473,9 @@ function renderLink(
   if (!s.image && /^https?:\/\//i.test(s.full.trimStart())) {
     const k = mediaKind(dest);
     if (k === "image")
-      return <AssetImage url={dest} alt="" blockId={blockId} spanAttrs={spanAttrs} />;
+      return <AssetImage url={dest} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
     if (k === "video" || k === "audio")
-      return <MediaEmbed url={dest} kind={k} alt="" blockId={blockId} spanAttrs={spanAttrs} />;
+      return <MediaEmbed url={dest} kind={k} alt="" blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
   const unsafeHref = /^(?:javascript|vbscript|data):/i.test(dest.replace(/[\u0000-\u0020]/g, ""));
   return (
@@ -719,32 +721,62 @@ function blockRefWidth(el: HTMLElement): number {
   return el.getBoundingClientRect().width;
 }
 
+/** The rendered media link a resize/trash edits: its exact source text (lsdoc
+ *  `full`, trailing `{…}` metadata included) and, when rendered from the
+ *  block's own text, its source span. */
+interface MediaToken {
+  full: string;
+  metadata?: string;
+  span?: Span;
+}
+
+// Where THIS token starts in the block's raw (C3 L16): at its source span when
+// the text there is exactly the token; otherwise only an occurrence that is the
+// ONLY one outside code. A duplicate earlier in the block, a lookalike inside a
+// code fence, a label with markup, or a render that is not of this raw never
+// redirects the edit to another token; null means "not found, edit nothing".
+function locateMediaToken(blockId: string, raw: string, token: MediaToken): number | null {
+  if (token.span) {
+    const at = utf8ByteToUtf16Offset(raw, rebulletedSourceByteToRawByte(raw, token.span[0]));
+    if (raw.startsWith(token.full, at)) return at;
+  }
+  const literal = literalBlockOfLine(raw, formatForBlock(blockId) ?? "md");
+  const hits: number[] = [];
+  for (let p = raw.indexOf(token.full); p !== -1; p = raw.indexOf(token.full, p + 1)) {
+    if (literal[raw.slice(0, p).split("\n").length - 1] === -1) hits.push(p);
+  }
+  return hits.length === 1 ? hits[0] : null;
+}
+
 // Persist a resized media width back into its block's raw text as the OG-native
-// `{:width "N%"}` brace. Works for images AND video/audio — all use the
-// `![alt](url)` form. We rewrite THIS token's trailing `{...}` only (matched by
-// its exact alt+url), so other text/media in the block are untouched; width is
-// stored as a percentage (Martin's choice — survives column width changes) and
-// as a quoted string so it stays valid EDN OG can also read.
-function writeMediaWidth(blockId: string, alt: string, url: string, pct: number) {
+// `{:width "N%"}` brace, on THIS token only (replacing its own `{…}`). Works for
+// images AND video/audio in the `![alt](url)` form; width is stored as a
+// percentage (Martin's choice — survives column width changes) and as a quoted
+// string so it stays valid EDN OG can also read.
+function writeMediaWidth(blockId: string, token: MediaToken | undefined, pct: number) {
   const node = docNode(blockId);
-  if (!node) return;
-  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`(!\\[${esc(alt)}\\]\\(${esc(url)}\\))(\\{[^}]*\\})?`);
-  const next = node.raw.replace(re, `$1{:width "${pct}%"}`);
+  if (!node || !token || !token.full.startsWith("![")) return;
+  const at = locateMediaToken(blockId, node.raw, token);
+  if (at === null) return;
+  const meta = token.metadata && token.full.endsWith(token.metadata) ? token.metadata.length : 0;
+  const base = token.full.slice(0, token.full.length - meta);
+  const next = node.raw.slice(0, at) + `${base}{:width "${pct}%"}` + node.raw.slice(at + token.full.length);
   if (next !== node.raw) setRaw(blockId, next);
 }
 
-// Remove THIS media token (`![alt](url){...}`) from its block's raw — the "trash"
-// affordance drops the reference (OG's delete-asset-of-block! also rewrites the
-// block, then unlinks the file). Eats one adjacent space so we don't leave a
-// double space behind. Matched by exact alt+url, like writeMediaWidth.
-function removeMediaToken(blockId: string, alt: string, url: string) {
+// Remove THIS media token from its block's raw — the "trash" affordance drops the
+// reference (OG's delete-asset-of-block! also rewrites the block, then unlinks
+// the file). Eats one preceding space so we don't leave a double space behind.
+// True only when the reference is gone from the block's raw.
+function removeMediaToken(blockId: string, token: MediaToken | undefined): boolean {
   const node = docNode(blockId);
-  if (!node) return;
-  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(` ?!\\[${esc(alt)}\\]\\(${esc(url)}\\)(\\{[^}]*\\})?`);
-  const next = node.raw.replace(re, "");
-  if (next !== node.raw) setRaw(blockId, next);
+  if (!node || !token) return false;
+  const at = locateMediaToken(blockId, node.raw, token);
+  if (at === null) return false;
+  const from = at > 0 && node.raw[at - 1] === " " ? at - 1 : at;
+  const next = node.raw.slice(0, from) + node.raw.slice(at + token.full.length);
+  setRaw(blockId, next);
+  return docNode(blockId)?.raw === next;
 }
 
 // Image embed: external URLs load directly; graph assets (`../assets/x.png`)
@@ -757,6 +789,7 @@ function AssetImage(props: {
   width?: string;
   height?: string;
   blockId?: string;
+  token?: MediaToken;
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
   // Width sizes the WRAPPER, not the <img>: an inline-block sized by a
@@ -826,7 +859,7 @@ function AssetImage(props: {
       window.removeEventListener("pointerup", up);
       const w = wrapEl ? wrapEl.getBoundingClientRect().width : startW;
       const pct = Math.max(5, Math.min(100, Math.round((w / refW) * 100)));
-      writeMediaWidth(props.blockId!, props.alt, props.url, pct);
+      writeMediaWidth(props.blockId!, props.token, pct);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -855,7 +888,13 @@ function AssetImage(props: {
       "Trash asset",
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
-    removeMediaToken(props.blockId, props.alt, props.url); // drop the reference first (saves the block)
+    // Drop the reference first (saves the block). Trash the file only when the
+    // reference is actually gone: otherwise the block keeps pointing at a file
+    // that was moved away (C3 L16).
+    if (!removeMediaToken(props.blockId, props.token)) {
+      pushToast("Couldn't find this image in the block's text; nothing was trashed", "error");
+      return;
+    }
     try {
       const result = await writeOwned(owner, backend().trashAsset(name, binding.backendGeneration));
       if (result.kind === "stale") return;
@@ -972,6 +1011,7 @@ function MediaEmbed(props: {
   alt?: string;
   width?: string;
   blockId?: string;
+  token?: MediaToken;
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
   const [failed, setFailed] = createSignal(false);
@@ -1071,7 +1111,7 @@ function MediaEmbed(props: {
       window.removeEventListener("pointerup", up);
       const w = wrapEl ? wrapEl.getBoundingClientRect().width : startW;
       const pct = Math.max(5, Math.min(100, Math.round((w / refW) * 100)));
-      writeMediaWidth(props.blockId!, props.alt ?? "", props.url, pct);
+      writeMediaWidth(props.blockId!, props.token, pct);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);

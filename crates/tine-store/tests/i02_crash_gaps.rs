@@ -647,6 +647,11 @@ fn durable_transition_inventory_names_crash_proofs() {
             "AbortAfterStep(index)",
         ),
         (
+            "crates/tine-store/src/transaction.rs",
+            "fn undo<'b>",
+            "FaultPoint::AbortAfterUndoWithdraw",
+        ),
+        (
             "crates/tine-store/src/restore.rs",
             "pub fn restore",
             "restore_abort_boundary()",
