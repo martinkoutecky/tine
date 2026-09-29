@@ -230,13 +230,74 @@ pub(crate) fn gpu_env() -> GpuEnv {
     }
 }
 
-/// Open a web/mail URL in the user's default external application. Scheme-gated
-/// to http(s)/mailto; the URL is passed as a single argument (no shell), so it
-/// can't inject commands.
+/// Turn a `file:` URL into the local path it names, or `None` when it names
+/// something that is not a plain local file.
+///
+/// Delegated to the WHATWG URL parser (`tauri::Url`, the re-exported `url`
+/// crate) rather than string surgery, because the shapes users actually write
+/// are not uniform (GH #444): Logseq's `file://D:\test.txt` puts the drive in
+/// the authority position, Obsidian's `<file:///D:\test.txt>` uses backslashes
+/// after a triple slash, and either can carry percent escapes. The parser
+/// already resolves all three, and rejects a remote authority
+/// (`file://host/share`) everywhere except Windows, where it is a real UNC path.
+pub(crate) fn file_url_to_path(url: &str) -> Option<std::path::PathBuf> {
+    let parsed = tauri::Url::parse(url).ok()?;
+    if parsed.scheme() != "file" {
+        return None;
+    }
+    let path = parsed.to_file_path().ok()?;
+    (path.as_os_str().len() > 0).then_some(path)
+}
+
+/// Where a clicked link is headed, decided before anything is spawned so the
+/// routing decision is testable on its own — the spawn that follows is not.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ExternalOpen {
+    /// A `file:` link naming a local path: the OS default application opens it.
+    LocalPath(std::path::PathBuf),
+    /// http(s) or mailto: the URL opener handles it.
+    Url,
+}
+
+/// OG parity for `file:` (og-1.0.0 `electron/window.cljs` `open-default-app!`):
+/// Logseq sends http(s)/mailto to `shell.openExternal` and hands EVERY other
+/// scheme, `file:` included, to the OS default application with no confirmation
+/// and no extension filtering. Tine matches that for `file:`: a graph is the
+/// user's own content, and a link that silently does nothing (GH #444, where
+/// this gate rejected `file:` outright and the frontend then discarded the
+/// rejection) is worse for the honest case than the parity behaviour is for the
+/// hostile one. Every other scheme stays refused, which is stricter than OG.
+pub(crate) fn external_open_plan(url: &str) -> Result<ExternalOpen, String> {
+    if url.starts_with("file:") {
+        let path = file_url_to_path(url)
+            .ok_or_else(|| "that file link does not name a local file".to_string())?;
+        return Ok(ExternalOpen::LocalPath(path));
+    }
+    if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
+        return Ok(ExternalOpen::Url);
+    }
+    Err("unsupported url scheme".into())
+}
+
+/// Open a web/mail URL, or a local `file:` link, in the user's default external
+/// application. The URL is passed as a single argument (no shell), so it can't
+/// inject commands.
 #[tauri::command]
 pub(crate) fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:")) {
-        return Err("unsupported url scheme".into());
+    if let ExternalOpen::LocalPath(path) = external_open_plan(&url)? {
+        // Every OS opener accepts a path that is not there — `explorer.exe` even
+        // opens an unrelated window for one — so without this check a stale link
+        // reproduces the reported "clicking does nothing" from the other side.
+        if !path.exists() {
+            return Err(format!("{} could not be found", path.display()));
+        }
+        #[cfg(desktop)]
+        return open_page_source(&path);
+        #[cfg(not(desktop))]
+        {
+            let _ = (path, &app);
+            return Err("opening local files is available on desktop only".into());
+        }
     }
     // Linux/macOS: spawn the desktop-session URL opener directly (Linux needs
     // the env-scrubbed browser policy; see opener_command_env).
@@ -736,5 +797,90 @@ mod tests {
         assert!(parse_comm_ppid("no parens here").is_none());
         assert!(parse_comm_ppid("12 (comm)").is_none()); // no ppid field
         assert!(parse_comm_ppid("12 (comm) S notanumber").is_none());
+    }
+}
+
+#[cfg(test)]
+mod file_url_tests {
+    use super::{external_open_plan, file_url_to_path, ExternalOpen};
+
+    /// The three shapes GH #444 reported, plus the ordinary POSIX one. On
+    /// Windows all four resolve to a real local path; elsewhere the drive-letter
+    /// forms still parse to a path, they just are not meaningful there — the
+    /// point of the assertion is that the parser does NOT reject them and does
+    /// NOT hand back a percent-escaped or backslash-mangled string.
+    #[test]
+    fn accepts_the_link_shapes_users_actually_write() {
+        // Logseq: the drive letter sits in the authority position.
+        let logseq = file_url_to_path("file://D:\\test.txt").expect("logseq drive form");
+        assert!(logseq.to_string_lossy().contains("D:"));
+        assert!(logseq.to_string_lossy().ends_with("test.txt"));
+
+        // Obsidian: triple slash, then a backslash separator.
+        let obsidian = file_url_to_path("file:///D:\\test.txt").expect("obsidian drive form");
+        assert_eq!(obsidian, logseq);
+
+        // The canonical forward-slash spelling agrees with both.
+        assert_eq!(file_url_to_path("file:///D:/test.txt"), Some(logseq));
+
+        // Percent escapes are decoded, so a spaced filename opens.
+        let spaced = file_url_to_path("file:///tmp/a%20b.txt").expect("percent-decoded");
+        assert_eq!(
+            spaced.file_name().and_then(|name| name.to_str()),
+            Some("a b.txt")
+        );
+    }
+
+    /// GH #444's two reported shapes, at the decision the command actually
+    /// makes. Before the fix this gate answered `unsupported url scheme` for
+    /// both — the link was rendered, clickable, and inert.
+    #[test]
+    fn a_file_link_is_routed_to_the_os_default_application() {
+        for url in ["file://D:\\test.txt", "file:///D:\\test.txt"] {
+            match external_open_plan(url) {
+                Ok(ExternalOpen::LocalPath(path)) => {
+                    assert!(path.to_string_lossy().ends_with("test.txt"), "{url}");
+                }
+                other => panic!("{url} should open a local path, got {other:?}"),
+            }
+        }
+        // A directory is the same route; OG hands it to the file manager too.
+        assert!(matches!(
+            external_open_plan("file:///home/user/notes/"),
+            Ok(ExternalOpen::LocalPath(_))
+        ));
+    }
+
+    #[test]
+    fn web_and_mail_links_keep_their_own_route_and_everything_else_stays_refused() {
+        assert_eq!(
+            external_open_plan("https://example.com/a"),
+            Ok(ExternalOpen::Url)
+        );
+        assert_eq!(
+            external_open_plan("http://example.com/a"),
+            Ok(ExternalOpen::Url)
+        );
+        assert_eq!(
+            external_open_plan("mailto:a@example.com"),
+            Ok(ExternalOpen::Url)
+        );
+        // Stricter than OG, which hands every unknown scheme to the OS.
+        for url in [
+            "javascript:alert(1)",
+            "smb://host/share",
+            "data:text/html,x",
+        ] {
+            assert!(external_open_plan(url).is_err(), "{url} must stay refused");
+        }
+    }
+
+    #[test]
+    fn refuses_what_is_not_a_local_file() {
+        assert_eq!(file_url_to_path("https://example.com/a.txt"), None);
+        assert_eq!(file_url_to_path("not a url"), None);
+        // A remote authority is not a local path on this platform.
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(file_url_to_path("file://example.com/share/a.txt"), None);
     }
 }

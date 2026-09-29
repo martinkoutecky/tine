@@ -14,6 +14,7 @@ import { isJournalTitle } from "../journal";
 import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, showBrackets } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
+import { reportLinkOpenFailure } from "../components/ExternalLink";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format, Span } from "./ast";
@@ -494,8 +495,8 @@ function renderLink(
           e.stopPropagation();
           if (unsafeHref) return;
           const rel = assetLinkRel(dest);
-          if (rel !== null) void backend().openAsset(rel, backend().graphBindingGeneration());
-          else void backend().openExternal(dest);
+          if (rel !== null) void backend().openAsset(rel, backend().graphBindingGeneration()).catch((error) => reportLinkOpenFailure(dest, error));
+          else void backend().openExternal(dest).catch((error) => reportLinkOpenFailure(dest, error));
         }}
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
@@ -642,7 +643,7 @@ function renderEmail(text: EmailValue, spanAttrs?: SpanDomAttrs): JSX.Element {
   }
   const href = `mailto:${addr}`;
   return (
-    <a class="external-link" href={href} {...(spanAttrs ?? {})} onClick={(e) => { e.preventDefault(); e.stopPropagation(); void backend().openExternal(href); }}>
+    <a class="external-link" href={href} {...(spanAttrs ?? {})} onClick={(e) => { e.preventDefault(); e.stopPropagation(); void backend().openExternal(href).catch((error) => reportLinkOpenFailure(href, error)); }}>
       {addr}
     </a>
   );
@@ -1044,8 +1045,8 @@ function MediaEmbed(props: {
   const open = (e: MouseEvent) => {
     e.stopPropagation();
     const r = rel();
-    if (r && !external) void backend().openAsset(r, backend().graphBindingGeneration());
-    else void backend().openExternal(props.url);
+    if (r && !external) void backend().openAsset(r, backend().graphBindingGeneration()).catch((error) => reportLinkOpenFailure(props.url, error));
+    else void backend().openExternal(props.url).catch((error) => reportLinkOpenFailure(props.url, error));
   };
   let tryingBlobFallback = false;
   let blobLease: MediaBlobLease | null = null;

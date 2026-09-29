@@ -490,6 +490,15 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn file_link_guide_says_a_file_link_opens_on_desktop() {
+        // GH #444 (master c817fb150): a `file:` link opens in the OS default
+        // application; nothing else tells the reader which link forms are live.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("A `file:` link"));
+        assert!(!search.contains("`file:` links are not opened"));
+    }
+
+    #[test]
     fn empty_html_export_names_the_public_page_rule_in_the_guide() {
         // GH #560 (master 350efef1f): a zero-page export is explained, not silent.
         let files = include_str!("templates/files-external-edits-backups.md");
