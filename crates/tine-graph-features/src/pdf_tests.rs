@@ -144,3 +144,177 @@ fn optional_page_checks_org_headline_depth_and_preserves_sidecar_reads() {
     assert_eq!(optional(&store, &sidecar).unwrap().unwrap().0, "{:ok true}");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+// ---- C3U: highlight writes never drop sidecar entries or page blocks they do
+// not own (I-1/I-2; in-scope: malformed imported content, sync-service delivery).
+
+const A: &str = "6a5604f8-a337-4336-a711-2ba6bc14fb0a";
+const B: &str = "6a5604f8-a337-4336-a711-2ba6bc14fb0b";
+const C: &str = "6a5604f8-a337-4336-a711-2ba6bc14fb0c";
+
+fn c3u_graph(tag: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "tine-pdf-c3u-{tag}-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("assets")).unwrap();
+    root
+}
+
+fn c3u_highlight(id: &str, text: &str) -> Highlight {
+    let rect = pdf::Rect {
+        top: 1.0,
+        left: 1.0,
+        width: 2.0,
+        height: 2.0,
+        source_width: None,
+        source_height: None,
+    };
+    Highlight {
+        id: id.into(),
+        page: 1,
+        position: pdf::Position {
+            page: 1,
+            bounding: rect.clone(),
+            rects: vec![rect],
+        },
+        color: "yellow".into(),
+        text: Some(text.into()),
+        image: None,
+    }
+}
+
+fn c3u_entry(id: &str, text: &str) -> String {
+    format!(
+        r#"{{:id #uuid "{id}" :page 1 :position {{:page 1 :bounding {{:top 1 :left 1 :width 2 :height 2}} :rects ({{:top 1 :left 1 :width 2 :height 2}})}} :content {{:text "{text}"}} :properties {{:color "yellow"}}}}"#
+    )
+}
+
+fn c3u_page(ids: &[(&str, &str)]) -> String {
+    let mut page =
+        "file:: [Paper](../assets/paper.pdf)\nfile-path:: ../assets/paper.pdf\n\n".to_string();
+    for (id, text) in ids {
+        page.push_str(&format!(
+            "- {text}\n  hl-page:: 1\n  hl-color:: yellow\n  ls-type:: annotation\n  id:: {id}\n\t- my note on {text}\n"
+        ));
+    }
+    page
+}
+
+fn c3u_entries(raw: &str) -> Vec<tine_core::edn::Edn> {
+    tine_core::edn::parse_strict(raw)
+        .unwrap()
+        .get("highlights")
+        .and_then(tine_core::edn::Edn::as_vec)
+        .unwrap()
+        .to_vec()
+}
+
+#[test]
+fn highlight_add_before_the_sidecar_syncs_keeps_existing_annotations() {
+    // Syncthing/Dropbox delivered the hls page but not (yet) its sidecar.
+    let root = c3u_graph("nosidecar");
+    std::fs::write(
+        root.join("pages/hls__paper.md"),
+        c3u_page(&[(A, "aye"), (B, "bee")]),
+    )
+    .unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let loaded = read_highlights_checked(&store, "paper.pdf").unwrap();
+    assert!(loaded.is_empty());
+    write_highlights(
+        &store,
+        "paper.pdf",
+        "Paper",
+        &[c3u_highlight(C, "sea")],
+        &loaded,
+    )
+    .unwrap();
+    let page = std::fs::read_to_string(root.join("pages/hls__paper.md")).unwrap();
+    for needle in [
+        format!("id:: {A}"),
+        "my note on aye".to_string(),
+        format!("id:: {B}"),
+        "my note on bee".to_string(),
+        format!("id:: {C}"),
+    ] {
+        assert!(page.contains(&needle), "{needle} lost:\n{page}");
+    }
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn deleting_a_known_highlight_still_drops_its_block_and_entry() {
+    let root = c3u_graph("delete");
+    std::fs::write(
+        root.join("assets/paper.edn"),
+        format!(
+            "{{:highlights [{} {}] :extra {{}}}}\n",
+            c3u_entry(A, "aye"),
+            c3u_entry(B, "bee")
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages/hls__paper.md"),
+        c3u_page(&[(A, "aye"), (B, "bee")]),
+    )
+    .unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let loaded = read_highlights_checked(&store, "paper.pdf").unwrap();
+    assert_eq!(loaded.len(), 2);
+    let keep: Vec<Highlight> = loaded.iter().filter(|h| h.id == A).cloned().collect();
+    write_highlights(&store, "paper.pdf", "Paper", &keep, &loaded).unwrap();
+    let page = std::fs::read_to_string(root.join("pages/hls__paper.md")).unwrap();
+    assert!(page.contains(&format!("id:: {A}")), "{page}");
+    assert!(!page.contains(&format!("id:: {B}")), "{page}");
+    let written = std::fs::read_to_string(root.join("assets/paper.edn")).unwrap();
+    assert_eq!(c3u_entries(&written).len(), 1, "{written}");
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn escape_before_a_multibyte_char_is_refused_without_panicking() {
+    let root = c3u_graph("escape");
+    std::fs::write(
+        root.join("assets/paper.edn"),
+        "{:highlights [{:id \"x\" :content {:text \"caf\\é\"}}] :extra {}}",
+    )
+    .unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        read_highlights_checked(&store, "paper.pdf")
+    }));
+    assert!(
+        read.is_ok(),
+        "read_highlights panicked on a \\<multibyte> escape"
+    );
+    let open = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        open_pdf(&store, "paper.pdf", "Paper")
+    }));
+    assert!(open.is_ok(), "open_pdf panicked on a \\<multibyte> escape");
+    let write = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        write_highlights(
+            &store,
+            "paper.pdf",
+            "Paper",
+            &[c3u_highlight(C, "sea")],
+            &[],
+        )
+    }));
+    assert!(
+        matches!(write, Ok(Err(_))),
+        "write must refuse, not panic or replace"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("assets/paper.edn")).unwrap(),
+        "{:highlights [{:id \"x\" :content {:text \"caf\\é\"}}] :extra {}}"
+    );
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}

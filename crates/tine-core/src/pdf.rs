@@ -11,7 +11,7 @@ use crate::doc::{DocBlock, Document};
 use crate::edn::{self, Edn};
 use crate::model::Format;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
@@ -498,13 +498,18 @@ pub fn hls_page_document_for_format(
     highlights: &[Highlight],
     format: Format,
 ) -> Document {
-    merge_hls_page_for_format(None, pdf_filename, label, highlights, format)
+    merge_hls_page_for_format(
+        None,
+        pdf_filename,
+        label,
+        highlights,
+        &HashSet::new(),
+        format,
+    )
 }
 
-/// Upsert highlights into an existing `hls__` page, **preserving each existing
-/// annotation block (and its child notes) by `id`**. New highlights are
-/// appended; highlights deleted from the set drop their block. This is what
-/// makes the review flow safe — re-saving never clobbers notes.
+/// Test shorthand: every existing annotation id missing from `highlights`
+/// counts as deleted by this write.
 #[cfg(test)]
 pub fn merge_hls_page(
     existing: Option<&Document>,
@@ -512,14 +517,37 @@ pub fn merge_hls_page(
     label: &str,
     highlights: &[Highlight],
 ) -> Document {
-    merge_hls_page_for_format(existing, pdf_filename, label, highlights, Format::Md)
+    let removed = existing
+        .map(|doc| {
+            doc.roots
+                .iter()
+                .filter_map(|b| b.property("id"))
+                .filter(|id| highlights.iter().all(|h| h.id != *id))
+                .collect()
+        })
+        .unwrap_or_default();
+    merge_hls_page_for_format(
+        existing,
+        pdf_filename,
+        label,
+        highlights,
+        &removed,
+        Format::Md,
+    )
 }
 
+/// Upsert highlights into an existing `hls__` page, **preserving each existing
+/// annotation block (and its child notes) by `id`** and the page's block order.
+/// A block is dropped only when its id is in `removed` — highlights this write
+/// knows were deleted. An annotation whose id the writer does not know (its
+/// sidecar entry is unreadable, or the page arrived by sync before the sidecar)
+/// is kept (L01 H1/H2). New highlights go after the last annotation block.
 pub fn merge_hls_page_for_format(
     existing: Option<&Document>,
     pdf_filename: &str,
     label: &str,
     highlights: &[Highlight],
+    removed: &HashSet<String>,
     format: Format,
 ) -> Document {
     let asset_path = format!("../assets/{pdf_filename}");
@@ -549,36 +577,36 @@ pub fn merge_hls_page_for_format(
     }
     let pre = pre_lines.join("\n");
 
-    // Split existing roots into annotation blocks (keyed by id) and everything
-    // else — user-authored top-level notes that must be PRESERVED, not rebuilt
-    // away. Annotations are regenerated from the (authoritative) highlight list so
-    // a removed highlight drops its block; a non-annotation root is always kept.
-    let mut ann_by_id: HashMap<String, DocBlock> = HashMap::new();
-    let mut user_roots: Vec<DocBlock> = Vec::new();
-    if let Some(doc) = existing {
-        for b in &doc.roots {
-            let is_annotation = b.property("ls-type").as_deref() == Some("annotation");
-            match b.property("id") {
-                Some(id) if is_annotation => {
-                    ann_by_id.insert(id, b.clone());
-                }
-                _ => user_roots.push(b.clone()),
-            }
-        }
-    }
-
-    let mut roots: Vec<DocBlock> = highlights
-        .iter()
-        .map(|h| match ann_by_id.remove(&h.id) {
+    let by_id: HashMap<&str, &Highlight> = highlights.iter().map(|h| (h.id.as_str(), h)).collect();
+    let mut placed: HashSet<&str> = HashSet::new();
+    let mut roots: Vec<DocBlock> = Vec::new();
+    let mut after_last_annotation = 0;
+    for b in existing.map(|doc| doc.roots.as_slice()).unwrap_or_default() {
+        let annotation = b.property("ls-type").as_deref() == Some("annotation");
+        let id = b.property("id").filter(|_| annotation);
+        match id.as_deref() {
             // Keep the user's note text + child blocks, but refresh the highlight
             // metadata (color/page) from the authoritative highlight — so
-            // recoloring in the PDF pane updates the colored badge here too.
-            Some(existing) => refresh_annotation(existing, h, format),
-            None => highlight_block(h, format),
-        })
+            // recoloring in the PDF pane updates the colored badge here too. A
+            // duplicate block for the same id is kept as it is, never dropped.
+            Some(id) if !placed.contains(id) && by_id.contains_key(id) => {
+                let (&key, h) = by_id.get_key_value(id).expect("checked");
+                placed.insert(key);
+                roots.push(refresh_annotation(b.clone(), h, format));
+            }
+            Some(id) if removed.contains(id) => continue,
+            _ => roots.push(b.clone()),
+        }
+        if annotation {
+            after_last_annotation = roots.len();
+        }
+    }
+    let fresh: Vec<DocBlock> = highlights
+        .iter()
+        .filter(|h| placed.insert(h.id.as_str()))
+        .map(|h| highlight_block(h, format))
         .collect();
-    // Keep the user's own top-level notes (after the generated annotations).
-    roots.extend(user_roots);
+    roots.splice(after_last_annotation..after_last_annotation, fresh);
     Document {
         pre_block: Some(pre),
         roots,
