@@ -2,7 +2,7 @@
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
 
-import type { Backend, GpuEnv, DebugInfo, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
+import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
 import { mockQueryCommands } from "./mockQuery";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
@@ -118,6 +118,7 @@ function mockReferencedPageNames(pages: PageDto[]): string[] {
 let _id = 0;
 const nid = () => `mock-${_id++}`;
 const mockPlugins: InstalledPluginRecord[] = [];
+const mockDiagnostics: DiagnosticFrontendKind[] = [];
 const mockPluginEntries = new Map<string, Uint8Array>();
 let mockPluginRegistryCache: PluginRegistryCacheEnvelope | null = null;
 
@@ -1601,19 +1602,15 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
     async setAppString(key: string, value: string): Promise<void> {
       mockAppStrings[key] = value;
     },
-    async applySpellcheck(): Promise<void> {
-      /* no native webview in the mock */
-    },
-    async listSpellcheckDictionaries(): Promise<string[]> {
-      // A representative set so the picker renders in the browser mock / harness.
-      return ["cs_CZ", "de_DE", "en_GB", "en_US", "fr_FR", "sk_SK"];
-    },
-    async debugInfo(): Promise<DebugInfo> {
-      return { enabled: false, path: "" };
-    },
-    async debugLog(_line: string): Promise<void> {
-      // no-op in the browser mock
-    },
+    async applySpellcheck(): Promise<void> { /* no native webview in the mock */ },
+    // A representative set so the picker renders in the browser mock / harness.
+    async listSpellcheckDictionaries(): Promise<string[]> { return ["cs_CZ", "de_DE", "en_GB", "en_US", "fr_FR", "sk_SK"]; },
+    async debugInfo(): Promise<DebugInfo> { return { enabled: false, path: "" }; },
+    async debugLog(_line: string): Promise<void> { /* no-op in the browser mock */ },
+    async diagnosticReport(): Promise<DiagnosticReport> { return { text: JSON.stringify({ schemaVersion: 1, sessions: { current: mockDiagnostics.map((kind) => ({ event: "frontend", kind })) } }, null, 2), suggestedFileName: "tine-diagnostics.json" }; },
+    async clearDiagnostics(): Promise<void> { mockDiagnostics.length = 0; },
+    async diagnosticFrontendEvent(kind: DiagnosticFrontendKind): Promise<void> { mockDiagnostics.push(kind); },
+    async appArchitecture(): Promise<string> { return "x86_64"; },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },

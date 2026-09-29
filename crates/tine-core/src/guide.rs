@@ -215,6 +215,8 @@ mod parity_guide_tests {
             "Settings → Appearance",
             "Toggle maximize active pane",
             "Open in new tab",
+            "Settings → Help & diagnostics",
+            "**Copy report**; nothing is uploaded",
         ] {
             assert!(tips.contains(phrase), "Tips missing {phrase}");
         }

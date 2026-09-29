@@ -3089,11 +3089,11 @@ impl Graph {
                 })
                 .collect();
             let mut built = PageCacheBuild::with_capacity(entry_count);
-            for (worker, handle) in handles.into_iter().enumerate() {
+            for handle in handles {
                 match handle.join() {
                     Ok(shard) => built.append(shard),
-                    Err(_) => eprintln!(
-                        "Tine search index worker {worker} panicked after per-page isolation; its shard was not indexed"
+                    Err(_) => tine_core::diag_line::diagnostic_line(
+                        "Tine search index worker panicked after per-page isolation; its shard was not indexed",
                     ),
                 }
             }
