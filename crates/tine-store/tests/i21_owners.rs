@@ -78,7 +78,9 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
         "src-tauri/src/commands/concord.rs",
         "spawn_blocking(",
-        6,
+        // +2 og-A: duplicate_journal_diff and resolve_duplicate_journal_day,
+        // each awaited by its own command future like the six before them.
+        8,
         "command future",
         "caller awaits blocking result",
     ),
