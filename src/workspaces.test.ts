@@ -309,4 +309,26 @@ describe("named workspace switching", () => {
     expect(rightSidebar()).toEqual(parked.rightSidebarItems);
     expect(savePages).not.toHaveBeenCalled();
   });
+
+  it("carries a registry entry this build cannot parse through every write instead of dropping it", async () => {
+    const newer = { id: "newer", name: "From a newer Tine", blob: { futureShape: true, tabs: "??" } };
+    vi.spyOn(backend(), "loadSession").mockResolvedValue(null);
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(JSON.stringify({
+      version: 1,
+      activeId: "default",
+      workspaces: [{ id: "default", name: "", blob: buildPersistedSession() }, newer],
+    }));
+    const save = vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
+    await initializeWorkspaces();
+    expect(workspaces().map((workspace) => workspace.id)).toEqual(["default"]);
+
+    await renameWorkspace("default", "Renamed");
+    const written = JSON.parse(save.mock.calls[0][0]) as { workspaces: Array<{ id: string }> };
+    expect(written.workspaces).toContainEqual(newer);
+    expect(written.workspaces.map((workspace) => workspace.id)).toEqual(["default", "newer"]);
+
+    await deleteWorkspace("default");
+    const afterDelete = JSON.parse(save.mock.calls[1][0]) as { workspaces: Array<{ id: string }> };
+    expect(afterDelete.workspaces).toContainEqual(newer);
+  });
 });

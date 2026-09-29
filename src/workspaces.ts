@@ -21,6 +21,10 @@ const [activeId, setActiveId] = createSignal("");
 export { workspaceList as workspaces, activeId as activeWorkspaceId };
 
 let operationQueue = {};
+/** Registry entries this build could not parse (a newer Tine's session shape, a
+ * sync-delivered schema change). They are carried through every registry write
+ * verbatim rather than dropped (I-9); never shown or activatable. */
+let foreignWorkspaces: unknown[] = [];
 
 interface WorkspaceOperation {
   assert: () => void;
@@ -76,17 +80,19 @@ function normalizeName(name: string): string {
   return name.trim().slice(0, 80);
 }
 
-function parseRegistry(raw: string): WorkspaceRegistry | null {
+function parseRegistry(raw: string): (WorkspaceRegistry & { foreign: unknown[] }) | null {
   try {
     const input = JSON.parse(raw) as Partial<WorkspaceRegistry>;
     if (input.version !== 1 || !Array.isArray(input.workspaces)) return null;
     const ids = new Set<string>();
     const valid: Workspace[] = [];
+    const foreign: unknown[] = [];
     for (const item of input.workspaces) {
-      if (!item || typeof item.id !== "string" || !item.id || item.id.length > 128 || ids.has(item.id)) continue;
-      if (typeof item.name !== "string") continue;
-      const parsed = parsePersistedSession(JSON.stringify(item.blob));
-      if (!parsed) continue;
+      const parsed = item && typeof item.id === "string" && item.id && item.id.length <= 128
+        && !ids.has(item.id) && typeof item.name === "string"
+        ? parsePersistedSession(JSON.stringify(item.blob))
+        : null;
+      if (!parsed) { foreign.push(item); continue; }
       ids.add(item.id);
       valid.push({ id: item.id, name: normalizeName(item.name), blob: cloneSession(item.blob) });
     }
@@ -96,6 +102,7 @@ function parseRegistry(raw: string): WorkspaceRegistry | null {
       version: 1,
       activeId: ids.has(requested) ? requested : valid[0].id,
       workspaces: valid,
+      foreign,
     };
   } catch {
     return null;
@@ -115,7 +122,9 @@ async function persist(next: WorkspaceRegistry, scope: WorkspaceOperation): Prom
   scope.assert();
   let outcome: "durable" | "published-unsynced";
   try {
-    outcome = await scope.after(writeOwned(scope.owner, backend().saveWorkspaces(JSON.stringify(next))));
+    outcome = await scope.after(writeOwned(scope.owner, backend().saveWorkspaces(
+      JSON.stringify({ ...next, workspaces: [...next.workspaces, ...foreignWorkspaces] }),
+    )));
   } catch (error) {
     if (!scope.owner()) throw error;
     // A transport failure may arrive after publication. Read the serialized
@@ -123,7 +132,7 @@ async function persist(next: WorkspaceRegistry, scope: WorkspaceOperation): Prom
     scope.assert();
     try {
       const loaded = parseRegistry(await scope.after(readOwned(scope.owner, backend().loadWorkspaces())));
-      if (loaded) install(loaded);
+      if (loaded) installLoaded(loaded);
       else clearWorkspaces();
     } catch {
       scope.assert();
@@ -133,6 +142,11 @@ async function persist(next: WorkspaceRegistry, scope: WorkspaceOperation): Prom
   }
   if (outcome === "published-unsynced")
     pushToast("Workspace changes are visible, but directory sync failed; they may not survive a power loss.", "error");
+}
+
+function installLoaded(loaded: WorkspaceRegistry & { foreign: unknown[] }) {
+  foreignWorkspaces = loaded.foreign;
+  install(loaded);
 }
 
 function install(next: WorkspaceRegistry) {
@@ -168,6 +182,7 @@ function workspaceId(): string {
 export function initializeWorkspaces(): Promise<void> {
   return enqueue(async (scope) => {
     const recover = prepareWorkspaceRecovery();
+    foreignWorkspaces = [];
     setWorkspaceList([]);
     setActiveId("");
     const loaded = parseRegistry(await scope.after(readOwned(scope.owner, backend().loadWorkspaces())));
@@ -176,7 +191,7 @@ export function initializeWorkspaces(): Promise<void> {
     loaded.workspaces = loaded.workspaces.map((workspace) =>
       workspace.id === loaded.activeId ? { ...workspace, blob: current } : workspace
     );
-    install(loaded);
+    installLoaded(loaded);
   });
 }
 
@@ -312,6 +327,7 @@ export function workspaceDisplayName(workspace: Pick<Workspace, "name">): string
  * operations fail until reinitialization. Does not cancel an in-flight load.
  * O(1), synchronous, no disk I/O. */
 export function clearWorkspaces() {
+  foreignWorkspaces = [];
   setWorkspaceList([]);
   setActiveId("");
   setSessionWorkspaceId(null);
