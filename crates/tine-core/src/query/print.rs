@@ -174,7 +174,10 @@ fn with_options(form: String, options: &str) -> String {
 /// macro at all while the anchored form is (§4.3.1, measured in both Markdown
 /// and Org). ` and <filter>` follows unless the filter is exactly `True`, when
 /// the anchor alone says the same thing. Every `Off` prints inline as `off(…)`;
-/// the `-- ` layout is the pane's, not the document's.
+/// the `-- ` layout is the pane's, not the document's. A page-reference operand
+/// after a comma (`any(children, [[a]])`) is spelled in parentheses
+/// ([`macro_text::guard_page_ref_arguments`]): the parser would otherwise read
+/// `[[a]])` as a malformed argument and the save would be refused.
 fn print_tql_macro(query: &Query) -> String {
     let anchor = match query.anchor {
         Anchor::Block => "@block",
@@ -183,7 +186,10 @@ fn print_tql_macro(query: &Query) -> String {
     if tql_root_is_true(&query.filter) {
         return anchor.to_string();
     }
-    format!("{anchor} and {}", tql_expr(&query.filter, Prec::Or))
+    macro_text::guard_page_ref_arguments(&format!(
+        "{anchor} and {}",
+        tql_expr(&query.filter, Prec::Or)
+    ))
 }
 
 // ---------------------------------------------------------------------------

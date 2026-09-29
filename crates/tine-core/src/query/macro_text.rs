@@ -412,6 +412,89 @@ pub fn macro_safe(argument: &str, family: FormFamily) -> Result<(), Diagnostic> 
 }
 
 // ---------------------------------------------------------------------------
+// C5b — spelling a TQL form so the document parser can read it (§4.3.1)
+// ---------------------------------------------------------------------------
+
+/// Re-spell a printed TQL form so no macro argument begins with a page
+/// reference.
+///
+/// The document parser splits a macro's arguments on commas, and an argument
+/// that begins (after spaces) with `[[` takes its page-reference alternative:
+/// it must then be followed by only spaces or the next comma. So
+/// `{{tine-query @block and any(children, [[a]])}}` — whose second argument is
+/// `[[a]])` — is not a macro at all, although every lexical rule of
+/// [`macro_safe`] passes. The operand after such a comma is wrapped in
+/// parentheses, `any(children, ([[a]]))`, which TQL reads as the same filter
+/// and the document parser reads as a plain argument. Only operands that would
+/// be misread are touched; text inside `'…'` strings and `[[…]]` references is
+/// copied verbatim. Pure and linear in the length of `form`.
+pub fn guard_page_ref_arguments(form: &str) -> String {
+    let bytes = form.as_bytes();
+    let mut out = String::with_capacity(form.len() + 8);
+    let mut depth = 0i32;
+    // Paren depths at which a synthetic `(` is still open.
+    let mut wraps: Vec<i32> = Vec::new();
+    let mut after_comma = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let byte = bytes[i];
+        let close_wraps = |out: &mut String, wraps: &mut Vec<i32>, depth: i32| {
+            while wraps.last() == Some(&depth) {
+                out.push(')');
+                wraps.pop();
+            }
+        };
+        match byte {
+            b'\'' => {
+                let end = tql_string_end(form, i);
+                out.push_str(&form[i..end]);
+                i = end;
+                after_comma = false;
+                continue;
+            }
+            b'[' if form[i..].starts_with("[[") => {
+                if after_comma && depth > 0 {
+                    out.push('(');
+                    wraps.push(depth);
+                }
+                let end = page_ref_end(form, i);
+                out.push_str(&form[i..end]);
+                i = end;
+                after_comma = false;
+                continue;
+            }
+            b'(' => depth += 1,
+            b')' => {
+                close_wraps(&mut out, &mut wraps, depth);
+                depth -= 1;
+            }
+            b',' => {
+                close_wraps(&mut out, &mut wraps, depth);
+                after_comma = true;
+                out.push(',');
+                i += 1;
+                continue;
+            }
+            b' ' | b'\t' => {
+                out.push(byte as char);
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+        after_comma = false;
+        // Copy one whole character so multibyte text is never split.
+        let width = form[i..].chars().next().map_or(1, char::len_utf8);
+        out.push_str(&form[i..i + width]);
+        i += width;
+    }
+    while wraps.pop().is_some() {
+        out.push(')');
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // C6 — recognition, proved by the real parser (§4.3.1, R1)
 // ---------------------------------------------------------------------------
 
@@ -487,6 +570,31 @@ pub fn recognizable_macro(name: &str, argument: &str) -> Result<(), Diagnostic> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- C5b: page-reference operands after a comma ------------------------
+
+    #[test]
+    fn a_page_reference_after_a_comma_is_parenthesized_and_nothing_else_moves() {
+        assert_eq!(
+            guard_page_ref_arguments("@block and any(children, [[a]])"),
+            "@block and any(children, ([[a]]))"
+        );
+        assert_eq!(
+            guard_page_ref_arguments("@block and none(children, [[a]] or [[b]], x)"),
+            "@block and none(children, ([[a]] or [[b]]), x)"
+        );
+        // Not after a comma, inside a string, or already parenthesized.
+        for untouched in [
+            "@block and [[a]] and tag('t')",
+            "@block and content like '%x, [[a]]%'",
+            "@block and any(children, ([[a]]))",
+            "@block and any(children, 中文 and [[a]])",
+        ] {
+            assert_eq!(guard_page_ref_arguments(untouched), untouched);
+        }
+        let once = guard_page_ref_arguments("@block and any(children, [[a]])");
+        assert_eq!(guard_page_ref_arguments(&once), once, "idempotent");
+    }
 
     // --- C1: the one splitter ---------------------------------------------
 
