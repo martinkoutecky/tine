@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, crea
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { ensurePageLoaded, formatForPage, pageByName, node as docNode } from "../document";
-import { Block, CollapseSurfaceContext, EmbedNavExitContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
+import { Block, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
@@ -221,6 +221,16 @@ export function LiveRefGroup(props: {
             ? { hostBlockId: props.hostBlockId, firstRoot: () => props.blocks[0]?.id }
             : null
         }>
+        {/* Master GH #341: arrow navigation out of an edited block in this group
+            stays in THIS rendered surface and moves to the adjacent RENDERED block,
+            not to the source page's sibling (which mounts an editor outside this
+            view and hides the caret). `roots` tracks result membership reactively;
+            navOnly keeps structural mutations (merges/indents/moves) on page order. */}
+        <OutlineScopeContext.Provider value={{
+          get roots() { return props.blocks.map((b) => b.id); },
+          collapsed: (id, stored) => collapseSurface.collapsed(id, stored),
+          navOnly: true,
+        }}>
         <LinkDepthContext.Provider value={linkDepth + 1}>
         <For each={props.blocks.map((b) => b.id)}>
           {(id) => {
@@ -280,6 +290,7 @@ export function LiveRefGroup(props: {
           }}
         </For>
         </LinkDepthContext.Provider>
+        </OutlineScopeContext.Provider>
         </EmbedNavExitContext.Provider>
         </SurfaceContext.Provider>
         </CollapseSurfaceContext.Provider>

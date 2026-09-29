@@ -762,11 +762,16 @@ export function Editor(props: { id: string }): JSX.Element {
   const surfaceKey = useContext(SurfaceContext);
   const outlineScope = useContext(OutlineScopeContext);
   const embedNavExit = useContext(EmbedNavExitContext);
-  // Generic ref/query surfaces intentionally return structural keyboard edits to
-  // the primary outline. An embed is a live editing surface: structural destinations
-  // (Enter, Arrow navigation, and empty-block merge/delete) must remain in the
-  // transclusion the user is looking at.
+  // Ref/query arrow navigation stays in the rendered result surface (master
+  // GH #341), while structural edits still target the source outline: a
+  // split/merge destination need not remain a query or backlink result. Embeds
+  // are true transclusions, so both navigation and structural destinations stay
+  // there.
+  const navigationSurface = () =>
+    surfaceKey.startsWith("ref:") || surfaceKey.startsWith("embed:") ? surfaceKey : null;
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
+  // A navOnly display-list scope must never act as a merge/structural topology.
+  const structuralScope = outlineScope?.navOnly ? null : outlineScope;
   let ref!: HTMLTextAreaElement;
   let pendingScrollAnchor: ReturnType<typeof captureEditorScrollAnchor> | undefined;
   onCleanup(() => pendingScrollAnchor?.cancel());
@@ -2247,7 +2252,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // A sibling reorder happens synchronously (a feed move's own sync part)
       // and keeps this textarea. Restore it in the same gesture: waiting a
       // frame lets Android dismiss the IME despite the later focus.
-      const move = outlineScope ? moveItem(props.id, dir) : moveBlockFeed(props.id, dir);
+      const move = outlineScope && !outlineScope.navOnly ? moveItem(props.id, dir) : moveBlockFeed(props.id, dir);
       if (ref === movedEditor && movedEditor.isConnected && editingId() === props.id
         && (document.activeElement === movedEditor || document.activeElement === document.body)) restore();
       await move;
@@ -2370,7 +2375,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // On an in-block list line, Tab nests the LIST ITEM (intra-block), not the block.
       const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll) { nudgeListItem(ll, +2); return true; }
-      if (outlineScope?.roots.includes(props.id)) return true;
+      if (!outlineScope?.navOnly && outlineScope?.roots.includes(props.id)) return true;
       const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
       commit(ref.value);
       if (indentBlock(props.id, selection, editSurface()) === false) pushToast("Outline is too deep to indent", "error");
@@ -2880,12 +2885,12 @@ export function Editor(props: { id: string }): JSX.Element {
           return;
         }
         commit(raw);
-        if (mergeWithPrev(props.id, outlineScope, editSurface())) {
+        if (mergeWithPrev(props.id, structuralScope, editSurface())) {
           e.preventDefault();
           return;
         }
         const n = docNode(props.id);
-        const next = nextVisible(props.id, outlineScope);
+        const next = nextVisible(props.id, structuralScope);
         if (n && splitProps(n.raw, hideFn(), pageFmt()).visible.trim() === "" && n.children.length === 0 && next && docNode(next)?.page === n.page) {
           e.preventDefault();
           deleteBlock(props.id);
@@ -2898,12 +2903,12 @@ export function Editor(props: { id: string }): JSX.Element {
       // or body-only code block itself (same rule as Backspace), and never
       // absorb an annotation/calc block's raw text into this one.
       if (isAnnot() || isCalc() || codeShown()) return;
-      const next = nextVisible(props.id, outlineScope);
+      const next = nextVisible(props.id, structuralScope);
       if (next) {
         const nextRaw = docNode(next)?.raw ?? "";
         if (isAnnotationBlock(nextRaw) || calcSource(nextRaw) !== null) return;
         commit(raw);
-        if (mergeWithNext(props.id, outlineScope, editSurface())) {
+        if (mergeWithNext(props.id, structuralScope, editSurface())) {
           e.preventDefault();
           const caretAt = start; // join point = the block's pre-merge end
           queueMicrotask(() => {
@@ -2920,7 +2925,7 @@ export function Editor(props: { id: string }): JSX.Element {
         if (prev) {
           e.preventDefault();
           // A number caret clamps to the new editor's full text length at mount.
-          startEditing(prev, Number.MAX_SAFE_INTEGER, null, editSurface());
+          startEditing(prev, Number.MAX_SAFE_INTEGER, null, navigationSurface());
         }
       }
     } else if (e.key === "ArrowRight" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -2929,7 +2934,7 @@ export function Editor(props: { id: string }): JSX.Element {
         const next = nextVisible(props.id, outlineScope);
         if (next) {
           e.preventDefault();
-          startEditing(next, 0, null, editSurface());
+          startEditing(next, 0, null, navigationSurface());
         }
       }
     } else if (e.key === "ArrowUp" && !e.shiftKey) {
@@ -2963,7 +2968,7 @@ export function Editor(props: { id: string }): JSX.Element {
           e.preventDefault();
           // Keep the caret's column on the previous block's bottom visual row.
           // Resolution happens after its textarea mounts, when wrapping is known.
-          startEditing(prev, { col: start - (before.lastIndexOf("\n") + 1), edge: "last" }, null, exitingEmbed ? null : editSurface());
+          startEditing(prev, { col: start - (before.lastIndexOf("\n") + 1), edge: "last" }, null, exitingEmbed ? null : navigationSurface());
         }
       }
     } else if (e.key === "ArrowDown" && !e.shiftKey) {
@@ -2978,7 +2983,7 @@ export function Editor(props: { id: string }): JSX.Element {
         const next = nextVisible(props.id, outlineScope);
         if (next) {
           e.preventDefault();
-          startEditing(next, { col, edge: "first" }, null, editSurface());
+          startEditing(next, { col, edge: "first" }, null, navigationSurface());
         } else {
           // No next LOADED block. In the journal feed, pull in the next day so
           // Down-arrow keeps going past the loaded window (previously only a
@@ -2988,7 +2993,7 @@ export function Editor(props: { id: string }): JSX.Element {
             e.preventDefault();
             commit(raw);
             void nextVisibleOrExtend(props.id).then((n) =>
-              n && startEditing(n, { col, edge: "first" }, null, editSurface())
+              n && startEditing(n, { col, edge: "first" }, null, navigationSurface())
             );
           }
         }

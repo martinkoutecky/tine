@@ -357,6 +357,10 @@ export function mergeWithPrev(
   editingSurface: string | null = null,
 ): boolean {
   if (!blockWritable(id)) return false;
+  // A navOnly display list (ref/query/embed group) is never a merge topology:
+  // merging into a rendered neighbour could weld unrelated subtrees that merely
+  // sit adjacent in the RESULT list. Fall back to page order.
+  if (scope?.navOnly) scope = null;
   const prev = prevVisible(id, scope);
   if (prev === null) return false;
   return absorbInto(prev, id, editingSurface);
@@ -371,6 +375,8 @@ export function mergeWithNext(
   editingSurface: string | null = null,
 ): boolean {
   if (!blockWritable(id)) return false;
+  // See mergeWithPrev: navOnly display lists are never a merge topology.
+  if (scope?.navOnly) scope = null;
   const next = nextVisible(id, scope);
   if (next === null) return false;
   return absorbInto(id, next, editingSurface);
