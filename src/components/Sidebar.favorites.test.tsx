@@ -2,6 +2,7 @@
 // the Favorites list renders the arrangement tree, edits groups in place and
 // reorders/nests rows by pointer drag, persisting through the real store.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { render } from "solid-js/web";
 import "../graph"; // installs the Favorites page door, as at app start
 import { backend, type SavePageEntry } from "../backend";
@@ -107,6 +108,37 @@ describe("favorites arrangement in the sidebar", () => {
     expect(rows().map((r) => r.textContent)).toEqual([expect.stringContaining("Beta"), expect.stringContaining("Alpha")]);
     expect(favorites().map((f) => f.name)).toEqual(["Beta", "Alpha"]);
     dispose();
+  });
+
+  // A group is a row like any other, so it drags with everything it holds. Its
+  // rename input is sized to its text (master c3adf171c) so there is somewhere
+  // left to grab; the input itself deliberately never starts a drag.
+  it("drags a whole group, carrying what it holds, by a part of the row that is not the input", async () => {
+    const { root, dispose, rows, layoutRows } = mount(["Alpha", "Beta"]);
+    root.querySelector<HTMLButtonElement>(".nav-fav-add-group")!.click();
+    await settle();
+    layoutRows();
+    drag(rows()[0], rows()[2], [10, 10], [30, 80]); // Alpha into the group
+    await settle();
+    layoutRows();
+    const [beta, group] = rows();
+    expect(group.classList.contains("nav-fav-group")).toBe(true);
+    const input = group.querySelector<HTMLInputElement>(".nav-fav-group-name")!;
+    // Structural: an input stretched across the row leaves nothing to grab.
+    expect(input.size).toBeGreaterThanOrEqual(4);
+    drag(group, beta, [150, 40], [150, 5]); // pressed on the row, right of the input
+    await settle();
+    expect(saved.at(-1)!.page.blocks.map((b) => [b.raw, b.children.map((c) => c.raw)]))
+      .toEqual([["New group", ["[[Alpha]]"]], ["[[Beta]]", []]]);
+    expect(rows()).toHaveLength(3);
+    dispose();
+  });
+
+  it("the group's rename input is not stretched across the row (CSS guard; jsdom has no layout)", () => {
+    const css = readFileSync("src/styles/favorites.css", "utf8");
+    const rule = /\.nav-fav-group-name\s*\{([^}]*)\}/.exec(css)![1].replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(rule).toMatch(/flex:\s*0\s+1\s+auto/);
+    expect(rule).not.toMatch(/flex:\s*1\b/);
   });
 
   it("a press without movement navigates; the click ending a drag does not", async () => {
