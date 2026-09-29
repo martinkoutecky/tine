@@ -1460,11 +1460,11 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
       if (typeof location !== "undefined" && !/[?&]conflicts\b/.test(location.search)) return [];
       return [
         {
-          path: "pages/Project Plan.sync-conflict-20260705-141233-A1B2C3D.md",
+          path: "pages/Project Plan.sync-conflict-20260705-141233-A2B2C3D.md",
           base_name: "Project Plan",
           base_path: "pages/Project Plan.md",
           kind: "page" as const,
-          tag: "sync-conflict-20260705-141233-A1B2C3D",
+          tag: "sync-conflict-20260705-141233-A2B2C3D",
           preview: "Milestones for the launch",
         },
       ];

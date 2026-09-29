@@ -252,9 +252,21 @@ impl Format {
 }
 
 /// If `stem` is a sync tool's conflict copy of another file, return the base file
-/// stem it shadows. Recognises Syncthing
-/// (`name.sync-conflict-YYYYMMDD-HHMMSS-XXXXXXX`) and Dropbox
-/// (`name (conflicted copy …)` / `name (<user>'s conflicted copy …)`).
+/// stem it shadows. Recognises the GENERATED shapes only (a page whose name
+/// merely resembles one stays a real page):
+///
+/// - Syncthing: `name.sync-conflict-YYYYMMDD-HHMMSS-DEVICEID`
+///   (`conflictName` in syncthing `lib/model/folder_sendrecv.go`; the device id
+///   is the modifying device's short id — up to 7 base32 chars `[A-Z2-7]`,
+///   empty when unknown — and pre-1.1.0 versions omitted `-DEVICEID`).
+/// - Seafile: `name (SFConflict [modifier ]YYYY-MM-DD-HH-MM-SS)`
+///   (`gen_conflict_path` in seafile `common/vc-common.c`; the modifier is the
+///   editing user's id when known).
+/// - Dropbox: `name (conflicted copy …)` / `name (<user>'s conflicted copy …)`.
+///
+/// Deliberately NOT recognized (too ambiguous to distinguish from a real page
+/// name, so treating them as conflict copies would deindex real pages):
+/// OneDrive's `name-COMPUTERNAME.ext` and Google Drive's `name (1).ext`.
 ///
 /// A conflict copy is NOT a real page — it must be kept out of the page list and
 /// the `(kind,name)` cache (otherwise it shows as a garbage page and its shared
@@ -263,8 +275,24 @@ impl Format {
 /// through `is_page_file`/`entry_for_path`/`resolve_rel` (which the merge UI's
 /// path-addressed load relies on).
 pub fn sync_conflict_base(stem: &str) -> Option<&str> {
-    if let Some(i) = stem.find(".sync-conflict-") {
-        return Some(&stem[..i]);
+    const SYNCTHING_TAG: &str = ".sync-conflict-";
+    let mut search = 0;
+    while let Some(found) = stem[search..].find(SYNCTHING_TAG) {
+        let i = search + found;
+        if syncthing_conflict_tail(&stem[i + SYNCTHING_TAG.len()..]) {
+            return Some(&stem[..i]);
+        }
+        search = i + SYNCTHING_TAG.len();
+    }
+    const SEAFILE_TAG: &str = " (SFConflict ";
+    if let Some(inner) = stem.strip_suffix(')') {
+        if let Some(i) = inner.rfind(SEAFILE_TAG) {
+            let args = &inner[i + SEAFILE_TAG.len()..];
+            let timestamp = args.rsplit(' ').next().unwrap_or(args);
+            if seafile_conflict_timestamp(timestamp) && !args.contains(')') {
+                return Some(&stem[..i]);
+            }
+        }
     }
     // Dropbox: "<base> (conflicted copy …)" or "<base> (<user>'s conflicted copy …)".
     if let Some(i) = stem.find(" (") {
@@ -273,6 +301,46 @@ pub fn sync_conflict_base(stem: &str) -> Option<&str> {
         }
     }
     None
+}
+
+/// Whether the text after `.sync-conflict-` matches Syncthing's generated
+/// `YYYYMMDD-HHMMSS[-DEVICEID]` tail exactly to the end of the stem.
+fn syncthing_conflict_tail(tail: &str) -> bool {
+    let bytes = tail.as_bytes();
+    if bytes.len() < 15
+        || !bytes[..8].iter().all(u8::is_ascii_digit)
+        || bytes[8] != b'-'
+        || !bytes[9..15].iter().all(u8::is_ascii_digit)
+    {
+        return false;
+    }
+    match &bytes[15..] {
+        // Pre-1.1.0 Syncthing: no `-DEVICEID` suffix at all.
+        [] => true,
+        // The short device id: up to 7 chars of RFC 4648 base32 (`[A-Z2-7]`),
+        // empty when the modifying device is unknown (zero ShortID).
+        [b'-', device @ ..] => {
+            device.len() <= 7
+                && device
+                    .iter()
+                    .all(|&b| b.is_ascii_uppercase() || (b'2'..=b'7').contains(&b))
+        }
+        _ => false,
+    }
+}
+
+/// Whether `text` is Seafile's `%Y-%m-%d-%H-%M-%S` conflict timestamp
+/// (`gen_conflict_path` in seafile `common/vc-common.c`).
+fn seafile_conflict_timestamp(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() == 19
+        && bytes.iter().enumerate().all(|(i, &b)| {
+            if matches!(i, 4 | 7 | 10 | 13 | 16) {
+                b == b'-'
+            } else {
+                b.is_ascii_digit()
+            }
+        })
 }
 
 /// Whether `stem` names a sync-tool conflict copy (see [`sync_conflict_base`]).

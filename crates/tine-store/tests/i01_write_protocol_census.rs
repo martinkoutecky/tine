@@ -104,6 +104,7 @@ fn every_content_mutation_has_a_reviewed_owner() {
         "crates/tine-graph-features/src/guide.rs",
         "src-tauri/src/backup.rs",
         "src-tauri/src/commands.rs",
+        "src-tauri/src/commands/concord.rs",
         "src-tauri/src/graph.rs",
         "src-tauri/src/state.rs",
         "src-tauri/src/watcher.rs",

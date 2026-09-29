@@ -64,7 +64,14 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
         "src-tauri/src/commands.rs",
         "spawn_blocking(",
-        34,
+        33,
+        "command future",
+        "caller awaits blocking result",
+    ),
+    (
+        "src-tauri/src/commands/concord.rs",
+        "spawn_blocking(",
+        4,
         "command future",
         "caller awaits blocking result",
     ),
@@ -149,6 +156,7 @@ fn production_acquisitions_have_owners() {
     for file in [
         "src-tauri/src/backup.rs",
         "src-tauri/src/commands.rs",
+        "src-tauri/src/commands/concord.rs",
         "src-tauri/src/graph.rs",
         "src-tauri/src/state.rs",
         "src-tauri/src/watcher.rs",

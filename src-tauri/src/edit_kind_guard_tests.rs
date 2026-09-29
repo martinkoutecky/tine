@@ -31,6 +31,7 @@ fn calls(body: &str, marker: &str) -> bool {
 #[test]
 fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     const COMMANDS: &str = include_str!("commands.rs");
+    const CONCORD: &str = include_str!("commands/concord.rs");
     const BACKUP: &str = include_str!("backup.rs");
     const PAGES: &str = include_str!("../../crates/tine-graph-features/src/pages.rs");
     const CONFLICTS: &str = include_str!("../../crates/tine-graph-features/src/conflicts.rs");
@@ -66,6 +67,14 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "tine_graph_features::pages::rename_file_to_page",
         ),
         (
+            "write_highlights",
+            "tine_graph_features::pdf::write_highlights",
+        ),
+        ("open_pdf", "tine_graph_features::pdf::open_pdf"),
+    ];
+    // Concord's writers live in their own command module (og family 8).
+    let concord_routes = [
+        (
             "resolve_sync_conflict",
             "tine_graph_features::conflicts::resolve_sync_conflict",
         ),
@@ -74,18 +83,20 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "tine_graph_features::conflicts::trash_sync_conflict",
         ),
         (
-            "write_highlights",
-            "tine_graph_features::pdf::write_highlights",
+            "resolve_vcs_marker_conflict",
+            "tine_graph_features::conflicts::resolve_vcs_marker_conflict",
         ),
-        ("open_pdf", "tine_graph_features::pdf::open_pdf"),
     ];
     assert_eq!(
-        routes.len(),
-        12,
+        routes.len() + concord_routes.len(),
+        13,
         "OG-RULES Rule 8: update the page-writer census; exemplar src-tauri/src/commands.rs"
     );
     for (name, route) in routes {
         assert!(calls(body(COMMANDS, name), route), "OG-RULES Rule 8: {name} changed its page-write route; exemplar src-tauri/src/commands.rs");
+    }
+    for (name, route) in concord_routes {
+        assert!(calls(body(CONCORD, name), route), "OG-RULES Rule 8: {name} changed its page-write route; exemplar src-tauri/src/commands/concord.rs");
     }
     let destinations = [
         (PAGES, "save_pages", "store.save_pages(&prepared)"),
@@ -128,6 +139,11 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             CONFLICTS,
             "resolve_sync_conflict",
             "tx.save_page(&[tine_store::EditKind::ReplacePage",
+        ),
+        (
+            CONFLICTS,
+            "resolve_vcs_marker_conflict",
+            "tx.save_page(&[tine_store::EditKind::ReplacePage], &page, SaveBase::ResolvingMarkers(rev)",
         ),
         (
             PDF,

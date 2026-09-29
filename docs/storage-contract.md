@@ -56,7 +56,7 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::twin::Twin` | 1 | Sync introduces a second physical file for the same page name or journal day; refuse a write that could choose the wrong one. |
 | `transaction.rs::preflight::InvalidTarget` | 13 | A legitimate caller supplies a malformed path, unsafe page nesting, or unsupported operation (including moving config), an external rename changes target shape, or a caller attempts to save a virtual Guide DTO in a transaction; refuse before any step changes disk. Config moves require live config publication; Guide content needs an explicit graph copy. |
 | `transaction.rs::preflight::Twin` | 1 | A sync-created same-name page appears between page creation and commit; refuse the ambiguous create. |
-| `transaction.rs::preflight::ReadOnly` | 1 | An Org page no longer round-trips after an external edit; keep its bytes and the unsaved editor proposal. |
+| `transaction.rs::preflight::ReadOnly` | 2 | An Org page no longer round-trips after an external edit; keep its bytes and the unsaved editor proposal. R-VCS-MARKERS: a VCS merge by an external writer left unresolved markers; a rewrite would re-indent them and silently lose a side. Only `SaveBase::ResolvingMarkers` (the Concord resolver) passes, and it first stages the old bytes in `logseq/.tine-trash/conflicts/`. |
 | `transaction.rs::preflight::RepeatedFile` | 1 | Two steps of one user operation choose the same unique filename; refuse the ambiguous plan. |
 | `transaction.rs::apply::InvalidTarget` | 1 | A generated unique candidate is no longer a valid target after a concurrent change; refuse that candidate. |
 | `transaction.rs::apply::RepeatedFile` | 1 | A unique candidate collides with another step after planning; refuse rather than overwrite. |
@@ -77,7 +77,7 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `store.rs::from_failed_step::Closed` | 1 | A transaction closes before commit; retain all unsaved page snapshots. |
 | `store.rs::from_failed_step::Conflict` | 1 | An external edit makes an entry's target revision stale; return its current disk revision for resolution. |
 | `store.rs::from_failed_step::Deleted` | 1 | Sync deletes an entry's page while its editor buffer is open; retain the buffer and report deletion. |
-| `store.rs::from_failed_step::ReadOnly` | 1 | A parser or format check rejects a round-trip edit; retain the buffer. |
+| `store.rs::from_failed_step::ReadOnly` | 1 | A parser or format check rejects a round-trip edit, or the file carries unresolved VCS markers (R-VCS-MARKERS); retain the buffer. |
 | `store.rs::from_failed_step::Twin` | 2 | A second same-name physical file appears before or after the guarded create; identify that claimant instead of presenting its revision as the target's. |
 | `store.rs::from_failed_step::InvalidTarget` | 2 | A saved target becomes invalid or undecodable; retain the buffer. |
 | `store.rs::from_failed_step::Repeated` | 1 | Two entries name the same file; refuse the request before writing either entry. |

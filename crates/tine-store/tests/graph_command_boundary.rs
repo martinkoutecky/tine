@@ -129,7 +129,10 @@ fn scan(source: &str) -> Vec<String> {
 #[test]
 fn graph_commands_are_thin_transport() {
     let source = include_str!("../../../src-tauri/src/commands.rs");
-    let violations = scan(source);
+    // A command module split out of commands.rs stays under the same rule.
+    let concord = include_str!("../../../src-tauri/src/commands/concord.rs");
+    let mut violations = scan(source);
+    violations.extend(scan(concord));
     assert!(violations.is_empty(), "Graph Tauri commands may decode arguments, make one store/client call, and map the result only; no lock, retry, loop, path work, or error-text matching. Found: {violations:#?}");
 }
 

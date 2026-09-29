@@ -10,6 +10,8 @@ mod backup;
 #[cfg(desktop)]
 mod cli;
 mod commands;
+#[path = "commands/concord.rs"]
+mod concord;
 mod debug;
 mod device_io;
 #[cfg(test)]
@@ -41,17 +43,20 @@ use commands::{
     get_backlink_filter_context, get_backlinks, get_page, get_page_by_path, get_unlinked_refs,
     graph_source_files, guide_pages, import_asset, import_native_capture, journal_content_days,
     journal_feed_page, list_journal_conflicts, list_journal_filename_migrations,
-    list_orphan_assets, list_sync_conflicts, list_templates, load_workspaces, merge_pages,
-    open_asset, open_page_file, open_pdf, page_icons, page_inventory, page_print_html,
-    preview_block, publish_html, query_facets, quick_switch, read_asset, read_custom_css,
-    read_highlights, read_journal_file, read_local_image, read_text_file, rename_file_to_page,
-    rename_page, resolve_block, resolve_blocks, resolve_page, resolve_sync_conflict,
-    run_graph_search, save_asset, save_pages, save_pdf_area_image, save_workspaces, search,
-    set_default_journal_template, set_doc_mode_enter_for_new_block, set_guide_announced,
-    set_journal_title_format, set_logical_outdenting, set_preferred_format, set_preferred_workflow,
-    set_show_brackets, set_start_of_week, set_timetracking_enabled, stream_asset_path,
-    sync_conflict_diff, tine_open_devtools, tine_quit, trash_asset, trash_journal_file,
-    trash_sync_conflict, write_highlights, write_pdf_view_state,
+    list_orphan_assets, list_templates, load_workspaces, merge_pages, open_asset, open_page_file,
+    open_pdf, page_icons, page_inventory, page_print_html, preview_block, publish_html,
+    query_facets, quick_switch, read_asset, read_custom_css, read_highlights, read_journal_file,
+    read_local_image, read_text_file, rename_file_to_page, rename_page, resolve_block,
+    resolve_blocks, resolve_page, run_graph_search, save_asset, save_pages, save_pdf_area_image,
+    save_workspaces, search, set_default_journal_template, set_doc_mode_enter_for_new_block,
+    set_guide_announced, set_journal_title_format, set_logical_outdenting, set_preferred_format,
+    set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
+    stream_asset_path, tine_open_devtools, tine_quit, trash_asset, trash_journal_file,
+    write_highlights, write_pdf_view_state,
+};
+use concord::{
+    conflict_inventory, list_sync_conflicts, resolve_sync_conflict, resolve_vcs_marker_conflict,
+    sync_conflict_diff, trash_sync_conflict, vcs_marker_conflict_diff,
 };
 use debug::{
     debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, diag_private,
@@ -843,6 +848,9 @@ pub fn run() {
             sync_conflict_diff,
             resolve_sync_conflict,
             trash_sync_conflict,
+            conflict_inventory,
+            vcs_marker_conflict_diff,
+            resolve_vcs_marker_conflict,
             trash_journal_file,
             read_journal_file,
             get_page_by_path,

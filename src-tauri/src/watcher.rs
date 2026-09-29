@@ -295,7 +295,7 @@ mod tests {
         let subscription = slot.store.subscribe();
         atomic_write(
             &root,
-            "pages/New.sync-conflict-2026.md",
+            "pages/New.sync-conflict-20260705-120000-ABCDEFG.md",
             "title:: New\n\n- theirs\n",
         );
         slot.store.scan_refresh().unwrap();
@@ -312,7 +312,7 @@ mod tests {
         assert!(
             tine_graph_features::conflicts::list_sync_conflicts(&slot.store)
                 .iter()
-                .any(|copy| copy.path == "pages/New.sync-conflict-2026.md")
+                .any(|copy| copy.path == "pages/New.sync-conflict-20260705-120000-ABCDEFG.md")
         );
         drop(slot);
         std::fs::remove_dir_all(root).unwrap();

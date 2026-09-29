@@ -3,6 +3,7 @@
 //! belong to `tine-store`), no GUI dependencies — fully unit
 //! testable without the Tauri shell.
 
+pub mod concord_queue;
 pub mod config;
 pub mod corpus;
 pub mod date;
@@ -23,6 +24,7 @@ pub mod refs;
 pub mod render;
 pub mod search_query;
 pub mod sync_diff;
+pub mod text_merge;
 
 /// Re-export the lsdoc parser so the Tauri shell can name its AST types
 /// (`tine_core::lsdoc::ast::Block`) without depending on lsdoc directly.

@@ -7056,7 +7056,7 @@ mod tests {
         fs::write(
             dir.join("pages")
                 .join("client-a")
-                .join("Foo.sync-conflict-20260705-141233-A1B2C3D.md"),
+                .join("Foo.sync-conflict-20260705-141233-A2B2C3D.md"),
             "- conflict copy\n",
         )
         .unwrap();
@@ -7070,7 +7070,7 @@ mod tests {
         let c = &conflicts[0];
         assert_eq!(
             c.path,
-            "pages/client-a/Foo.sync-conflict-20260705-141233-A1B2C3D.md"
+            "pages/client-a/Foo.sync-conflict-20260705-141233-A2B2C3D.md"
         );
         assert_eq!(c.base_path.as_deref(), Some("pages/client-a/Foo.md"));
         assert_eq!(c.base_name, "Foo");
