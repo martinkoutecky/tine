@@ -161,7 +161,9 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
         sync_dir(to)
     } else if kind.is_file() {
         fs::copy(from, to)?;
-        fs::File::open(to)?.sync_all()
+        // Opened for write: Windows refuses to flush a read-only handle.
+        let copied = fs::OpenOptions::new().write(true).open(to)?;
+        copied.sync_all()
     } else {
         Ok(())
     }
@@ -193,13 +195,7 @@ fn publish(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 fn sync_dir(dir: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    return fs::File::open(dir)?.sync_all();
-    #[cfg(not(unix))]
-    {
-        let _ = dir;
-        Ok(())
-    }
+    tine_store::directory_durability::sync_directory_entry(dir)
 }
 
 #[cfg(test)]
