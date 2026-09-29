@@ -8,6 +8,7 @@ import { workflow, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
 import type { Inline } from "../render/ast";
 import { rebulletedSourceByteToRawByte, utf8ByteLength, utf8ByteToUtf16Offset } from "../render/spans";
 import { tagRef } from "../tags";
+import { literalBlockOfLine } from "../editor/literalLines";
 import { parseIsoDateLike } from "./typed";
 import { evaluateFormulaForRow, formulaValueText, liveFormulaRowNode, type FormulaEvalRow } from "./formulaEval";
 
@@ -394,6 +395,9 @@ export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: Gr
 }
 
 function setPriorityRaw(raw: string, level: "A" | "B" | "C" | null): string {
+  // A block whose first line opens a code/src block has no title to carry a
+  // priority; prefixing it would stop the fence opening (C3 L16).
+  if (literalBlockOfLine(raw)[0] !== -1) return raw;
   const lines = raw.split("\n");
   const first = lines[0] ?? "";
   // The shared recognizer decides whether the marker is on this first line at

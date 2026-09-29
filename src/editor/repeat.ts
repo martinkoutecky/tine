@@ -6,6 +6,7 @@
 import { leadingMarker, nextMarker, cycleMarker, setMarker, type Workflow } from "./marker";
 import { matchLeadingMarker, taskCheckboxState } from "../markers";
 import { applyMarkerTransition } from "../logbook";
+import { literalBlockOfLine } from "./literalLines";
 import type { Format } from "../types";
 
 import { appNow } from "../journal";
@@ -19,9 +20,13 @@ interface MarkerTimeOptions {
   withSeconds: boolean;
 }
 
-/** True if the block has a repeater on a SCHEDULED/DEADLINE line. */
+/** True if the block has a repeater on a SCHEDULED/DEADLINE line. A line of a
+ *  code/src block is content, never the task's planning (C3 L14; the one answer
+ *  is editor/literalLines.ts — its Markdown parse also recognizes `#+BEGIN_SRC`). */
 export function hasRepeater(raw: string): boolean {
-  return raw.split("\n").some((l) => {
+  const literal = literalBlockOfLine(raw);
+  return raw.split("\n").some((l, i) => {
+    if (literal[i] !== -1) return false;
     const t = l.trim();
     return (t.startsWith("SCHEDULED:") || t.startsWith("DEADLINE:")) && REPEATER.test(t);
   });
@@ -72,8 +77,9 @@ export function rollRepeat(raw: string, workflow: Workflow): string | null {
   if (!hasRepeater(raw)) return null;
   const open = workflow === "now" ? "LATER" : "TODO";
   const lines = raw.split("\n");
+  const literal = literalBlockOfLine(raw);
   for (let i = 0; i < lines.length; i++) {
-    const m = /^(\s*)(SCHEDULED|DEADLINE):\s*(<[^>]+>)(.*)$/.exec(lines[i]);
+    const m = literal[i] === -1 ? /^(\s*)(SCHEDULED|DEADLINE):\s*(<[^>]+>)(.*)$/.exec(lines[i]) : null;
     if (m) {
       const adv = advanceTimestamp(m[3]);
       if (adv) lines[i] = `${m[1]}${m[2]}: ${adv}${m[4]}`;

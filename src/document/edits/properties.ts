@@ -6,33 +6,44 @@ import { markDirty, noteTitleIdentityIntent } from "../save/engine";
 import { PROP_LINE, isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
+import { insertableBefore, literalBlockOfLine } from "../../editor/literalLines";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { pushToast } from "../../toasts";
 
 /** Pure Markdown property rewrite for one compound store mutation. It scans only
  * the canonical head (title — or, when the first line is itself a property, no
  * title — planning, contiguous properties) plus the legacy trailing property
- * block, so a `key::` lookalike in body text or a code fence is never touched or
- * reordered. Keys match case-insensitively, like blockProperty/facetsOf: the
- * first head match is replaced in place with the file's spelling, and every
- * other match (head or trailing, any case) is removed. Existing order is kept. */
+ * block, so a `key::` lookalike in body text is never touched or reordered. A
+ * line of a code/src/example block (`literalBlockOfLine`) is never a head or
+ * trailing property, and a new property never lands inside one: when the head
+ * position is inside a block that opens on the title line (a whole-block code
+ * fence), the property goes at the end instead (C3 L13; a named OG divergence,
+ * see editor/literalLines.ts). Keys match case-insensitively, like
+ * blockProperty/facetsOf: the first head match is replaced in place with the
+ * file's spelling, and every other match (head or trailing, any case) is
+ * removed. Existing order is kept. */
 function markdownRawWithProperty(raw: string, key: string, value: string | null): string {
   const lines = raw.split("\n");
-  const titled = !PROP_LINE.test(lines[0] ?? "");
+  const literal = literalBlockOfLine(raw, "md");
+  const prop = (k: number) => literal[k] === -1 && PROP_LINE.test(lines[k] ?? "");
+  const titled = !prop(0);
   const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*</;
   let i = titled ? 1 : 0;
-  while (titled && i < lines.length && PLANNING_LINE.test(lines[i])) i++;
+  while (titled && i < lines.length && literal[i] === -1 && PLANNING_LINE.test(lines[i])) i++;
   const planningEnd = i;
-  while (i < lines.length && PROP_LINE.test(lines[i])) i++;
+  while (i < lines.length && prop(i)) i++;
   const propsEnd = i;
   let j = lines.length;
-  while (j > propsEnd && PROP_LINE.test(lines[j - 1] ?? "")) j--;
+  while (j > propsEnd && prop(j - 1)) j--;
   const keyOf = (l: string) => PROP_LINE.exec(l)?.[1].toLowerCase();
   const lower = key.toLowerCase();
   const props = lines.slice(planningEnd, propsEnd);
   const at = props.findIndex((l) => keyOf(l) === lower);
   const line = value === null ? null : `${at >= 0 ? PROP_LINE.exec(props[at])![1] : key}:: ${value}`;
   const head = props.flatMap((l, k) => (keyOf(l) !== lower ? [l] : k === at && line !== null ? [line] : []));
+  if (at < 0 && line !== null && !insertableBefore(literal, propsEnd)) {
+    return [...lines.slice(0, j), ...lines.slice(j).filter((l) => keyOf(l) !== lower), line].join("\n");
+  }
   if (at < 0 && line !== null) head.push(line);
   return [
     ...lines.slice(0, planningEnd),
