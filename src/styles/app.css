@@ -618,9 +618,7 @@ textarea {
 }
 
 .tab-title {
-  /* Grow into the tab's free space so the close control stays pinned to the
-     right edge at any width; min-width: 0 keeps long titles ellipsizing. */
-  flex: 1 1 auto;
+  flex: 1 1 auto; /* close control pinned right; min-width lets titles ellipsize */
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -818,15 +816,19 @@ textarea {
   flex: 1;
   min-width: 0; /* shrink horizontally when the right sidebar/PDF pane is open */
   overflow-y: auto;
+  display: flex; /* column context for the ::after slack below (GH #369) */
+  flex-direction: column;
 }
 
-/* The pane scroller is tabindex="-1" only as a programmatic focus target; a
-   click on empty space focuses it and the UA then paints its default frame
-   around the whole content area (GH #345). Only that UA frame is suppressed:
-   the `.pane-selected` ring and controls' :focus-visible cues are separate. */
-.main-content:focus {
-  outline: none;
-}
+/* GH #345: the tabindex=-1 scroller must not paint the UA focus frame; the
+   .pane-selected ring and controls' :focus-visible cues are separate. */
+.main-content:focus { outline: none; }
+
+/* End-of-page slack (GH #369/#390): a spacer in the scroller's column flex,
+   so it is pane-relative; only naturally overflowing pages keep 40% room
+   (PaneScroller in App.tsx measures that), fitting panes never scroll. */
+.main-content::after { content: ""; flex: 1 1 0; }
+.main-content.natural-content-overflow::after { flex: 1 0 40%; }
 
 /* Solo-pane shell: a non-scrolling, positioned wrapper so the pane-select
    overlays (edge segment, tab-split preview) don't scroll with the content.
@@ -1100,9 +1102,11 @@ textarea {
 }
 
 .main-content-inner {
+  flex: 0 0 auto; /* natural height: only real overflow scrolls (GH #369) */
+  width: 100%; /* a flex item would otherwise shrink-wrap its content (GH #382) */
   max-width: var(--ls-main-content-max-width);
   margin: 0 auto;
-  padding: 12px 48px 40vh;
+  padding: 12px 48px 0;
 }
 
 /* Wide mode: drop the reading-width cap. */
@@ -2696,7 +2700,7 @@ textarea {
 }
 @media (max-width: 640px) {
   .main-content-inner {
-    padding: 8px 12px 40vh;
+    padding: 8px 12px 0;
   }
   .page-title-row {
     gap: 6px;
