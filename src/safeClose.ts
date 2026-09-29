@@ -10,6 +10,8 @@ export interface SafeCloseDeps {
    *  run that discarded drafts is distinguishable in the diagnostic report
    *  (GH #540). Bounded to one second; its failure never blocks the close. */
   recordDiscard?(reason: DiscardReason): Promise<void>;
+  /** The user chose to keep unsaved work: show where it is (GH #540). */
+  onDiscardDeclined?(): void;
   flushSession(): Promise<void>;
   setTransition(active: boolean): void;
   notifyPdfFailure(): void;
@@ -98,7 +100,10 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
           deps.notifyConfirmationFailure();
           return "rejected";
         }
-        if (!discard) return "rejected";
+        if (!discard) {
+          deps.onDiscardDeclined?.();
+          return "rejected";
+        }
         try {
           await writeOwned(owner, bounded(deps.recordDiscard?.(reason) ?? Promise.resolve(), 1000, undefined));
         } catch {

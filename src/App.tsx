@@ -113,20 +113,18 @@ export const safeClose = createSafeCloseCoordinator({
   },
   flushPdfWork: drainPdfWork,
   flushAll,
-  confirmDiscard: async (reason) => {
-    // GH #540: name the pages at risk; "No" opens the recovery panel.
-    const pages = unsavedDrafts();
+  // GH #540: name the pages at risk; "No" opens the recovery panel.
+  confirmDiscard: (reason) => {
     const explanation = reason === "still-saving"
       ? "Tine is still writing your changes and is taking longer than expected — a slow or network drive can do this."
       : "Tine has changes that could not be saved (a conflict or a stuck save).";
-    const inventory = pages.map((p) => `• ${p.name} — ${p.state}`).join("\n") || "Pending attachments or storage work; no page draft identified.";
-    const discard = await backend().confirm(
+    const inventory = unsavedDrafts().map((p) => `• ${p.name} — ${p.state}`).join("\n") || "Pending attachments or storage work; no page draft identified.";
+    return backend().confirm(
       `${explanation}\n\n${inventory}\n\nChoose No to review, retry saving, or copy your drafts. Close this window anyway and lose them?`,
       "Unsaved changes",
     );
-    if (!discard) openUnsavedRecovery();
-    return discard;
   },
+  onDiscardDeclined: openUnsavedRecovery,
   recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
   flushSession,
   setTransition: setGraphTransitioning,
