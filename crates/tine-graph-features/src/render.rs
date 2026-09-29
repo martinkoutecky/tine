@@ -89,16 +89,30 @@ impl<'a> RenderGraph<'a> {
     }
 
     fn query_bounded(&self, source: &str, dialect: QueryTextDialect) -> BoundedGroups {
-        let empty = || BoundedGroups {
-            groups: Vec::new(),
-            pages: Vec::new(),
-            total: 0,
-            exceeded: false,
-        };
+        self.query_parsed(source, dialect, &[])
+            .map(|(_, bounded)| bounded)
+            .unwrap_or_else(|| BoundedGroups {
+                groups: Vec::new(),
+                pages: Vec::new(),
+                total: 0,
+                exceeded: false,
+            })
+    }
+
+    /// The ONE static query run: parse `source` under the host block's `tine.*`
+    /// properties, run it under the view the app runs it under, and return the
+    /// parse (its `view` and block presentation drive a query-backed sheet)
+    /// beside the bounded answer.
+    fn query_parsed(
+        &self,
+        source: &str,
+        dialect: QueryTextDialect,
+        block_properties: &[(String, String)],
+    ) -> Option<(tine_core::query::wire_parse::ParsedQuery, BoundedGroups)> {
         let Ok(IrAnswer::Registry(registry)) = self.whole.query_ir(IrRequest::Registry) else {
-            return empty();
+            return None;
         };
-        let parsed = parse_query_pair(source, dialect, &[], &registry);
+        let parsed = parse_query_pair(source, dialect, block_properties, &registry);
         let view = anchored_view(&parsed, parsed.query.anchor);
         let context = ExecutionContext::default();
         let Ok(IrAnswer::Result(answer)) = self.whole.query_ir(IrRequest::Run {
@@ -106,18 +120,19 @@ impl<'a> RenderGraph<'a> {
             view: &view,
             context: &context,
         }) else {
-            return empty();
+            return None;
         };
         let (groups, pages) = match answer.rows {
             QueryRows::Block { groups } => (groups, Vec::new()),
             QueryRows::Page { pages } => (Vec::new(), pages),
         };
-        BoundedGroups {
+        let bounded = BoundedGroups {
             groups,
             pages,
             total: answer.total,
             exceeded: answer.exceeded,
-        }
+        };
+        Some((parsed, bounded))
     }
 }
 
@@ -1759,7 +1774,26 @@ fn render_block(
         Some(BeginQueryInspection::Unsupported) => out.push_str(
             "<div class=\"query-unsupported begin-query-unsupported\" role=\"alert\">Unsupported BEGIN_QUERY.</div>",
         ),
-        None => out.push_str(&decorate(&tine_core::lsdoc::render_html(&blocks, &md_opts()), ctx, 0)),
+        None => {
+            // A block whose whole body is one `{{query}}` and that asks for a
+            // table or board presents the results as that sheet.
+            let sheet = render_sheets::sole_query_macro(b).filter(|found| {
+                let mut emit = render_sheets::Emit {
+                    ctx,
+                    slug,
+                    title,
+                    anchors,
+                    anchored: Default::default(),
+                    index,
+                    opts,
+                    tree_depth,
+                };
+                render_sheets::emit_query(b, at, found, &mut emit, out)
+            });
+            if sheet.is_none() {
+                out.push_str(&decorate(&tine_core::lsdoc::render_html(&blocks, &md_opts()), ctx, 0));
+            }
+        }
     }
     out.push_str("</div>");
     emit_trailer_facets(b.scheduled(), b.deadline(), b.raw(), &b.properties(), out);

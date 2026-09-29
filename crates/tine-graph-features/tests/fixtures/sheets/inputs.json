@@ -267,5 +267,270 @@
       }
     ],
     "omitted": 0
+  },
+  {
+    "page": "Tail-queries",
+    "path": [
+      0
+    ],
+    "fp": "79849cf339de5a7b",
+    "owner": {
+      "id": "6f009d18-ba92-8bdd-8e79-27d25272530a",
+      "raw": "{{query (task TODO DOING)}}\ntine.view:: table\ntine.fields:: qty=number",
+      "collapsed": false,
+      "children": [],
+      "breadcrumb": [],
+      "properties": [
+        [
+          "tine.view",
+          "table"
+        ],
+        [
+          "tine.fields",
+          "qty=number"
+        ]
+      ]
+    },
+    "rows": [],
+    "omitted": 0,
+    "query": {
+      "fp": "d59dfaada75f63b7",
+      "presentation": null,
+      "view": {
+        "view": "table",
+        "sort": [],
+        "columns": [],
+        "aggregates": []
+      },
+      "pages": [
+        "Sheets",
+        "Sheets",
+        "Sheets"
+      ],
+      "rows": [
+        {
+          "id": "dd206fa6-3bb8-82b6-ace0-daccd54609da",
+          "raw": "TODO [#A] First #x\nprice:: 5\nqty:: 2",
+          "collapsed": false,
+          "children": [],
+          "breadcrumb": [],
+          "marker": "TODO",
+          "priority": "A",
+          "tags": [
+            "x"
+          ],
+          "properties": [
+            [
+              "price",
+              "5"
+            ],
+            [
+              "qty",
+              "2"
+            ]
+          ]
+        },
+        {
+          "id": "b38f0f97-307a-878b-bad1-5ed713d988bd",
+          "raw": "TODO Write tests",
+          "collapsed": false,
+          "children": [],
+          "breadcrumb": [],
+          "marker": "TODO"
+        },
+        {
+          "id": "e0855caf-641c-8ac7-8eaa-4e5392b26e92",
+          "raw": "DOING Implement",
+          "collapsed": false,
+          "children": [],
+          "breadcrumb": [],
+          "marker": "DOING"
+        }
+      ]
+    }
+  },
+  {
+    "page": "Tail-queries",
+    "path": [
+      1
+    ],
+    "fp": "b9987330e31201da",
+    "owner": {
+      "id": "6dd1672c-f87e-827e-9025-6dcadf707286",
+      "raw": "{{query (task TODO DOING DONE)}}\ntine.view:: board\ntine.group-by:: state",
+      "collapsed": false,
+      "children": [],
+      "breadcrumb": [],
+      "properties": [
+        [
+          "tine.view",
+          "board"
+        ],
+        [
+          "tine.group-by",
+          "state"
+        ]
+      ]
+    },
+    "rows": [],
+    "omitted": 0,
+    "query": {
+      "fp": "a9ad7ae08b32a28c",
+      "presentation": null,
+      "view": {
+        "view": "board",
+        "sort": [],
+        "group_by": "state",
+        "columns": [],
+        "aggregates": []
+      },
+      "pages": [
+        "Sheets",
+        "Sheets",
+        "Sheets",
+        "Sheets"
+      ],
+      "rows": [
+        {
+          "id": "dd206fa6-3bb8-82b6-ace0-daccd54609da",
+          "raw": "TODO [#A] First #x\nprice:: 5\nqty:: 2",
+          "collapsed": false,
+          "children": [],
+          "breadcrumb": [],
+          "marker": "TODO",
+          "priority": "A",
+          "tags": [
+            "x"
+          ],
+          "properties": [
+            [
+              "price",
+              "5"
+            ],
+            [
+              "qty",
+              "2"
+            ]
+          ]
+        },
+        {
+          "id": "ac4db89d-60e0-8070-a209-ec566cd6468c",
+          "raw": "DONE Second\nprice:: 1\nqty:: 2",
+          "collapsed": false,
+          "children": [],
+          "breadcrumb": [],
+          "marker": "DONE",
+          "properties": [
+            [
+              "price",
+              "1"
+            ],
+            [
+              "qty",
+              "2"
+            ]
+          ]
+        },
+        {
+          "id": "b38f0f97-307a-878b-bad1-5ed713d988bd",
+          "raw": "TODO Write tests",
+          "collapsed": false,
+          "children": [],
+          "breadcrumb": [],
+          "marker": "TODO"
+        },
+        {
+          "id": "e0855caf-641c-8ac7-8eaa-4e5392b26e92",
+          "raw": "DOING Implement",
+          "collapsed": false,
+          "children": [],
+          "breadcrumb": [],
+          "marker": "DOING"
+        }
+      ]
+    }
+  },
+  {
+    "page": "Tail-queries",
+    "path": [
+      2
+    ],
+    "fp": "8b2521215590ccd5",
+    "owner": {
+      "id": "eb482068-b0f4-83a1-810d-7ede1e1aef5b",
+      "raw": "{{query (task TODO)}}\ntine.view:: grid",
+      "collapsed": false,
+      "children": [],
+      "breadcrumb": [],
+      "properties": [
+        [
+          "tine.view",
+          "grid"
+        ]
+      ]
+    },
+    "rows": [
+      {
+        "id": "f11bf2cb-6d95-8d7b-8267-845f9836afbe",
+        "raw": "",
+        "collapsed": false,
+        "children": [
+          {
+            "id": "31abea45-ad05-8db5-9ae0-c49224fd7d77",
+            "raw": "stays a result list",
+            "collapsed": false,
+            "children": [],
+            "breadcrumb": []
+          }
+        ],
+        "breadcrumb": []
+      }
+    ],
+    "omitted": 0,
+    "query": {
+      "fp": "7704d8bebbf60fc2",
+      "presentation": null,
+      "view": {
+        "sort": [],
+        "columns": [],
+        "aggregates": []
+      },
+      "pages": [
+        "Sheets",
+        "Sheets"
+      ],
+      "rows": [
+        {
+          "id": "dd206fa6-3bb8-82b6-ace0-daccd54609da",
+          "raw": "TODO [#A] First #x\nprice:: 5\nqty:: 2",
+          "collapsed": false,
+          "children": [],
+          "breadcrumb": [],
+          "marker": "TODO",
+          "priority": "A",
+          "tags": [
+            "x"
+          ],
+          "properties": [
+            [
+              "price",
+              "5"
+            ],
+            [
+              "qty",
+              "2"
+            ]
+          ]
+        },
+        {
+          "id": "b38f0f97-307a-878b-bad1-5ed713d988bd",
+          "raw": "TODO Write tests",
+          "collapsed": false,
+          "children": [],
+          "breadcrumb": [],
+          "marker": "TODO"
+        }
+      ]
+    }
   }
 ]

@@ -10,6 +10,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **A query shown as a table or board exports as that table or board** (og E, 22c open item).
+  A block whose whole body is one `{{query …}}` with `tine.view:: table` or `board` (a query `as table`/`as board` may override it)
+  now publishes with the query's own columns and rows, on the page each row came from, computed by the
+  app's own sheet code; if a result sits on a page the export does not publish, or the results changed while the
+  export was prepared, it stays the usual result list. The command-line export still writes the outline.
+- **A TQL query with a page reference after a comma saves as a macro** (og E).
+  A form such as `any(children, [[a]])` used to be refused when Tine wrote it into a
+  `{{tine-query …}}` block, because the document parser read the comma-separated `[[a]])` as a
+  page reference; the saved macro now spells that operand in parentheses, and it reads back as the same query.
 - **A conflict can no longer scroll out of sight** (master 61ea6600c, og A).
   Once the in-page review scrolls above the window, a slim bar pins to the top
   of the pane; tapping it unrolls the same review in place, with your choices

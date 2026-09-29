@@ -87,7 +87,7 @@ fn inputs_for_the_fixture_match_the_golden_handoff() {
     );
     // The Rust side names candidates by `tine.view` alone; whether the value is a sheet
     // view is the app's call (I-12), so the non-sheet block is still a candidate.
-    assert_eq!(inputs.len(), 4);
+    assert_eq!(inputs.len(), 7);
     store.close();
 }
 
@@ -215,7 +215,7 @@ fn a_stale_fingerprint_is_refused_with_a_note() {
 #[test]
 fn hostile_export_data_is_escaped_bounded_and_never_fails_the_export() {
     let html = export_html(mutate(raw_exports(), |x| {
-        if x["view"] == "table" {
+        if x["view"] == "table" && x["query"] != true {
             x["rows"][0]["bg"] = "red;background:url(javascript:alert(1))".into();
             x["rows"][0]["cells"][0] =
                 serde_json::json!({"k": "marker", "raw": "\"><script>x</script>", "text": "<i>"});
@@ -428,5 +428,88 @@ fn a_card_in_two_board_columns_keeps_page_anchors_unique() {
     assert_eq!(ids.len(), all, "duplicate element ids: {html}");
     let index = fs::read_to_string(base.join("output/export/search-index.js")).unwrap();
     assert_eq!(index.matches("Write tests").count(), 1, "{index}");
+    store.close();
+}
+
+fn tail_queries_html(base: &Path) -> String {
+    fs::read_to_string(base.join("output/export/tail-queries.html")).unwrap()
+}
+
+#[test]
+fn query_backed_sheets_lay_out_as_table_and_board_in_place_of_the_result_list() {
+    let (base, store) = open_fixture();
+    publish_live_with_sheets(&store, &base.join("output"), "export", false, &bundle(), exports())
+        .unwrap();
+    let html = tail_queries_html(&base);
+    // The table: the query's rows under the observed columns, the page column last.
+    assert!(html.contains("<table class=\"sheet-table\">"), "{html}");
+    assert!(html.contains("<th>Page</th>") && html.contains("<td>Sheets</td>"), "{html}");
+    assert!(html.contains("First"), "{html}");
+    // The board: state columns over the same rows, no result list beside it.
+    assert!(html.contains("<div class=\"sheet-board\">") && html.contains("Write tests"), "{html}");
+    // The grid face is not a query face: the block keeps its flat result list and outline.
+    assert!(html.contains("stays a result list"), "{html}");
+    assert_eq!(html.matches("<table class=\"sheet-table\">").count(), 1, "{html}");
+    assert_eq!(html.matches("class=\"query\"").count(), 1, "only the grid block keeps a result list: {html}");
+    store.close();
+}
+
+#[test]
+fn a_query_sheet_whose_result_changed_is_refused_with_a_note_and_shows_the_results() {
+    let html = {
+        let mut all = raw_exports();
+        for x in all.iter_mut().filter(|x| x["query"] == true && x["view"] == "table") {
+            x["fp"] = "0000000000000000".into();
+        }
+        export_html_of(&all)
+    };
+    let html = html.1;
+    assert!(html.contains("This query changed while the export was prepared; showing its results."), "{html}");
+    assert!(!html.contains("<table class=\"sheet-table\">"), "{html}");
+    assert!(html.contains("First"), "the flat result list still shows it: {html}");
+    assert!(html.contains("<div class=\"sheet-board\">"), "the other query sheet is unaffected");
+}
+
+fn export_html_of(all: &[Value]) -> (Scratch, String) {
+    let (base, store) = open_fixture();
+    publish_live_with_sheets(
+        &store,
+        &base.join("output"),
+        "export",
+        false,
+        &bundle(),
+        serde_json::from_value(Value::Array(all.to_vec())).unwrap(),
+    )
+    .unwrap();
+    let html = tail_queries_html(&base);
+    store.close();
+    (base, html)
+}
+
+#[test]
+fn a_query_sheet_over_an_unpublished_page_keeps_the_filtered_result_list() {
+    // A table's cells, counts and aggregates would carry the private row, so a query
+    // sheet with any row on a page the export does not publish falls back to the list,
+    // which drops that row.
+    let (base, store) = open_fixture();
+    fs::write(base.join("graph/pages/Secret.md"), "- TODO hidden-secret-row\n").unwrap();
+    store.scan_refresh().unwrap();
+    let inputs = sheet_export_inputs(&store, Some(&["Tail-queries".to_owned()])).unwrap();
+    let table = &inputs[0];
+    let query = table.query.as_ref().expect("the query table has rows");
+    assert!(query.pages.iter().any(|p| p == "Secret"), "the app sees the private row");
+    let answer: Vec<SheetExport> = serde_json::from_value(serde_json::json!([{
+        "page": table.page, "path": table.path, "fp": query.fp, "query": true, "view": "table",
+        "columns": [{"label": "Block", "formula": false}],
+        "rows": query.rows.iter().map(|r| serde_json::json!({"ix": 0, "title": r.raw, "bg": null, "cells": []})).collect::<Vec<_>>(),
+        "footer": null, "filterError": null, "omitted": 0
+    }]))
+    .unwrap();
+    publish_live_with_sheets(&store, &base.join("output"), "export", false, &bundle(), answer)
+        .unwrap();
+    let html = tail_queries_html(&base);
+    assert!(!html.contains("<table class=\"sheet-table\">"), "{html}");
+    assert!(!html.contains("hidden-secret-row"), "the private row never publishes: {html}");
+    assert!(html.contains("First"), "the public results still list: {html}");
     store.close();
 }

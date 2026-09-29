@@ -52,5 +52,7 @@ pub fn sheet_export_inputs(store: &Store, pages: Option<&[String]>) -> io::Resul
     let whole = store
         .whole_graph()
         .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
-    Ok(render::sheet_inputs(&whole.corpus(), pages))
+    let corpus = whole.corpus();
+    let graph = RenderGraph::new(&corpus, &whole, store, None);
+    Ok(render::sheet_inputs(&corpus, pages, Some(&graph)))
 }

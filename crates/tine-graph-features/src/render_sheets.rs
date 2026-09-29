@@ -19,14 +19,18 @@
 //! `MAX_TOTAL_CELLS` cells of data are accepted (I-22).
 
 use super::{
-    ast_plain_text, body_blocks, decorate, esc, esc_attr, md_opts, render_block, render_facets,
-    Ctx, PageAnchors, PrintOpts,
+    ast_plain_text, body_blocks, decorate, esc, esc_attr, has_class, md_opts, publish_page_allowed,
+    render_block, render_facets, tag_attr, unescape, Ctx, PageAnchors, PrintOpts, RenderGraph,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use tine_core::doc::DocBlock;
+use tine_core::lsdoc::ast::Block;
 use tine_core::model::BlockDto;
+use tine_core::query::ir::{ViewKind, ViewSettings};
+use tine_core::query::macro_text::{is_query_macro_name, query_macro_extent};
+use tine_core::query::wire_parse::QueryTextDialect;
 use tine_core::Corpus;
 
 /// Sheets accepted per export.
@@ -40,6 +44,11 @@ const MAX_INPUT_ROWS: usize = 5_000;
 /// Children of a sheet row sent to the app (the grid width bound).
 const MAX_INPUT_COLS: usize = 256;
 
+/// Query-backed sheets computed per phase (inputs, render). Each is one
+/// whole-graph query, so the count is bounded (I-22); a block past the bound
+/// keeps the flat result list.
+const MAX_QUERY_SHEETS: usize = 64;
+
 /// One candidate sheet block, as sent to the app (`SheetInput` in
 /// `src/sheet/staticExport.ts`).
 #[derive(Debug, Clone, Serialize)]
@@ -50,6 +59,25 @@ pub struct SheetInput {
     pub owner: BlockDto,
     pub rows: Vec<BlockDto>,
     pub omitted: usize,
+    /// Present when the block's whole body is one `{{query}}` macro: its result
+    /// rows, for the app to present as the table or board the block asks for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<QueryRowsInput>,
+}
+
+/// The rows a query-backed sheet presents (`QuerySource` in
+/// `src/sheet/staticExport.ts`): what the live query block hands its sheet.
+#[derive(Debug, Clone, Serialize)]
+pub struct QueryRowsInput {
+    /// Echoed back so a changed result is refused; covers the query and its rows.
+    pub fp: String,
+    /// The query's own block presentation (`as table`), which beats `tine.view`.
+    pub presentation: Option<ViewKind>,
+    /// The parsed query's display settings (columns, sort), as the live sheet reads them.
+    pub view: ViewSettings,
+    /// The page each row belongs to, parallel to `rows`.
+    pub pages: Vec<String>,
+    pub rows: Vec<BlockDto>,
 }
 
 /// How one cell value is shown (`CellView` in `src/sheet/cellPresentation.ts`).
@@ -143,6 +171,9 @@ pub struct SheetExport {
     page: String,
     path: Vec<u32>,
     fp: String,
+    /// The answer was computed over a query's result rows, not the block's children.
+    #[serde(default)]
+    query: bool,
     #[serde(flatten)]
     body: Body,
 }
@@ -253,7 +284,12 @@ fn is_candidate(block: &DocBlock) -> bool {
 /// Every candidate sheet block of the named pages (all pages when `pages` is
 /// `None`), with the data the app needs to compute it. Bounded by `MAX_SHEETS`,
 /// `MAX_INPUT_ROWS` and `MAX_INPUT_COLS`; cost O(blocks of the pages).
-pub fn sheet_inputs(corpus: &Corpus, pages: Option<&[String]>) -> Vec<SheetInput> {
+pub fn sheet_inputs(
+    corpus: &Corpus,
+    pages: Option<&[String]>,
+    graph: Option<&RenderGraph<'_>>,
+) -> Vec<SheetInput> {
+    let mut query_budget = MAX_QUERY_SHEETS;
     let wanted: Option<HashSet<&str>> = pages.map(|p| p.iter().map(String::as_str).collect());
     let mut out = Vec::new();
     for page in &corpus.pages {
@@ -292,6 +328,11 @@ pub fn sheet_inputs(corpus: &Corpus, pages: Option<&[String]>) -> Vec<SheetInput
                         dto
                     })
                     .collect();
+                let query = graph.filter(|_| query_budget > 0).and_then(|graph| {
+                    let found = sole_query_macro(block)?;
+                    query_budget -= 1;
+                    query_rows(graph, block, &found)
+                });
                 out.push(SheetInput {
                     page: page.name.clone(),
                     path: path.clone(),
@@ -299,6 +340,7 @@ pub fn sheet_inputs(corpus: &Corpus, pages: Option<&[String]>) -> Vec<SheetInput
                     owner: shallow(block),
                     rows,
                     omitted: block.children.len().saturating_sub(MAX_INPUT_ROWS),
+                    query,
                 });
             }
             for (i, child) in block.children.iter().enumerate().rev() {
@@ -309,6 +351,100 @@ pub fn sheet_inputs(corpus: &Corpus, pages: Option<&[String]>) -> Vec<SheetInput
         }
     }
     out
+}
+
+/// The name and RAW argument of the query macro that is a sheet block's whole
+/// body (`{{query …}}` or `{{tine-query …}}`), else `None`. The argument comes
+/// from the block source, not from lsdoc's comma-split arguments, so an options
+/// map or a literal comma survives (master §4.3.1).
+pub(super) fn sole_query_macro(block: &DocBlock) -> Option<(String, String)> {
+    if !is_candidate(block) {
+        return None;
+    }
+    let blocks: Vec<Block> = body_blocks(block.raw());
+    let html = tine_core::lsdoc::render_html(&blocks, &md_opts());
+    let inner = html.trim().strip_prefix("<span ")?;
+    let close = inner.find('>')?;
+    let tag = &inner[..close];
+    if !has_class(tag, "macro") || inner[close + 1..].trim() != "</span>" {
+        return None;
+    }
+    let name = tag_attr(tag, "data-macro").map(unescape)?;
+    is_query_macro_name(&name).then_some(())?;
+    Some((name, query_macro_extent(block.raw())?.argument))
+}
+
+/// FNV-1a of a query sheet's identity: the owner's subtree, the macro and each
+/// result row (page, raw text). Recomputed at render time from a fresh run.
+fn query_fingerprint(owner: &DocBlock, found: &(String, String), pages: &[String], rows: &[BlockDto]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| {
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+        hash ^= 0x1f;
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    };
+    feed(fingerprint(owner).as_bytes());
+    feed(found.0.as_bytes());
+    feed(found.1.as_bytes());
+    for (page, row) in pages.iter().zip(rows) {
+        feed(page.as_bytes());
+        // Not the row id: it is a per-load runtime id, and the input and the
+        // render may each open the graph.
+        feed(row.raw.as_bytes());
+    }
+    format!("{hash:016x}")
+}
+
+/// Run a sheet block's query the way the live block does and flatten the result
+/// rows. `None` (the flat result list stays) when the query is refused, exceeds
+/// its bounds, answers pages, matches nothing, or has more rows than one sheet
+/// takes.
+fn query_rows(
+    graph: &RenderGraph<'_>,
+    owner: &DocBlock,
+    found: &(String, String),
+) -> Option<QueryRowsInput> {
+    let (name, argument) = found;
+    if !tine_core::query::query_source_within_limit(argument)
+        || !tine_core::query::query_nesting_within_limit(argument)
+    {
+        return None;
+    }
+    let dialect = if name.eq_ignore_ascii_case("tine-query") {
+        QueryTextDialect::MacroTql
+    } else {
+        QueryTextDialect::MacroQuery
+    };
+    let host: Vec<(String, String)> = owner
+        .properties()
+        .into_iter()
+        .filter(|(key, _)| key.starts_with("tine."))
+        .collect();
+    let (parsed, bounded) = graph.query_parsed(argument, dialect, &host)?;
+    if bounded.exceeded || !bounded.pages.is_empty() {
+        return None;
+    }
+    let mut pages = Vec::new();
+    let mut rows = Vec::new();
+    for group in bounded.groups {
+        for block in group.blocks {
+            pages.push(group.page.clone());
+            rows.push(block);
+        }
+    }
+    if rows.is_empty() || rows.len() > MAX_INPUT_ROWS {
+        return None;
+    }
+    Some(QueryRowsInput {
+        fp: query_fingerprint(owner, found, &pages, &rows),
+        presentation: parsed.scoped.block_presentation,
+        view: parsed.view,
+        pages,
+        rows,
+    })
 }
 
 /// A CSS color the export will place in a `style` attribute: a hex, an
@@ -457,7 +593,7 @@ fn row_anchor(row: &DocBlock, e: &mut Emit) -> String {
     format!(" id=\"{}\"", esc_attr(&anchor))
 }
 
-fn render_table(owner: &DocBlock, body: &Body, e: &mut Emit, out: &mut String) {
+fn render_table(owner: Option<&DocBlock>, body: &Body, e: &mut Emit, out: &mut String) {
     let Body::Table {
         columns,
         rows,
@@ -485,8 +621,7 @@ fn render_table(owner: &DocBlock, body: &Body, e: &mut Emit, out: &mut String) {
     out.push_str("<tbody>");
     for row in rows {
         let id = owner
-            .children
-            .get(row.ix)
+            .and_then(|o| o.children.get(row.ix))
             .map(|b| row_anchor(b, e))
             .unwrap_or_default();
         out.push_str(&format!(
@@ -503,7 +638,7 @@ fn render_table(owner: &DocBlock, body: &Body, e: &mut Emit, out: &mut String) {
     out.push_str(&omitted_note(*omitted));
 }
 
-fn render_board(owner: &DocBlock, body: &Body, e: &mut Emit, out: &mut String) {
+fn render_board(owner: Option<&DocBlock>, body: &Body, e: &mut Emit, out: &mut String) {
     let Body::Board {
         columns,
         filter_error,
@@ -524,8 +659,7 @@ fn render_board(owner: &DocBlock, body: &Body, e: &mut Emit, out: &mut String) {
         ));
         for card in &column.cards {
             let id = owner
-                .children
-                .get(card.ix)
+                .and_then(|o| o.children.get(card.ix))
                 .map(|b| row_anchor(b, e))
                 .unwrap_or_default();
             let c = &card.chips;
@@ -633,6 +767,11 @@ pub(super) fn emit(owner: &DocBlock, at: &SheetPath, e: &mut Emit, out: &mut Str
     let Some(export) = sheets.0.get(&(e.title.to_owned(), at.to_vec())) else {
         return false;
     };
+    // A query-backed answer replaced the block's body (`emit_query`); the
+    // children stay the plain outline below it.
+    if export.query {
+        return false;
+    }
     if export.fp != fingerprint(owner) {
         out.push_str(&note(
             "",
@@ -650,9 +789,64 @@ pub(super) fn emit(owner: &DocBlock, at: &SheetPath, e: &mut Emit, out: &mut Str
             ));
             return false;
         }
-        Body::Table { .. } => render_table(owner, &export.body, e, out),
-        Body::Board { .. } => render_board(owner, &export.body, e, out),
+        Body::Table { .. } => render_table(Some(owner), &export.body, e, out),
+        Body::Board { .. } => render_board(Some(owner), &export.body, e, out),
         Body::Grid { .. } => render_grid(owner, at, &export.body, e, out),
+    }
+    true
+}
+
+/// Lay out the app's answer for a query-backed sheet block in place of its
+/// `{{query}}` macro's flat result list. False (the caller renders the list,
+/// which also states what it omits) when there is no answer, the query's
+/// result is no longer the one the app computed from, or any row sits on a
+/// page this export does not publish, since a table or board would otherwise
+/// carry that row's cells, counts and aggregates.
+pub(super) fn emit_query(
+    owner: &DocBlock,
+    at: &SheetPath,
+    found: &(String, String),
+    e: &mut Emit,
+    out: &mut String,
+) -> bool {
+    let Some(graph) = e.ctx.graph else {
+        return false;
+    };
+    let Some(sheets) = graph.sheets else {
+        return false;
+    };
+    let Some(export) = sheets.0.get(&(e.title.to_owned(), at.to_vec())) else {
+        return false;
+    };
+    if !export.query {
+        return false;
+    }
+    let Some(rows) = query_rows(graph, owner, found) else {
+        return false;
+    };
+    if export.fp != rows.fp {
+        out.push_str(&note(
+            "",
+            "This query changed while the export was prepared; showing its results.",
+            None,
+        ));
+        return false;
+    }
+    if !rows.pages.iter().all(|page| publish_page_allowed(e.ctx, page)) {
+        return false;
+    }
+    match &export.body {
+        Body::Error { message } => {
+            out.push_str(&note(
+                "",
+                "This sheet could not be computed; showing the query results.",
+                Some(message),
+            ));
+            return false;
+        }
+        Body::Table { .. } => render_table(None, &export.body, e, out),
+        Body::Board { .. } => render_board(None, &export.body, e, out),
+        Body::Grid { .. } => return false,
     }
     true
 }
