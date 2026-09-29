@@ -225,6 +225,8 @@ mod journal_guide_tests {
             "g p",
             "**g h** opens the graph's home page",
             ":default-home {:page",
+            "Renaming the home page (or a namespace it lives in) keeps it the home page",
+            "Drag an item by its header to reorder the list.",
             "default journal template",
             "Carry unfinished tasks",
             ":hidden [\"archive/private\"]",
@@ -234,6 +236,10 @@ mod journal_guide_tests {
                 "missing journal Guide control: {control}"
             );
         }
+        // og 22b: settings writes never overwrite a half-delivered config.edn.
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("`logseq/config.edn` is live too"));
+        assert!(files.contains("refused rather than written if `config.edn` is half-written"));
     }
 }
 
@@ -718,5 +724,14 @@ mod og_20d_guide_tests {
         ));
         assert!(files.contains("A sheet that cannot be computed"));
         assert!(files.contains("the export still succeeds"));
+    }
+
+    #[test]
+    fn guide_says_public_false_pages_are_never_exported() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("A page marked `public:: false` is never exported"));
+        assert!(files.contains("`:publishing/all-pages-public? true`"));
+        let queries = include_str!("templates/queries.md");
+        assert!(queries.contains("it still leaves out pages marked `public:: false`"));
     }
 }

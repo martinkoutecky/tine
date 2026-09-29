@@ -16,3 +16,19 @@ export function Field(props: { label: string; hint?: JSX.Element; children: JSX.
     </div>
   );
 }
+
+/** The on/off switch every boolean setting uses. */
+export function Toggle(props: { on: boolean; onClick: () => void; disabled?: boolean }): JSX.Element {
+  return (
+    <button
+      class="settings-toggle"
+      classList={{ on: props.on }}
+      role="switch"
+      aria-checked={props.on}
+      disabled={props.disabled}
+      onClick={props.onClick}
+    >
+      <span class="settings-toggle-knob" />
+    </button>
+  );
+}

@@ -22,8 +22,9 @@
 //!
 //! `Store::scan_refresh` compares file modification time and length, so a
 //! same-length edit with unchanged timestamp may remain unseen. It waits for
-//! the initial parse. Poll mode scans O(P) file metadata every three seconds;
-//! notification mode silently falls back to polling if needed.
+//! the initial parse. Poll mode scans O(P) file metadata and re-hashes
+//! `logseq/config.edn` every three seconds; notification mode silently falls
+//! back to polling if needed.
 //! `Store::close` waits for an in-flight writer and ends observation and the
 //! subscription. These calls have no general timeout. Run blocking calls off
 //! a UI thread.
@@ -196,10 +197,11 @@ pub struct Change {
     /// this publication. Rollback can emit separate Own and External changes.
     pub origin: Origin,
     /// Affected graph files, including `logseq/config.edn` when observed, with
-    /// resulting revisions when present. External config edits enter this feed
-    /// on `scan_refresh()`, not on the background watcher tick. An own config
-    /// create or replace lists its config file tuple in the same transaction
-    /// publication.
+    /// resulting revisions when present. An external config edit enters this
+    /// feed on the watcher cycle that observes it (an event naming the file, a
+    /// rescan, or every poll cycle) or on `scan_refresh()`, only when its bytes
+    /// changed. An own config create or replace lists its config file tuple in
+    /// the same transaction publication.
     /// Trash destinations are not listed. Assets are not watched for external
     /// changes. A committed transaction or restore lists an asset path here
     /// when its final bytes differ from the operation's starting bytes.
@@ -1208,12 +1210,15 @@ impl Store {
         ))
     }
 
-    /// Current graph configuration. Does not wait for the graph parse, but may
-    /// wait for a concurrent configuration update and its O(P + B) reparse.
-    /// External config edits are reloaded by `scan_refresh()`, not by watcher
-    /// ticks. Own config writes and restore reload before publication. The
-    /// store accepts raw config EDN through `Transaction::replace`; it does
-    /// not provide a config serializer.
+    /// Current graph configuration: the one answer to "what is the config"
+    /// (I-12). Does not wait for the graph parse, but may wait for a
+    /// concurrent configuration update and its O(P + B) reparse. An external
+    /// `logseq/config.edn` edit is taken in by the watcher cycle that sees it
+    /// (or `scan_refresh()`) when its bytes changed; one that names a page or
+    /// journal directory escaping the graph is not taken in, and this keeps
+    /// answering the last good config. Own config writes and restore reload
+    /// before publication. The store accepts raw config EDN through
+    /// `Transaction::replace`; it does not provide a config serializer.
     pub fn config(&self) -> ConfigState {
         self.config_state.read().unwrap().clone()
     }

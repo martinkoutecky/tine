@@ -18,7 +18,7 @@ import { resetPageIndex } from "./pageIndex";
 import { CUSTOM_CSS_STYLE_ID, ensureLsShimStyle } from "./lsShim";
 import { ensureThemeStyle } from "./themeGallery";
 import { isMobile, platformKind } from "./platform";
-import type { BlockDto } from "./types";
+import type { BlockDto, GraphMeta } from "./types";
 import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
 import { journalHasContent } from "./journalContent";
@@ -31,24 +31,46 @@ const GRAPH_KEY = "tine.graphPath";
 
 /** Apply the store's fresh config snapshot without reopening the graph. A
  * superseded binding or other root is ignored; matching visible favorites
- * keep their arrangement. Cost: O(favorites), plus one arrangement page read
- * only when membership changes. No write or observable error here. */
+ * keep their arrangement. A moved journal title format or new-page format
+ * bumps the graph epoch first, so in-flight results dated under the old one
+ * are dropped (master: same ordering rule as graph bind). Cost: O(favorites),
+ * plus one arrangement page read only when membership changes. No write or
+ * observable error here. */
 export function applyGraphConfigChange(change: GraphConfigChange): void {
   const previous = graphMeta();
   if (!previous || previous.root !== change.meta.root
       || captureBinding().backendGeneration !== change.binding_generation) return;
   const meta = change.meta;
   setGraphMeta(meta);
-  if (previous.preferred_workflow !== meta.preferred_workflow)
-    setWorkflow(meta.preferred_workflow === "todo" ? "todo" : "now");
-  if (previous.journal_page_title_format !== meta.journal_page_title_format)
-    setJournalTitleFormat(meta.journal_page_title_format);
-  const shown = favorites().map((item) => item.name);
-  if (previous.favorites_page !== meta.favorites_page
-      || shown.length !== meta.favorites.length
-      || shown.some((name, index) => name !== meta.favorites[index]))
-    seedFavorites(meta.favorites, meta.favorites_page ?? null);
+  if (previous.journal_page_title_format !== meta.journal_page_title_format
+      || previous.preferred_format !== meta.preferred_format)
+    bumpGraphEpoch();
+  applyConfigDerivedState(meta, previous);
   bumpDataRev();
+}
+
+/** The ONE producer (I-12) of config-derived state that is not read
+ *  reactively from `graphMeta`: task workflow, journal title format and the
+ *  favorites. Graph open passes `previous = null` (apply everything); a live
+ *  config change passes the meta it replaces, so only what moved is applied,
+ *  and favorites the user is already shown are not re-seeded (Tine's own
+ *  settings writes reach here too). Everything else on GraphMeta (shortcuts,
+ *  macros, hidden properties, start of week, …) updates from the signal and
+ *  must not be re-applied here. Cost: O(favorites), plus one arrangement page
+ *  read when membership or the arrangement page moved. */
+export function applyConfigDerivedState(meta: GraphMeta, previous: GraphMeta | null): void {
+  if (!previous || previous.preferred_workflow !== meta.preferred_workflow)
+    setWorkflow(meta.preferred_workflow === "todo" ? "todo" : "now");
+  if (!previous || previous.journal_page_title_format !== meta.journal_page_title_format)
+    setJournalTitleFormat(meta.journal_page_title_format);
+  const incoming = meta.favorites ?? [];
+  const alreadyShown = previous !== null && previous.favorites_page === meta.favorites_page
+    && sameNames(favorites().map((item) => item.name), incoming);
+  if (!alreadyShown) seedFavorites(incoming, meta.favorites_page ?? null);
+}
+
+function sameNames(shown: string[], incoming: string[]): boolean {
+  return shown.length === incoming.length && shown.every((name, index) => name === incoming[index]);
 }
 
 export function persistedGraphPath(): string {
@@ -194,9 +216,7 @@ export async function loadGraphPath(
   // its feed (Page.tsx), preserving #73's populated-first observation without
   // blocking graph open.
   bumpGraphEpoch();
-  setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
-  setJournalTitleFormat(meta?.journal_page_title_format); // match this graph's journal titles
-  seedFavorites(meta?.favorites ?? [], meta?.favorites_page ?? null);
+  applyConfigDerivedState(meta, null);
   void refreshJournalConflicts(true); // tell the user if any day has duplicate journal files
   void refreshSyncConflicts(); // conflict copies + VCS markers feed the sidebar badge
   if (path) {

@@ -13,6 +13,7 @@ import { pageIdentityKey } from "../ui";
 import { pageRefsInText } from "../render/pageRefs";
 import type { Format } from "../render/ast";
 import type { RenameDone, RenameTouchedPage } from "../types";
+import { graphMeta, setGraphMeta } from "../graphSession";
 
 let refreshRenamedNavigation: ((from: string, to: string, target?: PageTarget) => void) | null = null;
 
@@ -77,6 +78,11 @@ export async function renamePageOnDisk(
     // og 21a (master a8fd4230d): files mid-merge keep their old references.
     const skipped = result.value.skipped_conflicted_referrers ?? [];
     if (skipped.length) pushToast(`${skipped.length === 1 ? "One page still mid-merge keeps" : `${skipped.length} pages still mid-merge keep`} ${skipped.length === 1 ? "its" : "their"} references to “${from}”: ${skipped.join(", ")}. Resolve the merge, then update them.`, "warn", { sticky: true });
+    // The rename moved `:default-home` in its own transaction (OG
+    // `rename-page-aux`); an own write raises no config event, so take it in.
+    const home = result.value.home_page;
+    const meta = graphMeta();
+    if (home && meta) setGraphMeta({ ...meta, default_home: home });
     const reloads = forgetMovedPages(result.value.touched);
     refreshRenamedNavigation?.(from, to, target);
     onRefreshed?.(graphOwner());

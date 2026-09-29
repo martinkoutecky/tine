@@ -133,6 +133,9 @@ export interface RenameDone {
   /** Referrers left byte-identical because they carry VCS conflict markers
    *  (og 21a, master a8fd4230d): their references still name the old page. */
   skipped_conflicted_referrers?: string[];
+  /** The new `:default-home` page when the rename moved the home page with it
+   *  (og 22b, OG `rename-page-aux`); null otherwise. */
+  home_page?: string | null;
 }
 
 /** One page file a rename or merge wrote. */

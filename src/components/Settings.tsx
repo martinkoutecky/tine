@@ -43,7 +43,8 @@ import { platformKind } from "../platform";
 import { openConflicts, openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
-import { Field } from "./settingsField";
+import { Field, Toggle } from "./settingsField";
+import { AlwaysAskSetting } from "./AlwaysAskSetting";
 import { ContentWidthFields } from "./ContentWidthFields";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
@@ -278,21 +279,6 @@ export function Settings(): JSX.Element {
         </div>
       </div>
     </Show>
-  );
-}
-
-function Toggle(props: { on: boolean; onClick: () => void; disabled?: boolean }): JSX.Element {
-  return (
-    <button
-      class="settings-toggle"
-      classList={{ on: props.on }}
-      role="switch"
-      aria-checked={props.on}
-      disabled={props.disabled}
-      onClick={props.onClick}
-    >
-      <span class="settings-toggle-knob" />
-    </button>
   );
 }
 
@@ -1564,6 +1550,7 @@ function BackupsTab(): JSX.Element {
           onChange={(e) => void saveKeep(Number(e.currentTarget.value))}
         />
       </Field>
+      <AlwaysAskSetting />
 
       <div class="settings-section">
         Available snapshots

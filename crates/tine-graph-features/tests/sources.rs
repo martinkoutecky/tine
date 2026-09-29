@@ -70,3 +70,35 @@ fn parser_sources_do_not_follow_links() {
     store.close();
     fs::remove_dir_all(root).unwrap();
 }
+
+/// I-22/I-12: every file `is_graph_text` accepts (`.markdown`, upper-case
+/// extensions) has a format answer; imported or synced graphs carry them.
+#[test]
+fn parser_sources_accept_every_graph_text_extension() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("tine-source-ext-{}-{unique}", std::process::id()));
+    fs::create_dir_all(root.join("pages")).unwrap();
+    fs::write(root.join("pages/a.markdown"), b"- a\n").unwrap();
+    fs::write(root.join("pages/B.MD"), b"- b\n").unwrap();
+    fs::write(root.join("pages/C.ORG"), b"* c\n").unwrap();
+    let (store, _, _) = Store::open(&root, OpenOptions::default()).unwrap();
+    let files = graph_source_files(&store, false);
+    let formats: Vec<_> = files
+        .iter()
+        .map(|file| (file.rel.as_str(), file.format.as_str()))
+        .collect();
+    assert_eq!(
+        formats,
+        [
+            ("pages/B.MD", "md"),
+            ("pages/C.ORG", "org"),
+            ("pages/a.markdown", "md")
+        ]
+    );
+    store.close();
+    fs::remove_dir_all(root).unwrap();
+}

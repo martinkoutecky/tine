@@ -783,6 +783,22 @@ pub fn balanced_map_at(s: &str, open: usize) -> Option<(usize, usize)> {
     (close < s.len()).then_some((open, close))
 }
 
+/// `(open, close)` of the root map: the first form after blanks and `;`
+/// comments, when it is a balanced `{…}`.
+pub fn root_map_bounds(s: &str) -> Option<(usize, usize)> {
+    balanced_map_at(s, skip_blank(s, 0))
+}
+
+/// Byte index of `key` among the DIRECT entries of the root map, never inside
+/// a nested map, vector, comment or string. Every top-level config setter
+/// locates its key here: the depth-blind [`find_keyword`] returned a nested
+/// shadow first and the setter spliced over it (master DUP-3, 4ae2f6f4f).
+/// `None` when the key is absent or there is no balanced root map.
+pub fn find_top_level_keyword(s: &str, key: &str) -> Option<usize> {
+    let (open, close) = root_map_bounds(s)?;
+    find_keyword_at_map_level(&s[open + 1..close], key).map(|at| open + 1 + at)
+}
+
 /// Boolean value for `inner` inside the map following `outer`, e.g.
 /// `:logbook/settings {:with-second-support? false}`.
 fn nested_bool(edn: &str, outer: &str, inner: &str) -> Option<bool> {
