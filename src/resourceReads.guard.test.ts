@@ -31,8 +31,6 @@ const SRC = path.resolve(__dirname);
  *  its entry must then be deleted, and a file cannot be added. Owner lane in the
  *  value; the conversion is mechanical (see src/render/inline.tsx). */
 const PENDING_OWNED_FILES: Record<string, string> = {
-  "components/ConflictResolution.tsx": "OG-A (Concord tail)",
-  "components/Page.tsx": "OG-A (Concord tail)",
   "components/Macro.tsx": "OG-E (query tail)",
   "components/QueryBuilder.tsx": "OG-E (query tail)",
   "components/QueryExportDialog.tsx": "OG-E (query tail)",
