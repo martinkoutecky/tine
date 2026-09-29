@@ -10,11 +10,34 @@
 // (ui.ts) is the only refresher.
 import { createSignal } from "solid-js";
 import { clearOnBindingInvalidated } from "./binding";
+import { dismissToast } from "./toasts";
 import type { ConflictInventory, ConflictObject, SyncConflict } from "./types";
 
 const EMPTY: ConflictInventory = { sync_conflicts: [], vcs_markers: [], queue: [] };
 
-export const [conflictInventory, setConflictInventory] = createSignal<ConflictInventory>(EMPTY);
+const [inventory, publishInventory] = createSignal<ConflictInventory>(EMPTY);
+export const conflictInventory = inventory;
+// Sticky "N new sync conflicts need review" notices (toast id -> the objects
+// they announced) describe live objects, not history (master 042054c1b).
+const arrivalNotices = new Map<number, Set<string>>();
+/** Remember the objects a sticky arrival notice announced; it is dismissed once
+ *  none of them is in the queue. `forgetArrivalNotice` on a manual dismiss. */
+export function trackArrivalNotice(toastId: number, ids: string[]): void {
+  arrivalNotices.set(toastId, new Set(ids));
+}
+export function forgetArrivalNotice(toastId: number): void {
+  arrivalNotices.delete(toastId);
+}
+/** Publish the inventory, then retire every arrival notice whose objects are
+ *  all gone. O(queue + notices). */
+export function setConflictInventory(next: ConflictInventory | ((current: ConflictInventory) => ConflictInventory)): void {
+  const live = new Set(publishInventory(next).queue.map((conflict) => conflict.id));
+  for (const [toastId, ids] of [...arrivalNotices]) {
+    if ([...ids].some((id) => live.has(id))) continue;
+    arrivalNotices.delete(toastId);
+    dismissToast(toastId);
+  }
+}
 
 // Only the newest refresh episode may publish: an inventory walk begun before a
 // guarded Apply can otherwise finish after it and resurrect the settled object.

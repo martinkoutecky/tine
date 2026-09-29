@@ -58,4 +58,24 @@ describe("the derived conflict queue", () => {
     expect(conflictQueue().map((c) => c.page_name)).toEqual(["B"]);
     expect(syncConflicts().map((c) => c.base_name)).toEqual(["B"]);
   });
+
+  // Master 042054c1b: a sticky "needs review" notice names live objects, so it
+  // is retired once they are gone, or it contradicts the green "Merged" toast.
+  it("retires the arrival notice when a re-derivation no longer has its conflict", async () => {
+    vi.spyOn(backend(), "conflictInventory").mockResolvedValueOnce(inventoryOf("A")).mockResolvedValueOnce(EMPTY);
+    await refreshSyncConflicts("new");
+    expect(toasts().map((t) => t.message)).toEqual(["1 new sync conflict needs review"]);
+    await refreshSyncConflicts();
+    expect(toasts()).toEqual([]);
+  });
+
+  it("retires the arrival notice when its conflict is settled locally, and keeps one with a live conflict", async () => {
+    vi.spyOn(backend(), "conflictInventory").mockResolvedValueOnce(inventoryOf("A", "B"));
+    await refreshSyncConflicts("new");
+    expect(toasts()).toHaveLength(1);
+    settleArtifactConflict(copyObject("A").id);
+    expect(toasts()).toHaveLength(1);
+    settleArtifactConflict(copyObject("B").id);
+    expect(toasts()).toEqual([]);
+  });
 });

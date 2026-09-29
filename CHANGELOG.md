@@ -95,6 +95,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **The "new sync conflicts need review" notice goes away once they are resolved**
+  (master 042054c1b, og H). It used to stay beside the green "Merged" confirmation
+  until dismissed by hand; it now closes when none of the conflicts it announced is
+  left, whether resolved in Tine or cleared on disk.
 - **A voice memo stopped from another block is kept** (master b3d64add, og H). On
   mobile, starting a recording in one block and tapping Stop while editing another
   used to discard the recording silently; it is now saved to `assets/` and Tine says
