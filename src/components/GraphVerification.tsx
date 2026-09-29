@@ -14,7 +14,7 @@ import {
   type GraphVerificationReport,
 } from "../graphVerification";
 import { isMobilePlatform } from "../nativeChrome";
-import { graphOwner, readOwned, writeOwned } from "../owned";
+import { graphOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
 
 const isCancellation = (error: unknown) => String(error).toLowerCase().includes("cancelled");
@@ -29,11 +29,14 @@ export function GraphVerification(): JSX.Element {
   let stopProgress: (() => void) | undefined;
 
   onMount(() => {
-    void backend().onGraphVerificationProgress((event) => {
-      if (event.operationId === operation()) setProgress(event);
-    }).then((stop) => {
-      if (disposed) stop();
-      else stopProgress = stop;
+    void readOwnedResource(
+      ownedWhen(() => !disposed),
+      backend().onGraphVerificationProgress((event) => {
+        if (event.operationId === operation()) setProgress(event);
+      }),
+      (stop) => stop(),
+    ).then((result) => {
+      if (result.kind === "current") stopProgress = result.value;
     });
   });
   onCleanup(() => {
@@ -67,7 +70,7 @@ export function GraphVerification(): JSX.Element {
     const id = operation();
     if (!id) return;
     try {
-      await backend().cancelGraphVerification(id);
+      await readOwned(ownedWhen(() => !disposed), backend().cancelGraphVerification(id));
     } catch (error) {
       dbg(`graph verification cancel failed: ${String(error)}`);
     }

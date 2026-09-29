@@ -8,9 +8,9 @@ import { errorToastHistory } from "../errorToastHistory";
 import { pushToast } from "../toasts";
 
 export function ErrorToastHistory(): JSX.Element {
-  const copy = async (message: string) => {
+  const copy = async (text: string) => {
     try {
-      await writeClipboardText(message);
+      await writeClipboardText(text);
       pushToast("Error message copied", "success");
     } catch (error) {
       dbg(`error message copy failed: ${String(error)}`);
@@ -33,11 +33,11 @@ export function ErrorToastHistory(): JSX.Element {
                 <time class="diagnostics-error-time" dateTime={new Date(entry.at).toISOString()}>
                   {new Date(entry.at).toLocaleTimeString()}
                 </time>
-                <span class="diagnostics-error-text">{entry.message}</span>
+                <span class="diagnostics-error-text">{entry.text}</span>
                 <Show when={entry.count > 1}>
                   <span class="diagnostics-error-count">×{entry.count}</span>
                 </Show>
-                <button type="button" onClick={() => void copy(entry.message)}>Copy</button>
+                <button type="button" onClick={() => void copy(entry.text)}>Copy</button>
               </li>
             )}
           </For>

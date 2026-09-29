@@ -15,7 +15,7 @@ import { createSignal } from "solid-js";
 export const ERROR_TOAST_HISTORY_LIMIT = 20;
 
 export interface ErrorToastEntry {
-  message: string;
+  text: string;
   /** Occurrences of this exact text this session (shown "×N" above 1). */
   count: number;
   /** Epoch ms of the most recent occurrence. */
@@ -30,11 +30,12 @@ export const errorToastHistory = entries;
 /** Note one error toast. An identical text already listed is moved to the top
  *  with its count raised (as the toast itself does); otherwise a new entry is
  *  added and the oldest beyond the limit is dropped. */
-export function recordErrorToastText(message: string, at: number = Date.now()): void {
+export function recordErrorToastText(text: string, at: number = Date.now()): void {
   const current = entries();
-  const same = current.find((entry) => entry.message === message);
+  // Identical text is a repeat of the same error, not a decision on its content.
+  const same = current.find((entry) => entry.text === text);
   const rest = current.filter((entry) => entry !== same);
-  const next: ErrorToastEntry = { message, count: (same?.count ?? 0) + 1, at };
+  const next: ErrorToastEntry = { text, count: (same?.count ?? 0) + 1, at };
   setEntries([next, ...rest].slice(0, ERROR_TOAST_HISTORY_LIMIT));
 }
 
