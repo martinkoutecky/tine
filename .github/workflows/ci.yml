@@ -175,6 +175,8 @@ jobs:
           workspaces: ". -> target"
       - run: npm ci
       - run: npm run build
+      - name: UNC prefix normalization controls (vendored cap-primitives, GH #533)
+        run: cargo test --locked --manifest-path vendor/cap-primitives-4.0.2/Cargo.toml --lib removing_extended_prefix_keeps_unc_paths_absolute -- --nocapture
       - name: Windows core and graph-feature tests (including junction filesystem behavior)
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
       - name: Windows Tauri shell compiles

@@ -612,19 +612,6 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/cap-primitives/cap-primitives-4.0.2.crate",
-        "sha256": "cdadbd7c002d3a484b35243669abdae85a0ebaded5a61117169dc3400f9a7ff0",
-        "dest": "cargo/vendor/cap-primitives-4.0.2"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"cdadbd7c002d3a484b35243669abdae85a0ebaded5a61117169dc3400f9a7ff0\", \"files\": {}}",
-        "dest": "cargo/vendor/cap-primitives-4.0.2",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/cap-std/cap-std-4.0.2.crate",
         "sha256": "7281235d6e96d3544ca18bba9049be92f4190f8d923e3caef1b5f66cfa752608",
         "dest": "cargo/vendor/cap-std-4.0.2"

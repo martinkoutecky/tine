@@ -3,7 +3,10 @@ members = ["crates/tine-core", "crates/tine-store", "crates/tine-graph-features"
 # lsdoc-wasm is built ONLY by `npm run build:wasm` (wasm-pack, wasm32 target) to
 # regenerate the vendored frontend parser. Excluded so normal `cargo build`/`cargo
 # test --workspace` (host target) never touch it. See docs/wasm-parse-plan.md.
-exclude = ["crates/lsdoc-wasm"]
+exclude = [
+    "crates/lsdoc-wasm",
+    "vendor/cap-primitives-4.0.2",
+]
 resolver = "2"
 
 [workspace.package]
@@ -26,6 +29,8 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [patch.crates-io]
+# GH #533: preserve absolute UNC paths reconstructed from retained Windows handles.
+cap-primitives = { path = "vendor/cap-primitives-4.0.2" }
 # tao 0.35.3 stops GTK button events at the application-window handler, which
 # also swallows Linux native titlebar controls. This exact upstream merge makes
 # GTK propagate those events again. Remove the pin once Tauri adopts tao 0.36+.
