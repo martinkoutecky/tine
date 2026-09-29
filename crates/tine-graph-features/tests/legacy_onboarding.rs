@@ -154,6 +154,10 @@ fn guide_explains_following_the_link_at_the_caret() {
     assert!(tips
         .markdown
         .contains("**Ctrl+Shift+O** opens it in the right sidebar"));
+    // GH #262: the Ctrl+A ladder from text to subtree to the whole page.
+    assert!(tips
+        .markdown
+        .contains("press it again to select the block with its children"));
 }
 
 #[test]

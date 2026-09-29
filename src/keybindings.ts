@@ -24,7 +24,7 @@ import {
   route,
 } from "./router";
 import { journalTitle, parseJournalTitle } from "./journal";
-import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
+import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
@@ -357,6 +357,9 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/expand", binding: "mod+down", label: "Expand block", scope: "editor" },
   { id: "editor/select-block-up", binding: "shift+up", label: "Select block up", scope: "editor" },
   { id: "editor/select-block-down", binding: "shift+down", label: "Select block down", scope: "editor" },
+  // Ctrl/Cmd+A ladder (GH #262): first press selects the block's text natively,
+  // then the block's subtree, then each ancestor's subtree, then the outline.
+  { id: "editor/select-all", binding: "mod+a", label: "Select block / expand selection", scope: "editor" },
   { id: "editor/cycle-todo", binding: "mod+enter", label: "Cycle TODO / DOING / DONE", scope: "editor" },
   // Quick-capture mini-window only: file the capture to today's journal. Acts
   // only when CaptureCtx is present (Block.tsx); a no-op in the main app. Default
@@ -809,6 +812,9 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
       () => deleteSelection())
       .catch(() => pushToast("Couldn't cut selection: clipboard write failed.", "error"));
     return true;
+  }
+  if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a") {
+    return expandBlockSelection(), true;
   }
   if (e.key === "Enter") {
     const ids = selectedIds();

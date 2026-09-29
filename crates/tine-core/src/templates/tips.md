@@ -12,6 +12,8 @@ icon:: ⌨️
 	- The quick switcher, page search, suggestions, and find-in-page ignore accents, case, and compatibility-width differences by default: `cafe` finds `café`, `lodz` finds `Łódź`, and `Tine` finds `Ｔｉｎｅ`. Marks that form another letter stay significant (`か` and `が` differ). To require accents in these searches, set `:feature/enable-search-remove-accents? false` in `logseq/config.edn`. This changes matching only; page names and Markdown keep their original spelling.
 - ## Follow a link without the mouse — Ctrl+O
 	- With the caret inside a `[[link]]` or a `#tag`, **Ctrl+O** opens that page and **Ctrl+Shift+O** opens it in the right sidebar. This works while you are editing, so you can follow a name you just typed without reaching for the mouse.
+- ## Select whole blocks — Ctrl+A
+	- While editing, **Ctrl+A** first selects the block's text; press it again to select the block with its children, and keep pressing to widen the selection to each parent and finally the whole page. **Shift+Up** onto a parent always takes all of that parent's children with it.
 - ## Create one yourself
 	- 1. Press **Ctrl+K**.
 	- 2. Type part of a page name, a block phrase, or a command such as `Open Guide`.
