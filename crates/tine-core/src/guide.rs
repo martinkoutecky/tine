@@ -688,6 +688,8 @@ mod og_20d_guide_tests {
             "Couldn’t load search results",
             "A red error message appears",
             "stays on screen until you close it",
+            "Recent error messages",
+            "kept in memory only",
         ] {
             assert!(
                 recovery.contains(detail),

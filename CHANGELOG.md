@@ -16,6 +16,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   exists on only one side or differs. It reads files only, reports paths and
   checksums (never contents), can be cancelled, and never confirms a match from
   a scan that was disturbed while it ran.
+- **Recent error messages in Diagnostics** (og-D). Settings → Help & diagnostics
+  lists the last 20 red error messages of this session, newest first, with the
+  time, a ×N count for repeats and a Copy button, so a message can still be
+  reported after you closed it. It lives in memory only: never written to disk,
+  and not part of the diagnostic report, because messages can name pages.
 - **A command line you can rely on** (master e7af4db9c, og-D). `tine --help`,
   `tine --version`, `tine open GRAPH`, `tine capture`, `tine doctor GRAPH` and
   `tine export static|live GRAPH --output PARENT` share one documented schema,
