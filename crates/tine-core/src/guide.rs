@@ -224,6 +224,13 @@ mod parity_guide_tests {
             assert!(tips.contains(phrase), "Tips missing {phrase}");
         }
     }
+
+    #[test]
+    fn welcome_names_the_alias_completion_label() {
+        // GH #558: an alias row in `[[` completion names the page it belongs to.
+        let welcome = include_str!("templates/welcome.md");
+        assert!(welcome.contains("labelled **alias of** its page"));
+    }
 }
 
 #[cfg(test)]

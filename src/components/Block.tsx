@@ -18,10 +18,11 @@ import {
   filterAdvancedBlockCommands,
   commandScore,
   codeLanguageItems,
-  fuzzyScore,
+  fuzzyScore, aliasOfLabel,
   propertyKeyFold,
   type Trigger,
 } from "../editor/autocomplete";
+import { navigationName } from "../pageIndex";
 import { pluginManager } from "../plugins/manager";
 import { bindPluginBlockSnapshot, isPluginGraphOwnerCurrent } from "../plugins/ownership";
 import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairEdit, SELECTION_WRAP } from "../editor/autopair";
@@ -1088,8 +1089,8 @@ export function Editor(props: { id: string }): JSX.Element {
     if (result.kind === "stale") return;
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
-        ? { label: name, insert: pageInsert(name) }
-        : { label: `#${name}`, insert: tagInsert(name) }; // tag context reads "#name"
+        ? { label: name, insert: pageInsert(name), sub: aliasOfLabel(name, navigationName(name)) }
+        : { label: `#${name}`, insert: tagInsert(name), sub: aliasOfLabel(name, navigationName(name)) }; // tag context reads "#name"
     const createItem: AcItem =
       t.kind === "page"
         ? { label: `Create "${q}"`, insert: pageInsert(q) }

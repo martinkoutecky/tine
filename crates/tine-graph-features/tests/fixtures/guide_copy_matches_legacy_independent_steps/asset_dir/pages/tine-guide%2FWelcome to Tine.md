@@ -9,7 +9,7 @@ icon:: 👋
 		- TODO Click this checkbox to complete me
 		- DONE This one is already done
 	- Rich text: **bold**, *italic*, ==highlight==, `inline code`, and even math like $e^{i\pi} + 1 = 0$.
-	- Links: type `[[` to link a page or `#` for a #tag. Here's a link to [[tine-guide/Project/Roadmap]] — click it.
+	- Links: type `[[` to link a page or `#` for a #tag; a suggestion that is an alias is labelled **alias of** its page. Here's a link to [[tine-guide/Project/Roadmap]] — click it.
 - ## Block references & embeds
 	- Every bullet has a hidden id, so you can point at *one specific bullet* from anywhere. This is a live **reference** to a bullet over on the Roadmap: ((7a1c0f5e-0000-4000-8000-000000000001))
 	- And here is that same bullet **embedded** inline — it stays in sync with the original:

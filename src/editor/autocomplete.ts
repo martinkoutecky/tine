@@ -6,6 +6,7 @@ import { isBareTagPrefix, tagRef } from "../tags";
 import { propertyKeyNorm } from "../render/block";
 import { QUERY_MACRO_SCAFFOLD, QUERY_MACRO_SCAFFOLD_CARET } from "./queryMacroName";
 import { searchFold } from "./searchFold";
+import { pageIdentityKey } from "../pageIdentity";
 
 export type TriggerKind =
   | "page"
@@ -659,4 +660,13 @@ export function filterAdvancedBlockCommands(query: string): AdvancedBlockCommand
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score || a.command.matchTieOrder - b.command.matchTieOrder)
     .map(({ command }) => command);
+}
+
+/** The `[[`/`#` row label for a suggestion that is an authored alias. Core
+ *  offers an alias as its own row, so choosing it inserts the alias text; the
+ *  label names the page it belongs to (GH #558, GH #482). `owner` is the name
+ *  the page index resolves (an existing page wins), so an ordinary page gets
+ *  no label. */
+export function aliasOfLabel(name: string, owner: string): string | undefined {
+  return pageIdentityKey(owner) === pageIdentityKey(name) ? undefined : `alias of ${owner}`;
 }
