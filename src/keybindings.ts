@@ -7,7 +7,7 @@
 // (Block.tsx) resolve keys through the same merged binding table, so every
 // listed command is remappable from config.edn.
 
-import { openSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, pdfTarget, dismissMobileDrawer } from "./ui";
+import { openSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, dismissMobileDrawer } from "./ui";
 import { pushToast } from "./toasts";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { zoomReset } from "./zoom";
@@ -1011,7 +1011,7 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
       if (cs.length > seq.length) continue;
       const tail = seq.slice(seq.length - cs.length);
       if (cs.every((c, i) => chordEq(c, tail[i]))) {
-        if (cmd.id === "go/find-in-page" && pdfTarget()) {
+        if (cmd.id === "go/find-in-page" && paneRouter(focusedPaneId()).route().kind === "pdf") {
           resetSeq();
           return;
         }
