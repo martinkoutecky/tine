@@ -61,7 +61,7 @@ try {
 
   await page.locator('button.icon-btn[title^="Settings"]').first().click();
   await page.waitForSelector(".settings-modal", { timeout: 3000 });
-  await page.locator(".settings-nav-item", { hasText: "Help improve Tine" }).first().click();
+  await page.locator(".settings-nav-item", { hasText: "Help & diagnostics" }).first().click();
   await page.waitForSelector(".improve-tab", { timeout: 3000 });
   await sleep(300);
   await page.screenshot({ path: `${OUT}/improve-empty.png` });

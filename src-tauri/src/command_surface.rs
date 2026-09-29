@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 147] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 149] = [
     "app_architecture",
     "app_platform",
     "apply_journal_filename_migrations",
@@ -111,6 +111,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 147] = [
     "resolve_page",
     "resolve_sync_conflict",
     "restore_backup",
+    "reveal_known_graph",
     "rollback_pdf_area_image",
     "run_graph_search",
     "save_asset",
@@ -123,6 +124,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 147] = [
     "set_app_string",
     "set_backup_keep",
     "set_capture_enter_files",
+    "set_default_home",
     "set_default_journal_template",
     "set_doc_mode_enter_for_new_block",
     "set_favorites",

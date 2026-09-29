@@ -213,10 +213,6 @@ async function applyUpdateOrOpen(): Promise<void> {
     openReleases();
     return;
   }
-  if (await isManualOnlyBuild()) {
-    offerManualOnly(update.version);
-    return;
-  }
   const progressId = pushToast(`Downloading Tine ${update.version}…`, "info", { sticky: true });
   try {
     await update.downloadAndInstall();
@@ -298,7 +294,8 @@ export async function checkForUpdateNow(): Promise<UpdateStatus> {
     if (!latest) return { kind: "unavailable" };
 
     if (isNewer(latest, cur)) {
-      void applyUpdateOrOpen();
+      if (await isManualOnlyBuild()) offerManualOnly(latest.join("."));
+      else void applyUpdateOrOpen();
       return { kind: "available", version: latest.join("."), current: cur.join(".") };
     }
     return { kind: "current", version: cur.join(".") };
