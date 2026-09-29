@@ -3,7 +3,7 @@ import { normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
 import type { QueryPresentation } from "./routeTypes";
 import { graphOwner, readOwned, writeOwned } from "./owned";
 import { dismissToast, pushToastUnique } from "./toasts";
-import { isMobilePlatform } from "./nativeChrome";
+import { isSinglePaneShell } from "./nativeChrome";
 import {
   installSessionPersistence,
   sameRoute,
@@ -277,7 +277,8 @@ export function parsePersistedSession(raw: string): {
       recentExpanded: s.recentSectionExpanded,
     };
     const recent = s.recentPages === undefined ? legacyRecentPages() : sanitizeRecent(s.recentPages);
-    if (s.layout && !isMobilePlatform) {
+    const singlePane = isSinglePaneShell();
+    if (s.layout && !singlePane) {
       const snapshots = new Map<string, PaneSnapshot>();
       const layout = parseLayoutNode(s.layout, snapshots, { value: false });
       if (layout && snapshots.size) {
@@ -290,7 +291,7 @@ export function parsePersistedSession(raw: string): {
         };
       }
     }
-    if (s.layout && isMobilePlatform) {
+    if (s.layout && singlePane) {
       const snapshots = new Map<string, PaneSnapshot>();
       const parsed = parseLayoutNode(s.layout, snapshots, { value: false });
       if (parsed && snapshots.size) {

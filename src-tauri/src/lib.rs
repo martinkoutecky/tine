@@ -532,6 +532,18 @@ pub fn run() {
             media_protocol::respond(ctx, request)
         });
 
+    // The frontend's platform identity. It cannot be derived from the WebView's
+    // user agent: iPadOS 13+ serves a desktop-class `Macintosh; Intel Mac OS X`
+    // UA from a stock WKWebView, so UA sniffing reported an iPad as a Mac
+    // desktop and every mobile affordance stayed hidden (GH #446). The build
+    // knows the truth, so hand it over before frontend code runs -- the same
+    // idiom as `__TINE_NATIVE_FRAME__`, and synchronous for the same reason:
+    // an async `app_platform` round-trip would flash desktop-only chrome.
+    let builder = builder.append_invoke_initialization_script(format!(
+        "globalThis.__TINE_PLATFORM__ = {:?};",
+        crate::graph::app_platform()
+    ));
+
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let builder = builder.append_invoke_initialization_script(format!(
         "globalThis.__TINE_NATIVE_FRAME__ = {native_frame_active};"
@@ -909,8 +921,21 @@ pub fn run() {
             close_graph_window,
             tine_open_devtools
         ])
-        .run(context)
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                // tao delivers this callback for WM_ENDSESSION (Windows sign-out,
+                // restart, shutdown), but on that path its message loop neither
+                // receives WM_QUIT nor switches to an exiting ControlFlow.
+                // Returning would leave Tine alive until Windows names it on the
+                // "app is preventing shutdown" screen and force-terminates it
+                // (GH #455). Nothing remains to flush here: page saves are
+                // already durable when they report success, so terminate.
+                #[cfg(target_os = "windows")]
+                std::process::exit(0);
+            }
+        });
 }
 
 #[cfg(test)]
@@ -1015,5 +1040,41 @@ mod mobile_drawer_policy_tests {
             .additional_browser_args
             .as_deref()
             .is_some_and(|args| args.contains("--remote-debugging-port=9222"))));
+    }
+}
+
+#[cfg(test)]
+mod platform_lifecycle_guard_tests {
+    fn lib_source() -> String {
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
+            .expect("read src-tauri/src/lib.rs")
+    }
+
+    /// GH #455: on Windows sign-out/shutdown tao runs the `RunEvent::Exit`
+    /// callback for WM_ENDSESSION but never leaves its message loop, so the
+    /// event loop must terminate the process itself on Windows.
+    #[test]
+    fn windows_session_end_exit_terminates_the_process() {
+        let source = lib_source();
+        let run = &source[source.find(".run(|_app, event|").expect("the event loop")..];
+        let run = &run[..run.find("});").expect("the end of the event loop")];
+        assert!(
+            run.contains("tauri::RunEvent::Exit")
+                && run.contains("#[cfg(target_os = \"windows\")]\n                std::process::exit(0);"),
+            "GH #455: the RunEvent::Exit arm must call std::process::exit(0) on Windows, \
+             because WM_ENDSESSION does not break tao's message loop"
+        );
+    }
+
+    /// GH #446: the frontend's platform identity comes from the build
+    /// (`graph::app_platform`), injected before any frontend code runs, never
+    /// from the WebView user agent (iPadOS reports a Mac UA).
+    #[test]
+    fn frontend_platform_identity_is_injected_from_the_build() {
+        let source = lib_source();
+        assert!(
+            source.contains("\"globalThis.__TINE_PLATFORM__ = {:?};\",\n        crate::graph::app_platform()"),
+            "GH #446: lib.rs must inject __TINE_PLATFORM__ from crate::graph::app_platform()"
+        );
     }
 }

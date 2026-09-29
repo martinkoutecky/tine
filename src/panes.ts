@@ -18,7 +18,7 @@ import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
 import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
 import { journalTitle } from "./journal";
-import { isMobilePlatform } from "./nativeChrome";
+import { isSinglePaneShell } from "./nativeChrome";
 import { nearestPane, takeBlockSelectionForPaneReturn } from "./paneSelect";
 import { graphScopedSignal } from "./binding";
 
@@ -239,7 +239,7 @@ export function splitPane(
   dir: "row" | "col" = "row",
   opts: { focusNew?: boolean; position?: "before" | "after"; snapshot?: PaneSnapshot } = {}
 ): string | null {
-  if (isMobilePlatform) return null;
+  if (isSinglePaneShell()) return null;
   if (!layoutPaneIds().includes(paneId)) return null;
   const newPaneId = freshPaneId();
   const source = paneRouter(paneId);
@@ -295,7 +295,7 @@ export function splitRootAtEdge(
   sourcePaneId = focusedPaneId(),
   opts: { focusNew?: boolean; snapshot?: PaneSnapshot } = {}
 ): string | null {
-  if (isMobilePlatform) return null;
+  if (isSinglePaneShell()) return null;
   const ids = layoutPaneIds();
   const sourceId = ids.includes(sourcePaneId) ? sourcePaneId : ids[0];
   if (!sourceId) return null;
@@ -384,7 +384,7 @@ export function moveTabToSplitPane(
   side: "left" | "right" | "top" | "bottom"
 ): string | null {
   const ids = layoutPaneIds();
-  if (isMobilePlatform || !ids.includes(sourcePaneId) || !ids.includes(targetPaneId)) return null;
+  if (isSinglePaneShell() || !ids.includes(sourcePaneId) || !ids.includes(targetPaneId)) return null;
   const source = paneRouter(sourcePaneId);
   if (!source.tabs().some((t) => t.id === tabId)) return null;
   const moved = source.extractTabForAdoption(tabId);
@@ -401,7 +401,7 @@ export function moveTabToSplitPane(
 export function moveTabToSeamSplit(sourcePaneId: string, tabId: string, path: number[]): string | null {
   const ids = layoutPaneIds();
   const split = nodeAtPath(layoutRoot(), path);
-  if (isMobilePlatform || !ids.includes(sourcePaneId) || !split || split.kind === "pane") return null;
+  if (isSinglePaneShell() || !ids.includes(sourcePaneId) || !split || split.kind === "pane") return null;
   const source = paneRouter(sourcePaneId);
   if (!source.tabs().some((t) => t.id === tabId)) return null;
   const moved = source.extractTabForAdoption(tabId);
@@ -420,7 +420,7 @@ export function moveTabToRootEdge(
   side: "left" | "right" | "top" | "bottom"
 ): string | null {
   const ids = layoutPaneIds();
-  if (isMobilePlatform || !ids.includes(sourcePaneId)) return null;
+  if (isSinglePaneShell() || !ids.includes(sourcePaneId)) return null;
   const source = paneRouter(sourcePaneId);
   if (!source.tabs().some((t) => t.id === tabId)) return null;
   const moved = source.extractTabForAdoption(tabId);
