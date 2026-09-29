@@ -433,7 +433,9 @@ export interface Backend {
   search(query: string, limit: number, lane?: string): Promise<RefGroup[]>;
   /** One Rust-authoritative graph scan for bounded page and block hits. Page
    * membership defaults to names/aliases; content and both scan block text.
-   * Cost O(graph text) off the UI thread; native errors reject the promise. */
+   * Each Display view sorts before its section limit, then sample caps that
+   * limit; omitted views keep relevance order. Cost O(graph text) off the UI
+   * thread, plus O(matches log matches) for authored sorts. Native errors reject. */
   runGraphSearch(
     source: string,
     pageLimit: number,
@@ -441,7 +443,8 @@ export interface Backend {
     lane?: string,
     explain?: boolean,
     scope?: QueryPageScope,
-    pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope
+    pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope,
+    views?: { page: ViewSettings; block: ViewSettings }
   ): Promise<QueryExecution>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   /** Capture-only page/tag completion capability. It is intentionally not the
@@ -951,8 +954,8 @@ class TauriBackend implements Backend {
   search(query: string, limit: number, lane?: string) {
     return this.call<RefGroup[]>("search", { query, limit, lane });
   }
-  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope) {
-    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null });
+  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, views?: { page: ViewSettings; block: ViewSettings }) {
+    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null, pageView: views?.page ?? null, blockView: views?.block ?? null });
     return {
       ...execution,
       has_more: execution.has_more ?? { pages: false, blocks: false },
