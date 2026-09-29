@@ -3,6 +3,7 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { TweetMacro, VideoMacro } from "./Macro";
 import { backend } from "../backend";
+import { setToasts, toasts } from "../toasts";
 
 function mount(node: () => JSX.Element) {
   const root = document.createElement("div");
@@ -43,6 +44,16 @@ describe("graph macro URL boundary", () => {
         expect(event.defaultPrevented).toBe(true);
       }
       expect(openExternal.mock.calls).toEqual([["https://example.com/watch"], ["http://example.com/post"]]);
+    } finally { dispose(); }
+  });
+
+  it("I-22: a refused open is shown to the user", async () => {
+    vi.spyOn(backend(), "openExternal").mockRejectedValue(new Error("scheme not allowed"));
+    setToasts([]);
+    const { root, dispose } = mount(() => <TweetMacro body="tweet https://example.com/post" />);
+    try {
+      root.querySelector("a")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(toasts().map((toast) => toast.message)).toContain("Couldn't open https://example.com/post. (Error: scheme not allowed)"));
     } finally { dispose(); }
   });
 });
