@@ -644,6 +644,25 @@ export function App(): JSX.Element {
   // slow". Fire-and-forget; the probe is Tauri-gated and never throws.
   onMount(() => void warnIfSoftwareRendering());
 
+  // An unwritable app-data folder was relocated for this launch (data_home.rs):
+  // say where settings and backups went, stickily — a silent relocation would
+  // be its own defect (I-9).
+  onMount(async () => {
+    let alive = true;
+    onCleanup(() => { alive = false; });
+    try {
+      const result = await readOwned(ownedWhen(() => alive), backend().takeDataHomeFallbackNotice());
+      if (result.kind === "stale" || !result.value) return;
+      pushToast(
+        `Tine could not write its usual application-data folder, so this session is keeping settings and backups in ${result.value} instead. Fixing the permissions on that folder restores the normal location.`,
+        "warn",
+        { sticky: true },
+      );
+    } catch {
+      dbg("data-home notice unavailable");
+    }
+  });
+
   // Once per launch, a few seconds after startup (so it never competes with the
   // first paint or the graph load), check GitHub for a newer release and toast if
   // there is one. Best-effort + silent on failure (see update.ts).

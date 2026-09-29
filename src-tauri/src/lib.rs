@@ -14,6 +14,7 @@ mod commands;
 #[path = "commands/concord.rs"]
 mod concord;
 mod concord_ledger;
+mod data_home;
 mod debug;
 mod device_io;
 mod drafts;
@@ -490,6 +491,11 @@ pub fn run() {
         }
     }
 
+    // Tauri creates the WebView data dir inside its own setup() and panics if it
+    // cannot; an unwritable app-data home was a crash loop. Probe it (and
+    // relocate for this launch) before anything resolves that path.
+    data_home::ensure_usable(app_identity::APP_IDENTIFIER);
+
     // GPU/DMABUF rendering is ON by default (smoother scrolling — that's the point
     // of Tine). On the rare GPU/compositor combo where WebKitGTK's DMABUF renderer
     // aborts ("Could not create default EGL display: EGL_BAD_PARAMETER"), set
@@ -745,6 +751,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            data_home::take_data_home_fallback_notice,
             load_graph,
             inspect_graph_access,
             approve_external_assets,

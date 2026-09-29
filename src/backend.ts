@@ -685,6 +685,9 @@ export interface Backend {
    *  warning (see `gpu.ts`). A silent driver fallback is detected in the webview
    *  (WebGL renderer); this just supplies why/where context for the message. */
   gpuEnv(): Promise<GpuEnv>;
+  /** The fallback app-data folder iff this launch had to relocate an unwritable
+   *  one (desktop Linux), delivered once; `null` otherwise. */
+  takeDataHomeFallbackNotice(): Promise<string | null>;
   /** Experimental smooth-scrolling preference (Lenis), app-level, default off. */
   getSmoothScroll(): Promise<boolean>;
   setSmoothScroll(value: boolean): Promise<void>;
@@ -1418,6 +1421,9 @@ class TauriBackend implements Backend {
   }
   gpuEnv() {
     return this.call<GpuEnv>("gpu_env");
+  }
+  takeDataHomeFallbackNotice() {
+    return this.call<string | null>("take_data_home_fallback_notice");
   }
   debugInfo() {
     return this.call<DebugInfo>("debug_info");

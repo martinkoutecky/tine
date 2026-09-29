@@ -95,6 +95,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Tine starts when its usual application-data folder cannot be written** (og I1a, master 8e1ea0bfd).
+  On Linux, a root-owned or read-only `~/.local/share` made every launch crash before a window appeared.
+  Tine now keeps settings and the web view's data in `~/.tine-data` (or another private writable
+  folder) for that session and says so; if nothing is writable it prints one sentence explaining why.
 - **Closing no longer offers to throw away a save that is still running** (og I1b, master fea3c314b).
   If writing your changes took more than four seconds — a slow or network drive is enough — the close
   asked whether to lose them. It now says it is still saving and waits up to another 26 seconds; it
