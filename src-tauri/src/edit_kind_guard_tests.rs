@@ -28,11 +28,46 @@ fn calls(body: &str, marker: &str) -> bool {
     squash(body).contains(&squash(marker))
 }
 
+/// Production part of a source file: everything before its `mod tests`.
+fn production(source: &str) -> &str {
+    source
+        .split("#[cfg(test)]\nmod tests")
+        .next()
+        .unwrap_or(source)
+}
+
+/// Every graph-writing Store entry in `source` names its edit kind:
+/// `transaction(None)` or a kind-less `restore` would write pages outside
+/// the Rule 8 census, and `save_pages` belongs to the page-save front door.
+fn store_entries_take_a_kind(source: &str) -> Result<(), String> {
+    let squash = |text: &str| text.split_whitespace().collect::<String>();
+    let source = squash(production(source));
+    for (entry, kind_taking) in [
+        (".transaction(", ".transaction(Some(tine_store::EditKind::"),
+        (".restore(", ".restore(tine_store::EditKind::"),
+        (".save_pages(", "\0never"),
+    ] {
+        let (calls, kinded) = (
+            source.matches(entry).count(),
+            source.matches(kind_taking).count(),
+        );
+        if calls != kinded {
+            return Err(format!(
+                "{entry} called {calls}x, {kinded}x with an edit kind"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     const COMMANDS: &str = include_str!("commands.rs");
     const CONCORD: &str = include_str!("commands/concord.rs");
+    // The backup module is two files since the og-B seam split; scan both so
+    // the split never shrinks this census.
     const BACKUP: &str = include_str!("backup/restore.rs");
+    const BACKUP_SNAPSHOT: &str = include_str!("backup.rs");
     const PAGES: &str = include_str!("../../crates/tine-graph-features/src/pages.rs");
     const CONFLICTS: &str = include_str!("../../crates/tine-graph-features/src/conflicts.rs");
     const LIVE: &str = include_str!("../../crates/tine-graph-features/src/live_conflict.rs");
@@ -173,6 +208,14 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         body(BACKUP, "restore_from_backup_source"),
         ".restore(tine_store::EditKind::ReplacePage"
     ));
+    for (file, source) in [
+        ("src-tauri/src/backup.rs", BACKUP_SNAPSHOT),
+        ("src-tauri/src/backup/restore.rs", BACKUP),
+    ] {
+        if let Err(why) = store_entries_take_a_kind(source) {
+            panic!("OG-RULES Rule 8: {file}: {why}; exemplar src-tauri/src/backup/restore.rs");
+        }
+    }
 }
 
 #[test]
@@ -182,4 +225,19 @@ fn writer_guard_rejects_a_missing_kind_path() {
         body(altered, "delete_page_expected"),
         "transaction(Some(tine_store::EditKind::DeletePage))"
     ));
+}
+
+#[test]
+fn backup_census_rejects_a_writer_without_a_kind() {
+    let kindless =
+        "fn snapshot_repair() { store.transaction(None).unwrap(); }\n#[cfg(test)]\nmod tests {}";
+    assert!(store_entries_take_a_kind(kindless).is_err());
+    let restore = "fn r() { store.restore(files, None) }";
+    assert!(store_entries_take_a_kind(restore).is_err());
+    let front_door = "fn r() { store.save_pages(&prepared) }";
+    assert!(store_entries_take_a_kind(front_door).is_err());
+    let kinded = "fn r() { store.transaction(Some(tine_store::EditKind::ReplacePage)) }";
+    assert!(store_entries_take_a_kind(kinded).is_ok());
+    let test_only = "fn r() {}\n#[cfg(test)]\nmod tests { fn t() { store.transaction(None); } }";
+    assert!(store_entries_take_a_kind(test_only).is_ok());
 }
