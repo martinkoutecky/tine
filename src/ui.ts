@@ -472,9 +472,16 @@ export function closePageProps() {
 
 // "Copy / export as" modal — a live-preview text export of a block subtree or a
 // multi-block selection, with indent-style + remove options (mirrors OG Logseq).
-export const [exportModal, setExportModal] = graphScopedSignal<{ ids: string[] }>();
+export type ExportRequest = { ids: string[] } | { nodes: import("./editor/exportText").ExportNode[]; count: number };
+export const [exportModal, setExportModal] = graphScopedSignal<ExportRequest>();
+/** Open the shared export modal for a selection of document block ids. */
 export function openExportModal(ids: string[]) {
   if (ids.length) setExportModal({ ids });
+}
+/** Open the shared export modal for an already materialized, read-only forest.
+ * The caller supplies its visible block count; this does not write graph data. */
+export function openExportNodesModal(nodes: import("./editor/exportText").ExportNode[], count: number) {
+  if (nodes.length) setExportModal({ nodes, count });
 }
 export function closeExportModal() {
   setExportModal(null);

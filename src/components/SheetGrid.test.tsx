@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import type { JSX } from "solid-js";
+import { createSignal, Show, type JSX } from "solid-js";
 import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
@@ -9,6 +9,7 @@ import { type Node, type FeedPage } from "../document/model";
 import { setDoc } from "../document/model";
 import { openJournals, route } from "../router";
 import { resetCellSelectionForTests } from "../sheet/selection";
+import { SheetContainer } from "./SheetContainer";
 
 beforeAll(async () => {
   await initParser();
@@ -211,6 +212,23 @@ function loadOrgSheetDoc() {
 }
 
 describe("SheetGrid", () => {
+  it("resets horizontal scroll when a table changes to a board", async () => {
+    const [board, setBoard] = createSignal(false);
+    const { root, dispose } = mount(() => (
+      <SheetContainer>
+        <Show when={board()} fallback={<div class="sheet-table">Table</div>}>
+          <div class="sheet-board-wrap">Board</div>
+        </Show>
+      </SheetContainer>
+    ));
+    try {
+      const scroll = root.querySelector(".sheet-scroll") as HTMLDivElement;
+      scroll.scrollLeft = 335;
+      setBoard(true);
+      await vi.waitFor(() => expect(scroll.firstElementChild?.classList.contains("sheet-board-wrap")).toBe(true));
+      await vi.waitFor(() => expect(scroll.scrollLeft).toBe(0));
+    } finally { dispose(); }
+  });
   it("caps and progressively discloses a very wide grid", () => {
     const pageName = "Sheet";
     const byId: Record<string, Node> = {};
@@ -276,7 +294,7 @@ describe("SheetGrid", () => {
     dispose();
   });
 
-  it("toggles and centers breakout when the natural sheet width exceeds the column", async () => {
+  it("keeps an overflowing block sheet aligned and internally scrollable", async () => {
     let naturalWidth = 640;
     const layout = mockSheetLayout(() => naturalWidth);
     loadMdSheetDoc();
@@ -289,7 +307,7 @@ describe("SheetGrid", () => {
       await settledMeasure();
       const container = root.querySelector(".block-sheet-container") as HTMLElement | null;
       expect(container).not.toBeNull();
-      expect(container!.classList.contains("sheet-breakout")).toBe(true);
+      expect(container!.classList.contains("sheet-breakout")).toBe(false);
       expect(container!.style.getPropertyValue("--sheet-breakout-width")).toBe("640px");
       expect(container!.style.getPropertyValue("--sheet-breakout-shift")).toBe("220px");
       expect(root.querySelector(".sheet-cell .block-sheet-container")).toBeNull();

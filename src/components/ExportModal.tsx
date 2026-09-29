@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { graphOwner, readOwned, type Owner } from "../owned";
-import { exportModal, closeExportModal, typographyMode } from "../ui";
+import { exportModal, closeExportModal, typographyMode, type ExportRequest } from "../ui";
 import { pushToast } from "../toasts";
 import { graphMeta } from "../graphSession";
 import { exportNodesFor, formatForPage } from "../document";
@@ -145,7 +145,9 @@ function pageRefTarget(s: string): string | null {
   return /^\[\[([^\]]+)\]\]$/.exec(s.trim())?.[1] ?? null;
 }
 
-function blockDtosToExportNodes(blocks: BlockDto[], format: Format): ExportNode[] {
+/** Project a bounded DTO subtree into the export serializer's read-only forest.
+ * Cost is O(blocks and descendants); it does not read or write the graph. */
+export function blockDtosToExportNodes(blocks: BlockDto[], format: Format): ExportNode[] {
   return blocks.map((b) => ({ raw: b.raw, format, children: blockDtosToExportNodes(b.children, format) }));
 }
 
@@ -381,15 +383,18 @@ async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<strin
 // "Copy / Export" modal — live-preview Text/OPML/HTML export of a block forest,
 // with per-format controls mirroring OG Logseq's dialog. Read-only preview;
 // Copy writes the currently selected serializer payload to the clipboard.
+/** Render the shared read-only export preview for document ids or a caller's
+ * already materialized forest. Copy uses the currently selected serializer;
+ * only clipboard failure is reported to the user. */
 export function ExportModal(): JSX.Element {
   return (
     <Show when={exportModal()}>
-      {(m) => <Modal ids={m().ids} />}
+      {(m) => <Modal request={m()} />}
     </Show>
   );
 }
 
-function Modal(props: { ids: string[] }): JSX.Element {
+function Modal(props: { request: ExportRequest }): JSX.Element {
   let root: HTMLDivElement | undefined;
   createEffect(() => {
     const unregister = registerTransientLayer({ id: "copy-export", root: () => root ?? null, dismiss: () => { closeExportModal(); return true; } });
@@ -409,7 +414,7 @@ function Modal(props: { ids: string[] }): JSX.Element {
   // Build the node forest once (the selection is fixed while the modal is open);
   // the preview recomputes from it as options change. Rendered mode applies the
   // typographic glyphs exactly when the app displays them (not persisted).
-  const nodes = exportNodesFor(props.ids);
+  const nodes = "nodes" in props.request ? props.request.nodes : exportNodesFor(props.request.ids);
   const resolveMacro = (name: string, args: string[]) => {
     const warmed = warmedMacros.get(macroKey(name, args));
     if (warmed?.kind === "text") return { raw: "", format: "md" as const, text: warmed.text };
@@ -480,7 +485,7 @@ function Modal(props: { ids: string[] }): JSX.Element {
     return undefined;
   };
 
-  const blockCount = props.ids.length;
+  const blockCount = "nodes" in props.request ? props.request.count : props.request.ids.length;
   return (
     <div class="modal-overlay" onClick={closeExportModal}>
       <div ref={root} class="export-modal" onClick={(e) => e.stopPropagation()}>

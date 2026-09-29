@@ -240,6 +240,34 @@ mod search_guide_tests {
         let queries = include_str!("templates/queries.md");
         assert!(queries.contains("Both respect `:feature/enable-search-remove-accents? false`"));
     }
+    #[test]
+    fn reference_panel_controls_are_documented() {
+        let tips = include_str!("templates/tips.md");
+        for text in [
+            "select visible results",
+            "Org source stays Org",
+            "include chips match any",
+            "collapse or expand all source groups",
+        ] {
+            assert!(
+                tips.contains(text),
+                "missing reference panel Guide detail: {text}"
+            );
+        }
+    }
+    #[test]
+    fn table_resize_and_export_are_documented() {
+        let sheets = include_str!("templates/sheets.md");
+        for text in [
+            "right edge to resize",
+            "Double-click the handle",
+            "tine.table-widths::",
+            "+ Add row",
+            "produce HTML",
+        ] {
+            assert!(sheets.contains(text), "missing sheet Guide detail: {text}");
+        }
+    }
 }
 
 #[cfg(test)]
