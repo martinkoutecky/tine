@@ -17,7 +17,6 @@ import { AudioOverlay } from "./components/AudioOverlay";
 import { CalendarJump } from "./components/CalendarJump";
 import { ConflictBar } from "./components/ConflictBar";
 import { RightSidebar } from "./components/RightSidebar";
-import { Settings } from "./components/Settings";
 import { HelpPopup } from "./components/HelpShortcuts";
 import { DatePicker } from "./components/DatePicker";
 import { FormulaEditor } from "./components/FormulaEditor";
@@ -37,12 +36,12 @@ import { InPageFind } from "./components/InPageFind";
 import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
-import { loadGraphPath, persistedGraphPath } from "./graph";
+import { applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
 import { installPageIndex } from "./pageIndex";
 import { checkForUpdate } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
-import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer } from "./ui";
+import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer } from "./ui";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
@@ -78,6 +77,7 @@ import {
   focusedPaneId,
   layoutHasMultiplePanes,
   layoutRoot,
+  visibleLayoutNode,
   paneRouter,
   openPdfNotes,
   layoutPaneIds,
@@ -93,6 +93,9 @@ import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
 import { hlsPageName } from "./pdf";
 import type { InvalidRoute } from "./routeTypes";
 import { installBackgroundFlush } from "./backgroundFlush";
+import { initSettingsLayout } from "./settingsLayout";
+
+const Settings = lazy(() => import("./components/Settings").then((module) => ({ default: module.Settings })));
 
 /** The single persistence transaction used by both desktop close and Android
  * root Back.  Callers choose only the final platform action. */
@@ -564,6 +567,7 @@ export function App(): JSX.Element {
   onMount(() => void initCopySettings());
   onMount(() => void initRefCompletionSettings());
   onMount(() => void initNavSettings());
+  onMount(() => void initSettingsLayout());
   // Load the local-file images opt-in (Settings → Editing). Default off.
   onMount(() => void initLocalFileSettings());
   // A conflict copy appearing/vanishing on disk (watcher) refreshes the list.
@@ -572,6 +576,14 @@ export function App(): JSX.Element {
     let alive = true;
     const owner = ownedWhen(() => alive);
     void readOwnedResource(owner, backend().onConflictsChanged(() => void refreshSyncConflicts()), (u) => u())
+      .then((result) => { if (result.kind === "current") unsub = result.value; });
+    onCleanup(() => { alive = false; unsub(); });
+  });
+  onMount(() => {
+    let unsub = () => {};
+    let alive = true;
+    const owner = ownedWhen(() => alive);
+    void readOwnedResource(owner, backend().onGraphConfigChanged(applyGraphConfigChange), (u) => u())
       .then((result) => { if (result.kind === "current") unsub = result.value; });
     onCleanup(() => { alive = false; unsub(); });
   });
@@ -1078,7 +1090,7 @@ export function App(): JSX.Element {
           <DrawerBackground class="drawer-workspace" blockedBy="right">
           <PaneEdgeHighlights />
           <PaneSelectHint />
-          <PaneTree node={layoutRoot()} path={[]} />
+          <PaneTree node={visibleLayoutNode()} path={[]} />
           </DrawerBackground>
           <RightSidebar />
         </div>
@@ -1107,7 +1119,11 @@ export function App(): JSX.Element {
       <ExportModal />
       <PdfExportDialog />
       <QueryExportDialog request={queryExportRequest} />
-      <Settings />
+      <Show when={settingsOpen()}>
+        <Suspense>
+          <Settings />
+        </Suspense>
+      </Show>
       <HelpPopup />
       {/* First-run onboarding: covers the (empty) app when no graph is configured.
           Rendered before Toasts so a "couldn't create graph" toast still shows on top. */}

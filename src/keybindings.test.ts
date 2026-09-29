@@ -38,6 +38,18 @@ it("offers the journal navigation hotstrings and steps from the current journal 
   expect(router.route()).toMatchObject({ kind: "page", name: "Jul 31st, 2026", pageKind: "journal" });
 });
 
+it("keeps unbound commands in the palette and offers reset zoom and pane controls", () => {
+  const defaults = Object.fromEntries(commandDefaults().map((command) => [command.id, command.binding]));
+  expect(defaults["ui/reset-zoom"]).toBe("");
+  expect(defaults["pane/toggle-maximize"]).toBe("mod+alt+m");
+  expect(defaults["pane/grow-width"]).toBe("");
+  installFakeWindow();
+  const dispose = installKeybindings({ "go/home": "false" });
+  expect(paletteCommands().find((command) => command.id === "go/home")?.binding).toBe("");
+  dispose();
+  restoreFakeGlobals?.();
+});
+
 function keyEvent(init: Partial<KeyboardEvent>): KeyboardEvent {
   return {
     key: "",

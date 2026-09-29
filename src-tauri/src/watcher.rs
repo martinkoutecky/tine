@@ -86,7 +86,13 @@ fn window_events(change: &Change) -> (Vec<GraphChange>, bool) {
     (events, conflicts_dirty)
 }
 
-fn dispatch(app: &tauri::AppHandle, label: &str, binding_generation: u64, change: Change) {
+fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Change) {
+    let binding_generation = slot.binding_generation;
+    let config_changed = change.origin == Origin::External
+        && change
+            .files
+            .iter()
+            .any(|(id, _, _)| id.as_str() == "logseq/config.edn");
     let (events, conflicts_dirty) = window_events(&change);
     for event in events {
         let _ = app.emit_to(
@@ -104,6 +110,16 @@ fn dispatch(app: &tauri::AppHandle, label: &str, binding_generation: u64, change
     }
     if conflicts_dirty {
         let _ = app.emit_to(label, "conflicts-changed", ());
+    }
+    if config_changed {
+        let _ = app.emit_to(
+            label,
+            "graph-config-changed",
+            serde_json::json!({
+                "binding_generation": binding_generation,
+                "meta": crate::state::graph_meta(slot),
+            }),
+        );
     }
 }
 
@@ -127,7 +143,7 @@ pub(crate) fn start_slot_events(app: tauri::AppHandle, label: String, slot: &Arc
             .as_ref()
             .is_some_and(|current| Arc::ptr_eq(current, &slot))
         {
-            dispatch(&app, &label, slot.binding_generation, change);
+            dispatch(&app, &label, &slot, change);
         }
     });
 }

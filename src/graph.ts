@@ -1,11 +1,11 @@
 // Opening / switching the active graph from the UI (native folder picker),
 // persisting the choice so it reopens next launch.
 
-import { backend } from "./backend";
+import { backend, type GraphConfigChange } from "./backend";
 import { captureBinding, stillBound } from "./binding";
 import { graphOwner, readOwned, writeOwned, type Owner } from "./owned";
-import { setGraphMeta, bumpGraphEpoch, graphMeta, graphEpoch } from "./graphSession";
-import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer, pageIdentityKey } from "./ui";
+import { setGraphMeta, bumpGraphEpoch, bumpDataRev, graphMeta, graphEpoch } from "./graphSession";
+import { setWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer, pageIdentityKey } from "./ui";
 import { pushToast } from "./toasts";
 import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
@@ -28,6 +28,28 @@ import { isPublishedExport } from "./publishedBackend";
 import { clearWorkspaces } from "./workspaces";
 
 const GRAPH_KEY = "tine.graphPath";
+
+/** Apply the store's fresh config snapshot without reopening the graph. A
+ * superseded binding or other root is ignored; matching visible favorites
+ * keep their arrangement. Cost: O(favorites), plus one arrangement page read
+ * only when membership changes. No write or observable error here. */
+export function applyGraphConfigChange(change: GraphConfigChange): void {
+  const previous = graphMeta();
+  if (!previous || previous.root !== change.meta.root
+      || captureBinding().backendGeneration !== change.binding_generation) return;
+  const meta = change.meta;
+  setGraphMeta(meta);
+  if (previous.preferred_workflow !== meta.preferred_workflow)
+    setWorkflow(meta.preferred_workflow === "todo" ? "todo" : "now");
+  if (previous.journal_page_title_format !== meta.journal_page_title_format)
+    setJournalTitleFormat(meta.journal_page_title_format);
+  const shown = favorites().map((item) => item.name);
+  if (previous.favorites_page !== meta.favorites_page
+      || shown.length !== meta.favorites.length
+      || shown.some((name, index) => name !== meta.favorites[index]))
+    seedFavorites(meta.favorites, meta.favorites_page ?? null);
+  bumpDataRev();
+}
 
 export function persistedGraphPath(): string {
   try {

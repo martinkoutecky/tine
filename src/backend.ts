@@ -208,6 +208,8 @@ export interface Backend {
   bindCaptureGraph(): Promise<void>;
   listKnownGraphs(): Promise<KnownGraph[]>;
   forgetKnownGraph(path: string): Promise<void>;
+  /** Reveal a remembered graph's folder in the desktop file manager. */
+  revealKnownGraph(path: string): Promise<void>;
   appPlatform(): Promise<"android" | "ios" | "desktop">;
   /** Immutable, app-local plugin packages. Installation stores bytes but never
    * executes them; enabling is an explicit second step after host validation. */
@@ -337,6 +339,8 @@ export interface Backend {
   /** Persist favorited page names to config.edn `:favorites` and, when given,
    *  the arrangement page to `:tine/favorites-page`, in one config write. */
   setFavorites(names: string[], page?: string | null): Promise<void>;
+  /** Persist (or clear) `:default-home {:page "…"}` through the graph config writer. */
+  setDefaultHome(name: string | null): Promise<void>;
   /** Persist the task workflow to config.edn `:preferred-workflow`. */
   setPreferredWorkflow(workflow: "now" | "todo"): Promise<void>;
   /** Persist `:feature/enable-timetracking?` (default on when absent). */
@@ -580,6 +584,9 @@ export interface Backend {
   rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number): Promise<void>;
   /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
+  /** Subscribe to effective config.edn changes for this window. The event
+   * carries a fresh graph meta snapshot after the store reloaded the file. */
+  onGraphConfigChanged(cb: (change: GraphConfigChange) => void): Promise<() => void>;
   /** How many launch snapshots to keep. */
   getBackupKeep(): Promise<number>;
   setBackupKeep(keep: number): Promise<void>;
@@ -668,6 +675,11 @@ export interface GraphChange {
   kind: "journal" | "page";
   created: boolean;
   removed: boolean;
+}
+
+export interface GraphConfigChange {
+  binding_generation: number;
+  meta: GraphMeta;
 }
 
 export function isTauri(): boolean {
@@ -760,6 +772,9 @@ class TauriBackend implements Backend {
   }
   forgetKnownGraph(path: string) {
     return this.call<void>("forget_known_graph", { path });
+  }
+  revealKnownGraph(path: string) {
+    return this.call<void>("reveal_known_graph", { path });
   }
   appPlatform() {
     return this.call<"android" | "ios" | "desktop">("app_platform");
@@ -921,6 +936,9 @@ class TauriBackend implements Backend {
   }
   setFavorites(names: string[], page: string | null = null) {
     return this.call<void>("set_favorites", { names, page });
+  }
+  setDefaultHome(name: string | null) {
+    return this.call<void>("set_default_home", { name });
   }
   setPreferredWorkflow(workflow: "now" | "todo") {
     return this.call<void>("set_preferred_workflow", { workflow });
@@ -1200,6 +1218,10 @@ class TauriBackend implements Backend {
   async onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");
     return listen<GraphChange>("graph-changed", (e) => cb(e.payload));
+  }
+  async onGraphConfigChanged(cb: (change: GraphConfigChange) => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<GraphConfigChange>("graph-config-changed", (event) => cb(event.payload));
   }
   getBackupKeep() {
     return this.call<number>("get_backup_keep");

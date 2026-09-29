@@ -23,6 +23,7 @@ import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRo
 import { journalTitle } from "./journal";
 import { isMobilePlatform } from "./nativeChrome";
 import { nearestPane, takeBlockSelectionForPaneReturn } from "./paneSelect";
+import { graphScopedSignal } from "./binding";
 
 export type LayoutNode =
   | {
@@ -37,6 +38,35 @@ export const [layoutRoot, setLayoutRoot] = createSignal<LayoutNode>({
   kind: "pane",
   paneId: "main",
 });
+const maximizedPane = graphScopedSignal<string>();
+const maximizedPaneId = maximizedPane[0];
+const setMaximizedPaneId = maximizedPane[1];
+
+/** Return the pane tree shown on screen. Maximizing a pane leaves the saved
+ * split tree and ratios intact; an unknown pane id falls back to that tree.
+ * Cost: O(panes). No I/O or failure. */
+export function visibleLayoutNode(): LayoutNode {
+  const id = maximizedPaneId();
+  return id && layoutPaneIds().includes(id) ? { kind: "pane", paneId: id } : layoutRoot();
+}
+
+/** Toggle a pane's transient full-area view. Returns false when no split or
+ * target exists. Cost: O(panes); never changes the persisted layout. */
+export function togglePaneMaximize(paneId = focusedPaneId()): boolean {
+  if (maximizedPaneId() === paneId) {
+    setMaximizedPaneId(null);
+    return true;
+  }
+  if (!layoutHasMultiplePanes() || !layoutPaneIds().includes(paneId)) return false;
+  setMaximizedPaneId(paneId);
+  return true;
+}
+
+function commitLayout(node: LayoutNode) {
+  const id = maximizedPaneId();
+  if (id && !layoutPaneIds(node).includes(id)) setMaximizedPaneId(null);
+  setLayoutRoot(node);
+}
 const [focusedPaneIdAccessor, writeFocusedPaneId] = createSignal("main");
 export const focusedPaneId = focusedPaneIdAccessor;
 
@@ -218,7 +248,7 @@ export function splitPane(
   const source = paneRouter(paneId);
   const router = paneRouter(newPaneId);
   router.restoreSnapshot(opts.snapshot ?? splitSnapshotForNewPane(source));
-  setLayoutRoot(splitLayoutNodeAt(layoutRoot(), paneId, dir, newPaneId, opts.position ?? "after"));
+  commitLayout(splitLayoutNodeAt(layoutRoot(), paneId, dir, newPaneId, opts.position ?? "after"));
   if (opts.focusNew !== false) focusPane(newPaneId);
   focusedRouter().scheduleSessionSave();
   return newPaneId;
@@ -278,7 +308,7 @@ export function splitRootAtEdge(
   const newLeaf: LayoutNode = { kind: "pane", paneId: newPaneId };
   const dir = side === "left" || side === "right" ? "row" : "col";
   const newFirst = side === "left" || side === "top";
-  setLayoutRoot({
+  commitLayout({
     kind: "split",
     dir,
     ratio: 0.5,
@@ -294,7 +324,7 @@ export function closePane(paneId = focusedPaneId()): boolean {
   const closingFocusedPane = focusedPaneId() === paneId;
   const res = closeLayoutPane(layoutRoot(), paneId);
   if (!res.closed) return false;
-  setLayoutRoot(res.node);
+  commitLayout(res.node);
   if (paneId !== "main") routers.delete(paneId);
   // Closing a background pane must not manufacture a foreground visit. When
   // the focused pane closes, however, its sibling becomes the page the user is
@@ -307,6 +337,7 @@ export function closePane(paneId = focusedPaneId()): boolean {
 
 export function focusPane(paneId: string) {
   if (!layoutPaneIds().includes(paneId) || focusedPaneId() === paneId) return;
+  if (maximizedPaneId() && maximizedPaneId() !== paneId) setMaximizedPaneId(null);
   setFocusedPaneId(paneId);
   paneRouter(paneId).activateCurrentRoute();
 }
@@ -418,8 +449,31 @@ export function setSplitRatio(path: number[], ratio: number) {
         : [node.children[0], update(node.children[1], depth + 1)],
     };
   };
-  setLayoutRoot(update(layoutRoot(), 0));
+  commitLayout(update(layoutRoot(), 0));
   focusedRouter().scheduleSessionSave();
+}
+
+function panePath(node: LayoutNode, paneId: string, prefix: number[] = []): number[] | null {
+  if (node.kind === "pane") return node.paneId === paneId ? prefix : null;
+  return panePath(node.children[0], paneId, [...prefix, 0])
+    ?? panePath(node.children[1], paneId, [...prefix, 1]);
+}
+
+/** Resize a pane by five percentage points at its nearest split on `axis`.
+ * Returns false if no matching ancestor exists. Ratios clamp to 15–85% and
+ * the normal session save persists the change. Cost: O(panes). */
+export function adjustPaneSize(paneId: string, axis: "width" | "height", grow: boolean): boolean {
+  const path = panePath(layoutRoot(), paneId);
+  if (!path) return false;
+  const dir = axis === "width" ? "row" : "col";
+  for (let depth = path.length - 1; depth >= 0; depth--) {
+    const ancestor = nodeAtPath(layoutRoot(), path.slice(0, depth));
+    if (!ancestor || ancestor.kind !== "split" || ancestor.dir !== dir) continue;
+    const delta = (grow ? 0.05 : -0.05) * (path[depth] === 0 ? 1 : -1);
+    setSplitRatio(path.slice(0, depth), ancestor.ratio + delta);
+    return true;
+  }
+  return false;
 }
 
 export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId()): string | null {
@@ -529,6 +583,7 @@ export function openPdfNotes(sourcePaneId: string, notesPage: string, block?: st
 }
 
 export function resetPaneLayoutToSingle(snapshot?: PaneSnapshot) {
+  setMaximizedPaneId(null);
   setLayoutRoot({ kind: "pane", paneId: "main" });
   if (snapshot) mainRouter().restoreSnapshot(snapshot);
   for (const id of [...routers.keys()]) {
@@ -548,7 +603,7 @@ export function restorePaneLayout(
     if (snap) paneRouter(id).restoreSnapshot(snap);
     else paneRouter(id);
   }
-  setLayoutRoot(root);
+  commitLayout(root);
   for (const id of [...routers.keys()]) {
     if (id !== "main" && !ids.includes(id)) routers.delete(id);
   }

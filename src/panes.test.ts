@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  adjustPaneSize,
   closeLayoutPane,
   closePane,
   focusPane,
@@ -15,6 +16,8 @@ import {
   resetPaneLayoutToSingle,
   splitLayoutNode,
   splitPane,
+  togglePaneMaximize,
+  visibleLayoutNode,
   type LayoutNode,
 } from "./panes";
 import { hasSelection, selectBlock } from "./document";
@@ -25,6 +28,7 @@ import { clearRecent, recentPages } from "./ui";
 import { journalTitle } from "./journal";
 import { exitPaneSelect, rememberBlockSelectionForPaneReturn } from "./paneSelect";
 import { pdfNavigationIntent, resetPdfNavigationForTest } from "./pdfNavigation";
+import { invalidateBinding } from "./binding";
 
 const pageSnapshot = (name: string): PaneSnapshot => ({
   tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }],
@@ -91,6 +95,31 @@ function setJournalFeed(entries: { name: string; blockId?: string }[]) {
 }
 
 describe("pane layout mutations", () => {
+  it("maximizes transiently and restores the exact split tree", () => {
+    const other = splitPane("main", "row")!;
+    const original = layoutRoot();
+    expect(togglePaneMaximize(other)).toBe(true);
+    expect(visibleLayoutNode()).toEqual({ kind: "pane", paneId: other });
+    expect(layoutRoot()).toEqual(original);
+    expect(togglePaneMaximize(other)).toBe(true);
+    expect(visibleLayoutNode()).toEqual(original);
+  });
+
+  it("drops a transient maximize when its graph binding is retired", () => {
+    const other = splitPane("main", "row")!;
+    expect(togglePaneMaximize(other)).toBe(true);
+    invalidateBinding();
+    expect(visibleLayoutNode()).toEqual(layoutRoot());
+  });
+
+  it("grows and shrinks the focused branch at the nearest matching split", () => {
+    const other = splitPane("main", "row")!;
+    expect(adjustPaneSize(other, "height", true)).toBe(false);
+    expect(adjustPaneSize(other, "width", true)).toBe(true);
+    expect(layoutRoot()).toMatchObject({ kind: "split", ratio: 0.45 });
+    expect(adjustPaneSize(other, "width", false)).toBe(true);
+    expect(layoutRoot()).toMatchObject({ kind: "split", ratio: 0.5 });
+  });
   it("redirects a journals split to the selected feed day's plain, unpinned page", () => {
     setJournalFeed([{ name: "Selected journal day", blockId: "selected-feed-block" }]);
     resetPaneLayoutToSingle({

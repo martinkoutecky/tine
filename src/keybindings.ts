@@ -10,6 +10,7 @@
 import { openSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, dismissMobileDrawer } from "./ui";
 import { pushToast } from "./toasts";
 import { restoreDrawerFocus } from "./mobileDrawers";
+import { zoomReset } from "./zoom";
 import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
 import {
@@ -33,6 +34,7 @@ import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEv
 import { decodeNavIntent } from "./navProtocol";
 import {
   closePane,
+  adjustPaneSize,
   focusPane,
   focusedPaneId,
   layoutHasMultiplePanes,
@@ -43,6 +45,7 @@ import {
   splitPane,
   splitPaneAtSeam,
   splitRootAtEdge,
+  togglePaneMaximize,
 } from "./panes";
 import {
   enterPaneSelect,
@@ -272,6 +275,11 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/split-right", binding: "mod+alt+\\", label: "Split right", scope: "global", run: () => void splitPane(focusedPaneId(), "row"), global: true },
   { id: "pane/split-down", binding: "mod+alt+shift+\\", label: "Split down", scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
   { id: "pane/close", binding: "", label: "Close pane", scope: "global", run: () => void closePane(focusedPaneId()), global: true },
+  { id: "pane/toggle-maximize", binding: "mod+alt+m", label: "Toggle maximize active pane", scope: "global", run: () => { togglePaneMaximize(); }, global: true },
+  { id: "pane/grow-width", binding: "", label: "Grow active pane width", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", true); }, global: true },
+  { id: "pane/shrink-width", binding: "", label: "Shrink active pane width", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", false); }, global: true },
+  { id: "pane/grow-height", binding: "", label: "Grow active pane height", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", true); }, global: true },
+  { id: "pane/shrink-height", binding: "", label: "Shrink active pane height", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", false); }, global: true },
   // Palette-discoverable entry into pane-select (it's otherwise only reachable
   // via Esc-with-nothing-open, which users won't guess — Martin didn't).
   { id: "pane/select-mode", binding: "", label: "Pane select mode (arrows move, Enter opens/splits)", scope: "global", run: enterPaneSelectFromFocus, global: true },
@@ -292,6 +300,7 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/move-tab-up", binding: "mod+alt+shift+up", label: "Move tab to pane up", scope: "global", run: () => moveActiveTabInDirection("up"), global: true },
   { id: "pane/move-tab-down", binding: "mod+alt+shift+down", label: "Move tab to pane down", scope: "global", run: () => moveActiveTabInDirection("down"), global: true },
   { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
+  { id: "ui/reset-zoom", binding: "", label: "Reset interface zoom", scope: "global", run: zoomReset, global: true },
   { id: "ui/toggle-brackets", binding: "mod+c mod+b", label: "Toggle reference brackets", scope: "global", run: () => changeShowBrackets(!showBrackets()), global: true },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: "Toggle left sidebar", scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: "Toggle right sidebar", scope: "global", run: toggleRightSidebar },
@@ -670,14 +679,15 @@ export function paletteCommands(
     .map((c) => ({
       id: c.id,
       label: c.label,
-      binding: overridesApplied[c.id] ?? c.binding,
+      binding: (overridesApplied[c.id] ?? c.binding) === "false" ? "" : overridesApplied[c.id] ?? c.binding,
       run: c.run!,
-    }))
-    .filter((c) => c.binding !== "false");
+    }));
   const plugins = pluginManager.commands().map(({ pluginId, contribution }) => ({
     id: `plugin:${pluginId}:${contribution.id}`,
     label: contribution.title,
-    binding: overridesApplied[`plugin:${pluginId}:${contribution.id}`] ?? contribution.defaultBinding ?? "",
+    binding: overridesApplied[`plugin:${pluginId}:${contribution.id}`] === "false"
+      ? ""
+      : overridesApplied[`plugin:${pluginId}:${contribution.id}`] ?? contribution.defaultBinding ?? "",
     run: () => {
       void pluginManager
         .invokeCommand(pluginId, contribution.id, focusedPluginBlock ?? undefined)
