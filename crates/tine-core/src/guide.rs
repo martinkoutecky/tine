@@ -310,13 +310,24 @@ mod query_guide_tests {
                 "missing query Guide control: {control}"
             );
         }
-        let not_yet = &queries[queries
-            .find("## Not in this build yet")
-            .expect("the Not-yet section")..];
-        for shipped in ["tine-query", "explain which part", "visual builder"] {
+        assert!(!queries.contains("## Not in this build yet"));
+    }
+
+    #[test]
+    fn query_display_and_type_declarations_are_documented() {
+        let queries = include_str!("templates/queries.md");
+        for control in [
+            "press **Display**",
+            "Choosing **Page** in the column picker",
+            "`tine.fields::` remains the table's schema",
+            "number of blocks or pages",
+            "**declare type…**",
+            "**list of**",
+            "mismatches against a declaration",
+        ] {
             assert!(
-                !not_yet.contains(shipped),
-                "shipped capability still listed as missing: {shipped}"
+                queries.contains(control),
+                "missing Q4b Guide control: {control}"
             );
         }
     }

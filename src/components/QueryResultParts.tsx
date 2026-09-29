@@ -1,8 +1,9 @@
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
-import type { PageRow, QueryStatistics, QueryStatisticsCell } from "../editor/queryIr";
+import type { PageRow, QueryStatistics } from "../editor/queryIr";
 import { openPageTarget } from "../router";
 import { openPageInSidebar } from "../ui";
 import { fieldLabel, isFieldId } from "../sheet/fields";
+import { querySummary } from "../editor/queryAggregate";
 
 // Presentation parts of a query block's answer: page rows and the engine's
 // statistics. Neither decides membership or computes an answer (I-12).
@@ -98,35 +99,26 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
  *  answer is never a numeric zero. */
 export function QueryStatisticsSummary(props: { statistics: QueryStatistics }): JSX.Element {
   const stop = (e: MouseEvent) => e.stopPropagation();
-  const label = ([field, fn]: [string, string]) => {
-    const verb = fn === "count" ? "Count" : fn === "sum" ? "Sum" : "Avg";
-    return field ? `${verb} of ${field.replace(/^prop:/, "")}` : verb;
-  };
-  const text = (cell: QueryStatisticsCell | undefined) => {
-    if (!cell) return "";
-    if (cell.kind === "marker") return `Unavailable (${cell.reason.replaceAll("_", " ")})`;
-    const scaled = cell.value * 1000;
-    return `${Number.isFinite(scaled) ? Math.round(scaled) / 1000 : cell.value}`;
-  };
+  const summary = createMemo(() => querySummary({ statistics: props.statistics })!);
   const groupLabel = () => {
     const field = props.statistics.group_by;
     return field && isFieldId(field) ? fieldLabel(field) : field;
   };
   return (
     <>
-      <Show when={props.statistics.grouping_status === "unsupported_formula"}>
-        <p class="query-summary-note">Exact statistics by formula are not supported yet. Overall statistics are shown.</p>
+      <Show when={summary().notice}>
+        <p class="query-summary-note">{summary().notice}</p>
       </Show>
       <Show
-        when={props.statistics.groups}
+        when={summary().groups}
         fallback={
           <div class="query-summary" onClick={stop}>
-            <For each={props.statistics.aggregates}>{(aggregate, i) => (
+            <For each={summary().columns}>{(column, i) => (
               <span class="qs-entry">
-                <span class="qs-label">{label(aggregate)}:</span>{" "}
-                <span class="qs-value">{text(props.statistics.overall[i()])}</span>
-                <Show when={(props.statistics.overall[i()]?.skipped ?? 0) > 0}>
-                  <span class="qs-skip"> ({props.statistics.overall[i()]!.skipped} non-numeric skipped)</span>
+                <span class="qs-label">{column.label}:</span>{" "}
+                <span class="qs-value">{summary().overall[i()]?.text}</span>
+                <Show when={(summary().overall[i()]?.skipped ?? 0) > 0}>
+                  <span class="qs-skip"> ({summary().overall[i()]!.skipped} non-numeric skipped)</span>
                 </Show>
               </span>
             )}</For>
@@ -139,16 +131,16 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics }): 
               <thead>
                 <tr>
                   <th>{groupLabel()}</th>
-                  <For each={props.statistics.aggregates}>{(aggregate) => <th>{label(aggregate)}</th>}</For>
+                  <For each={summary().columns}>{(column) => <th>{column.label}</th>}</For>
                 </tr>
               </thead>
               <tbody>
                 <For each={groups()}>{(group) => (
                   <tr>
-                    <td>{group.key ?? "(none)"}</td>
+                    <td>{group.label}</td>
                     <For each={group.cells}>{(cell) => (
                       <td>
-                        {text(cell)}
+                        {cell.text}
                         <Show when={cell.skipped > 0}><span class="qs-skip"> ({cell.skipped} skipped)</span></Show>
                       </td>
                     )}</For>
@@ -156,7 +148,7 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics }): 
                 )}</For>
               </tbody>
             </table>
-            <Show when={props.statistics.group_by === "tags"}>
+            <Show when={summary().multiMembership}>
               <p class="query-summary-note" onClick={stop}>
                 A row with several tags appears in every matching group, so these counts can add up to more than the result.
               </p>

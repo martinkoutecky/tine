@@ -44,6 +44,8 @@ import type { PageKind, QueryExecution, QueryHit, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
 import { savedDslToFriendlySearch } from "../editor/searchQuery";
+import { displayPropertyPatch, isLegacyBareColumnList, mergeQueryAggregateValue } from "../editor/queryViewProperties";
+import { formulasOf } from "../sheet/formulaFields";
 import { LinkDepthContext, LinkDepthWarning, MAX_DEPTH_OF_LINKS } from "./linkDepth";
 import { blockDtoExternalId } from "../blockIdentity";
 import { QueryPrintRefusedError } from "../backend";
@@ -302,7 +304,8 @@ export function QueryMacro(props: {
         return;
       }
       setBlockProperty(blockId, "tine.view", next);
-      if (next === "board" && blockProperty(blockId, "tine.group-by") === null) {
+      if (next === "board" && blockProperty(blockId, "tine.group-by") === null
+        && blockProperty(blockId, "tine.group-field") === null) {
         setBlockProperty(blockId, "tine.group-by", "state");
       }
     });
@@ -491,10 +494,11 @@ export function QueryMacro(props: {
   // **The save path (§4.3).** `query_og_expressible` first; an edit OG cannot
   // express crosses to `{{tine-query}}` (and says so, §7.5). The bytes written
   // are the engine's; a refused print writes nothing and says why (I-4).
-  const applyEdit = async (next: BuilderSession): Promise<boolean> => {
+  const applyEdit = async (next: BuilderSession, displayEdit = false): Promise<boolean> => {
     const blockId = props.blockId;
     if (!blockId || !docNode(blockId)) return false;
     const rawAtStart = docNode(blockId).raw;
+    const previousDisplay = displayEdit ? new Map(displayPropertyPatch(reading()?.view ?? {})) : null;
     const owner = graphOwner(() => docNode(blockId)?.raw === rawAtStart);
     const current = macroName();
     let name = current;
@@ -543,6 +547,18 @@ export function QueryMacro(props: {
     const saved = withUndoUnit(crossing ? `query:cross:${blockId}` : `query:save:${blockId}`, [node.page], () => {
       rewriteMacro(`{{${name} ${argument}}}`, target);
       materializeView(blockId, next.view, dialect);
+      if (previousDisplay) for (const [key, value] of displayPropertyPatch(next.view)) {
+        if (previousDisplay.get(key) !== value) {
+          if (key === "tine.col-aggregates") {
+            const merged = mergeQueryAggregateValue(blockProperty(blockId, key), next.view.aggregates ?? []);
+            if (merged !== undefined) setBlockProperty(blockId, key, merged);
+          } else setBlockProperty(blockId, key, value);
+          if (key === "tine.group-field" && blockProperty(blockId, "tine.group-by")?.trim())
+            setBlockProperty(blockId, "tine.group-by", null);
+          if (key === "tine.columns" && isLegacyBareColumnList(blockProperty(blockId, "tine.fields")))
+            setBlockProperty(blockId, "tine.fields", null);
+        }
+      }
       return true;
     });
     if (saved !== true) {
@@ -551,6 +567,16 @@ export function QueryMacro(props: {
     }
     if (crossing) setCrossed(blockId, boundedFeature(argument));
     return true;
+  };
+  /** Display uses the same guarded print and undo unit as a filter edit. */
+  const applyDisplay = (view: ViewSettings): Promise<boolean> => {
+    const current = reading();
+    if (current && view.view !== current.view.view
+      && JSON.stringify({ ...view, view: undefined }) === JSON.stringify({ ...current.view, view: undefined })) {
+      setQueryView(view.view ?? "list");
+      return Promise.resolve(true);
+    }
+    return current ? applyEdit({ query: current.query, view }, true) : Promise.resolve(false);
   };
 
   // **A title edit is not a filter conversion (§4.3.1).** The new options map
@@ -860,6 +886,8 @@ export function QueryMacro(props: {
               <QueryBuilder
                 session={builderSession}
                 onChange={applyEdit}
+                display={{ view: () => reading()?.view ?? {}, apply: applyDisplay,
+                  formulas: () => [...formulasOf(hostProperties()).keys()] }}
                 paneDialect="tql"
                 blockId={props.blockId}
                 total={<span class="query-count">{total()}</span>}
@@ -918,7 +946,8 @@ export function QueryMacro(props: {
                       <SheetContainer>
                         <Switch>
                           <Match when={sheet()?.view === "table"}>
-                            <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()} />
+                            <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
+                              queryDisplay={{ view: reading()?.view ?? {}, apply: (next) => void applyDisplay(next) }} />
                           </Match>
                           <Match when={sheet()?.view === "board"}>
                             <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={sheet()?.groupBy} groups={groups()} />

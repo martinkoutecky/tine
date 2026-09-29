@@ -335,6 +335,49 @@ async function openSheet(root: HTMLElement): Promise<HTMLElement> {
   });
 }
 
+describe("Q4b: Display saves through the query block", () => {
+  it("offers Page as a table column and writes it on the query block (GH #606)", async () => {
+    load(TQL_MACRO);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("-- task TODO");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const sheet = await openSheet(root);
+      sheet.querySelector<HTMLButtonElement>(".qd-trigger")!.click();
+      await vi.waitFor(() => expect(sheet.querySelector(".qd-panel")).not.toBeNull());
+      const column = [...sheet.querySelectorAll<HTMLButtonElement>(".qd-add")]
+        .find((button) => button.textContent?.includes("column"));
+      column!.click();
+      const page = [...sheet.querySelectorAll<HTMLButtonElement>(".qs-vocab-option")]
+        .find((button) => button.textContent?.trim() === "Page");
+      expect(page).toBeDefined();
+      page!.click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.columns")).toBe("page"));
+      expect(blockProperty("query", "tine.fields")).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("persists a query table's Page header sort in the same query view", async () => {
+    load(`${TQL_MACRO}\ntine.view:: table`);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("-- task TODO");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const header = await vi.waitFor(() => {
+        const found = root.querySelector<HTMLElement>('[data-sheet-field-header][data-sheet-field="page"]');
+        if (!found) throw new Error("Page column was not rendered");
+        return found;
+      });
+      header.click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.sort")).toBe("page asc"));
+    } finally { dispose(); }
+  });
+});
+
 /** Reach the text pane in the sheet's footer. **P4 retired the disclosure**:
  *  inside an open sheet the pane is visible and editable, so opening the sheet
  *  IS opening the pane (§7.5). The resting sentence still mounts none of it. */
