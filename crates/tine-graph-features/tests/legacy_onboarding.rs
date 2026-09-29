@@ -166,6 +166,14 @@ fn guide_explains_following_the_link_at_the_caret() {
         .contains("choose **Plain text** for the text as displayed"));
     // GH #522: the palette resets interface zoom.
     assert!(tips.markdown.contains("**Reset interface zoom**"));
+    // GH #523: unbinding keeps the command; Reset restores the default.
+    assert!(tips.markdown.contains("**Unbind**"));
+    assert!(tips.markdown.contains("**Reset** restores its default"));
+    let capture = bundled_guide_pages()
+        .into_iter()
+        .find(|page| page.title == "Features/Quick capture")
+        .expect("capture guide is bundled");
+    assert!(capture.markdown.contains("**File capture** button"));
 }
 
 #[test]

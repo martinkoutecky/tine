@@ -1,7 +1,7 @@
 icon:: ⌨️
 
 - # Tips & shortcuts
-	- A quick tour of the things that aren't obvious on day one. (Shortcuts are remappable in Settings.)
+	- A quick tour of the things that aren't obvious on day one. (Shortcuts are remappable in Settings → **Keyboard Shortcuts**; choose **Unbind** to give a command no key at all — it remains available from places such as the command palette — and **Reset** restores its default instead.)
 - ## Find anything — Ctrl+K
 	- **Ctrl+K** opens the quick switcher: jump to a page, search the text of any block, or run a command — all from one box. **Ctrl+Shift+P** opens the command palette (commands only).
 	- Use **Ctrl+Shift+K** to search only the focused page, including children hidden under folded bullets. In the ordinary Ctrl+K switcher, press **Shift+Enter** on a page or block to send it to the right sidebar without leaving your current page.

@@ -310,6 +310,22 @@ describe("plugin command context", () => {
 });
 
 describe("keyboard binding strings", () => {
+  it("keeps an unbound global command in the palette while suppressing its chord", () => {
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "go/find-in-page": "false" });
+
+    const key = modFEvent();
+    fake.dispatchCaptureKeydown(key.event);
+
+    expect(inPageFindOpen()).toBe(false);
+    expect(key.prevented()).toBe(false);
+    const command = paletteCommands().find((candidate) => candidate.id === "go/find-in-page");
+    expect(command).toMatchObject({ binding: "" });
+    command!.run();
+    expect(inPageFindOpen()).toBe(true);
+    dispose();
+  });
+
   it("records physical Control distinctly from Command on macOS (GH #378)", async () => {
     vi.resetModules();
     vi.stubGlobal("navigator", { platform: "MacIntel" });

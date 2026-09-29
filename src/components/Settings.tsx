@@ -327,6 +327,10 @@ export function Settings(): JSX.Element {
                   shortcuts={shortcuts()}
                   recording={recording()}
                   onRecord={(id) => setRecording(recording() === id ? null : id)}
+                  onUnbind={(id) => {
+                    setRecording(null);
+                    setShortcutOverride(id, "false");
+                  }}
                   onReset={resetShortcutOverride}
                 />
               </Show>

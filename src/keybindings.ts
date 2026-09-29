@@ -691,14 +691,17 @@ export function paletteCommands(
     .map((c) => ({
       id: c.id,
       label: c.label,
-      binding: overridesApplied[c.id] ?? c.binding,
+      binding: (overridesApplied[c.id] ?? c.binding) === "false"
+        ? ""
+        : overridesApplied[c.id] ?? c.binding,
       run: c.run!,
-    }))
-    .filter((c) => c.binding !== "false");
+    }));
   const plugins = pluginManager.commands().map(({ pluginId, contribution }) => ({
     id: `plugin:${pluginId}:${contribution.id}`,
     label: contribution.title,
-    binding: overridesApplied[`plugin:${pluginId}:${contribution.id}`] ?? contribution.defaultBinding ?? "",
+    binding: overridesApplied[`plugin:${pluginId}:${contribution.id}`] === "false"
+      ? ""
+      : overridesApplied[`plugin:${pluginId}:${contribution.id}`] ?? contribution.defaultBinding ?? "",
     run: () => {
       void pluginManager
         .invokeCommand(pluginId, contribution.id, focusedPluginBlock ?? undefined)
