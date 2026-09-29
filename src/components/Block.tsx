@@ -136,6 +136,7 @@ import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
+import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { CalGlyph, ClockBadge, blockFirstLine, cycleBlockMarker, formatForBlockId, listLineAt, nearestScrollableY, timeStamp, toggleBlockCheckbox } from "./blockParts";
 
 type SheetSlashView = "grid" | "table" | "board";
@@ -758,6 +759,8 @@ export function Editor(props: { id: string }): JSX.Element {
   // transclusion the user is looking at.
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
   let ref!: HTMLTextAreaElement;
+  let pendingScrollAnchor: ReturnType<typeof captureEditorScrollAnchor> | undefined;
+  onCleanup(() => pendingScrollAnchor?.cancel());
   let pluginSlashInvocation = 0;
   let editorMounted = true;
   onCleanup(() => {
@@ -834,6 +837,12 @@ export function Editor(props: { id: string }): JSX.Element {
     // dirty or push undo — avoids churn and can't rewrite the block's bytes.
     if (next === node().raw) return;
     const setRawOpts = opts && "timetracking" in opts ? { timetracking: opts.timetracking } : undefined;
+    // GH #515: capture once for the autosize frame, before live mirrors above react.
+    if (pendingScrollAnchor === undefined) {
+      pendingScrollAnchor = ref && document.activeElement === ref
+        ? captureEditorScrollAnchor(ref, nearestScrollableY(ref)) : null;
+    }
+    autosize();
     setRaw(props.id, next, setRawOpts);
   };
 
@@ -1908,6 +1917,8 @@ export function Editor(props: { id: string }): JSX.Element {
     autosizeRaf = requestAnimationFrame(() => {
       autosizeRaf = undefined;
       resizeNow();
+      pendingScrollAnchor?.restore();
+      pendingScrollAnchor = undefined;
     });
   };
 
@@ -1957,6 +1968,7 @@ export function Editor(props: { id: string }): JSX.Element {
       owner: editingOwner(),
       surface: surfaceKey,
       selection: () => ({ start: ref.selectionStart, end: ref.selectionEnd }),
+      viewport: () => ({ editor: ref, scroller: nearestScrollableY(ref) }),
       focused: () => typeof document !== "undefined" && document.activeElement === ref,
     });
     onCleanup(unregisterHistoryTarget);

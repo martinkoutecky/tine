@@ -18,7 +18,7 @@ const FROZEN_SWALLOW_COUNT = 25;
 const ORIGINAL_SWALLOW_KEYS = new Set(`
   src/assetCache.ts:130 src/assetCache.ts:212 src/assetCache.ts:264 src/assetCache.ts:69
   src/components/AboutTab.tsx:17 src/components/AudioOverlay.tsx:117 src/components/AudioOverlay.tsx:154
-  src/components/Block.tsx:2985 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:44
+  src/components/Block.tsx:2997 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:44
   src/components/PdfViewer.tsx:492 src/components/PdfViewer.tsx:993 src/components/PdfViewer.tsx:1058
   src/capture.tsx:265 src/capture.tsx:573
   
@@ -38,7 +38,7 @@ const ALLOWED_SWALLOWS: Record<string, string> = {
   "src/components/AboutTab.tsx:17": "legacy best-effort operation needs an error-family audit",
   "src/components/AudioOverlay.tsx:117": "legacy best-effort operation needs an error-family audit",
   "src/components/AudioOverlay.tsx:154": "legacy best-effort operation needs an error-family audit",
-  "src/components/Block.tsx:2985": "association failure is intentionally a quiet feature miss (line rebased after asset guards)",
+  "src/components/Block.tsx:2997": "association failure is intentionally a quiet feature miss (line rebased after asset guards)",
   "src/components/HelpShortcuts.tsx:51": "legacy best-effort operation needs an error-family audit",
   "src/components/LinkedReferences.tsx:44": "legacy error-prose branch; replace with fixed error family",
   "src/components/PdfViewer.tsx:492": "best-effort viewer resource cleanup",
