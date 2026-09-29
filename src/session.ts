@@ -125,9 +125,10 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
       ...(pageDisplay ? { pageDisplay } : {}), ...(blockDisplay ? { blockDisplay } : {}) };
   }
   if (o.kind === "invalid") {
+    const detail = o.message;
     if (typeof o.title !== "string" || !o.title || o.title.length > 256
-      || typeof o.message !== "string" || !o.message || o.message.length > 4096) return null;
-    return { kind: "invalid", title: o.title, message: o.message };
+      || typeof detail !== "string" || !detail || detail.length > 4096) return null;
+    return { kind: "invalid", title: o.title, message: detail };
   }
   if (o.kind === "pdf") {
     const malformed = !(typeof o.viewId === "string" && o.viewId.length > 0 && o.viewId.length <= 128
