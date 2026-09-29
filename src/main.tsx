@@ -25,6 +25,7 @@ import "./styles/app.css";
 import "./styles/pdf-workspace.css";
 import "./styles/settingsControls.css";
 import "./styles/query.css";
+import "./styles/conflicts.css";
 import "./styles/published.css";
 
 applyTheme();

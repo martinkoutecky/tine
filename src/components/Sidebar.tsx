@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
-import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
-import { openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
+import { openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { conflictQueue, syncConflicts, openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type LoadGraphPathOutcome } from "../graph";
@@ -275,6 +275,7 @@ export function Sidebar(props: {
       </div>
 
       <div class="sidebar-footer">
+        <ConflictQueueBadge />
         <button class="new-page-btn" onClick={() => openSwitcher()}>+ New page</button>
       </div>
     </div>
@@ -450,6 +451,22 @@ export function GraphSwitcher(props: {
         </div>
       </Show>
     </div>
+  );
+}
+
+// Concord: the calm badge. A conflict is a persistent object, not an
+// interruption: it waits here, never opens a modal, and survives restarts
+// because the queue is derived from disk. It opens the Conflicts overview.
+// A copy whose page is gone counts too, or nothing would point at it.
+export function ConflictQueueBadge(): JSX.Element {
+  const count = () => conflictQueue().length + syncConflicts().filter((c) => !c.base_path).length;
+  return (
+    <Show when={count()}>
+      <button class="conflict-queue-badge" title="Review the pages that need a decision" onClick={() => openConflicts()}>
+        <span class="conflict-queue-dot" aria-hidden="true" />
+        {count()} conflict{count() === 1 ? "" : "s"}
+      </button>
+    </Show>
   );
 }
 

@@ -305,6 +305,26 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn concord_conflict_queue_and_resolver_are_documented_in_the_bundled_guide() {
+        // og family 8c: the badge, the Conflicts page, the in-page resolver and
+        // the marker save refusal are user-visible and named in the Guide.
+        let tips = include_str!("templates/tips.md");
+        for control in [
+            "**N conflicts** badge",
+            "**Conflicts** page",
+            "**Discard copy**",
+            "**Apply resolution**",
+            "Tine refuses to save a page that still contains merge markers",
+            "the file as it was first goes to the graph trash",
+        ] {
+            assert!(
+                tips.contains(control),
+                "missing family-8 Guide control: {control}"
+            );
+        }
+    }
+
+    #[test]
     fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide() {
         let tips = include_str!("templates/tips.md");
         for control in [

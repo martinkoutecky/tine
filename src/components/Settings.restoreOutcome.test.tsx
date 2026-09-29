@@ -4,7 +4,7 @@ import { backend } from "../backend";
 import { closeSettings, graphTransitioning, openSettings, setGraphTransitioning } from "../ui";
 import { setToasts, toasts } from "../toasts";
 import { resetStore } from "../document";
-import { setJournalConflicts, setSyncConflicts } from "../ui";
+import { setJournalConflicts } from "../ui";
 
 const controls = vi.hoisted(() => ({ flush: vi.fn(), load: vi.fn() }));
 vi.mock("../document", async (importOriginal) => ({
@@ -112,29 +112,4 @@ it("does not trash a duplicate journal after its confirmation outlives the graph
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(trash).not.toHaveBeenCalled();
   } finally { dispose(); setJournalConflicts([]); }
-});
-
-it("does not discard a sync conflict after its confirmation outlives the graph", async () => {
-  vi.spyOn(backend(), "getBackupKeep").mockResolvedValue(12);
-  vi.spyOn(backend(), "listBackups").mockResolvedValue([]);
-  const conflicts = [{ path: "pages/old.sync-conflict.md", base_name: "Page", base_path: "pages/Page.md",
-    kind: "page" as const, tag: "old", preview: "copy" }];
-  vi.spyOn(backend(), "listSyncConflicts").mockResolvedValue(conflicts);
-  setSyncConflicts(conflicts);
-  let finish!: (confirmed: boolean) => void;
-  vi.spyOn(backend(), "confirm").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-  const trash = vi.spyOn(backend(), "trashSyncConflict").mockResolvedValue();
-  const root = document.createElement("div");
-  document.body.append(root);
-  const dispose = render(() => <Settings />, root);
-  try {
-    openSettings("backups");
-    const button = () => root.querySelector<HTMLButtonElement>(".sync-conflict-row .settings-btn-danger");
-    await vi.waitFor(() => expect(button()).not.toBeNull());
-    button()!.click();
-    resetStore();
-    finish(true);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(trash).not.toHaveBeenCalled();
-  } finally { dispose(); setSyncConflicts([]); }
 });

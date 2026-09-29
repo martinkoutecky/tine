@@ -46,6 +46,8 @@ export interface InvalidRoute {
 
 export type Route =
   | { kind: "journals" }
+  /** The Concord overview: a view of the derived conflict queue, never a file. */
+  | { kind: "conflicts" }
   | QueryRoute
   | PdfRoute
   | InvalidRoute

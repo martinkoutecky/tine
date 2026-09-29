@@ -197,7 +197,7 @@ export async function loadGraphPath(
   setJournalTitleFormat(meta?.journal_page_title_format); // match this graph's journal titles
   seedFavorites(meta?.favorites ?? [], meta?.favorites_page ?? null);
   void refreshJournalConflicts(true); // tell the user if any day has duplicate journal files
-  void refreshSyncConflicts(true); // and flag any Syncthing/Dropbox conflict copies
+  void refreshSyncConflicts(); // conflict copies + VCS markers feed the sidebar badge
   if (path) {
     try {
       localStorage.setItem(GRAPH_KEY, path);

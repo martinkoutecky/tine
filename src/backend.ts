@@ -32,6 +32,8 @@ import type {
   SyncConflict,
   SyncConflictDiff,
   MergeDecision,
+  ConflictInventory,
+  MarkerConflictDiff,
   PrintOpts,
   PdfState,
   QueryExecution,
@@ -444,6 +446,22 @@ export interface Backend {
   ): Promise<void>;
   /** Discard a conflict copy without merging (move it to the recoverable trash). */
   trashSyncConflict(conflict: string, kind: "delete-page"): Promise<void>;
+  /** The conflict listings and the derived queue from ONE graph walk; never
+   *  stored. Cost: one bounded read of every page file (O(graph text bytes)). */
+  conflictInventory(): Promise<ConflictInventory>;
+  /** A marker-bearing page's own sides as a block diff (3-way when the markers
+   *  carry a common ancestor). Read-only; null when it carries no markers. */
+  vcsMarkerConflictDiff(path: string): Promise<MarkerConflictDiff | null>;
+  /** Rewrite a marker-bearing page per the user's decisions, guarded by the
+   *  file's `baseRev` ("conflict" if it changed); the pre-resolution bytes are
+   *  first staged in the recoverable trash. */
+  resolveVcsMarkerConflict(
+    path: string,
+    decisions: Record<string, MergeDecision>,
+    baseRev: string,
+    kinds: EditKinds,
+    preChoice?: "mine" | "theirs" | "union"
+  ): Promise<void>;
   /** Subscribe to the watcher's `conflicts-changed` event (a conflict copy
    *  appeared or vanished). Returns an unlisten fn. */
   onConflictsChanged(cb: () => void): Promise<() => void>;
@@ -1107,6 +1125,21 @@ class TauriBackend implements Backend {
   }
   trashSyncConflict(conflict: string) {
     return this.call<void>("trash_sync_conflict", { conflict });
+  }
+  conflictInventory() {
+    return this.call<ConflictInventory>("conflict_inventory");
+  }
+  vcsMarkerConflictDiff(path: string) {
+    return this.call<MarkerConflictDiff | null>("vcs_marker_conflict_diff", { path });
+  }
+  resolveVcsMarkerConflict(
+    path: string,
+    decisions: Record<string, MergeDecision>,
+    baseRev: string,
+    _kinds: EditKinds,
+    preChoice?: "mine" | "theirs" | "union"
+  ) {
+    return this.call<void>("resolve_vcs_marker_conflict", { path, decisions, baseRev, preChoice: preChoice ?? "union" });
   }
   async onConflictsChanged(cb: () => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");

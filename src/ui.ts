@@ -3,14 +3,16 @@ import { pushToast } from "./toasts";
 import { isMobilePlatform } from "./nativeChrome";
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal, useContext } from "solid-js";
-import type { JournalConflict, SyncConflict, PageKind } from "./types";
+import type { JournalConflict, PageKind } from "./types";
 import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
 import { backend } from "./backend";
 import { setFocusFullscreen } from "./focusFullscreen";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "./binding";
 import { graphOwner, latestOwner, readOwned, writeOwned } from "./owned";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
-import { route, focusBlock, scheduleSessionSave } from "./routerBridge";
+import { route, focusBlock, scheduleSessionSave, openPageTarget } from "./routerBridge";
+import { beginConflictRefresh, conflictQueue, conflictRefreshCurrent, queueTouchedBy, setConflictInventory } from "./conflictQueue";
+export { conflictQueue, settleArtifactConflict, syncConflicts, setSyncConflicts } from "./conflictQueue";
 import type { PageTarget } from "./routeTypes";
 import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
@@ -261,29 +263,38 @@ export async function refreshJournalConflicts(notify = false): Promise<void> {
   }
 }
 
-// --- sync-tool conflict copies (Syncthing/Dropbox `*.sync-conflict-*` files).
-// Excluded from the page list; surfaced here so the user can review + merge them
-// (Settings → Backups & recovery) instead of them rotting as garbage pages. ---
-export const [syncConflicts, setSyncConflicts] = createSignal<SyncConflict[]>([]);
-clearOnBindingInvalidated(() => setSyncConflicts([])); // I-20, as journalConflicts
-/** Re-fetch the sync-conflict list; with `notify`, toast if any exist. */
-export async function refreshSyncConflicts(notify = false): Promise<void> {
+// --- the Concord conflict inventory (src/conflictQueue.ts): sync-tool conflict
+// copies, marker-bearing pages, and the derived queue over both. The calm
+// sidebar badge, the Conflicts route and the in-page resolver carry the standing
+// inventory; like master, only a copy that ARRIVES mid-session is announced. ---
+/** Re-derive the conflict inventory from disk (one walk; never stored). With
+ *  `notify === "new"`, toast for sync copies that newly arrived. A failed read
+ *  empties it: no badge, never a broken app, and no refusal. */
+export async function refreshSyncConflicts(notify: "new" | false = false): Promise<void> {
   const owner = graphOwner();
+  const episode = beginConflictRefresh();
   try {
-    const result = await readOwned(owner, backend().listSyncConflicts());
-    if (result.kind === "stale") return;
-    const c = result.value;
-    setSyncConflicts(c);
-    if (notify && c.length) {
+    const result = await readOwned(owner, backend().conflictInventory());
+    if (result.kind === "stale" || !conflictRefreshCurrent(episode)) return;
+    const previous = new Set(conflictQueue().map((conflict) => conflict.id));
+    setConflictInventory(result.value);
+    const arrived = result.value.queue.filter((c) => c.source === "sync-copy" && !previous.has(c.id));
+    if (notify === "new" && arrived.length) {
+      const first = arrived[0];
       pushToast(
-        `${c.length} sync-conflict file${c.length === 1 ? "" : "s"} in your graph — review + merge them in Settings → Backups & recovery`,
+        `${arrived.length} new sync conflict${arrived.length === 1 ? " needs" : "s need"} review`,
         "info",
-        { sticky: true, action: { label: "Open", run: () => openSettings("backups") } }
+        { sticky: true, action: { label: "Review", run: () => openPageTarget({ name: first.page_name, pageKind: first.kind, path: first.page_path }) } }
       );
     }
   } catch {
-    /* best-effort */
+    if (conflictRefreshCurrent(episode)) setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [] });
   }
+}
+
+/** Re-derive the queue when a watcher change touched a page that is in it. */
+export async function refreshConflictQueueIfTouched(changes: { name: string; kind: PageKind; path?: string }[]): Promise<void> {
+  if (queueTouchedBy(changes)) await refreshSyncConflicts();
 }
 
 // --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole

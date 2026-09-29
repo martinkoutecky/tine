@@ -710,3 +710,93 @@ fn write_highlights_refuses_a_marker_bearing_hls_page() {
     assert_eq!(tree(&root), before, "page AND sidecar stay byte-identical");
     let _ = fs::remove_dir_all(&root);
 }
+
+/// The receipt fixture: one git `diff3` marker file and one Syncthing copy,
+/// driven through the literal backend path the in-page resolver calls
+/// (inventory → diff → guarded resolve → re-derived inventory). Before and
+/// after trees are printed for the lane receipt; the after-bytes are pinned.
+#[test]
+fn end_to_end_marker_file_and_syncthing_copy_fixtures() {
+    let root = scratch("e2e");
+    fs::write(root.join("pages/Merged.md"), DIFF3).unwrap();
+    fs::write(root.join("pages/Notes.md"), "- shared\n- winner edit\n").unwrap();
+    fs::write(root.join("pages").join(COPY), "- shared\n- copy edit\n").unwrap();
+    let show = |label: &str, t: &[(String, Vec<u8>)]| {
+        for (path, bytes) in t {
+            println!("{label} {path}: {:?}", String::from_utf8_lossy(bytes));
+        }
+    };
+    let before = tree(&root);
+    show("BEFORE", &before);
+
+    let store = open(&root);
+    let inventory = conflicts::conflict_inventory(&store);
+    assert_eq!(
+        inventory
+            .queue
+            .iter()
+            .map(|c| c.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["markers:pages/Merged.md", &format!("copy:pages/{COPY}")]
+    );
+
+    let marker = conflicts::vcs_marker_conflict_diff(&store, "pages/Merged.md")
+        .unwrap()
+        .unwrap()
+        .diff;
+    conflicts::resolve_vcs_marker_conflict(
+        &store,
+        "pages/Merged.md",
+        &all(&marker.rows, "both"),
+        &marker.base_rev,
+        "union",
+    )
+    .unwrap();
+
+    let copy = format!("pages/{COPY}");
+    let sync = conflicts::sync_conflict_diff(&store, "pages/Notes.md", &copy)
+        .unwrap()
+        .unwrap();
+    conflicts::resolve_sync_conflict(
+        &store,
+        "pages/Notes.md",
+        &copy,
+        &all(&sync.rows, "both"),
+        &sync.base_rev,
+        &sync.conflict_rev,
+        "union",
+    )
+    .unwrap();
+
+    let after = tree(&root);
+    show("AFTER", &after);
+    let file = |rel: &str| {
+        after
+            .iter()
+            .find(|(p, _)| p == rel)
+            .map(|(_, b)| String::from_utf8(b.clone()).unwrap())
+    };
+    assert_eq!(
+        file("pages/Merged.md").as_deref(),
+        Some("- shared top\n- mine wins\n- theirs wins\n")
+    );
+    assert_eq!(
+        file("pages/Notes.md").as_deref(),
+        Some("- shared\n- winner edit\n- copy edit\n")
+    );
+    assert_eq!(file(&copy), None, "the merged copy left pages/");
+    // Nothing is lost: both pre-resolution inputs sit in the recoverable trash.
+    let trashed: Vec<String> = after
+        .iter()
+        .filter(|(p, _)| p.starts_with("logseq/.tine-trash/"))
+        .map(|(_, b)| String::from_utf8(b.clone()).unwrap())
+        .collect();
+    assert!(trashed.contains(&DIFF3.to_string()), "{trashed:?}");
+    assert!(
+        trashed.contains(&"- shared\n- copy edit\n".to_string()),
+        "{trashed:?}"
+    );
+    let inventory = conflicts::conflict_inventory(&store);
+    assert!(inventory.queue.is_empty() && inventory.sync_conflicts.is_empty());
+    let _ = fs::remove_dir_all(&root);
+}

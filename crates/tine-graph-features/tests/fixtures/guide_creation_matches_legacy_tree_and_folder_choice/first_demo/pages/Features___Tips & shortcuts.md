@@ -38,6 +38,10 @@ icon:: ⌨️
 - ## Focus mode & dimming — t f / t b
 	- **t f** (focus mode) hides the sidebars and toolbar so the screen is just your text; layered **Esc** steps back out.
 	- **t b** (dim inactive blocks) fades everything except the bullet you're editing — a typewriter-style spotlight. Use it on its own, or let focus mode turn it on for you.
+- ## Sync copies and merge conflicts
+	- When Syncthing or Dropbox leaves a conflict copy of a page, or a git or Fossil merge leaves `<<<<<<<` merge markers in a file, an **N conflicts** badge appears at the bottom of the left sidebar. It opens the **Conflicts** page, which lists every page that needs a decision; **Discard copy** moves a sync copy to the graph trash (recoverable). Nothing is stored to remember the list: Tine re-reads it from your files.
+	- Open a listed page to resolve it there, block by block: keep one side, the other, or both. Where the merge markers carry the common ancestor, Tine pre-selects the side that actually changed; nothing is applied until you choose **Apply resolution**.
+	- Tine refuses to save a page that still contains merge markers, because rewriting it would re-indent the markers and silently lose one side. **Apply resolution** is the one save that may replace such a file; the file as it was first goes to the graph trash. A merged sync copy goes to the trash too.
 - ## A few more worth knowing
 	- Use the **…** beside an ordinary page title for its complete actions menu: open the source file, copy/export, inspect properties, rename, carry tasks, or delete. It is the same menu as right-click and works from the keyboard and touch.
 	- Right-click a block and choose **Open in new tab** to keep that block in its own tab.
