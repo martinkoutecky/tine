@@ -259,8 +259,14 @@ export function splitBlock(
 }
 
 /** Tab: make the block the last child of its previous sibling. Returns false
- *  when that would exceed the outline cap; the caller shows the refusal. */
-export function indentBlock(id: string, caretOffset: number | EditorSelection) {
+ *  when that would exceed the outline cap; the caller shows the refusal.
+ *
+ *  `editingSurface` names the surface the caret must stay on, exactly as the
+ *  split/merge operations take it. Without it the caret leaves a block embed
+ *  mid-keystroke: `editing()` in Block.tsx prefers the NON-embed rendering when
+ *  no surface is named, so the editor remounts on the source copy of the same
+ *  block further down the page (GH #477). */
+export function indentBlock(id: string, caretOffset: number | EditorSelection, editingSurface: string | null = null) {
   if (!blockWritable(id)) return;
   const i = indexInSiblings(id);
   if (i <= 0) return;
@@ -287,7 +293,7 @@ export function indentBlock(id: string, caretOffset: number | EditorSelection) {
         np.collapsed = false;
       })
     );
-    startEditing(id, caretOffset);
+    startEditing(id, caretOffset, null, editingSurface);
   });
 }
 
@@ -306,8 +312,9 @@ function reparentEditingBlock(page: string, kinds: EditKind | EditKinds, update:
   }
 }
 
-/** Shift+Tab: move the block out to be the next sibling of its parent. */
-export function outdentBlock(id: string, caretOffset: number | EditorSelection) {
+/** Shift+Tab: move the block out to be the next sibling of its parent.
+ *  `editingSurface` as in `indentBlock` (GH #477). */
+export function outdentBlock(id: string, caretOffset: number | EditorSelection, editingSurface: string | null = null) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id) || node.parent === null) return;
   pushUndo("outdent", [node.page]);
@@ -339,7 +346,7 @@ export function outdentBlock(id: string, caretOffset: number | EditorSelection) 
         gArr.splice(gArr.indexOf(parentId) + 1, 0, id);
       })
     );
-    startEditing(id, caretOffset);
+    startEditing(id, caretOffset, null, editingSurface);
   });
 }
 

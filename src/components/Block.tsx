@@ -2144,7 +2144,7 @@ export function Editor(props: { id: string }): JSX.Element {
     const restore = () => restoreMovedSelection(ref, props.id, selection.start, selection.end, selection.direction);
     commit(ref.value);
     void withBlockMoving(docNode(props.id)?.page ?? "", async () => {
-      startEditing(props.id, selection);
+      startEditing(props.id, selection, null, editSurface());
       // A sibling reorder happens synchronously (a feed move's own sync part)
       // and keeps this textarea. Restore it in the same gesture: waiting a
       // frame lets Android dismiss the IME despite the later focus.
@@ -2272,7 +2272,7 @@ export function Editor(props: { id: string }): JSX.Element {
       if (outlineScope?.roots.includes(props.id)) return true;
       const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
       commit(ref.value);
-      if (indentBlock(props.id, selection) === false) pushToast("Outline is too deep to indent", "error");
+      if (indentBlock(props.id, selection, editSurface()) === false) pushToast("Outline is too deep to indent", "error");
       return true;
     },
     "editor/outdent": (e) => {
@@ -2281,7 +2281,7 @@ export function Editor(props: { id: string }): JSX.Element {
       if (ll && ll.indent.length > 0) { nudgeListItem(ll, -2); return true; }
       if (outlineScope?.forceExpandedRoot === docNode(props.id)?.parent) return true;
       const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
-      commit(ref.value); outdentBlock(props.id, selection); return true;
+      commit(ref.value); outdentBlock(props.id, selection, editSurface()); return true;
     },
   };
   const mobileKeyEvent = { preventDefault() {} } as KeyboardEvent;
