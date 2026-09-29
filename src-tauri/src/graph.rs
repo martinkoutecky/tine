@@ -263,7 +263,12 @@ pub(crate) fn load_graph_for_label(
     crate::concord_ledger::attach(app.path().app_data_dir().ok(), &slot);
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
     backup_async(app.clone(), slot.clone());
-    remember_graph(app, &meta.root)?;
+    // The graph is bound above; a settings write that fails (disk full, EIO)
+    // must not return early, or `open_graph_window` skips its cleanup and the
+    // graph stays owned by a window that never existed (master graph.rs:629).
+    if remember_graph(app, &meta.root).is_err() {
+        crate::debug::diag("remembering the opened graph in settings failed");
+    }
     if let Some(window) = app.get_webview_window(window_label) {
         let name = Path::new(&meta.root)
             .file_name()
