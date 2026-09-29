@@ -651,9 +651,15 @@ impl<'a> Transaction<'a> {
         };
         match fs::symlink_metadata(&alt) {
             Ok(_) => Ok(Some(FileId::from(self.store.graph.rel_path(&alt)))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) if self.page(file) && error.kind() == io::ErrorKind::InvalidData => {
-                Err(content_refusal(error))
+            // A twin name the filesystem cannot hold (a 255-byte `.md` name is
+            // a 256-byte `.org` one) cannot exist: no twin (C3Y Y3).
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::InvalidFilename
+                ) =>
+            {
+                Ok(None)
             }
             Err(error) if self.page(file) && error.kind() == io::ErrorKind::InvalidData => {
                 Err(content_refusal(error))

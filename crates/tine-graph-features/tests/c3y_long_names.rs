@@ -176,3 +176,24 @@ fn y2_marker_resolution_of_a_long_page_stages_its_recovery_copy() {
     assert_eq!(fs::read_to_string(copy).unwrap(), MARKED);
     let _ = fs::remove_dir_all(&root);
 }
+
+/// Y3: creating an 84-CJK-char page (255 bytes with `.md`) probes the `.org`
+/// twin, a 256-byte name no filesystem can hold: that means "no twin".
+#[test]
+fn y3_create_of_a_255_byte_page_name_is_not_refused_by_the_twin_probe() {
+    let (root, store) = fixture("y3");
+    let title = "字".repeat(84);
+    let rel = format!("pages/{title}.md");
+    assert_eq!(rel.len() - "pages/".len(), NAME_MAX);
+    let created = store.save(
+        EditKind::CreatePage,
+        &PageId::from(rel.as_str()),
+        SaveBase::CreateNew,
+        &dto(&title, "fresh"),
+    );
+    assert!(matches!(created, SaveOutcome::Saved(_)), "{created:?}");
+    assert!(fs::read_to_string(root.join(&rel))
+        .unwrap()
+        .contains("fresh"));
+    let _ = fs::remove_dir_all(&root);
+}
