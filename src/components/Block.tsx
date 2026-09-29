@@ -562,10 +562,9 @@ function Rendered(props: {
   // stays hidden); the colored prefix still jumps to the PDF.
   //
   // The caret offset must be computed at MOUSEDOWN — before the previously-
-  // focused editor blurs and reflows the layout (on click the coordinates are
-  // stale; the mouseup can even land on a different element so no block receives
-  // the click at all). Whether it becomes an EDIT (click) or a SELECTION (drag)
-  // is decided at mouseup — see beginEditGesture.
+  // focused editor blurs and reflows the layout. Editing starts immediately;
+  // continuing the gesture within the block selects editor text, while crossing
+  // into another block escalates to outline selection (see beginEditGesture).
   const onMouseDown = (e: MouseEvent) => {
     if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
     if (readOnly()) return; // read-only org page — never enter the editor

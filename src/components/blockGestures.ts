@@ -8,9 +8,10 @@
  *   pointer and, on mouseup, moves the active selection (or just the block) with
  *   one `moveBlocksRelative` call. The move is refused when the graph changed
  *   during the drag (binding check) or when the target is inside a moved subtree.
- * - `beginEditGesture(...)` resolves a rendered-content mousedown at mouseup:
- *   a click starts editing at the captured offset; a drag that crosses into another
- *   block escalates to block selection. Callers need not know the listeners. */
+ * - `beginEditGesture(...)` starts editing at the captured offset on mousedown
+ *   (OG, GH #368); a drag inside the block selects editor text, and one that
+ *   crosses into another block escalates to block selection. Callers need not
+ *   know the listeners. */
 import { createSignal } from "solid-js";
 import { captureBinding, stillBound } from "../binding";
 import { clearSelection, extendSelectionTo, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
@@ -18,6 +19,7 @@ import { endEdit, startEditing } from "../editorController";
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
 import { codeBodyProjection } from "../editor/codeFence";
 import { blockDropPosition, type BlockDropPosition } from "../editor/blockDrag";
+import { textareaCaretPoints } from "../editor/caretRows";
 import { isBuiltinHidden, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 
@@ -89,19 +91,16 @@ export function beginDrag(id: string, e: MouseEvent) {
   document.addEventListener("mouseup", onUp);
 }
 
-// --- Click / drag gesture on rendered block content -------------------------
+// --- OG-compatible edit / drag gesture on rendered block content -----------
 //
-// The caret offset is captured at MOUSEDOWN (before the previously-edited
-// block's blur reflows the layout — the coordinates are only valid then), but
-// editing starts at MOUSEUP and only for a CLICK (pointer moved < threshold).
-// A drag instead selects: within the origin block it is the browser's native
-// text selection of the RENDERED text (copy gives the glyphs you see); the
-// moment it crosses into another block it escalates to Tine's block selection
-// (muscle memory from OG — but deterministic: the escalation rule is purely
+// OG enters edit mode from block-content-on-mouse-down (GH #368), not from
+// mouseup: a held click must show the caret immediately instead of making the
+// app feel one click behind. The caret offset is captured at MOUSEDOWN (before
+// the previously-edited block's blur reflows the layout), and editing starts at
+// once. The document-level drag escalation stays: a drag inside the block
+// selects raw text in the editor, and the moment the pointer enters a different
+// block the gesture escalates to Tine's block selection (deterministic: purely
 // "did the pointer enter a different block", never timing).
-//
-// Deliberately NOT OG's mousedown-instant-edit: that races the native
-// selection against the DOM swap (the inconsistency Martin observed in OG).
 const DRAG_THRESHOLD_PX = 4;
 
 interface EditGesture {
@@ -112,6 +111,9 @@ interface EditGesture {
   startY: number;
   escalated: boolean;
   outlineScope: OutlineScope | null;
+  /** Caret stops of the mounted textarea, measured lazily on the first in-block
+   *  drag move (undefined = not yet measured, null = no layout available). */
+  caretPoints: Array<{ x: number; y: number }> | null | undefined;
 }
 
 function blockIdAtPoint(x: number, y: number): string | null {
@@ -120,8 +122,6 @@ function blockIdAtPoint(x: number, y: number): string | null {
   return row?.getAttribute("data-block-id") ?? null;
 }
 
-/** Arm a click-or-drag gesture from a rendered-content mousedown. Document-level
- *  listeners resolve it, so post-blur layout shifts can't misroute the mouseup. */
 export function beginEditGesture(
   e: MouseEvent,
   blockId: string,
@@ -130,7 +130,21 @@ export function beginEditGesture(
   outlineScope: OutlineScope | null,
 ): void {
   clearSelection(); // a plain gesture replaces any active block selection (shift-click returns before this)
-  const g: EditGesture = { blockId, offset, owner, startX: e.clientX, startY: e.clientY, escalated: false, outlineScope };
+  const g: EditGesture = {
+    blockId,
+    offset,
+    owner,
+    startX: e.clientX,
+    startY: e.clientY,
+    escalated: false,
+    outlineScope,
+    caretPoints: undefined,
+  };
+  // The old rendered target is replaced synchronously. Prevent its native
+  // focus default from blurring the newly mounted textarea back out, then enter
+  // edit before mouseup exactly like OG's mousedown path.
+  e.preventDefault();
+  startEditing(g.blockId, g.offset, g.owner);
   const onMove = (ev: MouseEvent) => {
     const moved =
       Math.abs(ev.clientX - g.startX) > DRAG_THRESHOLD_PX || Math.abs(ev.clientY - g.startY) > DRAG_THRESHOLD_PX;
@@ -140,10 +154,47 @@ export function beginEditGesture(
       if (over) extendSelectionTo(over, g.outlineScope);
       return;
     }
+    if (over === g.blockId) {
+      const active = document.activeElement;
+      if (active instanceof HTMLTextAreaElement && active.classList.contains("block-editor")) {
+        if (g.caretPoints === undefined) {
+          // Edit entry maps raw source offsets into the actual textarea (code
+          // wrappers, for example, are hidden). Continue from that native
+          // anchor rather than mixing raw-block and editor coordinates.
+          g.offset = active.selectionStart;
+          g.caretPoints = textareaCaretPoints(active);
+        }
+        const points = g.caretPoints;
+        if (points?.length) {
+          const rect = active.getBoundingClientRect();
+          const x = ev.clientX - rect.left + active.scrollLeft;
+          const y = ev.clientY - rect.top + active.scrollTop;
+          const lineHeight = parseFloat(getComputedStyle(active).lineHeight) || 26;
+          let best = 0;
+          let bestScore = Infinity;
+          for (let i = 0; i < points.length; i++) {
+            // Prefer the correct visual row overwhelmingly, then the nearest
+            // horizontal caret stop on that row.
+            const score = Math.abs(points[i].y + lineHeight / 2 - y) * 10_000 + Math.abs(points[i].x - x);
+            if (score < bestScore) {
+              best = i;
+              bestScore = score;
+            }
+          }
+          active.setSelectionRange(
+            Math.min(g.offset, best),
+            Math.max(g.offset, best),
+            best < g.offset ? "backward" : "forward",
+          );
+        }
+      }
+      return;
+    }
     if (over && over !== g.blockId) {
       // Crossed into another block: escalate to block selection for the rest of
       // the gesture (never de-escalate — flipping modes mid-drag is jarring).
       g.escalated = true;
+      endEdit("select-block");
       window.getSelection()?.removeAllRanges();
       selectBlock(g.blockId, g.outlineScope);
       extendSelectionTo(over, g.outlineScope);
@@ -153,10 +204,6 @@ export function beginEditGesture(
     document.removeEventListener("mousemove", onMove, true);
     document.removeEventListener("mouseup", onUp, true);
     if (g.escalated) return; // block selection stands
-    const moved =
-      Math.abs(ev.clientX - g.startX) > DRAG_THRESHOLD_PX || Math.abs(ev.clientY - g.startY) > DRAG_THRESHOLD_PX;
-    if (moved) return; // an in-block text selection (or a stray drag) — not a click
-    startEditing(g.blockId, g.offset, g.owner);
   };
   document.addEventListener("mousemove", onMove, true);
   document.addEventListener("mouseup", onUp, true);

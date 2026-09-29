@@ -49,6 +49,40 @@ function buildMirror(ta: HTMLTextAreaElement): HTMLDivElement {
   return div;
 }
 
+/** Map a viewport point to the nearest caret offset in a textarea. Used only
+ *  after a rendered-block mousedown has already swapped in the editor and the
+ *  user continues dragging: the original rendered DOM no longer exists, so the
+ *  browser cannot extend its native selection. One mirror pass preserves the
+ *  same wrapping/font metrics and gives the gesture a raw-editor selection.
+ *  Returns null in no-layout environments. */
+export function textareaCaretPoints(ta: HTMLTextAreaElement): Array<{ x: number; y: number }> | null {
+  if (typeof document === "undefined") return null;
+  const div = buildMirror(ta);
+  // Keep shaping and word-break opportunities identical to the textarea.
+  // A zero-width marker between every character permits wrapping inside words
+  // and progressively displaces the drag endpoint on subsequent visual rows.
+  const text = document.createTextNode(ta.value + "\u200b");
+  div.appendChild(text);
+  document.body.appendChild(div);
+  try {
+    const points: Array<{ x: number; y: number }> = [];
+    if (!div.offsetHeight) return null;
+    const origin = div.getBoundingClientRect();
+    const range = document.createRange();
+    for (let offset = 0; offset <= ta.value.length; offset++) {
+      range.setStart(text, offset);
+      range.collapse(true);
+      const rects = range.getClientRects();
+      const rect = rects[rects.length - 1];
+      if (!rect) return null;
+      points.push({ x: rect.left - origin.left, y: rect.top - origin.top });
+    }
+    return points;
+  } finally {
+    document.body.removeChild(div);
+  }
+}
+
 function camelToKebab(s: string): string {
   return s.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
 }
