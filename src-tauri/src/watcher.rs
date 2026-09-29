@@ -510,7 +510,10 @@ mod tests {
             full_diff: true,
             ..batch
         };
-        assert_eq!(latency_receipt(&poll, 0, started).timing.event_to_emit_ms, None);
+        assert_eq!(
+            latency_receipt(&poll, 0, started).timing.event_to_emit_ms,
+            None
+        );
         let mut ring = VecDeque::new();
         for seq in 0..70 {
             push_latency_receipt(

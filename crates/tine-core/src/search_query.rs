@@ -39,9 +39,7 @@ fn common_regex_pattern(pattern: &str) -> bool {
     let (mut i, mut in_class) = (0, false);
     while i < bytes.len() {
         if bytes[i] == b'\\' {
-            if i + 1 < bytes.len()
-                && matches!(bytes[i + 1], b'1'..=b'9')
-            {
+            if i + 1 < bytes.len() && matches!(bytes[i + 1], b'1'..=b'9') {
                 return false;
             }
             i += 2;

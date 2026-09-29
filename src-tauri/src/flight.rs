@@ -366,7 +366,10 @@ pub(crate) fn record_watcher_batch(
         fields.insert("mode".into(), json!(timing.mode));
         fields.insert("eventPaths".into(), json!(timing.event_paths));
         fields.insert("fullDiff".into(), json!(timing.full_diff));
-        fields.insert("eventToReconcileMs".into(), json!(timing.event_to_reconcile_ms));
+        fields.insert(
+            "eventToReconcileMs".into(),
+            json!(timing.event_to_reconcile_ms),
+        );
         fields.insert("reconcileMs".into(), json!(timing.reconcile_ms));
         fields.insert("eventToEmitMs".into(), json!(timing.event_to_emit_ms));
     }

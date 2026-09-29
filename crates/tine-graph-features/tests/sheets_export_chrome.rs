@@ -68,10 +68,17 @@ fn exports() -> Vec<SheetExport> {
     serde_json::from_str(&fs::read_to_string(fixtures().join("exports.json")).unwrap()).unwrap()
 }
 
-
 fn publish() -> (Scratch, String, String) {
     let (base, store) = open_fixture();
-    publish_live_with_sheets(&store, &base.join("output"), "export", false, &bundle(), exports()).unwrap();
+    publish_live_with_sheets(
+        &store,
+        &base.join("output"),
+        "export",
+        false,
+        &bundle(),
+        exports(),
+    )
+    .unwrap();
     let html = sheets_html(&base);
     let index = fs::read_to_string(base.join("output/export/search-index.js")).unwrap();
     store.close();
@@ -86,8 +93,18 @@ fn a_sheet_owners_view_config_is_not_printed_as_property_chips() {
     let g = html.find("<table class=\"sheet-grid\">").unwrap();
     let grid_end = g + html[g..].find("</table>").unwrap();
     let region = &html[..grid_end];
-    for key in ["tine.view::", "tine.fields::", "tine.formula.total::", "tine.col-aggregates::", "tine.group-by::", "tine.header::"] {
-        assert!(!region.contains(key), "{key} printed in a sheet owner's props");
+    for key in [
+        "tine.view::",
+        "tine.fields::",
+        "tine.formula.total::",
+        "tine.col-aggregates::",
+        "tine.group-by::",
+        "tine.header::",
+    ] {
+        assert!(
+            !region.contains(key),
+            "{key} printed in a sheet owner's props"
+        );
     }
 }
 
@@ -97,7 +114,8 @@ fn sheet_rows_stay_searchable_and_board_follows_workflow() {
     for row in ["Second", "Write tests", "Implement"] {
         assert!(index.contains(row), "row {row} missing from search index");
     }
-    let board = &html[html.find("<div class=\"sheet-board\">").unwrap()..html.find("<table class=\"sheet-grid\">").unwrap()];
+    let board = &html[html.find("<div class=\"sheet-board\">").unwrap()
+        ..html.find("<table class=\"sheet-grid\">").unwrap()];
     let pos = |s: &str| board.find(s).unwrap_or_else(|| panic!("no {s}"));
     assert!(pos(">TODO") < pos(">DOING") && pos(">DOING") < pos(">(none)"));
 }
