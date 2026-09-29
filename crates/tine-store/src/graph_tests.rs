@@ -351,7 +351,8 @@ fn publishes_only_public_pages() {
     let p = std::fs::read_to_string(std::path::Path::new(&dir).join("shared.html"))
         .unwrap_or_else(|error| panic!("published page under {dir:?}: {error}"));
     assert!(p.contains("<h1 class=\"page\">Shared</h1>"));
-    assert!(p.contains("<a class=\"ref\""), "should link [[refs]]");
+    assert!(p.contains("<span class=\"ref ref-outside\">Secret</span>"), "private reference must stay inert");
+    assert!(!p.contains("href=\"secret.html\""), "private page must not be linked");
     // The private page must not be exported.
     assert!(!std::path::Path::new(&dir).join("secret.html").exists());
 
