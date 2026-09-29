@@ -200,17 +200,16 @@ function spansOverlap(a: [number, number], b: [number, number]): boolean {
   return Math.min(a[1], b[1]) - Math.max(a[0], b[0]) > EPS;
 }
 
-// A step must land at-or-beyond the CURRENT TARGET'S boundary in the pressed
-// direction, not merely beyond its center: a perpendicular window edge whose
-// center is barely "ahead" of an off-center pane's center otherwise wins with
-// a near-zero distance (Martin's Jul 8 report #3: ArrowRight from a pane left
-// of window-center selected the global TOP edge).
-function beyondLeadingBoundary(rect: Rect, c: { x: number; y: number }, dir: PaneDirection): boolean {
+// A candidate must itself lie at-or-beyond the CURRENT TARGET'S boundary in
+// the pressed direction, not merely have a center beyond it. The latter admits
+// a perpendicular whole-window edge: from an off-center seam, that edge's
+// center can be closer than the adjacent wide pane and tint the whole window.
+function beyondLeadingBoundary(current: Rect, candidate: Rect, dir: PaneDirection): boolean {
   switch (dir) {
-    case "left": return c.x <= rect.x + EPS;
-    case "right": return c.x >= rect.x + rect.w - EPS;
-    case "up": return c.y <= rect.y + EPS;
-    case "down": return c.y >= rect.y + rect.h - EPS;
+    case "left": return candidate.x + candidate.w <= current.x + EPS;
+    case "right": return candidate.x >= current.x + current.w - EPS;
+    case "up": return candidate.y + candidate.h <= current.y + EPS;
+    case "down": return candidate.y >= current.y + current.h - EPS;
   }
 }
 
@@ -281,7 +280,7 @@ export function stepPaneTarget(root: LayoutNode, target: PaneTarget | null, dir:
     .filter((x): x is { candidate: PaneTarget; rect: Rect } => !!x.rect)
     .map((x) => ({ ...x, c: center(x.rect) }))
     .filter((x) => isAhead(from, x.c, dir))
-    .filter((x) => beyondLeadingBoundary(currentRect, x.c, dir))
+    .filter((x) => beyondLeadingBoundary(currentRect, x.rect, dir))
     .filter((x) => spansOverlap(fromSpan, crossSpan(x.rect, dir)))
     .sort((a, b) => {
       const ap = primaryDistance(from, a.c, dir);
