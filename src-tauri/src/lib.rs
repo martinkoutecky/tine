@@ -1077,4 +1077,53 @@ mod platform_lifecycle_guard_tests {
             "GH #446: lib.rs must inject __TINE_PLATFORM__ from crate::graph::app_platform()"
         );
     }
+
+    /// GH #241: the updater ships on every desktop target (Windows, Linux,
+    /// macOS) and on no mobile target (Android, iOS). Windows uses native-tls
+    /// (Schannel) plus Reqwest's system-proxy reader; Linux/macOS keep rustls.
+    /// This pins the exact target sections so a cfg edit cannot silently drop
+    /// a platform's updater or its transport.
+    #[test]
+    fn updater_transport_is_declared_for_every_desktop_target() {
+        let manifest =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+                .expect("read src-tauri/Cargo.toml");
+        let mut section = "";
+        let mut updater_sections = Vec::new();
+        let mut windows_lines = Vec::new();
+        for line in manifest.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                section = line;
+                continue;
+            }
+            if line.starts_with("tauri-plugin-updater") {
+                updater_sections.push((section, line));
+            }
+            if section == "[target.'cfg(windows)'.dependencies]" && !line.starts_with('#') {
+                windows_lines.push(line);
+            }
+        }
+        assert_eq!(
+            updater_sections,
+            vec![
+                (
+                    "[target.'cfg(windows)'.dependencies]",
+                    "tauri-plugin-updater = { version = \"2\", default-features = false, features = [\"native-tls\", \"zip\"] }",
+                ),
+                (
+                    "[target.'cfg(all(not(target_os = \"android\"), not(target_os = \"ios\"), not(target_os = \"windows\")))'.dependencies]",
+                    "tauri-plugin-updater = \"2\"",
+                ),
+            ],
+            "GH #241: the updater must be declared once for Windows (native-tls) and once for \
+             Linux/macOS (rustls), and never for Android/iOS"
+        );
+        assert!(
+            windows_lines.contains(
+                &"reqwest = { version = \"0.13\", default-features = false, features = [\"system-proxy\"] }"
+            ),
+            "GH #241: the Windows updater must follow the system proxy via reqwest's system-proxy feature"
+        );
+    }
 }
