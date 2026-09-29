@@ -1,5 +1,6 @@
 import { Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { graphOwner, readOwned } from "../owned";
 import { registerTransientLayer } from "../transientLayers";
 import type { JournalFile } from "../types";
 
@@ -27,7 +28,17 @@ export function ConflictFileRow(props: {
   const [newName, setNewName] = createSignal("");
   const [content] = createResource(
     () => (open() ? props.file.name : null),
-    async (name) => (name ? backend().readJournalFile(name).catch((e) => `(couldn’t read: ${String(e)})`) : "")
+    // Owned by the graph that listed the file: a switch empties the list, and
+    // a read landing after it shows nothing from the other graph.
+    async (name) => {
+      if (!name) return "";
+      try {
+        const read = await readOwned(graphOwner(), backend().readJournalFile(name));
+        return read.kind === "current" ? read.value : "";
+      } catch (e) {
+        return `(couldn’t read: ${String(e)})`;
+      }
+    }
   );
   const submitRename = () => {
     const n = newName().trim();

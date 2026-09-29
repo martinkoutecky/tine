@@ -22,7 +22,7 @@
 import { Show, For, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
-import { graphOwner, readOwned, writeOwned } from "../owned";
+import { graphOwner, readOwned, writeOwned, type Owned } from "../owned";
 import { pushToast } from "../toasts";
 import { conflictQueue, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, settleArtifactConflict } from "../ui";
 import { openFile } from "../router";
@@ -234,15 +234,21 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     const live = c.live;
     const reviewed = read()?.draft, reviewedGeneration = read()?.generation ?? null;
     const owner = graphOwner();
+    const refresh = (message: string) => {
+      alignment = undefined;
+      void refetch();
+      pushToast(message, "info");
+    };
+    // The page's own pending edits are saved first, then the comparison is
+    // re-read against them: a resolution never lands over unseen edits.
+    const saveThenReview = async (message: string) => {
+      await flushPage(pageName);
+      refresh(message);
+    };
     setBusy(true);
     try {
       if (source === "live-save") {
         if (!live || !reviewed) return;
-        const refresh = (message: string) => {
-          alignment = undefined;
-          void refetch();
-          pushToast(message, "info");
-        };
         if (live.restored) {
           // After a restart the editor holds the disk version and the capsule
           // is the only copy of the draft: never resolve over newer edits.
@@ -259,8 +265,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
               pushToast("Finish the current edit, then apply this resolution.", "info");
               return;
             }
-            await flushPage(pageName);
-            refresh("Your newer edits to this page were saved. Review the kept draft against them, then apply it again.");
+            await saveThenReview("Your newer edits to this page were saved. Review the kept draft against them, then apply it again.");
             return;
           }
           const result = await writeOwned(owner, backend().resolveLiveConflict(pagePath, reviewed, live.base_rev,
@@ -300,10 +305,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         return;
       }
       if (isDirty(pageName) || isSaving(pageName)) {
-        await flushPage(pageName);
-        alignment = undefined;
-        void refetch();
-        pushToast("Your latest edit was saved. Review the updated comparison, then apply it again.", "info");
+        await saveThenReview("Your latest edit was saved. Review the updated comparison, then apply it again.");
         return;
       }
       // A duplicate day reaches the same guarded two-file fold through its own
@@ -355,10 +357,9 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     ? journalConflicts().find((day) => day.title === conflict().page_name)?.files ?? []
     : [];
   if (conflict().source === "duplicate-journal") void refreshJournalConflicts();
-  const reconcileFile = async (op: () => Promise<void>, ok: string) => {
-    const owner = graphOwner(() => mounted);
+  const reconcileFile = async (op: () => Promise<Owned<void>>, ok: string) => {
     try {
-      const result = await writeOwned(owner, op());
+      const result = await op();
       if (result.kind === "stale") return;
       pushToast(ok, "success");
       void refreshJournalConflicts();
@@ -373,7 +374,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         `It's a duplicate of another file for the same day. It moves to logseq/.tine-trash (recoverable).`
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
-    await reconcileFile(() => backend().trashJournalFile(name, "delete-page"), `Moved ${name} to trash`);
+    await reconcileFile(() => writeOwned(graphOwner(() => mounted), backend().trashJournalFile(name, "delete-page")), `Moved ${name} to trash`);
   };
 
   const markers = () => conflict().source === "vcs-markers";
@@ -420,7 +421,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
               file={file}
               parentLayerId="page-conflict"
               onOpen={() => openFile(file.path, conflict().page_name, "journal")}
-              onRename={(name) => void reconcileFile(() => backend().renameFileToPage(file.path, name, "rename-page"), `Renamed ${file.name} → ${name}`)}
+              onRename={(name) => void reconcileFile(() => writeOwned(graphOwner(() => mounted), backend().renameFileToPage(file.path, name, "rename-page")), `Renamed ${file.name} → ${name}`)}
               onTrash={() => void trashDayFile(file.name)}
             />
           )}
