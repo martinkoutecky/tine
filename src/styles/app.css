@@ -23,6 +23,33 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+:root {
+  /* One named owner for system-inset gutters (GH #205). Browser/iOS surfaces
+     use CSS env() values. MainActivity already sizes Android's WebView inside
+     the native insets, so main.tsx selects `native-viewport` before render and
+     the four tokens become zero instead of reserving the same bars a second
+     time. `.app-container` pads the app SHELL by the active tokens, but a
+     `position: fixed` overlay is laid out against the viewport and escapes that
+     padding completely — so every full-viewport overlay reapplies the
+     --overlay-inset-* gutters. All four are 0 on desktop, so each `calc()`
+     reduces to its own gap there. Never write env(safe-area-inset-*) at a call
+     site; src/mobileSafeArea.test.ts pins that. */
+  --system-inset-top: env(safe-area-inset-top, 0px);
+  --system-inset-right: env(safe-area-inset-right, 0px);
+  --system-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --system-inset-left: env(safe-area-inset-left, 0px);
+  --overlay-inset-top: var(--system-inset-top);
+  --overlay-inset-right: var(--system-inset-right);
+  --overlay-inset-bottom: var(--system-inset-bottom);
+  --overlay-inset-left: var(--system-inset-left);
+}
+html[data-system-insets="native-viewport"] {
+  --system-inset-top: 0px;
+  --system-inset-right: 0px;
+  --system-inset-bottom: 0px;
+  --system-inset-left: 0px;
+}
+
 /* Native text controls cannot use the Twemoji <img> renderer. Keep the bundled
    monochrome emoji face ahead of system fallback so WebKitGTK never reaches a
    COLRv1 font's crashing Skia path (#76), but put our bundled text face first.
@@ -67,8 +94,8 @@ textarea {
      buttons sit behind the status bar and can't be tapped. All four insets are
      0 on desktop, so this is a no-op there. box-sizing keeps 100vh honest. */
   box-sizing: border-box;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right)
-    env(safe-area-inset-bottom) env(safe-area-inset-left);
+  padding: var(--system-inset-top) var(--system-inset-right)
+    var(--system-inset-bottom) var(--system-inset-left);
 }
 
 /* Shown only if the wasm block renderer fails to load (degraded mode). */
@@ -78,7 +105,9 @@ textarea {
   left: 0;
   right: 0;
   z-index: 9999;
-  padding: 8px 14px;
+  padding: calc(var(--overlay-inset-top) + 8px)
+    calc(var(--overlay-inset-right) + 14px) 8px
+    calc(var(--overlay-inset-left) + 14px);
   font-size: 13px;
   background: #b91c1c;
   color: #fff;
@@ -227,19 +256,19 @@ textarea {
 .app-container[data-mobile-drawer-mode="true"] .left-sidebar,
 .app-container[data-mobile-drawer-mode="true"] .right-sidebar {
   position: fixed;
-  top: env(safe-area-inset-top);
-  bottom: env(safe-area-inset-bottom);
+  top: var(--system-inset-top);
+  bottom: var(--system-inset-bottom);
   z-index: 90;
   width: min(
     var(--mobile-drawer-width, 320px),
-    calc(100vw - 44px - env(safe-area-inset-left) - env(safe-area-inset-right))
+    calc(100vw - 44px - var(--system-inset-left) - var(--system-inset-right))
   ) !important;
-  max-width: calc(100vw - 44px - env(safe-area-inset-left) - env(safe-area-inset-right));
+  max-width: calc(100vw - 44px - var(--system-inset-left) - var(--system-inset-right));
   flex: none !important;
   box-shadow: 0 8px 30px rgba(0, 0, 0, .28);
 }
-.app-container[data-mobile-drawer-mode="true"] .left-sidebar { left: env(safe-area-inset-left); right: auto; }
-.app-container[data-mobile-drawer-mode="true"] .right-sidebar { right: env(safe-area-inset-right); left: auto; }
+.app-container[data-mobile-drawer-mode="true"] .left-sidebar { left: var(--system-inset-left); right: auto; }
+.app-container[data-mobile-drawer-mode="true"] .right-sidebar { right: var(--system-inset-right); left: auto; }
 .app-container[data-mobile-drawer-mode="true"] .sidebar-resizer,
 .app-container[data-mobile-drawer-mode="true"] .rs-resizer,
 .app-container[data-mobile-drawer-mode="true"] .resize-grip { display: none; }
@@ -1815,7 +1844,13 @@ textarea {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 12vh;
+  box-sizing: border-box;
+  /* Shared by Settings, Copy/Export, Print to PDF and the query workspace, so
+     the system-inset gutter belongs here rather than on any one of them. */
+  padding: calc(var(--overlay-inset-top) + 12vh)
+    calc(var(--overlay-inset-right) + 8px)
+    calc(var(--overlay-inset-bottom) + 8px)
+    calc(var(--overlay-inset-left) + 8px);
   z-index: 120;
 }
 .settings-modal {
@@ -2502,6 +2537,11 @@ textarea {
   align-items: center;
   justify-content: center;
   z-index: 60;
+  box-sizing: border-box;
+  padding: calc(var(--overlay-inset-top) + 8px)
+    calc(var(--overlay-inset-right) + 8px)
+    calc(var(--overlay-inset-bottom) + 8px)
+    calc(var(--overlay-inset-left) + 8px);
 }
 .sync-merge-modal {
   background: var(--bg-primary);
@@ -2744,12 +2784,18 @@ textarea {
 }
 @media (max-width: 480px) {
   .modal-overlay {
-    padding-top: 2vh;
+    /* A full-height phone sheet starts on the inset, not a breathing gap below
+       it: with `+ 2vh` a lit strip of the workspace showed above the sheet. */
+    padding-top: var(--overlay-inset-top);
   }
   .settings-modal {
-    width: calc(100vw - 16px);
+    /* Fill the overlay's already-inset content box instead of measuring against
+       the raw viewport. `96vh` counted the status bar and the gesture bar as
+       usable space, so the modal rode up under the transparent status bar and
+       its lowest control could sit under the gesture bar. */
+    width: 100%;
     max-width: none;
-    height: 96vh;
+    height: 100%;
     max-height: none;
     flex-direction: column;
   }
@@ -4038,8 +4084,8 @@ textarea {
 
 .mobile-keyboard-toolbar {
   position: fixed;
-  left: env(safe-area-inset-left);
-  right: env(safe-area-inset-right);
+  left: var(--system-inset-left);
+  right: var(--system-inset-right);
   z-index: 80;
   transform: translateY(-100%);
   display: flex;
@@ -4700,7 +4746,11 @@ mark {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  box-sizing: border-box;
+  padding: calc(var(--overlay-inset-top) + 24px)
+    calc(var(--overlay-inset-right) + 24px)
+    calc(var(--overlay-inset-bottom) + 24px)
+    calc(var(--overlay-inset-left) + 24px);
 }
 .audio-panel {
   width: 90vw;
@@ -6141,8 +6191,8 @@ body.file-drop-active::after {
 /* ------------------------------------------------------------- toasts */
 .toast-stack {
   position: fixed;
-  bottom: 18px;
-  right: 18px;
+  bottom: calc(var(--overlay-inset-bottom) + 18px);
+  right: calc(var(--overlay-inset-right) + 18px);
   z-index: 200;
   display: flex;
   flex-direction: column;
@@ -6223,6 +6273,11 @@ body.file-drop-active::after {
   align-items: center;
   justify-content: center;
   cursor: zoom-out;
+  box-sizing: border-box;
+  padding: calc(var(--overlay-inset-top) + 8px)
+    calc(var(--overlay-inset-right) + 8px)
+    calc(var(--overlay-inset-bottom) + 8px)
+    calc(var(--overlay-inset-left) + 8px);
 }
 .lightbox-img {
   max-width: 92vw;
@@ -7477,7 +7532,11 @@ img.emoji {
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 12vh;
+  box-sizing: border-box;
+  padding: calc(var(--overlay-inset-top) + 12vh)
+    calc(var(--overlay-inset-right) + 8px)
+    calc(var(--overlay-inset-bottom) + 8px)
+    calc(var(--overlay-inset-left) + 8px);
   z-index: 100;
 }
 
@@ -8511,7 +8570,11 @@ img.emoji {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  box-sizing: border-box;
+  padding: calc(var(--overlay-inset-top) + 24px)
+    calc(var(--overlay-inset-right) + 24px)
+    calc(var(--overlay-inset-bottom) + 24px)
+    calc(var(--overlay-inset-left) + 24px);
   background: var(--bg-primary);
   overflow: auto;
 }

@@ -751,7 +751,7 @@
     border-radius: 12px 12px 0 0;
     border-bottom: none;
     /* One system token, never `env()` at the call site (mobileSafeArea). */
-    padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+    padding: 12px 14px calc(12px + var(--overlay-inset-bottom));
     /* A bottom sheet is expected to scroll; menus inside it scroll with it. */
     max-height: 70vh;
     overflow-y: auto;

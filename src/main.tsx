@@ -21,11 +21,13 @@ import "katex/dist/katex.min.css";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./styles/theme.css";
 import "./lsShimInstall";
+import { installSystemInsetOwner } from "./systemInsets";
 import "./styles/app.css";
 import "./styles/settingsControls.css";
 import "./styles/query.css";
 import "./styles/published.css";
 
+installSystemInsetOwner();
 applyTheme();
 applyAccent();
 if (isPublishedExport()) document.documentElement.classList.add("tine-published");
