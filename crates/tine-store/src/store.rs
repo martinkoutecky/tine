@@ -148,7 +148,7 @@ pub enum WatchMode {
     /// notified file is hashed even if its length and mtime match the previous
     /// observation. Failure to install notifications for the graph root falls
     /// back to three-second polling, retries the watch every cycle, and is
-    /// reported through [`Store::observe_watch_status`]. Managed root
+    /// reported through [`Subscription::observe_watch_status`]. Managed root
     /// identity is checked every three seconds; a deleted and recreated root
     /// is watched again, with one full reconcile for edits made in the gap.
     /// A backend that
@@ -229,17 +229,6 @@ pub struct WatchBatch {
     pub event_paths: usize,
 }
 
-/// Live-notification state of a store's watcher, reported to the observer
-/// installed with [`Store::observe_watch_status`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum WatchStatus {
-    /// The OS refused live notifications for the graph root; the watcher polls
-    /// every three seconds and retries the watch each cycle.
-    Refused(String),
-    /// Live notifications work again after a refusal.
-    Restored,
-}
-
 impl Change {
     /// The parsed graph page altered by an external observation or an external
     /// writer whose bytes survived transaction undo, using its effective
@@ -278,9 +267,16 @@ pub(crate) struct ChangeFeed {
     journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
     config: Arc<RwLock<ConfigState>>,
     snapshot: RwLock<Option<Arc<Snapshot>>>,
+    /// Why live notifications are refused right now (`None` while watching or
+    /// polling by choice), and the subscriber told when that changes.
+    watch_status: Mutex<(Option<String>, Option<StatusObserver>)>,
     #[cfg(test)]
     pub(crate) snapshot_publish_pause: Mutex<Option<TestPause>>,
 }
+
+/// Told `Some(reason)` when the OS refuses live notifications and `None`
+/// when they work again after a refusal.
+type StatusObserver = Arc<dyn Fn(Option<String>) + Send + Sync>;
 
 struct FeedState {
     rev: u64,
@@ -453,6 +449,27 @@ impl Snapshot {
 }
 
 impl ChangeFeed {
+    /// Record the watcher's live-notification state. A new refusal message is
+    /// reported once (a retry failing the same way stays quiet); `restored`
+    /// reports the end of a refusal, which a user-selected Poll mode does not.
+    pub(crate) fn set_watch_refusal(&self, now: Option<String>, restored: bool) {
+        let mut state = self.watch_status.lock().unwrap();
+        if state.0 == now {
+            return;
+        }
+        let status = match (&now, state.0.is_some()) {
+            (Some(message), _) => Some(Some(message.clone())),
+            (None, true) if restored => Some(None),
+            (None, _) => None,
+        };
+        state.0 = now;
+        let observer = state.1.clone();
+        drop(state);
+        if let (Some(status), Some(observer)) = (status, observer) {
+            observer(status);
+        }
+    }
+
     fn new(
         graph: Arc<Graph>,
         config: Arc<RwLock<ConfigState>>,
@@ -470,6 +487,7 @@ impl ChangeFeed {
             config,
             journal_ids,
             snapshot: RwLock::new(None),
+            watch_status: Mutex::new((None, None)),
             #[cfg(test)]
             snapshot_publish_pause: Mutex::new(None),
         }
@@ -581,6 +599,22 @@ impl Subscription {
     /// exactly the publications after it.
     pub fn start_rev(&self) -> GraphRev {
         self.start
+    }
+
+    /// Install the one observer told `Some(reason)` when the OS refuses live
+    /// notifications for the graph root (the watcher then polls every three
+    /// seconds and retries the watch each cycle) and `None` when they work
+    /// again. A refusal already in force is reported at once. Replaces any
+    /// earlier observer.
+    pub fn observe_watch_status(&self, observer: impl Fn(Option<String>) + Send + Sync + 'static) {
+        let observer: StatusObserver = Arc::new(observer);
+        let mut state = self.feed.watch_status.lock().unwrap();
+        state.1 = Some(Arc::clone(&observer));
+        let refused = state.0.clone();
+        drop(state);
+        if let Some(message) = refused {
+            observer(Some(message));
+        }
     }
 
     /// Wait without a timeout for the next change; returns a typed end reason
@@ -1248,14 +1282,6 @@ impl Store {
         }
     }
 
-    /// Install the one observer told when the OS refuses live notifications
-    /// for the graph root (the watcher then polls every three seconds and
-    /// retries the watch each cycle) and when they work again. A refusal
-    /// already in force is reported at once. Replaces any earlier observer.
-    pub fn observe_watch_status(&self, observer: impl Fn(WatchStatus) + Send + Sync + 'static) {
-        self.watch.observe_status(Arc::new(observer));
-    }
-
     /// Wait for the initial graph parse, retrying it if it previously failed,
     /// then reconcile page, journal and
     /// config files. Assets are not scanned. A file is considered unchanged
@@ -1282,15 +1308,12 @@ impl Store {
     /// initial background parse in `Loading` indefinitely.
     /// A failed refresh after an earlier successful load returns an error but
     /// leaves the last published `WholeGraph` view available.
-    pub fn scan_refresh(&self) -> Result<(), LoadError> {
-        self.watch.scan_refresh()
-    }
-
-    /// The latest change-feed publication, O(1). A subscriber that has
-    /// received this revision has received every change `scan_refresh`
-    /// published before this call.
-    pub fn published_rev(&self) -> GraphRev {
-        self.changes.rev()
+    ///
+    /// Returns the change-feed revision through which this scan's changes are
+    /// published: a subscriber that has received it has received them all.
+    pub fn scan_refresh(&self) -> Result<GraphRev, LoadError> {
+        self.watch.scan_refresh()?;
+        Ok(self.changes.rev())
     }
 
     pub(crate) fn publish_own(

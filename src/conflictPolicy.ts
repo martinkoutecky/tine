@@ -11,48 +11,62 @@
 // raises the ordinary conflict bar.
 import { createSignal } from "solid-js";
 import { backend, type GraphChange } from "./backend";
-import { captureBinding, clearOnBindingInvalidated, stillBound, type Binding } from "./binding";
+import { graphScopedSignal } from "./binding";
+import { advanceRevision, currentRevision, readOwned, revisionOwner, writeOwned } from "./owned";
+import { pushToast } from "./toasts";
 
 const KEY = "concord_always_ask";
 const [alwaysAsk, setAlwaysAsk] = createSignal(false);
+const preferenceKey = {};
 
 /** Reactive: hold external changes for review instead of applying them. */
 export const conflictPolicyAlwaysAsk = alwaysAsk;
 
+/** Device preference; a later choice wins a delayed load, a failed write is
+ *  reported (the in-session choice still applies). */
 export function setConflictPolicyAlwaysAsk(on: boolean): void {
+  const revision = advanceRevision(preferenceKey);
   setAlwaysAsk(on);
   if (!on) clearHeldExternalChanges();
-  void backend().setAppBool(KEY, on).catch(() => {});
+  void writeOwned(revisionOwner(preferenceKey, revision), backend().setAppBool(KEY, on))
+    .catch((error) => pushToast(`Could not remember “Always ask”: ${String(error)}`, "error"));
 }
 
-/** Load the persisted preference. Default off (silent freshness). */
+/** Load the persisted preference. Default off (silent freshness); a failed
+ *  read keeps the default and says so. */
 export async function initConflictPolicy(): Promise<void> {
-  try { setAlwaysAsk(await backend().getAppBool(KEY, false)); } catch { /* default off */ }
+  const owner = revisionOwner(preferenceKey, currentRevision(preferenceKey));
+  try {
+    const loaded = await readOwned(owner, backend().getAppBool(KEY, false));
+    if (loaded.kind === "current") setAlwaysAsk(loaded.value);
+  } catch (error) {
+    pushToast(`Could not load “Always ask”: ${String(error)}`, "error");
+  }
 }
 
-interface Held { change: GraphChange; binding: Binding }
-const [held, setHeld] = createSignal<Record<string, Held>>({});
+// Page name -> the newest held change. Graph-scoped: a graph switch drops it,
+// so a held change never applies in another graph.
+const [heldChanges, setHeldChanges] = graphScopedSignal<Record<string, GraphChange>>();
 
 /** Whether page `name` has an external change waiting for its owner. */
 export function heldExternalChangeFor(name: string | undefined): boolean {
-  const pending = name ? held()[name] : undefined;
-  return !!pending && stillBound(pending.binding);
+  return !!name && !!heldChanges()?.[name];
 }
 
 /** Record a change the policy asks about; the latest observation wins (the
  *  apply refetches the page, so only the newest change matters). */
 export function holdExternalChange(name: string, change: GraphChange): void {
-  setHeld((current) => ({ ...current, [name]: { change, binding: captureBinding() } }));
+  setHeldChanges({ ...(heldChanges() ?? {}), [name]: change });
 }
 
-function take(name: string): Held | undefined {
-  const pending = held()[name];
-  if (pending) setHeld(({ [name]: _, ...rest }) => rest);
-  return pending && stillBound(pending.binding) ? pending : undefined;
+function take(name: string): GraphChange | undefined {
+  const current = heldChanges() ?? {};
+  const pending = current[name];
+  if (pending) { const { [name]: _, ...rest } = current; setHeldChanges(rest); }
+  return pending;
 }
 
-export function clearHeldExternalChanges(): void { setHeld({}); }
-clearOnBindingInvalidated(clearHeldExternalChanges);
+export function clearHeldExternalChanges(): void { setHeldChanges(null); }
 
 let applier: ((change: GraphChange) => void) | null = null;
 /** Installed once by the watcher handler: the bar re-enters the SAME
@@ -63,7 +77,7 @@ export function installHeldExternalChangeApplier(handler: (change: GraphChange) 
  *  every other gate (disposition, editing, deferred replay) still applies. */
 export function applyHeldExternalChange(name: string): void {
   const pending = take(name);
-  if (pending) applier?.(pending.change);
+  if (pending) applier?.(pending);
 }
 
 /** "Keep mine": drop the record; nothing is written. */

@@ -72,7 +72,7 @@ describe("reload on focus", () => {
     const api = backend() as Api;
     let report!: (status: { refused: boolean; message: string }) => void;
     api.onGraphWatchStatus = async (cb) => { report = cb; return () => {}; };
-    const unsubscribe = await subscribeWatcherFreshness();
+    const unsubscribe = subscribeWatcherFreshness();
     report({ refused: true, message: "inotify watch limit reached" });
     expect(toasts()[0]).toMatchObject({ kind: "warn", sticky: true });
     expect(toasts()[0].message).toContain("inotify watch limit reached");

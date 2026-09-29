@@ -688,13 +688,9 @@ export function App(): JSX.Element {
   // Family 10: checkout-sized batches, a refused OS watch, reload on focus,
   // and the "always ask" preference.
   onMount(() => {
-    let unsub = () => {};
-    let alive = true;
-    void readOwnedResource(ownedWhen(() => alive), subscribeWatcherFreshness(), (u) => u())
-      .then((result) => { if (result.kind === "current") unsub = result.value; });
+    onCleanup(subscribeWatcherFreshness());
     installReloadOnFocus();
     void initConflictPolicy();
-    onCleanup(() => { alive = false; unsub(); });
   });
   // Load the asset-filename format template (Settings → Backups → Asset names).
   onMount(() => void initAssetSettings());

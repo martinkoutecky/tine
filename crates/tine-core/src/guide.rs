@@ -695,7 +695,10 @@ mod og_20d_guide_tests {
             "shows a banner with **Review**",
             "under **Unsaved drafts**",
         ] {
-            assert!(files.contains(control), "missing 22a Guide control: {control}");
+            assert!(
+                files.contains(control),
+                "missing 22a Guide control: {control}"
+            );
         }
         let recovery = include_str!("templates/troubleshooting-recovery.md");
         assert!(recovery.contains("offers only **Review**"));

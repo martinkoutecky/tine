@@ -9,9 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Instant, SystemTime};
 use tauri::{Emitter, Manager, State};
 use tine_core::model::PageKind;
-use tine_store::{
-    Change, ChangeKind, GraphRev, Origin, SubscriptionEnd, WatchBatch, WatchMode, WatchStatus,
-};
+use tine_store::{Change, ChangeKind, GraphRev, Origin, SubscriptionEnd, WatchBatch, WatchMode};
 
 /// Above this many changed pages one publication is announced as ONE
 /// `graph-changed-bulk` event (master 1229f32fb, GH #337): a checkout or big
@@ -272,10 +270,11 @@ pub(crate) async fn rescan_graph_now(state: crate::state::GraphContext<'_>) -> R
     let label = state.window.label().to_owned();
     let sequence = RESCAN_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
     tauri::async_runtime::spawn_blocking(move || {
-        if slot.store.scan_refresh().is_err() {
+        // A failed scan published nothing to wait for: it completes at once.
+        let Ok(target) = slot.store.scan_refresh() else {
             crate::debug::diag("watcher-focus-rescan-failed");
-        }
-        let target = slot.store.published_rev();
+            return emit_rescan_complete(&app, &label, sequence);
+        };
         if slot.rescan.wait(target, sequence) {
             emit_rescan_complete(&app, &label, sequence);
         }
@@ -358,7 +357,7 @@ fn report_watch_status(
     app: &tauri::AppHandle,
     label: &str,
     slot: &Weak<GraphSlot>,
-    status: WatchStatus,
+    refusal: Option<String>,
 ) {
     let current = app.state::<AppState>().graphs.read().unwrap().slot(label);
     let Some(slot) = slot.upgrade() else {
@@ -367,11 +366,11 @@ fn report_watch_status(
     if !current.is_some_and(|current| Arc::ptr_eq(&current, &slot)) {
         return;
     }
-    let refused = matches!(status, WatchStatus::Refused(_));
+    let refused = refusal.is_some();
     crate::flight::record_watch_refused(refused);
-    let (event, message) = match status {
-        WatchStatus::Refused(message) => ("graph-watch-refused", message),
-        WatchStatus::Restored => ("graph-watch-restored", String::new()),
+    let (event, message) = match refusal {
+        Some(message) => ("graph-watch-refused", message),
+        None => ("graph-watch-restored", String::new()),
     };
     crate::debug::diag_private(event, format!("{event} {message}"));
     let _ = app.emit_to(
@@ -387,7 +386,7 @@ pub(crate) fn start_slot_events(app: tauri::AppHandle, label: String, slot: &Arc
     slot.rescan.dispatched(subscription.start_rev());
     {
         let (app, label, weak) = (app.clone(), label.clone(), weak.clone());
-        slot.store
+        subscription
             .observe_watch_status(move |status| report_watch_status(&app, &label, &weak, status));
     }
     std::thread::spawn(move || loop {

@@ -14,7 +14,7 @@ use notify::Watcher;
 use crate::model::{Graph, SyncFileResult};
 use crate::store::{
     journal_ids_from_entries, ChangeFeed, ChangeKind, ConfigState, Day, FileId, FileRev, LoadError,
-    LoadState, LoadStatus, Origin, PageId, WatchBatch, WatchMode, WatchStatus,
+    LoadState, LoadStatus, Origin, PageId, WatchBatch, WatchMode,
 };
 
 /// Boundary between "a burst of ordinary edits" and "an external revision"
@@ -403,10 +403,6 @@ pub(crate) struct Core {
     config_stamp: Mutex<Option<Stamp>>,
     unreadable_dirs: Mutex<HashMap<PathBuf, String>>,
     closed: AtomicBool,
-    /// Why live notifications are refused right now (`None` while watching or
-    /// polling by choice), and who is told when that changes.
-    refusal: Mutex<Option<String>>,
-    status_observer: Mutex<Option<StatusObserver>>,
     #[cfg(test)]
     pub(crate) recovery_reconcile_pause: Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
@@ -419,28 +415,11 @@ pub(crate) struct Core {
     force_mismatched_rev_once: AtomicBool,
 }
 
-type StatusObserver = Arc<dyn Fn(WatchStatus) + Send + Sync>;
-
 impl Core {
-    /// Record the live-notification state. A new refusal message is reported
-    /// once (a retry failing the same way stays quiet); `restored` reports the
-    /// end of a refusal, which a user-selected Poll mode does not.
+    /// Record the live-notification state on the change feed, which tells
+    /// its subscriber (see `ChangeFeed::set_watch_refusal`).
     fn set_refusal(&self, now: Option<String>, restored: bool) {
-        let mut refusal = self.refusal.lock().unwrap();
-        if *refusal == now {
-            return;
-        }
-        let status = match (&now, refusal.is_some()) {
-            (Some(message), _) => Some(WatchStatus::Refused(message.clone())),
-            (None, true) if restored => Some(WatchStatus::Restored),
-            (None, _) => None,
-        };
-        *refusal = now;
-        drop(refusal);
-        let observer = self.status_observer.lock().unwrap().clone();
-        if let (Some(status), Some(observer)) = (status, observer) {
-            observer(status);
-        }
+        self.changes.set_watch_refusal(now, restored);
     }
 
     fn path_for_id(&self, id: &FileId) -> PathBuf {
@@ -853,8 +832,6 @@ impl WatchHandle {
             config_stamp: Mutex::new(config_stamp),
             unreadable_dirs: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
-            refusal: Mutex::new(None),
-            status_observer: Mutex::new(None),
             #[cfg(test)]
             recovery_reconcile_pause: Mutex::new(None),
             #[cfg(test)]
@@ -877,13 +854,6 @@ impl WatchHandle {
             mode,
             wake,
             thread: Mutex::new(Some(thread)),
-        }
-    }
-
-    pub(crate) fn observe_status(&self, observer: StatusObserver) {
-        *self.core.status_observer.lock().unwrap() = Some(Arc::clone(&observer));
-        if let Some(message) = self.core.refusal.lock().unwrap().clone() {
-            observer(WatchStatus::Refused(message));
         }
     }
 
@@ -1289,16 +1259,16 @@ mod tests {
         store.whole_graph().unwrap();
         let statuses = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&statuses);
-        store.observe_watch_status(move |status| sink.lock().unwrap().push(status));
+        let subscription = store.subscribe();
+        subscription.observe_watch_status(move |status| sink.lock().unwrap().push(status));
         let deadline = Instant::now() + Duration::from_secs(10);
         while statuses.lock().unwrap().is_empty() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert_eq!(
             *statuses.lock().unwrap(),
-            vec![WatchStatus::Refused("watch refused by test".into())]
+            vec![Some("watch refused by test".to_owned())]
         );
-        let subscription = store.subscribe();
         fs::write(root.join("pages/Polled.md"), "- seen by polling\n").unwrap();
         let change = wait_for(&subscription, |change| {
             change
@@ -1323,7 +1293,7 @@ mod tests {
         while statuses.lock().unwrap().len() < 2 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert_eq!(statuses.lock().unwrap()[1], WatchStatus::Restored);
+        assert_eq!(statuses.lock().unwrap()[1], None, "restored");
         std::thread::sleep(Duration::from_millis(150));
         fs::write(root.join("pages/Live.md"), "- seen live\n").unwrap();
         let change = wait_for(&subscription, |change| {

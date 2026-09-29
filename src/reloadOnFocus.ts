@@ -19,6 +19,7 @@ import { backend } from "./backend";
 import { captureBinding, stillBound, type Binding } from "./binding";
 import { applyGraphChangesBulk, replayDeferredExternalReloads } from "./document";
 import { beginFreshnessBarrier, endFreshnessBarrier, installFreshnessInputGate } from "./freshnessBarrier";
+import { ownedWhen, readOwnedResource, type Owned } from "./owned";
 import { isPublishedExport } from "./publishedBackend";
 import { pushToast } from "./toasts";
 
@@ -51,7 +52,10 @@ function retireChangedBinding(): boolean {
  *  completion follows the events, but their handlers may still await reads. */
 export function trackGraphChangeApplication(work: Promise<unknown>): void {
   applications.add(work);
-  void work.finally(() => applications.delete(work)).catch(() => {});
+  // Tracking never consumes a failure: a rejection is re-raised exactly as the
+  // untracked `void applyGraphChange(c)` raised it before.
+  const untrack = () => { applications.delete(work); };
+  void work.then(untrack, (error: unknown) => { untrack(); throw error; });
 }
 
 function ensureCompletionListener(subscribe: (cb: (sequence: number) => void) => Promise<() => void>): Promise<unknown> {
@@ -138,15 +142,17 @@ export function installReloadOnFocus(): void {
  *  network mount or filesystem without notifications) is said out loud: the
  *  backend polls every 3 seconds meanwhile, so the graph is never silently
  *  stale (I-9). Returns the unsubscribe. */
-export async function subscribeWatcherFreshness(): Promise<() => void> {
+export function subscribeWatcherFreshness(): () => void {
+  let alive = true;
+  const owner = ownedWhen(() => alive);
+  const unsubs: (() => void)[] = [];
+  const keep = (result: Owned<() => void>) => { if (result.kind === "current") unsubs.push(result.value); };
   const api = backend();
-  const unsubs = await Promise.all([
-    api.onGraphChangedBulk?.((bulk) => trackGraphChangeApplication(applyGraphChangesBulk(bulk))),
-    api.onGraphWatchStatus?.((status) => {
-      if (status.binding_generation !== undefined && status.binding_generation !== captureBinding().backendGeneration) return;
-      if (status.refused) pushToast(`Live file notifications are unavailable for this graph (${status.message}). Tine checks for external changes every 3 seconds instead.`, "warn", { sticky: true });
-      else pushToast("Live file notifications are back for this graph.", "info");
-    }),
-  ]);
-  return () => { for (const unsub of unsubs) unsub?.(); };
+  if (api.onGraphChangedBulk) void readOwnedResource(owner, api.onGraphChangedBulk((bulk) => trackGraphChangeApplication(applyGraphChangesBulk(bulk))), (u) => u()).then(keep);
+  if (api.onGraphWatchStatus) void readOwnedResource(owner, api.onGraphWatchStatus((status) => {
+    if (status.binding_generation !== undefined && status.binding_generation !== captureBinding().backendGeneration) return;
+    if (status.refused) pushToast(`Live file notifications are unavailable for this graph (${status.message}). Tine checks for external changes every 3 seconds instead.`, "warn", { sticky: true });
+    else pushToast("Live file notifications are back for this graph.", "info");
+  }), (u) => u()).then(keep);
+  return () => { alive = false; for (const unsub of unsubs) unsub(); };
 }
