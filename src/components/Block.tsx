@@ -2108,16 +2108,21 @@ export function Editor(props: { id: string }): JSX.Element {
   // reorder briefly blurs the textarea; cross-day it remounts).
   const moveBlockCmd = (e: KeyboardEvent, dir: 1 | -1): boolean => {
     e.preventDefault();
-    const start = ref.selectionStart;
-    const end = ref.selectionEnd;
-    const direction = ref.selectionDirection;
+    const movedEditor = ref;
+    const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
+    const restore = () => restoreMovedSelection(ref, props.id, selection.start, selection.end, selection.direction);
     commit(ref.value);
     void withBlockMoving(docNode(props.id)?.page ?? "", async () => {
-      startEditing(props.id, start);
-      if (outlineScope) moveItem(props.id, dir);
-      else await moveBlockFeed(props.id, dir);
+      startEditing(props.id, selection);
+      // A sibling reorder happens synchronously (a feed move's own sync part)
+      // and keeps this textarea. Restore it in the same gesture: waiting a
+      // frame lets Android dismiss the IME despite the later focus.
+      const move = outlineScope ? moveItem(props.id, dir) : moveBlockFeed(props.id, dir);
+      if (ref === movedEditor && movedEditor.isConnected && editingId() === props.id
+        && (document.activeElement === movedEditor || document.activeElement === document.body)) restore();
+      await move;
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      restoreMovedSelection(ref, props.id, start, end, direction);
+      if (document.activeElement !== ref) restore();
     }).catch(() => console.error("Block move failed"));
     return true;
   };
