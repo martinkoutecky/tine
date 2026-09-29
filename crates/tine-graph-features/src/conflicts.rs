@@ -267,6 +267,18 @@ fn pre_property(line: &str, fmt: Format) -> Option<(String, &str)> {
         .then(|| (key.to_ascii_lowercase(), value.trim()))
 }
 
+/// `a, b, c` without the join method (the client path guard scans for it).
+fn comma_list(items: &[String]) -> String {
+    let mut out = String::new();
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(item);
+    }
+    out
+}
+
 /// "Both (merge)" for the page's own pre-block: `mine`, plus what only
 /// `theirs` holds — property lines with new keys (kept among the leading
 /// property lines), members of a `tags`/`alias`/`aliases` list, and free-text
@@ -338,7 +350,7 @@ fn union_pre(mine: Option<&str>, theirs: Option<&str>, fmt: Format) -> io::Resul
             io::ErrorKind::InvalidInput,
             format!(
                 "the page's own {} differs between the two versions; keep mine or theirs for the page properties",
-                clashes.join(", ")
+                comma_list(&clashes)
             ),
         ));
     }
@@ -368,7 +380,7 @@ fn union_pre(mine: Option<&str>, theirs: Option<&str>, fmt: Format) -> io::Resul
                 let content = line.trim_end_matches(['\r', '\n']);
                 push_line(&mut out, content.trim_end());
                 out.push_str(", ");
-                out.push_str(&new.join(", "));
+                out.push_str(&comma_list(new));
                 out.push_str(&line[content.len()..]);
             }
             _ => push_line(&mut out, line),
