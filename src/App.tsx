@@ -17,6 +17,9 @@ import { Toasts, Lightbox } from "./components/Toasts";
 import { AudioOverlay } from "./components/AudioOverlay";
 import { CalendarJump } from "./components/CalendarJump";
 import { ConflictBar } from "./components/ConflictBar";
+import { installReloadOnFocus, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
+import { freshnessVisible } from "./freshnessBarrier";
+import { initConflictPolicy } from "./conflictPolicy";
 import { RightSidebar } from "./components/RightSidebar";
 import { HelpPopup } from "./components/HelpShortcuts";
 import { DatePicker } from "./components/DatePicker";
@@ -678,8 +681,19 @@ export function App(): JSX.Element {
     let unsub = () => {};
     let alive = true;
     const owner = ownedWhen(() => alive);
-    void readOwnedResource(owner, backend().onGraphChanged((c) => { void applyGraphChange(c); }), (u) => u())
+    void readOwnedResource(owner, backend().onGraphChanged((c) => trackGraphChangeApplication(applyGraphChange(c))), (u) => u())
       .then((result) => { if (result.kind === "current") unsub = result.value; });
+    onCleanup(() => { alive = false; unsub(); });
+  });
+  // Family 10: checkout-sized batches, a refused OS watch, reload on focus,
+  // and the "always ask" preference.
+  onMount(() => {
+    let unsub = () => {};
+    let alive = true;
+    void readOwnedResource(ownedWhen(() => alive), subscribeWatcherFreshness(), (u) => u())
+      .then((result) => { if (result.kind === "current") unsub = result.value; });
+    installReloadOnFocus();
+    void initConflictPolicy();
     onCleanup(() => { alive = false; unsub(); });
   });
   // Load the asset-filename format template (Settings → Backups → Asset names).
@@ -1168,6 +1182,9 @@ export function App(): JSX.Element {
           </div>
         </header>
         <ConflictBar />
+        <Show when={freshnessVisible()}>
+          <div class="focus-freshness-barrier" role="status" aria-live="polite">Refreshing changes from disk…</div>
+        </Show>
         <InPageFind />
         </DrawerBackground>
         {/* Everything below the topbar lives in this row, so the topbar (and its

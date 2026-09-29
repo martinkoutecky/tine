@@ -396,3 +396,46 @@
 .page-conflict-refusal {
   padding: 6px 14px 0;
 }
+
+/* Family 10: a focus rescan slower than 120 ms says what the wait is. */
+.focus-freshness-barrier {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  z-index: 10020;
+  transform: translateX(-50%);
+  padding: 0.42rem 0.72rem;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 24%);
+  font-size: 0.78rem;
+  pointer-events: none;
+}
+
+/* Concord P5: an external change held for review ("always ask"). A calm bar
+   above the page, never a modal. */
+.external-change-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--accent, #3b82f6);
+  border-radius: 6px;
+  background: var(--bg-secondary, transparent);
+  font-size: 13px;
+}
+.external-change-text {
+  color: var(--text-muted);
+  flex: 1 1 320px;
+}
+.external-change-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
