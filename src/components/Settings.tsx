@@ -1343,8 +1343,8 @@ function JournalsTab(props: { search: string }): JSX.Element {
         hint={
           <>
             How journal dates are displayed and how new <code>[[date]]</code> titles are written.
-            Changing this also renames existing journal <em>files</em>. Saved to
-            <code>:journal/page-title-format</code>.
+            Display-only — your journal <em>file names</em> are untouched and existing journals keep
+            working. Saved to <code>:journal/page-title-format</code>.
           </>
         }
       >
