@@ -6,8 +6,7 @@
 //! clauses are returned as diagnostics in `AdvancedResult`.
 
 use crate::model::GraphRead;
-#[cfg(test)]
-use tine_core::date::JournalDate;
+use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::doc::{property_key_norm, DocBlock, Document};
 use tine_core::model::{
     BacklinkFilterContext, BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, BlockPreview,
@@ -515,7 +514,67 @@ fn graph_equivalent_page_names(
     aliases: &[(String, String)],
     target: &str,
 ) -> (String, Vec<String>, String) {
-    equivalent_page_names(&real_page_names(graph), aliases, target)
+    let mut resolved = equivalent_page_names(&real_page_names(graph), aliases, target);
+    let format = journal_format(graph.config());
+    let Some(target_day) = format.parse(target) else {
+        return resolved;
+    };
+    // O(journals) name parses, only for a date-shaped target.
+    let pages = graph.page_list_arc();
+    let Some(journal) = pages.iter().find(|entry| {
+        entry.kind == PageKind::Journal && format.parse(&entry.name) == Some(target_day)
+    }) else {
+        return resolved;
+    };
+    resolved
+        .1
+        .extend(journal_spelling_keys(&format, target_day, &journal.name));
+    resolved.1.sort();
+    resolved.1.dedup();
+    resolved.0 = journal.name.clone();
+    resolved.2 = journal.name.clone();
+    resolved
+}
+
+/// The graph's journal date format (title/file patterns from its config).
+pub(crate) fn journal_format(config: &tine_core::config::Config) -> JournalFormat {
+    JournalFormat::new(
+        config.journal_file_name_format.as_deref(),
+        config.journal_page_title_format.as_deref(),
+    )
+}
+
+/// Every spelling of a journal day a link may use to reach that journal (GH #481,
+/// master ee7730b48): its own name, the graph's title/file forms, the default
+/// title/file forms and ISO `yyyy-MM-dd`, as page keys. The one definition both
+/// query-time resolution and scoped invalidation use (I-12).
+fn journal_spelling_keys(
+    format: &JournalFormat,
+    day: JournalDate,
+    journal_name: &str,
+) -> Vec<String> {
+    [
+        journal_name.to_string(),
+        format.title(day),
+        format.file_stem(day),
+        day.title(),
+        day.file_stem(),
+        format!("{:04}-{:02}-{:02}", day.year, day.month, day.day),
+    ]
+    .iter()
+    .map(|spelling| refs::page_key(spelling))
+    .collect()
+}
+
+/// Scoped invalidation cannot see which journal pages exist, so a date-shaped
+/// target is widened by every accepted spelling of its day whether or not that
+/// journal exists: it may evict an unaffected entry but never keep a stale one.
+fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, target: &str) {
+    if let Some(day) = format.parse(target) {
+        names_norm.extend(journal_spelling_keys(format, day, target));
+        names_norm.sort();
+        names_norm.dedup();
+    }
 }
 
 fn org_property_line(line: &str) -> bool {
@@ -1151,11 +1210,13 @@ pub(crate) fn run_query_bounded(
 pub(crate) fn page_affects_backlinks(
     real_pages: &RealPageNames,
     aliases: &[(String, String)],
+    journal: &JournalFormat,
     target: &str,
     entry: &PageEntry,
     doc: &Document,
 ) -> bool {
-    let (canonical, names_norm, _) = equivalent_page_names(real_pages, aliases, target);
+    let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
+    widen_for_journal_day(&mut names_norm, journal, target);
     // Scoped invalidation has no Graph/config parameter. Default-enabled matching
     // is conservative for disabled/excluded property pages (it may evict an
     // unaffected cache entry, but cannot retain a stale one).
@@ -1197,11 +1258,13 @@ pub(crate) fn page_affects_backlinks(
 pub(crate) fn page_affects_unlinked(
     real_pages: &RealPageNames,
     aliases: &[(String, String)],
+    journal: &JournalFormat,
     target: &str,
     entry: &PageEntry,
     doc: &Document,
 ) -> bool {
-    let (canonical, names_norm, _) = equivalent_page_names(real_pages, aliases, target);
+    let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
+    widen_for_journal_day(&mut names_norm, journal, target);
     let config = tine_core::config::Config::default();
     if doc.pre_block.as_deref().is_some_and(|pre| {
         page_property_block(entry, pre).is_some_and(|block| {

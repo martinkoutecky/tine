@@ -1071,6 +1071,7 @@ export function QueryMacro(props: {
                         </Show>
                       }
                     >
+                      <div class="md-table-wrap">
                       <table class="md-table query-table">
                         <thead>
                           <tr onClick={stop}>
@@ -1119,6 +1120,7 @@ export function QueryMacro(props: {
                           </For>
                         </tbody>
                       </table>
+                      </div>
                     </Show>
                   </Show>
                 </Match>
