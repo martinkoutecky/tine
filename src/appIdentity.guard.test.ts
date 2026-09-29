@@ -95,8 +95,8 @@ describe("app identity switch", () => {
 
   it("docs/app-identity.md states the switch and the seed allowlist the code uses", () => {
     const doc = fs.readFileSync(path.join(ROOT, "docs/app-identity.md"), "utf8");
-    for (const identity of Object.values(IDENTITIES as Record<string, Record<string, string>>)) {
-      for (const value of Object.values(identity)) expect(doc, value).toContain(`"${value}"`);
+    for (const identity of Object.values(IDENTITIES)) {
+      for (const value of Object.values(identity)) expect(doc, String(value)).toContain(`"${value}"`);
     }
     const seedPath = path.join(ROOT, "src-tauri/src/experiment_config_seed.rs");
     if (!fs.existsSync(seedPath)) return;

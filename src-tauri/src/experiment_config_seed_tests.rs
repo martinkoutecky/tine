@@ -26,7 +26,11 @@ fn tree(dir: &Path) -> BTreeMap<String, Vec<u8>> {
             if path.is_dir() {
                 stack.push(path);
             } else {
-                let rel = path.strip_prefix(dir).unwrap().to_string_lossy().into_owned();
+                let rel = path
+                    .strip_prefix(dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
                 out.insert(rel, fs::read(&path).unwrap());
             }
         }
@@ -51,10 +55,16 @@ fn released_dir(root: &Path) -> PathBuf {
         &dir.join("sessions/notes-c868ec19883e67ac-workspaces.json"),
         br#"{"activeId":"default","version":1,"workspaces":[{"blob":{"activeIndex":0,"tabs":[{"history":[{"kind":"journals"}],"pinned":false,"pos":0}]},"id":"default","name":""}]}"#,
     );
-    write(&dir.join("sessions/notes-c868ec19883e67ac-notices.json"), br#"{"dismissed":["query-crossing"]}"#);
+    write(
+        &dir.join("sessions/notes-c868ec19883e67ac-notices.json"),
+        br#"{"dismissed":["query-crossing"]}"#,
+    );
     write(&dir.join("plugins/page.tine.x/0.1.0/manifest.json"), b"{}");
     write(&dir.join("plugins/page.tine.x/0.1.0/plugin.wasm"), b"\0asm");
-    write(&dir.join("localstorage/tauri_localhost_0.localstorage"), b"SQLite format 3\0");
+    write(
+        &dir.join("localstorage/tauri_localhost_0.localstorage"),
+        b"SQLite format 3\0",
+    );
     write(&dir.join("storage/salt"), b"salt");
     for master_only in [
         "backups/notes-b6e5cbb57a26572efaac2788630a5d15/2026-09-29_12-53-37/snapshot.json",
@@ -83,7 +93,13 @@ fn seeds_only_the_config_allowlist_and_never_touches_the_released_dir() {
 
     assert_eq!(
         outcome,
-        Seeded::Copied(vec!["tine-settings.json", "sessions", "plugins", "localstorage", "storage"])
+        Seeded::Copied(vec![
+            "tine-settings.json",
+            "sessions",
+            "plugins",
+            "localstorage",
+            "storage"
+        ])
     );
     assert_eq!(tree(&release), before, "the released dir is read-only");
     let seeded = tree(&own);
@@ -92,7 +108,10 @@ fn seeds_only_the_config_allowlist_and_never_touches_the_released_dir() {
         .filter(|(rel, _)| CONFIG_ENTRIES.iter().any(|entry| rel.starts_with(entry)))
         .map(|(rel, bytes)| (rel.clone(), bytes.clone()))
         .collect();
-    assert_eq!(seeded, expected, "exactly the config entries, byte for byte");
+    assert_eq!(
+        seeded, expected,
+        "exactly the config entries, byte for byte"
+    );
     assert!(!root.join("own-id.seeding").exists());
     let _ = fs::remove_dir_all(root);
 }
@@ -135,11 +154,20 @@ fn a_welcome_only_launch_is_set_aside_intact_not_deleted() {
     let root = scratch("aside");
     let release = released_dir(&root);
     let own = root.join("own-id");
-    write(&own.join("tine-settings.json"), b"{\"smooth_scroll\":true}\n");
-    write(&own.join("localstorage/tauri_localhost_0.localstorage"), b"welcome-only");
+    write(
+        &own.join("tine-settings.json"),
+        b"{\"smooth_scroll\":true}\n",
+    );
+    write(
+        &own.join("localstorage/tauri_localhost_0.localstorage"),
+        b"welcome-only",
+    );
     let before = tree(&own);
 
-    assert!(matches!(seed(&own, &release, None).unwrap(), Seeded::Copied(_)));
+    assert!(matches!(
+        seed(&own, &release, None).unwrap(),
+        Seeded::Copied(_)
+    ));
     assert_eq!(tree(&root.join("own-id.pre-seed.0")), before);
     assert!(has_configured_graph(&own));
     let _ = fs::remove_dir_all(root);
@@ -151,8 +179,14 @@ fn a_crashed_staging_dir_is_discarded_and_rebuilt() {
     let release = released_dir(&root);
     let own = root.join("own-id");
     // What a crash mid-copy leaves: a partial staging dir, no published dir.
-    write(&root.join("own-id.seeding/tine-settings.json"), b"{\"known_gr");
-    assert!(matches!(seed(&own, &release, None).unwrap(), Seeded::Copied(_)));
+    write(
+        &root.join("own-id.seeding/tine-settings.json"),
+        b"{\"known_gr",
+    );
+    assert!(matches!(
+        seed(&own, &release, None).unwrap(),
+        Seeded::Copied(_)
+    ));
     assert_eq!(
         fs::read(own.join("tine-settings.json")).unwrap(),
         RELEASE_SETTINGS.as_bytes()
@@ -193,7 +227,10 @@ fn a_copy_error_publishes_nothing_and_keeps_the_existing_dir() {
 fn nothing_is_seeded_from_a_released_dir_without_a_graph() {
     let root = scratch("empty-release");
     let release = root.join("release-id");
-    write(&release.join("tine-settings.json"), b"{\"smooth_scroll\":false}\n");
+    write(
+        &release.join("tine-settings.json"),
+        b"{\"smooth_scroll\":false}\n",
+    );
     let own = root.join("own-id");
     assert_eq!(
         seed(&own, &release, None).unwrap(),
@@ -209,16 +246,27 @@ fn window_geometry_is_copied_once_and_never_over_the_builds_own() {
     let release = released_dir(&root);
     let config = root.join("config");
     let (own_config, release_config) = (config.join("own-id"), config.join("release-id"));
-    write(&release_config.join(WINDOW_STATE), br#"{"main":{"width":900}}"#);
+    write(
+        &release_config.join(WINDOW_STATE),
+        br#"{"main":{"width":900}}"#,
+    );
     let own = root.join("own-id");
-    seed(&own, &release, Some((own_config.clone(), release_config.clone()))).unwrap();
+    seed(
+        &own,
+        &release,
+        Some((own_config.clone(), release_config.clone())),
+    )
+    .unwrap();
     assert_eq!(
         fs::read(own_config.join(WINDOW_STATE)).unwrap(),
         br#"{"main":{"width":900}}"#
     );
 
     // A second seed (own dir reset to Welcome-only) keeps the build's geometry.
-    write(&own_config.join(WINDOW_STATE), br#"{"main":{"width":1200}}"#);
+    write(
+        &own_config.join(WINDOW_STATE),
+        br#"{"main":{"width":1200}}"#,
+    );
     fs::remove_dir_all(&own).unwrap();
     seed(&own, &release, Some((own_config.clone(), release_config))).unwrap();
     assert_eq!(

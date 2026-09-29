@@ -44,6 +44,9 @@ mod tests {
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         assert_eq!(conf["identifier"].as_str(), Some(super::APP_IDENTIFIER));
         // An experiment build must never share the released app-data dir.
-        assert_eq!(ship == "release", super::APP_IDENTIFIER == super::RELEASE_IDENTIFIER);
+        assert_eq!(
+            ship == "release",
+            super::APP_IDENTIFIER == super::RELEASE_IDENTIFIER
+        );
     }
 }

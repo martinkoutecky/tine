@@ -57,7 +57,8 @@ pub(crate) fn seed_from_release_once() {
     ) else {
         return;
     };
-    let config_dirs = dirs::config_dir().map(|base| (base.join(APP_IDENTIFIER), base.join(RELEASE_IDENTIFIER)));
+    let config_dirs =
+        dirs::config_dir().map(|base| (base.join(APP_IDENTIFIER), base.join(RELEASE_IDENTIFIER)));
     match seed(&own, &release, config_dirs) {
         Ok(Seeded::Copied(entries)) => crate::debug::diag_private(
             "experiment-config-seeded",
@@ -93,11 +94,7 @@ fn has_configured_graph(dir: &Path) -> bool {
         })
 }
 
-fn seed(
-    own: &Path,
-    release: &Path,
-    config_dirs: Option<(PathBuf, PathBuf)>,
-) -> io::Result<Seeded> {
+fn seed(own: &Path, release: &Path, config_dirs: Option<(PathBuf, PathBuf)>) -> io::Result<Seeded> {
     if has_configured_graph(own) {
         return Ok(Seeded::Skipped("this build already has a configured graph"));
     }

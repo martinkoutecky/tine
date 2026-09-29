@@ -21,8 +21,17 @@ fn main() {
         );
     }
     let text = |value: &serde_json::Value, key: &str| value[key].as_str().expect(key).to_owned();
-    println!("cargo:rustc-env=TINE_APP_IDENTIFIER={}", text(shipped, "identifier"));
-    println!("cargo:rustc-env=TINE_PRODUCT_NAME={}", text(shipped, "productName"));
-    println!("cargo:rustc-env=TINE_RELEASE_IDENTIFIER={}", text(release, "identifier"));
+    println!(
+        "cargo:rustc-env=TINE_APP_IDENTIFIER={}",
+        text(shipped, "identifier")
+    );
+    println!(
+        "cargo:rustc-env=TINE_PRODUCT_NAME={}",
+        text(shipped, "productName")
+    );
+    println!(
+        "cargo:rustc-env=TINE_RELEASE_IDENTIFIER={}",
+        text(release, "identifier")
+    );
     tauri_build::build()
 }
