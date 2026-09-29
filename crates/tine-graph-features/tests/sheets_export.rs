@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use tine_graph_features::publish::sheet_export_inputs;
+use tine_graph_features::publish::{sheet_export_inputs, SheetScope};
 use tine_graph_features::publish_query::{publish_live, publish_live_with_sheets};
 use tine_graph_features::SheetExport;
 use tine_store::Store;
@@ -74,7 +74,7 @@ fn sheets_html(base: &Path) -> String {
 #[test]
 fn inputs_for_the_fixture_match_the_golden_handoff() {
     let (_base, store) = open_fixture();
-    let inputs = sheet_export_inputs(&store, None).unwrap();
+    let inputs = sheet_export_inputs(&store, None, None).unwrap();
     let actual = serde_json::to_string_pretty(&inputs).unwrap() + "\n";
     let golden = fixtures().join("inputs.json");
     if std::env::var_os("BLESS_SHEETS").is_some() {
@@ -87,7 +87,7 @@ fn inputs_for_the_fixture_match_the_golden_handoff() {
     );
     // The Rust side names candidates by `tine.view` alone; whether the value is a sheet
     // view is the app's call (I-12), so the non-sheet block is still a candidate.
-    assert_eq!(inputs.len(), 4);
+    assert_eq!(inputs.len(), 7);
     store.close();
 }
 
@@ -215,7 +215,7 @@ fn a_stale_fingerprint_is_refused_with_a_note() {
 #[test]
 fn hostile_export_data_is_escaped_bounded_and_never_fails_the_export() {
     let html = export_html(mutate(raw_exports(), |x| {
-        if x["view"] == "table" {
+        if x["view"] == "table" && x["query"] != true {
             x["rows"][0]["bg"] = "red;background:url(javascript:alert(1))".into();
             x["rows"][0]["cells"][0] =
                 serde_json::json!({"k": "marker", "raw": "\"><script>x</script>", "text": "<i>"});
@@ -344,7 +344,7 @@ fn inputs_sent_to_the_app_are_bounded() {
     }
     fs::write(base.join("graph/pages/Big.md"), page).unwrap();
     store.scan_refresh().unwrap();
-    let inputs = sheet_export_inputs(&store, Some(&["Big".to_owned()])).unwrap();
+    let inputs = sheet_export_inputs(&store, Some(&["Big".to_owned()]), None).unwrap();
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].rows.len(), 5_000);
     assert_eq!(inputs[0].omitted, 100);
@@ -362,7 +362,7 @@ fn a_sheet_inside_a_grid_cell_is_found_by_its_path_and_laid_out_in_the_cell() {
     )
     .unwrap();
     store.scan_refresh().unwrap();
-    let inputs = sheet_export_inputs(&store, Some(&["Nested".to_owned()])).unwrap();
+    let inputs = sheet_export_inputs(&store, Some(&["Nested".to_owned()]), None).unwrap();
     let paths: Vec<_> = inputs.iter().map(|i| i.path.clone()).collect();
     assert_eq!(
         paths,
@@ -429,4 +429,163 @@ fn a_card_in_two_board_columns_keeps_page_anchors_unique() {
     let index = fs::read_to_string(base.join("output/export/search-index.js")).unwrap();
     assert_eq!(index.matches("Write tests").count(), 1, "{index}");
     store.close();
+}
+
+fn tail_queries_html(base: &Path) -> String {
+    fs::read_to_string(base.join("output/export/tail-queries.html")).unwrap()
+}
+
+#[test]
+fn query_backed_sheets_lay_out_as_table_and_board_in_place_of_the_result_list() {
+    let (base, store) = open_fixture();
+    publish_live_with_sheets(
+        &store,
+        &base.join("output"),
+        "export",
+        false,
+        &bundle(),
+        exports(),
+    )
+    .unwrap();
+    let html = tail_queries_html(&base);
+    // The table: the query's rows under the observed columns, the page column last.
+    assert!(html.contains("<table class=\"sheet-table\">"), "{html}");
+    assert!(
+        html.contains("<th>Page</th>") && html.contains("<td>Sheets</td>"),
+        "{html}"
+    );
+    assert!(html.contains("First"), "{html}");
+    // The board: state columns over the same rows, no result list beside it.
+    assert!(
+        html.contains("<div class=\"sheet-board\">") && html.contains("Write tests"),
+        "{html}"
+    );
+    // The grid face is not a query face: the block keeps its flat result list and outline.
+    assert!(html.contains("stays a result list"), "{html}");
+    assert_eq!(
+        html.matches("<table class=\"sheet-table\">").count(),
+        1,
+        "{html}"
+    );
+    assert_eq!(
+        html.matches("class=\"query\"").count(),
+        1,
+        "only the grid block keeps a result list: {html}"
+    );
+    store.close();
+}
+
+#[test]
+fn a_query_sheet_whose_result_changed_is_refused_with_a_note_and_shows_the_results() {
+    let html = {
+        let mut all = raw_exports();
+        for x in all
+            .iter_mut()
+            .filter(|x| x["query"] == true && x["view"] == "table")
+        {
+            x["fp"] = "0000000000000000".into();
+        }
+        export_html_of(&all)
+    };
+    let html = html.1;
+    assert!(
+        html.contains("This query changed while the export was prepared; showing its results."),
+        "{html}"
+    );
+    assert!(!html.contains("<table class=\"sheet-table\">"), "{html}");
+    assert!(
+        html.contains("First"),
+        "the flat result list still shows it: {html}"
+    );
+    assert!(
+        html.contains("<div class=\"sheet-board\">"),
+        "the other query sheet is unaffected"
+    );
+}
+
+fn export_html_of(all: &[Value]) -> (Scratch, String) {
+    let (base, store) = open_fixture();
+    publish_live_with_sheets(
+        &store,
+        &base.join("output"),
+        "export",
+        false,
+        &bundle(),
+        serde_json::from_value(Value::Array(all.to_vec())).unwrap(),
+    )
+    .unwrap();
+    let html = tail_queries_html(&base);
+    store.close();
+    (base, html)
+}
+
+#[test]
+fn a_query_sheet_leaves_out_a_row_on_an_unpublished_page_and_keeps_the_rest() {
+    // Master filters the row and keeps the sheet. The row is dropped BEFORE the app
+    // computes cells, counts and aggregates, so no trace of it can reach the table.
+    let (base, store) = open_fixture();
+    fs::write(
+        base.join("graph/pages/Secret.md"),
+        "- TODO hidden-secret-row\n",
+    )
+    .unwrap();
+    store.scan_refresh().unwrap();
+    let scope = SheetScope::Live { all_pages: false };
+    let inputs =
+        sheet_export_inputs(&store, Some(&["Tail-queries".to_owned()]), Some(&scope)).unwrap();
+    let table = &inputs[0];
+    let query = table
+        .query
+        .as_ref()
+        .expect("the query table still has rows");
+    assert!(
+        query.pages.iter().all(|p| p != "Secret")
+            && query
+                .rows
+                .iter()
+                .all(|r| !r.raw.contains("hidden-secret-row")),
+        "the private row never reaches the app: {:?}",
+        query.pages
+    );
+    assert!(query.rows.iter().any(|r| r.raw.contains("First")));
+    let answer: Vec<SheetExport> = serde_json::from_value(serde_json::json!([{
+        "page": table.page, "path": table.path, "fp": query.fp, "query": true, "view": "table",
+        "columns": [{"label": "Block", "formula": false}],
+        "rows": query.rows.iter().map(|r| serde_json::json!({"ix": 0, "title": r.raw, "bg": null, "cells": []})).collect::<Vec<_>>(),
+        "footer": null, "filterError": null, "omitted": 0
+    }]))
+    .unwrap();
+    publish_live_with_sheets(
+        &store,
+        &base.join("output"),
+        "export",
+        false,
+        &bundle(),
+        answer,
+    )
+    .unwrap();
+    let html = tail_queries_html(&base);
+    assert!(
+        html.contains("<table class=\"sheet-table\">") && html.contains("First"),
+        "the sheet stays, with the public rows: {html}"
+    );
+    assert!(
+        !html.contains("hidden-secret-row"),
+        "the private row appears nowhere in the export: {html}"
+    );
+    store.close();
+}
+
+#[test]
+fn the_scope_the_app_sends_deserializes_as_the_wire_shape() {
+    // `src/sheet/staticExport.ts::SheetScope` is the other half of this contract.
+    let live: SheetScope =
+        serde_json::from_value(serde_json::json!({"kind": "live", "allPages": true})).unwrap();
+    assert!(matches!(live, SheetScope::Live { all_pages: true }));
+    let query: SheetScope = serde_json::from_value(serde_json::json!({
+        "kind": "query",
+        "request": {"argument": "(task TODO)", "dialect": "macro_query", "properties": [], "name": "n"}
+    }))
+    .unwrap();
+    assert!(matches!(query, SheetScope::Query { .. }));
 }

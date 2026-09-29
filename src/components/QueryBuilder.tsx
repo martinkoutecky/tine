@@ -44,6 +44,7 @@ import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { QueryDisplay } from "./QueryDisplay";
+import { readLatestOr } from "../resourceRead";
 
 // **The visual query builder: a resting SENTENCE that expands into a SHEET** (SPEC §7.2–§7.4).
 
@@ -162,7 +163,7 @@ function QueryTextPane(props: {
   );
   /** The printed text is shown only for the pair it was printed FROM. */
   const printedNow = () => {
-    const landed = printedResource.error === undefined ? printedResource.latest : undefined;
+    const landed = readLatestOr(printedResource, undefined, "query text");
     const current = props.session();
     if (!landed || !current) return undefined;
     return landed.query === current.query && landed.view === current.view ? landed : undefined;
@@ -432,7 +433,7 @@ export function createQueryRegistryAccess(active: () => boolean): RegistryAccess
   );
   // A type declaration changes operator semantics: an answer is usable only for the current graph AND revision.
   const registryRead = (): RegistryRead | undefined => {
-    const landed = registrySnapshot.error === undefined ? registrySnapshot.latest : undefined;
+    const landed = readLatestOr(registrySnapshot, undefined, "query vocabulary");
     return landed && landed.scope === registryScope() && landed.key === registryKey() ? landed : undefined;
   };
   let lastRows: { scope: string; rows: RegistryRow[] } | undefined;

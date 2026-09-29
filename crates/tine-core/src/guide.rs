@@ -788,6 +788,17 @@ mod og_20d_guide_tests {
         ));
         assert!(files.contains("A sheet that cannot be computed"));
         assert!(files.contains("the export still succeeds"));
+        // A query-backed table or board exports as a sheet; the old "result list for now" is gone.
+        assert!(
+            files.contains("A table or board that shows a query's results is written the same way")
+        );
+        assert!(!files.contains("result list for now"));
+        // A row on an unpublished page is left out, not the whole sheet.
+        assert!(files
+            .contains("a result on a page the export does not publish is left out of the table"));
+        assert!(!files.contains("if any result sits on a page the export does not publish"));
+        // og E: a query board can be ungrouped.
+        assert!(include_str!("templates/sheets.md").contains("also offers **No grouping**"));
     }
 
     /// og-D: the cross-device graph verifier is user-visible: create, copy or

@@ -1,6 +1,6 @@
 // Browser-mock Concord surface: sync-conflict copies and the derived conflict
 // queue. Split out of mock.ts (over the size ratchet); nothing here writes.
-import type { ConflictInventory, ConflictObject, MarkerConflictDiff, PageDto, SyncConflict, SyncConflictDiff } from "./types";
+import type { BlockDto, ConflictInventory, ConflictObject, MarkerConflictDiff, PageDto, SyncConflict, SyncConflictDiff } from "./types";
 
 // Gated on the `?conflicts` flag, like the journal-day demo, so the reconcile
 // surfaces stay out of the marketing screenshots by default.
@@ -55,6 +55,24 @@ function conflictInventory(): ConflictInventory {
     block_conflicts: 3,
   }] : []);
   return { sync_conflicts, vcs_markers: [], queue };
+}
+
+// Body of the page the sync-copy conflict above belongs to (empty unless `?conflicts`):
+// it matches the diff's "mine" side and is long enough to scroll, so the in-page
+// resolver and its pinned dock are demonstrable in the browser mock
+// (scripts/shot-conflict-dock.mjs). mock.ts wraps it in the page (I-12: PageDto
+// literals live in mock.ts and document/convert.ts only; this file may not import
+// document, which imports the mock).
+export const CONFLICT_DEMO_PAGE = "Project Plan";
+export function conflictDemoBodies(): BlockDto[][] {
+  if (!conflictsDemo()) return [];
+  const blk = (raw: string, id: string) => ({ id, raw, collapsed: false, children: [] });
+  return [[
+    blk("Milestones for the launch", "plan-0"),
+    blk("TODO ship the beta by Friday", "plan-1"),
+    blk("write the release notes", "plan-2"),
+    ...Array.from({ length: 60 }, (_, i) => blk(`launch checklist item ${i + 1} - status notes and follow-ups`, `plan-f${i}`)),
+  ]];
 }
 
 export const mockConflictApi = {

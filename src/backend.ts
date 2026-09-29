@@ -52,7 +52,7 @@ import { dbg } from "./debug";
 import { assetFileName } from "./media";
 import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
-import type { SheetExport, SheetInput } from "./sheet/staticExport";
+import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import { isPublishedExport, publishedBackend } from "./publishedBackend";
 
 export interface SavePageEntry {
@@ -303,7 +303,7 @@ export interface Backend {
    * with the data the sheet evaluator needs to compute each for a static export.
    * The `sheets` argument of publishLive/publishQuery/pagePrintHtml answers it
    * (see sheet/exportSheets.ts); without it a sheet exports as its plain outline. */
-  sheetExportInputs(pages?: string[]): Promise<SheetInput[]>;
+  sheetExportInputs(pages?: string[], scope?: SheetScope): Promise<SheetInput[]>;
   /** Render one page to a self-contained HTML document (assets inlined, no
    *  sidebar) for the print-to-PDF export, with the dialog's options. Rejects if
    *  the page doesn't exist. */
@@ -994,8 +994,8 @@ class TauriBackend implements Backend {
   publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]) {
     return this.call<PublicationReceipt>("publish_live", { destination, name, allPages, sheets });
   }
-  sheetExportInputs(pages?: string[]) {
-    return this.call<SheetInput[]>("sheet_export_inputs", { pages: pages ?? null });
+  sheetExportInputs(pages?: string[], scope?: SheetScope) {
+    return this.call<SheetInput[]>("sheet_export_inputs", { pages: pages ?? null, scope: scope ?? null });
   }
   pagePrintHtml(name: string, opts: PrintOpts, sheets: SheetExport[]) {
     return this.call<string>("page_print_html", { name, opts, sheets });

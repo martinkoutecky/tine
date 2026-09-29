@@ -30,15 +30,7 @@ const SRC = path.resolve(__dirname);
  *  "still offends" test below fails the moment one of these files is clean, so
  *  its entry must then be deleted, and a file cannot be added. Owner lane in the
  *  value; the conversion is mechanical (see src/render/inline.tsx). */
-const PENDING_OWNED_FILES: Record<string, string> = {
-  "components/ConflictResolution.tsx": "OG-A (Concord tail)",
-  "components/Page.tsx": "OG-A (Concord tail)",
-  "components/Macro.tsx": "OG-E (query tail)",
-  "components/QueryBuilder.tsx": "OG-E (query tail)",
-  "components/QueryExportDialog.tsx": "OG-E (query tail)",
-  "components/QueryWorkspace.tsx": "OG-E (query tail)",
-  "components/querySheetParts.tsx": "OG-E (query tail)",
-};
+const PENDING_OWNED_FILES: Record<string, string> = {};
 
 function sources(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {

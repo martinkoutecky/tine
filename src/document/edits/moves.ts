@@ -409,8 +409,6 @@ export function reassignPage(s: DocState, id: string, page: string) {
   for (const c of s.byId[id].children) reassignPage(s, c, page);
 }
 
-/** Move root blocks `ids` (document order) to the start (down) / end (up) of
- *  `toPage`, removing them from `fromPage`. Both pages must be loaded. */
 /** True while every id is still a root of `fromPage`. A cross-day move plans
  *  before awaiting the feed extender and must re-check its plan after it: a
  *  second nudge issued meanwhile may already have moved these blocks, and
@@ -423,6 +421,8 @@ function stillRootsOf(ids: readonly string[], fromPage: string): boolean {
   return ids.every((id) => roots.has(id) && doc.byId[id]?.page === fromPage && doc.byId[id]?.parent === null);
 }
 
+/** Move root blocks `ids` (document order) to the start (down) / end (up) of
+ *  `toPage`, removing them from `fromPage`. Both pages must be loaded. */
 function crossMoveBlocks(ids: string[], fromPage: string, toPage: string, dir: 1 | -1) {
   setDoc(
     produce((s) => {
@@ -460,6 +460,34 @@ async function feedNeighbor(page: string, dir: 1 | -1): Promise<string | null> {
   return doc.feed[ti];
 }
 
+/** The one door for moving root blocks across a journal-feed day boundary
+ *  (`moveBlockFeed` and `moveSelectionItems` both end here). It resolves the
+ *  neighbour day, which may await the feed extender, and then RE-CHECKS every
+ *  fact its plan rested on before writing: the graph binding (twice, around the
+ *  conflict check), both pages writable, neither page conflicted, and that `ids`
+ *  are still roots of `from`. The write itself is one `persistTogether` group.
+ *  A caller may not repeat this list: a caller that did once drifted from its
+ *  twin (master eba7c56b2 H1-H5; og answers them through SaveGroups, not a
+ *  ported coordinator). Resolves to whether the blocks crossed. */
+async function crossDayMove(
+  ids: string[],
+  from: string,
+  dir: 1 | -1,
+  undoKind: "move-cross" | "move-sel-cross",
+  binding: ReturnType<typeof captureBinding>,
+): Promise<boolean> {
+  const target = await feedNeighbor(from, dir);
+  if (!stillBound(binding)) return false;
+  if (!target || target === from || !pageWritable(target)) return false;
+  if (refuseConflictedMove([from, target])) return false;
+  if (!stillBound(binding)) return false;
+  if (!stillRootsOf(ids, from)) return false; // moved or vanished during the await (H3)
+  if (!pageWritable(from) || !pageWritable(target)) return false;
+  pushUndo(undoKind, [from, target]);
+  crossMoveBlocks(ids, from, target, dir);
+  return true;
+}
+
 /** Like `nextVisible`, but when we're at the last LOADED block of the journal feed
  *  it pulls in the next day first (via the feed extender) and returns that day's
  *  first block. This lets Down-arrow keep going past the loaded window — previously
@@ -494,17 +522,7 @@ export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" |
     return "within";
   }
   if (node.parent !== null) return "none"; // nested block at a child-list edge: stop
-  const from = node.page;
-  const target = await feedNeighbor(from, dir);
-  if (!stillBound(binding)) return "none";
-  if (!target || target === from || !pageWritable(target)) return "none";
-  if (refuseConflictedMove([from, target])) return "none";
-  if (!stillBound(binding)) return "none";
-  if (!stillRootsOf([id], from)) return "none"; // moved or vanished during the await (H3)
-  if (!pageWritable(from) || !pageWritable(target)) return "none";
-  pushUndo("move-cross", [from, target]);
-  crossMoveBlocks([id], from, target, dir);
-  return "crossed";
+  return (await crossDayMove([id], node.page, dir, "move-cross", binding)) ? "crossed" : "none";
 }
 
 /** Move every top-level selected block up/down by one slot, preserving the
@@ -549,13 +567,5 @@ export async function moveSelectionItems(dir: 1 | -1) {
   const page = doc.byId[ids[0]]?.page;
   if (!page) return;
   if (ids.some((id) => doc.byId[id].parent !== null || doc.byId[id].page !== page)) return;
-  const target = await feedNeighbor(page, dir);
-  if (!stillBound(binding)) return;
-  if (!target || target === page || !pageWritable(target)) return;
-  if (refuseConflictedMove([page, target])) return;
-  if (!stillBound(binding)) return;
-  if (!stillRootsOf(ids, page)) return; // moved or vanished during the await (H3)
-  if (!pageWritable(page) || !pageWritable(target)) return;
-  pushUndo("move-sel-cross", [page, target]);
-  crossMoveBlocks(ids, page, target, dir);
+  await crossDayMove(ids, page, dir, "move-sel-cross", binding);
 }

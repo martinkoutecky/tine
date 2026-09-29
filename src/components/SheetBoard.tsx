@@ -80,6 +80,9 @@ export function SheetBoard(props: {
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
   const groupBy = createMemo<FieldId>(() => boardGroupField(props.groupBy));
+  /** A query's explicit "No grouping" (the engine's `Cleared`, `group_by === ""`):
+   *  one column holding every result. An ordinary board has no such state. */
+  const ungrouped = () => props.rowSource === "query" && props.groupBy === "";
   const groupByOptions = createMemo<FieldId[]>(() => {
     const options = boardGroupByOptions(props.ownerId);
     const current = groupBy();
@@ -164,6 +167,7 @@ export function SheetBoard(props: {
   });
 
   const baseColumns = createMemo<BoardColumn[]>(() => {
+    if (ungrouped()) return [{ key: null, label: "All results", rows: rows() }];
     const now = appNow();
     return buildBoardColumns(rows(), groupBy(), schemaFields(), {
       formulas: formulas(),
@@ -402,7 +406,7 @@ export function SheetBoard(props: {
     if (!docNode(props.ownerId)) return;
     e.preventDefault();
     e.stopPropagation();
-    openSheetContextMenu(e.clientX, e.clientY, props.ownerId, "board", props.rowSource, groupBy(), {
+    openSheetContextMenu(e.clientX, e.clientY, props.ownerId, "board", props.rowSource, ungrouped() ? "" : groupBy(), {
       schemaPage: props.schemaPage,
       fields: formulaHintFields(),
       formulas: formulaEntries(),
@@ -431,12 +435,15 @@ export function SheetBoard(props: {
           <span>Group by</span>
           <select
             class="sheet-board-groupby"
-            value={groupBy()}
+            value={ungrouped() ? "" : groupBy()}
             aria-label="Group by"
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
-            onChange={(e) => setBoardGroupBy(props.ownerId, e.currentTarget.value as FieldId)}
+            onChange={(e) => setBoardGroupBy(props.ownerId, e.currentTarget.value as FieldId | "")}
           >
+            <Show when={props.rowSource === "query"}>
+              <option value="">No grouping</option>
+            </Show>
             <For each={groupByOptions()}>
               {(field) => <option value={field}>{fieldLabel(field)}</option>}
             </For>
@@ -484,7 +491,7 @@ export function SheetBoard(props: {
                         rowIndex={rowIndex()}
                         selected={selected(colIndex(), rowIndex())}
                         dragging={drag()?.id === row.id && drag()?.col === colIndex() && drag()?.row === rowIndex()}
-                        canMove={!isFormulaField(groupBy())}
+                        canMove={!isFormulaField(groupBy()) && !ungrouped()}
                         dragVersion={dragVersion()}
                         dragCoordinator={dragCoordinator}
                         hydrate={props.rowSource === "query"

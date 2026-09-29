@@ -530,7 +530,8 @@ function SheetMenu(props: {
     const normalized = raw.startsWith("formula.") ? `formula:${raw.slice("formula.".length)}` : raw;
     return isFieldId(normalized) ? normalized : "state";
   };
-  const doGroupBy = (field: FieldId) => {
+  const noGrouping = () => props.rowSource === "query" && props.groupBy === "";
+  const doGroupBy = (field: FieldId | "") => {
     setBoardGroupBy(props.ownerId, field);
     props.close();
   };
@@ -594,14 +595,19 @@ function SheetMenu(props: {
               {(field) => (
                 <div
                   class="ctx-item"
-                  classList={{ "ctx-active": field === boardGroupField() }}
+                  classList={{ "ctx-active": !noGrouping() && field === boardGroupField() }}
                   onClick={() => doGroupBy(field)}
                 >
-                  {field === boardGroupField() ? "✓ " : ""}
+                  {!noGrouping() && field === boardGroupField() ? "✓ " : ""}
                   {fieldLabel(field)}
                 </div>
               )}
             </For>
+            <Show when={props.rowSource === "query"}>
+              <div class="ctx-item" classList={{ "ctx-active": noGrouping() }} onClick={() => doGroupBy("")}>
+                {noGrouping() ? "✓ " : ""}No grouping
+              </div>
+            </Show>
           </div>
         </div>
         <div class="ctx-sep" />

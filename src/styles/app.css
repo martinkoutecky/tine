@@ -131,6 +131,11 @@ html[data-system-insets="native-viewport"] {
 .left-sidebar-scroll {
   height: 100%;
   overflow-y: auto;
+  /* A column, so the inner nav fills what the workspace header leaves: with
+     `min-height: 100%` on the inner alone, header + inner overflowed by the header's
+     height and the footer (conflict badge, New page) sat below the fold. */
+  display: flex;
+  flex-direction: column;
   /* GH #435: the resize strip is absolutely positioned over this element's right
      edge, where a classic (Windows) scrollbar lives, so the sidebar could be
      resized but the bar never grabbed. A transparent right border moves the
@@ -1134,7 +1139,7 @@ html[data-system-insets="native-viewport"] {
 .left-sidebar-inner {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  flex: 1 0 auto;
   padding: 12px 8px;
   font-size: 14px;
   color: var(--text-secondary);

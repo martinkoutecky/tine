@@ -19,8 +19,64 @@ import type { PageKind } from "./types";
 import { installRouterBridge } from "./routerBridge";
 import { pushToast } from "./toasts";
 import { retirePdfNavigationIntent } from "./pdfNavigation";
+import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
 import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 export type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
+
+const QUERY_PRESENTATIONS: ReadonlySet<string> = new Set(["search", "list", "table", "board"]);
+
+/** The one reader of a query presentation; null is "unreadable". */
+export function normalizeQueryPresentation(value: unknown): QueryPresentation | null {
+  return typeof value === "string" && QUERY_PRESENTATIONS.has(value) ? value as QueryPresentation : null;
+}
+
+/** What one atomic edit to the active query workspace may change. For each display
+ * or presentation field: absent keeps the route's value, an explicit `undefined`
+ * removes the override, a present value must normalize (`{}` stays an explicit clear). */
+export type QueryRoutePatch = Partial<Pick<QueryRoute,
+  "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">>;
+
+/** The pure half of `updateActiveQuery`: the next route, or null when the patch
+ * carries a value this build cannot read and the whole edit is refused. */
+export function applyQueryRoutePatch(current: QueryRoute, patch: QueryRoutePatch): QueryRoute | null {
+  const next: QueryRoute = { ...current };
+  if (Object.hasOwn(patch, "source")) {
+    if (typeof patch.source !== "string") return null;
+    next.source = patch.source;
+  }
+  if (Object.hasOwn(patch, "sourceKind")) {
+    if (patch.sourceKind !== "search" && patch.sourceKind !== "dsl") return null;
+    next.sourceKind = patch.sourceKind;
+  }
+  if (Object.hasOwn(patch, "presentation")) {
+    const presentation = normalizeQueryPresentation(patch.presentation);
+    if (!presentation) return null;
+    next.presentation = presentation;
+  }
+  for (const key of ["pageDisplay", "blockDisplay"] as const) {
+    if (!Object.hasOwn(patch, key)) continue;
+    if (patch[key] === undefined) { delete next[key]; continue; }
+    const display = normalizeQueryDisplayDraft(patch[key]);
+    if (!display) return null;
+    next[key] = display;
+  }
+  for (const key of ["pagePresentation", "blockPresentation"] as const) {
+    if (!Object.hasOwn(patch, key)) continue;
+    if (patch[key] === undefined) { delete next[key]; continue; }
+    const presentation = normalizeQueryPresentation(patch[key]);
+    if (!presentation) return null;
+    next[key] = presentation;
+  }
+  if (Object.hasOwn(patch, "pageMatchScope")) {
+    if (patch.pageMatchScope === undefined) delete next.pageMatchScope;
+    else {
+      const scope = normalizeFriendlyPageMatchScope(patch.pageMatchScope);
+      if (!scope) return null;
+      next.pageMatchScope = scope;
+    }
+  }
+  return next;
+}
 
 /** One logical page plus its optional concrete graph-relative file owner. */
 export interface BlockTarget extends PageTarget {
@@ -116,7 +172,7 @@ export interface PaneRouter {
   /** Close the reader tab, returning through history or Journals if needed. */
   closePdf(): Promise<boolean>;
   openQueryInNewTab(source: string, presentation?: QueryPresentation, foreground?: boolean): QueryRoute;
-  updateActiveQuery(patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">>): void;
+  updateActiveQuery(patch: QueryRoutePatch): void;
   replaceActiveRoute(route: Route): void;
   resetTabsToJournals(): void;
   openFile(
@@ -579,11 +635,12 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   }
 
   function updateActiveQuery(
-    patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">>
+    patch: QueryRoutePatch
   ) {
     const current = route();
     if (current.kind !== "query") return;
-    const next = { ...current, ...patch };
+    const next = applyQueryRoutePatch(current, patch);
+    if (!next) return;
     setTabs(tabs().map((tab) => {
       if (tab.id !== activeId()) return tab;
       const history = [...tab.history];
@@ -1193,7 +1250,7 @@ export function openQueryInNewTab(
 }
 
 export function updateActiveQuery(
-  patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">>
+  patch: QueryRoutePatch
 ) {
   focusedRouterInstance().updateActiveQuery(patch);
 }

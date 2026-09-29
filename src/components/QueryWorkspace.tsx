@@ -46,6 +46,7 @@ import { registerTransientLayer } from "../transientLayers";
 import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
 import { createPage, CreatePageRefusal, queryWorkspacePage } from "../document";
+import { readLatestOr, readOr } from "../resourceRead";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -588,7 +589,7 @@ function AdvancedModal(props: {
         <Show when={draftKind() === "search"} fallback={
           <div class="query-dsl-editor">
             <QueryBuilder
-              session={() => (builderSession.error === undefined ? builderSession.latest : undefined)}
+              session={() => (readLatestOr(builderSession, undefined, "query text"))}
               onChange={(next) => void applyBuilderEdit(next)}
               paneDialect="og"
               sheetAlwaysOpen
@@ -759,7 +760,9 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     }
   );
 
-  const hits = () => execution()?.hits ?? [];
+  // Failure is drawn from `execution.error` below; a read never throws into render.
+  const executed = () => readOr(execution, undefined, "search");
+  const hits = () => executed()?.hits ?? [];
   const pageHits = () => hits().filter((hit): hit is QueryPageHit => hit.entity === "page");
   const blockHits = () => hits().filter((hit): hit is Extract<QueryHit, { entity: "block" }> => hit.entity === "block");
   const boardGroups = createMemo(() => {
@@ -988,26 +991,26 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         <Show when={!!source().trim() && !execution.loading && execution.error}>
           Search failed: {execution.error instanceof Error ? execution.error.message : String(execution.error)}
         </Show>
-        <Show when={!!source().trim() && !execution.loading && !execution.error && execution()?.cancelled}>
+        <Show when={!!source().trim() && !execution.loading && !execution.error && executed()?.cancelled}>
           Search superseded by a newer request.
         </Show>
-        <Show when={!!source().trim() && !execution.loading && !execution.error && execution() && !execution()?.cancelled}>
+        <Show when={!!source().trim() && !execution.loading && !execution.error && executed() && !executed()?.cancelled}>
           {hits().length} result{hits().length === 1 ? "" : "s"}
         </Show>
       </section>
 
-      <Show when={(execution()?.diagnostics.length ?? 0) > 0}>
+      <Show when={(executed()?.diagnostics.length ?? 0) > 0}>
         <ul class="query-workspace-diagnostics" aria-label="Query diagnostics">
-          <For each={execution()?.diagnostics ?? []}>{(diagnostic) => (
+          <For each={executed()?.diagnostics ?? []}>{(diagnostic) => (
             <li role="alert" data-code={diagnostic.code}>{diagnostic.message}</li>
           )}</For>
         </ul>
       </Show>
 
-      <Show when={explain() && (execution()?.explanation.branches.length ?? 0) > 0}>
+      <Show when={explain() && (executed()?.explanation.branches.length ?? 0) > 0}>
         <section class="query-workspace-explanation" aria-label="Query explanation">
           <h2>How this query works</h2>
-          <ExplainTree nodes={execution()?.explanation.branches ?? []} />
+          <ExplainTree nodes={executed()?.explanation.branches ?? []} />
         </section>
       </Show>
 
@@ -1016,10 +1019,10 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         pending={execution.loading}
         failure={execution.error ? `Search failed: ${execution.error instanceof Error ? execution.error.message : String(execution.error)}` : null}
         families={[
-          { kind: "page", hits: pageHits().length, hasMore: !!execution()?.has_more?.pages,
+          { kind: "page", hits: pageHits().length, hasMore: !!executed()?.has_more?.pages,
             control: sectionControl("page"),
             body: <QueryPageResults hits={pageHits()} presentation={pageView().view ?? "list"} view={pageView()} surfaceId={hitSurfaceId} onOpen={openHit} /> },
-          { kind: "block", hits: blockHits().length, hasMore: !!execution()?.has_more?.blocks,
+          { kind: "block", hits: blockHits().length, hasMore: !!executed()?.has_more?.blocks,
             control: sectionControl("block"),
             body: <Switch>
         <Match when={blockView().view === "search"}>

@@ -95,7 +95,7 @@ icon:: ▦
 	- 4. What you should see: query results render as a live sheet view without copying the source blocks.
 - ### Create one yourself — board
 	- 1. On a block, type `/Board` and pick **Board** (`/Kanban` finds it too).
-	- 2. Choose the column axis with the **Group by** dropdown in the board header, or right-click and use **Group by →** to pick State, Tags, Priority, or any field.
+	- 2. Choose the column axis with the **Group by** dropdown in the board header, or right-click and use **Group by →** to pick State, Tags, Priority, or any field. On a query's board the same menu also offers **No grouping**: one column holding every result.
 	- 3. Add child bullets, or run `/Board` on a query block to board over query results.
 	- 4. What you should see: cards group into columns while staying normal outline blocks underneath.
 	- 5. Under the hood: the dropdown just writes `tine.view:: board` and `tine.group-by:: state` (or your chosen axis) for you.

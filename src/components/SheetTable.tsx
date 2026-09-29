@@ -5,6 +5,7 @@ import { InlineText } from "../render/inline";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { editorOffsetFromRenderedRange } from "../render/spans";
 import { isBuiltinHidden } from "../editor/properties";
+import { isLegacyBareColumnList } from "../editor/queryViewProperties";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { editingId, editingOwner } from "../editorController";
 import { SheetCellContext, type SheetCellCtx } from "../sheet/context";
@@ -112,14 +113,19 @@ export function SheetTable(props: {
     const owner = docNode(props.ownerId);
     return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
   });
+  // A pre-split bare column list on a QUERY block is the column selection, not a
+  // declared schema: reading it as one marked every column stray and let the next
+  // schema write replace the list (master P5A). It reads as an absent schema.
+  const isSchemaValue = (value: string | null): value is string =>
+    value !== null && (props.rowSource !== "query" || !isLegacyBareColumnList(value));
   const schemaHome = createMemo<SchemaHome | null>(() => {
     if (docNode(props.ownerId)) {
       const value = blockProperty(props.ownerId, "tine.fields");
-      if (value !== null) return { kind: "block", id: props.ownerId, value };
+      if (isSchemaValue(value)) return { kind: "block", id: props.ownerId, value };
     }
     if (props.schemaPage) {
       const value = readPageProperty(props.schemaPage, "tine.fields");
-      if (value !== null) return { kind: "page", name: props.schemaPage, value };
+      if (isSchemaValue(value)) return { kind: "page", name: props.schemaPage, value };
     }
     return null;
   });
@@ -395,8 +401,20 @@ export function SheetTable(props: {
     const home = schemaHome() ?? createSchemaHome();
     if (!home || !schemaWriteAllowed()) return;
     const value = serializeFields(next);
-    if (home.kind === "block") setBlockProperty(home.id, "tine.fields", value || null);
-    else setPageProperty(home.name, "tine.fields", value || null);
+    // Declaring a schema writes `tine.fields`, which on a query block may still
+    // hold the note's column list. Rescue it into `tine.columns` in the same undo
+    // unit, only when `tine.columns` is absent (a present value always wins).
+    const legacy = props.rowSource === "query" && docNode(props.ownerId)
+      && blockProperty(props.ownerId, "tine.columns") === null
+      && isLegacyBareColumnList(blockProperty(props.ownerId, "tine.fields"));
+    const columns = legacy ? props.queryDisplay?.view.columns : undefined;
+    const pages = [home.kind === "block" ? docNode(home.id)?.page : home.name, docNode(props.ownerId)?.page]
+      .filter((name, i, all): name is string => !!name && all.indexOf(name) === i);
+    withUndoUnit("sheet:schema-fields", pages, () => {
+      if (columns && columns.length > 0) setBlockProperty(props.ownerId, "tine.columns", columns.join(";"));
+      if (home.kind === "block") setBlockProperty(home.id, "tine.fields", value || null);
+      else setPageProperty(home.name, "tine.fields", value || null);
+    });
   };
   const formulaWriteAllowed = (home: FormulaHome | null) => {
     if (!home) return false;

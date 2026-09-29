@@ -21,7 +21,7 @@ export function GraphPublish(): JSX.Element {
     setBusy(true);
     setMessage("Exporting…");
     try {
-      const result = await writeOwned(owner, backend().publishLive(destination, name().trim() || "Tine graph", allPages(), await exportSheets()));
+      const result = await writeOwned(owner, backend().publishLive(destination, name().trim() || "Tine graph", allPages(), await exportSheets(undefined, { kind: "live", allPages: allPages() })));
       if (result.kind === "current") setMessage(`Exported ${result.value.pages} pages to ${result.value.path}`);
     } catch (error) {
       if (owner()) setMessage(`Export failed: ${String((error as Error)?.message ?? error)}`);

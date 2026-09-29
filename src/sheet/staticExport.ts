@@ -9,7 +9,7 @@ import { appNow } from "../journal";
 import { facetsFromDto } from "../render/facets";
 import { visibleBody } from "../render/block";
 import { blockBackgroundColor } from "../blockColors";
-import type { BlockDto } from "../types";
+import type { BlockDto, QueryPublicationRequest } from "../types";
 import { aggregate, AGGREGATE_LABELS, collectAggregateColumns } from "./aggregate";
 import { boardCardChips, boardGroupField, boardRowTitle, buildBoardColumns } from "./boardColumns";
 import { cellView, displayFieldValue, type CellView } from "./cellPresentation";
@@ -26,8 +26,16 @@ import {
 } from "./formulaEval";
 import { formulaFieldId, formulaNameFromField, formulasOf, mergeFormulas } from "./formulaFields";
 import { fieldIdsForRecords, tableFieldOrder, tableRowTitle } from "./tableFields";
+import { queryColumnFieldId } from "./tablePresentation";
+import type { ViewSettings } from "../editor/queryIr";
 
 /** What the Rust publisher sends per candidate sheet block. */
+/** Which pages the export consuming a sheet's inputs publishes; a query sheet's
+ * rows on any other page never reach the evaluator. No scope (print) = no boundary. */
+export type SheetScope =
+  | { kind: "live"; allPages: boolean }
+  | { kind: "query"; request: QueryPublicationRequest };
+
 export interface SheetInput {
   page: string;
   /** Child-index path from the page root to the owner block. */
@@ -39,6 +47,20 @@ export interface SheetInput {
   rows: BlockDto[];
   /** Children Rust left out to bound the export. */
   omitted: number;
+  /** Present when the block's whole body is one `{{query}}`: its result rows are the sheet's rows. */
+  query?: QuerySource;
+}
+
+/** The rows a query-backed sheet presents, as the live query block hands them to its sheet. */
+export interface QuerySource {
+  /** Echoed back so Rust can refuse a result that changed since. */
+  fp: string;
+  /** The query's own `as table|board`, which beats the block's `tine.view`. */
+  presentation: "list" | "table" | "board" | "search" | null;
+  view: ViewSettings;
+  /** The page of each row, parallel to `rows`. */
+  pages: string[];
+  rows: BlockDto[];
 }
 
 export interface Aggregated { label: string; text: string }
@@ -67,7 +89,7 @@ export type SheetBody =
   | { view: "grid"; cols: number; header: boolean; footer: (Aggregated | null)[] | null; omitted: number }
   | { view: "error"; message: string };
 
-export type SheetExport = { page: string; path: number[]; fp: string } & SheetBody;
+export type SheetExport = { page: string; path: number[]; fp: string; query?: boolean } & SheetBody;
 
 export interface ExportEnv {
   now: Date;
@@ -84,12 +106,17 @@ function tableBody(input: SheetInput, cfg: ReturnType<typeof sheetConfig>, rows:
   const kept = filtered.rows;
   const { results } = computeFormulaResults(kept, formulas, env.now);
   const types = new Map<FieldId, FieldType>(cfg.fields.map((s) => [s.field, s.type] as const));
-  const fields = tableFieldOrder(
-    fieldIdsForRecords(kept, false),
-    [],
-    cfg.fields.map((s) => s.field),
-    [...formulas.keys()].map(formulaFieldId)
-  );
+  // A query sheet shows the query's own `columns` when it names any; otherwise
+  // the observed fields, with the page column (the live SheetTable's `fields`).
+  const selected = input.query?.view.columns;
+  const fields = selected?.length
+    ? selected.map(queryColumnFieldId)
+    : tableFieldOrder(
+        fieldIdsForRecords(kept, !!input.query),
+        [],
+        cfg.fields.map((s) => s.field),
+        [...formulas.keys()].map(formulaFieldId)
+      );
   const formulaValue = (row: FormulaEvalRow, field: FieldId) => {
     const name = formulaNameFromField(field);
     return name ? results.get(formulaResultKey(row, name)) ?? null : null;
@@ -169,18 +196,27 @@ function gridBody(input: SheetInput, cfg: ReturnType<typeof sheetConfig>): Sheet
  *  Never throws: a failing sheet exports as `{view: "error"}`. */
 export function computeSheetExport(input: SheetInput, env: ExportEnv): SheetExport | null {
   try {
-    const cfg = childrenSheetConfig(facetsFromDto(input.owner).properties, input.owner.raw);
-    if (!cfg.view) return null;
-    const rows = input.rows.map((dto, ix) => detach(input.page, dto, ix));
-    const body = cfg.view === "table"
+    const query = input.query;
+    const cfg = query
+      ? sheetConfig(facetsFromDto(input.owner).properties)
+      : childrenSheetConfig(facetsFromDto(input.owner).properties, input.owner.raw);
+    // A query block's face is the query's own presentation, else its `tine.view`
+    // (Macro.tsx `blockFace`); only tables and boards present query rows.
+    const view = query ? (query.presentation ?? cfg.view) : cfg.view;
+    if (query && view !== "table" && view !== "board") return null;
+    if (!view) return null;
+    const rows = query
+      ? query.rows.map((dto, ix) => detach(query.pages[ix] ?? input.page, dto, ix))
+      : input.rows.map((dto, ix) => detach(input.page, dto, ix));
+    const body = view === "table"
       ? tableBody(input, cfg, rows, env)
-      : cfg.view === "board"
+      : view === "board"
         ? boardBody(input, cfg, rows, env)
         : gridBody(input, cfg);
-    return { page: input.page, path: input.path, fp: input.fp, ...body };
+    return { page: input.page, path: input.path, fp: query ? query.fp : input.fp, ...(query ? { query: true } : {}), ...body };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { page: input.page, path: input.path, fp: input.fp, view: "error", message: message.slice(0, 300) };
+    return { page: input.page, path: input.path, fp: input.query ? input.query.fp : input.fp, ...(input.query ? { query: true } : {}), view: "error", message: message.slice(0, 300) };
   }
 }
 

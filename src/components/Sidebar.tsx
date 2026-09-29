@@ -275,7 +275,7 @@ export function Sidebar(props: {
       </div>
 
       <div class="sidebar-footer">
-        <ConflictQueueBadge />
+        <ConflictQueueBadge onActiveNavigationComplete={props.onActiveNavigationComplete} />
         <button class="new-page-btn" onClick={() => openSwitcher()}>+ New page</button>
       </div>
     </div>
@@ -461,11 +461,13 @@ export function GraphSwitcher(props: {
 // interruption: it waits here, never opens a modal, and survives restarts
 // because the queue is derived from disk. It opens the Conflicts overview.
 // A copy whose page is gone counts too, or nothing would point at it.
-export function ConflictQueueBadge(): JSX.Element {
+// On a phone the sidebar is a drawer over the page: like every other navigation
+// row, opening the overview must close it, or the overview opens out of sight.
+export function ConflictQueueBadge(props: { onActiveNavigationComplete?: () => void }): JSX.Element {
   const count = pendingConflictCount;
   return (
     <Show when={count()}>
-      <button class="conflict-queue-badge" title="Review the pages that need a decision" onClick={() => openConflicts()}>
+      <button class="conflict-queue-badge" title="Review the pages that need a decision" onClick={() => { openConflicts(); props.onActiveNavigationComplete?.(); }}>
         <span class="conflict-queue-dot" aria-hidden="true" />
         {count()} conflict{count() === 1 ? "" : "s"}
       </button>

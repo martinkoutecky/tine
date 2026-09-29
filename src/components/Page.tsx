@@ -33,6 +33,8 @@ import { isPropertiesOnly, splitPagePreamble } from "../editor/properties";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
 import { PageConflictResolution } from "./ConflictResolution";
+import { readOr } from "../resourceRead";
+import { ResourceFailure } from "./ResourceFailure";
 import { conflictForPage } from "../conflictQueue";
 import { liveConflictForPage } from "../liveConflicts";
 import { ExternalChangeBar } from "./ExternalChangeBar";
@@ -1148,7 +1150,7 @@ export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
     () => tagTableGroups(props.page.name, owners)
   );
   const enabled = () => tagTableEnabled(props.page.name);
-  const visible = () => props.page.kind === "page" && (enabled() || taggedCount(groups()?.groups) > 0);
+  const visible = () => props.page.kind === "page" && (enabled() || taggedCount(readOr(groups, undefined, "tag table toggle")?.groups) > 0);
   return (
     <Show when={visible()}>
       <button
@@ -1165,10 +1167,14 @@ export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
 
 export function TagPageTable(props: { pageName: string }): JSX.Element {
   const owners = {};
-  const [groups] = createResource(
+  const [groupsResource, { refetch }] = createResource(
     () => `${props.pageName}\0${dataRev()}`,
     () => tagTableGroups(props.pageName, owners)
   );
+  // A rejected read (tagTableGroups reports its own failures as `error`, so this
+  // is the unanticipated case) must not throw into render: readOr, and the
+  // failure row because an empty table would claim "no tagged blocks".
+  const answer = () => readOr(groupsResource, undefined, "tag table");
   const addRow = async () => {
     const ok = await appendToTodayJournal(`${tagRef(props.pageName)} `);
     if (!ok) return;
@@ -1178,11 +1184,12 @@ export function TagPageTable(props: { pageName: string }): JSX.Element {
   };
   return (
     <div class="tag-page-table">
-      <Show when={!groups()?.error} fallback={<div role="alert">Tag table couldn't load: {groups()?.error}</div>}>
+      <ResourceFailure of={groupsResource} what="the tag table" onRetry={() => void refetch()} />
+      <Show when={!answer()?.error} fallback={<div role="alert">Tag table couldn't load: {answer()?.error}</div>}>
         <SheetTable
           ownerId={`tag-page:${encodeURIComponent(props.pageName)}`}
           rowSource="query"
-          groups={groups()?.groups ?? []}
+          groups={answer()?.groups ?? []}
           addRow={addRow}
           addRowLabel={`Add ${tagRef(props.pageName)} row`}
           schemaPage={props.pageName}

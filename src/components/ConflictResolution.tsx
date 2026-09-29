@@ -30,6 +30,7 @@ import { ConflictFileRow } from "./JournalConflictFileRow";
 import { applyGraphChange, conflictReason, flushPage, installLiveResolution, isConflicted, isDirty, isSaving, liveConflictDraft, node, sameLiveDraft } from "../document";
 import { dismissEarlierDraft } from "../draftStore";
 import { editingId } from "../editorController";
+import { readOr } from "../resourceRead";
 import {
   DiffRowView,
   collectRows,
@@ -176,10 +177,13 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
 
   // A live conflict re-reviews when a newer refused save observed another disk
   // revision; every source re-reviews after a refused Apply.
-  const [read, { refetch }] = createResource(
+  const [readResource, { refetch }] = createResource(
     () => `${conflict().id}\0${conflict().source === "live-save" ? conflictReason(conflict().page_name)?.observedRev ?? "" : ""}`,
     () => readDiff(conflict(), () => mounted),
   );
+  // readOr: a rejected read degrades to "no comparison" (the panel's own
+  // "Couldn't read this conflict." row below) instead of throwing into render.
+  const read = () => readOr(readResource, undefined, "conflict comparison");
   const diffValue = (): SyncConflictDiff | null => read()?.diff ?? null;
 
   // Row decisions belong to ONE exact pair of texts: every fresh alignment
@@ -225,7 +229,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
 
   const apply = async () => {
     const current = diffValue();
-    if (!current || read.loading || busy()) return;
+    if (!current || readResource.loading || busy()) return;
     // Plain snapshots only: resolving retires the queue object, which disposes
     // the <Show> that owns `props.conflict`.
     const c = conflict();
@@ -431,7 +435,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         when={diffValue()}
         fallback={
           <div class="page-conflict-empty">
-            {read.loading
+            {readResource.loading
               ? "Reading both versions…"
               : conflict().source === "duplicate-journal" && !read()?.error
                 ? "These two files can’t be folded together: one is Markdown and the other Org. Use the file actions above."
@@ -530,7 +534,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
                     ? "The other file moves to the recoverable trash once this is applied, leaving the day one file."
                     : "The copy moves to the recoverable trash once this is applied."}
               </span>
-              <button class="settings-btn settings-btn-primary" disabled={busy() || read.loading} onClick={() => void apply()}>
+              <button class="settings-btn settings-btn-primary" disabled={busy() || readResource.loading} onClick={() => void apply()}>
                 {busy() ? "Applying…" : "Apply resolution"}
               </button>
             </div>

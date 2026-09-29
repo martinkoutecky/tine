@@ -110,6 +110,8 @@ fn run(graph: &WholeGraph, query: &tine_core::query::ir::Query, view: &ViewSetti
 }
 
 struct Probe {
+    /// Whether the registry the edit left behind has a row for `rare`.
+    rare_row: bool,
     save_bytes: u64,
     save: Counts,
     query_bytes: u64,
@@ -117,6 +119,12 @@ struct Probe {
 }
 
 fn probe(pages: usize, blocks: usize, memo: bool) -> Probe {
+    probe_edit(pages, blocks, memo, ["settle", "after"])
+}
+
+/// `edits` are the two texts written to the first block of `Page0000`: the
+/// first settles one-time work, the second is measured.
+fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Probe {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-query-unit-cost-{}-{}",
@@ -143,7 +151,7 @@ fn probe(pages: usize, blocks: usize, memo: bool) -> Probe {
     warm(&store.whole_graph().unwrap(), memo);
     // A first edit settles one-time work (the seed's first patch), so the
     // measured edit is the steady state.
-    for text in ["settle", "after"] {
+    for text in edits {
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = text.into();
@@ -158,10 +166,15 @@ fn probe(pages: usize, blocks: usize, memo: bool) -> Probe {
         assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
         let graph = store.whole_graph().unwrap();
         let ((), query_bytes, query) = measure(|| after_edit(&graph));
-        if text == "after" {
+        if text == edits[1] {
+            let rare_row = match graph.query_ir(IrRequest::Registry) {
+                Ok(IrAnswer::Registry(registry)) => registry.row("rare").is_some(),
+                _ => panic!("registry"),
+            };
             store.close();
             let _ = fs::remove_dir_all(&root);
             return Probe {
+                rare_row,
                 save_bytes,
                 save,
                 query_bytes,
@@ -228,6 +241,46 @@ fn a_query_side_edit_cost_does_not_grow_with_the_graph() {
         assert!(
             large.query_bytes <= small.query_bytes * 2 + 64 * 1024,
             "I-25: query-side bytes per edit grew with the graph: {} (20 pages) → {} (10k pages)",
+            small.query_bytes,
+            large.query_bytes
+        );
+    }
+}
+
+/// A property edit moves the registry, and the registry patch is per key:
+/// changing a key held by one page reads that page, not the graph (the same
+/// probe on a text edit reads no page at all).
+#[test]
+fn a_property_edit_patches_the_registry_per_page_not_per_graph() {
+    let _case = CASE_LOCK.lock().unwrap();
+    for blocks in [1, 60] {
+        let edits = ["before\nrare:: v1", "before\nrare:: v2"];
+        let small = probe_edit(20, blocks, true, edits);
+        let large = probe_edit(10_000, blocks, true, edits);
+        let text = probe(10_000, blocks, true);
+        for (pages, p) in [(20, &small), (10_000, &large), (10_000, &text)] {
+            eprintln!(
+                "I-25 registry patch: blocks={blocks} pages={pages} registry_pages_read={} \
+                 query_bytes={}",
+                p.save.query_registry_pages_read + p.query.query_registry_pages_read,
+                p.query_bytes,
+            );
+        }
+        assert!(
+            small.rare_row && large.rare_row,
+            "the patched registry lost the edited key"
+        );
+        let read = |p: &Probe| p.save.query_registry_pages_read + p.query.query_registry_pages_read;
+        assert!(
+            read(&large) <= 2,
+            "I-25: a rare-property edit read {} pages' rows for the registry on a 10k graph; \
+             exemplar query/index.rs QueryIndex::patched_registry (per-key patch)",
+            read(&large)
+        );
+        assert_eq!(read(&text), 0, "a text-only edit read registry rows");
+        assert!(
+            large.query_bytes <= small.query_bytes * 2 + 64 * 1024,
+            "I-25: registry patch bytes grew with the graph: {} (20 pages) -> {} (10k pages)",
             small.query_bytes,
             large.query_bytes
         );

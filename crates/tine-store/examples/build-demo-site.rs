@@ -50,7 +50,7 @@ fn main() {
     create_demo_graph(temp.path()).expect("scaffold Guide graph");
     let (store, _, _) = Store::open(temp.path(), Default::default()).expect("open Guide graph");
     if let Some(dump) = dump {
-        let inputs = sheet_export_inputs(&store, None).expect("collect sheet inputs");
+        let inputs = sheet_export_inputs(&store, None, None).expect("collect sheet inputs");
         fs::write(
             &dump,
             serde_json::to_vec(&inputs).expect("encode sheet inputs"),

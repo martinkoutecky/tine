@@ -10,6 +10,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **A query shown as a table or board exports as that table or board** (og E, 22c open item).
+  A block whose whole body is one `{{query …}}` with `tine.view:: table` or `board` (a query `as table`/`as board` may override it)
+  now publishes with the query's own columns and rows, on the page each row came from, computed by the
+  app's own sheet code; a result on a page the export does not publish is left out (and never counted), and if the results changed while the
+  export was prepared it stays the usual result list. The command-line export still writes the outline.
+- **A TQL query with a page reference after a comma saves as a macro** (og E).
+  A form such as `any(children, [[a]])` used to be refused when Tine wrote it into a
+  `{{tine-query …}}` block, because the document parser read the comma-separated `[[a]])` as a
+  page reference; the saved macro now spells that operand in parentheses, and it reads back as the same query.
 - **Verify a synchronized graph** (master 749bfb2b1, og-D). Settings → Help &
   diagnostics can now fingerprint the exact bytes of your Markdown and Org files
   and compare them with the report from another device, naming every file that
@@ -101,6 +110,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   opening, renaming and linking agree on the page's name.
 - **Android follows external file changes with native events by default**
   (master, og-T), like every other platform; polling stays a setting.
+- **The conflict badge is always reachable, and closes the phone drawer** (og-F).
+  The sidebar's footer (the conflict badge and New page) sat one header-height below
+  the bottom of a short window, so a pending conflict could be invisible until you
+  scrolled the sidebar. It now fits, and on a phone tapping the badge closes the
+  navigation drawer so the Conflicts page opens in view instead of behind it.
+- **A failing tag table or conflict comparison no longer blanks the page** (og-F).
+  If reading them fails, the page shows a retryable error in that panel instead of
+  throwing while it renders.
+- **Query board and table settings survive and apply** (master P5A/P5B, og E).
+  A board now groups by the query's own Display grouping (it ignored it before), and its Group by
+  control changes that setting. A `tine.fields` list of column names on a query block is no longer
+  mistaken for a typed schema: its columns are not marked stray, and declaring a schema moves the
+  list to `tine.columns` in the same undo step. A saved query tab or window state with one malformed
+  display setting keeps the tab and drops only that setting. "No grouping" on a query board now shows one column of every result
+  instead of falling back to the task-state columns.
+
 - **Red error messages stay until you close them, and offer Copy.** Every error
   is also noted in the privacy-safe diagnostic report (not its text) and, with
   `TINE_DEBUG=1`, written in full to the debug log (og OG-TOAST).
