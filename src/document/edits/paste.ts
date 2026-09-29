@@ -8,6 +8,7 @@ import { graphEpoch, graphMeta } from "../../graphSession";
 import { ownedWhen, readOwned } from "../../owned";
 import { unwrap, produce } from "solid-js/store";
 import { blockWritable } from "./properties";
+import { outlineFits } from "./blocks";
 import { existingBlockId, UUID_RE } from "./identity";
 import { pushUndo } from "../history";
 import { backend } from "../../backend";
@@ -174,6 +175,12 @@ function insertClipboardBlocksSync(
 ): string | null {
   const target = doc.byId[targetId];
   if (!blocks.length || !target || !blockWritable(targetId)) return null;
+  // Same shared ceiling as every other outline inserter (I-22): a deeper page
+  // would be refused by save/page admission after the edit appeared to land.
+  if (!outlineFits(targetId, blocks)) {
+    pushToast("Pasted outline is too deep", "error");
+    return null;
+  }
   if (warnCopy) pushToast("Pasted as a copy; references to these blocks will not follow.", "error");
   const targetFormat = formatForPage(target.page);
   const prepared = blocks.map(function prepare(block): {

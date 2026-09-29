@@ -206,7 +206,16 @@ function captureInstances(names: readonly string[]): Record<string, number> {
 /** Peek, never the lazily-activating reader: minting a generation here would
  *  pass the check by inventing the identity it compares. */
 function staleInstances(e: UndoEntry): string[] {
-  return Object.keys(e.instances).filter((name) => pageInstanceGenerations.get(name) !== e.instances[name]);
+  const stale = Object.keys(e.instances).filter((name) => pageInstanceGenerations.get(name) !== e.instances[name]);
+  // A typing entry is stamped with the block's page at record time. If the block
+  // now lives on another page (a cross-page move whose own entry was dropped by
+  // an external reload), replaying would edit an instance the entry never
+  // described and dirty the wrong page, so the edit would never be saved.
+  if (e.kind === "raw" && !stale.includes(e.page)) {
+    const node = doc.byId[e.id];
+    if (node && node.page !== e.page) stale.push(e.page);
+  }
+  return stale;
 }
 
 /** Drop the popped stale entry's page histories and say so: silence would read
