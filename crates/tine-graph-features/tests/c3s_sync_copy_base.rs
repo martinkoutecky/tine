@@ -46,7 +46,10 @@ fn every_provider_suffix_is_parsed_from_the_end_of_the_stem() {
             Some("Meeting (draft)"),
         ),
         ("Report (conflicted copy 2026-08-01)", Some("Report")),
-        ("Report (Alice's conflicted copy 2026-08-01)", Some("Report")),
+        (
+            "Report (Alice's conflicted copy 2026-08-01)",
+            Some("Report"),
+        ),
         // Real page names that only resemble a Dropbox copy stay real pages.
         ("Meeting (conflicted copy notes) extra", None),
         ("My (draft) page", None),
@@ -90,7 +93,10 @@ fn a_copy_of_a_parenthesised_page_is_listed_against_it_and_never_merged_elsewher
         &[],
         "union",
     );
-    assert!(refused.is_err(), "merged a copy into a page it does not shadow");
+    assert!(
+        refused.is_err(),
+        "merged a copy into a page it does not shadow"
+    );
     assert_eq!(
         fs::read_to_string(root.join("pages/Meeting.md")).unwrap(),
         "- unrelated meeting\n"
