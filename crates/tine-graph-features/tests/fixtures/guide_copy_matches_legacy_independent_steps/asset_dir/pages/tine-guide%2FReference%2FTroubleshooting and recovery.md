@@ -53,6 +53,11 @@ icon:: 🛟
 	- 2. Smaller pieces degrade quietly rather than saying anything: a code block that could not be highlighted shows as plain text, a formula that could not be typeset shows its LaTeX, a preview that could not load shows nothing in its place. These are display-only, and reopening the page tries them again.
 	- 3. If it keeps failing, create a diagnostic report as described below.
 	- 4. What you should see: the rest of the window is unaffected, and nothing on disk changes.
+- ## A red error message appears
+	- Meaning: something actually went wrong — a save, a read, or a check Tine could not finish. A red message stays on screen until you close it, so there is time to read it; the brief states Tine passes through while it starts or opens a graph never show one.
+	- 1. Choose **Copy** on the message to copy its full text for a report.
+	- 2. Close it with **×** once you have what you need.
+	- 3. What you should see: the message stays until you close it; if the same error happens again it shows a count (×2, ×3) instead of a second message. The privacy-safe diagnostic report below notes that it appeared (not its text), and with `TINE_DEBUG=1` its full text is also in the detailed debug log.
 - ## Create a privacy-safe diagnostic report
 	- 1. Open Settings → **Help & diagnostics** and choose **Create diagnostic report**. Tine previews its bounded flight recorder for the current and previous run: fixed operation names, outcomes, timings, counts, platform, version, and build information.
 	- 2. Review the report, then choose **Copy report** (or **Save report…** on desktop). Nothing is uploaded automatically. The recorder excludes graph content, paths, page titles, queries, URLs, credentials, and the opt-in detailed debug log.

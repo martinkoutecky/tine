@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { buildPersistedSession, flushSession, parsePersistedSession, restoreSession, type PersistedSession } from "./session";
+import { buildPersistedSession, flushSession, parsePersistedSession, restoreSession, scheduleSessionSave, type PersistedSession } from "./session";
 import { setToasts, toasts } from "./toasts";
 import { backend } from "./backend";
 import { resetStore } from "./document";
@@ -38,6 +38,18 @@ describe("persisted split session", () => {
       save.mockResolvedValue();
       toasts()[0].action?.run();
       await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(3));
+    } finally { setToasts([]); vi.restoreAllMocks(); }
+  });
+  it("a window with no graph bound yet writes no session and raises no error toast (OG-TOAST)", async () => {
+    setToasts([]);
+    vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(0);
+    const save = vi.spyOn(backend(), "saveSession").mockRejectedValue(new Error("no graph loaded for window main"));
+    try {
+      scheduleSessionSave();
+      await flushSession();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(save).not.toHaveBeenCalled();
+      expect(toasts()).toEqual([]);
     } finally { setToasts([]); vi.restoreAllMocks(); }
   });
   it("does not apply a session read from an old graph after rebinding", async () => {

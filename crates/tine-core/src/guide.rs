@@ -686,6 +686,8 @@ mod og_20d_guide_tests {
             "A panel says it could not load something",
             "Couldn’t load references to this block",
             "Couldn’t load search results",
+            "A red error message appears",
+            "stays on screen until you close it",
         ] {
             assert!(
                 recovery.contains(detail),
