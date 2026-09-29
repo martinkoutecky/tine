@@ -413,10 +413,17 @@ await withApp(0, async (browser) => {
   await dialog.waitForExist({ timeout: 5_000 });
   if (!(await dialog.getText()).includes("All of these words")) throw new Error("friendly advanced fields are missing");
   // The visual query sheet's actions menu is a semantic child of Advanced.
-  // A pointer press back on the modal dismisses that child while preserving
-  // the draft/modal. Escape then closes the parent.
+  // Escape first dismisses the child without closing the parent. A pointer
+  // press back on the modal then proves outside dismissal preserves it too.
   await browser.$(".query-switch-to-dsl").click();
   await browser.$(".query-advanced-modal .qs-sheet").waitForExist({ timeout: 5_000 });
+  await browser.$(".query-advanced-modal .qs-row-menu").click();
+  await browser.$(".qs-menu").waitForExist({ timeout: 5_000 });
+  await browser.keys(["Escape"]);
+  await browser.$(".qs-menu").waitForExist({ reverse: true, timeout: 5_000 });
+  if (!(await browser.$(".query-advanced-modal").isExisting())) {
+    throw new Error("Query sheet child Escape also closed its Advanced parent");
+  }
   await browser.$(".query-advanced-modal .qs-row-menu").click();
   await browser.$(".qs-menu").waitForExist({ timeout: 5_000 });
   await browser.execute(() => document.querySelector(".query-advanced-header")?.dispatchEvent(
