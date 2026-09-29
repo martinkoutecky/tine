@@ -20,7 +20,7 @@ const ORIGINAL_SWALLOW_KEYS = new Set(`
   src/components/AboutTab.tsx:17 src/components/AudioOverlay.tsx:117 src/components/AudioOverlay.tsx:154
   src/components/Block.tsx:2985 src/components/HelpShortcuts.tsx:51 src/components/LinkedReferences.tsx:44
   src/components/PdfViewer.tsx:492 src/components/PdfViewer.tsx:993 src/components/PdfViewer.tsx:1058
-  src/capture.tsx:264 src/capture.tsx:572
+  src/capture.tsx:265 src/capture.tsx:573
   
   src/components/UnlinkedReferences.tsx:39 src/components/WindowChrome.tsx:24
   src/debug.ts:14
@@ -33,8 +33,8 @@ const ALLOWED_SWALLOWS: Record<string, string> = {
   "src/assetCache.ts:130": "best-effort stale blob URL cleanup",
   "src/assetCache.ts:212": "best-effort stale blob URL cleanup",
   "src/assetCache.ts:264": "best-effort stale blob URL cleanup",
-  "src/capture.tsx:264": "legacy best-effort operation needs an error-family audit",
-  "src/capture.tsx:572": "legacy error-prose branch; replace with fixed error family",
+  "src/capture.tsx:265": "legacy best-effort operation needs an error-family audit",
+  "src/capture.tsx:573": "legacy error-prose branch; replace with fixed error family",
   "src/components/AboutTab.tsx:17": "legacy best-effort operation needs an error-family audit",
   "src/components/AudioOverlay.tsx:117": "legacy best-effort operation needs an error-family audit",
   "src/components/AudioOverlay.tsx:154": "legacy best-effort operation needs an error-family audit",
