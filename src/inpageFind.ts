@@ -376,11 +376,52 @@ export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boo
     if (!current()) return false;
     const el = inPageFindBlockElement(match.blockId);
     if (el) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      if (!centerInPageFindOccurrence(el, match.ordinalInBlock)) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
       return true;
     }
   }
   return false;
+}
+
+/** Nearest ancestor that scrolls vertically (the pane content area), or null. */
+function nearestVerticalScroller(el: HTMLElement): HTMLElement | null {
+  for (let cur = el.parentElement; cur; cur = cur.parentElement) {
+    const overflowY = window.getComputedStyle(cur).overflowY;
+    // `overflow-y: auto` on an element that does not actually overflow scrolls
+    // nowhere. Accepting one would make the adjustment below a no-op while
+    // still reporting success, so the caller would skip its block-level
+    // fallback and the occurrence would stay off-screen — worse than before.
+    const scrolls = cur.scrollHeight > cur.clientHeight;
+    if ((overflowY === "auto" || overflowY === "scroll") && scrolls) return cur;
+  }
+  return null;
+}
+
+/** GH #253: center the ACTIVE OCCURRENCE, not just its block. A block-level
+ * scrollIntoView leaves occurrences off-screen when the block is taller than
+ * the viewport. Measures the occurrence's Range rect (the same ordinal the
+ * highlight layer uses) and adjusts the pane scroller. Returns false when no
+ * precise rect can be resolved (e.g. the block is in edit mode; jsdom) so the
+ * caller falls back to the coarse block scroll. */
+function centerInPageFindOccurrence(blockEl: HTMLElement, ordinalInBlock: number): boolean {
+  const root = blockEl.querySelector(".block-content") as HTMLElement | null;
+  const query = state.query().trim();
+  if (!root || !query) return false;
+  const range = textRanges(root, query)[ordinalInBlock];
+  if (!range || typeof range.getClientRects !== "function") return false;
+  const rect = Array.from(range.getClientRects()).find((r) => r.width > 0 || r.height > 0);
+  if (!rect) return false;
+  const occurrenceCenter = rect.top + rect.height / 2;
+  const scroller = nearestVerticalScroller(blockEl);
+  if (scroller) {
+    const scRect = scroller.getBoundingClientRect();
+    scroller.scrollTop += occurrenceCenter - (scRect.top + scroller.clientHeight / 2);
+  } else {
+    window.scrollBy({ top: occurrenceCenter - window.innerHeight / 2 });
+  }
+  return true;
 }
 
 interface TextPart {

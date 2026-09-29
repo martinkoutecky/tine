@@ -468,6 +468,13 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn in_page_find_guide_says_the_match_itself_is_revealed() {
+        // GH #253 (master 46a5290a2): Find scrolls to the occurrence, not its block.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("the match itself is scrolled into view"));
+    }
+
+    #[test]
     fn empty_html_export_names_the_public_page_rule_in_the_guide() {
         // GH #560 (master 350efef1f): a zero-page export is explained, not silent.
         let files = include_str!("templates/files-external-edits-backups.md");

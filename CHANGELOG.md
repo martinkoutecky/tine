@@ -95,6 +95,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Ctrl+F scrolls to the exact occurrence, not just its block** (GH #253, master
+  46a5290a2, og H). In a block taller than the window, in-page find used to center
+  only the block, leaving the match off-screen; it now centers the active occurrence
+  in the pane, falling back to the block while it is being edited.
 - **An HTML export of 0 pages says why** (GH #560, master 350efef1f, og H). With no
   `public:: true` page (and "Include every page" unticked), Settings → Graph →
   **Export HTML and read-only app…** now reports "only pages with `public:: true` are
