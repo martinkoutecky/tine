@@ -6,7 +6,8 @@ import { registerTransientLayer } from "../transientLayers";
 
 /** The inline Display panel edits one ViewSettings value. The host owns the
  * guarded write, so a field choice and the header switcher share one save path.
- * Registry reads are provided by the open QueryBuilder. */
+ * Opening is reported to the host so it can request the shared registry only
+ * while a picker may need it; closing requires no graph work. */
 export function QueryDisplay(props: {
   view: () => ViewSettings;
   apply: (view: ViewSettings) => void | Promise<boolean>;
@@ -14,8 +15,10 @@ export function QueryDisplay(props: {
   rowKind: () => "block" | "page";
   formulas?: () => readonly string[];
   parentTransientId?: string;
+  onOpenChange?: (open: boolean) => void;
 }): JSX.Element {
   const [open, setOpen] = createSignal(false);
+  createEffect(() => props.onOpenChange?.(open()));
   const [picker, setPicker] = createSignal<DisplaySlot | null>(null);
   const [sampleText, setSampleText] = createSignal("");
   const id = `query-display-${createUniqueId()}`;

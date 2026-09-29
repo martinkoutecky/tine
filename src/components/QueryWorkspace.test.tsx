@@ -127,6 +127,15 @@ describe("materializeQueryWorkspace", () => {
     expect(result.page.blocks[0].raw).toBe('{{query (search "alpha")}}\ntine.view:: search\ntine.page-match-scope:: content');
   });
 
+  it("materializes independent Display settings through the scoped writer", async () => {
+    const result = await materializeQueryWorkspace({ title: "Search table", sourceKind: "search", source: "alpha",
+      presentation: "search", pagePresentation: "table", blockPresentation: "list",
+      pageDisplay: { columns: ["prop:owner"] }, routeId: "scoped-save" }, materializeDeps());
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.message);
+    expect(result.page.blocks[0].raw).toBe('{{query (search "alpha")}}\ntine.view:: search\ntine.page-view:: table\ntine.page-display:: 1\ntine.page-columns:: prop:owner\ntine.block-view:: list');
+  });
+
   it("preserves canonical raw DSL and writes a presentation property only when needed", async () => {
     const listDeps = materializeDeps();
     const list = await materializeQueryWorkspace({
@@ -283,6 +292,29 @@ async function waitFor(check: () => void): Promise<void> {
 }
 
 describe("QueryWorkspace", () => {
+  it("keeps independent section Display choices and shows authored page columns", async () => {
+    const route: QueryRoute = { kind: "query", id: "scoped-display", sourceKind: "search", source: "alpha",
+      presentation: "search", pagePresentation: "table", blockPresentation: "list",
+      pageDisplay: { columns: ["prop:owner"] } };
+    const deps = workspaceDeps();
+    vi.mocked(deps.runGraphSearch).mockResolvedValue({ ...executionFixture(false), hits: executionFixture(false).hits.map((hit) =>
+      hit.entity === "page" ? { ...hit, row: { path: "pages/alpha.md", name: "Alpha notes", kind: "page",
+        properties: [["Owner", "Mira"]] } } : hit) });
+    const router = routerMock(route);
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={router} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(root.querySelector('[data-query-result-kind="page"] table')).not.toBeNull());
+      expect(root.querySelector('[data-query-result-kind="page"] thead')?.textContent).toContain("owner");
+      expect(root.querySelector('[data-query-result-kind="page"] tbody')?.textContent).toContain("Mira");
+      expect(root.querySelector('[data-query-result-kind="block"] ul')).not.toBeNull();
+      expect(root.querySelectorAll(".qd-trigger")).toHaveLength(2);
+      root.querySelector<HTMLButtonElement>('[data-query-result-kind="page"] .qd-trigger')!.click();
+      root.querySelector<HTMLButtonElement>('[data-query-result-kind="page"] [role="group"][aria-label="Query view"] button:nth-child(4)')!.click();
+      expect(router.updateActiveQuery).toHaveBeenCalledWith(expect.objectContaining({ pagePresentation: "board" }));
+      expect(router.updateActiveQuery).not.toHaveBeenCalledWith(expect.objectContaining({ blockPresentation: "board" }));
+    } finally { dispose(); }
+  });
   it("routes and persists page match scope through the search control", async () => {
     const route: QueryRoute = { kind: "query", id: "scope-test", sourceKind: "search", source: "alpha", presentation: "search" };
     const deps = workspaceDeps();

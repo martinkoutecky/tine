@@ -1,4 +1,6 @@
 import { backend } from "./backend";
+import { normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
+import type { QueryPresentation } from "./routeTypes";
 import { graphOwner, readOwned, writeOwned } from "./owned";
 import { dismissToast, pushToastUnique } from "./toasts";
 import { isMobilePlatform } from "./nativeChrome";
@@ -108,8 +110,18 @@ function validRoute(r: unknown): Route | null {
         || o.presentation === "table" || o.presentation === "board"))) return null;
     if (o.pageMatchScope !== undefined && o.pageMatchScope !== "names"
       && o.pageMatchScope !== "content" && o.pageMatchScope !== "both") return null;
+    for (const key of ["pagePresentation", "blockPresentation"] as const) {
+      if (o[key] !== undefined && o[key] !== "search" && o[key] !== "list"
+        && o[key] !== "table" && o[key] !== "board") return null;
+    }
+    const pageDisplay = o.pageDisplay === undefined ? undefined : normalizeQueryDisplayDraft(o.pageDisplay);
+    const blockDisplay = o.blockDisplay === undefined ? undefined : normalizeQueryDisplayDraft(o.blockDisplay);
+    if (o.pageDisplay !== undefined && pageDisplay === null || o.blockDisplay !== undefined && blockDisplay === null) return null;
     return { kind: "query", id: o.id, sourceKind: o.sourceKind, source: o.source, presentation: o.presentation,
-      ...(o.pageMatchScope ? { pageMatchScope: o.pageMatchScope } : {}) };
+      ...(o.pageMatchScope ? { pageMatchScope: o.pageMatchScope } : {}),
+      ...(o.pagePresentation ? { pagePresentation: o.pagePresentation as QueryPresentation } : {}),
+      ...(o.blockPresentation ? { blockPresentation: o.blockPresentation as QueryPresentation } : {}),
+      ...(pageDisplay ? { pageDisplay } : {}), ...(blockDisplay ? { blockDisplay } : {}) };
   }
   if (o.kind !== "page" || typeof o.name !== "string" || o.name.length > 4096
     || (o.pageKind !== "journal" && o.pageKind !== "page")) return null;

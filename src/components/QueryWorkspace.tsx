@@ -33,7 +33,11 @@ import type {
   QueryPageScope,
 } from "../types";
 import type { ParsedQuery, Query, QueryResult, ViewSettings, ExplainEmptyResult, FriendlyPageMatchScope } from "../editor/queryIr";
+import { queryDisplaySettings, type QueryDisplayDraft } from "../editor/queryDisplayDraft";
+import { queryScopedDisplayPropertyPatch } from "../editor/queryViewProperties";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
+import { createQueryRegistryAccess } from "./QueryBuilder";
+import { QueryDisplay } from "./QueryDisplay";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import { SearchResultRow } from "./SearchResultRow";
 import { QueryPageResults, type QueryPageHit } from "./QueryPageResults";
@@ -52,6 +56,11 @@ export interface MaterializeQueryInput {
   source: string;
   presentation: QueryPresentation;
   pageMatchScope?: FriendlyPageMatchScope;
+  /** Explicit scoped choices to persist with the ordinary query block. */
+  pagePresentation?: QueryPresentation;
+  blockPresentation?: QueryPresentation;
+  pageDisplay?: QueryDisplayDraft;
+  blockDisplay?: QueryDisplayDraft;
   /** Stable workspace identity: also bounds the native validation cancellation lane. */
   routeId: string;
 }
@@ -88,14 +97,20 @@ export interface QueryWorkspaceProps {
   focusSource?: boolean;
 }
 
-function savedQueryRaw(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation" | "pageMatchScope">): string {
+function savedQueryRaw(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">): string {
   const source = input.source.trim();
   const dsl = input.sourceKind === "search" ? friendlySearchToSavedDsl(source) : source;
   const query = `{{${QUERY_MACRO_NAMES[0]} ${dsl}}}`;
   const view = input.presentation === "list" ? "" : `\ntine.view:: ${input.presentation}`;
   const scope = input.sourceKind === "search" && input.pageMatchScope
     ? `\ntine.page-match-scope:: ${input.pageMatchScope}` : "";
-  return `${query}${view}${scope}`;
+  const scoped = (["page", "block"] as const).flatMap((kind) => queryScopedDisplayPropertyPatch({
+    scope: kind,
+    presentation: input[kind === "page" ? "pagePresentation" : "blockPresentation"],
+    display: input[kind === "page" ? "pageDisplay" : "blockDisplay"],
+    properties: [],
+  })).filter(([, value]) => value !== null).map(([key, value]) => `\n${key}:: ${value}`).join("");
+  return `${query}${view}${scope}${scoped}`;
 }
 
 /**
@@ -218,6 +233,7 @@ function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult): Q
     ? result.pages.map((page) => ({
       entity: "page" as const,
       page: { name: page.name, kind: page.kind, path: page.path, date_key: null },
+      row: page,
       display_text: page.name,
       evidence: [],
       score: 0,
@@ -619,6 +635,10 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const [source, setSource] = createSignal(props.route.source);
   const [sourceKind, setSourceKind] = createSignal(props.route.sourceKind);
   const [presentation, setPresentation] = createSignal(props.route.presentation);
+  const [pagePresentation, setPagePresentation] = createSignal(props.route.pagePresentation);
+  const [blockPresentation, setBlockPresentation] = createSignal(props.route.blockPresentation);
+  const [pageDisplay, setPageDisplay] = createSignal(props.route.pageDisplay);
+  const [blockDisplay, setBlockDisplay] = createSignal(props.route.blockDisplay);
   const [pageMatchScope, setPageMatchScope] = createSignal<FriendlyPageMatchScope>(props.route.pageMatchScope ?? "names");
   const [pageMatchScopeExplicit, setPageMatchScopeExplicit] = createSignal(props.route.pageMatchScope !== undefined);
   const [explain, setExplain] = createSignal(false);
@@ -639,6 +659,10 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     setSource(props.route.source);
     setSourceKind(props.route.sourceKind);
     setPresentation(props.route.presentation);
+    setPagePresentation(props.route.pagePresentation);
+    setBlockPresentation(props.route.blockPresentation);
+    setPageDisplay(props.route.pageDisplay);
+    setBlockDisplay(props.route.blockDisplay);
     setPageMatchScope(props.route.pageMatchScope ?? "names");
     setPageMatchScopeExplicit(props.route.pageMatchScope !== undefined);
   });
@@ -701,6 +725,27 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     }
     return [...grouped.entries()];
   });
+  const pageView = createMemo(() => queryDisplaySettings(pageDisplay(), {}, pagePresentation() ?? presentation()));
+  const blockView = createMemo(() => queryDisplaySettings(blockDisplay(), {}, blockPresentation() ?? presentation()));
+  const [pageDisplayOpen, setPageDisplayOpen] = createSignal(false);
+  const [blockDisplayOpen, setBlockDisplayOpen] = createSignal(false);
+  const registry = createQueryRegistryAccess(() => pageDisplayOpen() || blockDisplayOpen());
+  const sectionControl = (kind: "page" | "block") => <QueryDisplay
+    rowKind={() => kind}
+    registry={registry}
+    view={kind === "page" ? pageView : blockView}
+    onOpenChange={kind === "page" ? setPageDisplayOpen : setBlockDisplayOpen}
+    apply={(next) => {
+      const { view, ...draft } = next;
+      if (kind === "page") {
+        setPagePresentation(view ?? "list"); setPageDisplay(draft);
+        props.router.updateActiveQuery({ pagePresentation: view ?? "list", pageDisplay: draft });
+      } else {
+        setBlockPresentation(view ?? "list"); setBlockDisplay(draft);
+        props.router.updateActiveQuery({ blockPresentation: view ?? "list", blockDisplay: draft });
+      }
+    }}
+  />;
 
   const updateSource = (next: string, kind = sourceKind()) => {
     setSource(next);
@@ -744,6 +789,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         sourceKind: sourceKind(),
         source: source(),
         presentation: presentation(),
+        pagePresentation: pagePresentation(), blockPresentation: blockPresentation(),
+        pageDisplay: pageDisplay(), blockDisplay: blockDisplay(),
         pageMatchScope: pageMatchScopeExplicit() ? pageMatchScope() : undefined,
         routeId: props.route.id,
       }, deps());
@@ -893,10 +940,12 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         failure={execution.error ? `Search failed: ${execution.error instanceof Error ? execution.error.message : String(execution.error)}` : null}
         families={[
           { kind: "page", hits: pageHits().length, hasMore: !!execution()?.has_more?.pages,
-            body: <QueryPageResults hits={pageHits()} presentation={presentation()} surfaceId={hitSurfaceId} onOpen={openHit} /> },
+            control: sectionControl("page"),
+            body: <QueryPageResults hits={pageHits()} presentation={pageView().view ?? "list"} view={pageView()} surfaceId={hitSurfaceId} onOpen={openHit} /> },
           { kind: "block", hits: blockHits().length, hasMore: !!execution()?.has_more?.blocks,
+            control: sectionControl("block"),
             body: <Switch>
-        <Match when={presentation() === "search"}>
+        <Match when={blockView().view === "search"}>
           <div class="query-results-search" role="list" aria-label="Block results">
             <For each={blockHits()}>{(hit) => (
               <div role="listitem">
@@ -911,7 +960,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           </div>
         </Match>
 
-        <Match when={presentation() === "list"}>
+        <Match when={blockView().view === "list"}>
           <ul class="query-results-list" aria-label="Query results">
             <For each={blockHits()}>{(hit) => (
               <li>
@@ -924,7 +973,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           </ul>
         </Match>
 
-        <Match when={presentation() === "table"}>
+        <Match when={blockView().view === "table"}>
           <div class="query-results-table-wrap">
             <table class="query-results-table">
               <caption class="sr-only">Query results</caption>
@@ -942,7 +991,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           </div>
         </Match>
 
-        <Match when={presentation() === "board"}>
+        <Match when={blockView().view === "board"}>
           <div class="query-results-board" aria-label="Query results grouped by page">
             <For each={boardGroups()}>{([page, pageHits]) => (
               <section class="query-board-column">

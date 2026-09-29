@@ -1,5 +1,6 @@
 import type { PageKind } from "./types";
 import type { FriendlyPageMatchScope } from "./editor/queryIr";
+import type { QueryDisplayDraft } from "./editor/queryDisplayDraft";
 
 export interface PageTarget {
   name: string;
@@ -15,6 +16,12 @@ export interface QueryRoute {
   sourceKind: "search" | "dsl";
   source: string;
   presentation: QueryPresentation;
+  /** Each family inherits `presentation` until its own choice is set. */
+  pagePresentation?: QueryPresentation;
+  blockPresentation?: QueryPresentation;
+  /** A present draft, including `{}`, replaces that family's inherited display. */
+  pageDisplay?: QueryDisplayDraft;
+  blockDisplay?: QueryDisplayDraft;
   /** Omitted means the historical names/aliases-only page membership. */
   pageMatchScope?: FriendlyPageMatchScope;
 }

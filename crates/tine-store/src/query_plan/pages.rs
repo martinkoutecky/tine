@@ -341,6 +341,35 @@ pub(super) fn execute_pages(
             .then_with(|| b.score.cmp(&a.score))
             .then_with(|| a.tie_key.cmp(&b.tie_key))
     });
+    // Hydrate only admitted physical pages. The query index owns the authored
+    // property projection; matching and row construction share one graph snapshot.
+    let wanted: HashSet<&str> = winners
+        .iter()
+        .filter_map(|winner| match winner.candidate {
+            PageCandidate::File(index) => Some(file_pages[index].rel_path_str()),
+            PageCandidate::Referenced(_) => None,
+        })
+        .collect();
+    let rows = graph.with_pages(|pages| {
+        let index = graph.query_index();
+        pages
+            .iter()
+            .filter(|(entry, _)| wanted.contains(entry.rel_path_str()))
+            .map(|(entry, doc)| {
+                let facts = index.facts(entry, doc);
+                (
+                    entry.rel_path_str().to_owned(),
+                    tine_core::query::ir::PageRow {
+                        path: entry.rel_path_str().to_owned(),
+                        name: entry.name.clone(),
+                        kind: entry.kind,
+                        journal_day: entry.date_key,
+                        properties: facts.properties().to_vec(),
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>()
+    });
     Some((
         winners
             .into_iter()
@@ -369,6 +398,10 @@ pub(super) fn execute_pages(
                 .unwrap_or_default();
                 QueryHit::Page {
                     display_text: winner.matched_text,
+                    row: page
+                        .rel_path
+                        .as_ref()
+                        .and_then(|_| rows.get(page.rel_path_str()).cloned()),
                     page,
                     evidence,
                     score: winner.score,

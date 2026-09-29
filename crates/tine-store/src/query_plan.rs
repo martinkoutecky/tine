@@ -1508,7 +1508,7 @@ mod tests {
         fs::create_dir_all(dir.join("logseq")).unwrap();
         fs::write(
             dir.join("pages").join("Cafe\u{301}.md"),
-            "alias:: Re\u{301}sume\u{301}\n\n- Re\u{301}sume\u{301}\n",
+            "alias:: Re\u{301}sume\u{301}\nowner:: Mira\n\n- Re\u{301}sume\u{301}\n",
         )
         .unwrap();
         let graph = snapshot_for_dir(&dir);
@@ -1525,6 +1525,11 @@ mod tests {
             }) if page.name == "Cafe\u{301}"
                 && evidence[0].spans == vec![MatchSpan { start: 0, end: 5 }]
         ));
+        assert!(
+            matches!(page.hits.first(), Some(QueryHit::Page { row: Some(row), .. })
+            if row.path == "pages/Cafe\u{301}.md"
+                && row.properties.iter().any(|(key, value)| key == "owner" && value == "Mira"))
+        );
 
         let alias = QueryPlan::page_name_fuzzy("Résumé", 8).execute(&graph, || false);
         assert!(
@@ -1939,6 +1944,7 @@ mod tests {
     #[test]
     fn query_hit_json_contract_uses_tagged_entities_and_utf16_evidence() {
         let hit = QueryHit::Page {
+            row: None,
             page: PageEntry {
                 name: "🧠 Foo".into(),
                 kind: PageKind::Page,

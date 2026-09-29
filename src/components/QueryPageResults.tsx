@@ -4,6 +4,7 @@
 import { For, Match, Show, Switch, type JSX } from "solid-js";
 import type { QueryHit } from "../types";
 import type { QueryPresentation } from "../router";
+import type { ViewSettings } from "../editor/queryIr";
 import { buildSearchExcerpt } from "./SearchResultRow";
 
 export type QueryPageHit = Extract<QueryHit, { entity: "page" }>;
@@ -12,6 +13,17 @@ export type QueryPageHit = Extract<QueryHit, { entity: "page" }>;
  * Cost O(path or name length), with no failure for a valid page hit. */
 export function pageHitKey(hit: QueryPageHit): string {
   return hit.page.path ? `page\0${hit.page.path}\0${hit.page.kind}` : `name\0${hit.page.name}`;
+}
+
+/** Resolve an authored page column from the hydrated physical row; virtual
+ * pages have no authored properties. O(properties on one result page). */
+export function pageFieldValue(hit: QueryPageHit, field: string): string {
+  const name = field.startsWith("prop:") ? field.slice(5) : field;
+  if (name === "name") return hit.page.name;
+  if (name === "kind") return hit.page.kind === "journal" ? "Journal" : "Page";
+  if (name === "day" || name === "journal-day" || name === "journal_day")
+    return String(hit.row?.journal_day ?? hit.page.date_key ?? "");
+  return hit.row?.properties.find(([key]) => key.trim().toLowerCase() === name.trim().toLowerCase())?.[1] ?? "";
 }
 
 function PageText(props: { hit: QueryPageHit }): JSX.Element {
@@ -29,6 +41,8 @@ function PageText(props: { hit: QueryPageHit }): JSX.Element {
 export function QueryPageResults(props: {
   hits: QueryPageHit[];
   presentation: QueryPresentation;
+  /** Authored page columns in the table; missing rows keep empty cells. */
+  view?: ViewSettings;
   surfaceId: (hit: QueryPageHit) => string;
   onOpen: (hit: QueryPageHit) => void;
 }): JSX.Element {
@@ -52,9 +66,11 @@ export function QueryPageResults(props: {
     <Match when={props.presentation === "table"}>
       <div class="query-results-table-wrap"><table class="query-results-table">
         <caption class="sr-only">Page results</caption>
-        <thead><tr><th scope="col">Page</th><th scope="col">Kind</th></tr></thead>
+        <thead><tr><th scope="col">Page</th><For each={props.view?.columns ?? ["kind"]}>{(field) =>
+          <th scope="col">{field.startsWith("prop:") ? field.slice(5) : field}</th>}</For></tr></thead>
         <tbody><For each={props.hits}>{(hit) => <tr data-page-key={pageHitKey(hit)}>
-          <td>{link(hit)}</td><td>{hit.page.kind === "journal" ? "Journal" : "Page"}</td>
+          <td>{link(hit)}</td><For each={props.view?.columns ?? ["kind"]}>{(field) =>
+            <td>{pageFieldValue(hit, field)}</td>}</For>
         </tr>}</For></tbody>
       </table></div>
     </Match>
