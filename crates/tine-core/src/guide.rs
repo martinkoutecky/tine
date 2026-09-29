@@ -226,6 +226,7 @@ mod journal_guide_tests {
             "**g h** opens the graph's home page",
             ":default-home {:page",
             "Renaming the home page (or a namespace it lives in) keeps it the home page",
+            "Drag an item by its header to reorder the list.",
             "default journal template",
             "Carry unfinished tasks",
             ":hidden [\"archive/private\"]",

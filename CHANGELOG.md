@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Right-sidebar items can be reordered by dragging their header** (GH #211, og 22b); a short press still opens the item.
 - **A "changed on disk" conflict can be merged block by block at the page.** The
   panel at the top of the page compares your unsaved edits with the file as it is
   now, pre-selecting each side's own change when Tine still has the version you
