@@ -1516,13 +1516,8 @@ fn render_query_with_title(
         .corpus
         .pages
         .iter()
+        .filter(|page| publish_page_allowed(ctx, &page.name))
         .map(|page| page.id.as_str())
-        .collect();
-    let selected_names: HashSet<_> = graph
-        .corpus
-        .pages
-        .iter()
-        .map(|page| (page.kind, page.name.to_lowercase()))
         .collect();
     let pages: Vec<_> = bounded
         .pages
@@ -1532,9 +1527,7 @@ fn render_query_with_title(
     let groups: Vec<RefGroup> = bounded
         .groups
         .into_iter()
-        .filter(|group| {
-            ctx.pages.is_none() || selected_names.contains(&(group.kind, group.page.to_lowercase()))
-        })
+        .filter(|group| publish_page_allowed(ctx, &group.page))
         .collect();
     let total: usize = groups.iter().map(|g| g.blocks.len()).sum::<usize>() + pages.len();
     let omitted = pre_filter_total.saturating_sub(total);
