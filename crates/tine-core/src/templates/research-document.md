@@ -1,0 +1,29 @@
+icon:: 📖
+
+- # Research a document
+  - The short path: drop a PDF onto a page, read it in a companion pane, and highlight as you go. Each highlight becomes an ordinary bullet you can write under, quote anywhere, and follow back to the exact spot — so a paper turns into linked, searchable notes without leaving Tine. The precise highlight rules live in [[Features/PDF annotation]].
+- ## Bring the document in
+  - 1. Drag a PDF from your file manager onto any page and drop it on a block — or paste one you copied, or run the `/Upload an asset` slash command. Tine stores the file in your graph's `assets/` folder and inserts a link where you dropped it.
+  - 2. Click the inserted link. On desktop the document opens as a normal tab in a companion pane beside your notes; drag its tab into another pane or split to move it. On a phone it opens in the current one-pane history, and **Back** returns to the source page.
+  - What you should see: the PDF in an ordinary pane, with a toolbar holding a page-number box, a find button (**Ctrl+F** searches inside the document), zoom controls, an **Area highlight** toggle, a **Notes** button, **Outline**, a ⋯ menu, and the close control at the far edge. In a narrow pane the Area highlight, Notes and Outline buttons move into the ⋯ menu.
+- ## Read and highlight
+  - 1. Select a passage with the mouse and pick a color in the menu that appears — that's a highlight. Click an existing highlight to reopen its menu: recolor it, or remove it with ✕.
+  - 2. To clip a figure or table instead, toggle **Area highlight** in the toolbar (or hold **Shift** on Linux/Windows, **Command** on macOS) and drag a rectangle over the region, then choose its color. Dismiss the color menu and nothing is written.
+  - 3. Long document? **Outline** navigates its table of contents, the page-number box jumps straight to a page, and the ⋯ menu offers **Fit width**, **Fit height** and a **Light**, **Warm**, or **Dark** reader theme — remembered on this device, not written into your graph.
+  - What you should see: colored marks on the document — and, behind each mark, a bullet on a notes page named after the PDF.
+- ## Turn highlights into notes
+  - 1. Press **Notes** in the reader toolbar. On desktop Tine opens the document's highlights page in a companion pane next to the PDF; move its tab if another pane is more useful. On a phone it opens in the same history, so **Back** returns to the PDF. The page name starts with `hls__`, like Logseq, and every highlight is a bullet marked with a colored dot.
+  - 2. Write under a highlight bullet: a summary, a question, your own structure. These are ordinary bullets on an ordinary graph page — edit, nest, tag, and search them like any others.
+  - 3. Click the colored dot on a highlight bullet (or the highlight itself back in the PDF) to jump between the two: each note goes straight back to its spot in the document.
+  - What you should see: your notes and their source passages stay connected in both directions, and recoloring a highlight updates its dot on the notes page to match.
+- ## Quote a passage in your ordinary notes
+  - 1. Click the highlight and choose **Copy ref**, then paste into any bullet in your own notes. The pasted `((…))` renders as link-styled text quoting the highlighted passage, and clicking the quote opens the document at that page.
+  - 2. Keep source and words visible while you write: the PDF is a normal tab, so it can sit in any resizable pane or quadrant next to your notes page; **Shift-click** on any bullet's dot parks that note in the right sidebar. On a phone the reader instead fills the width of the screen and the sidebars open as overlays — the two-up layout is a wider-window pattern.
+  - 3. Choose **Linked references** on the highlight's menu to list every note that quotes it — the trail from one passage to everywhere you used it.
+  - What you should see: your note cites the source live, not as a copied excerpt — touch nothing, and the quote still opens the PDF at the right page tomorrow.
+- ## Share the result
+  - 1. From the notes page title's right-click menu: **Copy page as Markdown** puts a clean outline on the clipboard, **Copy / export as…** offers a rendered copy, and **Export to PDF…** (desktop only) opens print options and then your OS print dialog — choose **Save as PDF**. The page always prints on a light background, whatever your theme.
+  - 2. Publishing on the web? Pages marked `public:: true` go into the static export: Settings → **Graph** → **Export HTML and read-only app…** asks for a folder outside your graph. To share just one reading list or project, press **Export…** on a query: you review the pages its results live on, choose a destination folder outside the graph, and Tine writes a standalone site there. A query about blocks exports **whole pages**, not just the matched blocks, and the dialog asks you to confirm that. Nothing is uploaded.
+  - Your annotations are stored Logseq-compatibly — the `hls__` page with your notes, an `.edn` sidecar and any clipped area images under `assets/` — so launch snapshots cover your notes, config, and PDF highlight sidecars (not the PDF or other media files), and another Logseq-compatible tool reads the same annotations.
+- ## Where next
+  - The exact highlight, merge, and storage rules are mapped in [[Features/PDF annotation]]. For quoting anything else with `((…))` and the reference panels, see [[Workflows/Find and revisit]]; for snapshots and backups, [[Reference/Files, external edits, and backups]].

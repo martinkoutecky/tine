@@ -1,4 +1,4 @@
-import { journalTitle } from "../../journal";
+import { journalTitle, appNow } from "../../journal";
 import { OUTLINE_MAX_DEPTH, outlineDepth, parseOutline, type OutlineNode } from "../../editor/outline";
 import { type PageKind } from "../../types";
 import { graphOwner, readOwned } from "../../owned";
@@ -22,7 +22,7 @@ import { markDirty, flushPage } from "../save/engine";
  *  (`ensurePageLoaded` is a no-op when already loaded). Returns whether the write
  *  reached disk. */
 export async function appendToTodayJournal(markdown: string): Promise<boolean> {
-  return captureOutlineInto(journalTitle(new Date()), "journal", parseOutline(markdown));
+  return captureOutlineInto(journalTitle(appNow()), "journal", parseOutline(markdown));
 }
 
 /** In-app quick capture into a (new or existing) named PAGE — the heading-filled

@@ -20,7 +20,7 @@ describe("og campaign enforcement", () => {
   }, 30_000);
 
   it("pins persisted format count and low-level writer sites", () => {
-    expect(PINNED_FORMAT_COUNT).toBe(24);
+    expect(PINNED_FORMAT_COUNT).toBe(25);
     expect(PERSISTED_FORMATS).toEqual([
       "page-markdown", "page-org", "graph-config-edn", "graph-custom-css",
       "graph-assets", "asset-sidecar-edn", "asset-trash", "graph-trash",
@@ -29,6 +29,7 @@ describe("og campaign enforcement", () => {
       "pdf-highlights-edn", "published-site", "restore-recovery",
       "plugin-package", "desktop-launcher", "debug-log",
       "diagnostic-history-jsonl", "diagnostic-session-marker", "diagnostic-report-json",
+      "concord-base-ledger",
     ]);
     expect(() => checkFormatCount()).not.toThrow();
     const { current, baseline } = writerCounts;
@@ -41,7 +42,7 @@ describe("og campaign enforcement", () => {
   });
 
   it("fails on planted format and writer violations", () => {
-    expect(() => checkFormatCount(Array.from({ length: 25 }, (_, i) => `kind-${i}`))).toThrow(/Martin's approval/);
+    expect(() => checkFormatCount(Array.from({ length: PINNED_FORMAT_COUNT + 1 }, (_, i) => `kind-${i}`))).toThrow(/Martin's approval/);
     expect(() => checkWriterSites({ "src-tauri/src/new.rs": 1 }, {})).toThrow(/Martin's approval/);
     expect(() => checkWriterSites({ "src-tauri/src/flight_store.rs": 4 }, {})).toThrow(/3 → 4 writer sites/);
     expect(writerSiteCounts("#[cfg(test)]\nmod tests {\n fs::write(foo, bar);\n}\nfs::write(path, bytes);\n")).toBe(1);

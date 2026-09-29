@@ -10,7 +10,7 @@ import { focusedRouter, removePageTargetAcrossPanes } from "../panes";
 import "../graph"; // installs the document rename's navigation refresh handler
 import { backend } from "../backend";
 import { carryDay } from "../carry";
-import { journalTitle } from "../journal";
+import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
 import { ensureBlockId, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
@@ -880,7 +880,7 @@ function PageMenu(props: {
       : []),
     ...(!readOnly() ? [{ id: "page-properties", label: "Page properties…", run: () => openPageProps(props.name, props.x, props.y) }] : []),
     // Carry a past day's unfinished tasks to today (journal days only, not today).
-    ...(!readOnly() && props.pageKind === "journal" && props.name !== journalTitle(new Date())
+    ...(!readOnly() && props.pageKind === "journal" && props.name !== journalTitle(appNow())
       ? [{ id: "carry-unfinished", label: "Carry unfinished tasks → today", run: () => void carryDay(props.name) }]
       : []),
   ];

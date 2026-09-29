@@ -563,7 +563,7 @@ fn rename_page_after_inventory(
             };
             let org = id.as_str().ends_with(".org");
             let updated = refs::rename_tags_property_multi(
-                &refs::rename_refs_multi(&content, &lookup, org),
+                &refs::rename_refs_multi(&content, &lookup, org, store.config().file_name_format),
                 &lookup,
                 org,
             );
@@ -865,12 +865,13 @@ fn merged_survivor(
     }
     let source = store.page(src).map_err(store_error)?.doc;
     let mut doc = store.page(dst).map_err(store_error)?.doc;
+    let format = store.config().file_name_format;
     if let Some(renames) = renames {
-        rename_doc(&mut doc, renames, org);
+        rename_doc(&mut doc, renames, org, format);
     }
-    let mut payloads = vec![payload(&doc, &source, renames, org)];
+    let mut payloads = vec![payload(&doc, &source, renames, org, format)];
     if let Some(held) = held_renames {
-        payloads.push(payload(&doc, &source, Some(held), org));
+        payloads.push(payload(&doc, &source, Some(held), org, format));
     }
     let held = payloads.iter().position(|(_, blocks)| {
         !blocks.is_empty()
@@ -891,10 +892,20 @@ fn merged_survivor(
     })
 }
 
-fn rename_doc(doc: &mut PageDto, renames: &HashMap<String, String>, org: bool) {
-    fn rewrite(raw: &mut String, renames: &HashMap<String, String>, org: bool) {
+fn rename_doc(
+    doc: &mut PageDto,
+    renames: &HashMap<String, String>,
+    org: bool,
+    format: tine_core::config::FileNameFormat,
+) {
+    fn rewrite(
+        raw: &mut String,
+        renames: &HashMap<String, String>,
+        org: bool,
+        format: tine_core::config::FileNameFormat,
+    ) {
         *raw = refs::rename_tags_property_multi(
-            &refs::rename_refs_multi(raw, renames, org),
+            &refs::rename_refs_multi(raw, renames, org, format),
             renames,
             org,
         );
@@ -903,16 +914,17 @@ fn rename_doc(doc: &mut PageDto, renames: &HashMap<String, String>, org: bool) {
         blocks: &mut [tine_core::model::BlockDto],
         renames: &HashMap<String, String>,
         org: bool,
+        format: tine_core::config::FileNameFormat,
     ) {
         for block in blocks {
-            rewrite(&mut block.raw, renames, org);
-            walk(&mut block.children, renames, org);
+            rewrite(&mut block.raw, renames, org, format);
+            walk(&mut block.children, renames, org, format);
         }
     }
     if let Some(pre) = doc.pre_block.as_mut() {
-        rewrite(pre, renames, org);
+        rewrite(pre, renames, org, format);
     }
-    walk(&mut doc.blocks, renames, org);
+    walk(&mut doc.blocks, renames, org, format);
 }
 
 fn same_blocks(a: &[tine_core::model::BlockDto], b: &[tine_core::model::BlockDto]) -> bool {
@@ -968,10 +980,11 @@ fn payload(
     source: &PageDto,
     renames: Option<&HashMap<String, String>>,
     org: bool,
+    format: tine_core::config::FileNameFormat,
 ) -> (Option<String>, Vec<tine_core::model::BlockDto>) {
     let mut source = source.clone();
     if let Some(renames) = renames {
-        rename_doc(&mut source, renames, org);
+        rename_doc(&mut source, renames, org, format);
     }
     let mut new_header = None;
     let mut blocks = Vec::new();

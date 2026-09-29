@@ -325,6 +325,7 @@ fn hostile_child() {
         &store,
         "pages/Hostile.md",
         "pages/Hostile.sync-conflict-20260926-120000-ABCDEFG.md",
+        &[],
     );
     if case == "deep_edn" {
         let _ = tine_graph_features::pdf::read_highlights(&store, "sample.pdf");
@@ -440,6 +441,7 @@ fn benign_page_at_depth_cap() {
         &store,
         "pages/Deep.md",
         "pages/Deep.sync-conflict-20260928-120000-ABCDEFG.md",
+        &[],
     )
     .unwrap();
     assert!(diff.is_some(), "merge review opens at the cap");

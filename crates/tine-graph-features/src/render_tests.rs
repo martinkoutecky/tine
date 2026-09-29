@@ -44,6 +44,64 @@ mod tests {
     }
 
     #[test]
+    fn published_page_shows_logbook_badge_and_ordinal_markers() {
+        let dir = std::env::temp_dir().join(format!("tine-publish-facets-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/Facets.md"),
+            "public:: true\n\
+             - DONE A task with a logbook\n  \
+               :LOGBOOK:\n  \
+               CLOCK: [2026-07-01 Wed 10:00:00]--[2026-07-01 Wed 10:30:00] =>  00:30:00\n  \
+               :END:\n\
+             - Numbered parent\n  \
+               logseq.order-list-type:: number\n\
+             \t- First\n\
+             \t\tlogseq.order-list-type:: number\n\
+             \t- Second\n\
+             \t\tlogseq.order-list-type:: number\n\
+             - Another numbered\n  \
+               logseq.order-list-type:: number\n\
+             \t- Plain child\n",
+        )
+        .unwrap();
+        let store = Store::open(&dir, Default::default()).unwrap().0;
+        let whole = store.whole_graph().unwrap();
+        let corpus = whole.corpus();
+        let graph = RenderGraph {
+            corpus: &corpus,
+            whole: &whole,
+            store: &store,
+        };
+        let mut files = HashMap::<String, String>::new();
+        publish_graph(&graph, true, &[], &mut |name, bytes| {
+            files.insert(name.to_owned(), String::from_utf8(bytes.to_vec()).unwrap());
+            Ok(())
+        })
+        .unwrap();
+        let html = &files["facets.html"];
+        // The hidden LOGBOOK drawer still yields its elapsed-time badge.
+        assert!(html.contains("<div class=\"planning logbook\">"), "{html}");
+        assert!(html.contains("00:30:00"), "clock total: {html}");
+        assert!(
+            !html.contains("CLOCK: [2026"),
+            "drawer stays hidden: {html}"
+        );
+        // Own-numbered blocks show their ordinal: roots 1. and 2.; the children
+        // of an own-numbered parent cycle to letters (a., b.); a plain child
+        // and the logbook task show none.
+        let marker = |m: &str| format!("<span class=\"ord-marker\">{m}</span>");
+        for m in ["1.", "a.", "b."] {
+            assert!(html.contains(&marker(m)), "missing {m}: {html}");
+        }
+        assert!(html.contains(&marker("2.")), "second root run: {html}");
+        assert!(!html.contains(&marker("3.")), "{html}");
+        assert_eq!(html.matches("ol-item").count(), 4, "{html}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn repeated_query_sources_use_one_render_cache_entry() {
         let dir = std::env::temp_dir().join(format!(
             "tine-publish-query-memo-cache-{}",

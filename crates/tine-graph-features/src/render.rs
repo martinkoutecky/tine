@@ -16,6 +16,10 @@ use tine_core::refs::block_id;
 use tine_core::{Corpus, CorpusPage};
 use tine_store::{Area, IrAnswer, IrRequest, Store, WholeGraph};
 
+#[path = "render_facets.rs"]
+mod render_facets;
+use render_facets::{emit_header_facets, emit_trailer_facets, Ordinal};
+
 #[cfg(test)]
 #[path = "render_tests.rs"]
 mod review_tests;
@@ -1222,71 +1226,6 @@ fn checkbox_state(marker: &str) -> Option<bool> {
     }
 }
 
-/// The header-line facet chrome that precedes a block's body text: the task
-/// checkbox + marker badge and the `[#A]` priority badge (matches the app's Block header).
-fn emit_header_facets(marker: Option<&str>, priority: Option<&str>, out: &mut String) {
-    if let Some(m) = marker {
-        match checkbox_state(m) {
-            Some(true) => out.push_str("<span class=\"task-checkbox checked\"></span>"),
-            Some(false) => out.push_str("<span class=\"task-checkbox\"></span>"),
-            None => {}
-        }
-        out.push_str(&format!(
-            "<span class=\"task-marker m-{}\">{}</span> ",
-            m.to_ascii_lowercase(),
-            esc(m)
-        ));
-    }
-    if let Some(p) = priority {
-        out.push_str(&format!(
-            "<span class=\"priority p-{}\">[#{}]</span> ",
-            p.to_ascii_lowercase(),
-            esc(p)
-        ));
-    }
-}
-
-/// A block property is chrome we hide from the rendered page (the app hides these too):
-/// the block `id::`, the collapsed flag, and any `logseq.*` internal key.
-fn is_hidden_prop(key: &str) -> bool {
-    key == "id" || key == "collapsed" || key.starts_with("logseq.")
-}
-
-/// The trailing facet chrome shown BELOW a block's body: SCHEDULED / DEADLINE
-/// planning lines and the block's visible `key:: value` properties.
-fn emit_trailer_facets(
-    scheduled: Option<&str>,
-    deadline: Option<&str>,
-    props: &[(String, String)],
-    out: &mut String,
-) {
-    if let Some(s) = scheduled {
-        out.push_str(&format!(
-            "<div class=\"planning scheduled\"><span class=\"pk\">SCHEDULED:</span> {}</div>",
-            esc(s)
-        ));
-    }
-    if let Some(d) = deadline {
-        out.push_str(&format!(
-            "<div class=\"planning deadline\"><span class=\"pk\">DEADLINE:</span> {}</div>",
-            esc(d)
-        ));
-    }
-    let visible: Vec<&(String, String)> =
-        props.iter().filter(|(k, _)| !is_hidden_prop(k)).collect();
-    if !visible.is_empty() {
-        out.push_str("<div class=\"block-props\">");
-        for (k, v) in visible {
-            out.push_str(&format!(
-                "<div class=\"prop\"><span class=\"pk\">{}::</span> <span class=\"pv\">{}</span></div>",
-                esc(k),
-                esc(v)
-            ));
-        }
-        out.push_str("</div>");
-    }
-}
-
 /// Render one block's inner: header facets + the decorated body + trailer facets.
 /// Shared by the top-level renderer and the embedded/query-result renderers so a
 /// task in a query result looks exactly like a task on its own page.
@@ -1305,7 +1244,7 @@ fn emit_block_inner(raw: &str, out: &mut String, ctx: &Ctx, depth: u8) {
     );
     out.push_str(&body);
     out.push_str("</div>");
-    emit_trailer_facets(blk.scheduled(), blk.deadline(), &blk.properties(), out);
+    emit_trailer_facets(blk.scheduled(), blk.deadline(), raw, &blk.properties(), out);
 }
 
 /// Render a query/embed result block (a `BlockDto` from the query engine) as an
@@ -1731,6 +1670,7 @@ fn render_block(
     authored_ids: &HashSet<String>,
     index: &mut Vec<serde_json::Value>,
     opts: PrintOpts,
+    ord: Ordinal,
     tree_depth: usize,
 ) {
     if tree_depth >= MAX_RENDER_TREE_DEPTH {
@@ -1763,7 +1703,12 @@ fn render_block(
             }
         },
     };
-    out.push_str(&format!("<li id=\"{}\">", esc_attr(&anchor)));
+    let class = if ord.marker().is_some() {
+        " class=\"ol-item\""
+    } else {
+        ""
+    };
+    out.push_str(&format!("<li id=\"{}\"{class}>", esc_attr(&anchor)));
     // The container payload is executable/configuration source, not visible
     // page prose. In particular, malformed payload bytes must not be copied to
     // the publication search index after the visible block fails closed.
@@ -1785,6 +1730,9 @@ fn render_block(
     } else {
         "<div class=\"b\">"
     });
+    if let Some(marker) = ord.marker() {
+        out.push_str(&format!("<span class=\"ord-marker\">{marker}</span> "));
+    }
     emit_header_facets(b.marker(), b.priority(), out);
     match &begin_query {
         Some(BeginQueryInspection::Supported(begin)) => {
@@ -1807,7 +1755,7 @@ fn render_block(
         None => out.push_str(&decorate(&tine_core::lsdoc::render_html(&blocks, &md_opts()), ctx, 0)),
     }
     out.push_str("</div>");
-    emit_trailer_facets(b.scheduled(), b.deadline(), &b.properties(), out);
+    emit_trailer_facets(b.scheduled(), b.deadline(), b.raw(), &b.properties(), out);
     if let (Some(id), Some(reverse)) = (block_id(b.raw()), ctx.reverse_refs) {
         if let Some(referrers) = reverse.get(&id).filter(|items| !items.is_empty()) {
             let count = referrers.len();
@@ -1838,7 +1786,7 @@ fn render_block(
     // folded to match what's visible.
     if !b.children.is_empty() && (opts.expand_collapsed || !b.collapsed()) {
         out.push_str("<ul>");
-        for c in &b.children {
+        for (c, child_ord) in b.children.iter().zip(ord.children(b)) {
             render_block(
                 c,
                 out,
@@ -1849,6 +1797,7 @@ fn render_block(
                 authored_ids,
                 index,
                 opts,
+                child_ord,
                 tree_depth + 1,
             );
         }
@@ -1884,7 +1833,7 @@ fn page_html(
     body.push_str("<ul class=\"outline\">");
     let mut counter = 0u32;
     let authored_ids = authored_block_ids(&doc.roots);
-    for b in &doc.roots {
+    for (b, ord) in doc.roots.iter().zip(render_facets::siblings(&doc.roots, 0)) {
         // The whole-graph site export always expands (no fold state on paper).
         render_block(
             b,
@@ -1896,6 +1845,7 @@ fn page_html(
             &authored_ids,
             blocks,
             PrintOpts::default(),
+            ord,
             0,
         );
     }
@@ -2097,7 +2047,11 @@ pub fn page_print_html(
     body.push_str("<ul class=\"outline\">");
     let mut counter = 0u32;
     let authored_ids = authored_block_ids(&parsed.roots);
-    for b in &parsed.roots {
+    for (b, ord) in parsed
+        .roots
+        .iter()
+        .zip(render_facets::siblings(&parsed.roots, 0))
+    {
         render_block(
             b,
             &mut body,
@@ -2108,6 +2062,7 @@ pub fn page_print_html(
             &authored_ids,
             &mut blocks,
             opts,
+            ord,
             0,
         );
     }
@@ -2258,6 +2213,8 @@ strong{font-weight:650}
 .planning{font-size:.85em;color:var(--muted);margin:.05rem 0}
 .planning.deadline .pk{color:#b91c1c}
 .planning .pk,.block-props .pk{font-weight:650;letter-spacing:.02em}
+li.ol-item::before{display:none}
+.ord-marker{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;font-weight:600;margin-right:.35em}
 .block-props{font-size:.85em;color:var(--muted);margin:.1rem 0;display:flex;flex-wrap:wrap;gap:.1rem .8rem}
 .block-props .pv{color:var(--fg)}
 /* query results + embeds + video + namespace macro */

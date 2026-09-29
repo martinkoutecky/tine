@@ -3,6 +3,7 @@ icon:: 🧩
 - # Plugins
 	- Tine plugins are capability-limited WebAssembly guests. They are **not Logseq or Obsidian plugins** and cannot use those apps' plugin APIs.
 	- Plugins cannot directly access the DOM, Tauri, files, processes, the network, or arbitrary graph paths. Tine owns the commands, slash actions, decorations, settings controls, and any narrowly authorized block edit that a plugin can request.
+	- [[Workflows/Extend Tine]] walks the hands-on install → review → enable → disable path; this page remains the detailed reference.
 - ## Browse and install
 	- Open **Settings → Plugins → Browse** for the signed community catalogue. Each entry shows its source, supported platforms, declared capabilities, publication review, and a digest-verified safety report.
 	- Choose **Install** on a compatible entry. Local developers can instead choose **Install a local package** and select its `manifest.json` and `.wasm` together.

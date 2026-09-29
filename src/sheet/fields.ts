@@ -11,6 +11,7 @@ import { tagRef } from "../tags";
 import { parseIsoDateLike } from "./typed";
 import { evaluateFormulaForRow, formulaValueText, liveFormulaRowNode, type FormulaEvalRow } from "./formulaEval";
 
+import { appNow } from "../journal";
 export type FieldId =
   | "state"
   | "priority"
@@ -367,7 +368,7 @@ export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: Gr
       { id, page, kind: typeof input === "string" ? undefined : input.kind, dto: typeof input === "string" ? undefined : input.dto },
       field.slice("formula:".length),
       formulas,
-      opts.now ?? new Date()
+      opts.now ?? appNow()
     );
     if (value.kind === "error") return ["(error)"];
     if (value.kind === "null") return [null];

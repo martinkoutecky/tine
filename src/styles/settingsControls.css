@@ -55,3 +55,37 @@
 }
 .theme-switch.is-system .theme-knob { transform: translateX(100%); }
 .theme-switch.is-dark .theme-knob { transform: translateX(200%); }
+
+.settings-width-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: min(100%, 520px);
+}
+.settings-width-range {
+  width: 150px;
+  accent-color: var(--accent);
+}
+.settings-width-number {
+  width: 76px;
+}
+.settings-width-unit {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .settings-field-row:has(.settings-width-control) {
+    flex-wrap: wrap;
+  }
+  .settings-field-row:has(.settings-width-control) .settings-field-control,
+  .settings-width-control {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+  .settings-width-range {
+    flex: 1 1 120px;
+    min-width: 100px;
+  }
+}

@@ -2,6 +2,7 @@
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
+import { markCommandSlow } from "./slowBackend";
 import type {
   Diagnostic,
   ExecutionContext,
@@ -436,12 +437,14 @@ export interface Backend {
     baseRev: string,
     conflictRev: string,
     kinds: EditKinds,
-    preChoice?: "mine" | "theirs" | "union"
+    preChoice?: "mine" | "theirs" | "union",
+    mergeBaseRev?: string
   ): Promise<void>;
   /** Discard a conflict copy without merging (move it to the recoverable trash). */
   trashSyncConflict(conflict: string, kind: "delete-page"): Promise<void>;
-  /** The conflict listings and the derived queue from ONE graph walk; never
-   *  stored. Cost: one bounded read of every page file (O(graph text bytes)). */
+  /** The conflict listings and the derived queue, one answer; never stored.
+   *  Cost: the first call per graph walks every page file (O(graph text
+   *  bytes)); later calls answer from the backend's change-fed queue. */
   conflictInventory(): Promise<ConflictInventory>;
   /** A marker-bearing page's own sides as a block diff (3-way when the markers
    *  carry a common ancestor). Read-only; null when it carries no markers. */
@@ -456,8 +459,8 @@ export interface Backend {
     kinds: EditKinds,
     preChoice?: "mine" | "theirs" | "union"
   ): Promise<void>;
-  /** Subscribe to the watcher's `conflicts-changed` event (a conflict copy
-   *  appeared or vanished). Returns an unlisten fn. */
+  /** Subscribe to the backend's `conflicts-changed` event (the derived
+   *  conflict queue changed). Returns an unlisten fn. */
   onConflictsChanged(cb: () => void): Promise<() => void>;
   search(query: string, limit: number, lane?: string): Promise<RefGroup[]>;
   /** One Rust-authoritative graph scan for bounded page and block hits. Page
@@ -615,7 +618,7 @@ export interface Backend {
   setWatchMode(mode: string): Promise<void>;
   /** Available snapshots for the current graph, newest first. */
   listBackups(): Promise<BackupInfo[]>;
-  /** Restore a snapshot (overwrites journals/pages/config; snapshots current
+  /** Restore a snapshot (graph text at original paths, config, and sidecars; snapshots current
    *  state first). Destructive — confirm before calling. */
   restoreBackup(stamp: string, kind: "replace-page"): Promise<void>;
   /** Load the persisted UI session JSON (open tabs / active tab / zoom), or null.
@@ -671,6 +674,9 @@ export interface Backend {
   /** Record one fixed-kind frontend event. The backend drops the event when a
    *  token is outside its closed vocabulary; fields carry no free text. */
   diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields?: DiagnosticFrontendFields): Promise<void>;
+  /** The backend's current UTC offset and sample instant: the app's calendar
+   * authority (see `appNow` in journal.ts, GH #607). */
+  localClock(): Promise<{ offset_minutes: number; unix_ms: number }>;
   /** The CPU architecture of this binary (`x86`, `x86_64`, `aarch64`, …). */
   appArchitecture(): Promise<string>;
 }
@@ -801,7 +807,12 @@ class TauriBackend implements Backend {
     if (DIAGNOSTIC_COMMANDS.has(cmd)) return this.invoke<T>(cmd, leasedArgs);
     const started = performance.now();
     let slow = false;
-    const slowTimer = setTimeout(() => { slow = true; this.reportIpcPhase(cmd, "slow", started); }, SLOW_IPC_MS);
+    let settleSlow: (() => void) | undefined;
+    const slowTimer = setTimeout(() => {
+      slow = true;
+      settleSlow = markCommandSlow(started);
+      this.reportIpcPhase(cmd, "slow", started);
+    }, SLOW_IPC_MS);
     try {
       const result = await this.invoke<T>(cmd, leasedArgs);
       if (slow) this.reportIpcPhase(cmd, "completed", started);
@@ -812,6 +823,7 @@ class TauriBackend implements Backend {
       throw error;
     } finally {
       clearTimeout(slowTimer);
+      settleSlow?.();
     }
   }
 
@@ -1181,7 +1193,8 @@ class TauriBackend implements Backend {
     baseRev: string,
     conflictRev: string,
     _kinds: EditKinds,
-    preChoice?: "mine" | "theirs" | "union"
+    preChoice?: "mine" | "theirs" | "union",
+    mergeBaseRev?: string
   ) {
     return this.call<void>("resolve_sync_conflict", {
       winner,
@@ -1189,6 +1202,7 @@ class TauriBackend implements Backend {
       decisions,
       baseRev,
       conflictRev,
+      mergeBaseRev: mergeBaseRev ?? null,
       preChoice: preChoice ?? "union",
     });
   }
@@ -1390,6 +1404,9 @@ class TauriBackend implements Backend {
   }
   diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields: DiagnosticFrontendFields = {}) {
     return this.call<void>("diagnostic_frontend_event", { kind, ...fields });
+  }
+  localClock() {
+    return this.call<{ offset_minutes: number; unix_ms: number }>("local_clock");
   }
   appArchitecture() {
     return this.call<string>("app_architecture");

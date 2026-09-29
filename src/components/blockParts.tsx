@@ -10,6 +10,7 @@ import { toggleMarkerLabel, toggleTaskDone } from "../editor/repeat";
 import type { LogbookInfo } from "../logbook";
 import { logbookWithSecondSupport, timetrackingEnabled, workflow } from "../ui";
 
+import { appNow } from "../journal";
 // Marker-label clicks follow OG's separate two-state toggle (TODO <-> DOING,
 // LATER <-> NOW). Keyboard marker cycling remains cycleMarkerSmart and may
 // still reach DONE / no marker; a label click never removes completion.
@@ -126,7 +127,7 @@ export function CalGlyph(): JSX.Element {
   );
 }
 
-export function timeStamp(d = new Date()): string {
+export function timeStamp(d = appNow()): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 // Template support: session-cached list of templates, dynamic-var substitution,

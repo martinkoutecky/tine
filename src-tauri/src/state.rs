@@ -32,6 +32,11 @@ pub(crate) struct GraphSlot {
     /// Revoked as soon as this exact window→graph binding is replaced/removed.
     /// Detached warm/backup workers check it before and during graph-sized work.
     pub(crate) background_cancelled: AtomicBool,
+    /// Concord's derived conflict queue (memory only; see `ConflictQueue`).
+    pub(crate) conflict_queue: tine_graph_features::conflicts::ConflictQueue,
+    /// Concord base ledger, attached at graph open (`concord_ledger::attach`);
+    /// empty when app data is unavailable, which only means 2-way reviews.
+    pub(crate) concord_ledger: std::sync::OnceLock<crate::concord_ledger::ConcordLedger>,
 }
 
 impl GraphSlot {
@@ -45,6 +50,8 @@ impl GraphSlot {
             warm_done: AtomicBool::new(false),
             warm_generation: AtomicU64::new(0),
             background_cancelled: AtomicBool::new(false),
+            conflict_queue: Default::default(),
+            concord_ledger: Default::default(),
         }
     }
 }

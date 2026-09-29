@@ -3,14 +3,32 @@ icon:: 🧭
 - # Tine Guide
 	- Open this Guide beside your own graph when you want live examples without switching graphs.
 	- Each page is read-only here. Use **Copy the guide into your graph** on any Guide page when you want an editable, interlinked sandbox under `tine-guide/`.
-- ## Start here
+- ## Start
+  - [[Welcome to Tine]] — tour the basics hands-on: bullets, tasks, rich text, links, and live block references.
+  - [[Start/Where things are]] — map the main places: the page, the left sidebar, tabs, the right sidebar, and Settings and Help.
+  - [[Start/Bring an existing graph]] — point Tine at your existing Logseq graph and learn what it reads and writes.
+  - [[Project/Roadmap]] — try a few example tasks for your first steps.
+- ## Workflows
+  - [[Workflows/Keep context visible]] — park a source in the right sidebar, keep places in tabs and panes, and save the layout as a workspace.
+  - [[Workflows/Structure repeated information]] — turn a small repeated outline into a table or board, then find and reuse its blocks before reaching for query syntax.
+  - [[Workflows/Capture and plan your day]] — journal-first daily flow: tasks, priorities, dates, the agenda, and carrying leftovers forward.
+  - [[Workflows/Find and revisit]] — jump back to anything with Ctrl+K and follow links and reference panels.
+  - [[Workflows/Research a document]] — bring in a PDF, highlight it, and tie the highlights into your notes beside the source.
+  - [[Workflows/Extend Tine]] — install a plugin or theme, see exactly what authority it receives, and disable or remove it safely.
   - [[Features/Sheets]] — create grids, tables, boards, queries, and formulas over ordinary bullets.
   - [[Features/Queries]] — keep live lists of matching blocks and pages with simple or advanced queries.
   - [[Features/Formulas]] — build read-only computed columns with the visual formula editor.
   - [[Features/Quick capture]] — set up a global capture box that files notes into your graph.
   - [[Features/PDF annotation]] — highlight PDFs and turn those highlights into linked note blocks.
+- ## Feature reference
   - [[Features/Plugins]] — install capability-limited extensions and token themes, review what they request, and keep them under your control.
   - [[Features/Tips & shortcuts]] — learn Ctrl+K, slash commands, tabs, sidebars, focus mode, and daily shortcuts.
+  - [[Reference/Files, external edits, and backups]] — learn what Tine writes where, and where snapshots, conflict copies, and the trash live.
+  - [[Reference/Troubleshooting and recovery]] — follow numbered recovery steps for the changed-on-disk banner, deleted pages, snapshots, conflict copies, duplicate days, a graph that will not open, and a region that fails to display.
+  - [[Reference/Journals, tasks, and scheduling]] — map journal setup, task markers and priorities, scheduling dates, the agenda, time tracking, and repeating tasks.
+  - [[Reference/Pages, links, references, and search]] — the exact rules for pages, links, tags, aliases, block references, reference panels, and every search surface.
+  - [[Reference/Platforms and mobile]] — learn what changes on a narrow window versus on the Android app, and what ships on each platform today.
+- ## Feature showcase
   - [[Feature showcase]] — inspect one live example of each supported Logseq rendering feature.
 - ## Create one yourself
   - 1. Open one of the Guide pages above and follow its numbered steps.

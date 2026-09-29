@@ -10,6 +10,7 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import type { DiffRow, MergeDecision, MergedProposal, RowKind } from "../types";
 
+import { appNow } from "../journal";
 /** Why this body is on offer. The two sources carry different guarantees:
  *  Tine composed it from two edits that touch different parts of the body, or
  *  the merge tool that left the markers proposed it. Neither is ever applied
@@ -114,7 +115,7 @@ export function firstLine(text: string): string {
 
 /** Human wording for a sync tool's conflict-copy tag: "Sync copy · Jul 5"
  *  instead of the raw tag, which stays available as the tooltip. */
-export function humanizeSideLabel(label: string, now: Date = new Date()): { text: string; title?: string } {
+export function humanizeSideLabel(label: string, now: Date = appNow()): { text: string; title?: string } {
   const syncthing = label.match(/^sync-conflict-(\d{4})(\d{2})(\d{2})-\d{6}-[A-Za-z0-9]+$/);
   const dropbox = label.match(/conflicted copy (\d{4})-(\d{2})-(\d{2})/i);
   const m = syncthing ?? dropbox;

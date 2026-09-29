@@ -3,7 +3,7 @@
 // source of truth for both insertion paths: the slash-command template insert
 // (Block.tsx) and the default journal template (graph.ts).
 
-import { journalTitle } from "../journal";
+import { journalTitle, appNow } from "../journal";
 import { resolveDateToken } from "./dateExpr";
 
 type NaturalDateParser = (text: string, reference?: Date) => Date | null;
@@ -46,7 +46,7 @@ export function applyTemplateVars(raw: string, currentPage?: string): string {
   return raw.replace(/<%\s*([^%]*?)\s*%>/g, (whole, body) => {
     const kw = String(body).trim();
     const k = kw.toLowerCase();
-    const d = new Date();
+    const d = appNow();
     if (k === "time" || k === "current time") return clock(d);
     if (k === "current page") return currentPage ? `[[${currentPage}]]` : whole;
     if (k === "today") return `[[${journalTitle(d)}]]`;

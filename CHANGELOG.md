@@ -8,6 +8,49 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **The Guide grows thirteen task pages.** Start (Where things are, Bring an
+  existing graph), Workflows (Keep context visible, Structure repeated
+  information, Capture and plan your day, Find and revisit, Research a document,
+  Extend Tine) and Reference (Files, external edits and backups; Troubleshooting
+  and recovery; Journals, tasks and scheduling; Pages, links, references and
+  search; Platforms and mobile). Each describes only what this build does.
+- **A part of Tine that fails now says so, where it failed, with a Retry — instead
+  of leaving the window blank.** The page, the sidebar, Linked and Unlinked
+  References and the conflict panel each fail on their own; the message says how
+  many backend operations are still outstanding and for how long when that is the
+  likely cause (GH #490, GH #332).
+- **When the graph you last used will not open, the Welcome screen says which one
+  and why**, with Try again, Copy details and Open another graph.
+- **Page width is configurable per device** (Settings → Appearance → Advanced):
+  a standard reading width, and a fill-pane or custom maximum for Wide mode
+  (GH #382).
+
+### Fixed
+
+- **The static HTML export shows a block's clocked time and the numbering of
+  numbered blocks.** A block with LOGBOOK clock rows keeps its elapsed-time badge
+  (the drawer itself stays hidden), and blocks marked as own-numbered lists show
+  their `1.` / `a.` / `i.` markers as the app does.
+- **Journal days and "Today" follow the calendar zone the backend uses**
+  (GH #607). The frontend no longer trusts a WebView clock that can disagree
+  with the system zone; it applies the measured backend offset, refreshed
+  periodically and on focus.
+- **Opening a page by a differently cased name lands on the spelling that
+  exists on disk** (GH #597), and renaming an Org page keeps `file:` links to
+  it valid under the graph's filename format.
+- **Switching Settings sections no longer makes the whole dialog vanish and
+  reappear**, and the maximized size is remembered across restarts (GH #409,
+  GH #427).
+- **The right sidebar's spare header width is no longer a link** and the left
+  sidebar's whole row opens its page (GH #464, GH #468).
+- **The fold arrow on a block is no longer partly covered by the fold-all guide**
+  (GH #423), and **the left sidebar's scrollbar can be grabbed** with the resize
+  strip beside it instead of over it (GH #435).
+- **Application chrome no longer starts a text selection** while page content
+  and editors stay selectable.
+
 ## [0.6.5] - 2026-07-22
 
 ### Added

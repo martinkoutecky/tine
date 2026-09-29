@@ -12,6 +12,11 @@ export const [graphMeta, setGraphMeta] = createSignal<GraphMeta | null>(null);
 // never flashes it while the graph is still loading.
 export const [firstLoadDone, setFirstLoadDone] = createSignal(false);
 
+/** Why the graph chosen at launch could not be opened (Welcome recovery card).
+ * Set by App's launch open and by the card's retry; cleared when a retry loads. */
+export const [startupOpenFailure, setStartupOpenFailure] =
+  createSignal<{ path: string; message: string } | null>(null);
+
 /** Set (or clear, with null) the template applied to new journal days, persisting
  *  it to config.edn `:default-templates {:journals "Name"}` and updating the live
  *  meta so the UI reflects it immediately. */

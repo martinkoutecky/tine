@@ -181,7 +181,7 @@ struct SnapshotManifest {
     complete: bool,
 }
 
-fn root_backup_id(root: &std::path::Path) -> String {
+pub(crate) fn root_backup_id(root: &std::path::Path) -> String {
     let canonical = Store::canonical_root(root).unwrap_or_else(|_| root.to_path_buf());
     let mut hasher = Sha256::new();
     hasher.update(canonical.to_string_lossy().as_bytes());
