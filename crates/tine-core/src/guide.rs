@@ -559,7 +559,11 @@ mod query_guide_tests {
             today,
         );
         assert!(result.report().supported, "{example}");
-        assert!(result.report().ignored.is_empty(), "{:?}", result.report().ignored);
+        assert!(
+            result.report().ignored.is_empty(),
+            "{:?}",
+            result.report().ignored
+        );
         assert!(workflow.markdown.contains("never fewer"));
         assert!(workflow.markdown.contains("is left out whole"));
     }

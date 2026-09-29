@@ -40,7 +40,11 @@ fn backlinks_after_a_candidate_file_is_damaged_or_deleted_on_disk_parse_nothing(
     let counts = cost_counters::snapshot();
     let mut pages: Vec<&str> = groups.iter().map(|group| group.page.as_str()).collect();
     pages.sort();
-    assert_eq!(pages, vec!["Damaged", "Deleted", "Intact"], "answers from the snapshot");
+    assert_eq!(
+        pages,
+        vec!["Damaged", "Deleted", "Intact"],
+        "answers from the snapshot"
+    );
     assert_eq!(
         counts.parses, 0,
         "I-13/I-15: a reference question must not parse (let alone parse the graph); observed {counts:?}"

@@ -378,10 +378,19 @@ fn all_page_tags_round_trips_through_tql_with_absent_blank_and_populated_tags() 
     use tine_core::query::print::{query_print, PrintDialect};
 
     let fixture = open(&[
-        ("pages/absent.md", "- TODO absent page tags\n  tags:: block-only\n"),
+        (
+            "pages/absent.md",
+            "- TODO absent page tags\n  tags:: block-only\n",
+        ),
         ("pages/blank.md", "tags::\n\n- TODO blank page tags\n"),
-        ("pages/whitespace.md", "tags::   \n\n- TODO whitespace page tags\n"),
-        ("pages/tagged.md", "tags:: alpha, beta\n\n- TODO tagged task\n"),
+        (
+            "pages/whitespace.md",
+            "tags::   \n\n- TODO whitespace page tags\n",
+        ),
+        (
+            "pages/tagged.md",
+            "tags:: alpha, beta\n\n- TODO tagged task\n",
+        ),
     ]);
     let graph = &fixture.graph;
     let pages = |result: &QueryResult| page_names(result).into_iter().collect::<BTreeSet<_>>();
@@ -390,7 +399,10 @@ fn all_page_tags_round_trips_through_tql_with_absent_blank_and_populated_tags() 
 
     for (source, expected) in [
         ("(all-page-tags)", set(&["tagged"])),
-        ("(not (all-page-tags))", set(&["absent", "blank", "whitespace"])),
+        (
+            "(not (all-page-tags))",
+            set(&["absent", "blank", "whitespace"]),
+        ),
     ] {
         let (query, view) = parse_query_text(source, QueryDialect::Og, today);
         assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);
@@ -404,7 +416,11 @@ fn all_page_tags_round_trips_through_tql_with_absent_blank_and_populated_tags() 
             let (again, _) = parse_query_text(&printed, QueryDialect::Tql, today);
             assert!(!again.is_invalid(), "{printed}: {:?}", again.diagnostics);
             assert_eq!(again.anchor, query.anchor, "{printed}");
-            assert_eq!(again.normalized().filter, query.normalized().filter, "{printed}");
+            assert_eq!(
+                again.normalized().filter,
+                query.normalized().filter,
+                "{printed}"
+            );
             assert_eq!(
                 pages(&run_ir(graph, &again, &view, &ExecutionContext::none())),
                 expected,
@@ -413,7 +429,11 @@ fn all_page_tags_round_trips_through_tql_with_absent_blank_and_populated_tags() 
         }
     }
     // Composed with a block filter, the tag test still reads the block's page.
-    case(graph, "(and (task TODO) (all-page-tags))", &["TODO tagged task"]);
+    case(
+        graph,
+        "(and (task TODO) (all-page-tags))",
+        &["TODO tagged task"],
+    );
 }
 
 /// REG-P0-QUERY-UNKNOWN-HEAD-001.
