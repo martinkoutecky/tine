@@ -47,7 +47,7 @@ export function JournalFilenamePanel(): JSX.Element {
       const skippedMessage = journalMigrationSkipMessage({ migrated, skipped });
       if (skippedMessage) pushToast(skippedMessage, "info");
       await load();
-      await refreshJournalConflicts(true);
+      await refreshJournalConflicts();
     } catch (e) {
       // A durable failure from a graph the user already left is not this graph's.
       if (owner()) pushToast(`Couldn’t rename them: ${String(e)}`, "error");

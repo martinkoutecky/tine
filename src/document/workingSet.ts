@@ -1,5 +1,5 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
-import { untombstone, setBaseRev, activatePageInstance, forgetSaveState, rekeyPageSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, conflictReason, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations, deletePageOnDisk, group, groupedPages, savingPages, releaseGroup, reserveGroupMemberDeletion } from "./save/engine";
+import { untombstone, setBaseRev, baseRevFor, activatePageInstance, forgetSaveState, rekeyPageSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, conflictReason, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations, deletePageOnDisk, group, groupedPages, savingPages, releaseGroup, reserveGroupMemberDeletion } from "./save/engine";
 import { clearCollapseEpochs, doc, setDoc, FeedPage, pageByName } from "./model";
 import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, emptyPage } from "./convert";
@@ -15,7 +15,7 @@ import { type PageTarget } from "../routeTypes";
 import { editingId, endEdit } from "../editorController";
 import { clearSeededFacets } from "../render/facets";
 import { notifyModeReset } from "../modeHooks";
-import { replayDeferredExternalReloads } from "./deferredReload";
+import { deferExternalReload, replayDeferredExternalReloads } from "./deferredReload";
 import { isBlockMoving } from "./edits/moves";
 import { journalTitle, appNow } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
@@ -407,8 +407,14 @@ export function resetStore() {
 // the next save could write it, silently dropping the edit (GH #304 family, og 20b
 // contract 2). Same gate as the watcher: `reloadDisposition`. (reloadPage / "use
 // disk version" still replace explicitly via upsertPage — that is the user's choice.)
-function upsertUnlessDirty(dto: PageDto) {
-  if (pageByName(dto.name) && reloadDisposition(dto.name) !== "reload") return;
+function upsertUnlessDirty(dto: PageDto & { id?: string }) {
+  const disp = pageByName(dto.name) ? reloadDisposition(dto.name) : "reload";
+  // A held page ("skip") keeps its loaded copy, and the declined read replays
+  // through the watcher's deferred reload once the hold releases, so a feed or
+  // navigation read landing mid-hold is never silently dropped (master
+  // ba80a151e). A "conflict" page's own save settles it.
+  if (disp === "skip" && (dto.rev == null || dto.rev !== baseRevFor(dto.name))) deferExternalReload(dto.name, { name: dto.name, kind: dto.kind, path: dto.id, created: false, removed: false });
+  if (disp !== "reload") return;
   upsertPage(dto);
 }
 

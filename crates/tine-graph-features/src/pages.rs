@@ -308,7 +308,8 @@ pub fn delete_page_expected(
 /// Rename a page and its file-backed namespace descendants in one transaction.
 /// Pages that explicitly reference a renamed name (`WholeGraph::explicit_referrers`,
 /// OG `:block/refs` semantics: `{{query}}` arguments are not references) are
-/// rewritten, including `tags::`, aliases and self-references. Non-UTF-8
+/// rewritten, including bare `tags::` members and self-references; a bare
+/// `alias::` member stays, as in OG `replace-old-page!` (C3Y Y4). Non-UTF-8
 /// candidates are skipped as in v0.6.5; a non-round-tripping Org referrer
 /// refuses the entire rename (H1). An `old` with no file still rewrites its
 /// references; journal files never move. A case-only rename writes nothing
@@ -1061,11 +1062,17 @@ fn payload(
                 None if key != "title" => header.push(line.to_owned()),
                 Some(at) if key == "alias" => {
                     let kept = header[at].clone();
+                    // Members split like the reference evidence and OG
+                    // `sep-by-comma`: `,` or `，` (C3Y Y4).
                     let known: HashSet<String> = header_property(&kept, org)
-                        .map(|(_, v)| v.split(',').map(refs::normalize).collect())
+                        .map(|(_, v)| {
+                            v.split(refs::is_linkable_property_separator)
+                                .map(refs::normalize)
+                                .collect()
+                        })
                         .unwrap_or_default();
                     let extra: Vec<&str> = value
-                        .split(',')
+                        .split(refs::is_linkable_property_separator)
                         .map(str::trim)
                         .filter(|alias| {
                             !alias.is_empty() && !known.contains(&refs::normalize(alias))

@@ -70,6 +70,12 @@ export const mockConflictApi = {
   async trashSyncConflict(): Promise<void> {
     // no-op in the browser mock
   },
+  async duplicateJournalDiff(): Promise<SyncConflictDiff | null> {
+    return null;
+  },
+  async resolveDuplicateJournalDay(): Promise<void> {
+    // no-op in the browser mock
+  },
   async conflictInventory(): Promise<ConflictInventory> {
     return conflictInventory();
   },

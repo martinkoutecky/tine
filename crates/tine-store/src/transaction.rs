@@ -651,10 +651,7 @@ impl<'a> Transaction<'a> {
         };
         match fs::symlink_metadata(&alt) {
             Ok(_) => Ok(Some(FileId::from(self.store.graph.rel_path(&alt)))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) if self.page(file) && error.kind() == io::ErrorKind::InvalidData => {
-                Err(content_refusal(error))
-            }
+            Err(error) if crate::atomic_file::names_nothing(&error) => Ok(None),
             Err(error) if self.page(file) && error.kind() == io::ErrorKind::InvalidData => {
                 Err(content_refusal(error))
             }
@@ -846,8 +843,8 @@ impl<'a> Transaction<'a> {
             .and_then(|s| s.to_str())
             .unwrap_or("file");
         FileId::from(format!(
-            "logseq/.tine-trash/{kind}/{}__{name}",
-            trash_stamp()
+            "logseq/.tine-trash/{kind}/{}",
+            crate::atomic_file::prefixed_name(&format!("{}__", trash_stamp()), name)
         ))
     }
 
@@ -861,8 +858,8 @@ impl<'a> Transaction<'a> {
             .and_then(|s| s.to_str())
             .unwrap_or("file");
         let id = FileId::from(format!(
-            "logseq/.tine-trash/conflicts/{}__markers__{name}",
-            trash_stamp()
+            "logseq/.tine-trash/conflicts/{}",
+            crate::atomic_file::prefixed_name(&format!("{}__markers__", trash_stamp()), name)
         ));
         self.write_trash_copy(&id, old)?;
         #[cfg(feature = "test-faults")]
@@ -1033,7 +1030,7 @@ impl<'a> Transaction<'a> {
                         let rel = if attempt == 0 {
                             format!("{stem}{ext}")
                         } else {
-                            format!("{stem}_{attempt}{ext}")
+                            crate::atomic_file::marked_name(&stem, &format!("_{attempt}"), &ext)
                         };
                         self.store
                             .file_id(area, &rel)
@@ -1509,8 +1506,8 @@ impl<'a> Transaction<'a> {
             .and_then(|s| s.to_str())
             .unwrap_or("file");
         let copy = FileId::from(format!(
-            "logseq/.tine-trash/conflicts/{}__tx-old__{name}",
-            trash_stamp()
+            "logseq/.tine-trash/conflicts/{}",
+            crate::atomic_file::prefixed_name(&format!("{}__tx-old__", trash_stamp()), name)
         ));
         let recovery = self.store.graph.root.join(copy.as_str());
         self.store.graph.ensure_write_target(&recovery)?;

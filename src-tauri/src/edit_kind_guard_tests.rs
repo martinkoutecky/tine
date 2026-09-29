@@ -126,10 +126,14 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "resolve_live_conflict",
             "tine_graph_features::live_conflict::resolve_live_conflict",
         ),
+        (
+            "resolve_duplicate_journal_day",
+            "tine_graph_features::conflicts::resolve_duplicate_journal_day",
+        ),
     ];
     assert_eq!(
         routes.len() + concord_routes.len(),
-        14,
+        15,
         "OG-RULES Rule 8: update the page-writer census; exemplar src-tauri/src/commands.rs"
     );
     for (name, route) in routes {
@@ -175,9 +179,13 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "trash_current",
             "transaction(Some(tine_store::EditKind::DeletePage))",
         ),
+        // Both two-file folds (a sync copy, a duplicate journal day) write
+        // through the one shared `fold_pair`.
+        (CONFLICTS, "resolve_sync_conflict", "fold_pair("),
+        (CONFLICTS, "resolve_duplicate_journal_day", "fold_pair("),
         (
             CONFLICTS,
-            "resolve_sync_conflict",
+            "fold_pair",
             "tx.save_page(&[tine_store::EditKind::ReplacePage",
         ),
         (

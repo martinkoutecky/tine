@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
-import { conflictQueue, syncConflicts, openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
+import { openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
+import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -457,7 +458,7 @@ export function GraphSwitcher(props: {
 // because the queue is derived from disk. It opens the Conflicts overview.
 // A copy whose page is gone counts too, or nothing would point at it.
 export function ConflictQueueBadge(): JSX.Element {
-  const count = () => conflictQueue().length + syncConflicts().filter((c) => !c.base_path).length;
+  const count = pendingConflictCount;
   return (
     <Show when={count()}>
       <button class="conflict-queue-badge" title="Review the pages that need a decision" onClick={() => openConflicts()}>

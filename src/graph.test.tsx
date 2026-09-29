@@ -69,6 +69,7 @@ async function loadHarness(
   const retirePdfOwnership = vi.fn(() => { events.push("retire-pdf"); });
   const activatePdfOwnership = vi.fn((root: string) => { events.push(`activate-pdf:${root}`); });
   const resetTabsToJournals = vi.fn(() => { events.push("reset-tabs"); });
+  const flushAll = vi.fn(async () => true);
 
   vi.doMock("./backend", () => ({ backend: () => api }));
   vi.doMock("./ui", () => ({
@@ -103,7 +104,7 @@ async function loadHarness(
     activatePdfOwnership,
   }));
   vi.doMock("./document", () => ({
-    resetStore: vi.fn(), flushAll: vi.fn(async () => true),
+    resetStore: vi.fn(), flushAll,
     installRenameRefreshHandler: vi.fn(),
     favoritesArrangementPage: vi.fn(), favoritesArrangementBlocks: vi.fn(),
     reloadHlsIfLoaded: vi.fn(),
@@ -150,7 +151,7 @@ async function loadHarness(
   const { loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay } = await import("./graph");
   return {
     loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, api, events, resetPageIndex, resetAt, waitForWarmCache,
-    drainPdfWork, retirePdfOwnership, activatePdfOwnership, resetTabsToJournals,
+    drainPdfWork, retirePdfOwnership, activatePdfOwnership, resetTabsToJournals, flushAll,
     applyTemplateVars, prepareTemplateVars, openPage,
   };
 }
@@ -481,6 +482,39 @@ describe("PDF graph ownership", () => {
     ]);
     expect(harness.resetTabsToJournals).not.toHaveBeenCalled();
     expect(harness.activatePdfOwnership).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("an edit typed while a graph switch is in flight (og A, 20B open item 5)", () => {
+  // The first flush runs before the session save, the access prompt and the
+  // PDF drain; an edit that lands during those awaits used to reach resetStore
+  // unsaved and was discarded with the old graph's working set.
+  it("flushes again as the last step before binding another graph", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    harness.flushAll.mockClear();
+    harness.drainPdfWork.mockClear();
+    harness.api.loadGraph.mockClear();
+    const next = { ...META, root: "/tmp/other-graph" };
+    harness.api.loadGraph.mockResolvedValueOnce({ kind: "loaded" as const, meta: next, binding_generation: 2 });
+    await harness.loadGraphPath(next.root);
+    const flushes = harness.flushAll.mock.invocationCallOrder;
+    expect(flushes.length).toBe(2);
+    expect(flushes[1]).toBeGreaterThan(harness.drainPdfWork.mock.invocationCallOrder[0]);
+    expect(flushes[1]).toBeLessThan(harness.api.loadGraph.mock.invocationCallOrder[0]);
+  });
+
+  it("keeps the old graph (and its PDF owner) when that late edit cannot be saved", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    harness.events.length = 0;
+    harness.flushAll.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    await expect(harness.loadGraphPath("/tmp/other-graph")).resolves.toEqual({ kind: "aborted" });
+    expect(harness.api.loadGraph).toHaveBeenCalledOnce();
+    expect(harness.resetTabsToJournals).not.toHaveBeenCalled();
+    expect(harness.activatePdfOwnership).toHaveBeenLastCalledWith(META.root);
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)).toMatchObject({ kind: "error", message: expect.stringContaining("couldn't be saved") });
   });
 });
 

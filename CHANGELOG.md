@@ -10,6 +10,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **A conflict can no longer scroll out of sight** (master 61ea6600c, og A).
+  Once the in-page review scrolls above the window, a slim bar pins to the top
+  of the pane; tapping it unrolls the same review in place, with your choices
+  kept. Tap again, press Escape, or scroll back up to fold it away.
+- **A duplicate journal day resolves on the day itself** (master 9dc54e4a7, og A).
+  A day with two files (a date-named one and a title-named one) joins the
+  conflict badge and the Conflicts page, and its page compares the two files
+  block by block: the pre-selected choice keeps everything, and applying folds
+  the other file in and moves it to the recoverable trash. Each file keeps its
+  Open, Rename and Trash actions; the startup toast is gone, and Settings keeps
+  the list as a fallback.
 - **Right-sidebar items can be reordered by dragging their header** (GH #211, og 22b); a short press still opens the item.
 - **External changes stay fresh without interrupting you.** Returning to Tine
   asks the watcher for a fresh pass before you type; a large checkout or sync
@@ -58,6 +69,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **An edit made while a graph switch was already under way is no longer
+  dropped** (og A). Tine saves once more right before it opens the other graph,
+  and stays on the current graph if that edit cannot be saved.
+- **Files with very long names can be imported, deleted and resolved.** An asset
+  or page whose name is close to the 255-byte limit (an 84-character CJK title)
+  could not be imported, re-imported under a numbered name, moved to trash,
+  resolved after a VCS merge, or created: the helper files and trash copies Tine
+  names after it were too long. Trash copies now shorten the name and keep its
+  extension. Merging a page also no longer repeats an alias written after a
+  full-width comma, and a drag that would nest the outline too deep now says so.
 - **A page marked `public:: false` stays out of every export.** With
   `:publishing/all-pages-public? true` in `config.edn`, or **Include every page**
   ticked, Tine published such pages anyway; like Logseq it now leaves them out,

@@ -397,7 +397,7 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
             if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
                 continue;
             }
-            for alias in v.split([',', '，']) {
+            for alias in v.split(tine_core::refs::is_linkable_property_separator) {
                 let alias = strip_ref(alias.trim());
                 if !alias.is_empty() {
                     aliases.push(refs::page_key(&alias));
@@ -965,7 +965,7 @@ fn backlink_filter_entry(
             if quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"') {
                 continue;
             }
-            for value in value.split([',', '，']) {
+            for value in value.split(tine_core::refs::is_linkable_property_separator) {
                 let name = strip_ref(value.trim());
                 add_facet(&name);
             }

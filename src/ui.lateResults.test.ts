@@ -20,11 +20,22 @@ describe("late conflict lists (I-20)", () => {
     const list = vi.spyOn(backend(), "listJournalConflicts").mockImplementationOnce(() =>
       new Promise((resolve) => { finish = resolve; })
     );
-    const refreshing = refreshJournalConflicts(true);
+    const refreshing = refreshJournalConflicts();
     resetStore();
     finish([{ title: "Old day", files: [] }]);
     await refreshing;
     expect(journalConflicts()).toEqual([]);
+    expect(toasts()).toEqual([]);
+    list.mockRestore();
+  });
+
+  it("a duplicate journal day updates the list without a startup toast (master 9dc54e4a7)", async () => {
+    setJournalConflicts([]);
+    setToasts([]);
+    const day: JournalConflict = { title: "Friday, 26-06-2026", files: [] };
+    const list = vi.spyOn(backend(), "listJournalConflicts").mockResolvedValueOnce([day]);
+    await refreshJournalConflicts();
+    expect(journalConflicts()).toEqual([day]);
     expect(toasts()).toEqual([]);
     list.mockRestore();
   });

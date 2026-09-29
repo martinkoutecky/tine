@@ -2,7 +2,9 @@ import { For, Show, Suspense, createEffect, createMemo, createResource, createSi
 import { DiagnosticsTab } from "./DiagnosticsTab";
 import { AboutTab } from "./AboutTab";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
-import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, syncConflicts, refreshSyncConflicts, conflictQueue, type SettingsTabId } from "../ui";
+import { ConflictFileRow } from "./JournalConflictFileRow";
+import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
+import { pendingConflictCount } from "../liveConflicts";
 import { setJournalTemplate, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
@@ -1612,106 +1614,6 @@ function BackupsTab(): JSX.Element {
 // assets/ files no block links to, and let the user move them to the recoverable
 // trash. Tine never auto-deletes media (a deleted block keeps its files), so this
 // is how unused media gets cleaned up.
-// One file in a duplicate-day conflict. Click the name to reveal its full
-// contents; the action buttons let you reach and reconcile it (#21): Open
-// navigates to THIS specific file (editable, saves back to itself), Merge folds a
-// stray into the canonical day, Rename rescues it as a normal page, Trash removes
-// the redundant one (recoverable).
-function ConflictFileRow(props: {
-  file: JournalFile;
-  onOpen: () => void;
-  onMerge?: () => void;
-  onRename: (newName: string) => void;
-  onTrash: () => void;
-}): JSX.Element {
-  const rowLayerId = `journal-conflict-${props.file.path}`;
-  let renameRoot: HTMLDivElement | undefined;
-  let contentRoot: HTMLPreElement | undefined;
-  const [open, setOpen] = createSignal(false);
-  const [renaming, setRenaming] = createSignal(false);
-  const [newName, setNewName] = createSignal("");
-  const [content] = createResource(
-    () => (open() ? props.file.name : null),
-    async (name) => (name ? backend().readJournalFile(name).catch((e) => `(couldn’t read: ${String(e)})`) : "")
-  );
-  const submitRename = () => {
-    const n = newName().trim();
-    if (n) props.onRename(n);
-    setRenaming(false);
-    setNewName("");
-  };
-  createEffect(() => {
-    if (!open()) return;
-    const unregister = registerTransientLayer({
-      id: `${rowLayerId}-content`,
-      parentId: "settings",
-      root: () => contentRoot ?? null,
-      dismiss: () => { setOpen(false); return true; },
-    });
-    onCleanup(unregister);
-  });
-  createEffect(() => {
-    if (!renaming()) return;
-    const unregister = registerTransientLayer({
-      id: `${rowLayerId}-rename`,
-      parentId: "settings",
-      root: () => renameRoot ?? null,
-      dismiss: () => { setRenaming(false); setNewName(""); return true; },
-    });
-    onCleanup(unregister);
-  });
-  return (
-    <>
-      <div class="journal-conflict-row" data-journal-conflict={props.file.path}>
-        <button class="settings-asset-name mono" title="Show this file's contents" onClick={() => setOpen(!open())}>
-          {open() ? "▾ " : "▸ "}
-          {props.file.name}
-          <Show when={props.file.canonical}>
-            <span class="journal-conflict-keep"> · canonical</span>
-          </Show>
-        </button>
-        <span class="journal-conflict-actions">
-          <button class="settings-btn" title="Open this exact file (editable)" onClick={props.onOpen}>
-            Open
-          </button>
-          <Show when={props.onMerge}>
-            <button class="settings-btn" title="Append this file's blocks to the canonical day, then trash it" onClick={props.onMerge}>
-              Merge
-            </button>
-          </Show>
-          <button class="settings-btn" title="Move this file to a uniquely-named page" onClick={() => { setRenaming(true); setNewName(""); }}>
-            Rename…
-          </button>
-          <button class="settings-btn settings-btn-danger" onClick={props.onTrash}>
-            Trash
-          </button>
-        </span>
-      </div>
-      <div class="journal-conflict-preview">{props.file.preview}</div>
-      <Show when={renaming()}>
-        <div ref={renameRoot} class="journal-conflict-rename">
-          <input
-            class="settings-input"
-            placeholder="New page name"
-            value={newName()}
-            onInput={(e) => setNewName(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.isComposing || e.keyCode === 229) return;
-              if (e.key === "Enter") submitRename();
-              else if (e.key === "Escape") setRenaming(false);
-            }}
-          />
-          <button class="settings-btn" onClick={submitRename}>Save</button>
-          <button class="settings-btn" onClick={() => setRenaming(false)}>Cancel</button>
-        </div>
-      </Show>
-      <Show when={open()}>
-        <pre ref={contentRoot} class="journal-conflict-content">{content.loading ? "…" : content() || "(empty file)"}</pre>
-      </Show>
-    </>
-  );
-}
-
 // Duplicate journal days expose per-file reconcile actions.
 function JournalConflictsPanel(): JSX.Element {
   void refreshJournalConflicts(); // refresh when the Backups tab opens
@@ -1721,7 +1623,7 @@ function JournalConflictsPanel(): JSX.Element {
       const result = await writeOwned(owner, op());
       if (result.kind === "stale") return;
       pushToast(ok, "success");
-      await refreshJournalConflicts(true);
+      await refreshJournalConflicts();
     } catch (e) {
       pushToast(`Couldn’t do that: ${String(e)}`, "error");
     }
@@ -1795,14 +1697,13 @@ function JournalConflictsPanel(): JSX.Element {
 // modal that used to live here is retired: resolution happens on the page.
 function ConflictOverviewPointer(): JSX.Element {
   void refreshSyncConflicts(); // refresh when the Backups tab opens
-  const count = () => conflictQueue().length + syncConflicts().filter((c) => !c.base_path).length;
   return (
-    <Show when={count()}>
+    <Show when={pendingConflictCount()}>
       <div class="settings-section" style={{ "margin-top": "18px" }}>
         Conflicts
       </div>
       <div class="settings-hint settings-block">
-        {count()} {count() === 1 ? "item needs" : "items need"} a decision: sync conflict copies or
+        {pendingConflictCount()} {pendingConflictCount() === 1 ? "item needs" : "items need"} a decision: sync conflict copies or
         version-control merge markers. The Conflicts page lists them, with{" "}
         <strong>Discard copy</strong> for sync copies; the <strong>N conflicts</strong> badge in the
         sidebar opens it too.

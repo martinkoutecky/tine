@@ -174,6 +174,18 @@ export async function loadGraphPath(
   if (rebindsPdfOwner) {
     retirePdfOwnership();
   }
+  // An edit can land during the awaits since the first flush (session save,
+  // access prompt, PDF drain); resetStore would discard it with the old
+  // working set. Flush once more as the last await before the binding moves.
+  if (hadGraph && !(await flushAll())) {
+    if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
+    pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
+    return { kind: "aborted" };
+  }
+  if (!stillBound(startingBinding)) {
+    if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
+    return { kind: "aborted" };
+  }
 
   let result;
   try {
@@ -217,7 +229,7 @@ export async function loadGraphPath(
   // blocking graph open.
   bumpGraphEpoch();
   applyConfigDerivedState(meta, null);
-  void refreshJournalConflicts(true); // tell the user if any day has duplicate journal files
+  void refreshJournalConflicts(); // duplicate days surface through the conflict queue, not a toast
   void refreshSyncConflicts(); // conflict copies + VCS markers feed the sidebar badge
   if (path) {
     try {

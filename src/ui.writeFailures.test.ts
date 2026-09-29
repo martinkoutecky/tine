@@ -122,7 +122,7 @@ it("does not dispatch a queued config write into the next graph", async () => {
 // C3X X6 (L13): both of these used to swallow the failure silently.
 it("says so when the duplicate-journal listing fails instead of showing no duplicates", async () => {
   vi.spyOn(backend(), "listJournalConflicts").mockRejectedValueOnce(new Error("I/O"));
-  await refreshJournalConflicts(true);
+  await refreshJournalConflicts();
   expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("duplicate journal days"))).toBe(true);
 });
 

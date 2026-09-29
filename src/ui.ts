@@ -219,7 +219,7 @@ export function changeJournalTitleFormat(fmt: string) {
     .then((result) => {
       if (result.kind === "stale") return;
       bumpGraphEpoch();
-      void refreshJournalConflicts(true); // the new format can reveal same-day twins
+      void refreshJournalConflicts(); // the queue surfaces any day the new format reveals
     })
     .catch((error) => {
       if (owner()) {
@@ -244,21 +244,16 @@ export function journalMigrationSkipMessage(result: import("./types").JournalMig
 export const [journalConflicts, setJournalConflicts] = createSignal<JournalConflict[]>([]);
 // I-20: its reconcile actions take graph-relative paths; a switch empties it.
 clearOnBindingInvalidated(() => setJournalConflicts([]));
-/** Re-fetch the duplicate-journal-day list; with `notify`, toast if any exist. */
-export async function refreshJournalConflicts(notify = false): Promise<void> {
+/** Re-fetch the duplicate-journal-day list (Settings' fallback list and the
+ *  in-page file rows). It no longer toasts: a duplicate day is a conflict-queue
+ *  object, so it reaches the user through the badge, the overview and the day's
+ *  own page like every other standing conflict (master 9dc54e4a7). */
+export async function refreshJournalConflicts(): Promise<void> {
   const owner = graphOwner();
   try {
     const result = await readOwned(owner, backend().listJournalConflicts());
     if (result.kind === "stale") return;
-    const c = result.value;
-    setJournalConflicts(c);
-    if (notify && c.length) {
-      pushToast(
-        `${c.length} journal day${c.length === 1 ? "" : "s"} have duplicate files in different formats — reconcile them in Settings → Backups & recovery`,
-        "info",
-        { sticky: true, action: { label: "Open", run: () => openSettings("backups") } }
-      );
-    }
+    setJournalConflicts(result.value);
   } catch (error) {
     // A failed listing must not read as "no duplicate days": say so, but only
     // for the graph that asked (a switch already emptied the list).
