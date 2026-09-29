@@ -113,6 +113,15 @@ pub(crate) fn headers(text: &str, format: OutlineFormat) -> Result<Vec<Header>, 
     Ok(out)
 }
 
+/// Byte offset of the first block-opening line of `text` (same line-break
+/// contract as [`headers`]), or `None` when there is none or the outline is
+/// not representable: `doc::parse`/`org::parse_org` then read the whole text
+/// as the preamble. Silent (the page parse reports refusals).
+pub(crate) fn first_header_start(text: &str, format: OutlineFormat) -> Option<usize> {
+    let line = headers(text, format).ok()?.first()?.line;
+    Some(text.split_inclusive('\n').take(line).map(str::len).sum())
+}
+
 /// Headers, or none (with a diagnostic) when the outline is not representable.
 pub(crate) fn headers_or_none(text: &str, format: OutlineFormat) -> Vec<Header> {
     headers(text, format).unwrap_or_else(|refusal| {

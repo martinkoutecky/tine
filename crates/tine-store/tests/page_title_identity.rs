@@ -312,3 +312,76 @@ fn safe_new_filename_and_legacy_existing_path_keep_master_bytes() {
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+/// T1 (og-t): the page name comes from the preamble the page model reads,
+/// which ends at the outline authority's first block. A leading unbulleted
+/// heading is a block, so a `title::` under it is the heading's property
+/// (OG `extract.cljc` `get-page-name`: title only from leading properties);
+/// a bullet-looking line inside a fence is content, not the first block.
+#[test]
+fn page_name_agrees_with_the_outline_preamble() {
+    let root = std::env::temp_dir().join(format!("tine-title-outline-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("pages")).unwrap();
+    fs::create_dir_all(root.join("journals")).unwrap();
+    fs::write(
+        root.join("pages/Physical.md"),
+        "# Heading\ntitle:: Not The Page\n\n- body\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("pages/Fenced.md"),
+        "```\n- not a block\n```\ntitle:: Fenced Title\n\n- body\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("pages/Referrer.md"),
+        "- [[Physical]] [[Not The Page]] [[Fenced Title]]\n",
+    )
+    .unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let graph = store.whole_graph().unwrap();
+    assert!(matches!(
+        graph.resolve("Physical", false),
+        Resolved::Existing { .. }
+    ));
+    assert!(matches!(
+        graph.resolve("Not The Page", false),
+        Resolved::Absent { .. }
+    ));
+    assert!(matches!(
+        graph.resolve("Fenced Title", false),
+        Resolved::Existing { .. }
+    ));
+    let heading = store.page(&PageId::from("pages/Physical.md")).unwrap();
+    assert_eq!(heading.doc.name, "Physical");
+    assert_eq!(heading.doc.pre_block, None, "the heading is a block");
+    let fenced = store.page(&PageId::from("pages/Fenced.md")).unwrap();
+    assert_eq!(fenced.doc.name, "Fenced Title");
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// T1 (og-t): a rename leaves a heading block's `title::` property alone; it
+/// is not the page's title, so nothing binds it to the page name.
+#[test]
+fn rename_keeps_a_heading_blocks_title_property() {
+    let root =
+        std::env::temp_dir().join(format!("tine-title-heading-rename-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("pages")).unwrap();
+    fs::create_dir_all(root.join("journals")).unwrap();
+    fs::write(
+        root.join("pages/Physical.md"),
+        "# Heading\ntitle:: Physical\n\n- body\n",
+    )
+    .unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    tine_graph_features::pages::rename_page_expected(&store, "Physical", "Moved", None).unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Moved.md")).unwrap(),
+        "# Heading\ntitle:: Physical\n\n- body\n"
+    );
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}

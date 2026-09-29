@@ -2,7 +2,8 @@
 //! file identity; the preamble title is the logical page name.
 
 use super::*;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
+use tine_core::model::PreambleRead;
 
 impl Graph {
     /// Build the page list and effective-name claimants from one cold walk.
@@ -190,8 +191,11 @@ pub(crate) fn graph_text_relative_eligible(relative: &str, config: &Config) -> b
     graph_text_eligible(Path::new(""), Path::new(relative), config)
 }
 
-/// Read only the preamble instead of every block of every page during name
-/// discovery. A full parse is still done by the cache builder and page reader.
+/// Read only as much of the page as settles its preamble
+/// (`tine_core::model::preamble_read`) instead of every block of every page
+/// during name discovery; the title comes from the same answerer the page
+/// model agrees with. A full parse is still done by the cache builder and
+/// page reader.
 pub(super) fn effective_page_name(path: &Path, stem: &str, name_fmt: FileNameFormat) -> String {
     let title = (|| {
         let file = fs::File::open(path).ok()?;
@@ -203,20 +207,23 @@ pub(super) fn effective_page_name(path: &Path, stem: &str, name_fmt: FileNameFor
         let mut reader = BufReader::new(file);
         let mut preamble = String::new();
         let mut line = String::new();
-        let org = Format::from_path(path) == Format::Org;
+        let format = Format::from_path(path);
         loop {
             line.clear();
-            let n = reader.read_line(&mut line).ok()?;
-            if n == 0 {
-                break;
-            }
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("- ") || trimmed == "-" || (org && trimmed.starts_with("* ")) {
+            if reader.read_line(&mut line).ok()? == 0 {
                 break;
             }
             preamble.push_str(&line);
+            match tine_core::model::preamble_read(&preamble, format) {
+                PreambleRead::Settled => break,
+                PreambleRead::More => {}
+                PreambleRead::Whole => {
+                    reader.read_to_string(&mut preamble).ok()?;
+                    break;
+                }
+            }
         }
-        tine_core::model::page_title_from_preamble(&preamble, Format::from_path(path))
+        tine_core::model::page_title_from_preamble(&preamble, format)
     })();
     title.unwrap_or_else(|| decode_page_name(stem, name_fmt))
 }
