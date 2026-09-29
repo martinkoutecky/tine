@@ -377,6 +377,7 @@ export function setSelectionHeading(pointerId: string, state: HeadingState): boo
   setDoc(produce((stateDoc) => {
     for (const change of changes) stateDoc.byId[change.id].raw = change.raw;
   }));
-  for (const page of pages) markDirty(page, "save-block");
+  if (pages.length > 1) void persistTogether(pages, "save-block");
+  else for (const page of pages) markDirty(page, "save-block");
   return true;
 }
