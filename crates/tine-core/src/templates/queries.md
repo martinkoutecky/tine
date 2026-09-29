@@ -36,5 +36,8 @@ icon:: 🔎
 	- If Tine cannot read part of a query, the block says so — **Tine didn't understand part of this query, so it returned no results** — followed by what it could not read. An empty list without that message means the query is valid and nothing matches yet.
 	- An empty result offers **why empty?**: a table of the query's top-level conditions with how many rows each matches alone and how many the query would match without it, so the condition that emptied it stands out.
 	- A query that would return more than 20,000 rows (or 32 MiB) is refused with a message instead of being cut short. Narrow it, or add `(sample N)`.
+- ## Publish a query
+	- Use **Export…** on a query's result header. Review the complete pages selected by the result, then choose an external folder. Tine creates a new named site there, with a read-only browser view and static HTML fallback. A block result publishes its whole owner page, so review those pages before continuing.
+	- In **Settings → Graph → Publish live site**, choose an external folder to publish pages marked `public:: true`. **Include all pages** is an explicit choice for a graph meant to be public. The exported site can be served as ordinary static files.
 - ## Not in this build yet
 	- The query's **Display** panel (columns, grouping and totals chosen from the sheet) and the property chooser's observed types and counts are not in this build yet; set those with `tine.*` block properties.
