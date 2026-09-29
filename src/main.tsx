@@ -22,10 +22,10 @@ import "./styles/theme.css";
 import "./lsShimInstall";
 import { installSystemInsetOwner } from "./systemInsets";
 import { installPlatformAttribute } from "./nativeChrome";
-import "./styles/touchGestures.css";
 import { installEditableEmojiPlatform } from "./editableEmoji";
 import "./styles/editableEmoji.css";
 import "./styles/app.css";
+import "./styles/touchGestures.css"; // after app.css: its .sel-toolbar-mobile overrides .sel-toolbar
 import "./styles/topbar.css";
 import "./styles/readiness.css";
 import "./styles/themePresentation.css";

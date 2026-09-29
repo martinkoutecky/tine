@@ -3181,7 +3181,7 @@ export function Editor(props: { id: string }): JSX.Element {
         </div>
       </Show>
       <Show when={hasSel()}>
-        <div class="sel-toolbar" onMouseDown={(e) => e.preventDefault()}>
+        <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": isMobilePlatform }} data-mobile-selection-toolbar={isMobilePlatform ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
           <For each={essentialSelectionActions}>{(action) => (
             <button
               classList={{ "sel-action-page-link": action.id === "page-link" }}
