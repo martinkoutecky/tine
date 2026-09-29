@@ -2,6 +2,7 @@
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
+import { markCommandSlow } from "./slowBackend";
 import type {
   Diagnostic,
   ExecutionContext,
@@ -804,7 +805,12 @@ class TauriBackend implements Backend {
     if (DIAGNOSTIC_COMMANDS.has(cmd)) return this.invoke<T>(cmd, leasedArgs);
     const started = performance.now();
     let slow = false;
-    const slowTimer = setTimeout(() => { slow = true; this.reportIpcPhase(cmd, "slow", started); }, SLOW_IPC_MS);
+    let settleSlow: (() => void) | undefined;
+    const slowTimer = setTimeout(() => {
+      slow = true;
+      settleSlow = markCommandSlow(started);
+      this.reportIpcPhase(cmd, "slow", started);
+    }, SLOW_IPC_MS);
     try {
       const result = await this.invoke<T>(cmd, leasedArgs);
       if (slow) this.reportIpcPhase(cmd, "completed", started);
@@ -815,6 +821,7 @@ class TauriBackend implements Backend {
       throw error;
     } finally {
       clearTimeout(slowTimer);
+      settleSlow?.();
     }
   }
 
