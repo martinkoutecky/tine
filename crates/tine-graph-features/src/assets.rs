@@ -119,6 +119,21 @@ pub fn path_for_os_handoff(
         .map_err(AssetAccessError::Store)
 }
 
+/// Return the canonical path of an existing asset file OR directory for an OS
+/// opener; the empty name is the assets root (GH #367, OG's `[p](./assets/)`).
+/// Same name validation and Store containment as `path_for_os_handoff`, which
+/// keeps its regular-file gate for edit handoffs. Cost O(path components).
+pub fn path_for_os_open(store: &Store, name: &str) -> Result<std::path::PathBuf, AssetAccessError> {
+    let id = if name.is_empty() {
+        None
+    } else {
+        Some(named_asset(store, name)?)
+    };
+    store
+        .asset_path_for_os_open(id.as_ref())
+        .map_err(AssetAccessError::Store)
+}
+
 /// A device import failed during filename selection or streaming.
 /// Choose and validate an import name from an explicit name or the device
 /// source's final component. No path is opened. Cost O(name bytes).

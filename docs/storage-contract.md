@@ -91,7 +91,7 @@ by I-9's typed failure paths.
 | Owner / operation family | In-scope scenario and required response |
 |---|---|
 | `tine-store::model` path and graph acquisition | A configured graph or asset directory is retargeted, malformed, or resolves outside the approved root after sync or external editing; refuse reads and writes through that path. |
-| `tine-store::store` read, scan and handoff | Graph close revokes queued requests; a symlink, non-file, or escaped path appears after the caller selected it; refuse stale bytes and OS handoff. A failed initial parse withholds an unpublished view. |
+| `tine-store::store` read, scan and handoff | Graph close revokes queued requests; a symlink, non-file (for the asset opener: neither file nor directory), or escaped path appears after the caller selected it, or sync retargets `assets/`; refuse stale bytes and OS handoff. A failed initial parse withholds an unpublished view. |
 | `tine-store::watch` reconcile | A graph closes, its root disappears, or an external config edit changes directory layout; stop reconciliation rather than publishing a false view. |
 | `tine-store::restore` source, destination and recovery | A selected snapshot source changes type or length, a live/recovery path is retargeted, or an external writer creates the destination; refuse publication and retain displaced bytes in recovery. |
 | `tine-store::publish` staged site | An external writer retargets output or stage paths or wins the destination name; refuse replacement and retain the previous site. |

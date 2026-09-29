@@ -1828,13 +1828,13 @@ fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<Str
     std::fs::read_to_string(&resolved).map_err(|e| e.to_string())
 }
 
-/// Open a graph asset (by its `assets/`-relative name) in the OS default app,
-/// e.g. a video/audio file in the system player. Path-gated to the assets dir
-/// (canonicalized) so a crafted name can't open a file outside the graph.
+/// Open an `assets/`-relative file, directory, or (empty name) the assets root (GH #367)
+/// in the OS default app / file manager. Gated to the canonical assets dir.
 #[tauri::command]
 pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    let target = asset_handoff_target(&slot, &name)?;
+    let target = tine_graph_features::assets::path_for_os_open(&slot.store, &name)
+        .map_err(feature_asset_access_error)?;
     open_asset_with_os(&name, &target, false)
 }
 
