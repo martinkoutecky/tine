@@ -30,6 +30,38 @@ export const SEARCH_SYNTAX = [
   { example: "/[A-Z]{3}/", description: "case-sensitive regular expression", match: "ABC", miss: "abc" },
 ] as const;
 
+// Exact shared whitespace set: JS \s and Rust is_whitespace disagree on
+// U+FEFF and U+0085. Keep this in sync with search_query.rs.
+function isSearchWhitespace(char: string): boolean {
+  const code = char.codePointAt(0) ?? 0;
+  return (code >= 9 && code <= 13) || code === 0x20 || code === 0xa0 || code === 0x1680
+    || (code >= 0x2000 && code <= 0x200a) || code === 0x2028 || code === 0x2029
+    || code === 0x202f || code === 0x205f || code === 0x3000 || code === 0xfeff;
+}
+
+function trimSearchWhitespace(value: string): string {
+  const chars = Array.from(value);
+  let start = 0;
+  let end = chars.length;
+  while (start < end && isSearchWhitespace(chars[start])) start++;
+  while (end > start && isSearchWhitespace(chars[end - 1])) end--;
+  return chars.slice(start, end).join("");
+}
+
+/** Reject regex constructs whose Rust and browser meanings differ. */
+function commonRegexPattern(pattern: string): boolean {
+  let inClass = false;
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] === "\\") {
+      if (/[1-9wWdDsSbB]/.test(pattern[i + 1] ?? "")) return false;
+      i++;
+    } else if (pattern[i] === "[") inClass = true;
+    else if (pattern[i] === "]" && inClass) inClass = false;
+    else if (!inClass && pattern[i] === "(" && pattern[i + 1] === "?" && pattern[i + 2] !== ":") return false;
+  }
+  return true;
+}
+
 interface SourceSpan { start: number; end: number }
 
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -100,16 +132,17 @@ export function searchSubstringSpans(text: string, needle: string, limit = Numbe
 }
 
 export function parseSearchQuery(query: string, removeAccents = true): SearchMatcher {
-  const q = query.trim();
+  const q = trimSearchWhitespace(query);
   if (!q) return { kind: "empty" };
   // Whole-query regex: `/pattern/` with a non-empty pattern. (`//` is too short —
   // an empty pattern matches everything — so it falls through to a literal term.)
   if (q.length >= 3 && q.startsWith("/") && q.endsWith("/")) {
     const pat = q.slice(1, -1);
+    if (!commonRegexPattern(pat)) return { kind: "invalid", error: "regex feature is not supported by both search engines" };
     try {
       // Case-sensitive (no `i`), matching the Rust `regex` side: the pattern owns
       // its case classes, so `[A-Z]` works.
-      return { kind: "regex", re: new RegExp(pat) };
+      return { kind: "regex", re: new RegExp(pat, "u") };
     } catch (e) {
       return { kind: "invalid", error: e instanceof Error ? e.message : "invalid regex" };
     }
@@ -277,13 +310,13 @@ function tokenize(q: string): Token[] {
   const out: Token[] = [];
   let i = 0;
   while (i < chars.length) {
-    if (/\s/.test(chars[i])) {
+    if (isSearchWhitespace(chars[i])) {
       i += 1;
       continue;
     }
     let negated = false;
     // Leading `-` negates, but only when something non-space follows it.
-    if (chars[i] === "-" && i + 1 < chars.length && !/\s/.test(chars[i + 1])) {
+    if (chars[i] === "-" && i + 1 < chars.length && !isSearchWhitespace(chars[i + 1])) {
       negated = true;
       i += 1;
     }
@@ -300,7 +333,7 @@ function tokenize(q: string): Token[] {
     } else {
       // Bare token: read to the next whitespace.
       const start = i;
-      while (i < chars.length && !/\s/.test(chars[i])) i += 1;
+      while (i < chars.length && !isSearchWhitespace(chars[i])) i += 1;
       text = chars.slice(start, i).join("");
       quoted = false;
     }

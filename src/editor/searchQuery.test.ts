@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { SEARCH_SYNTAX, parseSearchQuery, matcherMatches, simpleTerm, matchHighlight, matchHighlights, friendlySearchToDsl, friendlySearchToSavedDsl, savedDslToFriendlySearch } from "./searchQuery";
 import { searchFold } from "./searchFold";
+import sharedContract from "../../tests/fixtures/search-query-contract.json";
 
 // Mirrors crates/tine-core/src/search_query.rs tests — keep the two in sync.
 const hit = (q: string, text: string) =>
@@ -53,6 +54,24 @@ describe("searchQuery parser (#44)", () => {
     expect(hit("/[A-Z]{3}/", "abc def")).toBe(false);
     expect(hit("/^start/", "start of line")).toBe(true);
     expect(hit("/^start/", "not at start")).toBe(false);
+  });
+
+  it("shares Unicode whitespace and bounded regex semantics with Rust", () => {
+    expect(simpleTerm(parseSearchQuery("\u0085foo\u0085"))).toBe("\u0085foo\u0085");
+    expect(simpleTerm(parseSearchQuery("\ufefffoo\ufeff"))).toBe("foo");
+    expect(hit("foo\u2003bar", "bar then foo")).toBe(true);
+    expect(hit("/\\p{L}+/", "café")).toBe(true);
+    for (const source of ["/foo(?=bar)/", "/(a)\\1/", "/(?i)abc/"])
+      expect(parseSearchQuery(source).kind, source).toBe("invalid");
+  });
+
+  it("executes every shared parser-contract fixture", () => {
+    for (const row of sharedContract) {
+      const parsed = parseSearchQuery(row.query);
+      expect(parsed.kind, row.query).toBe(row.kind);
+      expect(simpleTerm(parsed), row.query).toBe(row.simple);
+      expect(matcherMatches(parsed, searchFold(row.match), row.match), row.query).toBe(row.kind !== "invalid");
+    }
   });
 
   it("invalid regex reports an error and matches nothing", () => {
