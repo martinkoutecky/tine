@@ -809,28 +809,13 @@ pub(super) fn emit(owner: &DocBlock, at: &SheetPath, e: &mut Emit, out: &mut Str
     true
 }
 
-/// The properties a sheet owner still prints as chips: its `tine.*` view
-/// configuration is chrome (it drives the layout below), so it is dropped when
-/// the app computed a sheet for the block. Any other block keeps every
-/// property. O(properties); the sheet lookup is O(1).
-pub(super) fn chip_props(
-    props: Vec<(String, String)>,
-    ctx: &Ctx,
-    title: &str,
-    at: &SheetPath,
-) -> Vec<(String, String)> {
-    let laid_out = ctx
-        .graph
+/// Whether the app computed a laid-out sheet for this block, so its view
+/// configuration is chrome rather than a property chip. O(1).
+pub(super) fn is_laid_out(ctx: &Ctx, title: &str, at: &SheetPath) -> bool {
+    ctx.graph
         .and_then(|g| g.sheets)
         .and_then(|sheets| sheets.0.get(&(title.to_owned(), at.to_vec())))
-        .is_some_and(|export| !matches!(export.body, Body::Error { .. }));
-    if !laid_out {
-        return props;
-    }
-    props
-        .into_iter()
-        .filter(|(key, _)| !tine_core::doc::property_key_norm(key).starts_with("tine."))
-        .collect()
+        .is_some_and(|export| !matches!(export.body, Body::Error { .. }))
 }
 
 /// Lay out the app's answer for a query-backed sheet block in place of its

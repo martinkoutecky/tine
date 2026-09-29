@@ -1802,7 +1802,12 @@ fn render_block(
         }
     }
     out.push_str("</div>");
-    let props = render_sheets::chip_props(b.properties(), ctx, title, at);
+    // A sheet owner's `tine.*` view configuration is chrome (it drove the layout
+    // above), not a property chip; every other block keeps all its properties.
+    let mut props = b.properties();
+    if render_sheets::is_laid_out(ctx, title, at) {
+        props.retain(|(key, _)| !tine_core::doc::property_key_norm(key).starts_with("tine."));
+    }
     emit_trailer_facets(b.scheduled(), b.deadline(), b.raw(), &props, out);
     if let (Some(id), Some(reverse)) = (block_id(b.raw()), ctx.reverse_refs) {
         if let Some(referrers) = reverse.get(&id).filter(|items| !items.is_empty()) {
