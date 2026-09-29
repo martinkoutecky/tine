@@ -69,6 +69,20 @@ describe("QueryPageRows", () => {
     }
   });
 
+  // C3X X6 (L13): two components answered "what does this page column show"; only the
+  // search-hit one accepted `journal_day`, so a Table column of that name was blank here.
+  it("shows the same journal_day / journal-day / day value in every answerer", () => {
+    const journal: PageRow = { name: "Sep 29th, 2026", path: "journals/2026_09_29.md", kind: "journal", journal_day: 20260929, properties: [] };
+    for (const field of ["journal_day", "journal-day", "day", "prop:journal_day"]) {
+      const { root, dispose } = mount(() => <QueryPageRows rows={[journal]} view="table" columns={[field]} />);
+      try {
+        expect(root.querySelector("tbody tr")?.textContent).toContain("20260929");
+      } finally {
+        dispose();
+      }
+    }
+  });
+
   it("uses the view's chosen columns when it names them", () => {
     const rows = [row("Alpha", "pages/Alpha.md", [["status", "open"], ["owner", "ann"]])];
     const { root, dispose } = mount(() => <QueryPageRows rows={rows} view="table" columns={["prop:owner"]} />);

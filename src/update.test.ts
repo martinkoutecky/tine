@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 type Platform = "desktop" | "android" | "ios";
@@ -14,6 +15,7 @@ async function loadUpdate(opts: {
   version?: string;
   architecture?: string;
   updaterReject?: Error;
+  updaterUpdate?: object;
 }) {
   vi.resetModules();
   const isTauriMock = vi.fn(() => opts.tauri ?? true);
@@ -31,7 +33,8 @@ async function loadUpdate(opts: {
   const getVersionMock = vi.fn(async () => opts.version ?? "0.5.3");
   const updaterCheckMock = opts.updaterReject
     ? vi.fn(async () => { throw opts.updaterReject; })
-    : vi.fn(async () => null);
+    : vi.fn(async () => opts.updaterUpdate ?? null);
+  const relaunchMock = vi.fn(async () => {});
 
   vi.doMock("./backend", () => ({
     isTauri: isTauriMock,
@@ -50,7 +53,7 @@ async function loadUpdate(opts: {
   vi.doMock("./ui", () => ({ openSettings: openSettingsMock }));
   vi.doMock("@tauri-apps/api/app", () => ({ getVersion: getVersionMock }));
   vi.doMock("@tauri-apps/plugin-updater", () => ({ check: updaterCheckMock }));
-  vi.doMock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn(async () => {}) }));
+  vi.doMock("@tauri-apps/plugin-process", () => ({ relaunch: relaunchMock }));
 
   const update = await import("./update");
   return {
@@ -58,6 +61,7 @@ async function loadUpdate(opts: {
     platformKindMock,
     getVersionMock,
     updaterCheckMock,
+    relaunchMock,
     openExternalMock,
     pushToastMock,
     dismissToastMock,
@@ -244,5 +248,57 @@ describe("update checks", () => {
 
     expect(platformKindMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  describe("installing flushes saves first (the window-close gate)", () => {
+    async function installFlow(opts: { prepare: "accepted" | "rejected" | "in_flight"; installFails?: boolean }) {
+      mockLatest("v0.6.0");
+      const order: string[] = [];
+      const updateObject = {
+        version: "0.6.0",
+        download: vi.fn(async () => { order.push("download"); }),
+        install: vi.fn(async () => {
+          order.push("install");
+          if (opts.installFails) throw new Error("Failed to install package");
+        }),
+        downloadAndInstall: vi.fn(async () => { order.push("downloadAndInstall"); }),
+      };
+      const loaded = await loadUpdate({ platform: "desktop", version: "0.5.3", updaterUpdate: updateObject });
+      const guard = {
+        prepare: vi.fn(async () => { order.push("prepare"); return opts.prepare; }),
+        reset: vi.fn(() => { order.push("reset"); }),
+      };
+      loaded.update.setUpdateExitGuard(guard);
+      loaded.relaunchMock.mockImplementation(async () => { order.push("relaunch"); });
+      await loaded.update.checkForUpdateNow();
+      toastCalls(loaded.pushToastMock).find(([message]) => message.includes("0.6.0 is available"))?.[2]?.action?.run();
+      return { ...loaded, order, updateObject, guard };
+    }
+
+    it("downloads, flushes through the shared exit gate, and only then installs and relaunches", async () => {
+      const { order, updateObject } = await installFlow({ prepare: "accepted" });
+      await vi.waitFor(() => expect(order).toEqual(["download", "prepare", "install", "relaunch"]));
+      expect(updateObject.downloadAndInstall).not.toHaveBeenCalled();
+    });
+
+    it.each(["rejected", "in_flight"] as const)("does not install when the flush gate answers %s, and says why", async (prepare) => {
+      const { order, updateObject, pushToastMock, openExternalMock } = await installFlow({ prepare });
+      await vi.waitFor(() => expect(order).toEqual(["download", "prepare"]));
+      await vi.waitFor(() => expect(toastCalls(pushToastMock).some(([m]) => m.includes("not installed"))).toBe(true));
+      expect(updateObject.install).not.toHaveBeenCalled();
+      expect(openExternalMock).not.toHaveBeenCalled();
+    });
+
+    it("App registers the window-close coordinator as the update's exit gate, and nothing installs without it", () => {
+      expect(readFileSync("src/App.tsx", "utf8")).toContain("setUpdateExitGuard(safeClose);");
+      const source = readFileSync("src/update.ts", "utf8");
+      expect(source).not.toMatch(/update\.downloadAndInstall\(/);
+      expect(source.match(/\.install\(\)/g)).toHaveLength(1);
+    });
+
+    it("releases the exit gate when the install itself fails, so later closes still save", async () => {
+      const { order } = await installFlow({ prepare: "accepted", installFails: true });
+      await vi.waitFor(() => expect(order).toEqual(["download", "prepare", "install", "reset"]));
+    });
   });
 });

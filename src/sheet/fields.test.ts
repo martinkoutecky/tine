@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from "node:fs";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
 import { resetStore, undo } from "../document";
@@ -276,5 +277,14 @@ describe("writeTagDelta", () => {
     loadOne("Read #[[tag]]");
     expect(writeTagDelta("a", { remove: "tag" })).toBe(true);
     expect(doc.byId.a.raw).toBe("Read");
+  });
+});
+
+describe("cell edits report refusal (I-9)", () => {
+  it("no component calls the silent writeField: user-driven cell writes go through writeFieldVisibly", () => {
+    const offenders = readdirSync("src/components")
+      .filter((name) => /\.tsx?$/.test(name) && !/\.test\./.test(name))
+      .filter((name) => /\bwriteField\(/.test(readFileSync(`src/components/${name}`, "utf8")));
+    expect(offenders, "I-9: a refused cell write must be shown; use writeFieldVisibly (src/sheet/fields.ts), see SheetTable's FieldCell.commit").toEqual([]);
   });
 });

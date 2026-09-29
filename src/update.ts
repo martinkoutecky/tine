@@ -189,6 +189,19 @@ function openReleases(): void {
   void backend().openExternal(RELEASES_PAGE).catch((error) => reportUiFailure("external-link", error));
 }
 
+/** The window's one persistence-before-exit transaction (App's `safeClose`),
+ * injected because App imports this module. Installing an update ends the
+ * process (the Windows installer exits it; Linux relaunches), so it must pass
+ * through the same flush-and-confirm gate as closing the window (I-2, I-12). */
+export interface UpdateExitGuard {
+  prepare(): Promise<"accepted" | "rejected" | "in_flight">;
+  reset(): void;
+}
+let exitGuard: UpdateExitGuard | null = null;
+export function setUpdateExitGuard(guard: UpdateExitGuard | null): void {
+  exitGuard = guard;
+}
+
 /** The toast's "Install update" action. Win/Linux packaged app → run the Tauri updater
  *  in place and relaunch; everything else (macOS, browser, or any failure) → open
  *  the releases page. Never throws. */
@@ -215,17 +228,42 @@ async function applyUpdateOrOpen(): Promise<void> {
   }
   const progressId = pushToast(`Downloading Tine ${update.version}…`, "info", { sticky: true });
   try {
-    await update.downloadAndInstall();
+    // Download first: the user keeps editing meanwhile, so the flush below sees
+    // the latest state and runs immediately before the process can exit.
+    await update.download();
   } catch (error) {
     dismissToast(progressId);
     reportUpdaterFailure("apply", error);
     openReleases(); // signature/verify/network failure → never brick, just offer the page
     return;
   }
+  // Every in-flight save and at-risk draft is flushed (bounded), and a failed
+  // flush asks the user before anything is discarded: the window-close gate.
+  let gate: "accepted" | "rejected" | "in_flight" = "rejected";
+  try { gate = exitGuard ? await exitGuard.prepare() : "rejected"; }
+  catch (error) { dbg(`update exit guard failed: ${String(error)}`); }
+  if (gate !== "accepted") {
+    dismissToast(progressId);
+    pushToast(
+      "The update was downloaded but not installed, so your unsaved changes stay open. Choose Install update again when you are ready.",
+      "warn",
+    );
+    return;
+  }
+  try {
+    await update.install();
+  } catch (error) {
+    exitGuard?.reset();
+    dismissToast(progressId);
+    reportUpdaterFailure("apply", error);
+    openReleases();
+    return;
+  }
   try {
     const { relaunch } = await import("@tauri-apps/plugin-process");
     await relaunch(); // process restarts into the new version (this toast goes with it)
   } catch (error) {
+    exitGuard?.reset();
     dismissToast(progressId);
     reportUpdaterFailure("relaunch", error);
   }

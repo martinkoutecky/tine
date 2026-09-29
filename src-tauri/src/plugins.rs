@@ -641,13 +641,41 @@ pub(crate) fn verify_plugin_registry(
         .map_err(|_| "plugin registry signature did not verify".to_string())
 }
 
-fn plugin_states(app: &tauri::AppHandle) -> std::collections::HashMap<String, PluginState> {
-    crate::settings::settings_path(app)
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|json| json.get("plugin_states").cloned())
-        .and_then(|value| serde_json::from_value(value).ok())
-        .unwrap_or_default()
+/// The stored per-plugin enabled/selected map. A missing settings file is an
+/// empty map; a file that exists but cannot be read or parsed is an ERROR, not
+/// "everything defaults to disabled" (I-9): the caller surfaces it, and no writer
+/// ever sees a partial view (writes go through `update_settings_strict_at`, which
+/// refuses the same file). Entries this build cannot parse (a newer Tine's shape)
+/// are skipped in the view and stay untouched in the file.
+fn plugin_states_at(path: &Path) -> Result<std::collections::HashMap<String, PluginState>, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+        Err(error) => return Err(format!("device settings could not be read: {error}")),
+    };
+    if text.trim().is_empty() {
+        return Ok(Default::default());
+    }
+    let json: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "device settings file {} is not valid JSON ({error}); plugin states are unavailable until it is repaired or removed",
+            path.display()
+        )
+    })?;
+    Ok(json
+        .get("plugin_states")
+        .and_then(serde_json::Value::as_object)
+        .map(|states| {
+            states
+                .iter()
+                .filter_map(|(id, value)| {
+                    serde_json::from_value(value.clone())
+                        .ok()
+                        .map(|state| (id.clone(), state))
+                })
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 /// Persist an immutable plugin version. Installation never executes the guest and
@@ -699,13 +727,20 @@ pub(crate) fn uninstall_plugin(
 /// List valid packages under app-owned plugin storage, across all versions.
 /// Reads and hashes each wasm (at most 8 MiB each) and a 64 KiB manifest;
 /// malformed, missing, oversized or unreadable packages are omitted. A root
-/// lookup error returns an empty list. Cost O(installed wasm bytes).
+/// lookup error returns an empty list; an unreadable or unparseable device
+/// settings file is an error, never silently "all disabled". Cost O(installed wasm bytes).
 #[tauri::command]
-pub(crate) fn list_installed_plugins(app: tauri::AppHandle) -> Vec<InstalledPlugin> {
+pub(crate) fn list_installed_plugins(
+    app: tauri::AppHandle,
+) -> Result<Vec<InstalledPlugin>, String> {
     let Ok(root) = plugins_dir(&app) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    list_installed_plugins_at(&root, &plugin_states(&app))
+    let states = match crate::settings::settings_path(&app) {
+        Some(path) => plugin_states_at(&path)?,
+        None => Default::default(),
+    };
+    Ok(list_installed_plugins_at(&root, &states))
 }
 
 fn list_installed_plugins_at(
