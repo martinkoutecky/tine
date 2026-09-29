@@ -15,8 +15,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   asks the watcher for a fresh pass before you type; a large checkout or sync
   burst arrives as one change; `.git/` and `.stfolder/` are ignored; and if the
   system refuses live file notifications, Tine says so and checks every 3
-  seconds instead. An optional "always ask" policy holds even clean external
-  changes for **Reload from disk** / **Keep mine**.
+  seconds instead. An optional "always ask" policy (Settings → Backups &
+  recovery) holds even clean external changes for **Reload from disk** /
+  **Keep mine**.
 - **A live-draft conflict offers Review, not a blind overwrite.** Its banner opens
   the in-page comparison, and the Conflicts page lists such pages under
   **Unsaved drafts**.
