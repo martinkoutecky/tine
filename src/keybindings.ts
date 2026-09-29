@@ -12,6 +12,7 @@ import { pushToast } from "./toasts";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
+import { zoomReset } from "./zoom";
 import {
   openJournals,
   openPage,
@@ -259,6 +260,7 @@ const COMMANDS: CommandDef[] = [
   // intercept), so they never reach this dispatcher. Ctrl+Shift+J — Chrome's other
   // devtools shortcut (console) — is NOT grabbed by WebKit, so it works here. A
   // mod-chord, so it fires even while editing; remap it in Settings if you like.
+  { id: "ui/reset-zoom", binding: "", label: "Reset interface zoom", scope: "global", run: zoomReset, global: true },
   { id: "ui/toggle-devtools", binding: "mod+shift+j", label: "Toggle developer tools", scope: "global", run: openDevtools, global: true },
   { id: "go/journals", binding: "g j", label: "Go to journals", scope: "global", run: openJournals },
   { id: "go/home", binding: "g h", label: "Go to home page", scope: "global", run: goHome },

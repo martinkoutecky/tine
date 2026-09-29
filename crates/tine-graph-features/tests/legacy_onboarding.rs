@@ -164,6 +164,8 @@ fn guide_explains_following_the_link_at_the_caret() {
     assert!(tips
         .markdown
         .contains("choose **Plain text** for the text as displayed"));
+    // GH #522: the palette resets interface zoom.
+    assert!(tips.markdown.contains("**Reset interface zoom**"));
 }
 
 #[test]
