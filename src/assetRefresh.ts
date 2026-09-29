@@ -1,11 +1,18 @@
-// Refresh a graph asset's rendered <img> after it was edited in an external app
-// (GH #38). Tine doesn't watch assets/ (that dir is intentionally outside the
-// journals/+pages/ file-watcher), and the user necessarily alt-tabbed away to
-// edit — so when Tine regains window focus we invalidate + version-bump every
-// asset we launched an editor for, forcing its <img> to re-read from disk. No
-// polling, no watcher churn. The focus listener installs lazily on first use.
+// Refresh a graph asset's rendered <img> after it changed on disk outside Tine.
+//
+// Two triggers feed the same cache invalidation (`assetCache.refreshAsset`):
+//  * the native watcher observes the assets directory (in-graph, or the approved
+//    external target of an `assets` link) and emits `asset-changed` batches of
+//    assets-relative paths (master d017d1afc, 2f54a8d5e) — an image replaced by
+//    an editor, Syncthing, Dropbox or another Tine window refreshes in place;
+//  * GH #38: for an asset Tine launched an external editor for, focus return
+//    still forces a re-read, as a fallback for a platform event that never came.
+// The focus listener installs lazily on first use.
 
-import { refreshAsset } from "./assetCache";
+import { backend } from "./backend";
+import { captureBinding } from "./binding";
+import { invalidateAsset, refreshAsset } from "./assetCache";
+import { ownedWhen, readOwnedResource } from "./owned";
 
 const pending = new Set<string>();
 let installed = false;
@@ -31,4 +38,41 @@ export function refreshAssetOnReturn(rel: string): void {
   if (!rel) return;
   pending.add(rel);
   install();
+}
+
+const DEFERRED_MEDIA_EXTENSIONS = new Set([
+  "pdf",
+  "mp3", "mpeg", "m4a", "aac", "wav", "ogg", "oga", "opus", "flac",
+  "mp4", "m4v", "webm", "ogv", "mov", "mkv",
+]);
+
+function deferHotSwap(rel: string): boolean {
+  const ext = rel.split(/[?#]/, 1)[0].split(".").pop()?.toLowerCase();
+  return !!ext && DEFERRED_MEDIA_EXTENSIONS.has(ext);
+}
+
+/** Apply one native watcher publication. Images (and image-like unknown embeds)
+ *  refresh in place. PDF/audio/video bytes are only invalidated for their next
+ *  open: an already-open document or playback session is deliberately left alone. */
+export function applyObservedAssetChanges(paths: string[]): void {
+  for (const rel of new Set(paths.filter(Boolean))) {
+    if (deferHotSwap(rel)) invalidateAsset(rel);
+    else refreshAsset(rel);
+  }
+}
+
+/** Subscribe this window to the watcher's `asset-changed` events for the graph
+ *  it is bound to; a stale binding's batch is dropped. Returns the unsubscribe. */
+export function subscribeAssetChanges(): () => void {
+  let alive = true;
+  let unsub = () => {};
+  void readOwnedResource(
+    ownedWhen(() => alive),
+    backend().onAssetChanged((batch) => {
+      if (batch.binding_generation !== undefined && batch.binding_generation !== captureBinding().backendGeneration) return;
+      applyObservedAssetChanges(batch.paths);
+    }),
+    (stop) => stop(),
+  ).then((result) => { if (result.kind === "current") unsub = result.value; });
+  return () => { alive = false; unsub(); };
 }

@@ -1765,9 +1765,7 @@ impl<'a> Transaction<'a> {
             }
         }
         for undo in &done {
-            if !before.contains_key(undo.src.as_str()) {
-                before.insert(undo.src.as_str().into(), None);
-            }
+            before.entry(undo.src.as_str().into()).or_insert(None);
             if let Some(dst) = &undo.dst {
                 if !before.contains_key(dst.as_str()) {
                     before.insert(dst.as_str().into(), None);
@@ -1878,6 +1876,7 @@ impl<'a> Transaction<'a> {
                     self.preserve_old(&id, baseline.as_ref().unwrap(), &mut rollback);
                 }
             }
+            self.store.watch.settle_asset(&path);
             if now.as_ref() != baseline.as_ref() {
                 let kind = match (baseline, &now) {
                     (None, Some(_)) => ChangeKind::Created,

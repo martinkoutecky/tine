@@ -1492,6 +1492,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async onGraphChanged(): Promise<() => void> {
       return () => {}; // no external watcher in the browser mock
     },
+    async onAssetChanged(): Promise<() => void> { return () => {}; },
     async onGraphConfigChanged(): Promise<() => void> { return () => {}; },
     async getBackupKeep(): Promise<number> {
       return 12;

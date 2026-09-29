@@ -202,9 +202,13 @@ pub struct Change {
     /// rescan, or every poll cycle) or on `scan_refresh()`, only when its bytes
     /// changed. An own config create or replace lists its config file tuple in
     /// the same transaction publication.
-    /// Trash destinations are not listed. Assets are not watched for external
-    /// changes. A committed transaction or restore lists an asset path here
-    /// when its final bytes differ from the operation's starting bytes.
+    /// Trash destinations are not listed. A committed transaction or restore
+    /// lists an asset path here when its final bytes differ from the
+    /// operation's starting bytes. The watcher also observes the graph's assets
+    /// directory (the approved external target when `assets` is a link): an
+    /// outside create, replace or delete of a file there is an
+    /// `Origin::External` `assets/<path relative to that directory>` tuple with
+    /// no revision, from file metadata only (cost: `asset_watch.rs`).
     /// Sync-conflict
     /// copies may appear as files while [`Self::page`] returns `None` for them;
     /// they are excluded from parsed search, backlinks, and page inventory.

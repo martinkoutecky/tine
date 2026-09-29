@@ -18,6 +18,7 @@ import { AudioOverlay } from "./components/AudioOverlay";
 import { CalendarJump } from "./components/CalendarJump";
 import { ConflictBar } from "./components/ConflictBar";
 import { installReloadOnFocus, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
+import { subscribeAssetChanges } from "./assetRefresh";
 import { freshnessVisible } from "./freshnessBarrier";
 import { initConflictPolicy } from "./conflictPolicy";
 import { RightSidebar } from "./components/RightSidebar";
@@ -712,6 +713,7 @@ export function App(): JSX.Element {
   // and the "always ask" preference.
   onMount(() => {
     onCleanup(subscribeWatcherFreshness());
+    onCleanup(subscribeAssetChanges());
     installReloadOnFocus();
     void initConflictPolicy();
   });

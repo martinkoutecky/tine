@@ -11,6 +11,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use notify::Watcher;
 
+use crate::asset_watch::{AssetObserver, AssetPending, AssetScope};
 use crate::model::{Graph, SyncFileResult};
 use crate::store::{
     journal_ids_from_entries, ChangeFeed, ChangeKind, ConfigState, Day, FileId, FileRev, LoadError,
@@ -78,7 +79,7 @@ pub(crate) struct Stamp {
 
 pub(crate) type RestoreBaseline = HashMap<PathBuf, Stamp>;
 
-fn stamp_metadata(path: &Path) -> Option<Stamp> {
+pub(crate) fn stamp_metadata(path: &Path) -> Option<Stamp> {
     let metadata = fs::symlink_metadata(path).ok()?;
     if !metadata.file_type().is_file() {
         return None;
@@ -339,6 +340,8 @@ struct Pending {
     first_event_at: Option<Instant>,
     /// An event named `logseq/config.edn`; the next cycle re-checks it.
     config: bool,
+    /// Asset-lane events (metadata-only external asset observation).
+    assets: AssetPending,
 }
 
 /// Whether `path` is the graph's `logseq/config.edn`, compared ASCII
@@ -358,6 +361,26 @@ fn is_config_event_path(root: &Path, path: &Path) -> bool {
 }
 
 impl Pending {
+    /// The callback's entry: the asset lane sees the event first, and an event
+    /// wholly inside the assets directory (never graph text) skips the page
+    /// lane, so an asset write no longer costs a full graph-text stat diff.
+    fn add_event(
+        &mut self,
+        event: notify::Result<notify::Event>,
+        dirs: &[PathBuf; 1],
+        config: &tine_core::Config,
+        assets: &AssetScope,
+    ) -> bool {
+        if matches!(&event, Ok(event) if event_is_tool_noise(event, &dirs[0])) {
+            return false;
+        }
+        if self.assets.note(&event, assets) {
+            self.first_event_at.get_or_insert_with(Instant::now);
+            return true;
+        }
+        self.add(event, dirs, config)
+    }
+
     /// Admit one notification; false when it can never change graph text
     /// (tool noise), in which case the watcher is not woken at all.
     fn add(
@@ -426,6 +449,7 @@ pub(crate) struct Core {
     journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
     config: Arc<RwLock<ConfigState>>,
     dirs: RwLock<[PathBuf; 1]>,
+    assets: AssetObserver,
     snapshot: Mutex<HashMap<PathBuf, Stamp>>,
     config_stamp: Mutex<Option<Stamp>>,
     unreadable_dirs: Mutex<HashMap<PathBuf, String>>,
@@ -515,6 +539,27 @@ impl Core {
     ) -> Result<(), LoadError> {
         let _writer = self.writer.lock().unwrap();
         self.reconcile_inner(paths, include_config, false, Some(batch))
+    }
+
+    /// One asset-lane cycle: metadata-only, publishes `Origin::External`
+    /// `assets/<rel>` tuples without revisions. Writer-ordered like every
+    /// publication so an own asset write and its baseline update cannot
+    /// interleave with the comparison.
+    fn observe_assets(&self, exact: &HashSet<PathBuf>, full: bool) {
+        let _writer = self.writer.lock().unwrap();
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
+        let files: Vec<_> = self
+            .assets
+            .reconcile(exact, full)
+            .into_iter()
+            .filter_map(|(path, kind)| Some((self.file_id(&path)?, kind, None)))
+            .collect();
+        if !files.is_empty() {
+            self.changes
+                .publish_watched(Origin::External, files, false, Vec::new(), || {}, None);
+        }
     }
 
     // Caller holds writer through reconciliation and any recovery publication.
@@ -800,6 +845,9 @@ impl Core {
         let mut raced = HashSet::new();
         for (id, expected) in files {
             let path = self.path_for_id(id);
+            if id.as_str().starts_with("assets/") {
+                self.assets.note_own(&path);
+            }
             let current = stamp(&path);
             let tracked = self.tracks_in_snapshot(&path);
             if current.as_ref().and_then(|value| value.rev.as_ref()) != expected.as_ref() {
@@ -868,6 +916,8 @@ impl WatchHandle {
         watch: WatchMode,
     ) -> Self {
         let dirs = [graph.root.clone()];
+        // The asset baseline is captured before any OS watch exists.
+        let asset_scope = AssetScope::new(&graph);
         let snapshot = collect(&dirs, &graph.current_config());
         let config_stamp = stamp(&graph.root.join("logseq/config.edn"));
         let core = Arc::new(Core {
@@ -878,6 +928,7 @@ impl WatchHandle {
             journal_ids,
             config,
             dirs: RwLock::new(dirs),
+            assets: AssetObserver::new(asset_scope),
             snapshot: Mutex::new(snapshot),
             config_stamp: Mutex::new(config_stamp),
             unreadable_dirs: Mutex::new(HashMap::new()),
@@ -962,6 +1013,9 @@ impl WatchHandle {
             LoadStatus::Loading => unreachable!(),
         }
         let result = self.core.reconcile(None, true, true);
+        if result.is_ok() {
+            self.core.observe_assets(&HashSet::new(), true);
+        }
         let _ = self.wake.send(());
         result
     }
@@ -970,6 +1024,12 @@ impl WatchHandle {
         let raced = self.core.note_own(files);
         let _ = self.wake.send(());
         raced
+    }
+
+    /// The transaction's final bytes for this path are now the asset baseline,
+    /// also when it was rolled back and published nothing (no external echo).
+    pub(crate) fn settle_asset(&self, path: &Path) {
+        self.core.assets.note_own(path);
     }
 
     pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {
@@ -1013,6 +1073,9 @@ impl WatchHandle {
                 *self.core.config_stamp.lock().unwrap() = stamp(&path);
             }
             if let Some(id) = self.core.file_id(&path) {
+                if id.as_str().starts_with("assets/") {
+                    self.core.assets.note_own(&path);
+                }
                 files.push((id, kind, new.and_then(|value| value.rev.clone())));
             }
         }
@@ -1067,12 +1130,14 @@ fn install_watch(
     let wake = wake.clone();
     let callback_dirs = dirs.clone();
     let callback_graph = Arc::clone(&core.graph);
+    let callback_assets = core.assets.scope().clone();
     let mut created = notify::recommended_watcher(move |event| {
-        let admitted =
-            pending
-                .lock()
-                .unwrap()
-                .add(event, &callback_dirs, &callback_graph.current_config());
+        let admitted = pending.lock().unwrap().add_event(
+            event,
+            &callback_dirs,
+            &callback_graph.current_config(),
+            &callback_assets,
+        );
         if admitted {
             let _ = wake.send(());
         }
@@ -1082,6 +1147,14 @@ fn install_watch(
         created
             .watch(dir, notify::RecursiveMode::Recursive)
             .map_err(|error| error.to_string())?;
+    }
+    // An approved external assets root lies outside the graph, so the
+    // graph-root watch may not reach it (links are followed on inotify only).
+    // Refusal is reported like any refused watch and polling covers the gap.
+    if let Some(dir) = core.assets.scope().external_root(&dirs[0]) {
+        created
+            .watch(dir, notify::RecursiveMode::Recursive)
+            .map_err(|error| format!("assets directory: {error}"))?;
     }
     Ok(created)
 }
@@ -1141,11 +1214,11 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
             if !core.ready() {
                 continue;
             }
-            let (paths, full, config, first_event_at) = {
+            let (paths, full, config, first_event_at, assets) = {
                 let mut pending = pending.lock().unwrap();
                 let config = std::mem::take(&mut pending.config);
                 let (paths, full, first_event_at) = pending.drain();
-                (paths, full, config, first_event_at)
+                (paths, full, config, first_event_at, pending.assets.drain())
             };
             // A rescan or unusable event may hide a config write: re-check it.
             if full || config || !paths.is_empty() {
@@ -1162,6 +1235,10 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
                     batch,
                 );
             }
+            // A rescan/unusable event hides asset changes too: scan them.
+            if full || assets.1 || !assets.0.is_empty() {
+                core.observe_assets(&assets.0, full || assets.1);
+            }
         } else {
             // Poll mode has no event paths: every cycle re-checks the config
             // (one stat and one hash of a small file beside the full stat scan).
@@ -1175,6 +1252,7 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
                     event_paths: 0,
                 };
                 let _ = core.reconcile_batch(None, true, batch);
+                core.observe_assets(&HashSet::new(), true);
             }
         }
     }
@@ -1223,6 +1301,59 @@ mod tests {
                 None => panic!("the watcher never published the expected change"),
             }
         }
+    }
+
+    /// og-J2: an event wholly inside the assets directory belongs to the asset
+    /// lane only. It used to fall through to "unknown path under the graph" and
+    /// cost a full graph-text stat diff per asset write; a page event, a move
+    /// of the assets directory itself, and an unclassifiable event still reach
+    /// the page lane.
+    #[test]
+    fn asset_events_use_the_asset_lane_and_leave_the_page_lane_alone() {
+        let root = temp_root("asset-lane");
+        fs::create_dir_all(root.join("assets/sub")).unwrap();
+        fs::write(root.join("assets/sub/pic.png"), b"x").unwrap();
+        let graph = crate::model::Graph::open(&root);
+        let scope = AssetScope::new(&graph);
+        let config = tine_core::Config::default();
+        let dirs = [root.clone()];
+
+        let mut pending = Pending::default();
+        let inside = modify(vec![root.join("assets/sub/pic.png")]);
+        assert!(pending.add_event(Ok(inside), &dirs, &config, &scope));
+        assert!(
+            !pending.full && pending.paths.is_empty(),
+            "asset write escalated the page lane"
+        );
+        let (exact, full) = pending.assets.drain();
+        assert!(!full && exact.contains(&root.join("assets/sub/pic.png")));
+
+        // A page still takes the page lane, and touches no asset queue.
+        let page = root.join("pages/A.md");
+        fs::write(&page, "- a\n").unwrap();
+        assert!(pending.add_event(Ok(modify(vec![page.clone()])), &dirs, &config, &scope));
+        assert!(pending.paths.contains(&page));
+        let (exact, full) = pending.assets.drain();
+        assert!(exact.is_empty() && !full);
+
+        // The assets directory itself moving: both lanes rescan.
+        let mut pending = Pending::default();
+        let moved = notify::Event {
+            kind: notify::EventKind::Modify(notify::event::ModifyKind::Name(
+                notify::event::RenameMode::Both,
+            )),
+            paths: vec![root.join("assets"), root.join("assets-old")],
+            attrs: Default::default(),
+        };
+        assert!(pending.add_event(Ok(moved), &dirs, &config, &scope));
+        assert!(pending.full);
+        assert!(pending.assets.drain().1);
+
+        // Kernel overflow and notify errors force the asset scan too.
+        let mut pending = Pending::default();
+        assert!(pending.add_event(Err(notify::Error::generic("boom")), &dirs, &config, &scope));
+        assert!(pending.full && pending.assets.drain().1);
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// Master cd2d7562a: a repository or sync client parked inside the graph

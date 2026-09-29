@@ -60,6 +60,14 @@ export interface GraphChange {
   removed: boolean;
 }
 
+/** One coalesced watcher publication of files outside actors created, replaced
+ *  or deleted under the graph's assets capability. Paths are relative to
+ *  `assets/`; absolute device paths never cross the bridge. */
+export interface AssetChangedBatch {
+  paths: string[];
+  binding_generation?: number;
+}
+
 export interface GraphConfigChange {
   binding_generation: number;
   meta: GraphMeta;

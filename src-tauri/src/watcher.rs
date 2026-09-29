@@ -86,6 +86,9 @@ fn window_events(change: &Change) -> (Vec<GraphChange>, bool) {
         return (events, conflicts_dirty);
     }
     for (id, kind, _) in &change.files {
+        if id.as_str().starts_with("assets/") {
+            continue; // the asset lane (`asset_event_payload`), never a page
+        }
         if tine_core::model::path_is_sync_conflict(Path::new(id.as_str())) {
             conflicts_dirty = true;
         } else if let Some((page_kind, name)) = change.page(id) {
@@ -99,6 +102,27 @@ fn window_events(change: &Change) -> (Vec<GraphChange>, bool) {
         }
     }
     (events, conflicts_dirty)
+}
+
+/// The `asset-changed` window event for one publication (master d017d1afc):
+/// the assets-relative paths of files an outside actor created, replaced or
+/// deleted, so the WebView drops its cached blobs. Own writes and page files
+/// carry none, and no absolute path crosses the bridge.
+fn asset_event_payload(change: &Change, binding_generation: u64) -> Option<serde_json::Value> {
+    if change.origin != Origin::External {
+        return None;
+    }
+    let mut paths: Vec<&str> = change
+        .files
+        .iter()
+        .filter_map(|(id, _, _)| id.as_str().strip_prefix("assets/"))
+        .collect();
+    if paths.is_empty() {
+        return None;
+    }
+    paths.sort_unstable();
+    paths.dedup();
+    Some(serde_json::json!({ "paths": paths, "binding_generation": binding_generation }))
 }
 
 /// Concord's share of one publication: the base ledger records it
@@ -323,6 +347,9 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Chang
     let pages = events.len();
     for (name, payload) in page_event_payloads(events, binding_generation) {
         let _ = app.emit_to(label, name, payload);
+    }
+    if let Some(payload) = asset_event_payload(&change, binding_generation) {
+        let _ = app.emit_to(label, "asset-changed", payload);
     }
     // Measured once, after the last window event: the flight event and the
     // devtools ring report the same numbers.
@@ -756,6 +783,66 @@ mod tests {
             }]
         );
         drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// og-J2 (master d017d1afc): an outside asset replace/create/delete is the
+    /// window's `asset-changed` event with assets-relative paths and the
+    /// binding generation; own writes, page files, and asset names that look
+    /// like sync-conflict copies produce no page event and no conflicts flag.
+    #[test]
+    fn an_external_asset_change_is_one_asset_changed_event() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-watch-assets-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::create_dir_all(root.join("assets/sub")).unwrap();
+        std::fs::write(root.join("assets/pic.png"), b"one").unwrap();
+        let store = tine_store::Store::open(
+            &root,
+            tine_store::OpenOptions {
+                approved_external_assets: None,
+                watch: WatchMode::Poll,
+            },
+        )
+        .unwrap()
+        .0;
+        let slot = GraphSlot::new(store, root.clone());
+        slot.store.whole_graph().unwrap();
+        let subscription = slot.store.subscribe();
+        atomic_write(&root, "assets/pic.png", "two, longer");
+        atomic_write(
+            &root,
+            "assets/sub/pic.sync-conflict-20260705-120000-ABCDEFG.png",
+            "x",
+        );
+        atomic_write(&root, "pages/P.md", "- page\n");
+        tine_graph_features::assets::save_asset(&slot.store, "own.png", b"mine").unwrap();
+        slot.store.scan_refresh().unwrap();
+        let (mut payloads, mut page_events, mut conflicts) = (Vec::new(), 0, false);
+        while let Some(change) = subscription.try_recv().unwrap() {
+            let (events, dirty) = window_events(&change);
+            page_events += events.len();
+            conflicts |= dirty;
+            payloads.extend(asset_event_payload(&change, 7));
+        }
+        assert_eq!(
+            payloads.len(),
+            1,
+            "one publication carries the external assets"
+        );
+        assert_eq!(
+            payloads[0],
+            serde_json::json!({
+                "paths": ["pic.png", "sub/pic.sync-conflict-20260705-120000-ABCDEFG.png"],
+                "binding_generation": 7,
+            })
+        );
+        assert_eq!(page_events, 1, "only pages/P.md is a page event");
+        assert!(!conflicts, "an asset is never a conflict copy");
+        drop(slot);
         std::fs::remove_dir_all(root).unwrap();
     }
 
