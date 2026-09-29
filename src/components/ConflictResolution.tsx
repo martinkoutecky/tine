@@ -185,8 +185,21 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         if (live.restored) {
           // After a restart the editor holds the disk version and the capsule
           // is the only copy of the draft: never resolve over newer edits.
-          if (isDirty(pageName) || isSaving(pageName) || isConflicted(pageName)) {
-            pushToast("This reopened page also has new edits. Let them save first, then resolve the kept draft.", "info");
+          // Newer edits to the reopened page are saved first and the kept draft
+          // is re-reviewed against them (the guarded write would refuse the
+          // stale review anyway); a conflict of their own is settled first.
+          if (isConflicted(pageName)) {
+            pushToast("This reopened page has its own save conflict. Resolve it first, then resolve the kept draft.", "info");
+            return;
+          }
+          if (isDirty(pageName) || isSaving(pageName)) {
+            const ed = editingId();
+            if (ed && node(ed)?.page === pageName) {
+              pushToast("Finish the current edit, then apply this resolution.", "info");
+              return;
+            }
+            await flushPage(pageName);
+            refresh("Your newer edits to this page were saved. Review the kept draft against them, then apply it again.");
             return;
           }
           const result = await writeOwned(owner, backend().resolveLiveConflict(pagePath, reviewed, live.base_rev,

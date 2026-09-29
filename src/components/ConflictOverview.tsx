@@ -5,7 +5,7 @@ import type { PaneRouter } from "../router";
 import { pushToast } from "../toasts";
 import type { ConflictObject, ConflictSource, SyncConflict } from "../types";
 import { conflictQueue, openPageInSidebar, refreshSyncConflicts, syncConflicts } from "../ui";
-import { liveConflictObjects } from "../liveConflicts";
+import { liveConflictObjects, pendingConflictCount } from "../liveConflicts";
 
 // Concord overview (og 8c): every page that needs a decision, in one place,
 // rendered from the derived conflict queue and never written to the graph. It
@@ -66,7 +66,7 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
     if (event.shiftKey || event.button === 1) openPageInSidebar(target);
     else props.router.openPageTarget(target);
   };
-  const total = () => conflictQueue().length + orphans().length + liveConflictObjects().length;
+  const total = pendingConflictCount;
   return (
     <div class="conflict-overview">
       <h1 class="page-title">Conflicts</h1>

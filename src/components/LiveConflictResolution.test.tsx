@@ -14,6 +14,7 @@ import { earlierDrafts, installDraftStore, REFRESH_MS, writeAtRisk } from "../dr
 import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
 import { liveConflictForPage, liveConflictObjects } from "../liveConflicts";
 import { ConflictOverview } from "./ConflictOverview";
+import { ConflictQueueBadge } from "./Sidebar";
 import type { PaneRouter } from "../router";
 import { setToasts, toasts } from "../toasts";
 import { PageConflictResolution } from "./ConflictResolution";
@@ -214,6 +215,49 @@ describe("Concord live-draft conflicts (og 8e)", () => {
     await tick();
     expect(api.retireDraft).not.toHaveBeenCalled();
     expect(store.has("earlier:P")).toBe(true);
+    dispose();
+  });
+
+  it("the sidebar badge counts open and restored live drafts (master: one combined queue)", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <ConflictQueueBadge />, host);
+    const badge = () => host.querySelector(".conflict-queue-badge")?.textContent ?? null;
+    expect(badge()).toBeNull();
+    await conflictedDraft("open draft");
+    await tick();
+    expect(badge()).toBe("1 conflict");
+    await settle();
+    await killAndReopen(page("r2", "theirs on disk"));
+    expect(badge()).toBe("1 conflict");
+    dispose();
+  });
+
+  it("a restored draft's Apply saves the reopened page's newer edits, re-reviews, then resolves against them", async () => {
+    await conflictedDraft("kept before the kill");
+    await settle();
+    await killAndReopen(page("r2", "theirs on disk"));
+    let diskRev = "r2";
+    saveFails = false;
+    vi.mocked(api.savePages).mockImplementation(async (entries) => { diskRev = "r9"; return { ok: entries.map(() => "r9") }; });
+    vi.mocked(api.liveConflictDiff).mockImplementation(async () => review(diskRev));
+    const resolve = vi.spyOn(api, "resolveLiveConflict").mockImplementation(async (_p, draft) => ({ ...draft, rev: "r10" }));
+    installExternalChangeUiHandler(() => ({ pageOpen: () => true, journalsOpen: false, leaveRemovedPage() {}, restartJournalFeed() {} }));
+    vi.spyOn(api, "getPage").mockResolvedValue(page("r10", "merged on disk"));
+    const { host, dispose } = mount(liveConflictForPage("P", PATH)!);
+    await tick();
+    setRaw("p1", "typed after the reopen");
+    apply(host);
+    await tick();
+    expect(resolve).not.toHaveBeenCalled();
+    expect(isDirty("P")).toBe(false);
+    expect(toasts().at(-1)?.message).toContain("newer edits to this page were saved");
+    expect(vi.mocked(api.liveConflictDiff).mock.calls.length).toBeGreaterThanOrEqual(2);
+    apply(host);
+    await tick();
+    expect(resolve).toHaveBeenCalledTimes(1);
+    const [, draft, , conflictRev] = resolve.mock.calls[0];
+    expect([draft.blocks[0].raw, conflictRev]).toEqual(["kept before the kill", "r9"]);
     dispose();
   });
 

@@ -2,7 +2,8 @@ import { For, Show, Suspense, createEffect, createMemo, createResource, createSi
 import { DiagnosticsTab } from "./DiagnosticsTab";
 import { AboutTab } from "./AboutTab";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
-import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, syncConflicts, refreshSyncConflicts, conflictQueue, type SettingsTabId } from "../ui";
+import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
+import { pendingConflictCount } from "../liveConflicts";
 import { setJournalTemplate, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
@@ -1795,14 +1796,13 @@ function JournalConflictsPanel(): JSX.Element {
 // modal that used to live here is retired: resolution happens on the page.
 function ConflictOverviewPointer(): JSX.Element {
   void refreshSyncConflicts(); // refresh when the Backups tab opens
-  const count = () => conflictQueue().length + syncConflicts().filter((c) => !c.base_path).length;
   return (
-    <Show when={count()}>
+    <Show when={pendingConflictCount()}>
       <div class="settings-section" style={{ "margin-top": "18px" }}>
         Conflicts
       </div>
       <div class="settings-hint settings-block">
-        {count()} {count() === 1 ? "item needs" : "items need"} a decision: sync conflict copies or
+        {pendingConflictCount()} {pendingConflictCount() === 1 ? "item needs" : "items need"} a decision: sync conflict copies or
         version-control merge markers. The Conflicts page lists them, with{" "}
         <strong>Discard copy</strong> for sync copies; the <strong>N conflicts</strong> badge in the
         sidebar opens it too.
