@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildInputState, normalizedBuildInputState } from "./build-e2e-inputs.mjs";
 import { windowsWebviewProfileSnapshot } from "./e2e-capabilities.mjs";
+import { privateSessionLaunch } from "./lib/e2e-session-bus.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contractsPath = path.join(root, "tests/ui-regressions/e2e-contracts.json");
@@ -430,12 +431,13 @@ async function runScenario([id, script, extraEnv], contractEntry) {
     // inside one scenario still share the bus, preserving the multigraph and
     // Quick Capture handoff coverage.
     const command = nativeLinux ? "xvfb-run" : process.execPath;
+    const session = nativeLinux ? privateSessionLaunch(path.join(root, script), [], env) : null;
     const args = nativeLinux
       // Xvfb must wrap the private bus: D-Bus-activated GTK portal services need
       // DISPLAY in the activation environment for auxiliary-window behavior.
-      ? ["-a", process.env.DBUS_RUN_SESSION || "dbus-run-session", "--", process.execPath, path.join(root, script)]
+      ? ["-a", session.command, ...session.args]
       : [path.join(root, script)];
-    const child = spawn(command, args, { cwd: root, env, detached: process.platform !== "win32", stdio: ["ignore", stdout, stderr] });
+    const child = spawn(command, args, { cwd: root, env: session?.env ?? env, detached: process.platform !== "win32", stdio: ["ignore", stdout, stderr] });
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
