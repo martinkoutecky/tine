@@ -340,6 +340,14 @@ pub(crate) fn record_watcher_batch(pages: usize, conflicts_changed: bool) {
     record_fixed_event("watcher.batch", fields);
 }
 
+/// The OS refused (or restored) live notifications for a graph root; the
+/// watcher polls meanwhile (`watcher.refused`, fixed shape, no path or message).
+pub(crate) fn record_watch_refused(refused: bool) {
+    let mut fields = Map::new();
+    fields.insert("refused".into(), json!(refused));
+    record_fixed_event("watcher.refused", fields);
+}
+
 /// Commands whose own timing would only describe the recorder.
 const SELF_COMMANDS: [&str; 8] = [
     "diagnostic_ipc_event",

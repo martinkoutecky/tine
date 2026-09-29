@@ -94,6 +94,7 @@ by I-9's typed failure paths.
 | `tine-store::model` path and graph acquisition | A configured graph or asset directory is retargeted, malformed, or resolves outside the approved root after sync or external editing; refuse reads and writes through that path. |
 | `tine-store::store` read, scan and handoff | Graph close revokes queued requests; a symlink, non-file (for the asset opener: neither file nor directory), or escaped path appears after the caller selected it, or sync retargets `assets/`; refuse stale bytes and OS handoff. A failed initial parse withholds an unpublished view. |
 | `tine-store::watch` reconcile | A graph closes, its root disappears, or an external config edit changes directory layout; stop reconciliation rather than publishing a false view. |
+| `tine-store::watch` OS watch setup (og 22a) | The OS refuses live file notifications for the graph (inotify's per-user watch limit is spent by other apps, a network or FUSE mount without events, a root replaced while open); degrade to a 3-second poll that runs the same reconcile, retry the live watch every cycle, and report the refusal and its restoration (`Subscription::observe_watch_status`, `graph-watch-refused` / `graph-watch-restored`, flight event `watcher.refused`). The graph is never silently stale (I-9). |
 | `tine-store::restore` source, destination and recovery | A selected snapshot source changes type or length, a live/recovery path is retargeted, or an external writer creates the destination; refuse publication and retain displaced bytes in recovery. |
 | `tine-store::publish` staged site | An external writer retargets output or stage paths or wins the destination name; refuse replacement and retain the previous site. |
 | `tine-graph-features::pages` rename, rescue, merge and delete | A referrer carrying VCS conflict markers (an external merge or sync left it mid-conflict) is skipped, not rewritten, and reported (`skipped_conflicted_referrers`; R-VCS-MARKERS). Sync or an external editor changes a revision, creates a twin, occupies a destination, or makes Org non-round-tripping; refuse the affected transaction and retain source bytes. A rescue also refuses a name already carried by a retained non-portable legacy filename (`pages/A:B.md` from OG on Linux/macOS), which OG would load as a second file for that page. |
@@ -104,7 +105,7 @@ by I-9's typed failure paths.
 | `tine-graph-features::config` and `assets` | Config or an asset changes repeatedly while applying a user update; stop before overwriting the external winner. |
 | `src-tauri::backup` restore selection | A backup is incomplete, belongs to another graph, fails its manifest hash, loses a source file, or changes during verification; refuse restore before touching live content. A failed pre-restore safety snapshot also refuses publication. |
 | `src-tauri::state` graph binding | Two windows try to own overlapping roots, or a queued command carries an old binding generation; refuse a wrong-graph write. |
-| `src::persistence` frontend save gate | A page is tombstoned, conflicted, held as the source of a cross-page move, or the graph switch still has pending writes; retain the editor buffer and refuse the unsafe completion. |
+| `src::persistence` frontend save gate | A page is tombstoned, conflicted, held as the source of a cross-page move, or the graph switch still has pending writes; retain the editor buffer and refuse the unsafe completion. An alias draft already appended to its owner page is retried by replacing that landed tail, never by appending again; when the owner's tail no longer matches what landed (an external editor or sync client changed the owner in between), refuse with `conflict` (grouped path: `alias-owner-busy`) and keep the draft (og 22a, L13). |
 
 Watcher reconciliation distinguishes a successful page read, an intentionally
 excluded nonregular or escaped path, and a failed read. A successful read can
@@ -115,6 +116,17 @@ keeps it eligible for the next scan even if its metadata does not change.
 Deletion still forgets the cached page; a timestamp-only touch updates its
 observed time without reparsing. Tests cover these neighboring outcomes in
 `watch.rs` and `tests/watch.rs`.
+
+The watcher drops events under `.git/`, `.stfolder/` and other noise
+directories before reconciling. A burst of more than 32 changed paths is
+reconciled as one full diff and published as one revision; the desktop adapter
+forwards more than 32 page changes in one publication as a single
+`graph-changed-bulk` event. Returning focus asks for `rescan_graph_now`, whose
+completion is signalled only after the dispatch thread has emitted every change
+up to the rescanned revision. None of these paths writes: a reload never
+replaces a page holding an unsaved draft, and the frontend's "always ask"
+policy only holds clean changes it would otherwise apply silently. Tests cover
+these in `watch.rs`, `tests/watch.rs` and `src-tauri/src/watcher.rs`.
 
 Review rule: a new refusal must identify a reachable scenario involving an honest
 local user, sync or external editor. Source scans cannot prove reachability;

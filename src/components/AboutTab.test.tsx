@@ -3,7 +3,8 @@ import { render } from "solid-js/web";
 import { AboutTab } from "./AboutTab";
 import { setToasts, toasts } from "../toasts";
 
-const { isTauriMock, platformKindMock, openExternalMock } = vi.hoisted(() => ({
+const { isTauriMock, platformKindMock, openExternalMock, checkNowMock } = vi.hoisted(() => ({
+  checkNowMock: vi.fn(async (): Promise<{ kind: string; version?: string; current?: string }> => ({ kind: "current", version: "0.5.3" })),
   isTauriMock: vi.fn(() => false),
   platformKindMock: vi.fn(async (): Promise<"desktop" | "android" | "ios"> => "desktop"),
   openExternalMock: vi.fn(async () => {}),
@@ -15,7 +16,7 @@ vi.mock("../backend", () => ({
 }));
 vi.mock("../platform", () => ({ platformKind: platformKindMock }));
 vi.mock("../update", () => ({
-  checkForUpdateNow: async () => ({ kind: "current", version: "0.5.3" }),
+  checkForUpdateNow: checkNowMock,
   openReleasesPage: () => {},
 }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: async () => "0.5.3" }));
@@ -66,6 +67,25 @@ describe("AboutTab", () => {
       expect(host.textContent).not.toContain("distribution channel");
     } finally {
       dispose();
+    }
+  });
+
+  it("points an available update at the Install update action instead of claiming a download (GH #241)", async () => {
+    isTauriMock.mockReturnValue(true);
+    checkNowMock.mockResolvedValueOnce({ kind: "available", version: "0.6.0", current: "0.5.3" });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <AboutTab />, host);
+    try {
+      await flush();
+      const button = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Check for updates"));
+      button?.click();
+      await flush();
+      expect(host.textContent).toContain("Tine 0.6.0 is available — choose Install update in the notification.");
+      expect(host.textContent).not.toContain("downloading");
+    } finally {
+      dispose();
+      host.remove();
     }
   });
 

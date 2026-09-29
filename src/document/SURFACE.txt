@@ -7,6 +7,7 @@ UnsavedState  # why: the state label each unsaved page shows in that panel (GH #
 appendFeed
 appendToTodayJournal
 applyGraphChange
+applyGraphChangesBulk  # why: a checkout-sized watcher batch (graph-changed-bulk) is applied once (family 10); batch22a
 beginPageHeaderEdit
 blockExternalId
 blockIsGridView
@@ -122,6 +123,7 @@ removeOwnNumberedList
 renamePageOnDisk
 replaceChildOrders
 replaceEmptyBlockWithOutline
+replayDeferredExternalReloads  # why: returning to the window replays reloads deferred mid-edit (family 10 focus refresh); batch22a
 resetStore
 resolveBlockRef
 resolveConflict  # why: one conflict resolution intent; batch03

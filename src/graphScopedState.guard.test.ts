@@ -152,6 +152,7 @@ const CLASSIFIED_CONSUMERS: Record<string, string> = {
   "src/components/PdfExportDialog.tsx#pdfExportPage": "prints the named page through the OS dialog; never writes the graph",
   "src/components/QueryBuilder.tsx#queryBuilderAutoOpen": "one-shot flag compared with the mounting block's own id and consumed; no graph write",
   "src/capture.tsx#datePicker": "sizes the capture window while a picker is open; no write",
+  "src/conflictPolicy.ts#heldChanges": "held external changes (always ask); Reload from disk re-dispatches the change through applyGraphChange, which drops a change of another binding generation and only re-reads disk; no graph write",
 };
 
 describe("graph-scoped UI state (I-20)", () => {

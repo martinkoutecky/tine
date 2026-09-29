@@ -434,8 +434,10 @@ fn rollback_pdf_area_file(
 /// disk edit, returns a conflict before either artifact is written; retain the
 /// local edit for resolution. Returns the committed set for the next baseline.
 /// A blank sidecar or valid top-level EDN map is accepted; malformed nonblank
-/// EDN refuses. Malformed highlight entries within a valid map are skipped,
-/// and duplicate IDs are not rejected. Sidecar and annotation
+/// EDN refuses. Malformed highlight entries within a valid map are not merged;
+/// they are carried through the rewrite unchanged and keep their page blocks.
+/// Duplicate IDs are not rejected. Annotation blocks are removed only for
+/// highlights deleted by this write. Sidecar and annotation
 /// page are one guarded transaction. Failure can leave disk differences if
 /// undo or publication is incomplete; retain local edits and inspect disk.
 /// After commit, crop/legacy trash moves are best effort and do not fail this
@@ -546,8 +548,25 @@ pub fn write_highlights(
             ));
         }
         let prior = page_raw.map(|raw| parse_doc(raw, format(&page)));
-        let doc =
-            pdf::merge_hls_page_for_format(prior.as_ref(), pdf_name, label, &merged, format(&page));
+        // Only highlights this write knows were deleted lose their page block;
+        // an annotation whose sidecar entry is unreadable or not yet synced is
+        // not ours to remove (L01 H1/H2).
+        let merged_ids: HashSet<&str> = merged.iter().map(|item| item.id.as_str()).collect();
+        let removed: HashSet<String> = disk
+            .iter()
+            .map(|item| item.id.as_str())
+            .chain(base.keys().copied())
+            .filter(|id| !merged_ids.contains(id))
+            .map(str::to_owned)
+            .collect();
+        let doc = pdf::merge_hls_page_for_format(
+            prior.as_ref(),
+            pdf_name,
+            label,
+            &merged,
+            &removed,
+            format(&page),
+        );
         let page_dto = dto(&page, &name, &doc);
         let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
         match current.as_ref() {

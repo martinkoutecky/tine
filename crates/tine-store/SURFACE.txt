@@ -115,6 +115,8 @@ fn store::Store::subscribe
 fn store::Change::page
 fn store::Subscription::recv
 fn store::Subscription::try_recv
+fn store::Subscription::start_rev
+fn store::Subscription::observe_watch_status
 fn store::Store::journal_id
 fn store::Store::is_graph_ready
 fn store::Store::open_read
@@ -197,7 +199,14 @@ struct store::ConfigState
 struct store::Change
 enum store::SubscriptionEnd
 struct store::Subscription
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchMode,WholeGraph,}
+struct store::WatchBatch
+field store::Change.watch
+field store::WatchBatch.event_paths
+field store::WatchBatch.first_event_at
+field store::WatchBatch.full_diff
+field store::WatchBatch.poll
+field store::WatchBatch.reconcile_started
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 struct store::GraphAccessInspection
 struct store::OpenOptions
 struct store::WholeGraph

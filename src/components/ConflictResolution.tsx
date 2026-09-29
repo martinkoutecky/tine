@@ -196,7 +196,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           // after it (a crash in between offers an already-resolved draft,
           // never loses one), then show the result through the ordinary rule.
           if (live.record_id) await dismissEarlierDraft(live.record_id);
-          await applyGraphChange({ path: pagePath, name: pageName, kind, created: false, removed: false });
+          await applyGraphChange({ path: pagePath, name: pageName, kind, created: false, removed: false }, true);
           pushToast(`Resolved your kept draft of “${pageName}”`, "success");
           return;
         }
@@ -244,7 +244,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
       // Own-origin writes raise no watcher event, so the open page reloads here
       // through the ordinary external-change rule: a clean page takes the merged
       // file; one edited meanwhile keeps the edit and is marked conflicted.
-      await applyGraphChange({ path: pagePath, name: pageName, kind, created: false, removed: false });
+      await applyGraphChange({ path: pagePath, name: pageName, kind, created: false, removed: false }, true);
       pushToast(source === "vcs-markers" ? `Resolved the merge in “${pageName}”` : `Merged into “${pageName}”`, "success");
       void refreshSyncConflicts();
     } catch (e) {

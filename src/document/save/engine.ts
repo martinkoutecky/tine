@@ -3,8 +3,8 @@ import { createSignal } from "solid-js";
 import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
 import { type ClipboardSourcePage } from "../../clipboard";
 import { captureBinding, type Binding, stillBound } from "../../binding";
-import { pageToDto, appendAliasDraft } from "../convert";
-import type { PageDto, PageKind } from "../../types";
+import { pageToDto, appendAliasDraft, aliasDraftBlocks, replaceLandedAliasDraft } from "../convert";
+import type { BlockDto, PageDto, PageKind } from "../../types";
 import { backend, saveOnePage, type SavePageEntry } from "../../backend";
 import { forgetPage, reloadPage, loadSingle, rekeyPageIdentityByPath } from "../workingSet";
 import { editingId } from "../../editorController";
@@ -187,6 +187,19 @@ const baseRev = new Map<string, string | null>();
 // (missing file + null baseline = "new page") happily recreates it. While a name
 // is tombstoned, saves for it are skipped; re-loading/creating the page clears it.
 const deletedPages = new Set<string>();
+// Alias drafts whose snapshot already landed at the end of their owner file
+// while a later edit kept the draft open and conflicted (L13): the owner file
+// and the copy it holds. A retry replaces that copy; it never appends again.
+const landedAliasDrafts = new Map<string, { owner: string; blocks: BlockDto[]; generation: number | null }>();
+/** What alias draft `name` (instance `generation`) writes to `owner`: its
+ *  snapshot appended, or the copy that already landed replaced in place. Null
+ *  refuses: the owner no longer ends with that copy (an external editor or a
+ *  sync client changed it since), and appending again would duplicate it. */
+function aliasOwnerPage(name: string, generation: number | null, owner: PageDto & { id?: string }, dto: PageDto): PageDto | null {
+  const landed = landedAliasDrafts.get(name);
+  if (!landed || landed.generation !== generation) return appendAliasDraft(owner, dto);
+  return landed.owner === owner.id ? replaceLandedAliasDraft(owner, landed.blocks, dto) : null;
+}
 // Bumped whenever the working set is reset (graph switch). A save abandons its
 // baseline update if the graph changed under it; resetSaveState also clears
 // `dirty` so a stray queued save becomes a no-op.
@@ -496,11 +509,15 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
   }
   if (!validGroupMembers(g, binding, token, generations)) return abortGroup(g);
   const entries: SavePageEntry[] = [];
+  const drafts: PageDto[] = [];
   for (const name of order) {
     const dto = pageToDto(name), target = ids.get(name)!;
     if (!dto) return abortGroup(g);
     const decision = decidedConflict(g, name) ? conflictReason(name) : undefined;
-    entries.push({ id: target.id, page: target.owner ? appendAliasDraft(target.owner, dto) : dto,
+    const ownerPage = target.owner && aliasOwnerPage(name, generations.get(name) ?? null, target.owner, dto);
+    if (target.owner && !ownerPage) return failGroup(g, { index: order.indexOf(name), family: "conflict", undoFailed: [] }, order);
+    drafts.push(dto);
+    entries.push({ id: target.id, page: ownerPage || dto,
       baseRev: decision?.observedRev !== undefined ? decision.observedRev : target.owner ? target.owner.rev ?? null : baseRev.get(name) ?? null,
       force: false,
       kinds: target.owner ? ["insert-blocks", "delete-page"] : pendingKinds(name, (baseRev.get(name) ?? null) === null) });
@@ -521,7 +538,10 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
     }
     for (let i = 0; i < order.length; i++) {
       const name = order[i], target = ids.get(name)!;
-      if (target.owner) continue;
+      if (target.owner) {
+        landedAliasDrafts.set(name, { owner: target.id, blocks: aliasDraftBlocks(drafts[i]), generation: generations.get(name) ?? null });
+        continue;
+      }
       setPageId(name, target.id);
       baseRev.set(name, outcome.ok[i]);
       const writtenHeader = entries[i].page.pre_block;
@@ -544,6 +564,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
         continue;
       }
       const landed = { ...entries[i].page, rev: outcome.ok[i] };
+      landedAliasDrafts.delete(name);
       forgetPage(name);
       reloadPage(landed);
       loadSingle(landed);
@@ -738,6 +759,7 @@ export function resetSaveState() {
   titleIdentityIntents.clear();
   baseRev.clear();
   deletedPages.clear();
+  landedAliasDrafts.clear();
   deletingGroupMembers.clear();
   for (const g of new Set([...groupOf.values(), ...sealedGroups])) {
     g.cancelled = true;
@@ -871,9 +893,13 @@ async function doSave(
         // A draft's property-only first root is folded into pre_block by
         // pageToDto. Keep those bytes too: on the owner they are ordinary
         // appended content, never a replacement for the owner's preamble.
-        const appended = appendAliasDraft(owner, dto);
+        // A copy that already landed is replaced in place (L13), bound to this
+        // exact draft instance; a refusal is an ordinary disk conflict.
+        const appended = aliasOwnerPage(name, generation, owner, dto);
+        if (!appended) throw new Error("conflict");
         const ownerRev = await saveOnePage(backend(), { id: owner.id, page: appended, baseRev: owner.rev ?? null, force: false,
           kinds: ["insert-blocks", "delete-page"] }, binding.backendGeneration);
+        landedAliasDrafts.set(name, { owner: owner.id, blocks: aliasDraftBlocks(dto), generation });
         if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
         if (dirty.has(name) || isDirty(owner.name) || isSaving(owner.name)
             || isConflicted(owner.name) || pageInstanceGeneration(owner.name) !== ownerGeneration) {
@@ -882,6 +908,7 @@ async function doSave(
           throw new Error("conflict");
         }
         const landed = { ...appended, rev: ownerRev };
+        landedAliasDrafts.delete(name);
         forgetPage(name);
         reloadPage(landed);
         loadSingle(landed);

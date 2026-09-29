@@ -72,8 +72,12 @@ mod graph_tests;
 #[cfg(test)]
 mod issue137_investigation_tests;
 #[cfg(test)]
+mod journal_reference_tests;
+#[cfg(test)]
 mod legacy_graph_writer_guard_tests;
 pub mod model;
+#[cfg(test)]
+mod outside_roots_tests;
 pub use file_kind::{is_asset_sidecar, is_graph_text};
 pub use model::{parse_input_depth_within_limit, PARSE_INPUT_MAX_BYTES};
 mod atomic_file;
@@ -110,7 +114,7 @@ pub use store::{
     FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry, IrAnswer,
     IrRequest, Listing, LoadError, OpenError, OpenOptions, Origin, PageId, PageRead, QueryDialect,
     QueryError, QueryResult, Resolved, SaveBase, SaveOutcome, SavePagesOutcome, SearchRequest,
-    Store, StoreError, Subscription, SubscriptionEnd, TrashKind, WatchMode, WholeGraph,
+    Store, StoreError, Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]
 pub use transaction::FaultPoint;

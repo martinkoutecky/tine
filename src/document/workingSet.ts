@@ -113,7 +113,14 @@ function pageContentMatches(dto: PageDto & { id?: string }, page: FeedPage): boo
  *  already-loaded page's in-progress edits. */
 export function ensurePageLoaded(dto: PageDto & { id?: string }) {
   const existing = doc.pages.find((p) => p.name === dto.name);
-  if (existing && (existing.id ?? "") === (dto.id ?? "")) return;
+  if (existing && (existing.id ?? "") === (dto.id ?? "")) {
+    // Same-content hydration still carries new disk authority (master
+    // ba80a151e9a2): after a Concord resolution the winner can be open with an
+    // older baseline, and the next ordinary edit would look like a new
+    // conflict. Only a clean page whose content equals the DTO adopts its rev.
+    if (dto.rev !== undefined && reloadDisposition(dto.name) === "reload" && pageContentMatches(dto, existing)) setBaseRev(dto.name, dto.rev);
+    return;
+  }
   if (existing && reloadDisposition(dto.name) !== "reload") return;
   // A path-pinned route may intentionally load a duplicate-day stray with the
   // same logical title as the canonical journal. Replace a safe name slot with

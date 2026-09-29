@@ -611,6 +611,13 @@ export interface Backend {
   rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number): Promise<void>;
   /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
+  /** Watcher freshness (family 10), native only: a checkout-sized batch as one
+   *  event, a refused/restored OS watch, and a focus rescan (one full stat
+   *  diff) whose returned sequence completes after its page events. */
+  onGraphChangedBulk?(cb: (bulk: { changes: GraphChange[]; binding_generation?: number }) => void): Promise<() => void>;
+  onGraphWatchStatus?(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void): Promise<() => void>;
+  onGraphRescanComplete?(cb: (sequence: number) => void): Promise<() => void>;
+  rescanGraphNow?(): Promise<number>;
   /** Subscribe to effective config.edn changes for this window. The event
    * carries a fresh graph meta snapshot after the store reloaded the file. */
   onGraphConfigChanged(cb: (change: GraphConfigChange) => void): Promise<() => void>;
@@ -1357,14 +1364,18 @@ class TauriBackend implements Backend {
   rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number) {
     return this.assetCall<void>("rollback_pdf_area_image", { pdf, page, id, stamp }, bindingGeneration);
   }
-  async onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void> {
-    const { listen } = await import("@tauri-apps/api/event");
-    return listen<GraphChange>("graph-changed", (e) => cb(e.payload));
+  private async on<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
+    return (await import("@tauri-apps/api/event")).listen<T>(event, (e) => cb(e.payload));
   }
-  async onGraphConfigChanged(cb: (change: GraphConfigChange) => void): Promise<() => void> {
-    const { listen } = await import("@tauri-apps/api/event");
-    return listen<GraphConfigChange>("graph-config-changed", (event) => cb(event.payload));
+  onGraphChanged(cb: (c: GraphChange) => void) { return this.on("graph-changed", cb); }
+  onGraphChangedBulk(cb: (bulk: { changes: GraphChange[]; binding_generation?: number }) => void) { return this.on("graph-changed-bulk", cb); }
+  async onGraphWatchStatus(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void) {
+    const [a, b] = await Promise.all([true, false].map((refused) => this.on<{ message: string }>(`graph-watch-${refused ? "refused" : "restored"}`, (p) => cb({ ...p, refused }))));
+    return () => { a(); b(); };
   }
+  onGraphRescanComplete(cb: (sequence: number) => void) { return this.on("graph-rescan-complete", cb); }
+  rescanGraphNow() { return this.call<number>("rescan_graph_now"); }
+  onGraphConfigChanged(cb: (change: GraphConfigChange) => void) { return this.on("graph-config-changed", cb); }
   getBackupKeep() {
     return this.call<number>("get_backup_keep");
   }

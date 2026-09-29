@@ -9,6 +9,7 @@
 // numbers — never the message or file name.
 
 import { backend, type DiagnosticFrontendFields, type DiagnosticFrontendKind } from "./backend";
+import { platformKind } from "./nativeChrome";
 import { ownedWhen, writeOwned } from "./owned";
 import { pushToast, pushToastUnique } from "./toasts";
 
@@ -97,7 +98,10 @@ export async function initDebug(): Promise<void> {
   }
   if (!info.enabled) return;
   enabled = true;
-  dbg(`frontend booted (ua=${navigator.userAgent})`);
+  // platform= is the identity Rust injected, which is NOT derivable from ua=
+  // on iPadOS (GH #446). Keeping both in one line makes that divergence
+  // readable in a bug report.
+  dbg(`frontend booted (platform=${platformKind} ua=${navigator.userAgent})`);
   pushToast(`Debug logging is ON → ${info.path}`, "info");
 }
 

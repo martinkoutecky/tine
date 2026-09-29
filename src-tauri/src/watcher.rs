@@ -2,11 +2,20 @@
 
 use crate::settings::{settings_path, update_settings};
 use crate::state::{AppState, GraphSlot};
+use std::collections::VecDeque;
 use std::path::Path;
-use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak};
+use std::time::{Instant, SystemTime};
 use tauri::{Emitter, Manager, State};
 use tine_core::model::PageKind;
-use tine_store::{Change, ChangeKind, Origin, SubscriptionEnd, WatchMode};
+use tine_store::{Change, ChangeKind, GraphRev, Origin, SubscriptionEnd, WatchBatch, WatchMode};
+
+/// Above this many changed pages one publication is announced as ONE
+/// `graph-changed-bulk` event (master 1229f32fb, GH #337): a checkout or big
+/// sync otherwise costs the window one reload decision and one `dataRev` bump
+/// per page. The store escalates its reconcile at the same boundary.
+const BULK_CHANGE_THRESHOLD: usize = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 struct GraphChange {
@@ -96,6 +105,212 @@ pub(crate) fn concord_observe(slot: &GraphSlot, change: &Change) -> bool {
     slot.conflict_queue.refresh_change(&slot.store, change)
 }
 
+// ---------------------------------------------------------------------------
+// Watcher latency receipts (GH #337 diagnosis; master 388aede67)
+// ---------------------------------------------------------------------------
+// One receipt per external watcher publication: first notification ->
+// reconcile start -> last window event emitted. A structured `--debug` line
+// plus a 64-entry in-memory ring that `watcher_latency_recent` returns (a
+// reporter runs it from the devtools console). No reads, no per-path data.
+
+/// One external-change batch, as the watcher experienced it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct WatcherLatencyReceipt {
+    /// Process-wide receipt number.
+    seq: u64,
+    /// Wall-clock Unix ms, to correlate with "I saved the file at ...".
+    at_unix_ms: u64,
+    /// "inotify" or "poll" (a poll cycle, chosen or after a refused watch).
+    mode: &'static str,
+    /// Window page events emitted for this batch.
+    pages: usize,
+    /// Exact event paths in the batch (0 for a pure full diff).
+    event_paths: usize,
+    /// Whether the full stat diff ran (poll, unclassifiable event, burst).
+    full_diff: bool,
+    /// First notification -> reconcile start; `None` for a poll cycle.
+    event_to_reconcile_ms: Option<u64>,
+    /// Reconcile start -> last window event emitted.
+    reconcile_ms: u64,
+    /// First notification -> last window event emitted.
+    event_to_emit_ms: Option<u64>,
+}
+
+const LATENCY_RECEIPT_CAP: usize = 64;
+static LATENCY_RECEIPTS: Mutex<VecDeque<WatcherLatencyReceipt>> = Mutex::new(VecDeque::new());
+static LATENCY_RECEIPT_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn latency_receipt(batch: &WatchBatch, pages: usize, emitted_at: Instant) -> WatcherLatencyReceipt {
+    let since = |earlier: Instant| emitted_at.saturating_duration_since(earlier).as_millis() as u64;
+    WatcherLatencyReceipt {
+        seq: 0,
+        at_unix_ms: 0,
+        mode: if batch.poll { "poll" } else { "inotify" },
+        pages,
+        event_paths: batch.event_paths,
+        full_diff: batch.full_diff,
+        event_to_reconcile_ms: batch.first_event_at.map(|at| {
+            batch
+                .reconcile_started
+                .saturating_duration_since(at)
+                .as_millis() as u64
+        }),
+        reconcile_ms: since(batch.reconcile_started),
+        event_to_emit_ms: batch.first_event_at.map(since),
+    }
+}
+
+fn push_latency_receipt(
+    ring: &mut VecDeque<WatcherLatencyReceipt>,
+    receipt: WatcherLatencyReceipt,
+) {
+    while ring.len() >= LATENCY_RECEIPT_CAP {
+        ring.pop_front();
+    }
+    ring.push_back(receipt);
+}
+
+fn record_latency_receipt(mut receipt: WatcherLatencyReceipt) {
+    receipt.seq = LATENCY_RECEIPT_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+    receipt.at_unix_ms = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as u64);
+    let stage = |value: Option<u64>| value.map_or_else(|| "n/a".to_owned(), |ms| format!("{ms}ms"));
+    crate::debug::diag_private(
+        "watcher-latency",
+        format!(
+            "watcher-latency seq={} mode={} pages={} event_paths={} full_diff={} event->reconcile={} reconcile={}ms event->emit={}",
+            receipt.seq,
+            receipt.mode,
+            receipt.pages,
+            receipt.event_paths,
+            receipt.full_diff,
+            stage(receipt.event_to_reconcile_ms),
+            receipt.reconcile_ms,
+            stage(receipt.event_to_emit_ms),
+        ),
+    );
+    if let Ok(mut ring) = LATENCY_RECEIPTS.lock() {
+        push_latency_receipt(&mut ring, receipt);
+    }
+}
+
+/// Debug command for bug reports: the last 64 external-change latency
+/// receipts, oldest first.
+#[tauri::command]
+pub(crate) fn watcher_latency_recent() -> Vec<WatcherLatencyReceipt> {
+    LATENCY_RECEIPTS
+        .lock()
+        .map(|ring| ring.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// Reload on focus (Concord L0; master d56219d73, b3d64addee39)
+// ---------------------------------------------------------------------------
+// Returning to the window asks for one full stat diff. It is not a second
+// freshness path: whatever the diff finds is published by the store and
+// emitted by the ordinary dispatch thread as `graph-changed` events. Once
+// every event up to that publication has been emitted, `graph-rescan-complete`
+// {sequence} follows on the same window-event channel, so the window can wait
+// for its answer.
+
+/// How far this binding's dispatch thread has emitted, and the rescans waiting
+/// for it. One per `GraphSlot`.
+#[derive(Default)]
+pub(crate) struct RescanCursor {
+    state: Mutex<(Option<GraphRev>, Vec<(GraphRev, u64)>)>,
+}
+
+static RESCAN_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn emit_rescan_complete(app: &tauri::AppHandle, label: &str, sequence: u64) {
+    let _ = app.emit_to(label, "graph-rescan-complete", sequence);
+}
+
+impl RescanCursor {
+    /// The dispatch thread emitted every event up to publication `rev`;
+    /// returns the rescans that are now complete.
+    fn dispatched(&self, rev: GraphRev) -> Vec<u64> {
+        let mut state = self.state.lock().unwrap();
+        let done = state.0.map_or(rev, |seen| seen.max(rev));
+        state.0 = Some(done);
+        let mut complete = Vec::new();
+        state.1.retain(|&(target, sequence)| {
+            let finished = target <= done;
+            if finished {
+                complete.push(sequence);
+            }
+            !finished
+        });
+        complete
+    }
+
+    /// Whether `sequence` is already complete; otherwise it completes when
+    /// publication `target` has been dispatched.
+    fn wait(&self, target: GraphRev, sequence: u64) -> bool {
+        let mut state = self.state.lock().unwrap();
+        if state.0.is_some_and(|done| target <= done) {
+            return true;
+        }
+        state.1.push((target, sequence));
+        false
+    }
+}
+
+/// Run one full stat diff for the calling window's graph (the same scan
+/// `Store::scan_refresh` documents: one stat per graph-text file plus the
+/// bytes of changed files) and answer the sequence number its
+/// `graph-rescan-complete` event will carry. The scan runs on the blocking
+/// pool; a failed scan still completes, and the watcher stays primary.
+#[tauri::command]
+pub(crate) async fn rescan_graph_now(state: crate::state::GraphContext<'_>) -> Result<u64, String> {
+    let slot = crate::state::slot_for_context(&state)?;
+    let app = state.window.app_handle().clone();
+    let label = state.window.label().to_owned();
+    let sequence = RESCAN_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    tauri::async_runtime::spawn_blocking(move || {
+        // A failed scan published nothing to wait for: it completes at once.
+        let Ok(target) = slot.store.scan_refresh() else {
+            crate::debug::diag("watcher-focus-rescan-failed");
+            return emit_rescan_complete(&app, &label, sequence);
+        };
+        if slot.rescan.wait(target, sequence) {
+            emit_rescan_complete(&app, &label, sequence);
+        }
+    });
+    Ok(sequence)
+}
+
+/// One publication's page events as window events: one `graph-changed` per
+/// page, or a single `graph-changed-bulk` above `BULK_CHANGE_THRESHOLD`.
+fn page_event_payloads(
+    events: Vec<GraphChange>,
+    binding_generation: u64,
+) -> Vec<(&'static str, serde_json::Value)> {
+    let payload = |event: GraphChange| {
+        serde_json::json!({
+            "path": event.path,
+            "name": event.name,
+            "kind": event.kind,
+            "created": event.created,
+            "removed": event.removed,
+            "binding_generation": binding_generation,
+        })
+    };
+    if events.len() > BULK_CHANGE_THRESHOLD {
+        let changes: Vec<_> = events.into_iter().map(payload).collect();
+        let bulk =
+            serde_json::json!({ "changes": changes, "binding_generation": binding_generation });
+        vec![("graph-changed-bulk", bulk)]
+    } else {
+        events
+            .into_iter()
+            .map(|event| ("graph-changed", payload(event)))
+            .collect()
+    }
+}
+
 /// Emit one publication's window events; an external publication is also
 /// recorded as a fixed-shape `watcher.batch` diagnostic event (counts only).
 fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Change) {
@@ -110,19 +325,14 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Chang
     if !events.is_empty() || conflicts_dirty {
         crate::flight::record_watcher_batch(events.len(), conflicts_dirty);
     }
-    for event in events {
-        let _ = app.emit_to(
-            label,
-            "graph-changed",
-            serde_json::json!({
-                "path": event.path,
-                "name": event.name,
-                "kind": event.kind,
-                "created": event.created,
-                "removed": event.removed,
-                "binding_generation": binding_generation,
-            }),
-        );
+    let pages = events.len();
+    for (name, payload) in page_event_payloads(events, binding_generation) {
+        let _ = app.emit_to(label, name, payload);
+    }
+    if let Some(batch) = change.watch.as_ref() {
+        if change.origin == Origin::External && (pages > 0 || !change.files.is_empty()) {
+            record_latency_receipt(latency_receipt(batch, pages, Instant::now()));
+        }
     }
     if conflicts_dirty {
         let _ = app.emit_to(label, "conflicts-changed", ());
@@ -139,9 +349,46 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Chang
     }
 }
 
+/// Tell the window when the OS refuses live notifications for its graph (the
+/// store then polls every three seconds and retries), and when they return.
+/// In-scope scenarios: inotify's per-user watch limit reached by a second
+/// large graph, a network mount or filesystem without notifications.
+fn report_watch_status(
+    app: &tauri::AppHandle,
+    label: &str,
+    slot: &Weak<GraphSlot>,
+    refusal: Option<String>,
+) {
+    let current = app.state::<AppState>().graphs.read().unwrap().slot(label);
+    let Some(slot) = slot.upgrade() else {
+        return;
+    };
+    if !current.is_some_and(|current| Arc::ptr_eq(&current, &slot)) {
+        return;
+    }
+    let refused = refusal.is_some();
+    crate::flight::record_watch_refused(refused);
+    let (event, message) = match refusal {
+        Some(message) => ("graph-watch-refused", message),
+        None => ("graph-watch-restored", String::new()),
+    };
+    crate::debug::diag_private(event, format!("{event} {message}"));
+    let _ = app.emit_to(
+        label,
+        event,
+        serde_json::json!({ "message": message, "binding_generation": slot.binding_generation }),
+    );
+}
+
 pub(crate) fn start_slot_events(app: tauri::AppHandle, label: String, slot: &Arc<GraphSlot>) {
     let subscription = slot.store.subscribe();
     let weak: Weak<GraphSlot> = Arc::downgrade(slot);
+    slot.rescan.dispatched(subscription.start_rev());
+    {
+        let (app, label, weak) = (app.clone(), label.clone(), weak.clone());
+        subscription
+            .observe_watch_status(move |status| report_watch_status(&app, &label, &weak, status));
+    }
     std::thread::spawn(move || loop {
         let change = match subscription.recv() {
             Ok(change) => change,
@@ -159,7 +406,11 @@ pub(crate) fn start_slot_events(app: tauri::AppHandle, label: String, slot: &Arc
             .as_ref()
             .is_some_and(|current| Arc::ptr_eq(current, &slot))
         {
+            let rev = change.graph_rev;
             dispatch(&app, &label, &slot, change);
+            for sequence in slot.rescan.dispatched(rev) {
+                emit_rescan_complete(&app, &label, sequence);
+            }
         }
     });
 }
@@ -167,6 +418,92 @@ pub(crate) fn start_slot_events(app: tauri::AppHandle, label: String, slot: &Arc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rev(value: u64) -> GraphRev {
+        GraphRev::try_from(value.to_string()).unwrap()
+    }
+
+    fn page(index: usize) -> GraphChange {
+        GraphChange {
+            path: format!("pages/p{index}.md"),
+            name: format!("p{index}"),
+            kind: PageKind::Page,
+            created: false,
+            removed: false,
+        }
+    }
+
+    #[test]
+    fn a_checkout_sized_publication_is_one_bulk_window_event() {
+        let few = page_event_payloads((0..BULK_CHANGE_THRESHOLD).map(page).collect(), 7);
+        assert_eq!(few.len(), BULK_CHANGE_THRESHOLD);
+        assert!(few.iter().all(|(name, _)| *name == "graph-changed"));
+        let many = page_event_payloads((0..=BULK_CHANGE_THRESHOLD).map(page).collect(), 7);
+        assert_eq!(many.len(), 1, "one event for a checkout-sized batch");
+        let (name, payload) = &many[0];
+        assert_eq!(*name, "graph-changed-bulk");
+        assert_eq!(
+            payload["changes"].as_array().unwrap().len(),
+            BULK_CHANGE_THRESHOLD + 1
+        );
+        assert_eq!(payload["binding_generation"], 7);
+        assert_eq!(payload["changes"][3]["name"], "p3");
+        assert_eq!(payload["changes"][3]["binding_generation"], 7);
+    }
+
+    #[test]
+    fn a_focus_rescan_completes_only_after_its_publication_is_dispatched() {
+        let cursor = RescanCursor::default();
+        assert!(cursor.dispatched(rev(4)).is_empty());
+        assert!(
+            cursor.wait(rev(4), 1),
+            "nothing new published: complete at once"
+        );
+        assert!(
+            !cursor.wait(rev(6), 2),
+            "the rescan's publication is not emitted yet"
+        );
+        assert!(cursor.dispatched(rev(5)).is_empty());
+        assert_eq!(cursor.dispatched(rev(6)), vec![2]);
+        assert!(cursor.dispatched(rev(7)).is_empty(), "completes once");
+    }
+
+    #[test]
+    fn latency_receipts_keep_the_last_sixty_four() {
+        let started = Instant::now();
+        let batch = WatchBatch {
+            first_event_at: Some(started),
+            reconcile_started: started + std::time::Duration::from_millis(200),
+            poll: false,
+            full_diff: false,
+            event_paths: 2,
+        };
+        let receipt = latency_receipt(&batch, 1, started + std::time::Duration::from_millis(250));
+        assert_eq!(receipt.mode, "inotify");
+        assert_eq!(receipt.event_to_reconcile_ms, Some(200));
+        assert_eq!(receipt.reconcile_ms, 50);
+        assert_eq!(receipt.event_to_emit_ms, Some(250));
+        let poll = WatchBatch {
+            first_event_at: None,
+            poll: true,
+            full_diff: true,
+            ..batch
+        };
+        assert_eq!(latency_receipt(&poll, 0, started).event_to_emit_ms, None);
+        let mut ring = VecDeque::new();
+        for seq in 0..70 {
+            push_latency_receipt(
+                &mut ring,
+                WatcherLatencyReceipt {
+                    seq,
+                    ..receipt.clone()
+                },
+            );
+        }
+        assert_eq!(ring.len(), LATENCY_RECEIPT_CAP);
+        assert_eq!(ring.front().unwrap().seq, 6);
+        assert_eq!(ring.back().unwrap().seq, 69);
+    }
 
     /// Scan-refresh an external edit and return the window events it yields.
     fn events_after(slot: &GraphSlot, edit: impl FnOnce()) -> Vec<GraphChange> {

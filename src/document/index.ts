@@ -72,11 +72,16 @@
  * `installHistoryRouteContextAdapter`). An effective title change uses the
  * exact physical path to rekey navigation, loaded page ownership and its save
  * baseline in that order. The UI installs `installPageIdentityNavigation`;
- * rekeying refuses a name collision or an unsafe external reload. */
+ * rekeying refuses a name collision or an unsafe external reload.
+ * `applyGraphChangesBulk` applies a checkout-sized batch with one revision
+ * bump, at most one feed restart and one summary toast. With "always ask"
+ * (conflictPolicy.ts) the one silent case, a loaded clean page, is held for its
+ * bar instead; `replayDeferredExternalReloads` is the focus-return sweep. */
 export { blockIsGridView, collapseEpochOf, node, childIds, pageRoots, loadedPage, feedNames, isLoaded, formatForBlock, formatForPage, mainPages, pageByName } from "./model";
 export type { ReadonlyFeedPage as FeedPage, ReadonlyNode as Node } from "./model";
 export { conflictReason, conflicts, createPage, CreatePageRefusal, flushAll, flushPage, groupedPages, installAliasDraftRouteHandler, installDraftKeeper, installLiveResolution, isConflicted, liveConflictDraft, isDirty, isSaving, markDirty, refuseConflictedMove, resolveConflict, sameLiveDraft, trackAssetWrite, unsavedDrafts, unsavedPageCount, waitingFor, waitingOn, type UnsavedState } from "./save/engine";
-export { applyGraphChange, installExternalChangeUiHandler } from "./external";
+export { applyGraphChange, applyGraphChangesBulk, installExternalChangeUiHandler } from "./external";
+export { replayDeferredExternalReloads } from "./deferredReload";
 export { appendFeed, deletePage, ensurePageLoaded, loadFeed, loadGuidePages, loadRoutedPage, pinPageWhileDrafting, registerPaneRouteProvider, reloadHlsIfLoaded, resetStore, restoreTodayJournalInFeed } from "./workingSet";
 export { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
 export { graphRewriteFrozen } from "./graphRewriteState";

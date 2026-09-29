@@ -137,7 +137,7 @@ describe("in-page conflict resolution", () => {
     expect(resolve).toHaveBeenCalledWith("pages/Merged.md", { "0": "theirs", "1": "both" }, "marker-rev", ["replace-page"], "union");
     expect(sync).not.toHaveBeenCalled();
     expect(conflictQueue()).toEqual([]);
-    expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: "pages/Merged.md", name: "Merged", kind: "page", created: false, removed: false });
+    expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: "pages/Merged.md", name: "Merged", kind: "page", created: false, removed: false }, true); // a resolution is shown even under "always ask" (22a)
     dispose();
   });
 
@@ -210,7 +210,7 @@ describe("in-page conflict resolution", () => {
       "journal-rev", "copy-rev", ["replace-page", "delete-page"], "union", undefined,
     );
     expect(conflictQueue()).toEqual([]);
-    expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: "journals/2026_07_05.md", name: "Jul 5th, 2026", kind: "journal", created: false, removed: false });
+    expect(doc.applyGraphChange).toHaveBeenCalledWith({ path: "journals/2026_07_05.md", name: "Jul 5th, 2026", kind: "journal", created: false, removed: false }, true);
     dispose();
   });
 
