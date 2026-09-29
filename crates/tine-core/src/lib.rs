@@ -15,6 +15,7 @@ pub mod html_sanitize;
 pub mod logbook;
 pub mod model;
 pub mod org;
+mod outline;
 pub mod pdf;
 pub mod projection;
 mod property_line;

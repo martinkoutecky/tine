@@ -529,6 +529,20 @@ pub(crate) fn parse_text_bounded(text: &str, format: &str) -> Option<Projection>
     }
 }
 
+/// A whole page's outline headers ([`lsdoc::parse_outline`]) under the
+/// free-text bound: `None` when the page's quote staircase is deeper than
+/// [`SOURCE_QUOTE_DEPTH_MAX`] (refused before lsdoc recurses) or lsdoc does not
+/// take ownership of the text. lsdoc drops its own parse tree stack-safely.
+#[allow(dead_code)] // each crate that includes this file uses a subset
+pub(crate) fn parse_outline_bounded(text: &str, format: &str) -> Option<Vec<lsdoc::OutlineHeader>> {
+    if !quote_depth_within(text, SOURCE_QUOTE_DEPTH_MAX) {
+        return None;
+    }
+    lsdoc::parse_outline(text, format)
+        .ok()
+        .map(|outline| outline.headers)
+}
+
 /// [`lsdoc::inline`] under the same bound, for inline-only readers.
 #[allow(dead_code)] // each crate that includes this file uses a subset
 pub(crate) fn parse_inline_bounded(text: &str, format: &str) -> Option<Vec<Inline>> {
