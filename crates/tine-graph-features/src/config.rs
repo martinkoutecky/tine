@@ -164,6 +164,24 @@ pub(crate) fn edit_default_home(source: &str, name: Option<&str>) -> io::Result<
     Ok(content)
 }
 
+/// The config.edn replacement a page rename carries when it renames the home
+/// page (OG `rename-page-aux`, page.cljs:491 at 6e7afa8eb): `(id, base rev,
+/// new bytes, new home name)`. `renamed` maps the configured home name to its
+/// new name, or `None`. Nothing is returned when config.edn is absent,
+/// unreadable or cannot be edited safely: a malformed config never blocks a
+/// rename (scenario: external-editor race / sync delivery), and home keeps
+/// its old name.
+pub(crate) fn home_after_rename(
+    store: &Store,
+    renamed: impl Fn(&str) -> Option<String>,
+) -> Option<(FileId, FileRev, Vec<u8>, String)> {
+    let id = config_id(store).ok()?;
+    let (text, rev) = read_config(store, &id).ok()??;
+    let new = renamed(&tine_core::config::Config::parse(&text).default_home?)?;
+    let next = edit_default_home(&text, Some(&new)).ok()?;
+    (next != text).then(|| (id, rev, next.into_bytes(), new))
+}
+
 /// Remove `key` and its value from the map `{…}` at `open..close`, with the
 /// blanks and commas after it.
 fn remove_entry(content: &mut String, open: usize, close: usize, key: &str) {

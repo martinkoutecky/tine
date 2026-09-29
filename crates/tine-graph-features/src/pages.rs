@@ -673,8 +673,18 @@ fn rename_page_after_inventory(
                 ),
             ));
         }
+        // OG `rename-page-aux` moves `:default-home` with a renamed page;
+        // `merge-pages!` does not, so a merged source keeps it.
+        let merged_old = (merge.is_some() || ref_merge).then(|| refs::normalize(old));
+        let home = crate::config::home_after_rename(store, |home| {
+            let key = refs::normalize(home);
+            (merged_old.as_ref() != Some(&key))
+                .then(|| lookup.get(&key).cloned())
+                .flatten()
+        });
         // Crash order (I-2): survivor, then referrer rewrites, then namespace
-        // descendant moves, then the source trash LAST. Every boundary leaves
+        // descendant moves, then the source trash, then config.edn LAST. A
+        // crash before the config step leaves home naming the old page. Every boundary leaves
         // `[[Old]]` resolving to the still-live source, and a retry finds the
         // survivor already holding the source payload (see `merged_survivor`).
         let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
@@ -706,10 +716,14 @@ fn rename_page_after_inventory(
         if let (Some((src, _)), Some(survivor)) = (&merge, merged) {
             tx.trash(&src.file(), survivor.src_rev);
         }
+        if let Some((id, rev, bytes, _)) = &home {
+            tx.replace(id, rev.clone(), bytes.clone());
+        }
         Ok(crate::commit_retry(tx.commit())?.then_some(RenameReport {
             outcome,
             touched,
             skipped_conflicted_referrers: skipped,
+            home_page: home.map(|(_, _, _, name)| name),
         }))
     })
 }
@@ -724,6 +738,9 @@ pub struct RenameReport {
     /// rename left untouched (R-VCS-MARKERS); the UI says so. Reported once
     /// per file.
     pub skipped_conflicted_referrers: Vec<String>,
+    /// The new `:default-home` page name when this rename moved the home page
+    /// with it (in the same transaction); `None` otherwise.
+    pub home_page: Option<String>,
 }
 
 impl RenameReport {
@@ -732,6 +749,7 @@ impl RenameReport {
             outcome: RenameOutcome::Unchanged,
             touched: Vec::new(),
             skipped_conflicted_referrers: Vec::new(),
+            home_page: None,
         }
     }
 }

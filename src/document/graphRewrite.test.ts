@@ -8,7 +8,8 @@ import { setRaw } from "./edits/blocks";
 import { pasteClipboardPayload } from "./edits/paste";
 import { moveBlock, moveItem } from "./edits/moves";
 import { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
-import { bumpGraphEpoch } from "../graphSession";
+import { bumpGraphEpoch, graphMeta, setGraphMeta } from "../graphSession";
+import type { GraphMeta } from "../types";
 import { setToasts, toasts } from "../toasts";
 
 afterEach(() => {
@@ -95,4 +96,16 @@ it("names the referrers a rename left untouched because they are mid-merge (og 2
   expect(note).toMatchObject({ kind: "warn", sticky: true });
   expect(note!.message).toContain("“A”");
   setToasts([]);
+});
+
+it("takes in the home page a rename moved with it (og 22b, OG rename-page-aux)", async () => {
+  setGraphMeta({ root: "/g", default_home: "Start" } as GraphMeta);
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [], home_page: "Begin" });
+  installRenameRefreshHandler(() => {});
+  expect(await renamePageOnDisk("Start", "Begin")).toBe("renamed");
+  expect(graphMeta()?.default_home).toBe("Begin");
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [], home_page: null });
+  expect(await renamePageOnDisk("Other", "Kit")).toBe("renamed");
+  expect(graphMeta()?.default_home).toBe("Begin");
+  setGraphMeta(null);
 });
