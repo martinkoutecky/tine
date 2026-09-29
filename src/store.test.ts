@@ -638,6 +638,55 @@ describe("cross-day move (journal feed as one list)", () => {
   });
 });
 
+describe("OG structural block move parity", () => {
+  it("moves a last child down into the next parent sibling and reverses upward", async () => {
+    const moving = blk("moving", [blk("moving child")]);
+    const first = blk("first", [blk("first child"), moving]);
+    const second = blk("second", [blk("second child")]);
+    load([first, second]);
+
+    await expect(moveBlockFeed(moving.id, 1)).resolves.toBe("within");
+    expect(doc.byId[first.id].children.map((id) => doc.byId[id].raw)).toEqual(["first child"]);
+    expect(doc.byId[second.id].children.map((id) => doc.byId[id].raw)).toEqual([
+      "moving",
+      "second child",
+    ]);
+    expect(doc.byId[moving.id].parent).toBe(second.id);
+    expect(doc.byId[moving.children[0].id].parent).toBe(moving.id);
+
+    await expect(moveBlockFeed(moving.id, -1)).resolves.toBe("within");
+    expect(doc.byId[first.id].children.map((id) => doc.byId[id].raw)).toEqual([
+      "first child",
+      "moving",
+    ]);
+    expect(doc.byId[second.id].children.map((id) => doc.byId[id].raw)).toEqual(["second child"]);
+    expect(doc.byId[moving.id].parent).toBe(first.id);
+  });
+
+  it("keeps ordinary sibling swaps and undo/redo atomic", async () => {
+    const parent = blk("parent", [blk("a"), blk("b"), blk("c")]);
+    load([parent]);
+    const b = parent.children[1].id;
+
+    await expect(moveBlockFeed(b, -1)).resolves.toBe("within");
+    expect(doc.byId[parent.id].children.map((id) => doc.byId[id].raw)).toEqual(["b", "a", "c"]);
+    undo();
+    expect(doc.byId[parent.id].children.map((id) => doc.byId[id].raw)).toEqual(["a", "b", "c"]);
+    redo();
+    expect(doc.byId[parent.id].children.map((id) => doc.byId[id].raw)).toEqual(["b", "a", "c"]);
+  });
+
+  it("does not cross above the first child when its parent has no previous sibling", async () => {
+    const child = blk("child");
+    const first = blk("first", [child]);
+    load([first, blk("second")]);
+
+    await expect(moveBlockFeed(child.id, -1)).resolves.toBe("none");
+    expect(doc.byId[child.id].parent).toBe(first.id);
+    expect(doc.byId[first.id].children).toEqual([child.id]);
+  });
+});
+
 describe("exportNodesFor (Copy / export selection)", () => {
   it("a parent + its selected descendants export ONCE (no child duplication)", () => {
     // selectedIds() is a flat slice of visible order, so a parent selection
