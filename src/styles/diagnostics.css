@@ -20,6 +20,17 @@
   line-height: 1.45;
 }
 
+.diagnostics-verification {
+  border-top: 1px solid var(--border-color);
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+}
+
+.diagnostics-comparison ul {
+  max-height: 12rem;
+  overflow: auto;
+}
+
 .diagnostics-improve {
   border-top: 1px solid var(--border-color);
   margin-top: 1.5rem;

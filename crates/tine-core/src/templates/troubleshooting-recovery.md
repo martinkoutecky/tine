@@ -56,6 +56,12 @@ icon:: 🛟
 	- 1. Open Settings → **Help & diagnostics** and choose **Create diagnostic report**. Tine previews its bounded flight recorder for the current and previous run: fixed operation names, outcomes, timings, counts, platform, version, and build information.
 	- 2. Review the report, then choose **Copy report** (or **Save report…** on desktop). Nothing is uploaded automatically. The recorder excludes graph content, paths, page titles, queries, URLs, credentials, and the opt-in detailed debug log.
 	- 3. What you should see: a report you can attach to an issue without first setting up `adb`, SSH, or a terminal. **Clear recorded events** removes the retained flight-recorder history after you are done.
+- ## Check that two devices hold the same graph
+	- Meaning: after syncing a graph with Syncthing, Dropbox or a similar service, you can confirm that both devices hold the same Markdown and Org files, byte for byte, and see exactly which files differ if they do not.
+	- 1. On each device, open Settings → **Help & diagnostics** and choose **Create graph verification report**. Tine reads every Markdown and Org file of the open graph, shows its progress, and lets you **Cancel**.
+	- 2. On one device choose **Copy graph report** (or **Save graph report…** on desktop) and paste it into the box **Report from the other device** on the other, then choose **Compare reports**.
+	- 3. What you should see: either “The source file sets and bytes match”, or lists named **Only on this device**, **Only on the other device** and **Different bytes** with the file paths. The report holds paths and checksums, never file contents; nothing is uploaded and nothing in your graph changes.
+	- 4. If a file changed while Tine was reading it, the report says **Incomplete** and no match is confirmed: let the sync settle and create the report again.
 - ## Something parses or renders wrong
 	- 1. Open Settings → **Help & diagnostics** → **Help improve Tine's parser**, choose what to run (**Both**, **Divergences**, or **Speed**) and press **Run comparison**: Tine runs its own parser and Logseq's parser over your graph, locally, and lists the places they disagree.
 	- 2. Copy the report shown there — every snippet is anonymized (page names and words are scrubbed, markup shape kept) and re-verified to still reproduce the divergence before it is shown. Nothing is uploaded.

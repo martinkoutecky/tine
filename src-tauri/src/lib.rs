@@ -24,6 +24,7 @@ mod experiment_config_seed;
 mod flight;
 mod flight_store;
 mod graph;
+mod graph_verification;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
 #[cfg(test)]
@@ -73,6 +74,9 @@ use graph::{
     app_platform, approve_external_assets, capture_graph_binding, capture_target, create_graph,
     default_graph_parent, inspect_graph_access, load_graph, local_clock, open_graph_window,
     startup_graph_path, warm_done,
+};
+use graph_verification::{
+    cancel_graph_verification, create_graph_verification, save_graph_verification_report,
 };
 use pdf_crop_rollback::rollback_pdf_area_image;
 use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
@@ -763,6 +767,9 @@ pub fn run() {
             journal_feed_page,
             get_page,
             graph_source_files,
+            create_graph_verification,
+            cancel_graph_verification,
+            save_graph_verification_report,
             save_pages,
             resolve_page,
             guide_pages,

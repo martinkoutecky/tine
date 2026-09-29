@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Verify a synchronized graph** (master 749bfb2b1, og-D). Settings → Help &
+  diagnostics can now fingerprint the exact bytes of your Markdown and Org files
+  and compare them with the report from another device, naming every file that
+  exists on only one side or differs. It reads files only, reports paths and
+  checksums (never contents), can be cancelled, and never confirms a match from
+  a scan that was disturbed while it ran.
 - **A conflict can no longer scroll out of sight** (master 61ea6600c, og A).
   Once the in-page review scrolls above the window, a slim bar pins to the top
   of the pane; tapping it unrolls the same review in place, with your choices

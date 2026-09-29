@@ -755,6 +755,29 @@ mod og_20d_guide_tests {
         assert!(files.contains("the export still succeeds"));
     }
 
+    /// og-D: the cross-device graph verifier is user-visible: create, copy or
+    /// save, compare, name the differing paths, and refuse to confirm a match
+    /// from an incomplete report.
+    #[test]
+    fn troubleshooting_documents_cross_device_graph_verification() {
+        let recovery = page("Reference/Troubleshooting and recovery");
+        for detail in [
+            "**Create graph verification report**",
+            "**Copy graph report**",
+            "**Save graph report…**",
+            "**Compare reports**",
+            "**Only on this device**",
+            "**Different bytes**",
+            "never file contents",
+            "no match is confirmed",
+        ] {
+            assert!(
+                recovery.contains(detail),
+                "missing graph verification detail: {detail}"
+            );
+        }
+    }
+
     #[test]
     fn guide_says_public_false_pages_are_never_exported() {
         let files = include_str!("templates/files-external-edits-backups.md");

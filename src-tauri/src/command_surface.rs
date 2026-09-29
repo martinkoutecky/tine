@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 165] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 168] = [
     "app_architecture",
     "app_platform",
     "apply_journal_filename_migrations",
@@ -16,6 +16,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 165] = [
     "asset_trash_stats",
     "block_ref_counts",
     "block_referrers",
+    "cancel_graph_verification",
     "cancel_recording",
     "capture_frontend_ready",
     "capture_graph_binding",
@@ -29,6 +30,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 165] = [
     "copy_guide_into_graph",
     "copy_image_to_clipboard",
     "create_graph",
+    "create_graph_verification",
     "debug_info",
     "debug_log",
     "default_graph_parent",
@@ -127,6 +129,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 165] = [
     "run_graph_search",
     "save_asset",
     "save_diagnostic_report",
+    "save_graph_verification_report",
     "save_pages",
     "save_pdf_area_image",
     "save_session",
