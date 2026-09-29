@@ -50,6 +50,25 @@ describe("error toasts", () => {
     expect(toasts().some((t) => t.kind === "error")).toBe(false);
   });
 
+  it("a repeated identical error is one toast with a count, and every occurrence is recorded", async () => {
+    resetDebugForTests();
+    const api = backend();
+    const recorded = vi.spyOn(api, "diagnosticFrontendEvent").mockResolvedValue();
+    vi.spyOn(api, "debugLog").mockResolvedValue();
+    vi.spyOn(api, "debugInfo").mockResolvedValue({ enabled: false, path: "" } as never);
+    await initDebug();
+    pushToast("Could not save P: disk full", "error");
+    pushToast("Could not save P: disk full", "error");
+    pushToast("Could not save P: disk full", "error");
+    const shown = document.querySelectorAll(".toast.toast-error");
+    expect(shown).toHaveLength(1);
+    expect(shown[0].querySelector(".toast-count")!.textContent).toBe("×3");
+    expect(toasts()[0].count).toBe(3);
+    await vi.waitFor(() => expect(recorded.mock.calls.filter(([kind]) => kind === "error_toast")).toHaveLength(3));
+    pushToast("Could not save Q: disk full", "error");
+    expect(document.querySelectorAll(".toast.toast-error")).toHaveLength(2);
+  });
+
   it("only error toasts offer Copy", () => {
     pushToast("Heads up", "warn", { sticky: true });
     expect(document.querySelector(".toast-copy")).toBeNull();

@@ -86,7 +86,7 @@ export function prepareWorkspaceRecovery(): (activeId: string, parked: Persisted
       || intervened;
     const wantsParked = !!evidence && (evidence.present === false || !!evidence.workspaceId && evidence.workspaceId !== activeId);
     if (changed && wantsParked) {
-      pushToastUnique("Live changes were kept; workspace recovery was skipped.", "error");
+      pushToastUnique("Live changes were kept; workspace recovery was skipped.", "warn"); // a decision, not a failure
       return buildPersistedSession();
     }
     if (wantsParked) {

@@ -79,7 +79,10 @@ it("restores confirmed favorites after two queued failures", async () => {
   await flush();
   await flush();
   expect(favorites()).toEqual([]);
-  expect(toasts().filter((toast) => toast.kind === "error")).toHaveLength(2);
+  // Each failure is announced: identical sticky errors share one toast whose
+  // count is the number of failures (OG-TOAST).
+  const errors = toasts().filter((toast) => toast.kind === "error");
+  expect(errors.reduce((sum, toast) => sum + (toast.count ?? 1), 0)).toBe(2);
 });
 
 it("does not restore another graph's workflow after a rejected write", async () => {

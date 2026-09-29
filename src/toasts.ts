@@ -8,6 +8,7 @@ export interface Toast {
   // sticky: an error means something actually went wrong and is worth reporting
   // (Martin, 2026-09-29), so it must be readable and copyable, not a 3 s flash.
   sticky?: boolean;
+  count?: number; // identical sticky errors shown so far (rendered "×N" above 1)
   // Optional action button (e.g. "Download"). Runs, then dismisses the toast.
   action?: { label: string; run: () => void };
   onDismiss?: () => void;
@@ -25,6 +26,17 @@ export function pushToast(
   kind: Toast["kind"] = "info",
   opts: { sticky?: boolean; action?: { label: string; run: () => void }; onDismiss?: () => void } = {}
 ): number {
+  // A repeated identical error (a retrying write) is one toast with a count,
+  // not a growing wall of red; every occurrence is still recorded.
+  const repeated = kind === "error" && !opts.action && !opts.onDismiss ? toasts().find((toast) => {
+    const text = toast.message;
+    return toast.kind === "error" && text === message && !toast.action && !toast.onDismiss;
+  }) : undefined;
+  if (repeated) {
+    setToasts(toasts().map((toast) => toast.id === repeated.id ? { ...toast, count: (toast.count ?? 1) + 1 } : toast));
+    errorToastRecorder?.(message);
+    return repeated.id;
+  }
   const id = ++toastSeq;
   const sticky = kind === "error" || opts.sticky;
   setToasts([...toasts(), { id, message, kind, sticky, action: opts.action, onDismiss: opts.onDismiss }]);

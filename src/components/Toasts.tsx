@@ -18,6 +18,9 @@ export function Toasts(): JSX.Element {
             onClick={() => !t.sticky && dismissToast(t.id)}
           >
             <span class="toast-msg">{t.message}</span>
+            <Show when={(t.count ?? 1) > 1}>
+              <span class="toast-count" aria-label={`shown ${t.count} times`}>×{t.count}</span>
+            </Show>
             <Show when={t.action}>
               <button
                 class="toast-action"
