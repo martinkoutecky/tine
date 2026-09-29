@@ -8,6 +8,7 @@ import { allPageNames } from "../pages";
 import { EmojiText } from "../render/emoji";
 import type { PageKind } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
+import { readOr } from "../resourceRead";
 
 // Namespace hierarchy for a page named `a/b/c`: a clickable breadcrumb of the
 // ancestor namespaces (shown above the title) and a list of direct child pages
@@ -196,11 +197,13 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
     collectFulls(tree, fulls);
     return { tree, fulls };
   });
-  const [icons] = createResource(
+  const [iconsResource] = createResource(
     () => treeData().fulls,
     (fulls) =>
       fulls.length ? backend().pageIcons(fulls) : Promise.resolve({} as Record<string, string>)
   );
+  // Namespace rows without their icons still navigate; the tree is the feature.
+  const icons = () => readOr(iconsResource, undefined, "namespace page icons");
   const iconOf = (full: string) => (icons() ?? {})[full];
   return (
     <Show

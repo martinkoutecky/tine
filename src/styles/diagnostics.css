@@ -20,8 +20,53 @@
   line-height: 1.45;
 }
 
+.diagnostics-verification {
+  border-top: 1px solid var(--border-color);
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+}
+
+.diagnostics-comparison ul {
+  max-height: 12rem;
+  overflow: auto;
+}
+
 .diagnostics-improve {
   border-top: 1px solid var(--border-color);
   margin-top: 1.5rem;
   padding-top: 1.25rem;
+}
+
+.diagnostics-errors {
+  border-top: 1px solid var(--border-color);
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+}
+
+.diagnostics-error-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.diagnostics-error-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.diagnostics-error-time,
+.diagnostics-error-count {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.diagnostics-error-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
 }

@@ -24,6 +24,7 @@ mod experiment_config_seed;
 mod flight;
 mod flight_store;
 mod graph;
+mod graph_verification;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
 #[cfg(test)]
@@ -73,6 +74,9 @@ use graph::{
     app_platform, approve_external_assets, capture_graph_binding, capture_target, create_graph,
     default_graph_parent, inspect_graph_access, load_graph, local_clock, open_graph_window,
     startup_graph_path, warm_done,
+};
+use graph_verification::{
+    cancel_graph_verification, create_graph_verification, save_graph_verification_report,
 };
 use pdf_crop_rollback::rollback_pdf_area_image;
 use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
@@ -356,21 +360,6 @@ fn focus_last_graph_window(app: &tauri::AppHandle) {
     }
 }
 
-#[cfg(desktop)]
-fn forwarded_graph_path(argv: &[String], cwd: &str) -> Option<String> {
-    let raw = argv.iter().skip(1).find(|arg| !arg.starts_with('-'))?;
-    let path = std::path::Path::new(raw);
-    Some(
-        if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::path::Path::new(cwd).join(path)
-        }
-        .display()
-        .to_string(),
-    )
-}
-
 #[cfg(all(test, desktop))]
 mod multi_window_tests {
     use super::*;
@@ -383,15 +372,29 @@ mod multi_window_tests {
             "graphs/second".to_string(),
         ];
         assert_eq!(
-            forwarded_graph_path(&argv, "/home/user").as_deref(),
-            Some("/home/user/graphs/second")
+            cli::launch_request(&argv, std::path::Path::new("/home/user")),
+            cli::LaunchRequest::Open(std::path::PathBuf::from("/home/user/graphs/second"))
+        );
+    }
+
+    #[test]
+    fn forwarded_open_command_opens_the_named_graph_not_a_page_called_open() {
+        let argv = vec!["tine".to_string(), "open".to_string(), "second".to_string()];
+        assert_eq!(
+            cli::launch_request(&argv, std::path::Path::new("/home/user")),
+            cli::LaunchRequest::Open(std::path::PathBuf::from("/home/user/second"))
         );
     }
 
     #[test]
     fn capture_only_launch_has_no_graph_path() {
-        let argv = vec!["tine".to_string(), "--capture".to_string()];
-        assert!(forwarded_graph_path(&argv, "/tmp").is_none());
+        for spelling in ["--capture", "capture"] {
+            let argv = vec!["tine".to_string(), spelling.to_string()];
+            assert_eq!(
+                cli::launch_request(&argv, std::path::Path::new("/tmp")),
+                cli::LaunchRequest::Capture
+            );
+        }
     }
 
     #[test]
@@ -582,19 +585,20 @@ pub fn run() {
         // already-running instance with the new argv. `--capture` pops the
         // capture window; a plain re-launch just surfaces the main window.
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            if argv.iter().any(|a| a == "--capture" || a == "capture") {
-                show_capture(app);
-            } else if let Some(path) = forwarded_graph_path(&argv, &cwd) {
-                // WebView2 deadlocks if a WebviewWindow is built directly from
-                // a synchronous event handler. Use the async command path so
-                // Windows' event loop remains available while Tauri creates it.
-                let command_app = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    let state = command_app.state::<AppState>();
-                    let _ = open_graph_window(path, command_app.clone(), state).await;
-                });
-            } else {
-                focus_last_graph_window(app);
+            match cli::launch_request(&argv, std::path::Path::new(&cwd)) {
+                cli::LaunchRequest::Capture => show_capture(app),
+                cli::LaunchRequest::Open(path) => {
+                    // WebView2 deadlocks if a WebviewWindow is built directly from
+                    // a synchronous event handler. Use the async command path so
+                    // Windows' event loop remains available while Tauri creates it.
+                    let path = path.display().to_string();
+                    let command_app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state = command_app.state::<AppState>();
+                        let _ = open_graph_window(path, command_app.clone(), state).await;
+                    });
+                }
+                cli::LaunchRequest::Focus => focus_last_graph_window(app),
             }
         }))
         // In-app self-update. The updater reads `plugins.updater` from
@@ -735,7 +739,7 @@ pub fn run() {
             // the capture window once we're up (the main window loads too).
             // Desktop-only: the capture window and `--capture` argv don't exist on mobile.
             #[cfg(desktop)]
-            if std::env::args().any(|a| a == "--capture" || a == "capture") {
+            if cli::launch_request_env() == cli::LaunchRequest::Capture {
                 show_capture(app.handle());
             }
             Ok(())
@@ -763,6 +767,9 @@ pub fn run() {
             journal_feed_page,
             get_page,
             graph_source_files,
+            create_graph_verification,
+            cancel_graph_verification,
+            save_graph_verification_report,
             save_pages,
             resolve_page,
             guide_pages,

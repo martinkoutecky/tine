@@ -16,69 +16,22 @@
 //! `serialize_org_with(parse_org(content), trailing) == that text` byte-for-byte
 //! (see [`org_editable`]); the store writer then restores each lone `\r`
 //! (`line_endings::restore_org`). Files that fail that check are loaded
-//! **read-only** — Tine never writes org it cannot reproduce exactly. Headline detection is
-//! literal-block aware: a `*`-line inside a `#+BEGIN_…`/`#+END_…` block is
-//! content, not a headline (matching org — and, notably, *more* correct than
-//! orgize 0.9, which splits the block at such a line). The self-check is the
-//! corruption firewall regardless of any parser's classification choices.
+//! **read-only** — Tine never writes org it cannot reproduce exactly. Headline
+//! detection is lsdoc's (`crate::outline`): a `*`-line inside a closed
+//! `#+BEGIN_…`/`#+END_…` block is content, as mldoc reads it for OG. The
+//! self-check is the corruption firewall regardless of any parser's
+//! classification choices.
 
 use crate::doc::{DocBlock, Document};
+use crate::outline::{self, OutlineFormat};
 
-/// Heading level of a line if it is an org headline (`*`/`**`/… followed by a
-/// space, tab, CR or end-of-line), else `None`. Headlines start at column 0.
-/// `**bold**` (stars immediately followed by a non-space) is NOT a headline,
-/// matching org; `** title` (stars then space) IS a level-2 headline.
-fn headline_level(line: &str) -> Option<usize> {
-    let stars = line.bytes().take_while(|&b| b == b'*').count();
-    if stars == 0 {
-        return None;
-    }
-    let rest = &line[stars..];
-    if rest.is_empty() || rest.starts_with(' ') || rest.starts_with('\t') || rest.starts_with('\r')
-    {
-        Some(stars)
-    } else {
-        None
-    }
-}
-
-/// Scan a file's lines for the real headlines, in document order, returning
-/// `(line_index, level)` for each. Lines inside an org block
-/// (`#+BEGIN_x` … `#+END_x`, any `x`, case-insensitive, leading whitespace
-/// allowed) are content, so a `*`-line there is not mistaken for a headline.
-fn scan_headlines(lines: &[&str]) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
-    let mut block_depth: usize = 0;
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start_matches([' ', '\t']);
-        let b = trimmed.as_bytes();
-        if b.len() >= 2 && b[0] == b'#' && b[1] == b'+' {
-            let kw = &trimmed[2..];
-            if kw.len() >= 6 && kw[..6].eq_ignore_ascii_case("begin_") {
-                block_depth += 1;
-                continue;
-            }
-            if kw.len() >= 4 && kw[..4].eq_ignore_ascii_case("end_") {
-                block_depth = block_depth.saturating_sub(1);
-                continue;
-            }
-        }
-        if block_depth == 0 {
-            if let Some(level) = headline_level(line) {
-                out.push((i, level));
-            }
-        }
-    }
-    out
-}
-
-/// Whether every real Org headline, excluding lines inside `#+BEGIN_` blocks,
-/// is at or below `max_level`. Uses the parser's headline scanner.
+/// Whether every Org headline the outline authority reads is at or below
+/// `max_level`. A page with no representable outline has no headlines.
+/// One lsdoc parse, O(page bytes).
 pub fn headline_levels_within_limit(content: &str, max_level: usize) -> bool {
-    let lines: Vec<_> = content.lines().collect();
-    scan_headlines(&lines)
+    outline::headers_or_none(&lone_cr_to_lf(content), OutlineFormat::Org)
         .iter()
-        .all(|(_, level)| *level <= max_level)
+        .all(|header| header.level as usize <= max_level)
 }
 
 /// Number of trailing `\n` bytes (the document-level trailing-newline run),
@@ -105,14 +58,15 @@ pub fn lone_cr_to_lf(content: &str) -> std::borrow::Cow<'_, str> {
         .into()
 }
 
-/// Parse org `content` into a [`Document`]: headlines become blocks (nesting =
-/// headline level; a skipped level nests under the nearest shallower block),
+/// Parse org `content` into a [`Document`]: headlines become blocks, nested
+/// by lsdoc's headline level (`crate::outline`, the outline authority, so a
+/// `*` line inside a literal region is content exactly when mldoc says so);
 /// the pre-headline region becomes `pre_block`, and each block's body is kept
-/// verbatim in `raw` (leading stars and one following space stripped). A `*`
-/// line inside a `#+BEGIN_…`/`#+END_…` block is content. A lone `\r` ends a
-/// line and becomes `\n` ([`lone_cr_to_lf`]); a CRLF's `\r` stays in the body
-/// text and round-trips. Does not check nesting depth (the store's reader
-/// does). Pure, infallible, O(n).
+/// verbatim in `raw` (leading stars and one following space stripped). A lone
+/// `\r` ends a line and becomes `\n` ([`lone_cr_to_lf`]); a CRLF's `\r` stays
+/// in the body text and round-trips. A page whose outline is not
+/// representable one block per line is all pre-block. Does not check nesting
+/// depth (the store's reader does). Pure, infallible; one lsdoc parse, O(n).
 pub fn parse_org(content: &str) -> Document {
     let content = &*lone_cr_to_lf(content);
     let body = content.trim_end_matches('\n');
@@ -120,70 +74,12 @@ pub fn parse_org(content: &str) -> Document {
         return Document::default();
     }
     let lines: Vec<&str> = body.split('\n').collect();
-    let heads = scan_headlines(&lines);
-
-    let first = heads.first().map(|h| h.0).unwrap_or(lines.len());
-    let pre_block = if first == 0 {
-        None
-    } else {
-        Some(lines[..first].join("\n"))
-    };
-
-    // One (level, block) per headline; body = lines up to the next headline.
-    let mut flat: Vec<(usize, DocBlock)> = Vec::with_capacity(heads.len());
-    for (n, &(start, level)) in heads.iter().enumerate() {
-        let end = heads.get(n + 1).map(|h| h.0).unwrap_or(lines.len());
-        let seg = &lines[start..end];
-        // Drop the `level` stars and exactly one following space, so a block's raw
-        // is the title text with no leading marker (matching the markdown path,
-        // where `- ` is stripped). A second space, a tab, or no space is kept, so
-        // serialize re-adds one space and still round-trips multi-space headlines.
-        let after = &seg[0][level..];
-        let first_content = after.strip_prefix(' ').unwrap_or(after);
-        let raw = if seg.len() == 1 {
-            first_content.to_string()
-        } else {
-            let mut s = String::with_capacity(first_content.len() + 16);
-            s.push_str(first_content);
-            for l in &seg[1..] {
-                s.push('\n');
-                s.push_str(l);
-            }
-            s
-        };
-        let mut b = DocBlock::new(raw);
-        b.is_org = true; // org-format block → lsdoc parses inline refs in org mode
-        flat.push((level, b));
-    }
-
+    let headers = outline::headers_or_none(content, OutlineFormat::Org);
+    let first = headers.first().map_or(lines.len(), |header| header.line);
     Document {
-        pre_block,
-        roots: build_tree(flat),
+        pre_block: (first > 0).then(|| lines[..first].join("\n")),
+        roots: outline::blocks(&lines, &headers, true),
     }
-}
-
-/// Assemble a flat list of `(level, block)` in document order into a forest,
-/// nesting each block under the nearest preceding block of smaller level.
-fn build_tree(flat: Vec<(usize, DocBlock)>) -> Vec<DocBlock> {
-    let mut roots: Vec<DocBlock> = Vec::new();
-    let mut stack: Vec<(usize, DocBlock)> = Vec::new();
-    fn attach(stack: &mut Vec<(usize, DocBlock)>, roots: &mut Vec<DocBlock>, done: DocBlock) {
-        match stack.last_mut() {
-            Some((_, parent)) => parent.children.push(done),
-            None => roots.push(done),
-        }
-    }
-    for (level, blk) in flat {
-        while stack.last().is_some_and(|(l, _)| *l >= level) {
-            let (_, done) = stack.pop().unwrap();
-            attach(&mut stack, &mut roots, done);
-        }
-        stack.push((level, blk));
-    }
-    while let Some((_, done)) = stack.pop() {
-        attach(&mut stack, &mut roots, done);
-    }
-    roots
 }
 
 /// Serialize a [`Document`] to org text with one trailing newline (the common

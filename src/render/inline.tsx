@@ -52,6 +52,7 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { createLongPress } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
+import { readOr } from "../resourceRead";
 
 
 // ===========================================================================
@@ -342,10 +343,13 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // arms on primary touch/pen pointers.
   const longPress = createLongPress(() => anchorEl);
   onCleanup(longPress.dispose);
-  const [preview] = createResource(
+  const [previewResource] = createResource(
     () => (peek.open() && !isGuidePageName(targetName()) ? `${targetName()}\0${graphEpoch()}` : null),
     () => backend().getPage(targetName(), kind()),
   );
+  // A hover preview that cannot be fetched shows no popup; a rejection used to
+  // throw out of this read and cost the whole page region.
+  const preview = () => readOr(previewResource, undefined, "page peek");
   const capped = createMemo(() => capBlockTree(preview()?.blocks ?? [], PEEK_BLOCK_CAP));
 
   return (
@@ -665,7 +669,7 @@ function loadKatex() {
 export function MathView(props: { tex: string; display: boolean; spanAttrs?: SpanDomAttrs }): JSX.Element {
   const [katex] = createResource(loadKatex);
   const html = createMemo(() => {
-    const k = katex();
+    const k = readOr(katex, undefined, "KaTeX");
     if (!k) return null;
     try {
       return k.renderToString(props.tex, { throwOnError: false, displayMode: props.display });
@@ -1022,7 +1026,7 @@ function MediaEmbed(props: {
   const external = /^(https?:|data:|blob:)/.test(props.url);
   const rel = () => assetRelPath(props.url);
   // Graph media uses native range requests; never copy a multi-GB file into a Blob.
-  const [blob] = createResource(
+  const [blobResource] = createResource(
     () => (external ? null : `${graphEpoch()}\0${rel()}`),
     async () => {
       const r = rel();
@@ -1031,6 +1035,9 @@ function MediaEmbed(props: {
       return result.kind === "current" ? result.value : "";
     }
   );
+  // An asset stream that fails leaves the native element without a src, which
+  // is what `blobFallback()` above already exists to cover.
+  const blob = () => readOr(blobResource, undefined, "inline audio asset");
   const src = () => blobFallback() || (external ? props.url : blob());
   const label = () =>
     decodeURIComponent((rel() || props.url).split("/").pop() || props.url);
@@ -1292,7 +1299,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLSpanElement | undefined;
-  const [grp] = createResource(
+  const [grpResource] = createResource(
     // Not a UUID: nothing to resolve (OG's `parse-uuid` gate), so no lookup.
     () => isBlockRefUuid(props.id) && `${props.id}\0${graphEpoch()}\0${dataRev()}`,
     async () => {
@@ -1300,6 +1307,10 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
       return result.kind === "current" ? result.value : null;
     }
   );
+  // `undefined` on failure, not `null`: `null` is an AUTHORITATIVE miss (see
+  // targetRaw below) and a failed lookup has not established that. Undefined
+  // keeps a loaded reactive node winning and otherwise shows the short id.
+  const grp = () => readOr(grpResource, undefined, "block reference target");
   const peek = createPeekBridge(() => insidePeek);
   // A loaded target shares the editor's reactive node, so references update on
   // the keystroke without re-resolving every visible uuid after every save. The
@@ -1338,13 +1349,14 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // Summary resolution stays shallow and graph-lifetime cached. Fetch the
   // descendant tree only after the hover dwell, through a backend operation
   // that applies the cap before DTO allocation and IPC serialization.
-  const [preview] = createResource(
+  const [previewResource] = createResource(
     () => (peek.open() && grp() ? `${props.id}\0${graphEpoch()}\0${dataRev()}` : null),
     async () => {
       const result = await readOwned(graphOwner(), backend().previewBlock(props.id, PEEK_BLOCK_CAP));
       return result.kind === "current" ? result.value : null;
     },
   );
+  const preview = () => readOr(previewResource, undefined, "block reference peek");
   const capped = createMemo(() => capBlockTree(preview()?.group.blocks ?? [], PEEK_BLOCK_CAP));
   const previewTruncated = () => (preview()?.truncated ?? 0) + capped().truncated;
   return (

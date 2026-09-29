@@ -17,6 +17,7 @@ import { isQuarantined, parserReady } from "./parse";
 import { parseBody, stripPlanningLines } from "./facets";
 import { observeNear, unobserveNear, renderedBlocks } from "../lazyObserve";
 import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
+import { readOr } from "../resourceRead";
 
 function escapeHtml(code: string): string {
   return code.replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -35,7 +36,7 @@ function loadHljs() {
 function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
   const [hljs] = createResource(loadHljs);
   const html = createMemo(() => {
-    const h = hljs();
+    const h = readOr(hljs, undefined, "highlight.js");
     if (!h) return escapeHtml(props.code);
     try {
       if (props.lang && h.getLanguage(props.lang)) {

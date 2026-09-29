@@ -56,6 +56,12 @@ pub fn line_quote_depth(line: &str) -> usize {
     lsdoc_block_parse::line_quote_depth(line)
 }
 
+/// A whole page's lsdoc outline headers under the free-text bound; `None`
+/// when refused (I-22). Read through `crate::outline`, the outline authority.
+pub(crate) fn parse_outline_bounded(text: &str, is_org: bool) -> Option<Vec<lsdoc::OutlineHeader>> {
+    lsdoc_block_parse::parse_outline_bounded(text, if is_org { "org" } else { "md" })
+}
+
 /// [`lsdoc::inline`] under the same depth bound; `None` when deeper (I-22).
 pub fn parse_inline_bounded(text: &str, format: &str) -> Option<Vec<lsdoc::ast::Inline>> {
     lsdoc_block_parse::parse_inline_bounded(text, format)

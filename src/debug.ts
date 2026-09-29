@@ -11,6 +11,7 @@
 import { backend, type DiagnosticFrontendFields, type DiagnosticFrontendKind } from "./backend";
 import { platformKind } from "./nativeChrome";
 import { ownedWhen, writeOwned } from "./owned";
+import { recordErrorToastText } from "./errorToastHistory";
 import { pushToast, pushToastUnique, recordErrorToastsWith } from "./toasts";
 
 let enabled = false;
@@ -78,8 +79,10 @@ export async function initDebug(): Promise<void> {
     dbg(`unhandledrejection: ${String((e as PromiseRejectionEvent).reason)}`);
   });
   // Every error toast: its occurrence in the persisted recorder (fixed kind,
-  // no text: it may name pages), its full text in the opt-in debug log.
+  // no text: it may name pages), its full text in the opt-in debug log, and its
+  // text in the in-memory session list Diagnostics shows (never persisted).
   recordErrorToastsWith((message) => {
+    recordErrorToastText(message);
     void recordDiagnostic("error_toast");
     dbg(`error toast: ${message}`);
   });

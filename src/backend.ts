@@ -4,6 +4,7 @@
 
 import { readSavePlatformStep } from "./savePlatformStep";
 import { markCommandSlow } from "./slowBackend";
+import type { GraphVerificationProgress, GraphVerificationReport } from "./graphVerification";
 import type {
   Diagnostic,
   ExecutionContext,
@@ -715,6 +716,12 @@ export interface Backend {
   saveDiagnosticReport(buildCommit: string, buildTime: string): Promise<boolean>;
   /** Drop every recorded diagnostic event of this run and the previous one. */
   clearDiagnostics(): Promise<void>;
+  /** Exact-byte manifest of the open graph's Markdown/Org files; rejects with "cancelled" after a cancel. */
+  createGraphVerification(operationId: string): Promise<GraphVerificationReport>;
+  cancelGraphVerification(operationId: string): Promise<void>;
+  /** Save a report where the user picks (desktop); `false` when cancelled. */
+  saveGraphVerificationReport(text: string): Promise<boolean>;
+  onGraphVerificationProgress(cb: (progress: GraphVerificationProgress) => void): Promise<() => void>;
   /** Mobile only (GH #426): whether the recorded session counts as live, so an
    *  OS reap of a hidden app is not reported as an unclean exit. */
   diagnosticSessionActive(active: boolean): Promise<void>;
@@ -1426,6 +1433,10 @@ class TauriBackend implements Backend {
   clearDiagnostics() {
     return this.call<void>("clear_diagnostics");
   }
+  createGraphVerification(operationId: string) { return this.call<GraphVerificationReport>("create_graph_verification", { operationId }); }
+  cancelGraphVerification(operationId: string) { return this.call<void>("cancel_graph_verification", { operationId }); }
+  saveGraphVerificationReport(text: string) { return this.call<boolean>("save_graph_verification_report", { text }); }
+  onGraphVerificationProgress(cb: (progress: GraphVerificationProgress) => void) { return this.on("graph-verification-progress", cb); }
   diagnosticSessionActive(active: boolean) {
     return this.call<void>("diagnostic_session_active", { active });
   }

@@ -12,8 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
-mod fence;
-use fence::{fence_marker, next_fence};
+use crate::outline::{self, OutlineFormat};
 
 /// Recognized task markers (leading keyword of a block).
 pub const MARKERS: &[&str] = &[
@@ -668,170 +667,6 @@ pub fn property_key_norm(key: &str) -> String {
 
 pub use crate::property_line::parse_property_line;
 
-/// Number of leading whitespace characters (tabs and spaces). Used as an
-/// indent "column" for nesting. Tabs and spaces each count as one; within a
-/// single file indentation is consistent (all tabs or all N-spaces), so column
-/// comparison recovers nesting regardless of which a file uses. Output is
-/// always canonicalized to TABs.
-fn leading_ws(line: &str) -> usize {
-    line.bytes()
-        .take_while(|b| *b == b'\t' || *b == b' ')
-        .count()
-}
-
-/// Classify a line as a bullet at a given indent column, returning its content
-/// (text after the `- ` marker). Returns `None` for non-bullet lines.
-fn bullet(line: &str) -> Option<(usize, &str)> {
-    let col = leading_ws(line);
-    let rest = &line[col..];
-    if rest == "-" {
-        Some((col, ""))
-    } else if let Some(content) = rest.strip_prefix("- ") {
-        Some((col, content))
-    } else {
-        None
-    }
-}
-
-/// mldoc `Parsers.is_space`: space, tab, SUB, or form feed.
-fn mldoc_is_space(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | 0x1a | 0x0c)
-}
-
-fn mldoc_spaces_len(s: &str) -> usize {
-    s.as_bytes()
-        .iter()
-        .take_while(|&&b| mldoc_is_space(b))
-        .count()
-}
-
-fn mldoc_trim_spaces_start(s: &str) -> &str {
-    &s[mldoc_spaces_len(s)..]
-}
-
-/// lsdoc's line-local `ocaml_start`: space, tab, or form feed, but not SUB.
-fn ocaml_spaces_len(s: &str) -> usize {
-    s.as_bytes()
-        .iter()
-        .take_while(|&&b| matches!(b, b' ' | b'\t' | 0x0c))
-        .count()
-}
-
-// Transcribed from lsdoc v2 `block_begin_name`: after mldoc-space trimming,
-// BEGIN is ASCII-case-insensitive and the non-empty name ends at mldoc space.
-fn block_begin_name(s: &str) -> Option<String> {
-    let t = mldoc_trim_spaces_start(s);
-    if !t.get(..8)?.eq_ignore_ascii_case("#+BEGIN_") {
-        return None;
-    }
-    let rest = &t[8..];
-    let mut end = 0usize;
-    let bytes = rest.as_bytes();
-    while end < bytes.len() && !mldoc_is_space(bytes[end]) {
-        end += 1;
-    }
-    (end > 0).then(|| rest[..end].to_string())
-}
-
-fn starts_ci(s: &str, prefix: &str) -> bool {
-    let p = prefix.as_bytes();
-    let b = s.as_bytes();
-    b.len() >= p.len() && b[..p.len()].eq_ignore_ascii_case(p)
-}
-
-// Transcribed from lsdoc v2 `block_end_matches_name` / EndTrie: the first
-// later END suffix with the opener name as an ASCII-case-insensitive prefix
-// closes the region; no boundary after the name is required.
-fn block_end_matches_name(text: &str, name: &str) -> bool {
-    let t = &text[ocaml_spaces_len(text)..];
-    let Some(suffix) = t.get(6..) else {
-        return false;
-    };
-    starts_ci(t, "#+END_")
-        && suffix.len() >= name.len()
-        && suffix.as_bytes()[..name.len()].eq_ignore_ascii_case(name.as_bytes())
-}
-
-/// Prove that an org opener's first compatible END is in the same physical
-/// continuation lane before a bullet that would fold the opener frame.
-fn has_bounded_org_closer(following: &[&str], content_start: usize, name: &str) -> bool {
-    let mut fence = None;
-    for line in following {
-        // A bullet shallower than the opener block's content lane is a genuine
-        // child/sibling and bounds the lookahead. A bullet inside an inner fence
-        // remains literal.
-        if fence.is_none() && bullet(line).is_some_and(|(bullet_col, _)| bullet_col < content_start)
-        {
-            return false;
-        }
-
-        // mldoc takes the first name-compatible END. It is safe to rescue this
-        // outline region only when that same END is in the block-content lane.
-        if block_end_matches_name(line, name) {
-            return ocaml_spaces_len(line) == content_start;
-        }
-
-        fence = next_fence(fence, line);
-    }
-    false
-}
-
-fn markdown_property_line(line: &str) -> bool {
-    parse_property_line(line).is_some()
-}
-
-/// Recover a Logseq block shape emitted by some importers/plugins:
-///
-/// ```markdown
-/// # Parent heading
-/// collapsed:: true
-/// - child
-/// - child
-/// ```
-///
-/// The ATX heading is not list-bulleted, so the generic outline parser would put
-/// it in the page preamble and expose its children as roots. Logseq nevertheless
-/// treats this particular shape as one collapsed parent. Promote it narrowly:
-/// only an ATX heading at the END of the preamble, followed solely by block
-/// property lines and carrying `collapsed:: true`. Ordinary page prose/headings
-/// and genuine page properties remain untouched.
-fn promote_preamble_collapsed_heading(pre_block: &mut Option<String>, roots: &mut Vec<DocBlock>) {
-    if roots.is_empty() {
-        return;
-    }
-    let Some(pre) = pre_block.as_deref() else {
-        return;
-    };
-    let lines: Vec<&str> = pre.split('\n').collect();
-    let Some(start) = lines.iter().rposition(|line| {
-        let trimmed = line.trim_start();
-        let hashes = trimmed.chars().take_while(|c| *c == '#').count();
-        (1..=6).contains(&hashes) && trimmed.as_bytes().get(hashes) == Some(&b' ')
-    }) else {
-        return;
-    };
-    if !lines[start + 1..]
-        .iter()
-        .all(|line| !line.trim().is_empty() && markdown_property_line(line))
-    {
-        return;
-    }
-
-    let raw = lines[start..].join("\n");
-    let mut parent = DocBlock::new(raw);
-    if parent.heading_level().is_none() || !parent.collapsed() {
-        return;
-    }
-    parent.children = std::mem::take(roots);
-    roots.push(parent);
-
-    let mut pre_end = start;
-    while pre_end > 0 && lines[pre_end - 1].trim().is_empty() {
-        pre_end -= 1;
-    }
-    *pre_block = (pre_end > 0).then(|| lines[..pre_end].join("\n"));
-}
-
 /// Rewrite every line terminator to `\n`. Page text ends a line at `\r\n`,
 /// `\n` or a lone `\r`, as mldoc (`eol_chars = ['\r'; '\n']`) and lsdoc's lexer
 /// do. Borrows when the text has no `\r`; otherwise two O(n) copies (CRLF
@@ -844,15 +679,25 @@ pub fn normalize_line_endings(content: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-/// Parse Markdown page text into a [`Document`] (pre-block + block forest by
-/// bullet column). Ends a line at `\r\n`, `\n` or a lone `\r`; the model is
-/// LF-canonical, so the file's terminators are not kept here and must be
-/// restored at the write boundary (tine-store `model/line_endings.rs`). Assigns
-/// no block uuids (empty). Does not enforce the nesting ceiling — callers
-/// validate first (`parse_input_depth_within_limit`). An unclosed code fence is
-/// paragraph text, as in mldoc, so a later bullet remains an outline block.
-/// Pure, infallible; O(n) except that each unclosed `#+BEGIN_` line scans ahead
-/// to its block's end.
+/// Parse Markdown page text into a [`Document`]: a pre-block plus a block
+/// forest. lsdoc decides which lines open a block and how blocks nest
+/// (`crate::outline`, the outline authority): dash bullets and unbulleted ATX
+/// headings open blocks; fences and `#+BEGIN_…` regions hide look-alike lines,
+/// exactly as mldoc reads the page for OG. A block's `raw` is its header line
+/// after the structural prefix (`- ` and indentation; nothing for an
+/// unbulleted heading, whose whole line is `raw`) plus every following line up
+/// to the next header, dedented by the bullet's content column. The
+/// pre-block is everything before the first header, trailing blank lines
+/// dropped (the separator is re-added on write).
+///
+/// Ends a line at `\r\n`, `\n` or a lone `\r`; the model is LF-canonical, so the
+/// file's terminators are restored at the write boundary (tine-store
+/// `model/line_endings.rs`). Assigns no block uuids (empty). Does not enforce
+/// the nesting ceiling — callers validate first
+/// (`parse_input_depth_within_limit`). A page whose outline lsdoc cannot
+/// represent one block per line (or will not own) has no blocks: the whole
+/// text is the pre-block, so a save writes it back unchanged. Pure,
+/// infallible; one lsdoc parse, O(page bytes).
 pub fn parse(content: &str) -> Document {
     // A stray `\r` in the model would pollute property / `id::` values.
     let normalized = normalize_line_endings(content);
@@ -863,157 +708,23 @@ pub fn parse(content: &str) -> Document {
     } else {
         body.split('\n').collect()
     };
-
-    // Find the first bullet to split pre-block from block region.
-    let first_bullet = lines.iter().position(|l| bullet(l).is_some());
-
-    let (pre_lines, block_lines) = match first_bullet {
-        Some(i) => (&lines[..i], &lines[i..]),
-        None => (&lines[..], &[][..]),
-    };
-
-    // A fenced block is recognized by mldoc only if its closer exists. Build
-    // suffix maxima once so an unclosed opener never masks later bullets, with
-    // O(lines) lookahead even on a page full of candidate openers.
-    let mut later_fence_runs = vec![[0usize; 2]; block_lines.len() + 1];
-    for i in (0..block_lines.len()).rev() {
-        later_fence_runs[i] = later_fence_runs[i + 1];
-        if let Some((marker, length)) = fence_marker(block_lines[i]) {
-            let slot = if marker == '`' { 0 } else { 1 };
-            later_fence_runs[i][slot] = later_fence_runs[i][slot].max(length);
-        }
-    }
-    let opening_fence = |line_idx: usize, text: &str| {
-        fence_marker(text).filter(|(marker, length)| {
-            let slot = if *marker == '`' { 0 } else { 1 };
-            later_fence_runs[line_idx + 1][slot] >= *length
-        })
-    };
-
-    // Pre-block: drop trailing blank lines (the separator is re-added on write).
-    let mut pre_end = pre_lines.len();
-    while pre_end > 0 && pre_lines[pre_end - 1].trim().is_empty() {
+    let headers = outline::headers_or_none(content, OutlineFormat::Markdown);
+    let first = headers.first().map_or(lines.len(), |header| header.line);
+    let mut pre_end = first;
+    while pre_end > 0 && lines[pre_end - 1].trim().is_empty() {
         pre_end -= 1;
     }
-    let mut pre_block = if pre_end == 0 {
-        None
-    } else {
-        Some(pre_lines[..pre_end].join("\n"))
-    };
-
-    // Build the block forest with a stack of frames keyed by indent column.
-    struct Frame {
-        col: usize,
-        /// Column where the block's text starts (`col` + 2 for the `- `).
-        content_start: usize,
-        raw: String,
-        children: Vec<DocBlock>,
-        /// The open fence marker `(char, length)` if this block's content is
-        /// currently inside a fenced code block — `Some` means every following
-        /// line is literal continuation (even one that looks like a `- ` bullet),
-        /// so fenced code isn't shredded into child blocks. A fence closes only on
-        /// a marker of the SAME char and at least the opener's length, so a ````
-        /// fence containing ``` (or `~~~`) round-trips correctly.
-        fence: Option<(char, usize)>,
-        /// The lowercased name of a terminated `#+BEGIN_<name>` region. This is
-        /// independent of `fence`: an org closer is honored inside an inner code
-        /// fence, and fence state keeps updating while the org region is open.
-        org_block: Option<String>,
+    Document {
+        pre_block: (pre_end > 0).then(|| lines[..pre_end].join("\n")),
+        roots: outline::blocks(&lines, &headers, false),
     }
-    // fence_marker / next_fence are module-level (shared with property_lines /
-    // visible_lines so "is this line inside a code fence" has ONE implementation).
-    let mut stack: Vec<Frame> = Vec::new();
-    let mut roots: Vec<DocBlock> = Vec::new();
-
-    // Collapse frames at indent column >= `keep_above` into their parents.
-    fn fold_to(stack: &mut Vec<Frame>, roots: &mut Vec<DocBlock>, keep_above: usize) {
-        while let Some(top) = stack.last() {
-            if top.col >= keep_above {
-                let f = stack.pop().unwrap();
-                let block = DocBlock {
-                    raw: f.raw,
-                    children: f.children,
-                    uuid: String::new(),
-                    is_org: false,
-                    proj: std::sync::OnceLock::new(),
-                };
-                match stack.last_mut() {
-                    Some(parent) => parent.children.push(block),
-                    None => roots.push(block),
-                }
-            } else {
-                break;
-            }
-        }
-    }
-
-    for (line_idx, line) in block_lines.iter().enumerate() {
-        let in_literal = stack
-            .last()
-            .map(|f| f.fence.is_some() || f.org_block.is_some())
-            .unwrap_or(false);
-        // A `- ` line starts a new block only when we're outside both literal
-        // region kinds of the current top frame.
-        if !in_literal {
-            if let Some((col, content)) = bullet(line) {
-                // New block: fold every block at this column or deeper, so the
-                // remaining stack top (shallower column) becomes the parent.
-                fold_to(&mut stack, &mut roots, col);
-                let org_block = block_begin_name(content).and_then(|name| {
-                    has_bounded_org_closer(&block_lines[line_idx + 1..], col + 2, &name)
-                        .then(|| name.to_ascii_lowercase())
-                });
-                stack.push(Frame {
-                    col,
-                    content_start: col + 2,
-                    raw: content.to_string(),
-                    children: Vec::new(),
-                    fence: opening_fence(line_idx, content), // bullet line may open a fence
-                    org_block,
-                });
-                continue;
-            }
-        }
-        if let Some(top) = stack.last_mut() {
-            // Continuation line: strip the block's content-start indentation.
-            let stripped = strip_n_ws(line, top.content_start);
-            top.raw.push('\n');
-            top.raw.push_str(stripped);
-
-            if let Some(name) = top.org_block.as_deref() {
-                // END indexing is independent of fence context in mldoc.
-                if block_end_matches_name(stripped, name) {
-                    top.org_block = None;
-                }
-            } else if top.fence.is_none() {
-                // An already-open code fence suppresses BEGIN recognition.
-                top.org_block = block_begin_name(stripped).and_then(|name| {
-                    has_bounded_org_closer(&block_lines[line_idx + 1..], top.content_start, &name)
-                        .then(|| name.to_ascii_lowercase())
-                });
-            }
-            top.fence = match top.fence {
-                Some(open) => next_fence(Some(open), stripped),
-                None => opening_fence(line_idx, stripped),
-            };
-        }
-        // (A continuation before any bullet can't happen: it'd be pre-block.)
-    }
-    fold_to(&mut stack, &mut roots, 0);
-
-    promote_preamble_collapsed_heading(&mut pre_block, &mut roots);
-
-    Document { pre_block, roots }
 }
 
-/// Remove up to `n` leading whitespace characters (tabs or spaces).
-fn strip_n_ws(line: &str, n: usize) -> &str {
-    let bytes = line.as_bytes();
-    let mut i = 0;
-    while i < n && i < bytes.len() && (bytes[i] == b'\t' || bytes[i] == b' ') {
-        i += 1;
-    }
-    &line[i..]
+/// Whether lsdoc reads `line` alone as an unbulleted Markdown ATX heading
+/// (`# Title`), the one block form written without a `- ` bullet. For a
+/// writer that keeps such a heading unbulleted; the reparse stays the judge.
+pub fn is_unbulleted_heading_line(line: &str) -> bool {
+    outline::is_unbulleted_heading_line(line)
 }
 
 /// Formatting knobs detected from a file so re-saving preserves its existing
@@ -1064,11 +775,12 @@ impl SerializeOpts {
     }
 }
 
-/// Does the file put a blank line between its pre-block and the first bullet?
+/// Does the file put a blank line between its pre-block and the first block?
+/// The first block's line is the outline authority's first header.
 fn blank_after_props(s: &str) -> bool {
     let lines: Vec<&str> = s.split('\n').collect();
-    match lines.iter().position(|l| bullet(l).is_some()) {
-        Some(i) if i > 0 => lines[i - 1].trim().is_empty(),
+    match outline::headers_or_none(s, OutlineFormat::Markdown).first() {
+        Some(header) if header.line > 0 => lines[header.line - 1].trim().is_empty(),
         _ => true,
     }
 }
@@ -1172,8 +884,20 @@ mod property_fence_tests;
 mod unclosed_fence_outline_tests;
 
 #[cfg(test)]
+#[path = "doc/outline_authority_tests.rs"]
+mod outline_authority_tests;
+
+#[cfg(test)]
 mod org_container_outline_tests {
     use super::*;
+
+    /// Canonical save keeps the meaning (not the bytes) of the fixture.
+    fn parse_structural_round_trip(input: &str) -> Document {
+        let doc = parse(input);
+        let canonical = serialize_with(&doc, &SerializeOpts::detect(Some(input)));
+        assert_eq!(parse(&canonical), doc, "{input:?} -> {canonical:?}");
+        doc
+    }
 
     fn parse_round_trip(input: &str) -> Document {
         let doc = parse(input);
@@ -1264,48 +988,50 @@ mod org_container_outline_tests {
     }
 
     #[test]
-    fn continuation_begin_cannot_swallow_same_lane_sibling() {
+    fn continuation_begin_region_owns_the_look_alike_sibling() {
+        // lsdoc (= mldoc) closes the quote at the first compatible END, so
+        // the `- sibling` line inside it is quote content (master HEAD).
         let input = "- parent\n  #+BEGIN_QUOTE\n- sibling\n  #+END_QUOTE";
-        let doc = parse_round_trip(input);
-        assert_eq!(doc.roots.len(), 2);
-        assert_eq!(doc.roots[0].raw, "parent\n#+BEGIN_QUOTE");
-        assert_eq!(doc.roots[1].raw, "sibling\n#+END_QUOTE");
-        assert!(doc.roots.iter().all(|block| block.children.is_empty()));
+        let doc = parse_structural_round_trip(input);
+        assert_eq!(doc.roots.len(), 1);
+        assert_eq!(
+            doc.roots[0].raw,
+            "parent\n#+BEGIN_QUOTE\n- sibling\n#+END_QUOTE"
+        );
+        assert!(doc.roots[0].children.is_empty());
     }
 
     #[test]
-    fn nested_child_closer_lane_does_not_open_region() {
+    fn a_deeper_closer_lane_still_closes_the_region() {
         let tabbed = "- #+BEGIN_QUOTE\n\t- child\n\t  #+END_QUOTE";
-        let doc = parse_round_trip(tabbed);
+        let doc = parse_structural_round_trip(tabbed);
         assert_eq!(doc.roots.len(), 1);
-        assert_eq!(doc.roots[0].children.len(), 1);
-        assert_eq!(doc.roots[0].children[0].raw, "child\n#+END_QUOTE");
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(doc.roots[0].raw, "#+BEGIN_QUOTE\n- child\n #+END_QUOTE");
 
         let spaced = "- #+BEGIN_QUOTE\n  - child\n    #+END_QUOTE";
-        let doc = parse_round_trip(spaced);
+        let doc = parse_structural_round_trip(spaced);
         assert_eq!(doc.roots.len(), 1);
-        assert_eq!(doc.roots[0].children.len(), 1);
-        assert_eq!(doc.roots[0].children[0].raw, "child\n#+END_QUOTE");
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(doc.roots[0].raw, "#+BEGIN_QUOTE\n- child\n  #+END_QUOTE");
     }
 
     #[test]
-    fn tab_child_before_matching_end_opens_no_region() {
+    fn tab_child_before_matching_end_is_region_content() {
         let input = "- \t#+BEGIN_QUOTE\n\t- x\n\t  #+END_QUOTE";
-        let doc = parse_round_trip(input);
+        let doc = parse_structural_round_trip(input);
         assert_eq!(doc.roots.len(), 1);
-        assert_eq!(doc.roots[0].raw, "\t#+BEGIN_QUOTE");
-        assert_eq!(doc.roots[0].children.len(), 1);
-        assert_eq!(doc.roots[0].children[0].raw, "x\n#+END_QUOTE");
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(doc.roots[0].raw, "\t#+BEGIN_QUOTE\n- x\n #+END_QUOTE");
     }
 
     #[test]
-    fn continuation_opener_before_tab_child_opens_no_region() {
+    fn continuation_opener_before_tab_child_owns_it() {
         let input = "- p\n  \t#+BEGIN_QUOTE\n\t- x\n\t  #+END_QUOTE";
-        let doc = parse_round_trip(input);
+        let doc = parse_structural_round_trip(input);
         assert_eq!(doc.roots.len(), 1);
-        assert_eq!(doc.roots[0].raw, "p\n\t#+BEGIN_QUOTE");
-        assert_eq!(doc.roots[0].children.len(), 1);
-        assert_eq!(doc.roots[0].children[0].raw, "x\n#+END_QUOTE");
+        assert!(doc.roots[0].children.is_empty());
+        assert_eq!(doc.roots[0].raw, "p\n\t#+BEGIN_QUOTE\n- x\n #+END_QUOTE");
     }
 
     #[test]

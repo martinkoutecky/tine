@@ -1,0 +1,43 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine 1  "tine 0.6.5" 
+.SH NAME
+tine \- A fast, local\-first outliner for Logseq\-compatible graphs
+.SH SYNOPSIS
+\fBtine\fR [\fB\-v\fR|\fB\-\-version\fR] [\fB\-\-debug\fR] [\fB\-\-capture\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIGRAPH\fR] [\fIsubcommands\fR]
+.SH DESCRIPTION
+A fast, local\-first outliner for Logseq\-compatible graphs
+.SH OPTIONS
+.TP
+\fB\-v\fR, \fB\-\-version\fR
+Print the Tine version and exit
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-\-capture\fR
+Open Quick Capture (legacy spelling; prefer `tine capture`)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIGRAPH\fR]
+Graph to open in the desktop app (legacy shorthand for `tine open GRAPH`)
+.SH SUBCOMMANDS
+.TP
+tine\-open(1)
+Open a graph in the desktop app
+.TP
+tine\-capture(1)
+Open Quick Capture in the desktop app
+.TP
+tine\-export(1)
+Publish a graph as a static site or a read\-only Tine app
+.TP
+tine\-doctor(1)
+Check that a graph can be read and parsed without changing it
+.TP
+tine\-version(1)
+Print the Tine version and exit
+.SH VERSION
+v0.6.5

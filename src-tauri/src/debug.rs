@@ -157,6 +157,54 @@ mod tests {
     }
 
     #[test]
+    fn crate_diagnostic_child() {
+        if std::env::var_os("TINE_CRATE_DIAG_CHILD").is_none() {
+            return;
+        }
+        super::debug_init();
+        tine_core::diag_line::diagnostic_line("tine crate diagnostic probe 594");
+    }
+
+    /// GH #594 (master core_diag!): a line a crate writes reaches the opt-in debug
+    /// file, the one thing a Windows reporter (no console) can send. Debug off
+    /// creates no file. Runs in a child so the process-wide log and sink are fresh.
+    #[test]
+    fn a_crate_diagnostic_reaches_the_debug_log_file_only_when_debugging() {
+        for enabled in [false, true] {
+            let log_path = std::env::temp_dir().join(format!(
+                "tine-crate-diag-test-{}-{enabled}.log",
+                std::process::id()
+            ));
+            let mut child = Command::new(std::env::current_exe().unwrap());
+            child
+                .args([
+                    "--exact",
+                    "debug::tests::crate_diagnostic_child",
+                    "--nocapture",
+                ])
+                .env("TINE_CRATE_DIAG_CHILD", "1")
+                .env_remove("TINE_DEBUG")
+                .env("TINE_DEBUG_LOG", &log_path);
+            if enabled {
+                child.env("TINE_DEBUG", "1");
+            }
+            let output = child.output().unwrap();
+            assert!(output.status.success());
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("tine crate diagnostic probe 594"),
+                "the line still goes to stderr"
+            );
+            if enabled {
+                let log = std::fs::read_to_string(&log_path).unwrap();
+                assert!(log.contains("tine crate diagnostic probe 594"), "{log}");
+                std::fs::remove_file(log_path).unwrap();
+            } else {
+                assert!(!log_path.exists(), "debug off must not create a log file");
+            }
+        }
+    }
+
+    #[test]
     fn panic_hook_reports_location_without_payload() {
         for enabled in [false, true] {
             let log_path = std::env::temp_dir().join(format!(

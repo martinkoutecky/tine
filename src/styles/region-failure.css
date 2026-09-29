@@ -52,3 +52,30 @@
   border-color: var(--link-color);
   color: var(--link-color);
 }
+
+/* A panel whose own resource failed: one line, inside the panel, where the rows
+   would have been. Quieter than .region-failure on purpose — the panel and its
+   controls are still there, so this is a note, not a replacement. */
+.resource-failure {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px;
+  color: var(--text-secondary, var(--text-muted));
+}
+
+.resource-failure-retry {
+  font: inherit;
+  padding: 1px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.resource-failure-retry:hover,
+.resource-failure-retry:focus-visible {
+  border-color: var(--link-color);
+  color: var(--link-color);
+}

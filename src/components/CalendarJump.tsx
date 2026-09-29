@@ -6,6 +6,7 @@ import { firstDayOfWeek } from "../ui";
 import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
 import { registerTransientLayer } from "../transientLayers";
+import { readOr } from "../resourceRead";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -64,7 +65,7 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
 
   // Journal days that have content, fetched while the popup is open (re-fetched
   // on dataRev so adding content updates the dots). yyyymmdd keys, month 1-based.
-  const [contentDays] = createResource(
+  const [contentDaysResource] = createResource(
     () => (open() ? { rev: dataRev(), epoch: graphEpoch() } : null),
     async () => {
       const owner = graphOwner();
@@ -73,6 +74,9 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
       return { epoch, days: result.kind === "current" ? result.value : [] };
     }
   );
+  // No dots rather than no calendar: the popup's job is jumping to a day, and
+  // the content dots are a hint on top of it.
+  const contentDays = () => readOr(contentDaysResource, undefined, "journal content days");
   const haveContent = createMemo(() => new Set(contentDays()?.epoch === graphEpoch() ? contentDays()?.days : []));
   const hasContent = (d: number) =>
     haveContent().has(view().y * 10000 + (view().m + 1) * 100 + d);

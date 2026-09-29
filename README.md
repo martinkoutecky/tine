@@ -69,6 +69,23 @@ it:
 
 (Want to hack on Tine instead? Build from source — see [Build & run](#build--run).)
 
+### Command line
+
+The desktop binary also supports terminal workflows. Run `tine --help` for the full reference.
+
+```sh
+tine --version
+tine open ~/notes
+tine capture
+tine doctor ~/notes
+tine export static ~/notes --output ~/Sites
+tine export live ~/notes --output ~/Sites --name "My notes" --all-pages
+```
+
+`--output` is an existing absolute folder outside the graph; the export creates one new child
+there and never replaces an existing one. Linux `.deb` and `.rpm` packages install the generated
+`man tine` page.
+
 ### macOS: repeated "Documents" permission prompt
 
 If your Logseq graph lives in `~/Documents` (the common default), macOS gates access to that

@@ -149,6 +149,10 @@ pub const GUIDE_TEMPLATES: &[GuideTemplate] = &[
         markdown: include_str!("templates/extend-tine.md"),
     },
     GuideTemplate {
+        title: "Reference/Command line",
+        markdown: include_str!("templates/command-line.md"),
+    },
+    GuideTemplate {
         title: "Reference/Platforms and mobile",
         markdown: include_str!("templates/platforms-and-mobile.md"),
     },
@@ -679,8 +683,13 @@ mod og_20d_guide_tests {
             "**Copy details**",
             "**Retry**",
             "Changed on disk",
+            "A panel says it could not load something",
+            "Couldn’t load references to this block",
+            "Couldn’t load search results",
             "A red error message appears",
             "stays on screen until you close it",
+            "Recent error messages",
+            "kept in memory only",
         ] {
             assert!(
                 recovery.contains(detail),
@@ -689,12 +698,7 @@ mod og_20d_guide_tests {
         }
         // og has no search index: no page may describe rebuilding or waiting on one.
         for page in GUIDE_TEMPLATES {
-            for forbidden in [
-                "Rebuild the index",
-                "Indexing…",
-                "Managed Storage",
-                "Reference/Command line",
-            ] {
+            for forbidden in ["Rebuild the index", "Indexing…", "Managed Storage"] {
                 assert!(
                     !page.markdown.contains(forbidden),
                     "{} documents a feature og does not have: {forbidden}",
@@ -702,6 +706,35 @@ mod og_20d_guide_tests {
                 );
             }
         }
+    }
+
+    /// og-D D4 (master e7af4db9c): the command-line reference names every shipped
+    /// command and og's create-only export contract, and the guide index links it.
+    #[test]
+    fn command_line_reference_covers_the_shipped_surface_and_safety_defaults() {
+        let cli = page("Reference/Command line");
+        for promised in [
+            "tine --help",
+            "tine --version",
+            "tine open GRAPH",
+            "tine capture",
+            "tine export static GRAPH",
+            "tine export live GRAPH",
+            "tine doctor GRAPH",
+            "--output PARENT",
+            "absolute path",
+            "refuses to replace",
+            "man tine",
+        ] {
+            assert!(cli.contains(promised), "Guide omitted {promised}");
+        }
+        for stale in ["--replace", "graph-relative", "--home"] {
+            assert!(
+                !cli.contains(stale),
+                "og export has no {stale}; master-only wording leaked in"
+            );
+        }
+        assert!(page("Tine Guide").contains("[[Reference/Command line]]"));
     }
 
     /// og 21a: a live-draft conflict is merged at the page and survives a
@@ -760,6 +793,29 @@ mod og_20d_guide_tests {
             files.contains("A table or board that shows a query's results is written the same way")
         );
         assert!(!files.contains("result list for now"));
+    }
+
+    /// og-D: the cross-device graph verifier is user-visible: create, copy or
+    /// save, compare, name the differing paths, and refuse to confirm a match
+    /// from an incomplete report.
+    #[test]
+    fn troubleshooting_documents_cross_device_graph_verification() {
+        let recovery = page("Reference/Troubleshooting and recovery");
+        for detail in [
+            "**Create graph verification report**",
+            "**Copy graph report**",
+            "**Save graph report…**",
+            "**Compare reports**",
+            "**Only on this device**",
+            "**Different bytes**",
+            "never file contents",
+            "no match is confirmed",
+        ] {
+            assert!(
+                recovery.contains(detail),
+                "missing graph verification detail: {detail}"
+            );
+        }
     }
 
     #[test]

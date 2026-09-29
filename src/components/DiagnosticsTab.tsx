@@ -1,6 +1,7 @@
 // Settings → Help & diagnostics: review, copy, save (desktop) or clear the
 // privacy-safe diagnostic report of this run and the previous one (GH #343,
-// og ADR 0058), and run the parser comparison
+// og ADR 0058), verify a synchronized graph's exact bytes against another
+// device, list this session's recent error messages (memory only), and run the parser comparison
 // ("Help improve Tine's parser"). Nothing here is uploaded automatically.
 import { Show, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend, type DiagnosticReport } from "../backend";
@@ -9,6 +10,8 @@ import { dbg } from "../debug";
 import { isMobilePlatform } from "../nativeChrome";
 import { ownedWhen, readOwned, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
+import { ErrorToastHistory } from "./ErrorToastHistory";
+import { GraphVerification } from "./GraphVerification";
 import { ImproveTab } from "./ImproveTab";
 import "../styles/diagnostics.css";
 
@@ -120,6 +123,8 @@ export function DiagnosticsTab(): JSX.Element {
           </label>
         )}
       </Show>
+      <ErrorToastHistory />
+      <GraphVerification />
       <div class="diagnostics-improve">
         <h3>Help improve Tine's parser</h3>
         <ImproveTab />

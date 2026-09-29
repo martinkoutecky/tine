@@ -2,6 +2,7 @@
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
 
+import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
 import { mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
@@ -1585,6 +1586,14 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
     async diagnosticReport(): Promise<DiagnosticReport> { return { text: JSON.stringify({ schemaVersion: 1, sessions: { current: mockDiagnostics.map((kind) => ({ event: "frontend", kind })) } }, null, 2), suggestedFileName: "tine-diagnostics.json" }; },
     async saveDiagnosticReport(): Promise<boolean> { return false; },
     async clearDiagnostics(): Promise<void> { mockDiagnostics.length = 0; },
+    async createGraphVerification(): Promise<GraphVerificationReport> {
+      const aggregateDigest = "0".repeat(64);
+      const text = JSON.stringify({ schemaVersion: 1, tool: "tine-graph-bytes", algorithm: "sha256", complete: true, generatedAtUnixMs: Date.now(), files: [], aggregateDigest, errors: [] }, null, 2);
+      return { text, suggestedFileName: "tine-graph-verification-mock.json", totalFiles: 0, totalBytes: 0, aggregateDigest, complete: true };
+    },
+    async cancelGraphVerification(): Promise<void> { /* no-op in the browser mock */ },
+    async saveGraphVerificationReport(): Promise<boolean> { return false; },
+    async onGraphVerificationProgress(): Promise<() => void> { return () => {}; },
     async diagnosticSessionActive(): Promise<void> { /* no session marker in the mock */ },
     async diagnosticFrontendEvent(kind: DiagnosticFrontendKind): Promise<void> { mockDiagnostics.push(kind); },
     async localClock() {
