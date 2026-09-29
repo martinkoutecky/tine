@@ -104,6 +104,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   conflict that only a click could clear, and held the edit unsaved behind it. If the file comes back
   matching what your editor started from, the banner clears and your edit saves normally; a file that
   comes back changed still raises the conflict.
+- **A page with an unresolved save conflict can be opened on disk again** (og I1d, master 6f8531344, GH #490).
+  "Open with default app" and "Show in folder" refused while a conflict was pending. Both now open the
+  file as it stands on disk and say so; your unsaved changes stay in Tine until you resolve the conflict.
 - **Closing no longer offers to throw away a save that is still running** (og I1b, master fea3c314b).
   If writing your changes took more than four seconds — a slow or network drive is enough — the close
   asked whether to lose them. It now says it is still saving and waits up to another 26 seconds; it

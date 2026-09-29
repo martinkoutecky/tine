@@ -807,25 +807,26 @@ function PageMenu(props: {
       pushToast("This page target changed; reopen the page actions menu.", "error");
       return;
     }
-    if (isConflicted(name)) {
-      pushToast(`Resolve the save conflict for “${name}” before opening its file.`, "error");
-      return;
-    }
-    if (!page!.readOnly && !(await flushPage(name))) {
+    // A conflicted page is not flushed (its unsavable draft is what the
+    // conflict is) but its file is opened as it stands: opening or revealing
+    // changes nothing on disk and is the recovery path a stuck conflict needs
+    // (og I1d, master 6f8531344, GH #490).
+    let conflicted = isConflicted(name);
+    if (!conflicted && !page!.readOnly && !(await flushPage(name))) {
       if (owner()) pushToast(`Couldn't save “${name}”; its on-disk file was not opened.`, "error");
       return;
     }
     if (!owner()) return;
-    if (isConflicted(name)) {
-      pushToast(`Resolve the save conflict for “${name}” before opening its file.`, "error");
-      return;
-    }
+    conflicted = conflicted || isConflicted(name);
     try {
       if (!pageTargetMatchesLoaded(captured, pageByName(name))) {
         pushToast("This page target changed; reopen the page actions menu.", "error");
         return;
       }
-      await readOwned(owner, backend().openPageFile(name, kind, captured.path ?? page!.id, reveal));
+      const opened = await readOwned(owner, backend().openPageFile(name, kind, captured.path ?? page!.id, reveal));
+      if (opened.kind !== "stale" && conflicted) {
+        pushToast(`“${name}” has an unresolved save conflict — this is the file as it stands on disk. Your unsaved changes stay in Tine until you resolve it.`, "info");
+      }
     } catch (error) {
       const message = page!.id
         ? `Couldn't ${reveal ? "show" : "open"} the page file. (${String(error)})`

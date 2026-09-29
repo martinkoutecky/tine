@@ -13,6 +13,7 @@ import { backend } from "../backend";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
 import { setToasts, toasts } from "../toasts";
 import { focusedRouter } from "../panes";
+import { clearConflict, markConflict } from "../document/save/engine";
 
 describe("PageMenu page-kind availability", () => {
   it("keeps rename page-only but exposes delete for pages and journals", () => {
@@ -571,4 +572,63 @@ describe("BlockMenu — insert a block above (GH #480)", () => {
     expect(labels).not.toContain("Insert block above");
     dispose();
   });
+});
+
+// og I1d (port of master 6f8531344, GH #490 second half): opening or revealing
+// a conflicted page's file changes nothing on disk and is the recovery path a
+// stuck conflict needs, so it is not refused; the draft is not flushed.
+describe("page file actions on a conflicted page (GH #490)", () => {
+  beforeAll(async () => {
+    await initParser();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    clearConflict("P");
+    closeContextMenu();
+    clearTransientLayersForTest();
+    document.body.innerHTML = "";
+  });
+
+  function mount(node: () => JSX.Element): () => void {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    return render(node, root);
+  }
+  function loadPage() {
+    resetStore();
+    setDoc({
+      byId: { only: { id: "only", raw: "Body", collapsed: false, parent: null, page: "P", children: [] } },
+      pages: [{ id: "pages/P.md", name: "P", kind: "page", title: "P", preBlock: null, roots: ["only"], format: "md", readOnly: false, guide: false }],
+      feed: ["P"],
+      loaded: true,
+    } as never);
+  }
+  const clickItem = (label: string) => {
+    const item = [...document.querySelectorAll<HTMLElement>(".ctx-item")]
+      .find((e) => e.textContent?.trim() === label);
+    if (!item) throw new Error(`menu item not found: ${label}`);
+    item.click();
+  };
+
+  for (const [label, reveal] of [["Open with default app", false], ["Show in folder", true]] as const) {
+    it(`${label}: opens the file as it stands on disk and says the draft is not in it`, async () => {
+      loadPage();
+      markConflict("P");
+      const open = vi.spyOn(backend(), "openPageFile").mockResolvedValue(undefined as never);
+      const save = vi.spyOn(backend(), "savePages");
+      setToasts([]);
+      const dispose = mount(() => <ContextMenu />);
+      openPageContextMenu(10, 10, "P", "page", true);
+
+      clickItem(label);
+      await vi.waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+      expect(open.mock.calls[0][3]).toBe(reveal);
+      expect(save).not.toHaveBeenCalled();
+      await vi.waitFor(() =>
+        expect(toasts().some((toast) => toast.kind === "info" && toast.message.includes("as it stands on disk"))).toBe(true),
+      );
+      expect(toasts().every((toast) => toast.kind !== "error")).toBe(true);
+      dispose();
+    });
+  }
 });
