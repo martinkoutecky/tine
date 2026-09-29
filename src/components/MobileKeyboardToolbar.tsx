@@ -55,6 +55,10 @@ function viewportKeyboardTop(): number {
   return vv ? vv.height + vv.offsetTop : window.innerHeight;
 }
 
+/** Scroll the focused block editor's nearest scroller (or the window) just enough
+ *  that the editor's bottom sits 8px above `toolbarTop` (GH #384). Returns true
+ *  only when it scrolled; a non-editor focus or an already-visible editor is a
+ *  no-op returning false. O(1) layout reads. */
 export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
   const editor = document.activeElement;
   if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) {
