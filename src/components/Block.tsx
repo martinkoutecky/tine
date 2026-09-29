@@ -2124,13 +2124,21 @@ export function Editor(props: { id: string }): JSX.Element {
   // commit at compositionend instead.
   let compositionActive = false;
   let compositionEndValue: string | null = null;
-  const onCompositionStart = () => {
+  const beginComposition = () => {
     compositionActive = true;
     compositionEndValue = null;
     clearTimeout(acTimer);
   };
+  const onCompositionStart = () => beginComposition();
   const onInput = (e: InputEvent) => {
-    if (compositionActive || e.isComposing) return;
+    // Some supported IMEs omit compositionstart but mark their composing input
+    // (master f1c7de6e2). Enter the same transaction so the not-yet-committed
+    // text stays DOM-local until compositionend.
+    if (e.isComposing) {
+      if (!compositionActive) beginComposition();
+      return;
+    }
+    if (compositionActive) return;
     // Chromium-family engines can emit one ordinary input after compositionend.
     // Its DOM value has already committed above; suppress only that duplicate,
     // never a subsequent real edit with different text.

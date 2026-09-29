@@ -94,6 +94,33 @@ function legacyImeEnter(textarea: HTMLTextAreaElement) {
 }
 
 describe("IME composition", () => {
+  it("enters the composition transaction from a composing input when compositionstart never fired", () => {
+    loadSingle(page(""));
+    startEditing("ime-composition", 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("IME composition")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      setRawSpy.mockClear();
+
+      // No compositionstart: the composing flag on the input is the only signal.
+      composingInput(textarea, "n");
+      composingInput(textarea, "ni");
+      // The engine may interleave a plain input before compositionend; the
+      // transaction is still open, so it must not commit half a composition.
+      input(textarea, "ni");
+      expect(doc.byId["ime-composition"].raw).toBe("");
+      expect(setRawSpy).not.toHaveBeenCalled();
+
+      compositionEnd(textarea);
+      expect(doc.byId["ime-composition"].raw).toBe("ni");
+      expect(setRawSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      dispose();
+    }
+  });
+
   it("keeps intermediate page-reference input transaction-local, commits once on end, and ignores the trailing duplicate input", async () => {
     vi.useFakeTimers();
     const quickSwitch = vi.spyOn(backend(), "quickSwitch").mockResolvedValue([]);
