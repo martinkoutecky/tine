@@ -23,26 +23,51 @@ const TEMP_NAME_FLOOR: usize = 100;
 /// of a 231–255-byte page name, e.g. an 80-CJK-char title OG writes in place,
 /// fail with ENAMETOOLONG). When shortening, the stem is cut at a char boundary
 /// and a short extension is kept, so `watch.rs::atomic_temp` still recognizes a
-/// page temp; uniqueness comes from pid + seq alone.
+/// page temp; uniqueness comes from pid + seq alone. The only temp-name format
+/// in tine-store for a user-named target (C3Y Y1; guarded by
+/// `tests/c3y_derived_names_guard.rs`).
 pub(crate) fn temp_path(path: &Path, seq: u64, tag: &str) -> PathBuf {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
     let suffix = format!(".{}.{seq}{tag}.tmp", std::process::id());
-    let full = format!(".{fname}{suffix}");
     let limit = fname.len().max(TEMP_NAME_FLOOR).min(NAME_MAX_BYTES);
-    if full.len() <= limit {
-        return dir.join(full);
+    let (stem, ext) = split_short_ext(fname);
+    dir.join(fit_name(".", stem, &format!("{ext}{suffix}"), limit))
+}
+
+/// A trash or conflict-copy name `{prefix}{name}` (prefix = stamp + reason)
+/// that fits NAME_MAX whenever `name` itself does: the stem is cut at a char
+/// boundary and its extension kept, so the copy is still recognized by kind
+/// and recoverable; the unique stamp in `prefix` survives intact (C3Y Y2).
+pub(crate) fn prefixed_name(prefix: &str, name: &str) -> String {
+    let (stem, ext) = split_short_ext(name);
+    fit_name(prefix, stem, ext, NAME_MAX_BYTES)
+}
+
+/// A collision candidate `{stem}{mark}{ext}` (e.g. `_1`) that fits NAME_MAX
+/// whenever the uncollided name does (C3Y Y2).
+pub(crate) fn marked_name(stem: &str, mark: &str, ext: &str) -> String {
+    fit_name("", stem, &format!("{mark}{ext}"), NAME_MAX_BYTES)
+}
+
+/// Split at a short (at most 10-byte) extension a shortened name keeps.
+fn split_short_ext(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(dot) if dot > 0 && name.len() - dot <= 10 => name.split_at(dot),
+        _ => (name, ""),
     }
-    let (stem, ext) = match fname.rfind('.') {
-        Some(dot) if dot > 0 && fname.len() - dot <= 10 => fname.split_at(dot),
-        _ => (fname, ""),
-    };
-    let room = limit.saturating_sub(1 + ext.len() + suffix.len());
+}
+
+/// `{prefix}{stem}{tail}`, with `stem` cut at a char boundary so the whole is
+/// at most `limit` bytes. The one shortening rule for every file name tine-store
+/// derives from a user's file name.
+fn fit_name(prefix: &str, stem: &str, tail: &str, limit: usize) -> String {
+    let room = limit.saturating_sub(prefix.len() + tail.len());
     let mut cut = room.min(stem.len());
     while !stem.is_char_boundary(cut) {
         cut -= 1;
     }
-    dir.join(format!(".{}{ext}{suffix}", &stem[..cut]))
+    format!("{prefix}{}{tail}", &stem[..cut])
 }
 
 pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -121,10 +146,33 @@ mod tests {
                 assert_eq!(tmp.parent(), target.parent());
             }
         }
+        let short = temp_path(Path::new("/g/pages/A.md"), 7, ".import");
+        assert_eq!(
+            short.file_name().unwrap().to_str().unwrap(),
+            format!(".A.md.{}.7.import.tmp", std::process::id())
+        );
         let short = temp_path(Path::new("/g/pages/A.md"), 7, "");
         assert_eq!(
             short.file_name().unwrap().to_str().unwrap(),
             format!(".A.md.{}.7.tmp", std::process::id())
         );
+    }
+
+    #[test]
+    fn trash_and_collision_names_fit_and_keep_their_stamp_and_extension() {
+        for name in [
+            format!("{}.png", "c".repeat(251)),
+            format!("{}.md", "漢".repeat(84)),
+        ] {
+            let trash = prefixed_name("1759000000000-12__tx-old__", &name);
+            assert!(trash.len() <= NAME_MAX_BYTES, "{trash}");
+            assert!(trash.starts_with("1759000000000-12__tx-old__"));
+            assert_eq!(Path::new(&trash).extension(), Path::new(&name).extension());
+            let (stem, ext) = split_short_ext(&name);
+            let marked = marked_name(stem, "_12", ext);
+            assert!(marked.len() <= NAME_MAX_BYTES && marked.ends_with(&format!("_12{ext}")));
+        }
+        assert_eq!(prefixed_name("s__", "A.md"), "s__A.md");
+        assert_eq!(marked_name("A", "_1", ".pdf"), "A_1.pdf");
     }
 }

@@ -173,7 +173,7 @@ impl<'a> Transaction<'a> {
                     let rel = if index == 0 {
                         first.clone()
                     } else {
-                        format!("{stem}_{index}{ext}")
+                        crate::atomic_file::marked_name(stem, &format!("_{index}"), ext)
                     };
                     let candidate = self
                         .store

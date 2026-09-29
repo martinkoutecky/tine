@@ -3866,7 +3866,11 @@ impl Graph {
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or("file");
-        let staged = trash.join(format!("{}__{reason}__{name}", trash_stamp()));
+        // Fits whenever `name` does (C3Y Y2); a failed stage would refuse undo.
+        let staged = trash.join(crate::atomic_file::prefixed_name(
+            &format!("{}__{reason}__", trash_stamp()),
+            name,
+        ));
         match move_file_noreplace(path, &staged) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -5106,9 +5110,8 @@ pub fn atomic_copy(src: &Path, dst: &Path) -> io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = dst.parent().unwrap_or_else(|| Path::new("."));
-    let fname = dst.file_name().and_then(|s| s.to_str()).unwrap_or("asset");
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp = dir.join(format!(".{fname}.{}.{seq}.import.tmp", std::process::id()));
+    let tmp =
+        crate::atomic_file::temp_path(dst, TMP_SEQ.fetch_add(1, Ordering::Relaxed), ".import");
     let res = (|| {
         let mut input = fs::File::open(src)?;
         let mut output = fs::OpenOptions::new()
@@ -5135,13 +5138,9 @@ pub(crate) fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = dst.parent().unwrap_or_else(|| Path::new("."));
-    let fname = dst.file_name().and_then(|s| s.to_str()).unwrap_or("file");
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp = dir.join(format!(
-        ".{fname}.{}.{}.restore.tmp",
-        std::process::id(),
-        seq
-    ));
+    // A temp that fits whenever `dst` does (C3Y Y1: a 231–255-byte asset name).
+    let tmp =
+        crate::atomic_file::temp_path(dst, TMP_SEQ.fetch_add(1, Ordering::Relaxed), ".restore");
     let res = (|| {
         let mut input = fs::File::open(src)?;
         let mut output = fs::OpenOptions::new()
@@ -5173,13 +5172,8 @@ pub(crate) fn atomic_copy_file_new(
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = dst.parent().unwrap_or_else(|| Path::new("."));
-    let fname = dst.file_name().and_then(|s| s.to_str()).unwrap_or("file");
-    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp = dir.join(format!(
-        ".{fname}.{}.{}.capture.tmp",
-        std::process::id(),
-        seq
-    ));
+    let tmp =
+        crate::atomic_file::temp_path(dst, TMP_SEQ.fetch_add(1, Ordering::Relaxed), ".capture");
     let res = (|| {
         let mut output = fs::OpenOptions::new()
             .write(true)
