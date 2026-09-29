@@ -499,6 +499,7 @@ export function QueryMacro(props: {
     if (!blockId || !docNode(blockId)) return false;
     const rawAtStart = docNode(blockId).raw;
     const previousDisplay = displayEdit ? new Map(displayPropertyPatch(reading()?.view ?? {})) : null;
+    const previousGroup = displayEdit ? reading()?.view.group_by : undefined;
     const owner = graphOwner(() => docNode(blockId)?.raw === rawAtStart);
     const current = macroName();
     let name = current;
@@ -548,7 +549,8 @@ export function QueryMacro(props: {
       rewriteMacro(`{{${name} ${argument}}}`, target);
       materializeView(blockId, next.view, dialect);
       if (previousDisplay) for (const [key, value] of displayPropertyPatch(next.view)) {
-        if (previousDisplay.get(key) !== value) {
+        if (previousDisplay.get(key) !== value || key === "tine.group-field"
+          && previousGroup === undefined && next.view.group_by === "") {
           if (key === "tine.col-aggregates") {
             const merged = mergeQueryAggregateValue(blockProperty(blockId, key), next.view.aggregates ?? []);
             if (merged !== undefined) setBlockProperty(blockId, key, merged);

@@ -11,8 +11,8 @@ describe("query display persistence", () => {
     });
     expect(patch).toEqual([
       ["tine.view", "table"], ["tine.sort", "priority desc;page asc"],
-      ["tine.group-field", ""], ["tine.columns", "page;status"],
-      ["tine.col-aggregates", "count;cost=sum"], ["tine.sample", "0"],
+      ["tine.group-field", ""], ["tine.sample", "0"],
+      ["tine.columns", "page;status"], ["tine.col-aggregates", "count;cost=sum"],
     ]);
     expect(patch.some(([key]) => key === "tine.fields")).toBe(false);
   });

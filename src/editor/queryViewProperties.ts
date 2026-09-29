@@ -3,7 +3,7 @@
 import type { ViewSettings } from "./queryIr";
 export { normalizeQueryDisplayDraft, queryDisplaySettings } from "./queryDisplayDraft";
 export type DisplayNamespace = "legacy" | "page" | "block";
-const keys = ["view", "sort", "group-field", "columns", "col-aggregates", "sample"] as const;
+const keys = ["view", "sort", "group-field", "sample", "columns", "col-aggregates"] as const;
 
 /** Encode one complete display choice as block properties. Empty list values
  * explicitly clear older text directives; a scoped choice also writes its
@@ -15,9 +15,9 @@ export function displayPropertyPatch(view: ViewSettings, scope: DisplayNamespace
     scope === "legacy" && (view.view === "list" || view.view === undefined) ? null : view.view ?? "list",
     (view.sort ?? []).map(([field, dir]) => `${field} ${dir}`).join(";"),
     view.group_by ?? "",
+    view.sample === undefined ? "" : String(view.sample),
     (view.columns ?? []).join(";"),
     (view.aggregates ?? []).map(([field, fn]) => field ? `${field}=${fn}` : fn).join(";"),
-    view.sample === undefined ? "" : String(view.sample),
   ];
   const patch = keys.map((key, index): [string, string | null] =>
     [`${prefix}${key}`, scope === "legacy" && index !== 2 && values[index] === "" ? null : values[index]]);

@@ -336,6 +336,22 @@ async function openSheet(root: HTMLElement): Promise<HTMLElement> {
 }
 
 describe("Q4b: Display saves through the query block", () => {
+  it("saves an explicit empty grouping when None is chosen from an unset view", async () => {
+    load(TQL_MACRO);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("-- task TODO");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const sheet = await openSheet(root);
+      sheet.querySelector<HTMLButtonElement>(".qd-trigger")!.click();
+      await vi.waitFor(() => expect(sheet.querySelector(".qd-panel")).not.toBeNull());
+      [...sheet.querySelectorAll<HTMLButtonElement>(".qd-panel button")]
+        .find((button) => button.textContent === "None")!.click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.group-field")).toBe(""));
+    } finally { dispose(); }
+  });
+
   it("offers Page as a table column and writes it on the query block (GH #606)", async () => {
     load(TQL_MACRO);
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
