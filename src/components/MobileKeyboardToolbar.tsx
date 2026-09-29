@@ -43,6 +43,7 @@ const ACTIONS: ToolbarAction[] = [
 ];
 
 const KEYBOARD_GAP_THRESHOLD = 48;
+const EDITOR_TOOLBAR_MARGIN = 8;
 
 function activeEditorHasFocus(): boolean {
   const el = document.activeElement;
@@ -52,6 +53,21 @@ function activeEditorHasFocus(): boolean {
 function viewportKeyboardTop(): number {
   const vv = window.visualViewport;
   return vv ? vv.height + vv.offsetTop : window.innerHeight;
+}
+
+export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
+  const editor = document.activeElement;
+  if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) {
+    return false;
+  }
+  const overlap = editor.getBoundingClientRect().bottom + EDITOR_TOOLBAR_MARGIN - toolbarTop;
+  if (overlap <= 0) return false;
+  const scroller = editor.closest<HTMLElement>(
+    ".main-content, .right-sidebar-scroll, .left-sidebar-scroll",
+  );
+  if (scroller) scroller.scrollTop += overlap;
+  else window.scrollBy({ top: overlap });
+  return true;
 }
 
 function Icon(props: { name: ToolbarIcon }): JSX.Element {
@@ -94,6 +110,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
   const [dockTop, setDockTop] = createSignal(typeof window !== "undefined" ? window.innerHeight : 0);
   const [keyboardVisible, setKeyboardVisible] = createSignal(false);
   const [focusedFallback, setFocusedFallback] = createSignal(false);
+  let revealFrame = 0;
 
   const updateDock = () => {
     const top = viewportKeyboardTop();
@@ -105,19 +122,40 @@ export function MobileKeyboardToolbar(): JSX.Element {
   onMount(() => {
     if (!isMobilePlatform) return;
     const vv = window.visualViewport;
-    const updateAfterFocusChange = () => setTimeout(updateDock, 0);
+    const scheduleEditorReveal = () => {
+      if (revealFrame) return;
+      revealFrame = requestAnimationFrame(() => {
+        revealFrame = 0;
+        if (toolbarRef && visible()) {
+          revealFocusedEditorAboveToolbar(toolbarRef.getBoundingClientRect().top);
+        }
+      });
+    };
+    const updateViewport = () => {
+      updateDock();
+      scheduleEditorReveal();
+    };
+    const updateAfterFocusChange = () => setTimeout(updateViewport, 0);
+    const revealAfterEditorInput = (event: Event) => {
+      if (event.target instanceof HTMLTextAreaElement && event.target.classList.contains("block-editor")) {
+        scheduleEditorReveal();
+      }
+    };
     updateDock();
-    vv?.addEventListener("resize", updateDock);
-    vv?.addEventListener("scroll", updateDock);
-    window.addEventListener("resize", updateDock);
+    vv?.addEventListener("resize", updateViewport);
+    vv?.addEventListener("scroll", updateViewport);
+    window.addEventListener("resize", updateViewport);
     window.addEventListener("focusin", updateAfterFocusChange);
     window.addEventListener("focusout", updateAfterFocusChange);
+    document.addEventListener("input", revealAfterEditorInput, true);
     onCleanup(() => {
-      vv?.removeEventListener("resize", updateDock);
-      vv?.removeEventListener("scroll", updateDock);
-      window.removeEventListener("resize", updateDock);
+      vv?.removeEventListener("resize", updateViewport);
+      vv?.removeEventListener("scroll", updateViewport);
+      window.removeEventListener("resize", updateViewport);
       window.removeEventListener("focusin", updateAfterFocusChange);
       window.removeEventListener("focusout", updateAfterFocusChange);
+      document.removeEventListener("input", revealAfterEditorInput, true);
+      if (revealFrame) cancelAnimationFrame(revealFrame);
     });
   });
 
@@ -126,8 +164,26 @@ export function MobileKeyboardToolbar(): JSX.Element {
     if (isMobilePlatform) queueMicrotask(updateDock);
   });
 
+  // GH #336: the hide button's pointerdown blurs the editor, which drops the
+  // keyboard and would unmount this toolbar MID-GESTURE — Android then delivers
+  // the gesture's synthesized pointerup/click to whatever moved underneath
+  // ("touch-through" onto the page). Stay mounted until the trailing click is
+  // consumed here, with a short safety window for pointercancel/lost events.
+  const [hideGesture, setHideGesture] = createSignal(false);
+  const [hideGestureDockTop, setHideGestureDockTop] = createSignal<number | null>(null);
+  let hideGestureTimer: ReturnType<typeof setTimeout> | undefined;
+  const cancelHideGesture = () => {
+    if (hideGestureTimer !== undefined) clearTimeout(hideGestureTimer);
+    hideGestureTimer = undefined;
+    setHideGestureDockTop(null);
+    setHideGesture(false);
+  };
+  onCleanup(() => {
+    if (hideGestureTimer !== undefined) clearTimeout(hideGestureTimer);
+  });
+
   const visible = () =>
-    !!focusedEditorCommandBridge() && (keyboardVisible() || focusedFallback());
+    (!!focusedEditorCommandBridge() && (keyboardVisible() || focusedFallback())) || hideGesture();
 
   // Publish the toolbar's on-screen top as a CSS var so the fixed help "?" FAB
   // (and any other bottom-anchored chrome) can lift ABOVE it instead of
@@ -147,6 +203,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
       const top = toolbarRef.getBoundingClientRect().top;
       const lift = Math.max(0, window.innerHeight - top) + 8;
       root.style.setProperty("--mobile-kb-toolbar-lift", `${lift}px`);
+      revealFocusedEditorAboveToolbar(top);
     });
   });
   onCleanup(() => {
@@ -156,9 +213,74 @@ export function MobileKeyboardToolbar(): JSX.Element {
   });
 
   const style = () => ({
-    top: `calc(${Math.max(0, dockTop())}px - env(safe-area-inset-bottom))`,
+    // The viewport grows while the keyboard closes. Keep the button under the
+    // active pointer until its trailing click is consumed; otherwise a mounted
+    // toolbar can still move away and expose the note before pointer-up.
+    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop())}px - env(safe-area-inset-bottom))`,
   });
   const keepEditorFocus = (e: Event) => e.preventDefault();
+
+  // A structural command can briefly unregister the editor and retarget the
+  // browser's compatibility click (#495/#496). Own the completed pointer at
+  // toolbar scope, and consume its click before any new target can act. A new
+  // primary pointerdown starts a new gesture; keyboard/AT clicks have detail 0.
+  // No elapsed-time window may suppress an independent second activation.
+  let completedPointer: number | null = null;
+  onMount(() => {
+    if (!isMobilePlatform) return;
+    const beginPointer = (e: PointerEvent) => {
+      if (e.isPrimary) completedPointer = null;
+    };
+    const consumeClick = (e: MouseEvent) => {
+      if (completedPointer === null || e.detail === 0) return;
+      const clickPointer = "pointerId" in e ? (e as PointerEvent).pointerId : null;
+      if (clickPointer !== null && clickPointer !== completedPointer) return;
+      completedPointer = null;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    document.addEventListener("pointerdown", beginPointer, true);
+    document.addEventListener("click", consumeClick, true);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", beginPointer, true);
+      document.removeEventListener("click", consumeClick, true);
+    });
+  });
+
+  // Pointer-up remains the primary activation path: iOS WebKit can omit the
+  // compatibility click after our focus-preserving canceled pointerdown (#434).
+  function tapActivation(run: () => void) {
+    let pointer: number | null = null;
+    return {
+      onPointerDown(e: PointerEvent) {
+        e.preventDefault();
+        if (!e.isPrimary || e.button !== 0) return;
+        pointer = e.pointerId;
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      },
+      onPointerUp(e: PointerEvent) {
+        if (pointer !== e.pointerId) return;
+        pointer = null;
+        completedPointer = e.pointerId;
+        const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        // Sliding off cancels activation, including a possible trailing click.
+        // jsdom has no layout and reports a zero box.
+        const off =
+          (box.width > 0 || box.height > 0) &&
+          (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom);
+        if (!off) run();
+      },
+      onPointerCancel(e: PointerEvent) {
+        if (pointer === e.pointerId) pointer = null;
+      },
+      onClick(e: MouseEvent) {
+        e.preventDefault();
+        e.stopPropagation();
+        run();
+      },
+    };
+  }
+
   const run = (action: ToolbarAction) => {
     if (action.kind === "global") {
       runGlobalCommand(action.command);
@@ -166,33 +288,54 @@ export function MobileKeyboardToolbar(): JSX.Element {
     }
     dispatchFocusedEditorCommand(action.command);
   };
-  const hideKeyboard = (e?: Event) => {
-    e?.preventDefault();
+  const beginHideGesture = (e: Event) => {
+    e.preventDefault();
+    if (hideGestureTimer !== undefined) clearTimeout(hideGestureTimer);
+    setHideGestureDockTop(dockTop());
+    hideGestureTimer = setTimeout(cancelHideGesture, 700);
+    setHideGesture(true);
     blurFocusedEditor();
   };
+  const endHideGesture = () => {
+    // An AT/keyboard activation arrives without a pointer gesture, and still
+    // needs the blur itself.
+    if (!hideGesture()) blurFocusedEditor();
+    cancelHideGesture();
+  };
+  // The hide button's own two-phase gesture starts on pointerdown, so it keeps
+  // that handler and borrows only the completion half of tapActivation.
+  const hideTap = tapActivation(endHideGesture);
 
   return (
-    <Show when={isMobilePlatform && visible()}>
+    // The toolbar belongs to the mobile shell, not a particular editor DOM node.
+    // Preserve its buttons and horizontal scroll through bridge handoffs; only
+    // its visibility follows focus/keyboard state.
+    <Show when={isMobilePlatform}>
       <div
         ref={toolbarRef}
         class="mobile-keyboard-toolbar"
         data-mobile-keyboard-toolbar
         role="toolbar"
         aria-label="Editor toolbar"
-        style={style()}
+        hidden={!visible()}
+        style={{ ...style(), display: visible() ? undefined : "none" }}
       >
         <div class="mobile-keyboard-toolbar-strip" data-lenis-prevent>
           <For each={ACTIONS}>
-            {(action) => (
+            {(action) => {
+              const tap = tapActivation(() => run(action));
+              return (
               <button
                 type="button"
                 class="mobile-keyboard-toolbar-btn"
                 classList={{ recording: action.icon === "mic" && isRecordingAudio() }}
                 title={action.icon === "mic" && isRecordingAudio() ? "Stop recording" : action.label}
                 aria-label={action.icon === "mic" && isRecordingAudio() ? "Stop recording" : action.label}
-                onPointerDown={keepEditorFocus}
+                onPointerDown={tap.onPointerDown}
+                onPointerUp={tap.onPointerUp}
+                onPointerCancel={tap.onPointerCancel}
                 onMouseDown={keepEditorFocus}
-                onClick={() => run(action)}
+                onClick={tap.onClick}
               >
                 <Show
                   when={action.icon === "mic" && isRecordingAudio()}
@@ -201,7 +344,8 @@ export function MobileKeyboardToolbar(): JSX.Element {
                   <Icon name="stop-recording" />
                 </Show>
               </button>
-            )}
+              );
+            }}
           </For>
         </div>
         <button
@@ -209,9 +353,14 @@ export function MobileKeyboardToolbar(): JSX.Element {
           class="mobile-keyboard-toolbar-btn mobile-keyboard-toolbar-hide"
           title="Hide keyboard"
           aria-label="Hide keyboard"
-          onPointerDown={hideKeyboard}
+          onPointerDown={(e) => {
+            beginHideGesture(e);
+            hideTap.onPointerDown(e);
+          }}
+          onPointerUp={hideTap.onPointerUp}
+          onPointerCancel={hideTap.onPointerCancel}
           onMouseDown={keepEditorFocus}
-          onClick={() => hideKeyboard()}
+          onClick={hideTap.onClick}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <rect x="3" y="5" width="18" height="10" rx="2" />
