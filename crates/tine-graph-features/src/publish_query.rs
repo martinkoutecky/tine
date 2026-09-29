@@ -633,6 +633,24 @@ fn commit(
     })
 }
 
+/// The `page_key` of every page a query export would publish (its planned
+/// selection), for the sheet inputs' publication boundary.
+pub(crate) fn planned_page_keys(
+    store: &Store,
+    request: &QueryExportRequest,
+) -> io::Result<HashSet<String>> {
+    let graph = store
+        .whole_graph()
+        .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
+    let planned = resolve_plan(store, &graph, request)?;
+    Ok(planned
+        .selected
+        .pages
+        .iter()
+        .map(|page| tine_core::refs::page_key(&page.name))
+        .collect())
+}
+
 /// Commit a reviewed query to an external user-picked parent. It re-runs the
 /// plan and refuses changed membership or content before creating output.
 /// The resulting folder contains static HTML and the read-only browser app.

@@ -8,6 +8,8 @@ import path from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { Block } from "../components/Block";
+import { SheetBoard } from "../components/SheetBoard";
+import { SheetTable } from "../components/SheetTable";
 import { resetStore } from "../document";
 import { setDoc } from "../document/model";
 import { facetsOf } from "../render/facets";
@@ -15,7 +17,8 @@ import { initParser } from "../render/parse";
 import { setWorkflow } from "../ui";
 import type { BlockDto } from "../types";
 import type { CellView } from "./cellPresentation";
-import { computeSheetExport, computeSheetExports, type SheetExport, type SheetInput } from "./staticExport";
+import type { ViewSettings } from "../editor/queryIr";
+import { computeSheetExport, computeSheetExports, type QuerySource, type SheetExport, type SheetInput } from "./staticExport";
 
 const NOW = new Date(2026, 8, 29, 12, 0, 0);
 
@@ -188,6 +191,136 @@ describe("static sheet export equals the live app (contract 1)", () => {
   });
 });
 
+/** A query block's sheet: the owner, and the rows the query answered (page + raw each). */
+interface QueryFixture {
+  owner: string;
+  presentation?: QuerySource["presentation"];
+  view?: ViewSettings;
+  rows: { page: string; raw: string }[];
+}
+
+function queryInputOf(fx: QueryFixture): SheetInput {
+  const rows = fx.rows.map((r) => dto(r.raw));
+  return {
+    page: "Sheet", path: [0], fp: "fp", omitted: 0,
+    owner: dto(fx.owner),
+    rows: [],
+    query: { fp: "qfp", presentation: fx.presentation ?? null, view: fx.view ?? {}, pages: fx.rows.map((r) => r.page), rows },
+  };
+}
+
+/** Mount the LIVE query face: the same component + props Macro.tsx gives its results. */
+function mountLiveQuery(fx: QueryFixture, face: "table" | "board", groupBy?: string): HTMLElement {
+  setDoc({
+    byId: { tbl: { id: "tbl", raw: fx.owner, collapsed: false, parent: null, page: "Sheet", children: [] } },
+    pages: [{ name: "Sheet", kind: "page", title: "Sheet", preBlock: null, roots: ["tbl"], format: "md", readOnly: false, guide: false }],
+    feed: ["Sheet"],
+    loaded: true,
+  } as any);
+  const byPage = new Map<string, BlockDto[]>();
+  fx.rows.forEach((r, i) => {
+    const block = { ...dto(r.raw), id: `q${i}` };
+    byPage.set(r.page, [...(byPage.get(r.page) ?? []), block]);
+  });
+  const groups = [...byPage].map(([page, blocks]) => ({ page, kind: "page" as const, blocks }));
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+  disposers.push(
+    render(
+      () => face === "table"
+        ? <SheetTable ownerId="tbl" rowSource="query" groups={groups} queryDisplay={{ view: fx.view ?? {}, apply: () => {} }} />
+        : <SheetBoard ownerId="tbl" rowSource="query" groupBy={groupBy} groups={groups} />,
+      root
+    )
+  );
+  return root;
+}
+
+const QUERY_ROWS = [
+  { page: "Alpha", raw: "TODO [#A] First #x\nprice:: 5\nqty:: 2" },
+  { page: "Alpha", raw: "DONE Second\nprice:: 1\nqty:: 2" },
+  { page: "Beta", raw: "Third\nprice:: 3\nnote:: plain words" },
+];
+
+describe("static query-backed sheets equal the live query face (family 7, 22c open item)", () => {
+  it("table: the query's rows, observed fields (with the page column), schema, formulas and aggregates match", () => {
+    const fx: QueryFixture = {
+      owner: "Q {{query (task TODO DONE)}}\ntine.view:: table\ntine.fields:: price=number;qty=number\ntine.formula.total:: price * qty\ntine.col-aggregates:: prop:price=sum;formula:total=sum",
+      rows: QUERY_ROWS,
+    };
+    const exported = tableOf(computeSheetExport(queryInputOf(fx), { now: NOW, workflow: "todo" }));
+    const app = live(mountLiveQuery(fx, "table"));
+    expect(app.rows).toHaveLength(3);
+    expect(exported.columns.map((c) => (c.formula ? "ƒ" : "") + c.label)).toEqual(app.headers);
+    expect(app.headers.map((h) => h.toLowerCase())).toContain("page");
+    expect(exported.rows.map((r) => [r.title, ...r.cells.map(viewText)])).toEqual(app.rows);
+    expect((exported.footer ?? []).flatMap((a) => (a ? [a.text] : []))).toEqual(app.aggregates);
+    expect(app.aggregates.length).toBeGreaterThan(0);
+  });
+
+  it("table: the query's `columns` choose the fields and their order, as the live table does", () => {
+    const fx: QueryFixture = {
+      owner: "Q {{query (task TODO DONE)}}\ntine.view:: table",
+      view: { columns: ["page", "priority", "price"] },
+      rows: QUERY_ROWS,
+    };
+    const exported = tableOf(computeSheetExport(queryInputOf(fx), { now: NOW, workflow: "todo" }));
+    const app = live(mountLiveQuery(fx, "table"));
+    expect(exported.columns.map((c) => c.label)).toEqual(app.headers);
+    expect(app.headers).toHaveLength(4);
+    expect(exported.rows.map((r) => [r.title, ...r.cells.map(viewText)])).toEqual(app.rows);
+  });
+
+  it("table: a `tine.filter` drops the same query rows the live table drops", () => {
+    const fx: QueryFixture = {
+      owner: "Q {{query (task TODO DONE)}}\ntine.view:: table\ntine.fields:: price=number\ntine.filter:: price > 2",
+      rows: QUERY_ROWS,
+    };
+    const exported = tableOf(computeSheetExport(queryInputOf(fx), { now: NOW, workflow: "todo" }));
+    const app = live(mountLiveQuery(fx, "table"));
+    expect(app.rows).toHaveLength(2);
+    expect(exported.rows.map((r) => [r.title, ...r.cells.map(viewText)])).toEqual(app.rows);
+  });
+
+  it("board: the query's rows group into the same columns and cards as the live board", () => {
+    for (const groupBy of ["state", "page"]) {
+      disposers.splice(0).forEach((dispose) => dispose());
+      const fx: QueryFixture = {
+        owner: `Q {{query (task TODO DONE DOING)}}\ntine.view:: board\ntine.group-by:: ${groupBy}`,
+        rows: [
+          { page: "Alpha", raw: "TODO Write tests" },
+          { page: "Beta", raw: "DOING Implement" },
+          { page: "Beta", raw: "DONE Shipped" },
+        ],
+      };
+      const exported = computeSheetExport(queryInputOf(fx), { now: NOW, workflow: "todo" });
+      if (!exported || exported.view !== "board") throw new Error("expected a board");
+      const root = mountLiveQuery(fx, "board", groupBy);
+      const columns = [...root.querySelectorAll(".sheet-board-column:not(.sheet-board-add-tag-column)")].map((col) => ({
+        label: clean(col.querySelector(".sheet-board-header > span:first-child")!),
+        cards: [...col.querySelectorAll(".sheet-board-card-title")].map(clean),
+      }));
+      expect(columns.length).toBeGreaterThan(1);
+      expect(exported.columns.map((c) => ({ label: c.label, cards: c.cards.map((k) => k.title) }))).toEqual(columns);
+    }
+  });
+
+  it("the query's own presentation beats tine.view; a list or grid face has no sheet export", () => {
+    const base = { owner: "Q {{query (task TODO)}}\ntine.view:: table", rows: QUERY_ROWS };
+    expect(computeSheetExport(queryInputOf({ ...base, presentation: "board" }), { now: NOW, workflow: "todo" })?.view).toBe("board");
+    expect(computeSheetExport(queryInputOf({ ...base, presentation: "table" }), { now: NOW, workflow: "todo" })?.view).toBe("table");
+    expect(computeSheetExport(queryInputOf({ ...base, presentation: "list" }), { now: NOW, workflow: "todo" })).toBeNull();
+    const grid = { ...base, owner: "Q {{query (task TODO)}}\ntine.view:: grid" };
+    expect(computeSheetExport(queryInputOf(grid), { now: NOW, workflow: "todo" })).toBeNull();
+  });
+
+  it("the export echoes the query's own fingerprint and marks itself query-backed", () => {
+    const fx: QueryFixture = { owner: "Q {{query (task TODO)}}\ntine.view:: table", rows: QUERY_ROWS };
+    const exported = computeSheetExport(queryInputOf(fx), { now: NOW, workflow: "todo" });
+    expect(exported).toMatchObject({ fp: "qfp", query: true, view: "table" });
+  });
+});
+
 describe("static sheet export failure handling (contract 3, TS half)", () => {
   it("a block whose tine.view is not a sheet view yields no export", () => {
     const fx = { owner: "Plain\ntine.view:: nonsense", rows: [] };
@@ -225,7 +358,10 @@ describe("Rust hand-off chain", () => {
     if (process.env.BLESS_SHEETS) fs.writeFileSync(path.join(dir, "exports.json"), actual);
     expect(actual).toBe(fs.readFileSync(path.join(dir, "exports.json"), "utf8"));
     // The non-sheet candidate is dropped by the app, not by Rust (I-12).
-    expect(inputs.length).toBe(4);
-    expect(JSON.parse(actual).map((x: SheetExport) => x.view)).toEqual(["table", "board", "grid"]);
+    expect(inputs.length).toBe(7);
+    expect(JSON.parse(actual).map((x: SheetExport) => x.view)).toEqual(["table", "board", "grid", "table", "board"]);
+    // The two query-backed blocks are answered from their result rows; the query-face
+    // grid stays a result list (no export), exactly as the live query block does.
+    expect(JSON.parse(actual).map((x: SheetExport) => !!x.query)).toEqual([false, false, false, true, true]);
   });
 });

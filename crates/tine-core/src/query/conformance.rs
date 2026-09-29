@@ -419,12 +419,13 @@ fn both_print_forms_round_trip_semantically() {
     }
 }
 
-/// A quantifier's comma exposes a later-argument page reference, so the pane can
-/// hold it and the document cannot. The pane round-trips it; the macro printer
-/// refuses it and writes nothing (§4.3.1: no promise that every accepted text
-/// literal fits a document macro).
+/// A quantifier's comma exposes a later-argument page reference: the document
+/// parser reads `, [[a]])` as a malformed argument. The pane holds the plain
+/// spelling; the macro printer spells the operand in parentheses so the query
+/// still saves (og C3T follow-up; master refused this shape). Only text inside
+/// a string literal — the user's value, never re-spelled — stays a refusal.
 #[test]
-fn a_quantifier_over_a_page_ref_round_trips_in_the_pane_and_is_refused_as_a_macro() {
+fn a_quantifier_over_a_page_ref_round_trips_in_the_pane_and_in_the_macro() {
     let source = "@block and any(children, [[a]] and off([[b]]))";
     let query = parse_tql(source, Registry::none()).0;
     assert!(!query.is_invalid(), "{:?}", query.diagnostics);
@@ -433,14 +434,32 @@ fn a_quantifier_over_a_page_ref_round_trips_in_the_pane_and_is_refused_as_a_macr
     let again = parse_tql(&pane, Registry::none()).0;
     assert_eq!(again.normalized().filter, query.normalized().filter);
     assert_eq!(evaluable(&again.filter), evaluable(&query.filter));
-    let refusal = query_print(
+    let persisted = query_print(
         &query,
         &ViewSettings::default(),
         PrintDialect::TqlMacro,
         false,
     )
-    .expect_err("a comma that exposes a page reference is not a macro");
+    .expect("a page-reference operand is spelled so the parser reads the macro back");
+    let reread = parse_tql(&persisted, Registry::none()).0;
+    assert_eq!(reread.normalized().filter, query.normalized().filter);
+    assert_eq!(evaluable(&reread.filter), evaluable(&query.filter));
+    let literal = parse_tql("@block and content like '%a, [[b]]%'", Registry::none()).0;
+    let refusal = query_print(
+        &literal,
+        &ViewSettings::default(),
+        PrintDialect::TqlMacro,
+        false,
+    )
+    .expect_err("a `, [[` inside a string literal is not a macro argument");
     assert_eq!(refusal.kind, DiagnosticKind::Syntax);
+    // A located, readable message: the pane renders it (`.query-print-refused`,
+    // QueryMacro.ir.test.tsx "renders the printer's own message"), nothing is written.
+    assert!(
+        refusal.message.contains("does not read this back"),
+        "{}",
+        refusal.message
+    );
 }
 
 /// Cache keys use this normalization, so two trees that differ in truth must not

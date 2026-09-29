@@ -196,6 +196,39 @@ describe("persisted split session", () => {
     expect(JSON.stringify(parsed)).not.toContain("results");
   });
 
+  it("drops only a malformed optional field and keeps the query tab (og E, master P5C)", () => {
+    const restore = (fields: Record<string, unknown>) => parsePersistedSession(JSON.stringify({
+      tabs: [{
+        history: [{ kind: "query", id: "query-1", sourceKind: "search", source: "alpha", presentation: "table", ...fields }],
+        pos: 0, pinned: true,
+      }],
+      activeIndex: 0,
+    }))!.snapshots.get("main")!.tabs[0];
+    const bare = { kind: "query", id: "query-1", sourceKind: "search", source: "alpha", presentation: "table" };
+    for (const bad of [
+      { columns: ["bad;name"] }, { sort: [["priority", "sideways"]] }, { sample: -1 },
+      { group_by: "status" }, { aggregates: [["", "avg"]] }, "not-an-object", 3, null, [],
+    ]) {
+      for (const key of ["pageDisplay", "blockDisplay"]) {
+        const tab = restore({ [key]: bad });
+        expect(tab.pinned).toBe(true);
+        expect(tab.history[0], JSON.stringify(bad)).toEqual(bare);
+      }
+    }
+    // A bad membership mode is dropped, never widened to another mode, and the good
+    // siblings around it are kept.
+    const tab = restore({
+      pagePresentation: "gallery", pageDisplay: { columns: ["bad;field"] }, blockPresentation: "list",
+      blockDisplay: { columns: ["prop:owner"] }, pageMatchScope: "both-and-more",
+    });
+    expect(tab.history[0]).toEqual({ ...bare, blockPresentation: "list", blockDisplay: { columns: ["prop:owner"] } });
+    expect(tab.pinned).toBe(true);
+    // A malformed REQUIRED field still refuses the route.
+    expect(parsePersistedSession(JSON.stringify({
+      tabs: [{ history: [{ ...bare, presentation: "gallery" }], pos: 0, pinned: false }], activeIndex: 0,
+    }))).toBeNull();
+  });
+
   it("round-trips independent empty query routes in split panes with the chosen focused owner", () => {
     const empty = (id: string, source: string, presentation: "search" | "table"): PaneSnapshot => ({
       tabs: [{ history: [{ kind: "query", id, sourceKind: "search", source, presentation }], pos: 0, pinned: false }],

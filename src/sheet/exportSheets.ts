@@ -6,16 +6,16 @@ import { backend } from "../backend";
 import { appNow } from "../journal";
 import { graphOwner, readOwned } from "../owned";
 import { workflow } from "../ui";
-import { computeSheetExports, type SheetExport } from "./staticExport";
+import { computeSheetExports, type SheetExport, type SheetScope } from "./staticExport";
 
 /** Sheets of `pages` (every page when omitted), computed against the live app
  * settings. Never rejects: a sheet that cannot be computed is left out (or
  * exported as an error record) and renders as its plain outline. Inputs read
  * for a graph that is no longer current are dropped. */
-export async function exportSheets(pages?: string[]): Promise<SheetExport[]> {
+export async function exportSheets(pages?: string[], scope?: SheetScope): Promise<SheetExport[]> {
   const owner = graphOwner();
   try {
-    const read = await readOwned(owner, backend().sheetExportInputs(pages));
+    const read = await readOwned(owner, backend().sheetExportInputs(pages, scope));
     if (read.kind !== "current") return [];
     return computeSheetExports(read.value, workflow(), appNow());
   } catch {

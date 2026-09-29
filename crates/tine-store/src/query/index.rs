@@ -8,11 +8,17 @@
 //! in `spawn_blocking`). A snapshot published after an edit inherits the
 //! previous index as a SEED plus the changed paths; the first query of the new
 //! generation re-derives only those pages. The registry is carried unchanged
-//! when no changed page's property rows or name changed, and is otherwise
-//! rebuilt from the whole graph on its next use.
+//! when no changed page's property rows moved. Otherwise the next use PATCHES it
+//! per key: each page records a digest of the rows it holds per key, an
+//! inverted key -> pages table names the pages a moved key lives on, and only
+//! those keys' rows are rebuilt by the one producer (`build_registry`) and
+//! folded into the previous registry (`patch_registry`). Unit cost of a
+//! property edit: O(the edited page + the pages and rows of the keys it
+//! changed), never O(pages in the graph); a text-only edit reads no property
+//! rows at all. A registry never built is built whole, once, on first use.
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -20,7 +26,10 @@ use tine_core::config::Config;
 use tine_core::doc::{property_key_norm, DocBlock, Document};
 use tine_core::model::{Format, PageEntry};
 use tine_core::query::atom::{AtomFormat, ParseConfig};
-use tine_core::query::registry::{build_registry, OwnerRow, OwnerType, PageMeta, Registry};
+use tine_core::query::registry::{
+    build_registry, is_internal_key, patch_registry, OwnerRow, OwnerType, PageMeta, Registry,
+    DECLARED_TYPE_KEY,
+};
 
 /// A seed carries at most this many changed paths; beyond it the next index
 /// is built from scratch, which costs no more than patching that many pages.
@@ -60,9 +69,15 @@ pub(crate) struct PageFacts {
     /// (master's lsdoc preamble projection drops them).
     properties: Box<[(String, String)]>,
     tags: Box<[String]>,
-    /// Hash of every property row this page contributes to the registry, plus
-    /// the page name (a `tine.type` declaration is keyed by it).
-    rows_digest: u64,
+    /// For every registry-relevant property key (every non-internal key, plus
+    /// the `tine.type` declaration key), a digest of the rows this page holds
+    /// for it: owner, ordinal, spelling and value. Sorted by key. A key whose
+    /// digest differs between two generations of the page is a key the
+    /// registry must re-derive.
+    keys: Box<[(String, u64)]>,
+    /// The page key a `tine.type::` on this page declares a type for (the
+    /// page's own name); `None` when the page carries no declaration.
+    declares: Option<String>,
     /// Every normalized page reference of every block on the page, sorted and
     /// de-duplicated: the page-level half of `:block/path-refs`, which is what
     /// lets a page-ref query skip a page without walking it.
@@ -70,38 +85,58 @@ pub(crate) struct PageFacts {
 }
 
 impl PageFacts {
-    pub(crate) fn of(entry: &PageEntry, doc: &Document) -> PageFacts {
+    pub(crate) fn of(entry: &PageEntry, doc: &Document, config: &ParseConfig) -> PageFacts {
         #[cfg(feature = "test-faults")]
         crate::cost_counters::query_facts_derived();
         let (properties, tags) = super::page_facets(doc);
-        let mut hasher = DefaultHasher::new();
-        entry.name.hash(&mut hasher);
-        properties.hash(&mut hasher);
-        fn blocks(roots: &[DocBlock], hasher: &mut DefaultHasher, refs: &mut Vec<String>) {
+        let mut per_key: BTreeMap<String, DefaultHasher> = BTreeMap::new();
+        let mut declares = false;
+        let mut note = |owner: &str, ordinal: usize, key: &str, value: &str, page_level: bool| {
+            let normalized = property_key_norm(key);
+            let declaration = page_level && normalized == DECLARED_TYPE_KEY;
+            if normalized.is_empty() || (!declaration && is_internal_key(&normalized, config)) {
+                return;
+            }
+            declares |= declaration;
+            (page_level, owner, ordinal, key, value).hash(per_key.entry(normalized).or_default());
+        };
+        for (ordinal, (key, value)) in properties.iter().enumerate() {
+            note("", ordinal, key, value, true);
+        }
+        fn blocks(
+            roots: &[DocBlock],
+            note: &mut impl FnMut(&str, usize, &str, &str, bool),
+            refs: &mut Vec<String>,
+        ) {
             for block in roots {
                 let projection = block.projection();
-                if !projection.properties.is_empty() {
-                    block.uuid.hash(hasher);
-                    projection.properties.hash(hasher);
+                for (ordinal, (key, value)) in projection.properties.iter().enumerate() {
+                    note(&block.uuid, ordinal, key, value, false);
                 }
                 refs.extend(projection.refs_norm.iter().cloned());
-                blocks(&block.children, hasher, refs);
+                blocks(&block.children, note, refs);
             }
         }
         let mut refs = Vec::new();
-        blocks(&doc.roots, &mut hasher, &mut refs);
+        blocks(&doc.roots, &mut note, &mut refs);
         refs.sort_unstable();
         refs.dedup();
         PageFacts {
             properties: properties.into_boxed_slice(),
             tags: tags.into_boxed_slice(),
-            rows_digest: hasher.finish(),
+            keys: per_key
+                .into_iter()
+                .map(|(key, hasher)| (key, hasher.finish()))
+                .collect(),
+            declares: declares.then(|| tine_core::refs::page_key(&entry.name)),
             refs: refs.into_boxed_slice(),
         }
     }
 
-    pub(crate) fn rows_digest(&self) -> u64 {
-        self.rows_digest
+    /// Whether the registry rows this page holds differ from `other`'s: a
+    /// property row of any registry-relevant key, or the declaration it makes.
+    pub(crate) fn registry_rows_differ(&self, other: &PageFacts) -> bool {
+        self.keys != other.keys || self.declares != other.declares
     }
 
     /// Whether any block of this page (or the page itself, which is in every
@@ -128,12 +163,171 @@ pub(crate) fn atom_format(entry: &PageEntry) -> AtomFormat {
     Format::from_path(&entry.path).into()
 }
 
+/// An inverted table (member key -> the paths holding it), shared with earlier
+/// generations like [`FactsMap`]: a bounded delta over an `Arc`'d base, so a
+/// patch copies the delta and the sets of the keys whose membership moved,
+/// never the table.
+#[derive(Clone, Default)]
+struct Postings {
+    base: Arc<HashMap<String, Arc<BTreeSet<String>>>>,
+    delta: HashMap<String, Arc<BTreeSet<String>>>,
+}
+
+impl Postings {
+    fn get(&self, key: &str) -> Option<&Arc<BTreeSet<String>>> {
+        let set = self.delta.get(key).or_else(|| self.base.get(key))?;
+        (!set.is_empty()).then_some(set)
+    }
+
+    /// Every key that has at least one member. O(keys), used only when a
+    /// declaration moved (a key is matched to its page by `page_key`).
+    fn keys(&self) -> Vec<&str> {
+        fn live<'a>((key, set): (&'a String, &Arc<BTreeSet<String>>)) -> Option<&'a str> {
+            (!set.is_empty()).then_some(key.as_str())
+        }
+        self.delta
+            .iter()
+            .filter_map(live)
+            .chain(
+                self.base
+                    .iter()
+                    .filter(|(key, _)| !self.delta.contains_key(*key))
+                    .filter_map(live),
+            )
+            .collect()
+    }
+
+    /// This table with `(key, path, added)` applied.
+    fn applied(&self, changes: &[(String, String, bool)]) -> Postings {
+        let mut delta = self.delta.clone();
+        for (key, path, added) in changes {
+            let current = delta.get(key).or_else(|| self.base.get(key));
+            let mut set = current.map(|set| (**set).clone()).unwrap_or_default();
+            if *added {
+                set.insert(path.clone());
+            } else {
+                set.remove(path);
+            }
+            delta.insert(key.clone(), Arc::new(set));
+        }
+        if delta.len() <= FACTS_DELTA_MAX {
+            return Postings {
+                base: Arc::clone(&self.base),
+                delta,
+            };
+        }
+        let mut base = (*self.base).clone();
+        for (key, set) in delta {
+            if set.is_empty() {
+                base.remove(&key);
+            } else {
+                base.insert(key, set);
+            }
+        }
+        Postings {
+            base: Arc::new(base),
+            delta: HashMap::new(),
+        }
+    }
+}
+
+/// What a generation's pages moved in the registry's inputs, relative to the
+/// generation before: the keys to re-derive, the declared page keys whose
+/// `tine.type::` moved, and the membership changes for the two inverted tables.
+#[derive(Default)]
+struct RegistryDelta {
+    keys: BTreeSet<String>,
+    declared: BTreeSet<String>,
+    key_members: Vec<(String, String, bool)>,
+    declarers: Vec<(String, String, bool)>,
+}
+
+impl RegistryDelta {
+    fn note(&mut self, path: &str, before: Option<&PageFacts>, after: Option<&PageFacts>) {
+        let (b, a) = (
+            before.map_or(&[][..], |f| &f.keys[..]),
+            after.map_or(&[][..], |f| &f.keys[..]),
+        );
+        let (mut i, mut j) = (0, 0);
+        while i < b.len() || j < a.len() {
+            let order = match (b.get(i), a.get(j)) {
+                (Some(x), Some(y)) => x.0.cmp(&y.0),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                _ => std::cmp::Ordering::Greater,
+            };
+            let (key, was, is) = match order {
+                std::cmp::Ordering::Less => {
+                    i += 1;
+                    (&b[i - 1].0, Some(b[i - 1].1), None)
+                }
+                std::cmp::Ordering::Greater => {
+                    j += 1;
+                    (&a[j - 1].0, None, Some(a[j - 1].1))
+                }
+                std::cmp::Ordering::Equal => {
+                    i += 1;
+                    j += 1;
+                    (&b[i - 1].0, Some(b[i - 1].1), Some(a[j - 1].1))
+                }
+            };
+            if was == is || key == DECLARED_TYPE_KEY {
+                continue;
+            }
+            self.keys.insert(key.clone());
+            if was.is_none() || is.is_none() {
+                self.key_members
+                    .push((key.clone(), path.to_owned(), is.is_some()));
+            }
+        }
+        let (was, is) = (
+            before.and_then(|f| f.declares.clone()),
+            after.and_then(|f| f.declares.clone()),
+        );
+        let declaration_moved = was != is
+            || is.is_some()
+                && a.iter().find(|k| k.0 == DECLARED_TYPE_KEY)
+                    != b.iter().find(|k| k.0 == DECLARED_TYPE_KEY);
+        if declaration_moved {
+            if was != is {
+                if let Some(key) = &was {
+                    self.declarers.push((key.clone(), path.to_owned(), false));
+                }
+                if let Some(key) = &is {
+                    self.declarers.push((key.clone(), path.to_owned(), true));
+                }
+            }
+            self.declared.extend(was.into_iter().chain(is));
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.keys.is_empty() && self.declared.is_empty()
+    }
+}
+
+/// A registry inherited from an earlier generation plus the keys whose rows
+/// the intervening edits moved: the registry of this generation is that one
+/// with those keys re-derived, on first use (see the module doc).
+struct Pending {
+    base: Arc<Registry>,
+    keys: BTreeSet<String>,
+    declared: BTreeSet<String>,
+}
+
 /// The query facts of one snapshot generation.
 pub(crate) struct QueryIndex {
     facts: FactsMap,
+    /// Normalized property key -> pages holding a row of it (never the
+    /// declaration key).
+    key_pages: Postings,
+    /// Page key -> pages whose `tine.type::` declares a type for it.
+    declarers: Postings,
     parse_config: ParseConfig,
     generation: u64,
+    /// This snapshot's path -> slot in its page vector.
+    positions: Arc<HashMap<String, usize>>,
     registry: OnceLock<Arc<Registry>>,
+    pending: Option<Pending>,
 }
 
 impl QueryIndex {
@@ -141,25 +335,43 @@ impl QueryIndex {
         pages: &[(PageEntry, Arc<Document>)],
         config: &Config,
         generation: u64,
+        positions: Arc<HashMap<String, usize>>,
     ) -> QueryIndex {
+        let parse_config = ParseConfig::from_config(config);
+        let mut facts = HashMap::with_capacity(pages.len());
+        let mut delta = RegistryDelta::default();
+        for (entry, doc) in pages {
+            let path = entry.rel_path_str();
+            let page_facts = Arc::new(PageFacts::of(entry, doc, &parse_config));
+            delta.note(path, None, Some(&page_facts));
+            facts.insert(path.to_owned(), page_facts);
+        }
+        let group = |changes: &[(String, String, bool)]| {
+            let mut by_key: HashMap<String, Arc<BTreeSet<String>>> = HashMap::new();
+            let mut sets: HashMap<&str, BTreeSet<String>> = HashMap::new();
+            for (key, path, _) in changes {
+                sets.entry(key).or_default().insert(path.clone());
+            }
+            for (key, set) in sets {
+                by_key.insert(key.to_owned(), Arc::new(set));
+            }
+            Postings {
+                base: Arc::new(by_key),
+                delta: HashMap::new(),
+            }
+        };
         QueryIndex {
             facts: FactsMap {
-                base: Arc::new(
-                    pages
-                        .iter()
-                        .map(|(entry, doc)| {
-                            (
-                                entry.rel_path_str().to_owned(),
-                                Arc::new(PageFacts::of(entry, doc)),
-                            )
-                        })
-                        .collect(),
-                ),
+                base: Arc::new(facts),
                 delta: HashMap::new(),
             },
-            parse_config: ParseConfig::from_config(config),
+            key_pages: group(&delta.key_members),
+            declarers: group(&delta.declarers),
+            parse_config,
             generation,
+            positions,
             registry: OnceLock::new(),
+            pending: None,
         }
     }
 
@@ -167,30 +379,25 @@ impl QueryIndex {
     /// path's page in the new generation (`None`: removed). Work and bytes are
     /// O(changed pages + delta), not O(graph): the base map is shared, and a
     /// compaction copies it only once per [`FACTS_DELTA_MAX`] changed pages.
-    /// The registry is carried when no changed page's registry input moved.
+    /// The registry is carried when no changed page's registry input moved,
+    /// and otherwise patched per moved key on first use.
     pub(crate) fn patched<'p>(
         &self,
         page: impl Fn(&str) -> Option<&'p (PageEntry, Arc<Document>)>,
         changed: &[String],
         generation: u64,
+        positions: Arc<HashMap<String, usize>>,
     ) -> QueryIndex {
         let mut delta = self.facts.delta.clone();
         #[cfg(feature = "test-faults")]
         crate::cost_counters::query_facts_copies(delta.len() as u64);
-        let mut rows_moved = false;
+        let mut moved = RegistryDelta::default();
         for path in changed {
-            let before = self.facts.get(path).map(|facts| facts.rows_digest);
-            match page(path) {
-                Some((entry, doc)) => {
-                    let current = Arc::new(PageFacts::of(entry, doc));
-                    rows_moved |= before != Some(current.rows_digest);
-                    delta.insert(path.clone(), Some(current));
-                }
-                None => {
-                    rows_moved |= before.is_some();
-                    delta.insert(path.clone(), None);
-                }
-            }
+            let before = self.facts.get(path).cloned();
+            let current = page(path)
+                .map(|(entry, doc)| Arc::new(PageFacts::of(entry, doc, &self.parse_config)));
+            moved.note(path, before.as_deref(), current.as_deref());
+            delta.insert(path.clone(), current);
         }
         let facts = if delta.len() > FACTS_DELTA_MAX {
             let mut base = (*self.facts.base).clone();
@@ -213,16 +420,37 @@ impl QueryIndex {
             }
         };
         let registry = OnceLock::new();
-        if !rows_moved {
-            if let Some(carried) = self.registry.get() {
-                let _ = registry.set(Arc::clone(carried));
+        let pending = match (self.registry.get(), &self.pending) {
+            (Some(built), _) if moved.is_empty() => {
+                let _ = registry.set(Arc::clone(built));
+                None
             }
-        }
+            (Some(built), _) => Some(Pending {
+                base: Arc::clone(built),
+                keys: moved.keys,
+                declared: moved.declared,
+            }),
+            (None, Some(pending)) => Some(Pending {
+                base: Arc::clone(&pending.base),
+                keys: pending.keys.iter().chain(&moved.keys).cloned().collect(),
+                declared: pending
+                    .declared
+                    .iter()
+                    .chain(&moved.declared)
+                    .cloned()
+                    .collect(),
+            }),
+            (None, None) => None,
+        };
         QueryIndex {
             facts,
+            key_pages: self.key_pages.applied(&moved.key_members),
+            declarers: self.declarers.applied(&moved.declarers),
             parse_config: self.parse_config.clone(),
             generation,
+            positions,
             registry,
+            pending,
         }
     }
 
@@ -233,78 +461,50 @@ impl QueryIndex {
         self.facts
             .get(entry.rel_path_str())
             .cloned()
-            .unwrap_or_else(|| Arc::new(PageFacts::of(entry, doc)))
+            .unwrap_or_else(|| Arc::new(PageFacts::of(entry, doc, &self.parse_config)))
     }
 
     pub(crate) fn parse_config(&self) -> &ParseConfig {
         &self.parse_config
     }
 
-    /// The property registry of this generation, built on first use.
+    /// The property registry of this generation, built (or patched from the
+    /// inherited one) on first use.
     pub(crate) fn registry(&self, pages: &[(PageEntry, Arc<Document>)]) -> Arc<Registry> {
         Arc::clone(self.registry.get_or_init(|| {
             #[cfg(test)]
             REGISTRY_BUILDS.with(|count| count.set(count.get() + 1));
-            Arc::new(self.build_registry(pages))
+            Arc::new(match &self.pending {
+                Some(pending) => self.patched_registry(pending, pages),
+                None => self.build_registry(pages),
+            })
         }))
     }
 
+    /// The page at `path` in this snapshot's vector.
+    fn page_at<'a>(
+        &self,
+        pages: &'a [(PageEntry, Arc<Document>)],
+        path: &str,
+    ) -> Option<&'a (PageEntry, Arc<Document>)> {
+        self.positions
+            .get(path)
+            .and_then(|&at| pages.get(at))
+            .filter(|(entry, _)| entry.rel_path_str() == path)
+    }
+
+    /// The whole registry: the one producer over every page's rows.
     fn build_registry(&self, pages: &[(PageEntry, Arc<Document>)]) -> Registry {
         let metas: HashMap<&str, PageMeta> = pages
             .iter()
-            .map(|(entry, _)| {
-                (
-                    entry.rel_path_str(),
-                    PageMeta {
-                        format: atom_format(entry),
-                        name: entry.name.clone(),
-                    },
-                )
-            })
+            .map(|(entry, _)| (entry.rel_path_str(), page_meta(entry)))
             .collect();
-        let rows = pages.iter().flat_map(|(entry, doc)| {
-            let page_id = entry.rel_path_str().to_owned();
-            let page_rows = self
-                .facts(entry, doc)
-                .properties()
-                .iter()
-                .enumerate()
-                .map({
-                    let page_id = page_id.clone();
-                    move |(ordinal, (key, value))| {
-                        owner_row(
-                            OwnerType::Page,
-                            format!("p:{page_id}"),
-                            &page_id,
-                            ordinal,
-                            key,
-                            value,
-                        )
-                    }
-                })
-                .collect::<Vec<_>>();
-            let mut block_rows = Vec::new();
-            fn walk(roots: &[DocBlock], page_id: &str, out: &mut Vec<OwnerRow>) {
-                for block in roots {
-                    for (ordinal, (key, value)) in block.projection().properties.iter().enumerate()
-                    {
-                        out.push(owner_row(
-                            OwnerType::Block,
-                            format!("b:{page_id}#{}", block.uuid),
-                            page_id,
-                            ordinal,
-                            key,
-                            value,
-                        ));
-                    }
-                    walk(&block.children, page_id, out);
-                }
-            }
-            walk(&doc.roots, &page_id, &mut block_rows);
-            page_rows.into_iter().chain(block_rows)
-        });
+        let mut rows = Vec::new();
+        for (entry, doc) in pages {
+            owner_rows(entry, doc, &self.facts(entry, doc), &|_, _| true, &mut rows);
+        }
         let page_of = |page_id: &str| metas.get(page_id).cloned();
-        match build_registry(rows, &page_of, &self.parse_config) {
+        match build_registry(rows.into_iter(), &page_of, &self.parse_config) {
             Ok(registry) => registry.with_generation(self.generation),
             // Every row's page came from the same page slice, so this cannot
             // happen; an empty registry types every key as text rather than
@@ -312,25 +512,131 @@ impl QueryIndex {
             Err(_) => Registry::empty(&self.parse_config).with_generation(self.generation),
         }
     }
+
+    /// The inherited registry with each moved key re-derived by the SAME
+    /// producer over that key's complete row set (plus the `tine.type::` row of
+    /// the page that declares it), read from the pages the inverted tables
+    /// name: O(rows of the moved keys), not O(graph).
+    fn patched_registry(
+        &self,
+        pending: &Pending,
+        pages: &[(PageEntry, Arc<Document>)],
+    ) -> Registry {
+        let mut keys = pending.keys.clone();
+        if !pending.declared.is_empty() {
+            // A declaration binds a key to the page NAMED like it, under
+            // `page_key`; find the keys such a page key covers, in the new
+            // generation and in the inherited registry (a key may have lost
+            // its last row).
+            let covered = |key: &str| pending.declared.contains(&tine_core::refs::page_key(key));
+            keys.extend(
+                self.key_pages
+                    .keys()
+                    .into_iter()
+                    .chain(
+                        pending
+                            .base
+                            .rows()
+                            .iter()
+                            .map(|row| row.normalized_name.as_str()),
+                    )
+                    .filter(|key| covered(key))
+                    .map(str::to_owned),
+            );
+        }
+        let mut patches = Vec::with_capacity(keys.len());
+        for key in keys {
+            let holders = self.key_pages.get(&key);
+            let declarers = self.declarers.get(&tine_core::refs::page_key(&key));
+            let paths: BTreeSet<&String> = holders
+                .into_iter()
+                .chain(declarers)
+                .flat_map(|set| set.iter())
+                .collect();
+            let mut rows = Vec::new();
+            let mut metas: HashMap<&str, PageMeta> = HashMap::new();
+            for path in paths {
+                let Some((entry, doc)) = self.page_at(pages, path) else {
+                    continue;
+                };
+                metas.insert(entry.rel_path_str(), page_meta(entry));
+                owner_rows(
+                    entry,
+                    doc,
+                    &self.facts(entry, doc),
+                    &|normalized, page_level| {
+                        normalized == key || page_level && normalized == DECLARED_TYPE_KEY
+                    },
+                    &mut rows,
+                );
+            }
+            let page_of = |page_id: &str| metas.get(page_id).cloned();
+            let row = build_registry(rows.into_iter(), &page_of, &self.parse_config)
+                .ok()
+                .and_then(|registry| registry.row(&key).cloned());
+            patches.push((key, row));
+        }
+        patch_registry(&pending.base, patches).with_generation(self.generation)
+    }
 }
 
-fn owner_row(
-    owner_type: OwnerType,
-    owner_id: String,
-    page_id: &str,
-    ordinal: usize,
-    key: &str,
-    value: &str,
-) -> OwnerRow {
-    OwnerRow {
-        owner_type,
-        owner_id,
-        page_id: page_id.to_owned(),
-        source_name: key.to_owned(),
-        normalized_name: property_key_norm(key),
-        ordinal: ordinal as u32,
-        value: value.to_owned(),
+fn page_meta(entry: &PageEntry) -> PageMeta {
+    PageMeta {
+        format: atom_format(entry),
+        name: entry.name.clone(),
     }
+}
+
+/// Every property row of `entry` whose (normalized key, page-level?) `keep`
+/// accepts, in the producer's row shape: the ONE place a page becomes owner
+/// rows, for the whole registry and for a patch alike.
+fn owner_rows(
+    entry: &PageEntry,
+    doc: &Document,
+    facts: &PageFacts,
+    keep: &dyn Fn(&str, bool) -> bool,
+    out: &mut Vec<OwnerRow>,
+) {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::query_registry_pages_read();
+    let page_id = entry.rel_path_str();
+    let mut push =
+        |owner_type: OwnerType, owner_id: String, ordinal: usize, key: &str, value: &str| {
+            let normalized = property_key_norm(key);
+            if keep(&normalized, owner_type == OwnerType::Page) {
+                out.push(OwnerRow {
+                    owner_type,
+                    owner_id,
+                    page_id: page_id.to_owned(),
+                    source_name: key.to_owned(),
+                    normalized_name: normalized,
+                    ordinal: ordinal as u32,
+                    value: value.to_owned(),
+                });
+            }
+        };
+    for (ordinal, (key, value)) in facts.properties().iter().enumerate() {
+        push(OwnerType::Page, format!("p:{page_id}"), ordinal, key, value);
+    }
+    fn walk(
+        roots: &[DocBlock],
+        page_id: &str,
+        push: &mut impl FnMut(OwnerType, String, usize, &str, &str),
+    ) {
+        for block in roots {
+            for (ordinal, (key, value)) in block.projection().properties.iter().enumerate() {
+                push(
+                    OwnerType::Block,
+                    format!("b:{page_id}#{}", block.uuid),
+                    ordinal,
+                    key,
+                    value,
+                );
+            }
+            walk(&block.children, page_id, push);
+        }
+    }
+    walk(&doc.roots, page_id, &mut push);
 }
 
 /// One snapshot's query index: built on first use, from the predecessor's
@@ -376,7 +682,7 @@ impl QueryIndexSlot {
     pub(crate) fn get(
         &self,
         pages: &[(PageEntry, Arc<Document>)],
-        positions: &HashMap<String, usize>,
+        positions: &Arc<HashMap<String, usize>>,
         config: &Config,
         generation: u64,
     ) -> Arc<QueryIndex> {
@@ -390,9 +696,9 @@ impl QueryIndexSlot {
                             .and_then(|&at| pages.get(at))
                             .filter(|(entry, _)| entry.rel_path_str() == path)
                     };
-                    base.patched(page, &changed, generation)
+                    base.patched(page, &changed, generation, Arc::clone(positions))
                 }
-                _ => QueryIndex::build(pages, config, generation),
+                _ => QueryIndex::build(pages, config, generation, Arc::clone(positions)),
             })
         }))
     }
@@ -406,4 +712,170 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn registry_builds() -> usize {
     REGISTRY_BUILDS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Small deterministic generator: no dependency, reproducible failures.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self, bound: usize) -> usize {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((self.0 >> 33) as usize) % bound
+        }
+    }
+
+    const KEYS: [&str; 6] = [
+        "status", "Rating", "due-date", "some_key", "Some-Key", "tags2",
+    ];
+    const VALUES: [&str; 7] = [
+        "open",
+        "3",
+        "4.5",
+        "2026-01-05",
+        "[[Alpha]]",
+        "a, b",
+        "true",
+    ];
+    const NAMES: [&str; 6] = ["Alpha", "rating", "Some Key", "status", "Beta", "due date"];
+
+    fn entry(name: &str) -> PageEntry {
+        PageEntry {
+            name: name.into(),
+            kind: tine_core::model::PageKind::Page,
+            date_key: None,
+            rel_path: Some(format!("pages/{name}.md").into()),
+            path: format!("pages/{name}.md").into(),
+        }
+    }
+
+    /// A page's text: an optional page-property block (possibly a declaration
+    /// of the type of the key named like the page), and blocks with properties.
+    fn text(rng: &mut Rng) -> String {
+        let mut out = String::new();
+        let prop = |rng: &mut Rng| {
+            format!(
+                "{}:: {}",
+                KEYS[rng.next(KEYS.len())],
+                VALUES[rng.next(VALUES.len())]
+            )
+        };
+        if rng.next(3) == 0 {
+            out.push_str(&format!("{}\n", prop(rng)));
+            if rng.next(2) == 0 {
+                out.push_str(&format!(
+                    "tine.type:: {}\n",
+                    ["number", "text", "date", "checkbox"][rng.next(4)]
+                ));
+            }
+            out.push('\n');
+        }
+        for block in 0..rng.next(4) {
+            out.push_str(&format!("- block {block}\n"));
+            for _ in 0..rng.next(3) {
+                out.push_str(&format!("  {}\n", prop(rng)));
+            }
+        }
+        out
+    }
+
+    fn page(name: &str, rng: &mut Rng) -> (PageEntry, Arc<Document>) {
+        let entry = entry(name);
+        let mut doc = tine_core::doc::parse(&text(rng));
+        // The store gives every block its runtime identity; owners are keyed by it.
+        tine_core::projection::assign_doc_runtime_ids(&mut doc.roots, entry.rel_path_str());
+        (entry, Arc::new(doc))
+    }
+
+    fn positions(pages: &[(PageEntry, Arc<Document>)]) -> Arc<HashMap<String, usize>> {
+        Arc::new(
+            pages
+                .iter()
+                .enumerate()
+                .map(|(at, (entry, _))| (entry.rel_path_str().to_owned(), at))
+                .collect(),
+        )
+    }
+
+    /// A chain of patched indexes (registry built lazily, sometimes never
+    /// between edits) always yields the rows a fresh build over the same pages
+    /// yields, across property, declaration, add and delete edits.
+    #[test]
+    fn a_patched_registry_equals_a_fresh_build_after_any_edit_sequence() {
+        let config = Config::default();
+        let parse_config = ParseConfig::from_config(&config);
+        let mut declared_rows = 0;
+        for seed in 0..40u64 {
+            let mut rng = Rng(seed + 1);
+            let mut pages: Vec<(PageEntry, Arc<Document>)> = Vec::new();
+            for name in NAMES
+                .iter()
+                .map(|n| n.to_string())
+                .chain((0..6).map(|n| format!("P{n}")))
+            {
+                pages.push(page(&name, &mut rng));
+            }
+            let mut index = Arc::new(QueryIndex::build(&pages, &config, 1, positions(&pages)));
+            index.registry(&pages);
+            for step in 0..25u64 {
+                let mut changed = Vec::new();
+                for _ in 0..1 + rng.next(3) {
+                    match rng.next(5) {
+                        0 if pages.len() > 4 => {
+                            let at = rng.next(pages.len());
+                            changed.push(pages.remove(at).0.rel_path_str().to_owned());
+                        }
+                        1 => {
+                            let name = if rng.next(2) == 0 {
+                                NAMES[rng.next(NAMES.len())].to_owned()
+                            } else {
+                                format!("N{}", rng.next(4))
+                            };
+                            if !pages.iter().any(|(e, _)| e.name == name) {
+                                pages.push(page(&name, &mut rng));
+                                changed.push(entry(&name).rel_path_str().to_owned());
+                            }
+                        }
+                        _ => {
+                            let at = rng.next(pages.len());
+                            let name = pages[at].0.name.clone();
+                            pages[at] = page(&name, &mut rng);
+                            changed.push(pages[at].0.rel_path_str().to_owned());
+                        }
+                    }
+                }
+                let positions = positions(&pages);
+                let lookup = |path: &str| {
+                    positions
+                        .get(path)
+                        .and_then(|&at| pages.get(at))
+                        .filter(|(entry, _)| entry.rel_path_str() == path)
+                };
+                index = Arc::new(index.patched(lookup, &changed, 2 + step, Arc::clone(&positions)));
+                // Read the registry only after some edits: pending keys must
+                // accumulate across unread generations.
+                if rng.next(3) != 0 {
+                    let fresh =
+                        QueryIndex::build(&pages, &config, 2 + step, Arc::clone(&positions));
+                    let (got, want) = (index.registry(&pages), fresh.registry(&pages));
+                    assert_eq!(
+                        got.rows(),
+                        want.rows(),
+                        "seed {seed} step {step}: patched registry differs from a fresh build"
+                    );
+                    assert_eq!(index.parse_config(), &parse_config);
+                    declared_rows += want.rows().iter().filter(|r| r.declared.is_some()).count();
+                }
+            }
+        }
+        assert!(
+            declared_rows > 0,
+            "the generator never produced a declared key"
+        );
+    }
 }

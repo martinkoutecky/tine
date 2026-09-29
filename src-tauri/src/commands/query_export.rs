@@ -104,12 +104,17 @@ pub(crate) async fn publish_live(
 #[tauri::command]
 pub(crate) async fn sheet_export_inputs(
     pages: Option<Vec<String>>,
+    scope: Option<tine_graph_features::publish::SheetScope>,
     state: GraphContext<'_>,
 ) -> Result<Vec<SheetInput>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::publish::sheet_export_inputs(&slot.store, pages.as_deref())
-            .map_err(|e| e.to_string())
+        tine_graph_features::publish::sheet_export_inputs(
+            &slot.store,
+            pages.as_deref(),
+            scope.as_ref(),
+        )
+        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
