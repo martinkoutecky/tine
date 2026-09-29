@@ -284,6 +284,14 @@ describe("renderInlines", () => {
     expect(inl([{ k: "latex", mode: "Inline", body: "x^2" }])).toContain('class="math"');
   });
 
+  it("renders dollar math nested directly inside Markdown emphasis", () => {
+    const h = blk(parseBlock("*$x^2$* and _$$y_i$$_", false));
+    expect(h).toContain("<em ");
+    expect(h.match(/class="math(?: math-display)?"/g) ?? []).toHaveLength(2);
+    expect(h).not.toContain("$x^2$");
+    expect(h).not.toContain("$$y_i$$");
+  });
+
   it("org active timestamp formats date in <>", () => {
     const h = inl([{ k: "timestamp", ts: "Date", date: { date: { year: 2026, month: 6, day: 28 }, wday: "Sun", active: true } }]);
     expect(h).toContain("org-timestamp");

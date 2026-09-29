@@ -11,6 +11,8 @@ use wasm_bindgen::prelude::*;
 mod logbook;
 #[path = "../../lsdoc-block-parse.rs"]
 mod lsdoc_block_parse;
+#[path = "../../tine-core/src/property_line.rs"]
+mod property_line;
 
 /// Parse one de-bulleted block body into lsdoc's render AST, serialized to JSON.
 ///
@@ -20,7 +22,7 @@ mod lsdoc_block_parse;
 #[wasm_bindgen]
 pub fn parse_block_json(raw: &str, is_org: bool) -> String {
     let ast = lsdoc_block_parse::parse_block(raw, is_org);
-    serde_json::to_string(&ast).unwrap_or_else(|_| "[]".to_string())
+    lsdoc::blocks_to_json(&ast).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// Parse a WHOLE FILE (raw graph file text, NOT re-bulleted) into lsdoc's observable
@@ -31,7 +33,7 @@ pub fn parse_block_json(raw: &str, is_org: bool) -> String {
 #[wasm_bindgen]
 pub fn parse_document_json(text: &str, is_org: bool) -> String {
     let fmt = if is_org { "org" } else { "md" };
-    serde_json::to_string(&lsdoc::parse_format(text, fmt)).unwrap_or_else(|_| "{}".to_string())
+    lsdoc::projection_to_json(&lsdoc::parse_format(text, fmt)).unwrap_or_else(|_| "{}".to_string())
 }
 
 /// Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render

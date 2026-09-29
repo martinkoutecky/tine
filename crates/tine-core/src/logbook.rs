@@ -327,7 +327,7 @@ fn leading_properties_end(lines: &[&str], format: LogbookFormat) -> usize {
 }
 
 fn is_md_property_line(line: &str) -> bool {
-    crate::doc::parse_property_line(line).is_some()
+    crate::property_line::parse_property_line(line).is_some()
 }
 
 fn logbook_bounds<T: AsRef<str>>(lines: &[T]) -> Option<(usize, usize)> {
@@ -528,7 +528,7 @@ mod tests {
         for line in ["klíč:: v", "a.b:: v", "\tkey:: v", "empty::"] {
             assert_eq!(
                 is_md_property_line(line),
-                crate::doc::parse_property_line(line).is_some(),
+                crate::property_line::parse_property_line(line).is_some(),
                 "{line:?}"
             );
         }
