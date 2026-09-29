@@ -157,7 +157,7 @@ pub(crate) fn blocks(lines: &[&str], headers: &[Header], is_org: bool) -> Vec<Do
 
 /// Remove up to `n` leading tabs, spaces or form feeds (mldoc's layout
 /// whitespace; master `strip_leading_layout_whitespace`).
-fn strip_layout_ws(line: &str, n: usize) -> &str {
+pub(crate) fn strip_layout_ws(line: &str, n: usize) -> &str {
     let skip = line
         .bytes()
         .take(n)
