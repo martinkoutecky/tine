@@ -28,6 +28,10 @@ icon:: 🔎
 		- `(sort-by priority desc)`, `(sample 10)` — order the results (by `priority`, `page`, `scheduled`, `deadline` or any property), or keep only the first N after sorting.
 		- A bare word or quoted text finds block content; Tine's `(search "cafe")` predicate uses the search syntax. Both respect `:feature/enable-search-remove-accents? false` in `logseq/config.edn`, so `cafe` then differs from `café`.
 	- A block property on the query block itself can set the view: `tine.sort:: priority desc` and `tine.sample:: 10` win over the same directive in the query text.
+- ## Display and property types
+	- Open the query sheet and press **Display** to choose Search, List, Table or Board; add ordered sort fields and table columns, choose grouping, add count/sum/average summaries, or set a sample limit. Choosing **Page** in the column picker shows each block's owning page. The controls save on the query block as `tine.*` properties; `tine.fields::` remains the table's schema and is not changed by a column choice.
+	- The condition picker lists properties found in this graph with their observed type and the number of blocks or pages that carry them. A key found on both blocks and pages has separate choices for those scopes. You can type a key that has not appeared yet.
+	- Beside a property condition, **declare type…** writes `tine.type:: number`, `date`, `checkbox`, `ref` or `text` on the page named for that property key. Select **list of** for multiple values, or remove the declaration. The badge distinguishes an observed type from a declared one and shows mismatches against a declaration.
 - ## Advanced (datalog) queries
 	- `{{query {:query [:find (pull ?b [*]) :where …]}}}` and `#+BEGIN_QUERY` blocks run a supported subset of Logseq's datalog: task markers, priority, page references, properties, page, namespace, page tags, scheduled/deadline and journal date ranges.
 	- A note above the results lists which clauses **ran** and which were **ignored**. An ignored clause did not filter the results; a query with no supported clause shows a notice instead of results.
@@ -36,5 +40,3 @@ icon:: 🔎
 	- If Tine cannot read part of a query, the block says so — **Tine didn't understand part of this query, so it returned no results** — followed by what it could not read. An empty list without that message means the query is valid and nothing matches yet.
 	- An empty result offers **why empty?**: a table of the query's top-level conditions with how many rows each matches alone and how many the query would match without it, so the condition that emptied it stands out.
 	- A query that would return more than 20,000 rows (or 32 MiB) is refused with a message instead of being cut short. Narrow it, or add `(sample N)`.
-- ## Not in this build yet
-	- The query's **Display** panel (columns, grouping and totals chosen from the sheet) and the property chooser's observed types and counts are not in this build yet; set those with `tine.*` block properties.

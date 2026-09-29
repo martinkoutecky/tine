@@ -47,6 +47,9 @@ import {
 } from "../editor/queryBuilder";
 import type { Anchor, Cardinality, Diagnostic, Filter, ObservedType, Query, RegistryRow } from "../editor/queryIr";
 import { Listbox, stop, type ListboxOption } from "./QueryListbox";
+import { QueryVocabularyPicker, type VocabularyChoice } from "./QueryVocabularyPicker";
+import { PropertyType } from "./PropertyType";
+import { registryRowFor, effectiveTypeOf } from "../editor/queryPropertyType";
 import { DATE_PRESETS, previewDate } from "../editor/dateExpr";
 import type { QuerySheetDropTarget } from "./querySheetReorder";
 import { registerTransientLayer, type TransientLayer } from "../transientLayers";
@@ -77,30 +80,12 @@ export function dismissOnOutsidePointer(options: {
   });
 }
 
-/** The registry row for a key, exact then relaxed (`Registry` normalization). */
-export function registryRowFor(rows: RegistryRow[] | undefined, key: string): RegistryRow | undefined {
-  if (!rows?.length) return undefined;
-  const relaxed = key.trim().toLowerCase().replace(/[ _]/g, "-");
-  return rows.find((row) => row.normalized_name === key) ?? rows.find((row) => row.normalized_name === relaxed);
-}
+export { registryRowFor, effectiveTypeOf } from "../editor/queryPropertyType";
 
-/** What the engine coerces by: the declaration, else the observed majority. */
-export function effectiveTypeOf(row: RegistryRow): { type: ObservedType; cardinality: Cardinality } {
-  return row.declared
-    ? { type: row.declared[0], cardinality: row.declared[1] }
-    : { type: row.observed_type, cardinality: row.cardinality };
-}
+export type { VocabularyChoice } from "./QueryVocabularyPicker";
 
-/** What a field pick means. `field` is the Display panel's (Q4b) and never a filter. */
-export type VocabularyChoice =
-  | { kind: "builtin"; leaf: BuilderLeafKind }
-  | { kind: "property"; key: string; throughPage: boolean }
-  | { kind: "field"; field: string };
-
-const PAGE_SIDE: BuilderLeafKind[] = ["journal", "onPage", "namespace", "pageTags"];
-
-/** The filter vocabulary: built-ins for the anchor, then the registry's keys.
- *  Q4b's `QueryVocabularyPicker` (typed badges, value previews) replaces this. */
+/** The condition picker delegates vocabulary and keyboard behaviour to the
+ * shared registry picker. Registry status is supplied by the sheet's one read. */
 export function QueryFieldPicker(props: {
   id: string;
   anchor: Anchor;
@@ -113,72 +98,7 @@ export function QueryFieldPicker(props: {
   rootRef?: (element: HTMLDivElement) => void;
   onPick: (choice: VocabularyChoice) => void;
 }): JSX.Element {
-  const [query, setQuery] = createSignal("");
-  const choices = createMemo(() => {
-    const out = new Map<string, VocabularyChoice>();
-    const options: ListboxOption[] = [];
-    const needle = query().trim().toLowerCase();
-    const add = (key: string, label: string, choice: VocabularyChoice, hint?: string) => {
-      if (needle && !label.toLowerCase().includes(needle)) return;
-      const current = props.current;
-      const active = !!current && JSON.stringify(current) === JSON.stringify(choice);
-      out.set(key, choice);
-      options.push({ key, label, hint, active });
-    };
-    for (const type of FILTER_TYPES) {
-      if (type.kind === "property" || type.kind === "pageProperty") continue;
-      if (props.anchor === "page" && !PAGE_SIDE.includes(type.kind)) continue;
-      add(`builtin:${type.kind}`, type.label, { kind: "builtin", leaf: type.kind });
-    }
-    const rows = [...(props.rows() ?? [])].sort((a, b) => b.count_blocks + b.count_pages - (a.count_blocks + a.count_pages));
-    const sections: [string, boolean][] = props.anchor === "page" ? [["Properties", false]] : [["Properties", false], ["Page properties", true]];
-    for (const [title, throughPage] of sections) {
-      const before = options.length;
-      options.push({ key: `header:${title}`, label: title, header: true });
-      for (const row of rows) {
-        add(`${throughPage ? "page" : "prop"}:${row.normalized_name}`, row.normalized_name, { kind: "property", key: row.normalized_name, throughPage });
-      }
-      const typed = query().trim();
-      if (typed && !rows.some((row) => row.normalized_name === typed.toLowerCase())) {
-        add(`${throughPage ? "page" : "prop"}-novel:${typed}`, typed, { kind: "property", key: typed, throughPage }, "use this key by name");
-      }
-      if (options.length === before + 1) options.pop();
-    }
-    return { out, options };
-  });
-  return (
-    <Listbox
-      id={props.id}
-      label="Condition field"
-      filterable
-      placeholder={props.placeholder ?? "Type to filter"}
-      query={query()}
-      onQuery={setQuery}
-      options={choices().options}
-      rootRef={props.rootRef}
-      status={
-        <Show when={props.failure() ?? (props.pending() ? true : null)}>
-          <Show
-            when={props.failure()}
-            fallback={<div class="qs-registry-pending" role="status">Reading this graph's properties…</div>}
-          >
-            {(failure) => (
-              <div class="qs-registry-failure" role="alert">
-                <span class="qs-registry-failure-message">This graph's properties could not be read. {failure().message}</span>
-                <button type="button" class="qs-registry-retry" onClick={(e) => { stop(e); props.onRetry(); }}>
-                  Try again
-                </button>
-              </div>
-            )}
-          </Show>
-        </Show>
-      }
-      onPick={(key) => {
-        const choice = choices().out.get(key);
-        if (choice) props.onPick(choice);
-      }}
-    />
-  );
+  return <QueryVocabularyPicker {...props} />;
 }
 
 /** The property registry for the current graph. An open sheet shares one read
@@ -1237,7 +1157,8 @@ export function PropertyValueCell(props: {
   return (
     <span class="qs-property-value">
       <span class="qs-property-key">{props.test.key}</span>
-      {/* Q4b seam: the key\'s type badge + "declare type…" (PropertyType) mounts here. */}
+      <PropertyType propertyKey={props.test.key} rows={props.registry.rows}
+        onDeclarationWritten={props.registry.request} readOnly={props.disabled} />
       <Show when={arity() > 0}>
         <input
           class="qs-input"

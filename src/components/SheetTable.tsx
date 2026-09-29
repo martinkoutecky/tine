@@ -61,48 +61,22 @@ import { Editor, SurfaceContext } from "./Block";
 import { SheetAggregateCornerToggle, SheetAggregateFooterCell } from "./SheetAggregateFooter";
 import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
 import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
+import { compareSortKeys, measuredGridTracks, nextQuerySort, queryColumnFieldId, queryColumnName, querySortFieldName, reorderedQueryColumns,
+  SCHEMA_PROP_TYPES, type SchemaMenuType, type SortKey, type SortState } from "../sheet/tablePresentation";
+import type { ViewSettings } from "../editor/queryIr";
 
 interface RowRecord extends FormulaEvalRow {}
 
 export const __sheetTableTestHooks: { onIndexRow?: (rowId: string) => void } = {};
 
-type SortState = { col: number; dir: 1 | -1 } | null;
-type SortKey = { kind: "number"; value: number; text: string } | { kind: "text"; text: string };
 type SchemaHome = { kind: "block"; id: string; value: string } | { kind: "page"; name: string; value: string };
 type FormulaHome = { kind: "block"; id: string } | { kind: "page"; name: string };
-type SchemaMenuType = "text" | "number" | "date" | "datetime" | "checkbox" | "list" | "ref";
 type FieldHeaderDrop = { field: FieldId; before: boolean };
 
 const BUILTIN_FIELDS = new Set<FieldId>(["state", "priority", "scheduled", "deadline", "tags", "page"]);
 const FIELD_HEADER_DRAG_THRESHOLD_PX = 4;
-const SCHEMA_PROP_TYPES: SchemaMenuType[] = [
-  "text",
-  "number",
-  "date",
-  "datetime",
-  "checkbox",
-  "list",
-  "ref",
-];
-
-function measuredGridTracks(grid: HTMLElement, count: number): string | null {
-  const cells = [...grid.children].filter((child): child is HTMLElement =>
-    child instanceof HTMLElement && child.classList.contains("sheet-cell")
-  );
-  const tracks: string[] = [];
-  for (const cell of cells.slice(0, count)) {
-    const width = cell.getBoundingClientRect().width;
-    if (width <= 0) return null;
-    tracks.push(`${Math.round(width)}px`);
-  }
-  return tracks.length === count ? tracks.join(" ") : null;
-}
-
-function compareSortKeys(a: SortKey, b: SortKey): number {
-  if (a.kind === "number" && b.kind === "number") return a.value - b.value;
-  return a.text.localeCompare(b.text);
-}
-
+/** A table receives one query display controller for saved columns and header
+ * sorts. Without it, headers keep their existing local-only arrangement. */
 export function SheetTable(props: {
   ownerId: string;
   rowSource: "children" | "query";
@@ -110,6 +84,7 @@ export function SheetTable(props: {
   addRow?: () => void | Promise<void>;
   addRowLabel?: string;
   schemaPage?: string;
+  queryDisplay?: { view: ViewSettings; apply: (next: ViewSettings) => void };
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
   let tableRef: HTMLDivElement | undefined;
@@ -205,6 +180,8 @@ export function SheetTable(props: {
   };
 
   const fields = createMemo<FieldId[]>(() => {
+    const selected = props.rowSource === "query" ? props.queryDisplay?.view.columns : undefined;
+    if (selected?.length) return selected.map(queryColumnFieldId);
     const loadedIds = rows().filter((r) => liveFormulaRowNode(r)).map((r) => r.id);
     const observed = loadedIds.length === rows().length
       ? fieldIdsForBlocks(loadedIds, { includePage: props.rowSource === "query" })
@@ -379,7 +356,22 @@ export function SheetTable(props: {
     }
   });
 
+  const persistedSort = createMemo<SortState>(() => {
+    const entries = props.queryDisplay?.view.sort;
+    if (entries?.length !== 1) return null;
+    const col = columns().findIndex((field) => querySortFieldName(field) === entries[0][0]);
+    return col < 0 ? null : { col, dir: entries[0][1] === "desc" ? -1 : 1 };
+  });
+  createEffect(() => { if (props.queryDisplay?.view.sort) setSort(null); });
   const sortHeader = (col: number) => {
+    const control = props.queryDisplay;
+    const field = columns()[col];
+    const name = field && querySortFieldName(field);
+    if (control && name) {
+      setSort(null);
+      control.apply({ ...control.view, sort: nextQuerySort(control.view.sort, name) });
+      return;
+    }
     setSort((cur) => {
       if (!cur || cur.col !== col) return { col, dir: 1 };
       if (cur.dir === 1) return { col, dir: -1 };
@@ -387,7 +379,7 @@ export function SheetTable(props: {
     });
   };
   const sortArrow = (col: number) => {
-    const s = sort();
+    const s = sort() ?? persistedSort();
     return s?.col === col ? (s.dir > 0 ? " ▲" : " ▼") : "";
   };
 
@@ -451,9 +443,11 @@ export function SheetTable(props: {
     writeSchemaFields(specs);
   };
   const canDragFieldHeader = (field: FieldId) =>
-    field.startsWith("prop:") && schemaWriteAllowed() && (!schemaHome() || schemaFieldSet().has(field));
+    props.queryDisplay ? queryColumnName(field) !== null && !blockPageReadOnly(props.ownerId)
+      : field.startsWith("prop:") && schemaWriteAllowed() && (!schemaHome() || schemaFieldSet().has(field));
   const canDropFieldHeader = (field: FieldId, dragged: FieldId) => {
     if (field === dragged) return false;
+    if (props.queryDisplay) return queryColumnName(field) !== null;
     // Formula fields are not serialized in tine.fields. They still make a useful
     // terminal drop boundary: a property dropped on one is inserted before all
     // formulas, which are always rendered at the end.
@@ -461,6 +455,12 @@ export function SheetTable(props: {
     return schemaHome() ? schemaFieldSet().has(field) : !!specForField(field);
   };
   const reorderFieldHeader = (field: FieldId, drop: FieldHeaderDrop) => {
+    if (props.queryDisplay) {
+      const columns = reorderedQueryColumns(fields(), field, drop.field, drop.before);
+      if (columns) props.queryDisplay.apply({ ...props.queryDisplay.view, columns });
+      else pushToast("This order cannot be saved while a computed column is visible.", "info");
+      return;
+    }
     if (!schemaHome()) declareFreshSchema();
     const next = [...schemaFields()];
     const from = next.findIndex((spec) => spec.field === field);
