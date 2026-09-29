@@ -5,6 +5,7 @@ import { closeQueryExport } from "../ui";
 import { pushToast } from "../toasts";
 import { graphOwner, readOwned, writeOwned } from "../owned";
 import type { QueryPublicationRequest } from "../types";
+import { readOr } from "../resourceRead";
 
 /** Review complete owner pages, then pick an external folder for a create-only
  * static site and read-only browser app. The backend rechecks the fingerprint
@@ -24,7 +25,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     if (!value.trim()) throw new Error("Give the export a name.");
     return backend().publishQueryPlan({ ...props.request, name: value });
   });
-  const reviewed = () => plan.error === undefined ? plan() : undefined;
+  const reviewed = () => readOr(plan, undefined, "export plan");
   const choose = async () => {
     const owner = graphOwner();
     const selected = await readOwned(owner, backend().pickFolder("Choose a folder outside the graph for this export"));

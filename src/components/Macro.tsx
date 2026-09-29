@@ -50,6 +50,7 @@ import { formulasOf } from "../sheet/formulaFields";
 import { LinkDepthContext, LinkDepthWarning, MAX_DEPTH_OF_LINKS } from "./linkDepth";
 import { blockDtoExternalId } from "../blockIdentity";
 import { QueryPrintRefusedError } from "../backend";
+import { readLatestOr, readOr } from "../resourceRead";
 import { focusedRouter, openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { pushToast, pushToastUnique } from "../toasts";
@@ -397,7 +398,7 @@ export function QueryMacro(props: {
   /** The last coherent answer; an errored run shows its error, not old rows. */
   const displayed = (): QueryOperation | undefined => {
     const current = runRequest();
-    const landed = operation.error === undefined ? operation.latest : undefined;
+    const landed = readLatestOr(operation, undefined, "query run");
     return current && landed?.requestKey === current.displayKey ? landed : undefined;
   };
   const groups = () => displayed()?.groups ?? [];
@@ -449,7 +450,7 @@ export function QueryMacro(props: {
     );
     return landed.kind === "current" ? landed.value : undefined;
   });
-  const explanation = () => (explained.error === undefined ? explained() : undefined);
+  const explanation = () => readOr(explained, undefined, "query explain");
   const explainNotice = (): string | null => {
     if (explained.error !== undefined) return errorText(explained.error);
     const answer = explanation();
@@ -1483,11 +1484,12 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
     return null;
   });
 
+  const embedded = () => readOr(data, undefined, "embed");
   return (
     <div class="embed-block">
       <Show when={!selfPageEmbed()}>
-        <Show when={data()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
-          <LiveRefGroup page={data()!.page} kind={data()!.kind} blocks={data()!.blocks} embedId={data()!.embedId} hostBlockId={props.blockId} surface="embed" />
+        <Show when={embedded()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
+          <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} blocks={embedded()!.blocks} embedId={embedded()!.embedId} hostBlockId={props.blockId} surface="embed" />
         </Show>
       </Show>
     </div>

@@ -53,6 +53,7 @@ import { registryRowFor, effectiveTypeOf } from "../editor/queryPropertyType";
 import { DATE_PRESETS, previewDate } from "../editor/dateExpr";
 import type { QuerySheetDropTarget } from "./querySheetReorder";
 import { dismissOnOutsidePointer, registerTransientLayer, type TransientLayer } from "../transientLayers";
+import { readOr } from "../resourceRead";
 
 export { stop, Listbox, type ListboxOption };
 
@@ -680,7 +681,7 @@ export function PageInput(props: {
   onCleanup(() => clearTimeout(dqTimer));
   const [matchesResource] = createResource(dq, (s) => backend().quickSwitch(s, 8));
   // A failed lookup offers no completions; the next keystroke re-runs it.
-  const matches = () => (matchesResource.error === undefined ? matchesResource() : undefined);
+  const matches = () => (readOr(matchesResource, undefined, "value completions"));
   return (
     <div class="qs-value-editor">
       <input

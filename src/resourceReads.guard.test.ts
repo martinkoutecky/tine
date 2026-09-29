@@ -33,11 +33,6 @@ const SRC = path.resolve(__dirname);
 const PENDING_OWNED_FILES: Record<string, string> = {
   "components/ConflictResolution.tsx": "OG-A (Concord tail)",
   "components/Page.tsx": "OG-A (Concord tail)",
-  "components/Macro.tsx": "OG-E (query tail)",
-  "components/QueryBuilder.tsx": "OG-E (query tail)",
-  "components/QueryExportDialog.tsx": "OG-E (query tail)",
-  "components/QueryWorkspace.tsx": "OG-E (query tail)",
-  "components/querySheetParts.tsx": "OG-E (query tail)",
 };
 
 function sources(dir: string, out: string[] = []): string[] {
