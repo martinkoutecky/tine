@@ -7,6 +7,7 @@ mod android_media;
 mod android_system_bars;
 mod app_identity;
 mod backup;
+mod capture_target;
 #[cfg(desktop)]
 mod cli;
 mod command_surface;

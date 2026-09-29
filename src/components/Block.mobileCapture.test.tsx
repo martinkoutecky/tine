@@ -35,6 +35,7 @@ import { setToasts, toasts } from "../toasts";
 import { resetSaveState } from "../document/save/engine";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
+import { isRecordingAudio, setRecordingAudio } from "../mediaCapture";
 
 const STALE_ASSET_TOAST =
   "The asset was saved, but it was not inserted because the graph or block changed.";
@@ -138,6 +139,7 @@ describe("mobile photo capture editor-token staleness (GH #493)", () => {
         NATIVE_CACHE_TOKEN,
         expect.stringMatching(/\.jpg$/),
         expect.any(Number),
+        "/graphs/A",
       );
       handles.finishImport("20260916_120000_123-1.jpg");
       await settle();
@@ -200,6 +202,86 @@ describe("mobile photo capture editor-token staleness (GH #493)", () => {
       expect(toasts().some((toast) => toast.message === STALE_ASSET_TOAST)).toBe(false);
     } finally {
       dispose();
+    }
+  });
+});
+
+// Master b3d64add (og-G #29): the recorder is one app-wide state, but the token
+// of the editor that started it lived in that Editor's closure. Stopping from
+// another editor found no token and returned before importing, so the native
+// recording never reached assets/ and nothing was said. It must be stored and
+// reported as not inserted.
+describe("mobile voice memo stopped from another editor", () => {
+  it("imports the recording into assets/ and reports that it was not inserted", async () => {
+    loadSingle(page("Memo", [blk("memo-a", "first"), blk("memo-b", "second")]));
+    const [a, b] = pageByName("Memo")!.roots;
+    vi.spyOn(backend(), "startRecording").mockResolvedValue({ status: "recording" } as never);
+    vi.spyOn(backend(), "stopRecording").mockResolvedValue({ status: "ok", path: "/cache/tine_memo_1.m4a", ext: "m4a" } as never);
+    const imported = vi.spyOn(backend(), "importNativeCapture").mockResolvedValue("20260929_memo.m4a");
+    startEditing(a, 0);
+    const mounted = mount(() => <For each={pageByName("Memo")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
+    try {
+      (mounted.root.querySelector("textarea") as HTMLTextAreaElement).focus();
+      expect(dispatchFocusedEditorCommand("editor/voice-memo")).toBe(true);
+      await settle();
+      expect(isRecordingAudio()).toBe(true);
+      startEditing(b, 0);
+      await settle();
+      (mounted.root.querySelector("textarea") as HTMLTextAreaElement).focus();
+      expect(dispatchFocusedEditorCommand("editor/voice-memo")).toBe(true);
+      await settle();
+      expect(isRecordingAudio()).toBe(false);
+      expect(imported).toHaveBeenCalledWith("/cache/tine_memo_1.m4a", expect.stringMatching(/\.m4a$/), expect.any(Number), "/graphs/A");
+      expect(toasts().some((toast) => toast.message === STALE_ASSET_TOAST)).toBe(true);
+      expect(doc.byId[a].raw).toBe("first");
+      expect(doc.byId[b].raw).toBe("second");
+    } finally {
+      setRecordingAudio(false);
+      mounted.dispose();
+    }
+  });
+});
+
+// og H1b (manager decision 2026-09-29): a recording finished after a graph
+// switch is the only copy of that audio. It must not be lost and must not land
+// in the new graph: it is saved into the graph it was started in, named
+// explicitly, and the user is told where it went.
+describe("mobile voice memo stopped after a graph switch", () => {
+  it("saves the recording into the graph it was started in and says where", async () => {
+    loadSingle(page("Memo", [blk("memo-a", "first")]));
+    vi.spyOn(backend(), "startRecording").mockResolvedValue({ status: "recording" } as never);
+    vi.spyOn(backend(), "stopRecording").mockResolvedValue({ status: "ok", path: "/cache/tine_memo_2.m4a", ext: "m4a" } as never);
+    const imported = vi.spyOn(backend(), "importNativeCapture").mockResolvedValue("20260929_memo.m4a");
+    startEditing(pageByName("Memo")!.roots[0], 0);
+    const first = mount(() => <For each={pageByName("Memo")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
+    let second: ReturnType<typeof mount> | null = null;
+    try {
+      (first.root.querySelector("textarea") as HTMLTextAreaElement).focus();
+      expect(dispatchFocusedEditorCommand("editor/voice-memo")).toBe(true);
+      await settle();
+      expect(isRecordingAudio()).toBe(true);
+      first.dispose();
+      // The graph switch: graph B replaces A in this window while recording.
+      resetStore();
+      setGraphMeta({ root: "/graphs/B" } as never);
+      loadSingle(page("Other", [blk("other-b", "in B")]));
+      const b = pageByName("Other")!.roots[0];
+      startEditing(b, 0);
+      second = mount(() => <For each={pageByName("Other")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
+      await settle();
+      (second.root.querySelector("textarea") as HTMLTextAreaElement).focus();
+      expect(dispatchFocusedEditorCommand("editor/voice-memo")).toBe(true);
+      await settle();
+      expect(isRecordingAudio()).toBe(false);
+      expect(imported).toHaveBeenCalledOnce();
+      expect(imported).toHaveBeenCalledWith("/cache/tine_memo_2.m4a", expect.stringMatching(/\.m4a$/), expect.any(Number), "/graphs/A");
+      const told = toasts().find((toast) => toast.message.includes("20260929_memo.m4a"));
+      expect(told?.message).toContain("graph “A”");
+      expect(told?.message).toContain("not inserted");
+      expect(doc.byId[b].raw).toBe("in B");
+    } finally {
+      setRecordingAudio(false);
+      second?.dispose();
     }
   });
 });

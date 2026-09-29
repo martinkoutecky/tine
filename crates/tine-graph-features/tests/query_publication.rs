@@ -265,3 +265,34 @@ fn live_publication_survives_multibyte_text_at_every_probed_offset() {
     assert!(output.join("multibyte/app/snapshot.json").is_file());
     store.close();
 }
+
+/// GH #560 (master 350efef1f): "0 pages exported" is the ordinary outcome for
+/// a graph with no `public:: true` page; nothing non-public reaches the export.
+#[test]
+fn live_publication_of_a_graph_without_public_pages_exports_nothing() {
+    let (graph, output, store) = fixture();
+    fs::write(graph.join("pages/Public.md"), "- alpha body\n").unwrap();
+    store.scan_refresh().unwrap();
+    let receipt = publish_live(&store, &output, "Nothing public", false, &bundle()).unwrap();
+    assert_eq!(
+        receipt.pages, 0,
+        "publication is the public-page capability"
+    );
+    let mut stack = vec![output.join("nothing-public")];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                let text = String::from_utf8_lossy(&fs::read(&path).unwrap()).into_owned();
+                assert!(
+                    !text.contains("alpha body") && !text.contains("DOING hidden"),
+                    "a non-public page reached {}",
+                    path.display()
+                );
+            }
+        }
+    }
+    store.close();
+}

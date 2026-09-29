@@ -468,6 +468,35 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn a_capture_finished_after_a_graph_switch_is_documented() {
+        // og H1b: kept in the graph it was started in, never the new one.
+        let mobile = include_str!("templates/platforms-and-mobile.md");
+        assert!(mobile.contains("saved into the graph it was started in and not inserted"));
+    }
+
+    #[test]
+    fn in_page_find_guide_says_the_match_itself_is_revealed() {
+        // GH #253 (master 46a5290a2): Find scrolls to the occurrence, not its block.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("the match itself is scrolled into view"));
+    }
+
+    #[test]
+    fn empty_html_export_names_the_public_page_rule_in_the_guide() {
+        // GH #560 (master 350efef1f): a zero-page export is explained, not silent.
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("A graph with no `public:: true` page exports 0 pages"));
+    }
+
+    #[test]
+    fn parser_comparison_guide_says_intentional_differences_are_not_bugs() {
+        // Master c0c2ff11b: a known intentional lsdoc difference is suppressed,
+        // not offered as a reportable parser bug.
+        let recovery = include_str!("templates/troubleshooting-recovery.md");
+        assert!(recovery.contains("Known intentional parser differences are not offered as bugs"));
+    }
+
+    #[test]
     fn the_conflict_review_stays_reachable_while_scrolling_in_the_guide() {
         // Master 61ea6600c: a pinned bar unrolls the review in place.
         let files = include_str!("templates/files-external-edits-backups.md");

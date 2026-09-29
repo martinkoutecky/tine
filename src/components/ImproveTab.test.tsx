@@ -140,4 +140,33 @@ describe("Help improve Tine privacy boundary", () => {
       dispose();
     }
   });
+  it("does not offer intentional nested-dollar math differences as reportable bugs", async () => {
+    Object.assign(globalThis, {
+      __tineDiffFixture: {
+        tineVersion: "0.6.984",
+        lsdocVersion: "v0.5.7",
+        stats: { files: 1, totalBytes: 30 },
+        lsdocAvailable: true,
+        findings: [{
+          type: "intentional-divergence",
+          rel: "graph-file-0001.md",
+          lineStart: 1,
+          lineEnd: 1,
+          kind: "md-nested-dollar-latex",
+          detail: "suppressed: Tine intentionally preserves dollar math inside Markdown emphasis",
+        }],
+      },
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <ImproveTab />, host);
+    try {
+      (host.querySelector(".improve-run button") as HTMLButtonElement).click();
+      await vi.waitFor(() => expect(host.textContent).toContain("No actionable divergences"));
+      expect(host.textContent).toContain("1 known intentional parser difference");
+      expect(host.querySelectorAll(".improve-findings button")).toHaveLength(0);
+    } finally {
+      dispose();
+    }
+  });
 });

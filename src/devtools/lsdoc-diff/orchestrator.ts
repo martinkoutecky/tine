@@ -40,6 +40,14 @@ export type Finding =
   | { type: "mldoc-failure"; rel: string; status: string; detail: string }
   | { type: "unstable-divergence"; rel: string }
   | {
+      type: "intentional-divergence";
+      rel: string;
+      lineStart: number;
+      lineEnd: number;
+      kind: "md-nested-dollar-latex";
+      detail: string;
+    }
+  | {
       type: "mldoc-oracle-artifact";
       rel: string;
       lineStart: number;
@@ -208,6 +216,27 @@ async function runDiff(
       }
     }
     const minimizedOriginal = await parseBothFresh(min.input, f.format);
+    if (
+      minimizedOriginal.ok
+      && minimizedOriginal.diverges
+      && minimizedOriginal.lsdocProjection
+      && await isIntentionalNestedDollarDivergence(
+        min.input,
+        f.format,
+        minimizedOriginal.lsdocProjection,
+        parseBothFresh,
+      )
+    ) {
+      findings.push({
+        type: "intentional-divergence",
+        rel,
+        lineStart: min.lineStart,
+        lineEnd: min.lineEnd,
+        kind: "md-nested-dollar-latex",
+        detail: "suppressed: Tine intentionally preserves dollar math inside Markdown emphasis",
+      });
+      continue;
+    }
     const anon = minimizedOriginal.ok && minimizedOriginal.diverges
       ? await anonymizeAndVerify<Projection>(
           min.input,
@@ -239,6 +268,144 @@ async function runDiff(
   }
   return findings;
 }
+
+type JsonObject = Record<string, unknown>;
+type NestedDollarCandidate = {
+  path: (string | number)[];
+  parentPath: (string | number)[];
+  start: number;
+  end: number;
+};
+
+function jsonObject(value: unknown): JsonObject | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonObject
+    : null;
+}
+
+function valueAtPath(root: unknown, path: (string | number)[]): unknown {
+  let value = root;
+  for (const part of path) {
+    if (Array.isArray(value) && typeof part === "number") value = value[part];
+    else value = jsonObject(value)?.[String(part)];
+  }
+  return value;
+}
+
+function nestedDollarCandidates(root: unknown, source: Uint8Array): NestedDollarCandidate[] | null {
+  const candidates: NestedDollarCandidate[] = [];
+  let invalid = false;
+  const walk = (value: unknown, path: (string | number)[]) => {
+    if (Array.isArray(value)) {
+      value.forEach((child, index) => walk(child, [...path, index]));
+      return;
+    }
+    const object = jsonObject(value);
+    if (!object) return;
+    if (object.k === "emphasis" && Array.isArray(object.children)) {
+      object.children.forEach((child, index) => {
+        const node = jsonObject(child);
+        if (node?.k === "latex") {
+          const span = node.span;
+          const delimiter = node.mode === "Inline" ? "$" : node.mode === "Displayed" ? "$$" : null;
+          if (
+            !delimiter
+            || typeof node.body !== "string"
+            || !Array.isArray(span)
+            || span.length !== 2
+            || !span.every(Number.isInteger)
+          ) {
+            invalid = true;
+          } else {
+            const [start, end] = span as [number, number];
+            const expected = new TextEncoder().encode(`${delimiter}${node.body}${delimiter}`);
+            const actual = source.slice(start, end);
+            if (
+              start < 0
+              || start >= end
+              || end > source.length
+              || actual.length !== expected.length
+              || actual.some((byte, offset) => byte !== expected[offset])
+            ) invalid = true;
+            else candidates.push({ path: [...path, "children", index], parentPath: [...path, "children"], start, end });
+          }
+        }
+        walk(child, [...path, "children", index]);
+      });
+      for (const [key, child] of Object.entries(object)) {
+        if (key !== "children") walk(child, [...path, key]);
+      }
+      return;
+    }
+    for (const [key, child] of Object.entries(object)) walk(child, [...path, key]);
+  };
+  walk(root, []);
+  candidates.sort((a, b) => a.start - b.start);
+  if (invalid || candidates.length === 0) return null;
+  if (candidates.some((candidate, index) => index > 0 && candidate.start < candidates[index - 1].end)) return null;
+  return candidates;
+}
+
+function coalescePlainChildren(children: unknown[]): unknown[] {
+  const result: unknown[] = [];
+  for (const child of children) {
+    const object = jsonObject(child);
+    const previous = jsonObject(result[result.length - 1]);
+    if (object?.k === "plain" && previous?.k === "plain" && typeof object.text === "string" && typeof previous.text === "string") {
+      previous.text += object.text;
+    } else result.push(child);
+  }
+  return result;
+}
+
+function transformedNestedDollarProjection(
+  original: Projection,
+  candidates: NestedDollarCandidate[],
+): Projection | null {
+  const transformed = structuredClone(original);
+  const parents = new Map<string, (string | number)[]>();
+  for (const candidate of candidates) {
+    const parent = valueAtPath(transformed, candidate.parentPath);
+    const index = candidate.path[candidate.path.length - 1];
+    if (!Array.isArray(parent) || typeof index !== "number") return null;
+    const node = jsonObject(parent[index]);
+    if (node?.k !== "latex") return null;
+    parent[index] = { k: "plain", text: ",".repeat(candidate.end - candidate.start) };
+    parents.set(JSON.stringify(candidate.parentPath), candidate.parentPath);
+  }
+  for (const path of parents.values()) {
+    const children = valueAtPath(transformed, path);
+    const owner = jsonObject(valueAtPath(transformed, path.slice(0, -1)));
+    const key = path[path.length - 1];
+    if (!Array.isArray(children) || !owner || typeof key !== "string") return null;
+    owner[key] = coalescePlainChildren(children);
+  }
+  return transformed;
+}
+
+export async function isIntentionalNestedDollarDivergence(
+  input: string,
+  format: Format,
+  lsdocOriginal: Projection,
+  parseBothFresh: (text: string, format: Format) => Promise<PairResult>,
+): Promise<boolean> {
+  if (format !== "md") return false;
+  const source = new TextEncoder().encode(input);
+  const candidates = nestedDollarCandidates(lsdocOriginal, source);
+  if (!candidates) return false;
+  for (const candidate of candidates) {
+    const standalone = new TextDecoder().decode(source.slice(candidate.start, candidate.end));
+    const parsed = await parseBothFresh(standalone, format);
+    if (!parsed.ok || parsed.diverges) return false;
+  }
+  const masked = source.slice();
+  for (const candidate of candidates) masked.fill(",".charCodeAt(0), candidate.start, candidate.end);
+  const maskedPair = await parseBothFresh(new TextDecoder().decode(masked), format);
+  if (!maskedPair.ok || maskedPair.diverges || !maskedPair.lsdocProjection) return false;
+  const transformed = transformedNestedDollarProjection(lsdocOriginal, candidates);
+  return !!transformed && projectionKey(transformed) === projectionKey(maskedPair.lsdocProjection);
+}
+
 
 async function currentTineVersion(): Promise<string> {
   try {

@@ -550,8 +550,9 @@ export interface Backend {
   /** Import an app-cache tine_photo_*.jpg (64 MiB max) or tine_memo_*.m4a
    * (32 MiB max) capability into a unique asset. Reject empty/invalid sources,
    * bad names, size limits, and writes. After commit, attempt temp removal;
-   * cleanup failure does not reject. Cost O(source bytes + collision candidates). */
-  importNativeCapture(path: string, name: string, bindingGeneration: number): Promise<string>;
+   * cleanup failure does not reject. Cost O(source bytes + collision candidates).
+   * `graphRoot` names the graph the capture was started in (og H1b); Rust refuses one that is not a known graph. */
+  importNativeCapture(path: string, name: string, bindingGeneration: number, graphRoot?: string): Promise<string>;
   /** Paths explicitly copied in the OS file manager. Empty when the clipboard
    *  has no native file-list flavor or the platform cannot expose one. */
   clipboardFiles(): Promise<ClipboardFileList>;
@@ -1256,8 +1257,8 @@ class TauriBackend implements Backend {
   importAsset(path: string, name: string | undefined, bindingGeneration: number) {
     return this.assetCall<string>("import_asset", { path, name }, bindingGeneration);
   }
-  importNativeCapture(path: string, name: string, bindingGeneration: number) {
-    return this.assetCall<string>("import_native_capture", { path, name }, bindingGeneration);
+  importNativeCapture(path: string, name: string, bindingGeneration: number, graphRoot?: string) {
+    return this.assetCall<string>("import_native_capture", { path, name, graphRoot }, bindingGeneration);
   }
   clipboardFiles() {
     return this.call<ClipboardFileList>("clipboard_files");

@@ -1676,13 +1676,13 @@ pub(crate) fn import_asset(
 pub(crate) fn import_native_capture(
     path: String,
     name: String,
+    graph_root: Option<String>,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     use cap_std::{ambient_authority, fs::Dir};
     use tauri::Manager;
-
-    let slot = slot_for_context(&state)?;
+    let target = crate::capture_target::pick(slot_for_context(&state)?, graph_root, &app, &state)?;
     const MAX_PHOTO_BYTES: u64 = 64 * 1024 * 1024;
     const MAX_RECORDING_BYTES: u64 = 32 * 1024 * 1024;
     let source = std::path::Path::new(&path);
@@ -1738,14 +1738,14 @@ pub(crate) fn import_native_capture(
         ));
     }
     let stored = tine_graph_features::assets::import_asset_file(
-        &slot.store,
+        target.store(),
         &name,
         tine_store::Content::Stream {
             source: capture.into_std(),
             max_bytes,
         },
     )
-    .map_err(|error| feature_asset_error(error, &slot))?;
+    .map_err(|error| target.asset_error(error))?;
     // The graph asset is authoritative now. Cleanup failure is harmless cache
     // litter and must not make the frontend omit the already-durable reference.
     let _ = cache_dir.remove_file(filename);

@@ -11,7 +11,7 @@ import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "./
 import { graphOwner, latestOwner, readOwned, writeOwned } from "./owned";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave, openPageTarget } from "./routerBridge";
-import { beginConflictRefresh, conflictQueue, conflictRefreshCurrent, setConflictInventory } from "./conflictQueue";
+import { beginConflictRefresh, conflictQueue, conflictRefreshCurrent, forgetArrivalNotice, setConflictInventory, trackArrivalNotice } from "./conflictQueue";
 export { conflictQueue, settleArtifactConflict, syncConflicts, setSyncConflicts } from "./conflictQueue";
 import type { PageTarget } from "./routeTypes";
 import { PaneContext } from "./paneContext";
@@ -279,11 +279,13 @@ export async function refreshSyncConflicts(notify: "new" | false = false): Promi
     const arrived = result.value.queue.filter((c) => c.source === "sync-copy" && !previous.has(c.id));
     if (notify === "new" && arrived.length) {
       const first = arrived[0];
-      pushToast(
+      const toastId = pushToast(
         `${arrived.length} new sync conflict${arrived.length === 1 ? " needs" : "s need"} review`,
         "info",
-        { sticky: true, action: { label: "Review", run: () => openPageTarget({ name: first.page_name, pageKind: first.kind, path: first.page_path }) } }
+        { sticky: true, action: { label: "Review", run: () => openPageTarget({ name: first.page_name, pageKind: first.kind, path: first.page_path }) },
+          onDismiss: () => forgetArrivalNotice(toastId) }
       );
+      trackArrivalNotice(toastId, arrived.map((conflict) => conflict.id));
     }
   } catch {
     if (conflictRefreshCurrent(episode)) setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [] });

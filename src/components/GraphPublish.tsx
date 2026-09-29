@@ -18,11 +18,15 @@ export function GraphPublish(): JSX.Element {
     const selected = await readOwned(owner, backend().pickFolder("Choose a folder outside this graph for the export"));
     if (selected.kind !== "current" || !selected.value) return;
     const destination = selected.value;
+    const everyPage = allPages();
     setBusy(true);
     setMessage("Exporting…");
     try {
-      const result = await writeOwned(owner, backend().publishLive(destination, name().trim() || "Tine graph", allPages(), await exportSheets(undefined, { kind: "live", allPages: allPages() })));
-      if (result.kind === "current") setMessage(`Exported ${result.value.pages} pages to ${result.value.path}`);
+      const result = await writeOwned(owner, backend().publishLive(destination, name().trim() || "Tine graph", everyPage, await exportSheets(undefined, { kind: "live", allPages: everyPage })));
+      // A zero reads as a broken button unless it names the rule (GH #560, master 350efef1f).
+      if (result.kind === "current") setMessage(result.value.pages === 0 && !everyPage
+        ? `Exported 0 pages to ${result.value.path} — only pages with “public:: true” are exported.`
+        : `Exported ${result.value.pages} pages to ${result.value.path}`);
     } catch (error) {
       if (owner()) setMessage(`Export failed: ${String((error as Error)?.message ?? error)}`);
     } finally { if (owner()) setBusy(false); }

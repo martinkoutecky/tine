@@ -5,6 +5,7 @@ import {
   clearInPageFindRenderedTextCacheForTests,
   collectInPageFindMatches,
   findTextOccurrences,
+  revealInPageFindMatch,
   scopedInPageFindMatchesForQuery,
   type InPageFindBlock,
   openInPageFind,
@@ -236,5 +237,70 @@ describe("in-page find model", () => {
       "linked:Source",
       "unlinked:Other",
     ]);
+  });
+
+  it("reveals the exact occurrence, not just the block, in a viewport-tall block (GH #253)", async () => {
+    setDoc({
+      loaded: true,
+      feed: ["Long"],
+      pages: [{ name: "Long", kind: "page", title: "Long", preBlock: null, roots: ["b1"], format: "md", readOnly: false, guide: false }],
+      byId: { b1: { id: "b1", raw: "needle top … needle bottom", collapsed: false, parent: null, page: "Long", children: [] } },
+    });
+    resetPaneLayoutToSingle(pageSnapshot("Long"));
+    document.body.innerHTML = `
+      <main data-pane-id="main">
+        <div class="scroller" style="overflow-y: auto">
+          <div class="ls-block" data-block-id="b1">
+            <div class="block-content">needle top … needle bottom</div>
+          </div>
+        </div>
+      </main>`;
+    const scroller = document.querySelector(".scroller") as HTMLElement;
+    Object.defineProperty(scroller, "clientHeight", { value: 800, configurable: true });
+    // A pane that does not overflow scrolls nowhere, and the reveal deliberately
+    // refuses to claim success on one (it would skip the block-level fallback and
+    // leave the occurrence off-screen). jsdom reports scrollHeight 0, so the
+    // fixture has to say that this scroller really does have somewhere to go.
+    Object.defineProperty(scroller, "scrollHeight", { value: 4000, configurable: true });
+    let st = 0;
+    // Mirror the DOM clamp (scrollTop never goes negative) so sequential
+    // reveals accumulate exactly like a real scroller.
+    Object.defineProperty(scroller, "scrollTop", {
+      get: () => st,
+      set: (v: number) => { st = Math.max(0, v); },
+      configurable: true,
+    });
+    // jsdom has no layout: make each occurrence's Range report a distinct rect.
+    // Occurrence 0 sits at the viewport top, occurrence 1 far below it.
+    const rectByStart = new Map<number, DOMRect>([
+      [0, { top: 100, bottom: 120, height: 20, width: 40, left: 0, right: 40 } as DOMRect],
+      [13, { top: 2600, bottom: 2620, height: 20, width: 40, left: 0, right: 40 } as DOMRect],
+    ]);
+    (Range.prototype as unknown as { getClientRects: () => unknown }).getClientRects = function (this: Range) {
+      const rect = rectByStart.get(this.startOffset);
+      return rect ? [rect] : [];
+    };
+    const scrollIntoViewCalls: Element[] = [];
+    (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = function (this: Element) {
+      scrollIntoViewCalls.push(this);
+    };
+    try {
+      // og reveals only while Find is open (stale-reveal guard); opening it
+      // reveals occurrence 0 on its own, so let that settle first.
+      openInPageFind();
+      setInPageFindQuery("needle");
+      for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+      st = 0;
+
+      await revealInPageFindMatch({ blockId: "b1", ordinalInBlock: 1, start: 13, end: 19 });
+
+      // Scroller center is 400 (clientHeight 800, top 0); occurrence center is 2610.
+      expect(scroller.scrollTop).toBeCloseTo(2610 - 400, 5);
+      expect(scrollIntoViewCalls).toEqual([]);
+    } finally {
+      closeInPageFind({ restoreFocus: false });
+      delete (Range.prototype as unknown as { getClientRects?: unknown }).getClientRects;
+      delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+    }
   });
 });

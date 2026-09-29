@@ -49,7 +49,8 @@ export function ImproveTab(): JSX.Element {
 
   const divergences = () => (report()?.findings ?? []).filter((f): f is Extract<Finding, { type: "divergence" }> => f.type === "divergence");
   const oracleArtifacts = () => (report()?.findings ?? []).filter((f): f is Extract<Finding, { type: "mldoc-oracle-artifact" }> => f.type === "mldoc-oracle-artifact");
-  const otherFindings = () => (report()?.findings ?? []).filter((f) => f.type !== "divergence" && f.type !== "mldoc-oracle-artifact");
+  const intentionalDivergences = () => (report()?.findings ?? []).filter((f): f is Extract<Finding, { type: "intentional-divergence" }> => f.type === "intentional-divergence");
+  const otherFindings = () => (report()?.findings ?? []).filter((f) => f.type !== "divergence" && f.type !== "mldoc-oracle-artifact" && f.type !== "intentional-divergence");
 
   const flash = async (text: string, key: string) => {
     try {
@@ -87,7 +88,7 @@ export function ImproveTab(): JSX.Element {
       "These snippets are anonymized (page content scrubbed) and each still reproduces the divergence between lsdoc and Logseq's mldoc.",
       "",
       ...ds.map(findingMarkdown),
-      `Reported via Tine → Settings → Help improve Tine. Post to ${ISSUES_URL}`,
+      `Reported via Tine → Settings → Help & diagnostics. Post to ${ISSUES_URL}`,
     ].join("\n");
   };
 
@@ -234,6 +235,18 @@ export function ImproveTab(): JSX.Element {
                   <details class="improve-other">
                     <summary>{oracleArtifacts().length} suppressed mldoc oracle artifact(s)</summary>
                     <For each={oracleArtifacts()}>
+                      {(f) => (
+                        <div class="settings-hint">
+                          <code>{f.rel}</code> · lines {f.lineStart}-{f.lineEnd} — {f.detail}
+                        </div>
+                      )}
+                    </For>
+                  </details>
+                </Show>
+                <Show when={intentionalDivergences().length > 0}>
+                  <details class="improve-other">
+                    <summary>{intentionalDivergences().length} known intentional parser difference(s) suppressed</summary>
+                    <For each={intentionalDivergences()}>
                       {(f) => (
                         <div class="settings-hint">
                           <code>{f.rel}</code> · lines {f.lineStart}-{f.lineEnd} — {f.detail}

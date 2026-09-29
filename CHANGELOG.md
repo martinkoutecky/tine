@@ -121,6 +121,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   If writing your changes took more than four seconds — a slow or network drive is enough — the close
   asked whether to lose them. It now says it is still saving and waits up to another 26 seconds; it
   only asks once the save has failed or stalled, in words that say which.
+- **Ctrl+F scrolls to the exact occurrence, not just its block** (GH #253, master
+  46a5290a2, og H). In a block taller than the window, in-page find used to center
+  only the block, leaving the match off-screen; it now centers the active occurrence
+  in the pane, falling back to the block while it is being edited.
+- **An HTML export of 0 pages says why** (GH #560, master 350efef1f, og H). With no
+  `public:: true` page (and "Include every page" unticked), Settings → Graph →
+  **Export HTML and read-only app…** now reports "only pages with `public:: true` are
+  exported" instead of a bare "Exported 0 pages".
+- **A phone toolbar keeps calendar, journals and theme on the bar** (GH #205,
+  master a006f1308, og H). On a 390px phone they had moved into the "…" menu; they
+  now collapse only below a 345px toolbar. A narrow desktop window, whose tab strip
+  needs room, still collapses them at 460px and below a 440px window also moves
+  Back/Forward into "…", so the tab title stays readable instead of shrinking to a
+  couple of letters, and the "Show all tabs" button never covers the next button.
+- **The parser comparison no longer offers known intentional differences as bugs**
+  (master c0c2ff11b, og H). Dollar math inside Markdown emphasis (`**…$x$…**`),
+  which Tine keeps on purpose, is re-verified in isolation and listed under a
+  "known intentional parser difference(s) suppressed" count instead of a reportable
+  divergence.
+- **The "new sync conflicts need review" notice goes away once they are resolved**
+  (master 042054c1b, og H). It used to stay beside the green "Merged" confirmation
+  until dismissed by hand; it now closes when none of the conflicts it announced is
+  left, whether resolved in Tine or cleared on disk.
+- **A voice memo stopped from another block is kept** (master b3d64add, og H). On
+  mobile, starting a recording in one block and tapping Stop while editing another
+  used to discard the recording silently; it is now saved to `assets/` and Tine says
+  it was not inserted. A failed stop or import is always reported. A recording or
+  photo that finishes after you switched graphs is saved to the `assets/` of the graph
+  it was started in, never the new one, and Tine names that graph and the file.
 - **An edit typed while another graph is opening is kept** (og-T). It is saved
   as a draft of the graph you left and offered for review when you reopen it,
   instead of being dropped by the switch.
