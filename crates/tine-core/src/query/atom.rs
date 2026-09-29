@@ -621,11 +621,15 @@ fn compact_day(text: &str) -> Option<i64> {
     if text.len() != 8 || !text.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    let year: i32 = text[0..4].parse().ok()?;
+    let year: i32 = text.get(0..4)?.parse().ok()?;
     if !(1900..=2100).contains(&year) {
         return None;
     }
-    valid_day(year, text[4..6].parse().ok()?, text[6..8].parse().ok()?)
+    valid_day(
+        year,
+        text.get(4..6)?.parse().ok()?,
+        text.get(6..8)?.parse().ok()?,
+    )
 }
 
 fn valid_day(year: i32, month: u32, day: u32) -> Option<i64> {

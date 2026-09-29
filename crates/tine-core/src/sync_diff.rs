@@ -1106,7 +1106,9 @@ fn without_id_line(raw: &str, is_org: bool, id: &str) -> String {
     let is_id = |l: &str| {
         if is_org {
             let t = body(l).trim();
-            t.len() > 4 && t[..4].eq_ignore_ascii_case(":id:") && t[4..].trim() == id
+            t.get(..4)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(":id:"))
+                && t.get(4..).is_some_and(|value| value.trim() == id)
         } else {
             crate::doc::parse_property_line(body(l))
                 .is_some_and(|(k, v)| k.eq_ignore_ascii_case("id") && v.trim() == id)

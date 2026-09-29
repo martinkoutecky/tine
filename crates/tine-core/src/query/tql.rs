@@ -77,6 +77,7 @@ pub(crate) fn parse_tql_with_options(
                     original: text,
                     source: &pre.sql,
                     source_offset: pre.offset,
+                    origins: &pre.origins,
                     not_applicable: None,
                 };
                 let scope = match pre.anchor {
@@ -202,6 +203,7 @@ struct Lower<'a> {
     /// `original` byte offset of `source[0]`, or `None` when the pre-pass
     /// rewrote something and the two no longer line up.
     source_offset: Option<usize>,
+    origins: &'a [usize],
     /// **The one deferred rejection (§7.4).** A name that resolves on the OTHER
     /// row is not unknown — it does not APPLY here — and §7.4 requires the
     /// author's leaf to stay in the tree instead of collapsing to `False`. The
@@ -303,8 +305,16 @@ impl Lower<'_> {
     /// on the way through, discard the `False` it produced and keep the exact
     /// source text of this condition as a `Raw` capsule instead.
     fn leaf(&mut self, expr: &Expr, scope: Scope) -> Filter {
+        let diagnostic_start = self.diagnostics.len();
         let filter = self.condition(expr, scope);
         let Some((message, suggestions)) = self.not_applicable.take() else {
+            if self.disabled_depth > 0 && !matches!(filter, Filter::Raw { .. }) {
+                if let Some(diagnostic) = self.diagnostics.get(diagnostic_start) {
+                    let kind = diagnostic.kind;
+                    let (text, _) = self.retained_slice(expr);
+                    return Filter::raw(text, kind);
+                }
+            }
             return filter;
         };
         let (text, span) = self.retained_slice(expr);
@@ -342,7 +352,12 @@ impl Lower<'_> {
             return (expr.to_string(), None);
         };
         let end = balanced_end(self.source, start, end);
-        let text = self.source[start..end].to_string();
+        let authored = self.origins.get(start).zip(self.origins.get(end));
+        let text = authored
+            .and_then(|(from, to)| self.original.get(*from..*to))
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| self.source.get(start..end).expect("SQL span boundaries"))
+            .to_string();
         let span = self
             .source_offset
             .map(|offset| Span::from_byte_range(self.original, offset + start, offset + end));
@@ -723,7 +738,7 @@ impl Lower<'_> {
             DiagnosticKind::UnknownIdent,
             format!("`{name}` is not a field of this query"),
         );
-        self.diagnostics.push(self.suggested(diagnostic, name));
+        self.diagnose(self.suggested(diagnostic, name));
     }
 
     /// Attach the registry's nearest keys to a diagnostic that named an
@@ -736,7 +751,7 @@ impl Lower<'_> {
     /// `reject` for the identifier-shaped rejections, which carry suggestions.
     fn reject_ident(&mut self, name: &str, message: impl Into<String>) -> Filter {
         let diagnostic = Diagnostic::new(DiagnosticKind::UnknownIdent, message);
-        self.diagnostics.push(self.suggested(diagnostic, name));
+        self.diagnose(self.suggested(diagnostic, name));
         Filter::False
     }
 

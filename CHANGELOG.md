@@ -106,6 +106,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   scratch/title edits made while saving. Page-menu deletion retains its file
   target through confirmation, alias saves preserve active editor/IME drafts,
   and cancelled or unmounted image/video resizes cannot edit another graph.
+- **Content survives disabled-query edits, Unicode Org conflict resolution, and raced page merges** (OG-K1).
+  Editing another query operand preserves rejected conditions inside `off(...)` byte for byte.
+  Keeping both Org block versions and renaming an Org reference tolerate non-ASCII prefixes.
+  An unchanged transaction step checks its revision before a merge can retire the source page.
 
 - **A second file holding a page's name is never shown or written as that page** (master 7bd793bd0, og J1).
   When a duplicate journal day (left by sync or a date-format change) or a same-named page opened by path
