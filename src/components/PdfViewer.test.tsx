@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { Show, createSignal } from "solid-js";
+import { Show, createEffect, createSignal } from "solid-js";
 import { render } from "solid-js/web";
+import { makePdfRoute, type PdfRoute } from "../router";
+import { publishPdfNavigationIntent } from "../pdfNavigation";
 import { backend } from "../backend";
 import { setToasts, toasts } from "../toasts";
 import type { Highlight } from "../types";
@@ -44,11 +46,22 @@ function PdfViewer(props: {
 }
 
 function KeyedPdfViewer(props: { target: () => any }) {
-  const ownedTarget = () => {
+  const [route, setRoute] = createSignal<PdfRoute | null>(null);
+  createEffect(() => {
     const target = props.target();
-    return target ? { ...target, owner: target.owner ?? testPdfOwner() } : null;
-  };
-  return <OwnedKeyedPdfViewer target={ownedTarget} />;
+    if (!target) { setRoute(null); return; }
+    const previous = route();
+    if (previous && previous.filename === target.filename) {
+      if (target.page !== undefined || target.highlightId !== undefined) {
+        publishPdfNavigationIntent(previous.viewId, { page: target.page, highlightId: target.highlightId });
+      }
+    } else {
+      const next = makePdfRoute(target.filename, target.label, { page: target.page });
+      setRoute(next);
+      publishPdfNavigationIntent(next.viewId, { page: target.page, highlightId: target.highlightId });
+    }
+  });
+  return <OwnedKeyedPdfViewer route={route} owner={() => props.target()?.owner ?? testPdfOwner()} />;
 }
 
 vi.mock("pdfjs-dist", () => ({
@@ -242,6 +255,71 @@ describe("PdfViewer resource safety", () => {
     } finally {
       dispose();
     }
+  });
+
+  it("serializes duplicate visibility requests before the page canvas is rendered", async () => {
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const visiblePage = page(612, 792);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([visiblePage])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="race.pdf" label="Race PDF" />, host);
+    try {
+      await flush();
+      const pageElement = host.querySelector(".pdf-page")!;
+      const observer = TestIntersectionObserver.instances[0];
+      observer.show(pageElement);
+      observer.show(pageElement);
+      await flush();
+      expect(visiblePage.render).toHaveBeenCalledOnce();
+      expect(host.querySelector(".pdf-load-error")).toBeNull();
+    } finally { dispose(); }
+  });
+
+  it("keeps a typed page jump when Enter blurs the page field", async () => {
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    vi.spyOn(backend(), "writePdfViewState").mockResolvedValue(undefined);
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792), page(612, 792)])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    try {
+      await flush();
+      const input = host.querySelector(".pdf-page-input") as HTMLInputElement;
+      input.focus();
+      input.value = "2";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await flush();
+      expect(document.activeElement).not.toBe(input);
+      expect(input.value).toBe("2");
+    } finally { dispose(); }
+  });
+
+  it("does not publish a false page one while zoom is settling", async () => {
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 2, scale: 1 });
+    vi.spyOn(backend(), "writePdfViewState").mockResolvedValue(undefined);
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792), page(612, 792)])) });
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { callback(0); return 1; });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    try {
+      await flush();
+      const scroller = host.querySelector<HTMLElement>(".pdf-scroll")!;
+      const pages = host.querySelectorAll<HTMLElement>(".pdf-page");
+      Object.defineProperty(pages[0], "offsetTop", { configurable: true, value: 0 });
+      Object.defineProperty(pages[1], "offsetTop", { configurable: true, value: 800 });
+      scroller.scrollTop = 800;
+      (host.querySelector('button[title="Zoom in"]') as HTMLButtonElement).click();
+      scroller.scrollTop = 0; // browser clamps during the partial wrapper resize
+      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+      await flush();
+      expect((host.querySelector(".pdf-page-input") as HTMLInputElement).value).toBe("2");
+    } finally { dispose(); }
   });
 
   it("rejects unsafe dimensions discovered on a later page", async () => {
@@ -444,7 +522,7 @@ describe("PdfViewer OG area-highlight selection", () => {
       (host.querySelector('button[title^="Area highlight"]') as HTMLButtonElement).click();
       dragArea(wrap, { x: 45, y: 55 });
       await flush();
-      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
       await flush();
       expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved")).toBe("true");
       expect(rollback).not.toHaveBeenCalled();
@@ -480,7 +558,7 @@ describe("PdfViewer OG area-highlight selection", () => {
       (host.querySelector('button[title^="Area highlight"]') as HTMLButtonElement).click();
       dragArea(wrap, { x: 45, y: 55 });
       await flush();
-      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
       await flush();
       expect(host.querySelector(".pdf-highlight-conflict")).not.toBeNull();
       (host.querySelector('button[title="Close PDF"]') as HTMLButtonElement).click();
@@ -518,7 +596,7 @@ describe("PdfViewer OG area-highlight selection", () => {
       (host.querySelector('button[title^="Area highlight"]') as HTMLButtonElement).click();
       dragArea(wrap, { x: 45, y: 55 });
       await flush();
-      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
       await flush();
       [...host.querySelectorAll<HTMLButtonElement>(".pdf-highlight-conflict button")]
         .find((button) => button.textContent === "Use disk version")!.click();
@@ -550,7 +628,7 @@ describe("PdfViewer OG area-highlight selection", () => {
       (host.querySelector('button[title^="Area highlight"]') as HTMLButtonElement).click();
       dragArea(wrap, { x: 45, y: 55 });
       await flush();
-      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2].dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
       await flush();
     };
     try {
@@ -690,7 +768,7 @@ describe("PdfViewer OG area-highlight selection", () => {
       dragArea(wrap, { x: 45, y: 55 });
       await flush();
       const blue = host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2];
-      blue.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      blue.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
       await flush();
       await expect(drainPdfWork()).resolves.toBe(true);
 
@@ -754,7 +832,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
       await flush();
       (host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[swatch]).dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+        new MouseEvent("pointerdown", { bubbles: true, cancelable: true })
       );
       await flush();
     };
@@ -797,7 +875,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
       await flush();
       host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[swatch].dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+        new MouseEvent("pointerdown", { bubbles: true, cancelable: true })
       );
       await flush();
     };
@@ -837,7 +915,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
       await flush();
       host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[swatch].dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+        new MouseEvent("pointerdown", { bubbles: true, cancelable: true })
       );
       await flush();
     };
@@ -878,7 +956,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       await flush();
       (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
       await flush();
-      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[1].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[1].dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
       await flush();
       expect(host.querySelector(".pdf-highlight-conflict")?.textContent).toContain("Keep mine");
       (host.querySelector('button[title="Close PDF"]') as HTMLButtonElement).click();
@@ -886,7 +964,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       expect(host.querySelector(".pdf-highlight-conflict")).not.toBeNull();
       (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
       await flush();
-      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[3].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[3].dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
       await flush();
       expect(write).toHaveBeenCalledTimes(1);
       setToasts([]);
@@ -936,7 +1014,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       (host.querySelector(`[data-highlight-id="${id}"]`) as HTMLElement).click();
       await flush();
       (host.querySelector('button[title="Remove highlight"]') as HTMLButtonElement).dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true, cancelable: true })
+        new MouseEvent("pointerdown", { bubbles: true, cancelable: true })
       );
       await flush();
       expect(host.querySelector(".pdf-highlight-conflict")).not.toBeNull();
@@ -1100,7 +1178,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       }));
       await flush();
       (host.querySelector(".pdf-color-swatch") as HTMLButtonElement).dispatchEvent(
-        new MouseEvent("mousedown", { bubbles: true })
+        new MouseEvent("pointerdown", { bubbles: true })
       );
       await flush();
 
@@ -1137,7 +1215,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       } as unknown as Selection);
       host.querySelector(".pdf-scroll")!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: 20, clientY: 30 }));
       await flush();
-      (host.querySelector(".pdf-color-swatch") as HTMLButtonElement).dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      (host.querySelector(".pdf-color-swatch") as HTMLButtonElement).dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
       await flush();
       expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlights-unsaved")).toBe("true");
       expect(await drainPdfWork()).toBe(true);
@@ -1199,7 +1277,7 @@ describe("PdfViewer OG state and reference behavior", () => {
 
       const copy = [...host.querySelectorAll<HTMLButtonElement>(".pdf-color-menu button")]
         .find((button) => button.textContent?.trim() === "Copy ref")!;
-      copy.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      copy.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
       await flush();
       expect(writeHighlights).toHaveBeenCalledOnce();
       expect(writeHighlights.mock.calls[0][2].map((highlight) => highlight.id)).toEqual([textId, areaId]);
@@ -1250,7 +1328,7 @@ describe("PdfViewer OG state and reference behavior", () => {
         await flush();
         const copy = [...host.querySelectorAll<HTMLButtonElement>(".pdf-color-menu button")]
           .find((button) => button.textContent?.trim() === "Copy ref")!;
-        copy.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        copy.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
         await flush();
       }
       expect(write).toHaveBeenCalledTimes(2);
@@ -1921,7 +1999,7 @@ describe("PdfViewer released-OG themes and outline", () => {
   });
 
   it("matches released OG 1.0.0 page-theme filtering without inverting highlight overlays", () => {
-    const css = readFileSync("src/styles/app.css", "utf8");
+    const css = readFileSync("src/styles/pdf-workspace.css", "utf8");
     expect(css).toContain('.pdf-viewer[data-theme="light"] {\n  --pdf-container-bg: #fff;\n  --pdf-toolbar-bg: #fff;\n  --pdf-page-bg: #fff;');
     expect(css).toContain('.pdf-viewer[data-theme="warm"] {\n  --pdf-container-bg: #f6efdf;\n  --pdf-toolbar-bg: #f6efdf;\n  --pdf-page-bg: #f8eeda;');
     expect(css).not.toMatch(/\.pdf-viewer\[data-theme="warm"\][^{]*\{[^}]*filter:[^}]*\b(?:sepia|saturate)\b/s);

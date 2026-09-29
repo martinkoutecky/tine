@@ -5,7 +5,7 @@ import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
 import { graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, graphMeta, graphEpoch } from "./graphSession";
-import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePdf, closePageProps, setAudioPlayer, pageIdentityKey } from "./ui";
+import { setWorkflow, setRightSidebar, seedFavorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer, pageIdentityKey } from "./ui";
 import { pushToast } from "./toasts";
 import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
@@ -129,7 +129,6 @@ export async function loadGraphPath(
   if (!stillBound(startingBinding)) return { kind: "aborted" };
   if (rebindsPdfOwner) {
     retirePdfOwnership();
-    closePdf();
   }
 
   let result;

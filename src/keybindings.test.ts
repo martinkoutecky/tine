@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal } from "./keybindings";
-import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
+import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
+import { makePdfRoute } from "./router";
 import { bumpGraphEpoch, setGraphMeta } from "./graphSession";
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
@@ -179,7 +180,6 @@ afterEach(() => {
   endEdit("blur");
   resetStore();
   clearTransientLayersForTest();
-  setPdfTarget(null);
   setWorkflow("now");
   setFocusMode(false);
   setGraphMeta(null);
@@ -440,11 +440,7 @@ describe("find-in-page routing", () => {
     const fake = installFakeWindow();
     const dispose = installKeybindings();
     const e = modFEvent();
-    setPdfTarget({
-      filename: "paper.pdf",
-      label: "Paper",
-      owner: { graphRoot: "/test/keybindings", generation: 1 },
-    });
+    paneRouter("main").openPdf(makePdfRoute("paper.pdf", "Paper"));
 
     fake.dispatchCaptureKeydown(e.event);
 

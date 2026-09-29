@@ -4,6 +4,8 @@ import {
   closePane,
   focusPane,
   openRouteInOtherPane,
+  openPdf,
+  openPdfNotes,
   layoutPaneIds,
   layoutRoot,
   focusedPaneId,
@@ -22,6 +24,7 @@ import type { PaneSnapshot } from "./router";
 import { clearRecent, recentPages } from "./ui";
 import { journalTitle } from "./journal";
 import { exitPaneSelect, rememberBlockSelectionForPaneReturn } from "./paneSelect";
+import { pdfNavigationIntent, resetPdfNavigationForTest } from "./pdfNavigation";
 
 const pageSnapshot = (name: string): PaneSnapshot => ({
   tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }],
@@ -34,10 +37,43 @@ const journalsSnapshot = (): PaneSnapshot => ({
 });
 
 beforeEach(() => {
+  resetPdfNavigationForTest();
   clearRecent();
   exitPaneSelect();
   resetPaneLayoutToSingle(journalsSnapshot());
   paneRouter("main").setScrollerElement(null);
+});
+
+describe("PDF workspace routes", () => {
+  it("opens a PDF in a companion tab and preserves its position on a plain reopen", () => {
+    const route = openPdf("paper.pdf", "Paper")!;
+    const readerId = layoutPaneIds().find((id) => paneRouter(id).route().kind === "pdf")!;
+    expect(readerId).toBeTruthy();
+    expect(paneRouter(readerId).route()).toMatchObject({ kind: "pdf", filename: "paper.pdf" });
+    paneRouter(readerId).updateActivePdfViewState({ page: 7, scale: 1.75 });
+    const serial = pdfNavigationIntent(route.viewId)()?.serial;
+
+    openPdf("paper.pdf", "Paper");
+    expect(paneRouter(readerId).route()).toMatchObject({ page: 7, scale: 1.75 });
+    expect(pdfNavigationIntent(route.viewId)()?.serial).toBe(serial);
+    expect(layoutPaneIds()).toHaveLength(2);
+
+    openPdf("paper.pdf", "Paper", 3);
+    expect(paneRouter(readerId).route()).toMatchObject({ page: 3 });
+    expect(pdfNavigationIntent(route.viewId)()?.serial).not.toBe(serial);
+  });
+
+  it("reuses an existing companion Notes tab", () => {
+    const route = openPdf("paper.pdf", "Paper")!;
+    const readerId = layoutPaneIds().find((id) => paneRouter(id).route().kind === "pdf")!;
+    const notesId = openPdfNotes(readerId, "hls__paper.pdf")!;
+    const tabsBefore = paneRouter(notesId).tabs().length;
+    paneRouter(notesId).openJournals();
+    openPdfNotes(readerId, "hls__paper.pdf");
+    expect(paneRouter(notesId).tabs()).toHaveLength(tabsBefore);
+    expect(paneRouter(notesId).route()).toMatchObject({ kind: "page", name: "hls__paper.pdf" });
+    expect(route.kind).toBe("pdf");
+  });
 });
 
 function setJournalFeed(entries: { name: string; blockId?: string }[]) {

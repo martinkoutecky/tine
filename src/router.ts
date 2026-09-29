@@ -18,8 +18,9 @@ import { isMobilePlatform } from "./nativeChrome";
 import type { PageKind } from "./types";
 import { installRouterBridge } from "./routerBridge";
 import { pushToast } from "./toasts";
-import type { PageTarget, Route, QueryPresentation, QueryRoute } from "./routeTypes";
-export type { PageTarget, Route, QueryPresentation, QueryRoute } from "./routeTypes";
+import { retirePdfNavigationIntent } from "./pdfNavigation";
+import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
+export type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 
 /** One logical page plus its optional concrete graph-relative file owner. */
 export interface BlockTarget extends PageTarget {
@@ -107,6 +108,12 @@ export interface PaneRouter {
   ): void;
   openPageTarget(target: PageTarget, opts?: { inPlace?: boolean }): void;
   openJournals(opts?: { inPlace?: boolean }): void;
+  /** Navigate this pane to a PDF tab. Cost O(tabs); no file read until mounted. */
+  openPdf(route: PdfRoute, opts?: { inPlace?: boolean }): void;
+  /** Save the active reader's page/zoom in its route; invalid values are ignored. */
+  updateActivePdfViewState(state: { page?: number; scale?: number }): void;
+  /** Close the reader tab, returning through history or Journals if needed. */
+  closePdf(): Promise<boolean>;
   openQueryInNewTab(source: string, presentation?: QueryPresentation, foreground?: boolean): QueryRoute;
   updateActiveQuery(patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">>): void;
   replaceActiveRoute(route: Route): void;
@@ -156,6 +163,8 @@ export function tabRoute(t: Tab): Route {
 
 export function routeTitle(r: Route): string {
   if (r.kind === "journals") return "Journals";
+  if (r.kind === "pdf") return r.label.trim() || r.filename;
+  if (r.kind === "invalid") return r.title;
   if (r.kind === "query") {
     const source = r.source.trim().replace(/\s+/g, " ");
     return source ? `Search: ${source.slice(0, 36)}${source.length > 36 ? "…" : ""}` : "Search";
@@ -170,6 +179,8 @@ export function sameRoute(a: Route, b: Route): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "journals") return true;
   if (a.kind === "query") return a.id === (b as QueryRoute).id;
+  if (a.kind === "pdf") return a.viewId === (b as PdfRoute).viewId;
+  if (a.kind === "invalid") return a === b;
   const bb = b as typeof a;
   return (
     a.name === bb.name && a.pageKind === bb.pageKind && a.block === bb.block && a.path === bb.path
@@ -180,6 +191,28 @@ const CLOSED_CAP = 10;
 const MOBILE_HISTORY_STATE = { tineRouter: true };
 const GUIDE_DISPLAY_PREFIX = "Tine-guide/";
 let queryRouteCounter = 0;
+let pdfViewCounter = 0;
+
+/** Mint a tab-local PDF view ID, avoiding IDs already restored in a session. */
+export function mintPdfViewId(used: ReadonlySet<string> = new Set()): string {
+  let id: string;
+  do { id = `pdf-${Date.now().toString(36)}-${++pdfViewCounter}`; }
+  while (used.has(id));
+  return id;
+}
+
+/** Construct a PDF route without reading or changing the graph. */
+export function makePdfRoute(filename: string, label: string, state: {
+  page?: number; scale?: number; viewId?: string;
+} = {}): PdfRoute {
+  return { kind: "pdf", viewId: state.viewId ?? mintPdfViewId(), filename, label,
+    ...(state.page !== undefined ? { page: state.page } : {}),
+    ...(state.scale !== undefined ? { scale: state.scale } : {}) };
+}
+
+function duplicateRoute(route: Route): Route {
+  return route.kind === "pdf" ? { ...route, viewId: mintPdfViewId() } : { ...route };
+}
 
 export function makeQueryRoute(
   source: string,
@@ -278,6 +311,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   let mobileHistoryBackPending = false;
   let handlingMobilePopState = false;
   let mobileHistoryListenerAttached = false;
+  let pdfViewStateSaveTimer: ReturnType<typeof setTimeout> | undefined;
   function setScrollerElement(el: HTMLElement | null) {
     scrollerElement = el;
   }
@@ -484,6 +518,38 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     navigate({ kind: "journals" }, { sticky: !opts.inPlace });
   }
 
+  function openPdf(pdfRoute: PdfRoute, opts: { inPlace?: boolean } = {}) {
+    navigate(pdfRoute, { sticky: !opts.inPlace });
+  }
+
+  function updateActivePdfViewState(state: { page?: number; scale?: number }) {
+    const current = route();
+    if (current.kind !== "pdf") return;
+    const page = state.page !== undefined && Number.isSafeInteger(state.page) && state.page > 0
+      ? state.page : current.page;
+    const scale = state.scale !== undefined && Number.isFinite(state.scale) && state.scale > 0
+      ? state.scale : current.scale;
+    if (page === current.page && scale === current.scale) return;
+    setTabs(tabs().map((tab) => {
+      if (tab.id !== activeId()) return tab;
+      const history = [...tab.history];
+      history[tab.pos] = { ...current, ...(page !== undefined ? { page } : {}),
+        ...(scale !== undefined ? { scale } : {}) };
+      return { ...tab, history };
+    }));
+    clearTimeout(pdfViewStateSaveTimer);
+    pdfViewStateSaveTimer = setTimeout(persist, 750);
+  }
+
+  async function closePdf(): Promise<boolean> {
+    if (route().kind !== "pdf") return false;
+    if (tabs().length > 1) { await closeTab(activeId()); return true; }
+    if (activeTab().pos > 0) { goBack(); return true; }
+    if (lastTabCloseHandler(paneId)) return true;
+    replaceActiveRoute({ kind: "journals" });
+    return true;
+  }
+
   function replaceActiveRoute(nextRoute: Route) {
     rememberScroll();
     setTabs(tabs().map((tab) => {
@@ -527,6 +593,11 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
    *  so they're discarded wholesale rather than remapped - mirroring OG, which
    *  keeps one graph open at a time and reloads the whole workspace on switch. */
   function resetTabsToJournals() {
+    clearTimeout(pdfViewStateSaveTimer);
+    pdfViewStateSaveTimer = undefined;
+    for (const tab of tabs()) for (const entry of tab.history) {
+      if (entry.kind === "pdf") retirePdfNavigationIntent(entry.viewId);
+    }
     const id = newId();
     setTabs([{ id, history: [{ kind: "journals" }], pos: 0, pinned: false }]);
     setActiveId(id);
@@ -769,6 +840,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // Remember the closed tab (its full history + position) so Ctrl+Shift+T can
     // reopen it. Most-recent last; cap the stack.
     if (t) {
+      for (const entry of t.history) if (entry.kind === "pdf") retirePdfNavigationIntent(entry.viewId);
       closedTabs.push({ history: t.history, pos: t.pos });
       if (closedTabs.length > CLOSED_CAP) closedTabs.shift();
     }
@@ -936,7 +1008,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     rememberScroll();
     const active = activeTab();
     return {
-      tabs: [{ history: active.history.map((r) => ({ ...r })), pos: active.pos, pinned: active.pinned }],
+      tabs: [{ history: active.history.map(duplicateRoute), pos: active.pos, pinned: active.pinned }],
       activeIndex: 0,
       scrolls: [scrollByRoute.get(active.history[active.pos]) ?? null],
     };
@@ -970,6 +1042,9 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     openPage,
     openPageTarget,
     openJournals,
+    openPdf,
+    updateActivePdfViewState,
+    closePdf,
     openQueryInNewTab,
     updateActiveQuery,
     replaceActiveRoute,

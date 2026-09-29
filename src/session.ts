@@ -6,6 +6,7 @@ import { dismissToast, pushToastUnique } from "./toasts";
 import { isMobilePlatform } from "./nativeChrome";
 import {
   installSessionPersistence,
+  mintPdfViewId,
   sameRoute,
   type PaneSnapshot,
   type Route,
@@ -98,7 +99,7 @@ export function prepareWorkspaceRecovery(): (activeId: string, parked: Persisted
   };
 }
 
-function validRoute(r: unknown): Route | null {
+function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
   if (!r || typeof r !== "object") return null;
   const o = r as Record<string, unknown>;
   if (o.kind === "journals") return { kind: "journals" };
@@ -123,6 +124,26 @@ function validRoute(r: unknown): Route | null {
       ...(o.blockPresentation ? { blockPresentation: o.blockPresentation as QueryPresentation } : {}),
       ...(pageDisplay ? { pageDisplay } : {}), ...(blockDisplay ? { blockDisplay } : {}) };
   }
+  if (o.kind === "invalid") {
+    if (typeof o.title !== "string" || !o.title || o.title.length > 256
+      || typeof o.message !== "string" || !o.message || o.message.length > 4096) return null;
+    return { kind: "invalid", title: o.title, message: o.message };
+  }
+  if (o.kind === "pdf") {
+    const malformed = !(typeof o.viewId === "string" && o.viewId.length > 0 && o.viewId.length <= 128
+      && typeof o.filename === "string" && o.filename.length > 0 && o.filename.length <= 4096
+      && typeof o.label === "string" && o.label.length <= 4096
+      && (o.page === undefined || (Number.isSafeInteger(o.page) && Number(o.page) > 0 && Number(o.page) <= 5000))
+      && (o.scale === undefined || (typeof o.scale === "number" && Number.isFinite(o.scale)
+        && o.scale >= 0.05 && o.scale <= 20)));
+    if (malformed) return { kind: "invalid", title: "Unavailable PDF",
+      message: "This saved PDF tab is malformed and was not opened." };
+    const viewId = seenViewIds.has(o.viewId as string) ? mintPdfViewId(seenViewIds) : o.viewId as string;
+    seenViewIds.add(viewId);
+    return { kind: "pdf", viewId, filename: o.filename as string, label: o.label as string,
+      ...(o.page !== undefined ? { page: Number(o.page) } : {}),
+      ...(o.scale !== undefined ? { scale: Number(o.scale) } : {}) };
+  }
   if (o.kind !== "page" || typeof o.name !== "string" || o.name.length > 4096
     || (o.pageKind !== "journal" && o.pageKind !== "page")) return null;
   if (o.path !== undefined && (typeof o.path !== "string" || o.path.length > 4096)) return null;
@@ -134,13 +155,13 @@ function validRoute(r: unknown): Route | null {
   };
 }
 
-function parseSnapshotValue(raw: unknown): PaneSnapshot | null {
+function parseSnapshotValue(raw: unknown, seenViewIds: Set<string>): PaneSnapshot | null {
   const s = raw as Partial<PaneSnapshot> | null | undefined;
   if (!s || !Array.isArray(s.tabs)) return null;
   const tabs: SerializedTab[] = [];
   for (const t of s.tabs as Partial<SerializedTab>[]) {
     if (!t || !Array.isArray(t.history) || !t.history.length) continue;
-    const history = t.history.map(validRoute).filter((route): route is Route => !!route);
+    const history = t.history.map((route) => validRoute(route, seenViewIds)).filter((route): route is Route => !!route);
     if (!history.length) continue;
     tabs.push({
       history,
@@ -202,14 +223,15 @@ function sanitizeJournals(snapshot: PaneSnapshot, journalsSeen: { value: boolean
 function parseLayoutNode(
   raw: unknown,
   snapshots: Map<string, PaneSnapshot>,
-  journalsSeen: { value: boolean }
+  journalsSeen: { value: boolean },
+  seenViewIds: Set<string>,
 ): LayoutNode | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
   if (o.kind === "pane") {
     const paneId = typeof o.paneId === "string" && o.paneId ? o.paneId : null;
     if (!paneId) return null;
-    const snap = parseSnapshotValue(o);
+    const snap = parseSnapshotValue(o, seenViewIds);
     if (!snap) return null;
     const sanitized = sanitizeJournals(snap, journalsSeen);
     if (!sanitized) return null;
@@ -219,8 +241,8 @@ function parseLayoutNode(
   if (o.kind === "split") {
     if (o.dir !== "row" && o.dir !== "col") return null;
     const children = Array.isArray(o.children) ? o.children : [];
-    const a = parseLayoutNode(children[0], snapshots, journalsSeen);
-    const b = parseLayoutNode(children[1], snapshots, journalsSeen);
+    const a = parseLayoutNode(children[0], snapshots, journalsSeen, seenViewIds);
+    const b = parseLayoutNode(children[1], snapshots, journalsSeen, seenViewIds);
     if (a && b) {
       const ratio = typeof o.ratio === "number" ? Math.min(0.85, Math.max(0.15, o.ratio)) : 0.5;
       return { kind: "split", dir: o.dir, ratio, children: [a, b] };
@@ -277,9 +299,10 @@ export function parsePersistedSession(raw: string): {
       recentExpanded: s.recentSectionExpanded,
     };
     const recent = s.recentPages === undefined ? legacyRecentPages() : sanitizeRecent(s.recentPages);
+    const seenViewIds = new Set<string>();
     if (s.layout && !isMobilePlatform) {
       const snapshots = new Map<string, PaneSnapshot>();
-      const layout = parseLayoutNode(s.layout, snapshots, { value: false });
+      const layout = parseLayoutNode(s.layout, snapshots, { value: false }, seenViewIds);
       if (layout && snapshots.size) {
         return {
           layout,
@@ -292,7 +315,7 @@ export function parsePersistedSession(raw: string): {
     }
     if (s.layout && isMobilePlatform) {
       const snapshots = new Map<string, PaneSnapshot>();
-      const parsed = parseLayoutNode(s.layout, snapshots, { value: false });
+      const parsed = parseLayoutNode(s.layout, snapshots, { value: false }, seenViewIds);
       if (parsed && snapshots.size) {
         const feedId =
           [...snapshots].find(([, snap]) =>
@@ -307,7 +330,7 @@ export function parsePersistedSession(raw: string): {
         };
       }
     }
-    const legacy = parseSnapshotValue(s);
+    const legacy = parseSnapshotValue(s, seenViewIds);
     if (!legacy) return null;
     return {
       layout: { kind: "pane", paneId: "main" },
