@@ -214,7 +214,7 @@ function relativeMovePlan(capturedIds: readonly string[], targetId: string): Rel
 export async function moveBlocksRelative(
   capturedIds: readonly string[],
   targetId: string,
-  position: "before" | "after",
+  position: "before" | "after" | "child",
 ): Promise<boolean> {
   const plan = relativeMovePlan(capturedIds, targetId);
   if (!plan) return false;
@@ -242,12 +242,14 @@ export async function moveBlocksRelative(
       siblings.splice(siblings.indexOf(id), 1);
     }
     const target = state.byId[targetId];
-    const destination = target.parent === null
+    // "child": append under the target (OG's nested drop, GH #326).
+    const destinationParent = position === "child" ? targetId : target.parent;
+    const destination = destinationParent === null
       ? state.pages.find((page) => page.name === target.page)!.roots
-      : state.byId[target.parent].children;
-    const targetIndex = destination.indexOf(targetId);
+      : state.byId[destinationParent].children;
+    const targetIndex = position === "child" ? destination.length : destination.indexOf(targetId);
     for (const id of plan.roots) {
-      state.byId[id].parent = target.parent;
+      state.byId[id].parent = destinationParent;
       state.byId[id].raw = movedRaw.get(id)!;
     }
     destination.splice(targetIndex + (position === "after" ? 1 : 0), 0, ...plan.roots);

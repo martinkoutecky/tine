@@ -3498,6 +3498,10 @@ html[data-system-insets="native-viewport"] {
 .block-main.drop-before {
   box-shadow: inset 0 2px 0 var(--link-color);
 }
+.block-main.drop-child {
+  box-shadow: inset 3px 0 0 var(--link-color);
+  background: color-mix(in srgb, var(--link-color) 9%, transparent);
+}
 .block-main.dragging {
   opacity: 0.4;
 }

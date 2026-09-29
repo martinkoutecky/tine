@@ -348,8 +348,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           // editing, apply the same offset only when the hidden-props-stripped editor
           // value is still a single line; multi-line heading blocks edit at body size.
           [`bullet-h${headingLevel()}`]: headingLevel() != null && (!editing() || editorIsUniline()),
-          "drop-before": dropInd()?.id === props.id && dropInd()?.before === true,
-          "drop-after": dropInd()?.id === props.id && dropInd()?.before === false,
+          "drop-before": dropInd()?.id === props.id && dropInd()?.position === "before",
+          "drop-after": dropInd()?.id === props.id && dropInd()?.position === "after",
+          "drop-child": dropInd()?.id === props.id && dropInd()?.position === "child",
           dragging: dragId() === props.id,
           selected: isSelected(props.id),
           // Marks the row being edited; drives dim-mode's active-block spotlight.

@@ -17,13 +17,14 @@ import { clearSelection, extendSelectionTo, moveBlocksRelative, selectBlock, sel
 import { endEdit, startEditing } from "../editorController";
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
 import { codeBodyProjection } from "../editor/codeFence";
+import { blockDropPosition, type BlockDropPosition } from "../editor/blockDrag";
 import { isBuiltinHidden, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
 const [dragId, setDragId] = createSignal<string | null>(null);
-const [dropInd, setDropInd] = createSignal<{ id: string; before: boolean } | null>(null);
+const [dropInd, setDropInd] = createSignal<{ id: string; position: BlockDropPosition } | null>(null);
 let dragMoved = false;
 
 /** True from the drag threshold until the tick after mouseup: the bullet's click
@@ -62,7 +63,10 @@ export function beginDrag(id: string, e: MouseEvent) {
     const tid = el?.dataset.blockId;
     if (tid) {
       const main = el!.querySelector(".block-main")!.getBoundingClientRect();
-      setDropInd({ id: tid, before: ev.clientY < main.top + main.height / 2 });
+      setDropInd({
+        id: tid,
+        position: blockDropPosition(ev.clientX, ev.clientY, el!.getBoundingClientRect(), main),
+      });
     } else {
       setDropInd(null);
     }
@@ -75,7 +79,7 @@ export function beginDrag(id: string, e: MouseEvent) {
     if (stillBound(binding) && dragMoved && ind && docNode(ind.id)) {
       // One transaction: normalizes nested captures, refuses a drop into a
       // moved subtree, and persists a cross-page move as one save group.
-      void moveBlocksRelative(capturedIds ?? [id], ind.id, ind.before ? "before" : "after");
+      void moveBlocksRelative(capturedIds ?? [id], ind.id, ind.position);
     }
     setDragId(null);
     setDropInd(null);
