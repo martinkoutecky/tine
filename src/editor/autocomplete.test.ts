@@ -20,6 +20,7 @@ import {
   codeLanguageItems,
   COMMON_CODE_LANGUAGES,
   propertyKeyFold,
+  propertyValueKeyAfterBoundary,
 } from "./autocomplete";
 import slashFixtureManifest from "./fixtures/slash-ranking-prefix-base-15bbddc/manifest.json";
 import slashFixturePart1 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-1.json";
@@ -178,6 +179,12 @@ describe("detectTrigger", () => {
     expect(detectTrigger("before\nAlpha_value::", 20)).toEqual({
       kind: "property-name", query: "Alpha_value", start: 7, end: 20,
     });
+    expect(detectTrigger("::", 0)).toEqual({
+      kind: "property-name", query: "", start: 0, end: 2,
+    });
+    expect(detectTrigger("before\nAlpha_value::", 18)).toEqual({
+      kind: "property-name", query: "Alpha_value", start: 7, end: 20,
+    });
 
     expect(detectTrigger("ordinary prose ::", 17)).toBeNull();
     expect(detectTrigger("[[reference]]::", 15)).toBeNull();
@@ -193,6 +200,17 @@ describe("detectTrigger", () => {
     });
     expect(detectTrigger("other:: one", 11, "alpha")).toBeNull();
     expect(detectTrigger("alpha:: one", 11)).toBeNull();
+    expect(detectTrigger("alpha:: one, two", 16, "alpha")).toEqual({
+      kind: "property-value", query: "two", start: 13, end: 16, property: "alpha",
+      propertyValues: ["one"],
+    });
+  });
+
+  it("enters property-value completion only from a just-typed value boundary", () => {
+    expect(propertyValueKeyAfterBoundary("Alpha_value:: ", 14, " ")).toBe("alpha-value");
+    expect(propertyValueKeyAfterBoundary("alpha:: one,", 12, ",")).toBe("alpha");
+    expect(propertyValueKeyAfterBoundary("alpha:: one", 11, "e")).toBeNull();
+    expect(propertyValueKeyAfterBoundary("prose alpha:: ", 14, " ")).toBeNull();
   });
 
   it("detects language text only on opening backtick and tilde fences", () => {

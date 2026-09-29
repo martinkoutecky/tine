@@ -1,6 +1,6 @@
 # og persisted-format census (batch 5b)
 
-The pinned count is **25 durable layouts** in `scripts/lib/og-enforcement.mjs`.
+The pinned count is **26 durable layouts** in `scripts/lib/og-enforcement.mjs`.
 Several rows share a low-level writer. A format means a byte layout or durable
 directory convention, not each JSON key or filename. Temporary files used for
 atomic publication have the same payload as their final name.
@@ -32,6 +32,7 @@ atomic publication have the same payload as their final name.
 | Diagnostic session marker | app data `diagnostics/session-active` and `diagnostics/process.lock`, empty files (ADR 0058) | `src-tauri/src/flight_store.rs` `set_session_active`, `open` |
 | Diagnostic report JSON | a user-chosen file from Settings → Help & diagnostics → Save report (ADR 0058) | `src-tauri/src/flight_store.rs` `save_report` |
 | Concord base ledger | app data `concord-ledger/<graph-id>/`: per page `pages/<sha(path)>/index.json` + ≤ 2 text blobs, per sync copy `pins/<sha(path)>.{json,blob}`; disposable, never under the graph root (ADR 0056) | `src-tauri/src/concord_ledger.rs` `LedgerFiles::write` (via `device_io::atomic_write`) |
+| Draft store JSON | app data `drafts/<graph-id>.v1.json`, unsaved drafts of pages that could not be saved, ≤ 64 records and 8 MiB (ADR 0061) | `src-tauri/src/drafts.rs` `write_unlocked` |
 
 The graph session JSON may carry `workspaceId`, the ID of the workspace that
 produced it. On startup, a matching live session is fresher than the registry's
@@ -42,9 +43,11 @@ live edit wins instead, and the skipped recovery is reported to the user. This
 resolves a crash after the registry switch was published but before its
 scheduled session save without replacing newer live work.
 
-There is **no separate retained-draft format** on this og tree. Unsaved editor
-state is not a durable draft capsule; that is inventory family 9, status todo.
-Likewise, restore recovery contains the original file bytes, not a new syntax.
+The draft store holds a page's editor draft only while that page's edits cannot
+be saved (a conflict or a failed save); an ordinary save never writes it. Its
+`live-conflict` record kind is reserved for the Concord live-draft capsule, so
+that capsule is a record in this store rather than a second store (ADR 0061).
+Restore recovery contains the original file bytes, not a new syntax.
 
 The count test pins the vocabulary and compares low-level writer-site counts
 against `2d0349368` to catch uncensused new writes. A caller may still route a

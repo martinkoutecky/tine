@@ -211,7 +211,7 @@ describe("page hover-peek (GH #40)", () => {
 
   it("opens block-ref peeks only after dwell", async () => {
     const preview = vi.spyOn(backend(), "previewBlock");
-    const { root, dispose } = mountAttached("Inline ref ((arch-1)) here");
+    const { root, dispose } = mountAttached("Inline ref ((58900000-0000-4000-8000-0000000000b1)) here");
     try {
       const ref = root.querySelector(".block-ref")!;
       expect(ref).toBeTruthy();
@@ -225,7 +225,7 @@ describe("page hover-peek (GH #40)", () => {
       expect(shown).toBe(true);
       expect(popup()!.querySelector(".peek-popup-title-name")?.textContent).toContain("Tine");
       expect(popup()!.querySelector(".ls-block")).toBeTruthy();
-      expect(preview).toHaveBeenCalledWith("arch-1", 50);
+      expect(preview).toHaveBeenCalledWith("58900000-0000-4000-8000-0000000000b1", 50);
     } finally {
       dispose();
     }
@@ -287,7 +287,7 @@ describe("page hover-peek (GH #40)", () => {
   });
 
   it("uses the same mounted peek rung for shared Back", async () => {
-    const { root, dispose } = mountAttached("Inline ref ((arch-1)) here");
+    const { root, dispose } = mountAttached("Inline ref ((58900000-0000-4000-8000-0000000000b1)) here");
     try {
       fireEnter(root.querySelector(".block-ref")!);
       await advance(PEEK_OPEN_MS);

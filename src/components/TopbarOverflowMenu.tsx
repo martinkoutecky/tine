@@ -1,5 +1,5 @@
 import { Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
-import { registerTransientLayer } from "../transientLayers";
+import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 
 export interface TopbarOverflowMenuProps {
   onCalendar: () => void;
@@ -38,17 +38,10 @@ export function TopbarOverflowMenu(props: TopbarOverflowMenuProps): JSX.Element 
       dismiss: () => { close(true); return true; },
     });
     onCleanup(unregister);
-    // Dismiss when the user clicks anywhere outside the menu (the toolbar, the
-    // page, another control). The transient registry only handles Escape/Back;
-    // without this the popover stayed open on an outside click. Capture phase so
-    // it fires regardless of downstream stopPropagation; focus is NOT restored to
-    // the trigger here because the user's intent was to click elsewhere.
-    const onDown = (e: MouseEvent) => {
-      if (root && !root.contains(e.target as Node)) close(false);
-    };
-    document.addEventListener("mousedown", onDown, true);
-    onCleanup(() => document.removeEventListener("mousedown", onDown, true));
   });
+  // `root` already contains the trigger. Focus is NOT restored here, unlike the
+  // Escape/Back dismissal above: the user's intent was to click elsewhere.
+  dismissOnOutsidePointer({ open, inside: () => [root], dismiss: () => close(false) });
 
   const run = (action: () => void) => {
     // Restore focus to the "···" trigger before invoking the action. This is

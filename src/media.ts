@@ -6,6 +6,7 @@
 import { assetNameFormat } from "./assetSettings";
 import type { Format } from "./types";
 
+import { appNow } from "./journal";
 // Image extensions Tine renders as <img> (unchanged from the prior inline check).
 export const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
 // OG's media format sets (deps/.../config.cljs): reused so a clone graph stays
@@ -178,7 +179,7 @@ export function formatAssetName(template: string, original: string | undefined, 
  *  candidates get millisecond + session-counter uniqueness before the backend's
  *  final collision de-dupe, so same-second optimistic links don't alias. */
 export function assetFileName(original?: string): string {
-  const now = new Date();
+  const now = appNow();
   if (original !== undefined) return formatAssetName(assetNameFormat(), original, now);
   const uniqueStem = clipboardPasteStem(now);
   return appendClipboardUniqueness(
@@ -194,7 +195,7 @@ export function assetFileName(original?: string): string {
  *  collapse to `photo.jpg`/`photo_1.jpg`). */
 export function captureAssetFileName(ext: string): string {
   const clean = (ext || "").replace(/^\.+/, "").toLowerCase() || "bin";
-  const now = new Date();
+  const now = appNow();
   const uniqueStem = clipboardPasteStem(now);
   return appendClipboardUniqueness(
     formatAssetNameWithFallbackStem(assetNameFormat(), undefined, now, uniqueStem, clean),

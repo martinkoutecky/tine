@@ -3,6 +3,8 @@ import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage, openPageInNewTab } from "../router";
+import { openRouteInOtherPane } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openPageInSidebar, openPageContextMenu, searchRemoveAccents } from "../ui";
 import { graphMeta } from "../graphSession";
 import { LiveRefGroup } from "./LiveRefGroup";
@@ -464,15 +466,14 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                         e.stopPropagation();
                         return;
                       }
-                      if (e.shiftKey) openPageInSidebar(group().page, group().kind);
+                      const dest = internalLinkDest(e);
+                      if (dest === "sidebar") openPageInSidebar(group().page, group().kind);
+                      else if (dest === "background") openPageInNewTab(group().page, group().kind);
+                      else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: group().page, pageKind: group().kind });
                       else openPage(group().page, group().kind);
                     }}
-                    onAuxClick={(e) => {
-                      if (e.button === 1) {
-                        e.preventDefault();
-                        openPageInNewTab(group().page, group().kind);
-                      }
-                    }}
+                    onMouseDown={internalLinkMouseDown}
+                    onAuxClick={(e) => internalLinkAuxClick(e, () => openPageInNewTab(group().page, group().kind))}
                     onPointerDown={longPress.onPointerDown}
                     onPointerMove={longPress.onPointerMove}
                     onPointerUp={longPress.onPointerUp}

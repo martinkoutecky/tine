@@ -180,6 +180,7 @@ describe("graph-scoped UI state (I-20)", () => {
     expect(consumers.filter((c) => c.proven).map((c) => c.key).sort(), "the proven writers").toEqual([
       "src/components/DatePicker.tsx#datePicker",
       "src/components/FormulaEditor.tsx#formulaEditor",
+      "src/draftStore.ts#earlier",
     ]);
     const picker = readFileSync("src/components/DatePicker.tsx", "utf8");
     expect(picker.match(/if \(!bound\(\)\) return/g)?.length, `${RULE}: both DatePicker write paths check bound()`).toBe(2);

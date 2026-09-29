@@ -12,6 +12,8 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: "Accent color", description: "interface highlight color" },
   { tab: "appearance", label: "Interface size", description: "zoom scale Ctrl scroll" },
   { tab: "appearance", label: "Wide mode", description: "reading width" },
+  { tab: "appearance", label: "Standard page width", description: "reading column pixels cap reset", aliases: ["narrow width"], level: "advanced" },
+  { tab: "appearance", label: "Wide page width", description: "fill pane custom pixels cap", aliases: ["wide mode width"], level: "advanced" },
   { tab: "appearance", label: "Document mode", description: "hide bullets prose" },
   { tab: "appearance", label: "Document-mode Enter creates a new block", description: "Enter Shift Enter internal newline config" },
   { tab: "appearance", label: "Show brackets", description: "page references config shortcut" },

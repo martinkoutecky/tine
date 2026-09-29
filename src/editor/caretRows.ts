@@ -49,6 +49,40 @@ function buildMirror(ta: HTMLTextAreaElement): HTMLDivElement {
   return div;
 }
 
+/** Map a viewport point to the nearest caret offset in a textarea. Used only
+ *  after a rendered-block mousedown has already swapped in the editor and the
+ *  user continues dragging: the original rendered DOM no longer exists, so the
+ *  browser cannot extend its native selection. One mirror pass preserves the
+ *  same wrapping/font metrics and gives the gesture a raw-editor selection.
+ *  Returns null in no-layout environments. */
+export function textareaCaretPoints(ta: HTMLTextAreaElement): Array<{ x: number; y: number }> | null {
+  if (typeof document === "undefined") return null;
+  const div = buildMirror(ta);
+  // Keep shaping and word-break opportunities identical to the textarea.
+  // A zero-width marker between every character permits wrapping inside words
+  // and progressively displaces the drag endpoint on subsequent visual rows.
+  const text = document.createTextNode(ta.value + "\u200b");
+  div.appendChild(text);
+  document.body.appendChild(div);
+  try {
+    const points: Array<{ x: number; y: number }> = [];
+    if (!div.offsetHeight) return null;
+    const origin = div.getBoundingClientRect();
+    const range = document.createRange();
+    for (let offset = 0; offset <= ta.value.length; offset++) {
+      range.setStart(text, offset);
+      range.collapse(true);
+      const rects = range.getClientRects();
+      const rect = rects[rects.length - 1];
+      if (!rect) return null;
+      points.push({ x: rect.left - origin.left, y: rect.top - origin.top });
+    }
+    return points;
+  } finally {
+    document.body.removeChild(div);
+  }
+}
+
 function camelToKebab(s: string): string {
   return s.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
 }
@@ -153,4 +187,32 @@ export function caretAtLastRow(ta: HTMLTextAreaElement, offset: number): boolean
   if (offset === ta.value.length) return true;
   const rows = measureRows(ta, [offset, ta.value.length]);
   return rows ? rows[0] === rows[1] : true;
+}
+
+/** The x, in content coordinates, of `offset` in a NO-WRAP textarea (a code
+ *  card's editor). Used to reveal the caret horizontally; returns null where
+ *  there is no layout (jsdom), so callers simply leave the scroll alone.
+ *
+ *  The shared mirror wraps at the textarea's width, which is exactly wrong
+ *  here — a `wrap="off"` textarea puts the whole logical line on one visual
+ *  row — so this builds its own with `white-space: pre` and no width. */
+export function textareaCaretLeft(ta: HTMLTextAreaElement, offset: number): number | null {
+  if (typeof document === "undefined") return null;
+  const div = buildMirror(ta);
+  div.style.whiteSpace = "pre";
+  div.style.wordWrap = "normal";
+  div.style.overflowWrap = "normal";
+  div.style.width = "auto";
+  document.body.appendChild(div);
+  try {
+    div.textContent = "";
+    div.appendChild(document.createTextNode(ta.value.slice(0, offset)));
+    const marker = document.createElement("span");
+    marker.textContent = "​";
+    div.appendChild(marker);
+    if (!div.offsetHeight) return null; // no layout (tests)
+    return marker.offsetLeft;
+  } finally {
+    document.body.removeChild(div);
+  }
 }

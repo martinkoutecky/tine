@@ -14,12 +14,12 @@ body,
 html,
 body {
   background: var(--bg-primary, #ffffff);
-  color: var(--text-primary, #433f38);
+  color: var(--text-primary, #0f1419);
 }
 html[data-theme="dark"],
 html[data-theme="dark"] body {
   background: var(--bg-primary, #1a1b1e);
-  color: var(--text-primary, #c6c8cc);
+  color: var(--text-primary, #ecedf0);
 }
 .startup-shell {
   display: flex;

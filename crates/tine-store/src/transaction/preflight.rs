@@ -236,7 +236,7 @@ impl<'a> Transaction<'a> {
                 let new = if *rebind_title {
                     rewrite_move(&old, &path, renames, self.store.config().file_name_format)?
                 } else {
-                    rewrite(&old, &path, renames)?
+                    rewrite(&old, &path, renames, self.store.config().file_name_format)?
                 };
                 Ok(Prepared {
                     src: file,

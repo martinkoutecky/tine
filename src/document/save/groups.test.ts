@@ -225,6 +225,32 @@ describe("save groups", () => {
     expect(memory("A")).toContain("X");
   });
 
+  // master 0.6.984 "Undoing a move between pages can no longer lose the moved
+  // blocks": og replays a multi-page undo as one save group, so the page that
+  // regains the blocks and the page that loses them land in one guarded request
+  // or not at all (og 20b, contract 4).
+  it("undo of a landed cross-page move writes both pages in one request, and a refusal writes neither", async () => {
+    const moved = block("X");
+    loadFeed([{ ...page("A", ["a"]), blocks: [moved, block("a")] }, page("B", ["b"])]);
+    const { disk, save } = diskBackend({ A: ["X", "a"], B: ["b"] });
+    await moveBlock(moved.id, null, 0, "B");
+    expect(await flushAll()).toBe(true);
+    expect(disk.get("A")).toEqual(["a"]);
+    expect(disk.get("B")).toEqual(["X", "b"]);
+
+    save.mockResolvedValueOnce({ failed: { index: 0, family: "conflict", undoFailed: [] } });
+    undo();
+    expect(group("A")).toBeTruthy();
+    await flushAll();
+    const refused = save.mock.calls.at(-1)![0];
+    expect(refused.map((entry) => entry.page.name).sort()).toEqual(["A", "B"]);
+    // Refused as a whole: the blocks are still in B on disk and in A in memory.
+    expect(disk.get("A")).toEqual(["a"]);
+    expect(disk.get("B")).toEqual(["X", "b"]);
+    expect(memory("A")).toEqual(["X", "a"]);
+    expect(isConflicted("A") || isConflicted("B")).toBe(true);
+  });
+
   it("X1: a new intent during a sealed request saves in a successor group", async () => {
     const moved = block("X");
     loadFeed([{ ...page("A", []), blocks: [moved] }, page("B", []), page("C", [])]);

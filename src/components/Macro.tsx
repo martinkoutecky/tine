@@ -1,8 +1,8 @@
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
-import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
-import { openPageInSidebar, openPageContextMenu, pageIdentityKey, openQueryExport } from "../ui";
+import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
+import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, pageIdentityKey, openQueryExport } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
 import { blockProperty, blockWritable, formatForPage, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
@@ -50,7 +50,8 @@ import { formulasOf } from "../sheet/formulaFields";
 import { LinkDepthContext, LinkDepthWarning, MAX_DEPTH_OF_LINKS } from "./linkDepth";
 import { blockDtoExternalId } from "../blockIdentity";
 import { QueryPrintRefusedError } from "../backend";
-import { focusedRouter } from "../panes";
+import { focusedRouter, openRouteInOtherPane } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { pushToast, pushToastUnique } from "../toasts";
 
 const QUERY_VIEWS: QueryView[] = ["search", "list", "table", "board"];
@@ -991,11 +992,24 @@ export function QueryMacro(props: {
                               <button
                                 type="button"
                                 class="query-search-page"
-                                onClick={() => openPageTarget({
+                                onMouseDown={internalLinkMouseDown}
+                                onClick={(e) => {
+                                  const target = {
+                                    name: hit.page.name,
+                                    pageKind: hit.page.kind,
+                                    ...(hit.page.path ? { path: hit.page.path } : {}),
+                                  };
+                                  const dest = internalLinkDest(e);
+                                  if (dest === "sidebar") openPageInSidebar(target);
+                                  else if (dest === "background") openPageTargetInNewTab(target);
+                                  else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target });
+                                  else openPageTarget(target);
+                                }}
+                                onAuxClick={(e) => internalLinkAuxClick(e, () => openPageTargetInNewTab({
                                   name: hit.page.name,
                                   pageKind: hit.page.kind,
                                   ...(hit.page.path ? { path: hit.page.path } : {}),
-                                })}
+                                }))}
                               >
                                 <span class="switcher-kind">{hit.page.kind}</span>
                                 <span>{hit.display_text}</span>
@@ -1006,11 +1020,20 @@ export function QueryMacro(props: {
                               <button
                                 type="button"
                                 class="query-search-hit switcher-row block-result"
-                                onClick={() => openPageAtBlock({
-                                  name: blockHit().page,
-                                  pageKind: blockHit().kind,
-                                  block: blockDtoExternalId(blockHit().block),
-                                  ...(blockHit().path ? { path: blockHit().path } : {}),
+                                onMouseDown={internalLinkMouseDown}
+                                onClick={(e) => {
+                                  const bh = blockHit();
+                                  const uuid = blockDtoExternalId(bh.block);
+                                  const route = { kind: "page" as const, name: bh.page, pageKind: bh.kind, block: uuid, ...(bh.path ? { path: bh.path } : {}) };
+                                  const dest = internalLinkDest(e);
+                                  if (dest === "sidebar") openBlockInSidebar({ uuid, page: bh.page, pageKind: bh.kind, ...(bh.path ? { path: bh.path } : {}) });
+                                  else if (dest === "background") openInNewTab(route);
+                                  else if (dest === "pane") openRouteInOtherPane(route);
+                                  else openPageAtBlock({ name: bh.page, pageKind: bh.kind, block: uuid, ...(bh.path ? { path: bh.path } : {}) });
+                                }}
+                                onAuxClick={(e) => internalLinkAuxClick(e, () => {
+                                  const bh = blockHit();
+                                  openInNewTab({ kind: "page", name: bh.page, pageKind: bh.kind, block: blockDtoExternalId(bh.block), ...(bh.path ? { path: bh.path } : {}) });
                                 })}
                               >
                                 <SearchResultRow
@@ -1069,15 +1092,16 @@ export function QueryMacro(props: {
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     const target = { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) };
-                                    if (e.shiftKey) openPageInSidebar(target);
+                                    const dest = internalLinkDest(e);
+                                    if (dest === "sidebar") openPageInSidebar(target);
+                                    else if (dest === "background") openPageTargetInNewTab(target);
+                                    else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target });
                                     else openPageTarget(target);
                                   }}
+                                  onMouseDown={internalLinkMouseDown}
                                   onAuxClick={(e) => {
-                                    if (e.button === 1) {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      openPageTargetInNewTab({ name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
-                                    }
+                                    e.stopPropagation();
+                                    internalLinkAuxClick(e, () => openPageTargetInNewTab({ name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) }));
                                   }}
                                   onContextMenu={(e) => {
                                     if (!shouldOpenTextContextMenu(e.target)) return;
@@ -1126,15 +1150,16 @@ function QueryGroup(props: { group: () => RefGroup | undefined; flat?: boolean }
             class={props.flat ? "query-crumb" : "query-page"}
             onClick={(e) => {
               e.stopPropagation();
-              if (e.shiftKey) openPageInSidebar(target());
+              const dest = internalLinkDest(e);
+              if (dest === "sidebar") openPageInSidebar(target());
+              else if (dest === "background") openPageTargetInNewTab(target());
+              else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target() });
               else openPageTarget(target());
             }}
+            onMouseDown={internalLinkMouseDown}
             onAuxClick={(e) => {
-              if (e.button === 1) {
-                e.preventDefault();
-                e.stopPropagation();
-                openPageTargetInNewTab(target());
-              }
+              e.stopPropagation();
+              internalLinkAuxClick(e, () => openPageTargetInNewTab(target()));
             }}
             onContextMenu={(e) => {
               if (!shouldOpenTextContextMenu(e.target)) return;
@@ -1461,7 +1486,7 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
     <div class="embed-block">
       <Show when={!selfPageEmbed()}>
         <Show when={data()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
-          <LiveRefGroup page={data()!.page} kind={data()!.kind} blocks={data()!.blocks} embedId={data()!.embedId} surface="embed" />
+          <LiveRefGroup page={data()!.page} kind={data()!.kind} blocks={data()!.blocks} embedId={data()!.embedId} hostBlockId={props.blockId} surface="embed" />
         </Show>
       </Show>
     </div>

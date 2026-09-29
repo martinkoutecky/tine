@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openPage } from "../router";
-import { journalTitle } from "../journal";
+import { journalTitle, appNow } from "../journal";
 import { dataRev, graphEpoch } from "../graphSession";
 import { firstDayOfWeek } from "../ui";
 import { backend } from "../backend";
@@ -24,13 +24,13 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
   // "today" is REFRESHED each time the popup opens (see `toggle`), not captured once:
   // CalendarJump is mounted permanently in the topbar, so a plain `new Date()` would
   // freeze at the app-launch day and never roll over (issue #11).
-  const [today, setToday] = createSignal(new Date());
+  const [today, setToday] = createSignal(appNow());
   const [view, setView] = createSignal({ y: today().getFullYear(), m: today().getMonth() });
   const sow = () => firstDayOfWeek();
   // Open/close the popup; on OPEN, snap "today" + the viewed month to the real now.
   const openCalendar = () => {
     if (!open()) {
-      const now = new Date();
+      const now = appNow();
       setToday(now);
       setView({ y: now.getFullYear(), m: now.getMonth() });
     }

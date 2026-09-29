@@ -63,10 +63,20 @@ export function pageVisibleOrder(pageName: string): string[] {
 }
 
 /** Model-only description of the outline currently rendered around a block.
- * Zoom uses a single root whose durable collapse is overridden for this view. */
+ * Zoom uses a single root whose durable collapse is overridden for this view.
+ *
+ * Reference/query/embed groups render an ARBITRARY display list of roots
+ * (backlink hits, query results) that is not the outline. Such a scope is
+ * `navOnly`: arrow navigation and view-local selection read it, but structural
+ * mutations (merges/indents/moves) must NOT treat the display list as the
+ * outline — they fall back to page order instead (master GH #341). */
 export interface OutlineScope {
   roots: string[];
   forceExpandedRoot?: string;
+  /** A secondary surface's collapse contract, so the scoped visible order
+   * mirrors what is rendered rather than the durable `node.collapsed` flags. */
+  collapsed?: (id: string, stored: boolean) => boolean;
+  navOnly?: boolean;
 }
 
 export function scopedVisibleOrder(scope: OutlineScope): string[] {
@@ -76,7 +86,8 @@ export function scopedVisibleOrder(scope: OutlineScope): string[] {
       const node = doc.byId[id];
       if (!node) continue;
       order.push(id);
-      const expanded = !node.collapsed || id === scope.forceExpandedRoot;
+      const collapsed = scope.collapsed?.(id, node.collapsed) ?? node.collapsed;
+      const expanded = !collapsed || id === scope.forceExpandedRoot;
       if (expanded && node.children.length && !blockIsOpaqueSheetView(id)) walk(node.children);
     }
   };

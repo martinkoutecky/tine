@@ -16,6 +16,7 @@ mod concord;
 mod concord_ledger;
 mod debug;
 mod device_io;
+mod drafts;
 #[cfg(test)]
 mod edit_kind_guard_tests;
 #[cfg(desktop)]
@@ -70,8 +71,8 @@ use debug::{
 };
 use graph::{
     app_platform, approve_external_assets, capture_graph_binding, capture_target, create_graph,
-    default_graph_parent, inspect_graph_access, load_graph, open_graph_window, resolve_root,
-    startup_graph_path, warm_done,
+    default_graph_parent, inspect_graph_access, load_graph, local_clock, open_graph_window,
+    resolve_root, startup_graph_path, warm_done,
 };
 use pdf_crop_rollback::rollback_pdf_area_image;
 use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
@@ -562,6 +563,13 @@ pub fn run() {
         crate::graph::app_platform()
     ));
 
+    // The backend's zone offset at launch, so the frontend's first "today" is
+    // already the backend's (GH #607); `local_clock` keeps it current.
+    let (offset_minutes, unix_ms) = tine_core::date::JournalDate::local_utc_offset_now();
+    let builder = builder.append_invoke_initialization_script(format!(
+        "globalThis.__TINE_LOCAL_CLOCK__ = {{ offset_minutes: {offset_minutes}, unix_ms: {unix_ms} }};"
+    ));
+
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let builder = builder.append_invoke_initialization_script(format!(
         "globalThis.__TINE_NATIVE_FRAME__ = {native_frame_active};"
@@ -810,6 +818,7 @@ pub fn run() {
             capture_frontend_ready,
             create_graph,
             app_platform,
+            local_clock,
             default_graph_parent,
             android_folder_picker::pick_graph_folder,
             android_media::capture_photo,
@@ -919,6 +928,9 @@ pub fn run() {
             list_backups,
             restore_backup,
             load_session,
+            drafts::load_drafts,
+            drafts::store_draft,
+            drafts::retire_draft,
             save_session,
             load_workspaces,
             save_workspaces,
@@ -1134,6 +1146,19 @@ mod platform_lifecycle_guard_tests {
                 "\"globalThis.__TINE_PLATFORM__ = {:?};\",\n        crate::graph::app_platform()"
             ),
             "GH #446: lib.rs must inject __TINE_PLATFORM__ from crate::graph::app_platform()"
+        );
+    }
+
+    /// GH #607: the frontend's calendar is the backend's. The launch offset is
+    /// injected before frontend code runs, from the same zone source as
+    /// `JournalDate::today`; `local_clock` keeps it current.
+    #[test]
+    fn frontend_clock_correction_is_injected_from_the_backend_zone() {
+        let source = lib_source();
+        assert!(
+            source.contains("JournalDate::local_utc_offset_now();")
+                && source.contains("globalThis.__TINE_LOCAL_CLOCK__ = "),
+            "GH #607: lib.rs must inject __TINE_LOCAL_CLOCK__ from JournalDate::local_utc_offset_now()"
         );
     }
 

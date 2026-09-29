@@ -344,3 +344,65 @@ describe("right sidebar collapsed-source block (GH #358)", () => {
     }
   });
 });
+
+describe("right sidebar page with nothing to type into (GH #483)", () => {
+  // The reporter's exact conditional — "If I add any text on this page in the
+  // first place and AFTER that open it in the Sidebar, I can continue to edit"
+  // — is the tell. A page shown ONLY in the sidebar never ran the main pane's
+  // re-seed effect, so a page with no body rendered an empty box: no bullet, no
+  // trailing target, nothing to put a caret in. The two shapes below are the
+  // same defect: no roots at all, and a page whose only root is its properties.
+  const noBlocks: PageDto = {
+    name: "Blank sidebar page", kind: "page", title: "Blank sidebar page", pre_block: null, blocks: [],
+  };
+  const propertiesOnly: PageDto = {
+    name: "Properties only page",
+    kind: "page",
+    title: "Properties only page",
+    pre_block: null,
+    blocks: [{ id: "props-only-root", raw: "type:: reference\nstatus:: open", collapsed: false, children: [] }],
+  };
+
+  function mountOnly(dto: PageDto) {
+    loadSingle(dto);
+    applySidebarSession({ right: true, items: [{ kind: "page", name: dto.name, pageKind: "page" }] });
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+    vi.spyOn(backend(), "getBlockRefCounts").mockResolvedValue({});
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <RightSidebar />, root);
+    return { root, dispose };
+  }
+
+  async function expectCaretAvailable(dto: PageDto) {
+    const { root, dispose } = mountOnly(dto);
+    try {
+      const body = await vi.waitFor(() => {
+        const found = root.querySelector<HTMLElement>(".rs-item-body");
+        expect(found).not.toBeNull();
+        return found!;
+      });
+
+      // Something editable must exist without the user first visiting the page
+      // in the main pane.
+      const target = body.querySelector<HTMLButtonElement>(".page-trailing-block-target");
+      expect(target, "no trailing block target in the sidebar body").not.toBeNull();
+
+      target!.click();
+      await vi.waitFor(() => expect(editingId()).not.toBeNull());
+      expect(doc.byId[editingId()!].page).toBe(dto.name);
+      expect(doc.byId[editingId()!].raw).toBe("");
+    } finally {
+      dispose();
+    }
+  }
+
+  it("offers a caret for a page with no blocks at all", async () => {
+    await expectCaretAvailable(noBlocks);
+  });
+
+  it("offers a caret for a page whose only block is its properties", async () => {
+    await expectCaretAvailable(propertiesOnly);
+  });
+});

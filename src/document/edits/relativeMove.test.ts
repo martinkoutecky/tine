@@ -81,6 +81,25 @@ describe("target-relative multi-root drag (GH #240)", () => {
     expect(snapshot()).toEqual(after);
   });
 
+  it("appends selected roots as children of the target with exact undo/redo (GH #326)", async () => {
+    loadSingle(pageDto("Test", [blk("first"), blk("second", [blk("second child")]), blk("target", [blk("existing child")])]));
+    const before = snapshot();
+
+    expect(await moveBlocksRelative(["first", "second"], "target", "child")).toBe(true);
+    expect(pageByName("Test")!.roots).toEqual(["target"]);
+    expect(doc.byId.target.children).toEqual(["existing child", "first", "second"]);
+    expect(doc.byId.first.parent).toBe("target");
+    expect(doc.byId.second.parent).toBe("target");
+    expect(doc.byId["second child"]).toMatchObject({ parent: "second", page: "Test" });
+    expect(isDirty("Test")).toBe(true);
+    const after = snapshot();
+
+    undo();
+    expect(snapshot()).toEqual(before);
+    redo();
+    expect(snapshot()).toEqual(after);
+  });
+
   it.each([
     ["target is a moved root", "same"],
     ["target is inside a moved subtree", "descendant"],
@@ -147,5 +166,33 @@ describe("target-relative multi-root drag (GH #240)", () => {
     expect(snapshot()).toEqual(before);
     redo();
     expect(snapshot()).toEqual(after);
+  });
+
+  it("nests a cross-page drop under the target and saves both pages as one group (GH #326)", async () => {
+    loadFeed([
+      pageDto("Source", [blk("moved", [blk("moved child")])]),
+      pageDto("Destination", [blk("target", [blk("existing")]), blk("tail")]),
+    ]);
+    clearSeededFacets();
+    const save = vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => ({ ok: entries.map(() => "rev") }));
+
+    expect(await moveBlocksRelative(["moved"], "target", "child")).toBe(true);
+    expect(pageByName("Source")!.roots).toEqual([]);
+    expect(pageByName("Destination")!.roots).toEqual(["target", "tail"]);
+    expect(doc.byId.target.children).toEqual(["existing", "moved"]);
+    expect(doc.byId.moved.parent).toBe("target");
+    expect(doc.byId["moved child"]).toMatchObject({ page: "Destination", parent: "moved" });
+
+    expect(await flushAll()).toBe(true);
+    const requests = save.mock.calls.filter((call) => call[0].some((entry) => entry.page.name === "Destination"));
+    expect(requests).toHaveLength(1);
+    expect(requests[0][0].map((entry) => entry.page.name).sort()).toEqual(["Destination", "Source"]);
+  });
+
+  it("refuses to nest a block under its own descendant", async () => {
+    loadSingle(pageDto("Test", [blk("source", [blk("child")])]));
+    const before = snapshot();
+    expect(await moveBlocksRelative(["source"], "child", "child")).toBe(false);
+    expect(snapshot()).toEqual(before);
   });
 });

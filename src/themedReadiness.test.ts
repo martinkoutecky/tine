@@ -36,10 +36,10 @@ describe("themed readiness before the app mounts (GH #299, GH #401)", () => {
   it("lets the built-in palette tokens win over the pre-CSS fallbacks (GH #401)", () => {
     expect(startupCss).toContain("background: var(--bg-primary, #ffffff);");
     expect(startupCss).toContain("background: var(--bg-primary, #1a1b1e);");
-    expect(startupCss).toContain("color: var(--text-primary, #c6c8cc);");
-    // The fallbacks are og's own palette values from theme.css.
+    expect(startupCss).toContain("color: var(--text-primary, #ecedf0);");
+    // The fallbacks are og's own palette values from theme.css (primary text is the title colour since GH #394).
     const theme = read("src/styles/theme.css");
-    for (const value of ["#ffffff", "#433f38", "#1a1b1e", "#c6c8cc"]) expect(theme).toContain(value);
+    for (const value of ["#ffffff", "#0f1419", "#1a1b1e", "#ecedf0"]) expect(theme).toContain(value);
   });
 
   it("uses a light or night Tine backing color before the WebView paints", () => {

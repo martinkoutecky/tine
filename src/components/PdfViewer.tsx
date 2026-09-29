@@ -17,7 +17,7 @@ import { areaHighlightPosition, hlsPageName, rectInPageSpace, rectWithSourceSpac
 import { decideWheelZoomGesture, type WheelZoomGestureState } from "../zoom";
 import type { Highlight, Rect } from "../types";
 import { isMac, isMobilePlatform } from "../nativeChrome";
-import { registerTransientLayer } from "../transientLayers";
+import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { createPdfHighlightState } from "./pdfHighlightState";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
 import { createPdfFind } from "./pdfFind";
@@ -1355,19 +1355,12 @@ export function PdfViewer(props: {
         return true;
       },
     });
-    // The shared registry orders Escape/Back and pointer activation; individual
-    // anchored popups still own their outside-pointer dismissal.
-    const dismissOnOutsidePointer = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (target && !settingsRootEl?.contains(target) && !settingsTriggerEl?.contains(target)) {
-        setSettingsOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", dismissOnOutsidePointer, true);
-    onCleanup(() => {
-      document.removeEventListener("pointerdown", dismissOnOutsidePointer, true);
-      unregister();
-    });
+    onCleanup(unregister);
+  });
+  dismissOnOutsidePointer({
+    open: settingsOpen,
+    inside: () => [settingsRootEl, settingsTriggerEl],
+    dismiss: () => setSettingsOpen(false),
   });
   createEffect(() => {
     if (!outlineOpen()) return;
@@ -1381,19 +1374,12 @@ export function PdfViewer(props: {
         return true;
       },
     });
-    // See the settings popup above: outside-click is intentionally local while
-    // the registry remains the single Escape/Back ordering authority.
-    const dismissOnOutsidePointer = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (target && !outlineRootEl?.contains(target) && !outlineTriggerEl?.contains(target)) {
-        setOutlineOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", dismissOnOutsidePointer, true);
-    onCleanup(() => {
-      document.removeEventListener("pointerdown", dismissOnOutsidePointer, true);
-      unregister();
-    });
+    onCleanup(unregister);
+  });
+  dismissOnOutsidePointer({
+    open: outlineOpen,
+    inside: () => [outlineRootEl, outlineTriggerEl],
+    dismiss: () => setOutlineOpen(false),
   });
   createEffect(() => {
     if (!menu()) return;
@@ -1406,14 +1392,14 @@ export function PdfViewer(props: {
         return true;
       },
     });
-    const dismissPendingAreaOnOutsidePointer = (event: PointerEvent) => {
-      if (pendingArea && !highlightMenuRootEl?.contains(event.target as Node)) closeHighlightMenu();
-    };
-    document.addEventListener("pointerdown", dismissPendingAreaOnOutsidePointer, true);
-    onCleanup(() => {
-      document.removeEventListener("pointerdown", dismissPendingAreaOnOutsidePointer, true);
-      unregister();
-    });
+    onCleanup(unregister);
+  });
+  dismissOnOutsidePointer({
+    open: () => menu() != null,
+    inside: () => [highlightMenuRootEl],
+    // Only a PENDING area selection is abandoned by pressing elsewhere; a menu
+    // over an existing highlight stays until it is dismissed deliberately.
+    dismiss: () => { if (pendingArea) closeHighlightMenu(); },
   });
 
   unregisterPdfParticipant = registerPdfParticipant(owner, {

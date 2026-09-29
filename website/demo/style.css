@@ -108,6 +108,8 @@ strong{font-weight:650}
 .planning{font-size:.85em;color:var(--muted);margin:.05rem 0}
 .planning.deadline .pk{color:#b91c1c}
 .planning .pk,.block-props .pk{font-weight:650;letter-spacing:.02em}
+li.ol-item::before{display:none}
+.ord-marker{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.88em;font-weight:600;margin-right:.35em}
 .block-props{font-size:.85em;color:var(--muted);margin:.1rem 0;display:flex;flex-wrap:wrap;gap:.1rem .8rem}
 .block-props .pv{color:var(--fg)}
 /* query results + embeds + video + namespace macro */

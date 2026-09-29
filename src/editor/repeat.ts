@@ -8,6 +8,7 @@ import { taskCheckboxState } from "../markers";
 import { applyMarkerTransition } from "../logbook";
 import type { Format } from "../types";
 
+import { appNow } from "../journal";
 const REPEATER = /([.+]{1,2})(\d+)([dwmy])/;
 const TS_RE = /<(\d{4})-(\d{2})-(\d{2})(?:\s+[A-Za-z]{3})?(?:\s+([.+]{1,2})(\d+)([dwmy]))?>/;
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -44,12 +45,12 @@ function advanceTimestamp(ts: string): string | null {
   // missed occurrences); `+`/`.+` advance once. The kind is preserved verbatim.
   let dt: Date;
   if (kind === ".+") {
-    dt = new Date();
+    dt = appNow();
     step(dt);
   } else {
     dt = new Date(Number(y), Number(mo) - 1, Number(d));
     if (kind === "++") {
-      const today = new Date();
+      const today = appNow();
       today.setHours(0, 0, 0, 0);
       let guard = 0;
       do {

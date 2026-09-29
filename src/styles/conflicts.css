@@ -6,7 +6,7 @@
    and their controls fit without discovering wide mode; resolving removes the
    panel and restores the reading width. */
 .main-content-inner:has(.page-conflict) {
-  max-width: 100%;
+  max-width: var(--tine-wide-content-max-width, var(--ls-main-content-max-width-wide));
 }
 
 /* A 3-way pre-selection (Concord base ledger) the user hasn't overridden. */

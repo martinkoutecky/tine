@@ -1,0 +1,35 @@
+icon:: 📌
+
+- # Keep context visible
+  - Source beside draft, note beside plan: this tour builds a working layout step by step — park a page in the right sidebar, collect places in tabs, split the window for true side-by-side, and save the arrangement as a workspace. Each part ends with what you should see. The shortcut map is [[tine-guide/Features/Tips & shortcuts]].
+- ## Park a source in the right sidebar
+  - 1. On the page you're writing, **Shift-click** a link (or a bullet's dot) to open it in the right sidebar. It's a full editor, not a preview — you can write in either place.
+  - 2. Two more ways to park things: in **Ctrl+K**, press **Shift+Enter** on any page or block result; while editing, **Ctrl+Shift+O** sends the link at the caret across.
+  - 3. Crowded? Fold an item with its arrow and keep just its title in reach, or use the sidebar's ⋯ menu for **Collapse all**, **Expand all**, and **Close all**. Folding or closing never strands half-typed text — Tine commits the active edit first.
+  - 4. Press **t r** to hide the whole sidebar and **t r** again to bring it back just as it was; its items are restored with your session.
+  - What you should see: the source parked beside your page, both editable — and it stays parked while the main page navigates elsewhere.
+- ## Gather places in tabs, and pin the ones you live in
+  - 1. **Middle-click** a link, a search hit, or a bullet's dot to open it in a background tab — you never leave the page you're on. In **Ctrl+K**, **Ctrl/Cmd+Enter** (or Ctrl/Cmd-click) does the same for the highlighted result and leaves the search open, so you can fan several out in a row.
+  - 2. Navigating to a page that's already open just focuses its tab instead of making a duplicate (Settings → **Editor** → **Advanced** → **Switch to an already-open tab when navigating** turns that off).
+  - 3. **Double-click** a tab to pin it. Pinned tabs gather at the left and hold their content: ordinary navigation from one opens a fresh tab instead, and closing a pinned tab asks first — an accidental **Ctrl+W** can't eat it.
+  - 4. Closed one too soon? **Ctrl+Shift+T** reopens the last closed tab with its history. **Ctrl+PageDown** and **Ctrl+PageUp** step to the next and previous tab. When titles stop fitting, the **Show all tabs** button at the strip's edge lists them in full — activate, pin, close, or reorder there.
+  - What you should see: the same tabs, pins included, come back after a restart — and as session state kept in Tine's own app data, none of this ever adds a file to your graph.
+- ## Split the window for true side-by-side
+  - 1. Desktop only: **Ctrl/Cmd-click** any `[[link]]`, tag, or block reference to open it in another pane — with a single pane, Tine splits right for it. In **Ctrl+K**, **Alt+click** or **Alt+Enter** does the same for the highlighted result. The direct bindings: `Ctrl+Alt+\` splits right with a copy of the current tab, `Ctrl+Alt+Shift+\` splits down.
+  - 2. Each pane keeps its own tab strip and its own back/forward history — **Alt+Left** and **Alt+Right** step through it, even mid-edit.
+  - 3. Drag the seam between panes to resize them. Drag a tab onto another pane's strip to move it there, onto a pane's body to append it, or onto a seam or pane edge to split that spot and drop the tab into the new pane — **Esc** cancels a drag mid-way. The command palette (**Ctrl+Shift+P**) also has **Toggle maximize active pane** (**Ctrl+Alt+M**) and commands to grow or shrink the active pane.
+  - 4. PDF readers use the same tabs and panes. Opening a PDF link makes a companion pane while preserving the source page; you can then drag the PDF tab into any pane or quadrant. **Notes** opens the PDF's notes page in its structural companion pane, and that notes tab can be moved in exactly the same way.
+  - 5. From the keyboard, **Ctrl+1** … **Ctrl+9** focus panes in reading order, **Ctrl+Alt+←↑↓→** moves focus to the nearest pane in that direction, and **Ctrl+Alt+Shift+←↑↓→** moves the active tab there instead.
+  - 6. Prefer staged control? **Esc** climbs from editing to block selection into pane-select mode — a hint pill at the bottom tells you when it's on (the command palette's **Pane select mode** enters it directly). Arrows step between panes, seams, and window edges; **Enter** on a seam makes a mirror split; typing opens the new pane with the search box pre-filled. Another **Esc** backs out.
+  - What you should see: two note panes that scroll, navigate, and keep tabs independently — source and draft side by side, never fighting over one cursor.
+- ## Save the arrangement as a workspace
+  - 1. With the layout where you want it — splits, every pane's tabs and histories, both sidebars — click the workspace name at the top of the left sidebar and choose **+ New workspace**; name it once.
+  - 2. Come back to it from the same switcher: hover the name for a quick-switch list, or click it for the full menu with **Rename** and **Delete**. Each graph keeps its own set, and the active one comes back after a restart.
+  - What you should see: the saved pane layout, tabs and histories, sidebars, and Recent return together. Workspaces are device-local session state — saving, switching, or deleting one never writes to your graph.
+- ## Clear everything else away
+  - **t f** (focus mode) hides the sidebars and toolbar so the screen is just text — on desktop it also takes the window full screen. Hover the top edge to reach the toolbar again; layered **Esc** steps back out.
+  - **t b** fades every block except the one you're editing. Settings → **Appearance** → **Dim in focus mode** turns that dimming on for you whenever focus mode is on.
+  - **t w** drops the reading-width cap for a wide page; Settings → **Appearance** → **Advanced** lets you set your own **Standard page width** and **Wide page width**.
+  - On a phone the layout stays one page: the sidebars open as overlays (dismiss with the shaded edge, Esc, or Android Back), and tabs and splits are off. A PDF and its Notes page use that same history, so Back returns to the previous surface.
+- ## Where next
+  - [[tine-guide/Features/Tips & shortcuts]] has the compact shortcut map, [[tine-guide/Start/Where things are]] is the plain map of the places used here, and [[tine-guide/Workflows/Find and revisit]] covers getting back to anything you parked.

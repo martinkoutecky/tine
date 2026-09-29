@@ -20,7 +20,7 @@ describe("og campaign enforcement", () => {
   }, 30_000);
 
   it("pins persisted format count and low-level writer sites", () => {
-    expect(PINNED_FORMAT_COUNT).toBe(25);
+    expect(PINNED_FORMAT_COUNT).toBe(26);
     expect(PERSISTED_FORMATS).toEqual([
       "page-markdown", "page-org", "graph-config-edn", "graph-custom-css",
       "graph-assets", "asset-sidecar-edn", "asset-trash", "graph-trash",
@@ -30,6 +30,7 @@ describe("og campaign enforcement", () => {
       "plugin-package", "desktop-launcher", "debug-log",
       "diagnostic-history-jsonl", "diagnostic-session-marker", "diagnostic-report-json",
       "concord-base-ledger",
+      "draft-store-json",
     ]);
     expect(() => checkFormatCount()).not.toThrow();
     const { current, baseline } = writerCounts;

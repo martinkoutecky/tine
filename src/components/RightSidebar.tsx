@@ -4,15 +4,19 @@ import { graphEpoch } from "../graphSession";
 import { mobileDrawerMode } from "../mobileDrawers";
 import { registerTransientLayer } from "../transientLayers";
 import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell";
-import { openPageTarget, openPageAtBlock } from "../router";
+import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
+import { openRouteInOtherPane } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
 import { ensurePageLoaded, pageByName, resolveBlockRef, node as docNode } from "../document";
 import { visibleBody } from "../render/block";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
+import { PageTypingTarget } from "./Page";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { endEditForSurface } from "../editorController";
+import { FailureBoundary } from "./FailureBoundary";
 
 function surfaceKey(item: SidebarItem): string {
   return `sidebar:${sidebarItemKey(item)}`;
@@ -262,9 +266,16 @@ function PageItem(props: {
         <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? "Expand sidebar item" : "Collapse sidebar item"} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
           <span aria-hidden="true">▸</span>
         </button>
-        <a class="rs-item-title" onClick={() => {
-          openPageTarget({ name: props.item.name, pageKind: props.item.pageKind, path: props.item.path });
-        }}>
+        <a class="rs-item-title" onMouseDown={internalLinkMouseDown} onClick={(e) => {
+          const target = { name: props.item.name, pageKind: props.item.pageKind, path: props.item.path };
+          // The shift destination (right sidebar) is meaningless for a title
+          // already IN the sidebar, so it keeps the ordinary navigation.
+          const dest = internalLinkDest(e);
+          if (dest === "background") openPageTargetInNewTab(target);
+          else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target });
+          else openPageTarget(target);
+        }} onAuxClick={(e) => internalLinkAuxClick(e, () =>
+          openPageTargetInNewTab({ name: props.item.name, pageKind: props.item.pageKind, path: props.item.path }))}>
           <EmojiText text={props.item.name} />
         </a>
         <button class="rs-close" onClick={props.onClose} title="Close">
@@ -275,10 +286,17 @@ function PageItem(props: {
         <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ? "Could not load this sidebar page. Collapse and expand to retry." : ""}</div>}>
           <div id={bodyId} class="rs-item-body">
             <For each={page()!.roots}>{(id) => <Block id={id} />}</For>
+            {/* The same producer the main pane uses: a page opened only here still
+                gets its phantom empty bullet and a trailing target (GH #483). */}
+            <PageTypingTarget page={page} surface={props.surfaceKey} />
             {/* OG shows a page's Linked/Unlinked References in the sidebar view too,
                 not just the main pane. Same lazy components, so this stays cheap. */}
-            <LinkedReferences name={props.item.name} />
-            <UnlinkedReferences name={props.item.name} />
+            <FailureBoundary region="Linked References">
+              <LinkedReferences name={props.item.name} />
+            </FailureBoundary>
+            <FailureBoundary region="Unlinked References">
+              <UnlinkedReferences name={props.item.name} />
+            </FailureBoundary>
           </div>
         </Show>
       </Show>

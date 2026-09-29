@@ -1,0 +1,46 @@
+icon:: 🗄️
+
+- # Files, external edits, and backups
+	- **If closing warns about unsaved changes:** Tine tries to save everything before the window closes. If a conflict or a stuck save prevents it, a prompt says so and asks whether to close anyway. The prompt names each unsaved page. Choose **No** to stay: a panel lists those pages with **Retry saving**, open, and **Copy draft**. A failed save's message stays up with **Review unsaved**, which opens the same panel. For a conflict, look for the conflict banner or the **N conflicts** badge (below) and resolve it before you close.
+	- **If Tine crashes or quits while a page cannot be saved,** that page's unsaved text is kept in Tine's app data (never in your graph) and on the next start a message offers **Review**, which opens the same panel with that text to copy. Text that saved normally is not kept there.
+	- Your graph content stays in ordinary files shared with Logseq. Tine also keeps device settings and launch snapshots outside the graph. This page maps what is written where, and the safety nets around it.
+- ## What lands on disk
+	- **Pages and journals** — one Markdown or Org file per page. Existing files may live at the graph root or in nested folders; Tine saves each one back to its exact path. New files use the configured `pages/` and `journals/` folders.
+	- **Assets** — pasted and uploaded files in `assets/`. Deleting a block never deletes its media.
+	- **Graph configuration** — `logseq/config.edn`, shared with Logseq: journal date formats, macros, and UI choices such as `:ui/show-brackets?` live there.
+	- **Tine's view config** — harmless `tine.*` block properties on the view-owning block (see [[tine-guide/Features/Sheets]]). Everything else stays ordinary graph text.
+- ## Saving
+	- You never press Save: edits are written automatically to the same file the page came from, a moment after you pause.
+	- Writes go through a guarded path: Tine checks that the file still matches what it read before it replaces it, and a save that would overwrite an outside change is refused rather than forced (see external edits below).
+	- A page **rename** is transactional: the file move and every page-link and tag rewrite that points at it commit together, or roll back.
+	- Tine saves pending edits before a rename. A page whose edits cannot be saved stops the rename only if the rename would change that page, or its unsaved text mentions the old name; the message names it. Other pages keep their unsaved edits through the rename.
+	- An Org file is rewritten only when Tine can reproduce it byte-for-byte; one it cannot round-trip opens **read-only** so the graph cannot be corrupted.
+- ## External edits
+	- Tine notices changes made outside it — Logseq, Syncthing, or another editor. Settings (**t s**) → **Files** → **Watch for external edits**: **Live (inotify)** (default, no idle wakeups) or **Poll (3s)** for filesystems where the OS watcher misses edits (some network mounts). Saved per device.
+	- A page you are not editing updates in place automatically. A page with unsaved edits is never overwritten: Tine shows a banner and skips that page in future saves until you choose **Use disk version** (re-read the file) or **Keep mine (overwrite)** (write your version).
+	- `logseq/config.edn` is live too. A change made in Logseq, a text editor, or delivered by a sync provider updates favorites, shortcuts, the home page, journal formats, and other shared settings during the session; reopening the graph is not required.
+	- For file sync between devices, run one app at a time on the graph where you can, and let conflict copies (below) catch the rest.
+- ## Snapshots — automatic backups
+	- Each time Tine opens your graph it snapshots your Markdown/Org pages and journals, plus `logseq/config.edn` and asset `.edn` sidecars, to a local folder **outside** the graph, about a second after opening so the copy does not compete with your first page. Syncthing never syncs it. Binary assets are not copied.
+	- Settings → **Backups & recovery** → **Snapshots to keep** (default 12) controls how many survive; the oldest beyond the count are pruned.
+	- 1. Pick a snapshot under **Available snapshots** and choose **Restore**, then confirm.
+	- 2. What you should see: Tine saves pending edits, snapshots your current state first, restores backed-up graph text to its original paths, restores config and sidecars, and reloads the graph — a mistaken restore is itself reversible. A snapshot made under a different pages or journals folder setting is refused rather than restored into the wrong place.
+- ## Trash
+	- Deleting a page or journal moves the file to `logseq/.tine-trash/pages/` or `logseq/.tine-trash/journals/`, not permanent deletion. Its name gains a timestamp followed by `__`.
+	- Duplicate journal files you trash and unused media from an orphan scan land there too, and discarded sync-conflict copies and a file's pre-resolution version go to `logseq/.tine-trash/conflicts/`.
+	- To restore something, open the matching typed folder, remove the timestamp and `__` from its name, then move it into `pages/`, `journals/`, or `assets/` with your file manager. Tine picks it up like any external change.
+	- Settings → **Files** → **Orphaned media** (**Scan for orphans**) can find media no block links to (a deleted block keeps its files, so unused media accumulates) and trash it, and **Empty asset trash** deletes *asset* trash permanently — page, journal, and conflict recovery files are always kept.
+- ## Sync tools and conflict copies
+	- Keep Syncthing or Dropbox on your graph — Tine is built to coexist with them. Two files that resolve to the same journal day are kept, not dropped: Settings → **Backups & recovery** → **Duplicate journal days** offers **Open**, **Merge**, **Rename**, or **Trash** per file.
+	- A `*.sync-conflict-*` (or `(conflicted copy)`) file never appears as a page. Files carrying unresolved git or Fossil merge markers are also quarantined from ordinary saves rather than rewritten.
+	- Both kinds appear in one **N conflicts** badge in the sidebar. Open a conflicted page to compare the two versions block by block: choose **Mine**, **Theirs**, or both for each differing block, accept a suggested **Merged** version when both sides edited separate parts of one block, then **Apply resolution**. Nothing is auto-merged or auto-deleted.
+	- Choosing the **N conflicts** badge opens the **Conflicts** page: every page that needs a decision, grouped by source, with how many blocks are left ("—" when not counted). Click a page to resolve it, or shift-click to open it in the right sidebar and keep the list in view. **Discard copy** moves a provider conflict copy to the trash, including a copy whose page no longer exists.
+- ## Journal files named by title
+	- Tine does not silently rename journal files when a graph opens. If an otherwise valid journal uses its display title as its filename (for example `Jun 18th, 2026.md`), the day may look empty because the filename cannot be matched to its date.
+	- Settings → **Backups & recovery** → **Journal files named by title** lists these files. Review the list and choose **Rename to date names**; Tine takes a snapshot first.
+- ## Export
+	- Settings → **Graph** → **Export HTML and read-only app…** exports your `public:: true` pages as a standalone site. Give the export a name and choose a destination folder outside the graph; tick **Include every page, including private pages** only if you mean it. Nothing is uploaded, and your graph is not touched.
+	- **Export…** in a query's header exports the pages its results live on — whatever their `public::` setting — as a standalone site. Review the page list first, then choose a destination folder outside the graph. A query about blocks exports **whole pages**, not just the matched blocks, and the dialog asks you to confirm that.
+	- Serve an export folder over HTTP (any static host, or `python3 -m http.server` inside it) to open it as a read-only app; opening `index.html` straight from disk, or adding `?static` to the address, shows the plain static site instead.
+	- Right-click a page title → **Export to PDF…** prints one page on a light background. It is offered on desktop only: printing is unavailable inside a mobile WebView, so Android and iOS do not show it. **Export HTML and read-only app…** works on every platform.
+	- **Copy / export as…** on a block or page offers **Plain text** (cleaned, as displayed) or **Markdown source**, then Text / OPML / HTML destinations with cleanup and depth controls.

@@ -1,5 +1,8 @@
 import { createEffect, createSignal, onCleanup, Show, type JSX } from "solid-js";
-import { switchGraph, createNewGraph } from "../graph";
+import { switchGraph, createNewGraph, loadGraphPath } from "../graph";
+import { graphMeta, startupOpenFailure, setStartupOpenFailure } from "../graphSession";
+import { writeClipboardText } from "../clipboard";
+import { pushToast } from "../toasts";
 import { isTauri } from "../backend";
 import { WindowControls } from "./WindowChrome";
 import { osDrawsWindowControls } from "../nativeChrome";
@@ -22,6 +25,27 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
       // picker was cancelled, re-enable the buttons.
       setBusy(null);
     }
+  };
+
+  // A graph chosen at launch that would not open: say which one and why, and
+  // offer the way out (retry it, pick another, copy the details) instead of a
+  // silent first-run screen that looks as if the graph were never configured.
+  const failure = () => (graphMeta() ? null : startupOpenFailure());
+  const retry = run("open", async () => {
+    const failed = startupOpenFailure();
+    if (!failed) return;
+    try {
+      await loadGraphPath(failed.path);
+      setStartupOpenFailure(null);
+    } catch (e) {
+      setStartupOpenFailure({ path: failed.path, message: String(e) });
+    }
+  });
+  const copyDetails = () => {
+    const failed = failure();
+    if (!failed) return;
+    void writeClipboardText(`Could not open ${failed.path}\n${failed.message}`)
+      .catch((e) => pushToast(`Could not copy: ${String(e)}`, "error"));
   };
 
   return (
@@ -52,6 +76,21 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
           A fast, local outliner for your <strong>Logseq</strong> graph. Tine reads and writes the
           same Markdown files — so you can keep using Logseq too, on the same notes.
         </p>
+
+        <Show when={failure()}>
+          {(failed) => (
+            <div class="welcome-recovery" role="alert">
+              <p class="welcome-recovery-title">Tine could not open your last graph</p>
+              <p class="welcome-recovery-path">{failed().path}</p>
+              <p class="welcome-recovery-reason">{failed().message}</p>
+              <div class="welcome-recovery-actions">
+                <button disabled={!!busy()} onClick={retry}>Try again</button>
+                <button onClick={copyDetails}>Copy details</button>
+              </div>
+              <p class="welcome-recovery-note">Nothing was changed on disk. You can also open another graph below.</p>
+            </div>
+          )}
+        </Show>
 
         <div class="welcome-actions">
           <button

@@ -1,6 +1,8 @@
 import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { openPage } from "../router";
+import { openPage, openPageInNewTab } from "../router";
+import { openRouteInOtherPane } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openPageInSidebar } from "../ui";
 import { allPageNames } from "../pages";
 import { EmojiText } from "../render/emoji";
@@ -12,6 +14,25 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 // (shown below the page). Mirrors OG's hierarchy component.
 
 /** Breadcrumb of ancestor namespaces, e.g. for "a/b/c" → a › b (clickable). */
+/** The shared modified-click contract (linkGesture.ts) for a namespace segment:
+ *  Shift → right sidebar (GH #63), Ctrl/Cmd or middle → background tab
+ *  (GH #283), Alt → other pane (GH #438). `stop` keeps a row's own click
+ *  handler from also firing. */
+function nsLink(name: string, after?: () => void, stop = false) {
+  return {
+    onMouseDown: internalLinkMouseDown,
+    onClick: (e: MouseEvent) => {
+      if (stop) e.stopPropagation();
+      const dest = internalLinkDest(e);
+      if (dest === "sidebar") openPageInSidebar(name, "page");
+      else if (dest === "background") openPageInNewTab(name, "page");
+      else if (dest === "pane") openRouteInOtherPane({ kind: "page", name, pageKind: "page" });
+      else { openPage(name, "page"); after?.(); }
+    },
+    onAuxClick: (e: MouseEvent) => internalLinkAuxClick(e, () => openPageInNewTab(name, "page")),
+  };
+}
+
 export function NamespaceCrumb(props: { name: string }): JSX.Element {
   const parts = () => props.name.split("/");
   return (
@@ -22,7 +43,7 @@ export function NamespaceCrumb(props: { name: string }): JSX.Element {
             const prefix = () => parts().slice(0, i() + 1).join("/");
             return (
               <>
-                <span class="ns-crumb-item" onClick={() => openPage(prefix(), "page")}>
+                <span class="ns-crumb-item" {...nsLink(prefix())}>
                   {parts()[i()]}
                 </span>
                 <span class="ns-crumb-sep">/</span>
@@ -87,14 +108,7 @@ function NsNodeView(props: {
         </Show>
         <span
           class="ns-node-label"
-          // Shift+click opens in the right sidebar (GH #63); onMouseDown guard
-          // suppresses native shift-range text-selection.
-          onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
-          onClick={(e) =>
-            e.shiftKey
-              ? openPageInSidebar(props.node.full, "page")
-              : (openPage(props.node.full, "page"), props.onActiveNavigationComplete?.())
-          }
+          {...nsLink(props.node.full, props.onActiveNavigationComplete)}
           onContextMenu={(e) => {
             if (!shouldOpenTextContextMenu(e.target)) return;
             props.onPageContextMenu?.(e, props.node.full, "page");
@@ -157,7 +171,7 @@ function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string,
             <EmojiText text={props.icons[props.node.full]} />
           </span>
         </Show>
-        <a class="page-ref" onClick={(e) => { e.stopPropagation(); openPage(props.node.full, "page"); }}>
+        <a class="page-ref" {...nsLink(props.node.full, undefined, true)}>
           <EmojiText text={props.node.seg} />
         </a>
       </div>
@@ -206,7 +220,7 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
                   <EmojiText text={iconOf(root.full)!} />
                 </span>
               </Show>
-              <a class="page-ref" onClick={(e) => { e.stopPropagation(); openPage(root.full, "page"); }}>
+              <a class="page-ref" {...nsLink(root.full, undefined, true)}>
                 <EmojiText text={root.seg} />
               </a>
             </div>
@@ -282,7 +296,7 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
                           </Show>
                           <a
                             class="page-ref"
-                            onClick={(e) => { e.stopPropagation(); openPage(full(), "page"); }}
+                            {...nsLink(full(), undefined, true)}
                           >
                             <span class="bracket">[[</span>
                             {seg}

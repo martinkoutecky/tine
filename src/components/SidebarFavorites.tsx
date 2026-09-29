@@ -3,6 +3,7 @@
 // drop found by elementFromPoint needs no translation, and a label row and a
 // favorite row drag on exactly the same terms.
 import { For, Show, createSignal, type JSX } from "solid-js";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
   addFavoriteGroup, deleteFavoriteGroup, favoritesLayout, moveFavoriteRow,
   renameFavoriteGroup, setFavoriteRowCollapsed,
@@ -49,7 +50,7 @@ function startDrag(from: number, event: PointerEvent) {
 export function SidebarFavorites(props: {
   isActive: (name: string) => boolean;
   targetName: (name: string, kind: PageKind) => string;
-  open: (name: string, kind: PageKind, gesture: "normal" | "sidebar" | "new-tab" | "context", point?: { x: number; y: number }) => void;
+  open: (name: string, kind: PageKind, gesture: "normal" | "sidebar" | "new-tab" | "pane" | "context", point?: { x: number; y: number }) => void;
 }): JSX.Element {
   return (
     <div id="sidebar-favorites-list">
@@ -88,13 +89,13 @@ export function SidebarFavorites(props: {
             <div class="nav-page" data-row-index={i()} classList={{ active: props.isActive(props.targetName(name, kind)), ...rowClass() }}
               style={style()}
               onPointerDown={(e) => startDrag(i(), e)}
-              onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
-              onClick={(e) => { if (!rowReorderClickSuppressed()) props.open(name, kind, e.shiftKey ? "sidebar" : "normal"); }}
-              onAuxClick={(e) => {
-                if (e.button !== 1) return;
-                e.preventDefault();
-                props.open(name, kind, "new-tab");
+              onMouseDown={internalLinkMouseDown}
+              onClick={(e) => {
+                if (rowReorderClickSuppressed()) return;
+                const dest = internalLinkDest(e);
+                props.open(name, kind, dest === "sidebar" ? "sidebar" : dest === "background" ? "new-tab" : dest === "pane" ? "pane" : "normal");
               }}
+              onAuxClick={(e) => internalLinkAuxClick(e, () => props.open(name, kind, "new-tab"))}
               onContextMenu={(e) => {
                 e.preventDefault();
                 props.open(name, kind, "context", { x: e.clientX, y: e.clientY });

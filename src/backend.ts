@@ -2,6 +2,7 @@
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
+import { markCommandSlow } from "./slowBackend";
 import type {
   Diagnostic,
   ExecutionContext,
@@ -43,6 +44,7 @@ import type {
   QueryPublicationRequest,
   QueryPublicationPlan,
   PublicationReceipt,
+  DraftRecord,
 } from "./types";
 import { dbg } from "./debug";
 import { assetFileName } from "./media";
@@ -617,7 +619,7 @@ export interface Backend {
   setWatchMode(mode: string): Promise<void>;
   /** Available snapshots for the current graph, newest first. */
   listBackups(): Promise<BackupInfo[]>;
-  /** Restore a snapshot (overwrites journals/pages/config; snapshots current
+  /** Restore a snapshot (graph text at original paths, config, and sidecars; snapshots current
    *  state first). Destructive — confirm before calling. */
   restoreBackup(stamp: string, kind: "replace-page"): Promise<void>;
   /** Load the persisted UI session JSON (open tabs / active tab / zoom), or null.
@@ -626,6 +628,13 @@ export interface Backend {
   loadSession(): Promise<string | null>;
   /** Persist the UI session JSON. */
   saveSession(data: string): Promise<void>;
+  /** This graph's crash-surviving draft records (og ADR 0061). A corrupt store
+   *  loads empty; absent where drafts cannot be kept (published export). */
+  loadDrafts?(): Promise<DraftRecord[]>;
+  /** Replace one draft record; refused past the store's bound. */
+  storeDraft?(record: DraftRecord): Promise<void>;
+  /** Remove one draft record by id; a missing id is not an error. */
+  retireDraft?(id: string): Promise<void>;
   /** Load the current graph's device-local named-workspace registry JSON. */
   loadWorkspaces(): Promise<string>;
   /** Replace the registry atomically. A failed post-rename directory sync reports
@@ -673,6 +682,9 @@ export interface Backend {
   /** Record one fixed-kind frontend event. The backend drops the event when a
    *  token is outside its closed vocabulary; fields carry no free text. */
   diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields?: DiagnosticFrontendFields): Promise<void>;
+  /** The backend's current UTC offset and sample instant: the app's calendar
+   * authority (see `appNow` in journal.ts, GH #607). */
+  localClock(): Promise<{ offset_minutes: number; unix_ms: number }>;
   /** The CPU architecture of this binary (`x86`, `x86_64`, `aarch64`, …). */
   appArchitecture(): Promise<string>;
 }
@@ -803,7 +815,12 @@ class TauriBackend implements Backend {
     if (DIAGNOSTIC_COMMANDS.has(cmd)) return this.invoke<T>(cmd, leasedArgs);
     const started = performance.now();
     let slow = false;
-    const slowTimer = setTimeout(() => { slow = true; this.reportIpcPhase(cmd, "slow", started); }, SLOW_IPC_MS);
+    let settleSlow: (() => void) | undefined;
+    const slowTimer = setTimeout(() => {
+      slow = true;
+      settleSlow = markCommandSlow(started);
+      this.reportIpcPhase(cmd, "slow", started);
+    }, SLOW_IPC_MS);
     try {
       const result = await this.invoke<T>(cmd, leasedArgs);
       if (slow) this.reportIpcPhase(cmd, "completed", started);
@@ -814,6 +831,7 @@ class TauriBackend implements Backend {
       throw error;
     } finally {
       clearTimeout(slowTimer);
+      settleSlow?.();
     }
   }
 
@@ -1365,6 +1383,15 @@ class TauriBackend implements Backend {
   saveSession(data: string) {
     return this.call<void>("save_session", { data });
   }
+  loadDrafts() {
+    return this.call<DraftRecord[]>("load_drafts");
+  }
+  storeDraft(record: DraftRecord) {
+    return this.call<void>("store_draft", { record });
+  }
+  retireDraft(id: string) {
+    return this.call<void>("retire_draft", { id });
+  }
   loadWorkspaces() {
     return this.call<string>("load_workspaces");
   }
@@ -1394,6 +1421,9 @@ class TauriBackend implements Backend {
   }
   diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields: DiagnosticFrontendFields = {}) {
     return this.call<void>("diagnostic_frontend_event", { kind, ...fields });
+  }
+  localClock() {
+    return this.call<{ offset_minutes: number; unix_ms: number }>("local_clock");
   }
   appArchitecture() {
     return this.call<string>("app_architecture");

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { placeContextMenu } from "./ContextMenu";
+import { placeContextMenu, placeSubmenu } from "./ContextMenu";
 
 // Viewport-aware menu placement (the "Delete namespace" nit: a tall menu opened
 // low in the sidebar spilled off the bottom and clipped its items). Margin = 6.
@@ -34,5 +34,35 @@ describe("placeContextMenu", () => {
   it("just fits below when the down-edge lands exactly on the safe boundary", () => {
     // down-edge = y + h = 794 = vh - margin → not greater → stays down.
     expect(place(50, 594, 180, 200)).toEqual({ left: 50, top: 594 });
+  });
+});
+
+// GH #471: a submenu was pure CSS at `left: 100%`, so a menu opened over a
+// table's rightmost column pushed "Show children as →" off the screen. Margin = 6.
+describe("placeSubmenu", () => {
+  const side = (menuLeft: number, submenuWidth: number, vw = VW) =>
+    placeSubmenu(menuLeft, 180, submenuWidth, vw);
+
+  it("opens right when the pair fits", () => {
+    expect(side(120, 160)).toBe("right");
+  });
+
+  it("mirrors to the left rather than leaving the window", () => {
+    // 800 + 180 + 160 = 1140 > 1000 - 6, and 800 - 160 = 640 >= 6.
+    expect(side(800, 160)).toBe("left");
+  });
+
+  it("takes the right side when it fits exactly to the safe boundary", () => {
+    // 654 + 180 + 160 = 994 = vw - margin → not greater → stays right.
+    expect(side(654, 160)).toBe("right");
+  });
+
+  it("overlays the menu when the viewport is too narrow for either side", () => {
+    // A phone: menu clamped near the left edge, and neither side has room.
+    expect(side(6, 160, 330)).toBe("over");
+  });
+
+  it("prefers left over overlaying whenever the left side has room", () => {
+    expect(side(170, 160, 340)).toBe("left");
   });
 });

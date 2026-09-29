@@ -1,18 +1,20 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage } from "../document";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
-import { PaneContext, focusedRouter, rewritePageTargetAcrossPanes } from "../panes";
-import { isFavorite, toggleFavorite, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
+import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
+import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation } from "../ui";
 import { graphEpoch, dataRev, graphMeta } from "../graphSession";
 import { captureBinding } from "../binding";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
-import { isConflicted } from "../document";
+import { blockRef, isConflicted } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
 import { pushToast } from "../toasts";
 import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
+import { FailureBoundary } from "./FailureBoundary";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
 import { SheetTable } from "./SheetTable";
@@ -22,7 +24,7 @@ import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
 import { aliasNamesOf, visibleBody } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
-import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay } from "../journal";
+import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay, appNow } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
 import type { JournalFeedPage, RefGroup } from "../types";
 import { tagRef } from "../tags";
@@ -116,7 +118,7 @@ let journalRefreshFlight: { graphEpoch: number; day: number; owner: JournalsFeed
 /** Ensure today's configured template before any feed read for that day. */
 async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promise<unknown | null> {
   if (!ownerIsLive(owner) || windowUnbound()) return null;
-  const date = new Date();
+  const date = appNow();
   const day = localDayKey(date);
   const rollover = journalAsOfDay !== null && journalAsOfDay !== day && feedNames().length > 0;
   if (!graphMeta()?.default_journal_template) return restartJournalFeed(owner, false, rollover);
@@ -454,7 +456,7 @@ export function PageView(): JSX.Element {
     const restart = () => { void refreshJournalFeedForCurrentDay(owner); };
     const arm = () => {
       if (disposed || !ownerIsLive(owner)) return;
-      const now = new Date();
+      const now = appNow();
       timer = window.setTimeout(() => {
         // One-shot rather than 24h arithmetic (DST-safe).  Re-arm after every
         // trigger, including a deferred/error response, while this owner lives.
@@ -607,12 +609,20 @@ export function PageView(): JSX.Element {
             </Show>
             <Show
               when={pagesToRender()[0].kind === "page" && !pagesToRender()[0].guide && tagTableEnabled(pagesToRender()[0].name)}
-              fallback={<Show when={!pagesToRender()[0].guide}><LinkedReferences name={pagesToRender()[0].name} /></Show>}
+              fallback={
+                <Show when={!pagesToRender()[0].guide}>
+                  <FailureBoundary region="Linked References">
+                    <LinkedReferences name={pagesToRender()[0].name} />
+                  </FailureBoundary>
+                </Show>
+              }
             >
               <TagPageTable pageName={pagesToRender()[0].name} />
             </Show>
             <Show when={!pagesToRender()[0].guide}>
-              <UnlinkedReferences name={pagesToRender()[0].name} />
+              <FailureBoundary region="Unlinked References">
+                <UnlinkedReferences name={pagesToRender()[0].name} />
+              </FailureBoundary>
             </Show>
           </Show>
         </div>
@@ -660,7 +670,15 @@ function ZoomedView(props: { id: string }): JSX.Element {
       <div class="zoom-breadcrumb">
         <a
           class="crumb crumb-page"
-          onClick={() => router.openPageTarget(pageTarget())}
+          onMouseDown={internalLinkMouseDown}
+          onClick={(e) => {
+            const dest = internalLinkDest(e);
+            if (dest === "sidebar") openPageInSidebar(pageTarget());
+            else if (dest === "background") router.openPageTargetInNewTab(pageTarget());
+            else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...pageTarget() });
+            else router.openPageTarget(pageTarget());
+          }}
+          onAuxClick={(e) => internalLinkAuxClick(e, () => router.openPageTargetInNewTab(pageTarget()))}
         >
           {pageName()}
         </a>
@@ -668,7 +686,26 @@ function ZoomedView(props: { id: string }): JSX.Element {
           {(aid) => (
             <>
               <span class="crumb-sep">›</span>
-              <a class="crumb" onClick={() => router.focusBlock(aid)}>
+              <a
+                class="crumb"
+                onMouseDown={internalLinkMouseDown}
+                onClick={(e) => {
+                  const dest = internalLinkDest(e);
+                  if (dest === "default") {
+                    router.focusBlock(aid);
+                    return;
+                  }
+                  const ref = blockRef(aid);
+                  const route = { kind: "page" as const, name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) };
+                  if (dest === "sidebar") openBlockInSidebar(ref);
+                  else if (dest === "pane") openRouteInOtherPane(route);
+                  else router.openInNewTab(route);
+                }}
+                onAuxClick={(e) => internalLinkAuxClick(e, () => {
+                  const ref = blockRef(aid);
+                  router.openInNewTab({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
+                })}
+              >
                 <InlineText text={crumb(aid)} format={formatForBlock(aid)} />
               </a>
             </>
@@ -695,6 +732,8 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
   const router = pane.router;
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
+  // An open title-rename draft pins its page: no reload may remount it (og 20b contract 2).
+  onCleanup(pinPageWhileDrafting(() => (renaming() ? props.page.name : null)));
   let renameInFlight = false;
   let renameSubmitted = false;
   let renameCancelled = false;
@@ -732,30 +771,6 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     const id = beginPageHeaderEdit(props.page.name);
     if (id) startEditing(id, docNode(id).raw.length, null, editSurface());
   };
-  const focusTrailing = () => {
-    const roots = rootsToRender();
-    if (!roots.length) {
-      const id = ensureEmptyBlock(props.page.name, { afterProperties: true });
-      if (id) startEditing(id, 0, null, editSurface());
-      return;
-    }
-    // GH #158: always add a fresh root-level block (never reuse the trailing empty
-    // leaf). Reuse stranded users whose last block is an empty *indented* bullet —
-    // clicking could only ever re-focus that indented block, never give them a new
-    // unindented last block. Stacking empty last blocks is intentionally allowed.
-    const id = insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
-    if (id) startEditing(id, 0, null, editSurface());
-    else pushToast("Could not add a block to this page.", "error");
-  };
-  // A page emptied of its last block (explicit Delete bypasses the Backspace
-  // last-block guard) would render nothing to type into. Re-seed the phantom empty
-  // bullet — same shape a brand-new day gets — so there's always a bullet present;
-  // it only persists once the user types (ensureEmptyBlock leaves it non-dirty).
-  createEffect(() => {
-    if (rootsToRender().length === 0 && !props.page.readOnly) {
-      ensureEmptyBlock(props.page.name, { afterProperties: true });
-    }
-  });
   const startRename = () => {
     if (renameInFlight) return;
     if (props.page.guide || props.page.readOnly) return;
@@ -845,17 +860,16 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           <h1
             class="page-title"
             classList={{ "journal-title": props.page.kind === "journal" }}
-            title={props.page.guide ? "Bundled Guide page" : props.page.kind === "page" ? "Double-click to rename (shift-click → sidebar, middle-click → new tab)" : "Shift-click to open in sidebar, middle-click → new tab"}
+            title={props.page.guide ? "Bundled Guide page" : props.page.kind === "page" ? "Double-click to rename (shift-click → sidebar, ctrl/middle-click → new tab, alt-click → other pane)" : "Shift-click to open in sidebar, ctrl/middle-click → new tab, alt-click → other pane"}
+            onMouseDown={internalLinkMouseDown}
             onClick={(e) => {
-              if (e.shiftKey && !props.page.guide) openPageInSidebar(pageTarget());
+              const dest = internalLinkDest(e);
+              if (dest === "sidebar" && !props.page.guide) openPageInSidebar(pageTarget());
+              else if (dest === "background" && !props.page.guide) router.openPageTargetInNewTab(pageTarget());
+              else if (dest === "pane" && !props.page.guide) openRouteInOtherPane({ kind: "page", ...pageTarget() });
               else router.openPageTarget(pageTarget());
             }}
-            onAuxClick={(e) => {
-              if (e.button === 1) {
-                e.preventDefault(); // middle-click → background tab, like a body link
-                router.openPageTargetInNewTab(pageTarget());
-              }
-            }}
+            onAuxClick={(e) => internalLinkAuxClick(e, () => router.openPageTargetInNewTab(pageTarget()))}
             onDblClick={startRename}
             onContextMenu={(e) => {
               if (props.page.guide) return;
@@ -988,7 +1002,11 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
       </Show>
       {/* Concord: a queued conflict is resolved AT the page, block by block. */}
       <Show when={conflictForPage(props.page.id)}>
-        {(conflict) => <PageConflictResolution conflict={conflict()} />}
+        {(conflict) => (
+          <FailureBoundary region="The conflict panel">
+            <PageConflictResolution conflict={conflict()} />
+          </FailureBoundary>
+        )}
       </Show>
       <div class="page-blocks">
         <Show when={preambleContent()}>
@@ -1011,10 +1029,56 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         <For each={rootsToRender()}>{(id) => <Block id={id} />}</For>
       </div>
       {props.children}
-      <Show when={!props.page.readOnly && !props.page.guide}>
-        <TrailingBlockTarget onActivate={focusTrailing} />
-      </Show>
+      <PageTypingTarget page={() => props.page} surface={editSurface()} />
     </div>
+  );
+}
+
+/** The one answer to "where does the caret go on this page".
+ *
+ *  Every surface that renders a page's roots renders this too. It re-seeds the
+ *  phantom empty bullet whenever the body has nothing in it (the shape a
+ *  brand-new day gets; non-dirty until the user types) and offers the trailing
+ *  "+ Add block" for appending below the last block. GH #483 is what a surface
+ *  without it looks like: a page created and never opened in the main pane, then
+ *  opened in the right sidebar, rendered an empty box with nowhere to put a caret.
+ *  `ensureEmptyBlock` is the emptiness authority (a page whose only root is its
+ *  `key:: value` header counts as empty, and it returns null once a body exists),
+ *  so no caller carries its own predicate. */
+export function PageTypingTarget(props: {
+  page: () => FeedPage | undefined;
+  surface?: string | null;
+}): JSX.Element {
+  const focusTrailing = () => {
+    const page = props.page();
+    if (!page || page.readOnly || page.guide) return;
+    const seeded = ensureEmptyBlock(page.name, { afterProperties: true });
+    if (seeded) {
+      startEditing(seeded, 0, null, props.surface ?? null);
+      return;
+    }
+    // GH #158: always add a fresh root-level block (never reuse the trailing empty
+    // leaf). Reuse stranded users whose last block is an empty *indented* bullet:
+    // clicking could only ever re-focus that indented block, never give them a new
+    // unindented last block. Stacking empty last blocks is intentionally allowed.
+    const roots = page.roots;
+    const id = insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
+    if (id) startEditing(id, 0, null, props.surface ?? null);
+    else pushToast("Could not add a block to this page.", "error");
+  };
+  // A page emptied of its last block (explicit Delete bypasses the Backspace
+  // last-block guard) would render nothing to type into. `ensureEmptyBlock` is a
+  // no-op once a body exists, so this only ever fires on a genuinely empty page.
+  createEffect(() => {
+    const page = props.page();
+    if (!page || page.readOnly) return;
+    page.roots.length; // track: a page emptied while rendered must re-seed
+    ensureEmptyBlock(page.name, { afterProperties: true });
+  });
+  return (
+    <Show when={props.page() && !props.page()!.readOnly && !props.page()!.guide}>
+      <TrailingBlockTarget onActivate={focusTrailing} />
+    </Show>
   );
 }
 
@@ -1096,7 +1160,7 @@ export function TagPageTable(props: { pageName: string }): JSX.Element {
   const addRow = async () => {
     const ok = await appendToTodayJournal(`${tagRef(props.pageName)} `);
     if (!ok) return;
-    const today = pageByName(journalTitle(new Date()));
+    const today = pageByName(journalTitle(appNow()));
     const id = today?.roots[today.roots.length - 1];
     if (id && docNode(id)) startEditing(id, docNode(id).raw.length);
   };

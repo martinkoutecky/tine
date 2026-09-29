@@ -51,15 +51,21 @@ describe("Android system-bar theme synchronization", () => {
     expect(activity.indexOf("SystemBarAppearance.restore(this)")).toBeGreaterThan(activity.indexOf("super.onCreate"));
   });
   // GH #205 (master 945337d03): WebView reports env(safe-area-inset-*) as zero
-  // on API 35, so the Activity content root is the one inset owner. IME stays
-  // unconsumed and out of this padding (lane 17a owns the IME viewport).
+  // on API 35, so the Activity content root is the one inset owner. The IME is
+  // part of that native viewport (master d5412929a): edge-to-edge WebView can
+  // leave visualViewport unchanged under keyboard occlusion, so the bottom pad is
+  // the larger of the navigation bar and the keyboard. The insets themselves
+  // stay unconsumed so descendants still observe IME visibility.
   it("bounds the WebView by the native system-bar and cutout insets", () => {
     const root = path.resolve(import.meta.dirname, "..");
     const activity = fs.readFileSync(path.join(root,
       "src-tauri/gen/android/app/src/main/java/page/tine/app/MainActivity.kt"), "utf8");
     expect(activity).toContain("ViewCompat.setOnApplyWindowInsetsListener(content)");
     expect(activity).toContain("WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()");
-    expect(activity).toContain("view.setPadding(safe.left, safe.top, safe.right, safe.bottom)");
+    expect(activity).toContain("val ime = insets.getInsets(WindowInsetsCompat.Type.ime())");
+    expect(activity).toContain("view.setPadding(safe.left, safe.top, safe.right, maxOf(safe.bottom, ime.bottom))");
+    // Not consumed: the listener hands the original insets back to descendants.
+    expect(activity).toMatch(/maxOf\(safe\.bottom, ime\.bottom\)\)\s*\n\s*insets\s*\n\s*\}/);
     expect(activity).toContain("ViewCompat.requestApplyInsets(content)");
     expect(activity.indexOf("setOnApplyWindowInsetsListener")).toBeGreaterThan(activity.indexOf("super.onCreate"));
   });

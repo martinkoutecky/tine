@@ -46,6 +46,7 @@ describe("favorite alias navigation", () => {
       normal: vi.fn(),
       sidebar: vi.fn(),
       newTab: vi.fn(),
+      pane: vi.fn(),
       context: vi.fn(),
     };
 
@@ -55,6 +56,8 @@ describe("favorite alias navigation", () => {
     expect(deps.sidebar).toHaveBeenCalledWith("Canonical", "page");
     openSidebarPageTarget("Shortcut", "page", "new-tab", undefined, deps);
     expect(deps.newTab).toHaveBeenCalledWith("Canonical", "page");
+    openSidebarPageTarget("Shortcut", "page", "pane", undefined, deps);
+    expect(deps.pane).toHaveBeenCalledWith("Canonical", "page");
     openSidebarPageTarget("Shortcut", "page", "context", { x: 12, y: 34 }, deps);
     expect(deps.context).toHaveBeenCalledWith(12, 34, "Canonical", "page");
 
@@ -73,6 +76,7 @@ describe("favorite alias navigation", () => {
       normal: vi.fn(),
       sidebar: vi.fn(),
       newTab: vi.fn(),
+      pane: vi.fn(),
       context: vi.fn(),
     };
 
@@ -98,6 +102,7 @@ describe("favorite alias navigation", () => {
       normal,
       sidebar: vi.fn(),
       newTab: vi.fn(),
+      pane: vi.fn(),
       context: vi.fn(),
     });
     expect(normal).toHaveBeenCalledWith("ΟΣ", "page");

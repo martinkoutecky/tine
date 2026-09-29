@@ -24,6 +24,18 @@ body {
 }
 
 :root {
+  /* The FIRST LINE of an ordinary block, owned in one place (GH #459). The
+     bullet column, `.block-content` and `.block-editor` all derive their height
+     from these two tokens, so they cannot disagree. The bullet column used to be
+     a literal 26px: it matched the line-height but not the content's 2px top
+     padding, putting every bullet 2px above the middle of its own first line. A
+     typography preset retunes the token, not three rules. Integer px, not a
+     unitless ratio: see `.block-content`. */
+  --ls-block-line-height: 26px;
+  --ls-block-content-pad-y: 2px;
+  /* Width of the sidebar's drag-to-resize strip, and of the gutter the sidebar
+     reserves so that strip never lands on top of the scrollbar (GH #435). */
+  --sidebar-resizer-width: 7px;
   /* One named owner for system-inset gutters (GH #205). Browser/iOS surfaces
      use CSS env() values. MainActivity already sizes Android's WebView inside
      the native insets, so main.tsx selects `native-viewport` before render and
@@ -119,6 +131,17 @@ html[data-system-insets="native-viewport"] {
 .left-sidebar-scroll {
   height: 100%;
   overflow-y: auto;
+  /* GH #435: the resize strip is absolutely positioned over this element's right
+     edge, where a classic (Windows) scrollbar lives, so the sidebar could be
+     resized but the bar never grabbed. A transparent right border moves the
+     scrollbar inboard by the strip's own width; the two occupy disjoint columns.
+     scripts/check-sidebar-resizer-scrollbar.mjs holds them apart. */
+  border-right: var(--sidebar-resizer-width) solid transparent;
+}
+
+/* The mobile drawer hides the resize strip, so the sidebar keeps its full width. */
+.app-container[data-mobile-drawer-mode="true"] .left-sidebar-scroll {
+  border-right-width: 0;
 }
 
 /* One restrained scrollbar vocabulary for the three primary outline surfaces.
@@ -189,7 +212,9 @@ html[data-system-insets="native-viewport"] {
   position: absolute;
   top: 0;
   right: 0;
-  width: 7px;
+  /* One width for the strip and for the gutter `.left-sidebar-scroll` reserves
+     for it; they must not drift apart or the strip covers the scrollbar again. */
+  width: var(--sidebar-resizer-width);
   height: 100%;
   cursor: col-resize;
   z-index: 20;
@@ -1000,14 +1025,14 @@ html[data-system-insets="native-viewport"] {
 
 .main-content-inner {
   flex: 0 0 auto; width: 100%; /* natural height, full width as a flex item (GH #369, #382) */
-  max-width: var(--ls-main-content-max-width);
+  max-width: var(--tine-main-content-max-width, var(--ls-main-content-max-width));
   margin: 0 auto;
   padding: 12px 48px 0;
 }
 
 /* Wide mode: drop the reading-width cap. */
 .wide-mode .main-content-inner {
-  max-width: 100%;
+  max-width: var(--tine-wide-content-max-width, var(--ls-main-content-max-width-wide));
 }
 
 /* Document mode: a cleaner prose view — hide bullets, collapse controls, and the
@@ -1356,14 +1381,14 @@ html[data-system-insets="native-viewport"] {
   font-weight: 600;
   color: var(--text-title);
   margin: 8px 0 6px;
-  line-height: 1.2;
+  line-height: 1.5;
 }
 .page-title-input {
   font-size: var(--ls-page-title-size);
   font-weight: 600;
   color: var(--text-title);
   margin: 8px 0 6px;
-  line-height: 1.2;
+  line-height: 1.5;
   border: none;
   border-bottom: 2px solid var(--accent, #10b981);
   background: transparent;
@@ -1418,6 +1443,8 @@ html[data-system-insets="native-viewport"] {
   font: inherit;
   font-size: 20px;
   line-height: 1;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .page-title-row:hover .page-actions-trigger,
 .page-actions-trigger:focus-visible,
@@ -1445,6 +1472,8 @@ html[data-system-insets="native-viewport"] {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.1s, background 0.1s, color 0.1s;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .page-title-row:hover .tag-table-toggle,
 .tag-table-toggle.active {
@@ -1463,6 +1492,8 @@ html[data-system-insets="native-viewport"] {
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .guide-copy-btn:hover {
   background: var(--bg-tertiary);
@@ -2517,6 +2548,8 @@ html[data-system-insets="native-viewport"] {
   gap: 8px;
   flex-wrap: wrap;
   margin-left: auto;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .carry-btn {
   background: none;
@@ -3099,8 +3132,11 @@ html[data-system-insets="native-viewport"] {
   position: relative;
 }
 
+/* Hidden by `visibility`, not `display`, so ContextMenu can MEASURE the submenu
+   before choosing a side (GH #471); absolutely positioned, so it costs the menu
+   no size and leaves the parent's own placement measurement unchanged. */
 .ctx-submenu-menu {
-  display: none;
+  visibility: hidden;
   position: absolute;
   left: 100%;
   top: -4px;
@@ -3112,8 +3148,20 @@ html[data-system-insets="native-viewport"] {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 
-.ctx-submenu:hover .ctx-submenu-menu {
-  display: block;
+.ctx-submenu:hover > .ctx-submenu-menu {
+  visibility: visible;
+}
+
+/* Side chosen by `placeSubmenu`, once per menu (GH #471). */
+.ctx-menu[data-submenu-side="left"] .ctx-submenu-menu {
+  left: auto;
+  right: 100%;
+}
+
+.ctx-menu[data-submenu-side="over"] .ctx-submenu-menu {
+  left: 0;
+  right: auto;
+  top: 100%;
 }
 
 .ctx-row {
@@ -3436,6 +3484,8 @@ html[data-system-insets="native-viewport"] {
   cursor: text;
   text-align: left;
   padding-left: 34px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .page-trailing-block-target span {
   opacity: 0;
@@ -3474,6 +3524,10 @@ html[data-system-insets="native-viewport"] {
 .block-main.drop-before {
   box-shadow: inset 0 2px 0 var(--link-color);
 }
+.block-main.drop-child {
+  box-shadow: inset 3px 0 0 var(--link-color);
+  background: color-mix(in srgb, var(--link-color) 9%, transparent);
+}
 .block-main.dragging {
   opacity: 0.4;
 }
@@ -3486,10 +3540,12 @@ html[data-system-insets="native-viewport"] {
   user-select: none;
 }
 
+/* Exactly one first line of block text tall, so centring inside it centres the
+   bullet ON that line (GH #459). Derived, never a literal. */
 .block-controls {
   display: flex;
   align-items: center;
-  height: 26px;
+  height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
   flex: 0 0 auto;
 }
 
@@ -3630,18 +3686,18 @@ html[data-system-insets="native-viewport"] {
   cursor: text;
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 2px 0;
+  padding: var(--ls-block-content-pad-y) 0;
   /* Integer-px line-height (not unitless 1.6) so each line box is a whole number of
      px and the rendered box height equals the editor textarea's integer scrollHeight
      EXACTLY — otherwise the 25.6px fractional line rounds up on focus and the block
      shifts ~0.4px on every click (issue #12). Headings re-assert their own ratio below. */
-  line-height: 26px;
+  line-height: var(--ls-block-line-height);
   /* Full 1-line box height = line-height 26 + padding (2+2). An EMPTY block has no
      line box, so without this it collapses to a 26px border-box (padding only) — 4px
      SHORTER than the editor textarea, which always reserves one line (30px). That gap
      made a blank block jump +4px on click (issue #12 residual). Match 30px so the
      rendered box == the editor box whether or not the block has content. */
-  min-height: 30px;
+  min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
   /* calt OFF. Inter's contextual alternates (calt) drew `->` as an arrow, but the
      SAME feature contextually re-positions the asterisk (`*(` centered vs `)*`
      raised — a visible glitch while editing `*(…)*`). Arrows now come from an
@@ -3652,8 +3708,21 @@ html[data-system-insets="native-viewport"] {
 }
 
 .block-content.done {
-  color: var(--done-color);
+  color: var(--text-primary);
+  opacity: 0.5;
+  text-decoration: none;
+}
+/* Decorate content separately from its task controls: an ancestor decoration
+   cannot be canceled with text-decoration:none on the marker itself. */
+.block-content.done > :not(.block-marker):not(.block-task-checkbox):not(.block-refs-count) {
   text-decoration: line-through;
+}
+/* A block reference can contain its own task label (master #518). Its text keeps
+   the completion strike, while this atomic inline box keeps the label unstruck. */
+.block-content.done .block-ref .block-marker {
+  display: inline-block;
+  line-height: normal;
+  text-decoration: none;
 }
 
 /* headings — re-assert a ratio line-height (the block uses a fixed 26px; without this
@@ -3672,14 +3741,20 @@ html[data-system-insets="native-viewport"] {
   margin-left: var(--ls-block-indent);
 }
 
+/* GH #423: this bulk "fold every descendant" target was 14px wide and, being
+   z-index:1, was painted ON TOP of the leftmost 5px of the per-block fold arrow
+   next to it, so 5 of the arrow's 18 pixels folded the whole subtree instead of
+   one block. It stops at the arrow's edge now: 5px, centred on the 1px line it
+   draws (OG's block.css uses 4px). scripts/check-outline-guide-hitbox.mjs holds
+   this geometry. */
 .block-children-left-border {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -9px;
+  left: -5px;
   z-index: 1;
-  width: 14px;
-  min-width: 14px;
+  width: 5px;
+  min-width: 5px;
   height: auto;
   margin: 0;
   padding: 0;
@@ -4016,16 +4091,39 @@ html[data-system-insets="native-viewport"] {
      full 1-line box (line-height 26 + padding 4); it floors the empty-value editor at
      the same height as the rendered empty block so entering/leaving edit on a blank
      block never changes height (and the editor can't shrink below the block). */
-  line-height: 26px;
-  min-height: 30px;
+  line-height: var(--ls-block-line-height);
+  min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
   color: var(--text-primary);
-  padding: 2px 0;
+  padding: var(--ls-block-content-pad-y) 0;
   margin: 0;
   /* calt OFF while editing too (see .block-content): consistent asterisk heights,
      and the raw `->` stays raw in the textarea (the arrow glyph appears on render). */
   font-variant-ligatures: no-contextual;
   overflow: hidden;
   display: block;
+}
+
+/* While the block being edited IS one fenced code block, the editor wears the
+   same card as the rendered .code-block (mono, no soft wrap, same padding and
+   metrics), so clicking a code region no longer re-lays it out (GH #357).
+   Font/line-height/padding numbers mirror .code-block exactly — keep them in
+   sync. `wrap="off"` on the textarea is the functional side of no-soft-wrap. */
+.block-editor.code-edit {
+  background: var(--code-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 4px 0;
+  /* Editable fonts are set via the !important textarea rule above — override
+     the --tine-editable-font variable like .calc-wrap does, not font-family. */
+  --tine-editable-font: "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco,
+    Consolas, "Courier New", var(--tine-editable-emoji-font), monospace;
+  font-size: 0.86em;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-height: 0;
 }
 
 .block-editor.h1 { font-size: 1.7em; font-weight: 600; line-height: 1.3; }
@@ -4131,17 +4229,24 @@ html[data-system-insets="native-viewport"] {
   box-sizing: border-box;
   vertical-align: -1px;
   margin-right: 1px;
-  border: 1.5px solid color-mix(in srgb, currentColor 45%, transparent);
+  --task-checkbox-color: var(--marker-color);
+  border: 1.5px solid var(--task-checkbox-color);
   border-radius: 3px;
   cursor: pointer;
   position: relative;
 }
-.block-task-checkbox:hover {
-  border-color: var(--accent, #4c8bf5);
+.block-task-checkbox:has(+ .marker-todo) { --task-checkbox-color: var(--marker-todo); }
+.block-task-checkbox:has(+ .marker-doing) { --task-checkbox-color: var(--marker-doing); }
+.block-task-checkbox:has(+ .marker-now) { --task-checkbox-color: var(--marker-now); }
+.block-task-checkbox:has(+ .marker-later) { --task-checkbox-color: var(--marker-later); }
+.block-task-checkbox:has(+ .marker-waiting),
+.block-task-checkbox:has(+ .marker-in-progress) { --task-checkbox-color: var(--marker-waiting); }
+.block-task-checkbox:not(.checked):hover {
+  background: color-mix(in srgb, var(--task-checkbox-color) 20%, transparent);
 }
 .block-task-checkbox.checked {
-  background: var(--accent, #4c8bf5);
-  border-color: var(--accent, #4c8bf5);
+  background: var(--marker-done);
+  border: none;
 }
 .block-task-checkbox.checked::after {
   content: "";
@@ -6504,6 +6609,8 @@ img.emoji {
   display: flex;
   align-items: center;
   gap: 8px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .references-header > button { margin-left: 0; }
@@ -7782,8 +7889,13 @@ img.emoji {
   transform: rotate(90deg);
 }
 
+/* GH #464. The markup already made only this anchor the link, but a stretched
+   flex item (`1 1 auto`) made every pixel right of a short title still the <a>:
+   the hand cursor followed the pointer out over empty space. Sized to its own
+   text, the spare width belongs to the head. `min-width: 0` keeps it the element
+   that ellipsises a long title. */
 .rs-item-title {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   font-weight: 600;
   color: var(--link-color);
@@ -7795,6 +7907,9 @@ img.emoji {
 }
 
 .rs-close {
+  /* The title no longer stretches, so the close button keeps the right edge
+     itself (GH #464). */
+  margin-left: auto;
   background: none;
   border: none;
   color: var(--text-muted);

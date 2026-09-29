@@ -119,7 +119,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "pasteImage", "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
   "openPdf", "writeHighlights", "writePdfViewState", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setCaptureEnterFiles", "setLinkFirstMatch", "setWatchMode", "restoreBackup",
-  "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
+  "saveSession", "saveWorkspaces", "storeDraft", "retireDraft", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
   "debugLog", "diagnosticFrontendEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
 ]);
 // All remaining Backend methods are reads, resource subscriptions, dialogs,
@@ -130,7 +130,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "captureTarget", "bindCaptureGraph", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
   "readPluginEntry", "verifyPluginRegistry", "loadPluginRegistryCache", "defaultGraphParent", "quit",
   "closeGraphWindow", "openDevtools", "pageInventory", "journalFeedPage", "journalContentDays",
-  "getPage", "resolvePage", "graphSourceFiles", "guidePages", "getBacklinks",
+  "getPage", "resolvePage", "loadDrafts", "graphSourceFiles", "guidePages", "getBacklinks",
   "getBacklinkFilterContext", "getUnlinkedRefs", "warmDone", "getBlockRefCounts", "getBlockReferrers",
   "pagePrintHtml", "exportQuerySubtrees", "parseQuery", "printQuery", "queryOgExpressible", "queryRegistry",
   "queryRun", "queryExplainEmpty", "queryFacets", "publishQueryPlan", "pageIcons",
@@ -141,7 +141,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "readLocalImage", "readClipboardImage", "clipboardFiles", "readTextFile", "confirm", "pickFolder",
   "pickGraphFolder", "pickFile", "capturePhoto", "startRecording", "stopRecording", "cancelRecording",
   "readHighlights", "onGraphChanged", "onGraphConfigChanged", "getBackupKeep", "getCaptureEnterFiles", "getLinkFirstMatch",
-  "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "gpuEnv", "getSmoothScroll",
+  "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "localClock", "gpuEnv", "getSmoothScroll",
   "getAppBool", "getAppString", "listSpellcheckDictionaries", "debugInfo",
   "diagnosticReport", "appArchitecture",
 ]);

@@ -6,7 +6,7 @@ import { graphMeta } from "../graphSession";
 import { BUILTIN_KEYS, type BuiltinKeyDef, type ShortcutScope } from "../keybindings";
 import { EmojiText } from "../render/emoji";
 import { openGuide } from "../guide";
-import { registerTransientLayer } from "../transientLayers";
+import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import "../styles/help.css";
 
 const REPO = "https://github.com/martinkoutecky/tine";
@@ -55,18 +55,7 @@ function openExternal(url: string) {
 export function HelpPopup(): JSX.Element {
   let root: HTMLDivElement | undefined;
 
-  createEffect(() => {
-    if (!helpPopupOpen()) return;
-
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as Node | null;
-      if (root && target && !root.contains(target)) closeHelpPopup();
-    };
-    window.addEventListener("pointerdown", onPointerDown, true);
-    onCleanup(() => {
-      window.removeEventListener("pointerdown", onPointerDown, true);
-    });
-  });
+  dismissOnOutsidePointer({ open: helpPopupOpen, inside: () => [root], dismiss: closeHelpPopup });
   createEffect(() => {
     if (!helpPopupOpen()) return;
     const unregister = registerTransientLayer({ id: "help", root: () => root ?? null, dismiss: () => { closeHelpPopup(); return true; } });
@@ -115,6 +104,10 @@ export interface ShortcutSettingRow {
   id: string;
   label: string;
   binding: string;
+  /** A second built-in chord that runs the same command. Shown beside the
+   *  binding so it is discoverable, but not remappable and not its own row: it
+   *  disappears the moment the user binds the command themselves. */
+  alias?: string;
   effective: string;
   overridden: boolean;
   scope: ShortcutScope;
@@ -324,14 +317,21 @@ function ShortcutRow(props: {
   return (
     <div class="help-shortcut-row">
       <span class="help-shortcut-label">{props.row.label}</span>
-      <button
-        class="help-keycap help-keycap-button"
-        classList={{ recording: recording(), overridden: props.row.overridden, disabled: props.row.effective === "false" }}
-        onClick={() => props.onRecord(props.row.id)}
-        title="Click to remap"
-      >
-        {recording() ? "Press keys..." : displayBinding(props.row.effective)}
-      </button>
+      <span class="help-shortcut-keys">
+        <button
+          class="help-keycap help-keycap-button"
+          classList={{ recording: recording(), overridden: props.row.overridden, disabled: props.row.effective === "false" }}
+          onClick={() => props.onRecord(props.row.id)}
+          title="Click to remap"
+        >
+          {recording() ? "Press keys..." : displayBinding(props.row.effective)}
+        </button>
+        <Show when={props.row.alias && !props.row.overridden}>
+          <span class="help-shortcut-alias">
+            or <span class="help-keycap help-keycap-static">{displayBinding(props.row.alias!)}</span>
+          </span>
+        </Show>
+      </span>
       <span class="help-shortcut-tail">
         <Show when={props.row.effective.trim() && props.row.effective !== "false"}>
           <button class="help-reset" title="Remove this keybinding" onClick={() => props.onUnbind(props.row.id)}>Unbind</button>

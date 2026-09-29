@@ -8,7 +8,7 @@ html[data-theme="light"] {
   --ls-secondary-background-color: #f7f7f7;
   --ls-tertiary-background-color: #eaeaea;
   --ls-quaternary-background-color: #e2e2e2;
-  --ls-primary-text-color: #433f38;
+  --ls-primary-text-color: var(--ls-title-text-color);
   --ls-secondary-text-color: #5c5c5c;
   --ls-title-text-color: #0f1419;
   --ls-link-text-color: var(--ls-active-primary-color);
@@ -57,7 +57,7 @@ html[data-theme="dark"] {
   --ls-secondary-background-color: #25262b;
   --ls-tertiary-background-color: #2f3035;
   --ls-quaternary-background-color: #3a3b40;
-  --ls-primary-text-color: #c6c8cc;
+  --ls-primary-text-color: var(--ls-title-text-color);
   --ls-secondary-text-color: #a0a2a8;
   --ls-title-text-color: #ecedf0;
   --ls-link-text-color: var(--ls-active-primary-color);

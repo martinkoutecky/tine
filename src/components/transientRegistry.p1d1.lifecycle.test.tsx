@@ -26,9 +26,19 @@ function mountedHost() {
 }
 
 function registryListeners(calls: unknown[][]) {
-  return calls.filter(([type, _listener, capture]) =>
+  // The registry registers ONE function for both `focusin` and `pointerdown`.
+  // Other producers put capture listeners on the same document — an open
+  // popover's `dismissOnOutsidePointer` registers a different function for
+  // `pointerdown` and `mousedown` — so identify the registry's pair by that
+  // shared identity rather than by event type alone, or this scan silently
+  // adopts a neighbour's listener and asserts its lifecycle instead.
+  const captured = calls.filter(([type, _listener, capture]) =>
     (type === "focusin" || type === "pointerdown") && capture === true,
   ) as ["focusin" | "pointerdown", EventListener, true][];
+  const pairedWithFocusin = new Set(
+    captured.filter(([type]) => type === "focusin").map(([, listener]) => listener),
+  );
+  return captured.filter(([, listener]) => pairedWithFocusin.has(listener));
 }
 
 function expectRemoved(removeSpy: ReturnType<typeof vi.spyOn>, listeners: ["focusin" | "pointerdown", EventListener, true][]) {

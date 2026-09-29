@@ -5,7 +5,7 @@
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
 import { mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, DraftRecord, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { leadingMarker } from "./markers";
@@ -166,7 +166,7 @@ const PAGES: PageDto[] = [
       b("A code block:\n```rust\nfn main() {\n    println!(\"hello, tine\");\n}\n```"),
       b("A table:\n| Feature | Status |\n| --- | --- |\n| Outliner | done |\n| Queries | partial |"),
       b("DONE Validate round-trip on the real `shui-graph`"),
-      b("Inline math works too: $E = mc^2$ and references like ((arch-1))."),
+      b("Inline math works too: $E = mc^2$ and references like ((58900000-0000-4000-8000-0000000000b1))."),
       b("```calc\n1 + 2\n2+4\n5 + 4\nx = 12 * 3\nx / 4\n```"),
       b("Open tasks across the graph:"),
       b("{{query (todo TODO DOING)}}"),
@@ -212,7 +212,7 @@ const NAMED: PageDto[] = [
         b("Reads the same markdown graph as OG Logseq."),
       ]),
       b("## Architecture"),
-      b("Rust core owns parsing; the frontend owns the live editing tree.\nid:: arch-1"),
+      b("Rust core owns parsing; the frontend owns the live editing tree.\nid:: 58900000-0000-4000-8000-0000000000b1"),
       b("A PDF asset: [sample.pdf](../assets/sample.pdf)"),
     ],
   },
@@ -470,6 +470,7 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
 const mockHighlights: Record<string, { label: string; highlights: Highlight[]; page?: number; scale?: number }> = {};
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
+const mockDrafts = new Map<string, DraftRecord>();
 let mockWorkspaces: string | null = null;
 let mockLinkFirstMatch = false;
 let mockGuideAnnounced = false;
@@ -1524,6 +1525,15 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
     async saveSession(data: string): Promise<void> {
       mockSession = data;
     },
+    async loadDrafts(): Promise<DraftRecord[]> {
+      return [...mockDrafts.values()].map((record) => structuredClone(record));
+    },
+    async storeDraft(record: DraftRecord): Promise<void> {
+      mockDrafts.set(record.id, structuredClone(record));
+    },
+    async retireDraft(id: string): Promise<void> {
+      mockDrafts.delete(id);
+    },
     async loadWorkspaces(): Promise<string> {
       if (!mockWorkspaces) {
         const blob = mockSession ? JSON.parse(mockSession) : {
@@ -1574,6 +1584,10 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
     async clearDiagnostics(): Promise<void> { mockDiagnostics.length = 0; },
     async diagnosticSessionActive(): Promise<void> { /* no session marker in the mock */ },
     async diagnosticFrontendEvent(kind: DiagnosticFrontendKind): Promise<void> { mockDiagnostics.push(kind); },
+    async localClock() {
+      const now = Date.now();
+      return { offset_minutes: -new Date(now).getTimezoneOffset(), unix_ms: now };
+    },
     async appArchitecture(): Promise<string> { return "x86_64"; },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];

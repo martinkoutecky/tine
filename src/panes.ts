@@ -20,7 +20,7 @@ import { publishPdfNavigationIntent } from "./pdfNavigation";
 import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
 import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
-import { journalTitle } from "./journal";
+import { journalTitle, appNow } from "./journal";
 import { isSinglePaneShell } from "./nativeChrome";
 import {
   nearestPane,
@@ -223,7 +223,7 @@ export function closeLayoutPane(
 
 function routeForJournalsDuplicate(anchor: string | null): Route {
   const selectedDay = anchor ? docNode(anchor)?.page : undefined;
-  const today = journalTitle(new Date());
+  const today = journalTitle(appNow());
   const name =
     (selectedDay && feedNames().includes(selectedDay) ? selectedDay : undefined) ??
     (feedNames().includes(today) ? today : feedNames()[0] ?? today);

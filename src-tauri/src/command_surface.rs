@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 154] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 158] = [
     "app_architecture",
     "app_platform",
     "apply_journal_filename_migrations",
@@ -72,10 +72,12 @@ pub(crate) const KNOWN_COMMANDS: [&str; 154] = [
     "list_spellcheck_dictionaries",
     "list_sync_conflicts",
     "list_templates",
+    "load_drafts",
     "load_graph",
     "load_plugin_registry_cache",
     "load_session",
     "load_workspaces",
+    "local_clock",
     "merge_pages",
     "open_asset",
     "open_external",
@@ -114,6 +116,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 154] = [
     "resolve_sync_conflict",
     "resolve_vcs_marker_conflict",
     "restore_backup",
+    "retire_draft",
     "reveal_known_graph",
     "rollback_pdf_area_image",
     "run_graph_search",
@@ -148,6 +151,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 154] = [
     "start_recording",
     "startup_graph_path",
     "stop_recording",
+    "store_draft",
     "store_plugin_registry_cache",
     "stream_asset_path",
     "sync_conflict_diff",

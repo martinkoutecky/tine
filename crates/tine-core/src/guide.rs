@@ -100,6 +100,58 @@ pub const GUIDE_TEMPLATES: &[GuideTemplate] = &[
         title: "Project/Roadmap",
         markdown: include_str!("templates/roadmap.md"),
     },
+    GuideTemplate {
+        title: "Workflows/Structure repeated information",
+        markdown: include_str!("templates/structure-repeated-information.md"),
+    },
+    GuideTemplate {
+        title: "Reference/Files, external edits, and backups",
+        markdown: include_str!("templates/files-external-edits-backups.md"),
+    },
+    GuideTemplate {
+        title: "Start/Bring an existing graph",
+        markdown: include_str!("templates/bring-existing-graph.md"),
+    },
+    GuideTemplate {
+        title: "Reference/Troubleshooting and recovery",
+        markdown: include_str!("templates/troubleshooting-recovery.md"),
+    },
+    GuideTemplate {
+        title: "Workflows/Capture and plan your day",
+        markdown: include_str!("templates/capture-plan-day.md"),
+    },
+    GuideTemplate {
+        title: "Reference/Journals, tasks, and scheduling",
+        markdown: include_str!("templates/journals-tasks-scheduling.md"),
+    },
+    GuideTemplate {
+        title: "Workflows/Find and revisit",
+        markdown: include_str!("templates/find-and-revisit.md"),
+    },
+    GuideTemplate {
+        title: "Reference/Pages, links, references, and search",
+        markdown: include_str!("templates/pages-links-references-search.md"),
+    },
+    GuideTemplate {
+        title: "Workflows/Research a document",
+        markdown: include_str!("templates/research-document.md"),
+    },
+    GuideTemplate {
+        title: "Start/Where things are",
+        markdown: include_str!("templates/where-things-are.md"),
+    },
+    GuideTemplate {
+        title: "Workflows/Keep context visible",
+        markdown: include_str!("templates/keep-context-visible.md"),
+    },
+    GuideTemplate {
+        title: "Workflows/Extend Tine",
+        markdown: include_str!("templates/extend-tine.md"),
+    },
+    GuideTemplate {
+        title: "Reference/Platforms and mobile",
+        markdown: include_str!("templates/platforms-and-mobile.md"),
+    },
 ];
 
 pub struct GuideAsset {
@@ -133,7 +185,13 @@ pub fn guide_link_renames() -> HashMap<String, String> {
 }
 
 pub fn rewrite_bundled_guide_links(markdown: &str, renames: &HashMap<String, String>) -> String {
-    crate::refs::rename_refs_multi(markdown, renames, false)
+    // Markdown has no `file:` page links, so the filename format is not consulted.
+    crate::refs::rename_refs_multi(
+        markdown,
+        renames,
+        false,
+        crate::config::FileNameFormat::TripleLowbar,
+    )
 }
 
 pub fn collect_guide_asset_refs(markdown: &str, into: &mut HashSet<String>) {
@@ -313,6 +371,40 @@ mod search_guide_tests {
 #[cfg(test)]
 mod rename_guide_tests {
     #[test]
+    fn editor_gestures_are_documented_in_the_bundled_guide() {
+        // Family 19: the code-block editor, nested drop and property autocomplete.
+        let tips = include_str!("templates/tips.md");
+        assert!(tips.contains("**Code blocks**: type ``` "));
+        assert!(tips.contains("only the code itself is in the text box"));
+        assert!(
+            tips.contains("**Drag a bullet onto another bullet and move a little to the right**")
+        );
+        assert!(tips.contains("that bullet's last child"));
+        assert!(
+            tips.contains("Typing `::` at the start of a line inside a bullet starts a property")
+        );
+    }
+
+    #[test]
+    fn modified_link_clicks_are_documented_in_the_bundled_guide() {
+        // GH #283/#438: one modified-click contract for internal links.
+        let tips = include_str!("templates/tips.md");
+        assert!(tips.contains("all take the same modified clicks"));
+        assert!(tips.contains("**Ctrl/Cmd-click** or **middle-click** opens a background tab"));
+        assert!(tips.contains("**Alt-click** opens the other pane"));
+    }
+
+    #[test]
+    fn ctrl_y_redo_alias_is_documented_in_the_bundled_guide() {
+        // GH #491: both redo chords, the platforms that get the second one, and
+        // that remapping Redo replaces both.
+        let tips = include_str!("templates/tips.md");
+        assert!(tips.contains("redo is Ctrl/Cmd+Shift+Z"));
+        assert!(tips.contains("On Windows and Linux **Ctrl+Y** also redoes"));
+        assert!(tips.contains("remapping Redo replaces both"));
+    }
+
+    #[test]
     fn pdf_export_save_refusal_is_documented_in_the_bundled_guide() {
         let tips = include_str!("templates/tips.md");
         assert!(tips.contains("**Export to PDF…** saves pending page edits"));
@@ -476,5 +568,67 @@ mod theme_presentation_guide_tests {
         assert!(plugins.contains("are chosen independently"));
         assert!(plugins.contains("The theme receives neither those tasks"));
         assert!(!plugins.contains("Token themes live under"));
+    }
+}
+
+#[cfg(test)]
+mod og_20d_guide_tests {
+    use super::*;
+
+    fn page(title: &str) -> &'static str {
+        GUIDE_TEMPLATES
+            .iter()
+            .find(|t| t.title == title)
+            .unwrap_or_else(|| panic!("Guide page {title:?} is not bundled"))
+            .markdown
+    }
+
+    #[test]
+    fn where_things_are_documents_page_width_settings_size_and_region_failures() {
+        let map = page("Start/Where things are");
+        for detail in [
+            "**t w**",
+            "**Standard page width**",
+            "**Wide page width**",
+            "fill the window",
+            "**Retry**",
+        ] {
+            assert!(
+                map.contains(detail),
+                "missing where-things-are detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
+    fn troubleshooting_documents_the_launch_failure_card_and_failed_regions() {
+        let recovery = page("Reference/Troubleshooting and recovery");
+        for detail in [
+            "Tine could not open your last graph",
+            "**Try again**",
+            "**Copy details**",
+            "**Retry**",
+            "Changed on disk",
+        ] {
+            assert!(
+                recovery.contains(detail),
+                "missing recovery detail: {detail}"
+            );
+        }
+        // og has no search index: no page may describe rebuilding or waiting on one.
+        for page in GUIDE_TEMPLATES {
+            for forbidden in [
+                "Rebuild the index",
+                "Indexing…",
+                "Managed Storage",
+                "Reference/Command line",
+            ] {
+                assert!(
+                    !page.markdown.contains(forbidden),
+                    "{} documents a feature og does not have: {forbidden}",
+                    page.title
+                );
+            }
+        }
     }
 }

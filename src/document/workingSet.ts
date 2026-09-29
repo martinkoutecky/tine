@@ -16,7 +16,7 @@ import { editingId, endEdit } from "../editorController";
 import { clearSeededFacets } from "../render/facets";
 import { notifyModeReset } from "../modeHooks";
 import { isBlockMoving } from "./edits/moves";
-import { journalTitle } from "../journal";
+import { journalTitle, appNow } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { pushToast } from "../toasts";
 import { resetReferenceSectionState } from "../referenceSectionState";
@@ -277,15 +277,20 @@ export function registerPaneRouteProvider(provider: () => Route[]) {
 }
 const draftPins = new Set<() => string | null | undefined>();
 /** Keep the page a draft outside the block editor will write to (e.g. a sheet
- * prop cell) from being evicted from the working set (og 15a K17a). `page` is
- * called at each eviction check and names a store page name (null/undefined pins
- * nothing). Returns the unpin function; nothing unpins automatically — call it
+ * prop cell, the page-title rename input) from being evicted OR replaced by a
+ * navigation/feed/watcher reload (og 15a K17a; og 20b contract 2 — one registry
+ * answers both, via `pinnedPages` and `reloadDisposition`). `page` is called at
+ * each check and names a store page name (null/undefined pins nothing). Returns the unpin function; nothing unpins automatically — call it
  * from `onCleanup`. The pin is not cleared by a graph switch (it is re-read
  * against the new graph). O(1) to register; each eviction check calls every
  * registered accessor. */
 export function pinPageWhileDrafting(page: () => string | null | undefined): () => void {
   draftPins.add(page);
   return () => draftPins.delete(page);
+}
+function draftPinned(name: string): boolean {
+  for (const draft of draftPins) if (draft() === name) return true;
+  return false;
 }
 function pinnedPages(): Set<string> {
   const pin = new Set<string>(doc.feed);
@@ -383,16 +388,15 @@ export function resetStore() {
   notifyModeReset();
 }
 
-// A navigation/feed load must NOT replace a page that has unsaved edits (or an
-// unresolved conflict) with a fresh disk DTO — e.g. you edited it in the sidebar,
-// then opened it in the main view before the debounce saved. Keep the live dirty
-// nodes; the disk version would otherwise be served and the next save could write
-// it, silently dropping the edit. (reloadPage / "use disk version" still replace
-// explicitly via upsertPage.)
+// A navigation/feed load must NOT replace a page that holds unsaved input with a
+// fresh disk DTO — e.g. you edited it in the sidebar, then opened it in the main
+// view before the debounce saved, or it is open in a block editor / title rename /
+// sheet cell. Keep the live nodes; the disk version would otherwise be served and
+// the next save could write it, silently dropping the edit (GH #304 family, og 20b
+// contract 2). Same gate as the watcher: `reloadDisposition`. (reloadPage / "use
+// disk version" still replace explicitly via upsertPage — that is the user's choice.)
 function upsertUnlessDirty(dto: PageDto) {
-  // `isSaving` too — an in-flight save's edit isn't durable yet (audit H1).
-  if (pageByName(dto.name) && (isDirty(dto.name) || isConflicted(dto.name) || isSaving(dto.name) || group(dto.name)))
-    return;
+  if (pageByName(dto.name) && reloadDisposition(dto.name) !== "reload") return;
   upsertPage(dto);
 }
 
@@ -402,11 +406,13 @@ export type ReloadDisposition = "reload" | "conflict" | "skip";
  *  branches in Page.tsx can't diverge:
  *  - `"conflict"` — it has unsaved edits / an open conflict: surface a conflict,
  *    NEVER clobber the in-memory edit with the disk version.
- *  - `"skip"` — a block on it is being edited (don't yank the caret) or a block
- *    move is mid-flight (the textarea is transiently blurred): leave it alone.
+ *  - `"skip"` — a block on it is being edited (don't yank the caret), a block
+ *    move is mid-flight (the textarea is transiently blurred), or a component
+ *    draft pinned it (`pinPageWhileDrafting`): leave it alone.
  *  - `"reload"` — safe to replace the loaded copy with the disk version.
- *  (Navigation/flush-first paths — upsertUnlessDirty, reloadHlsIfLoaded — use a
- *  simpler dirty-only guard on purpose and do not go through this.) */
+ *  Every replacement of a loaded instance except the user's explicit "use disk"
+ *  asks this: the watcher, navigation/feed loads (`upsertUnlessDirty`),
+ *  `ensurePageLoaded`, and `reloadHlsIfLoaded`. */
 export function reloadDisposition(name: string): ReloadDisposition {
   // `isSaving` too: `doSave` clears `dirty` BEFORE the `await savePages`, so during the
   // save IPC the page is no longer dirty but its edit isn't durable. Reloading then
@@ -415,7 +421,7 @@ export function reloadDisposition(name: string): ReloadDisposition {
   // real conflict.
   if (isDirty(name) || isConflicted(name) || isSaving(name) || group(name)) return "conflict";
   const ed = editingId();
-  if ((ed && doc.byId[ed]?.page === name) || isBlockMoving()) return "skip";
+  if ((ed && doc.byId[ed]?.page === name) || isBlockMoving() || draftPinned(name)) return "skip";
   return "reload";
 }
 
@@ -477,7 +483,7 @@ export function appendFeed(dtos: (PageDto & { id?: string })[]) {
  *  writable — `upsertPage` lifts the delete tombstone, so the first keystroke saves
  *  a fresh file, exactly like reopening the journal. */
 export function restoreTodayJournalInFeed() {
-  const title = journalTitle(new Date());
+  const title = journalTitle(appNow());
   if (doc.feed.includes(title)) return;
   upsertUnlessDirty(emptyPage(title, "journal"));
   setDoc("feed", [title, ...doc.feed]);

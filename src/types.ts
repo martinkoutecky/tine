@@ -100,6 +100,20 @@ export interface PageDto {
   guide?: boolean;
 }
 
+/** One crash-surviving draft (og ADR 0061): the page as the editor held it when
+ *  it could not be saved. `id` is `<session>:<page name>`; `kind` "live-conflict"
+ *  is reserved for the Concord live-draft capsule (one store, not two). */
+export interface DraftRecord {
+  id: string;
+  kind: "unsaved" | "live-conflict";
+  session: string;
+  page_name: string;
+  path: string | null;
+  reason: "conflict" | "save-failed";
+  saved_at: number;
+  page: PageDto;
+}
+
 /** A page loaded from one concrete file. Its identity is returned unchanged on save. */
 export interface PageRead extends PageDto {
   id: string;
