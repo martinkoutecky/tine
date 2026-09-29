@@ -77,6 +77,8 @@ export interface Trigger {
   end: number;
   /** Canonical key owning a property-value query. */
   property?: string;
+  /** Earlier comma-separated values on the same property line. */
+  propertyValues?: string[];
 }
 
 /** Existing canonical property identity, re-exported for editor authoring. */
@@ -132,13 +134,26 @@ export function detectTrigger(
         ) {
           const afterDelimiter = delimiter + 2;
           const valueOffset = afterDelimiter + (before[afterDelimiter] === " " ? 1 : 0);
-          const query = before.slice(valueOffset);
+          const authored = before.slice(valueOffset);
+          const comma = authored.lastIndexOf(",");
+          const segmentOffset = comma === -1 ? 0 : comma + 1;
+          const segment = authored.slice(segmentOffset);
+          const leading = /^\s*/.exec(segment)?.[0].length ?? 0;
+          const query = segment.slice(leading);
+          const propertyValues = comma === -1
+            ? []
+            : authored
+                .slice(0, comma)
+                .split(",")
+                .map((value) => value.trim())
+                .filter(Boolean);
           return {
             kind: "property-value",
             query,
-            start: lineStart + valueOffset,
+            start: lineStart + valueOffset + segmentOffset + leading,
             end: caret,
             property: propertyKeyFold(propertyValueKey),
+            ...(propertyValues.length ? { propertyValues } : {}),
           };
         }
       }
@@ -153,6 +168,19 @@ export function detectTrigger(
         query: propertyName[1],
         start: lineStart,
         end: caret,
+      };
+    }
+
+    // OG's line-opening `::` lifecycle puts the caret BEFORE the delimiter and
+    // lets the user type the property name to its left. Keep the replacement
+    // span through the delimiter even though the caret is before it, so
+    // `::` -> caret 0 -> type `alp` yields `alp|::` and accepts as `alpha:: `.
+    if (raw.slice(caret, caret + 2) === "::" && /^[A-Za-z0-9_./-]*$/.test(before)) {
+      return {
+        kind: "property-name",
+        query: before,
+        start: lineStart,
+        end: caret + 2,
       };
     }
   }
@@ -214,6 +242,25 @@ export function detectTrigger(
   }
 
   return null;
+}
+
+/** Property key when a just-typed boundary should enter/re-enter value search.
+ * This is input-event scoped so merely moving the caret through an existing
+ * property line never opens autocomplete. A space immediately after `key::`
+ * starts values; a comma starts the next value in a multi-value property. */
+export function propertyValueKeyAfterBoundary(
+  raw: string,
+  caret: number,
+  typed: string,
+): string | null {
+  if (typed !== " " && typed !== ",") return null;
+  const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
+  const before = raw.slice(lineStart, caret);
+  const match = /^([A-Za-z0-9_./-]+)::(.*)$/.exec(before);
+  if (!match) return null;
+  if (typed === " " && match[2] !== " ") return null;
+  if (typed === "," && !match[2].endsWith(",")) return null;
+  return propertyKeyFold(match[1]);
 }
 
 /** OG-style bracket auto-pairing for page refs, run AFTER the browser has

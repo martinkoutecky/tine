@@ -20,6 +20,7 @@ import {
   codeLanguageItems,
   fuzzyScore, aliasOfLabel,
   propertyKeyFold,
+  propertyValueKeyAfterBoundary,
   type Trigger,
 } from "../editor/autocomplete";
 import { navigationName } from "../pageIndex";
@@ -86,6 +87,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro, youtubeTimestampMacroFor } from "./Macro";
+import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { graphMeta, dataRev, graphEpoch } from "../graphSession";
 import { pushToast, dismissToast } from "../toasts";
@@ -963,17 +965,19 @@ export function Editor(props: { id: string }): JSX.Element {
     left.query === right.query &&
     left.start === right.start &&
     left.end === right.end &&
-    left.property === right.property;
+    left.property === right.property &&
+    (left.propertyValues ?? []).join("\0") === (right.propertyValues ?? []).join("\0");
   const detectEditorTrigger = (value = ref.value, caret = ref.selectionStart): Trigger | null =>
     isCalc() || isAnnot() || !!sheetCell
       ? null
       : detectTrigger(value, caret, propertyValueKey());
-  const propertyValueItems = (key: string, query: string): AcItem[] => {
+  const propertyValueItems = (key: string, query: string, used: readonly string[] = []): AcItem[] => {
     const values = propertyFacets.find(([candidate]) => candidate === key)?.[1] ?? [];
     const q = query.trim();
+    const excluded = new Set(used.map((value) => value.toLocaleLowerCase()));
     const ranked = values
       .map((value, index) => ({ value, index, score: q ? fuzzyScore(q, value) : 1 }))
-      .filter(({ score }) => score > 0)
+      .filter(({ value, score }) => score > 0 && !excluded.has(value.toLocaleLowerCase()))
       .sort((left, right) => right.score - left.score || left.index - right.index)
       .slice(0, 100)
       .map(({ value }) => ({ label: value, propertyValue: value }));
@@ -1007,7 +1011,16 @@ export function Editor(props: { id: string }): JSX.Element {
     setAcIndex(0);
     const requestOwner = latestOwner(autocompleteScope, "suggestions", graphOwner(() => sameAcTrigger(ac(), t)));
     if (t.kind === "property-name") {
-      const facets = await autocompleteFacets();
+      let facets: [string, string[]][];
+      try {
+        facets = await autocompleteFacets();
+      } catch (error) {
+        // Completion is an optional aid: a transient facet-query failure must
+        // never reject the editor input event or pile up global error toasts.
+        dbg(`property-autocomplete: ${String(error)}`);
+        if (sameAcTrigger(ac(), t)) setAcItems([]);
+        return;
+      }
       const cur = ac();
       if (!sameAcTrigger(cur, t)) return;
       propertyFacets = facets;
@@ -1020,13 +1033,13 @@ export function Editor(props: { id: string }): JSX.Element {
         .map(({ key }) => ({ label: key, propertyName: key }));
       const created = propertyKeyFold(t.query);
       if (created && !facets.some(([key]) => key === created)) {
-        ranked.push({ label: `Create "${created}"`, propertyName: created });
+        ranked.unshift({ label: `Create "${created}"`, propertyName: created });
       }
       setAcItems(ranked);
       return;
     }
     if (t.kind === "property-value") {
-      setAcItems(propertyValueItems(t.property!, t.query));
+      setAcItems(propertyValueItems(t.property!, t.query, t.propertyValues));
       return;
     }
     if (t.kind === "code-language") {
@@ -2126,6 +2139,17 @@ export function Editor(props: { id: string }): JSX.Element {
     if (e.inputType === "insertText" && e.data && e.data.length === 1 && !e.isComposing) {
       const ch = e.data;
       let handled = false;
+      // OG parity: typing `::` at the beginning of a property line places the
+      // caret before the delimiter. Subsequent property-name characters are
+      // authored as `name|::`, not the malformed `::name` that caused GH #306.
+      if (ch === ":" && ref.selectionStart >= 2) {
+        const caret = ref.selectionStart;
+        const lineStart = ref.value.lastIndexOf("\n", caret - 3) + 1;
+        if (caret - lineStart === 2 && ref.value.slice(lineStart, caret) === "::") {
+          ref.setSelectionRange(lineStart, lineStart);
+          handled = true;
+        }
+      }
       if (ch === "【") {
         handled = applyFullWidthRefReplace();
       }
@@ -2172,6 +2196,8 @@ export function Editor(props: { id: string }): JSX.Element {
           ref.setSelectionRange(r.caret, r.caret);
         }
       }
+      const valueKey = propertyValueKeyAfterBoundary(ref.value, ref.selectionStart, ch);
+      if (valueKey) setPropertyValueKey(valueKey);
       // OG's typing trigger is exact: only the complete visible editor value
       // `1. ` becomes own numbered-list state, then the trigger text disappears
       // (`src/main/frontend/handler/editor.cljs:1888-1892`, 6e7afa8eb).
