@@ -62,21 +62,11 @@ function planningOf(raw: string, tag: "SCHEDULED" | "DEADLINE"): string | undefi
   const m = new RegExp(`^${tag}:\\s*<([^>]+)>`, "m").exec(raw);
   return m?.[1];
 }
-/**
- * Tags written in a mock block's raw text, in first-seen order, deduplicated
- * case-insensitively. `#[[Long Tag]]` and `#short` count; the `[#A]` priority
- * token does not. Exported for its regression test (GH #256).
- */
+/** Tags in `raw`: first-seen, case-insensitively deduped, `[#A]` excluded. No lookbehind: pre-16.4 WebKit (GH #256). */
 export function tagsOf(raw: string): string[] {
   const out: string[] = [];
-  // No regex lookbehind here: `(?<!\[)` is a SyntaxError on Safari/WKWebView
-  // older than 16.4, and this module is eagerly imported, so it white-screened
-  // startup (GH #256). A `#` directly after `[` is skipped by hand instead,
-  // which keeps the [#A] priority token from leaking a fake #A tag. A leading
-  // `(^|[^\[])` group would consume the preceding char and drop `#b` in `#a#b`.
   const re = /#\[\[([^\]]+)\]\]|#([\w/_.-]+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(raw))) {
+  for (let m: RegExpExecArray | null; (m = re.exec(raw)); ) {
     if (m[2] !== undefined && m.index > 0 && raw[m.index - 1] === "[") continue;
     const tag = (m[1] ?? m[2]).trim();
     if (tag && !out.some((t) => t.toLowerCase() === tag.toLowerCase())) out.push(tag);
