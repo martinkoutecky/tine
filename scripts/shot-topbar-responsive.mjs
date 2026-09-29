@@ -8,16 +8,22 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 5225;
 const OUT = path.resolve(process.env.TOPBAR_SHOT_DIR || "notes");
-// GH #205 has two container-query tiers: optional actions move into "…" at
-// 460px, while Back/Forward stay inline until the 300px floor. Exercise both
-// tiers and a roomy desktop neighbor.
+// GH #205 has container-query tiers: optional actions move into "…" at 460px,
+// while Back/Forward stay inline until the 300px floor. The right-sidebar
+// action stays direct on a topbar without window controls (phones, system-
+// decorated windows) until the 250px last resort; a frameless desktop with its
+// three window buttons moves it to the menu at 460px (master 945337d03).
 const CASES = [
-  { name: "desktop-900", width: 900, sidebar: "open", menu: false, nav: 2, optional: 4, overflow: false },
-  { name: "optional-collapse-440", width: 440, sidebar: "closed", menu: true, nav: 2, optional: 0, overflow: true,
+  { name: "desktop-900", width: 900, sidebar: "open", menu: false, nav: 2, optional: 3, sidebarAction: 1, overflow: false },
+  { name: "optional-collapse-440", width: 440, sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
+    menuActions: ["calendar", "journals", "theme"], separator: false },
+  { name: "custom-frame-collapse-440", width: 440, sidebar: "closed", fakeWindowControls: true, menu: true, nav: 2, optional: 0, sidebarAction: 0, overflow: true,
     menuActions: ["calendar", "journals", "theme", "right-sidebar"], separator: false },
-  { name: "phone-nav-inline-390", width: 390, sidebar: "closed", menu: true, nav: 2, optional: 0, overflow: true,
-    menuActions: ["calendar", "journals", "theme", "right-sidebar"], separator: false },
-  { name: "nav-collapse-280", width: 280, sidebar: "closed", menu: true, nav: 0, optional: 0, overflow: true,
+  { name: "phone-nav-inline-390", width: 390, sidebar: "closed", menu: true, nav: 2, optional: 0, sidebarAction: 1, overflow: true,
+    menuActions: ["calendar", "journals", "theme"], separator: false },
+  { name: "nav-collapse-280", width: 280, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 1, overflow: true,
+    menuActions: ["calendar", "journals", "theme", "back", "forward"], separator: true },
+  { name: "last-resort-240", width: 240, sidebar: "closed", menu: true, nav: 0, optional: 0, sidebarAction: 0, overflow: true,
     menuActions: ["calendar", "journals", "theme", "right-sidebar", "back", "forward"], separator: true },
 ];
 
@@ -69,6 +75,9 @@ function measureTopbar() {
     fullSwitcherInSidebar: Boolean(document.querySelector("[data-workspace-switcher-sidebar] [data-workspace-switcher]")),
     visibleNavigation: [...topbar.querySelectorAll(".topbar-navigation-action")].filter(visible).length,
     visibleOptional: [...topbar.querySelectorAll(".topbar-optional-action")].filter(visible).length,
+    // By role, not class: the user-visible question is whether the direct
+    // right-sidebar button is on the bar.
+    visibleSidebarAction: [...topbar.querySelectorAll('button[title^="Toggle right sidebar"]')].filter(visible).length,
     visibleOverflowActions: [...topbar.querySelectorAll("[data-topbar-overflow-action]")]
       .filter(visible)
       .map((element) => element.getAttribute("data-topbar-overflow-action")),
@@ -89,7 +98,9 @@ try {
       ...(process.env.TINE_SHOT_SINGLE_PROCESS ? ["--single-process", "--no-zygote"] : []),
     ],
   });
-  for (const testCase of CASES) {
+  // TOPBAR_CASES=name1,name2 runs a subset (for focused fail-before proof).
+  const only = process.env.TOPBAR_CASES?.split(",").filter(Boolean);
+  for (const testCase of only ? CASES.filter((c) => only.includes(c.name)) : CASES) {
     const page = await browser.newPage({ viewport: { width: testCase.width, height: 760 }, deviceScaleFactor: 1 });
     // makeSidebar's click toggle is pre-existing-broken at <=430px. Seed the
     // persisted state before the app module reads it instead of toggling live.
@@ -100,10 +111,19 @@ try {
     target.searchParams.set("topbar205", testCase.name);
     await page.goto(target.href);
     await page.waitForSelector("header.topbar", { timeout: 8_000 });
+    if (testCase.fakeWindowControls) {
+      await page.evaluate(() => {
+        const controls = document.createElement("div");
+        controls.className = "win-controls";
+        controls.setAttribute("data-test-window-controls", "true");
+        document.querySelector(".topbar-right")?.append(controls);
+      });
+    }
     await sleep(180);
     const before = await page.evaluate(measureTopbar);
     if (before.clipped.length) throw new Error(`${testCase.name}: clipped toolbar buttons: ${before.clipped.join(", ")}`);
-    if (before.visibleNavigation !== testCase.nav || before.visibleOptional !== testCase.optional || before.overflowVisible !== testCase.overflow) {
+    if (before.visibleNavigation !== testCase.nav || before.visibleOptional !== testCase.optional
+      || before.visibleSidebarAction !== testCase.sidebarAction || before.overflowVisible !== testCase.overflow) {
       throw new Error(`${testCase.name}: wrong topbar tier: ${JSON.stringify(before)}`);
     }
     if (testCase.sidebar === "closed" && (!before.compactFallback || before.fullSwitcherInTopbar)) {

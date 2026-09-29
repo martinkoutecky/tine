@@ -543,6 +543,17 @@ textarea {
   .topbar .topbar-overflow .topbar-overflow-sep {
     display: none;
   }
+  /* A frameless desktop window carries three window buttons in this row, so
+     the right-sidebar toggle joins the overflow menu here. A phone (no window
+     controls) has room for this frequent one-tap action after calendar/
+     journals/theme collapse: keep it direct and hide the duplicate menu row
+     until the last-resort tier below (GH #205, master 945337d03). */
+  .topbar:has(.win-controls) .topbar-sidebar-action {
+    display: none;
+  }
+  .topbar:not(:has(.win-controls)) .topbar-overflow [data-topbar-overflow-action="right-sidebar"] {
+    display: none;
+  }
 }
 
 /* At this floor the ~76px Back/Forward pair no longer has reliable room beside
@@ -555,6 +566,18 @@ textarea {
   .topbar .topbar-overflow [data-topbar-overflow-action="back"],
   .topbar .topbar-overflow [data-topbar-overflow-action="forward"],
   .topbar .topbar-overflow .topbar-overflow-sep {
+    display: block;
+  }
+}
+
+/* Last-resort floor for the fixed clusters themselves. The 280px viewport has
+   a 252px content box and still fits right-sidebar exactly once; only below
+   that measured boundary does it join the overflow menu. */
+@container topbar (max-width: 250px) {
+  .topbar:not(:has(.win-controls)) .topbar-sidebar-action {
+    display: none;
+  }
+  .topbar:not(:has(.win-controls)) .topbar-overflow [data-topbar-overflow-action="right-sidebar"] {
     display: block;
   }
 }
