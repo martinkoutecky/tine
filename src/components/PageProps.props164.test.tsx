@@ -106,7 +106,7 @@ describe("properties panel — arbitrary keys (GH #164)", () => {
     try {
       await tick();
       const commit = () => host.querySelector<HTMLButtonElement>("button.pp-add-commit")!;
-      for (const bad of ["a b", "a::b", "klíč", "id", "tine.view", ""]) {
+      for (const bad of ["a b", "a::b", "#tag", "id", "tine.view", ""]) {
         typeInto(host.querySelector<HTMLInputElement>("input.pp-add-key")!, bad);
         await tick();
         expect(commit().disabled, bad).toBe(true);
