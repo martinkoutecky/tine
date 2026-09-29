@@ -332,6 +332,77 @@ describe("TabBar pointer tab drag", () => {
   });
 });
 
+describe("TabBar close control on a split pane's only tab (GH #207)", () => {
+  it("shows the ✕ on a lone non-feed tab of a split pane and closes the pane directly", () => {
+    renderSplit(["A", "B"], ["Solo"]);
+    const paneIdsBefore = layoutPaneIds();
+    expect(paneIdsBefore).toEqual(["main", "pane-2"]);
+
+    const solo = tab(document.body, "pane-2", 0);
+    const close = solo.querySelector<HTMLElement>(".tab-close");
+    expect(close).not.toBeNull(); // the pane/tab must be closable directly
+
+    close!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    expect(layoutPaneIds()).toEqual(["main"]);
+
+    // Cleanup: renderSplit mounted into document.body — drop it like the other tests.
+    document.body.innerHTML = "";
+  });
+
+  it("still hides the ✕ on a whole-window last tab and on a feed-only pane", () => {
+    // Single-pane window: the one tab (journals feed) has nothing to close into.
+    resetPaneLayoutToSingle(journalsSnapshot());
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    let dispose = render(() => <TabBar router={paneRouter("main")} />, root);
+    expect(root.querySelector<HTMLElement>(".tab-close")).toBeNull();
+    dispose();
+
+    // Split where THIS pane's only tab is the journals feed: the feed keeps its
+    // last tab (established invariant), so no close control is offered.
+    restorePaneLayout(
+      {
+        kind: "split",
+        dir: "row",
+        ratio: 0.5,
+        children: [
+          { kind: "pane", paneId: "main" },
+          { kind: "pane", paneId: "pane-2" },
+        ],
+      },
+      new Map([
+        ["main", pageSnapshot(["A"])],
+        ["pane-2", journalsSnapshot()],
+      ]),
+      "main"
+    );
+    dispose = render(() => <TabBar router={paneRouter("pane-2")} paneStrip />, root);
+    expect(root.querySelector<HTMLElement>(".tab-close")).toBeNull();
+    dispose();
+
+    // …but once the feed pane also holds a page tab, every tab is closable again.
+    restorePaneLayout(
+      {
+        kind: "split",
+        dir: "row",
+        ratio: 0.5,
+        children: [
+          { kind: "pane", paneId: "main" },
+          { kind: "pane", paneId: "pane-2" },
+        ],
+      },
+      new Map([
+        ["main", pageSnapshot(["A"])],
+        ["pane-2", pageSnapshot(["X", "Y"])],
+      ]),
+      "main"
+    );
+    dispose = render(() => <TabBar router={paneRouter("pane-2")} paneStrip />, root);
+    expect(root.querySelectorAll<HTMLElement>(".tab-close")).toHaveLength(2);
+    dispose();
+  });
+});
+
 describe("TabBar overflow overview", () => {
   it("keeps readable tabs scrollable and exposes every tab through an accessible overview", async () => {
     const callbacks: ResizeObserverCallback[] = [];
