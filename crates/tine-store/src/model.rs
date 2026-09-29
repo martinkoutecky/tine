@@ -1087,6 +1087,7 @@ impl ReadSnapshot {
         block_limit: usize,
         scope: Option<crate::query_plan::QueryPageScope>,
         explain: bool,
+        page_match_scope: tine_core::query::ir::FriendlyPageMatchScope,
     ) -> tine_core::query_plan::QueryExecution {
         match scope {
             Some(scope) => crate::query_plan::QueryPlan::friendly_for_page_with_policy(
@@ -1095,11 +1096,12 @@ impl ReadSnapshot {
                 scope,
                 self.config.enable_search_remove_accents,
             ),
-            None => crate::query_plan::QueryPlan::friendly_with_policy(
+            None => crate::query_plan::QueryPlan::friendly_with_scope(
                 source,
                 page_limit,
                 block_limit,
                 self.config.enable_search_remove_accents,
+                page_match_scope,
             ),
         }
         .execute_with_explain(

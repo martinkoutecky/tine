@@ -113,6 +113,7 @@ fn page_reads_and_publishes_external_edit() {
                     page_limit: 10,
                     block_limit: 10,
                     explain: false,
+                    page_match_scope: None,
                 },
                 &tine_store::Cancel(Arc::new(false.into()))
             )

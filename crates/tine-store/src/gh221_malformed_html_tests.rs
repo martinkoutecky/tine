@@ -37,6 +37,7 @@ fn gh221_malformed_html_fragment_indexes_without_panic() {
                 page_limit: 100,
                 block_limit: 100,
                 explain: false,
+                page_match_scope: None,
             },
             &Cancel(Arc::new(AtomicBool::new(false))),
         )

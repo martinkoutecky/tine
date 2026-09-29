@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tine_core::model::{PageKind, RefGroup};
+use tine_core::query::ir::FriendlyPageMatchScope;
 use tine_core::query_plan::{QueryExecution, QueryExplanation, QueryHasMore, QueryHit};
 use tine_store::{
     Cancel, LoadError, PageId, QueryDialect, QueryError, QueryResult, Resolved, SearchRequest,
@@ -48,7 +49,8 @@ pub struct Scope {
 
 /// Run a graph search under one snapshot, replacing an earlier request on its
 /// lane. Cancellation returns an empty execution marked `cancelled`.
-/// Cost O(graph search + output).
+/// Page membership defaults to names/aliases; content and both also inspect
+/// blocks. Cost O(graph text + output); load/query errors are returned.
 pub fn run_graph_search(
     store: &Store,
     lanes: &SearchLanes,
@@ -58,6 +60,7 @@ pub fn run_graph_search(
     lane: Option<&str>,
     explain: bool,
     scope: Option<Scope>,
+    page_match_scope: Option<FriendlyPageMatchScope>,
 ) -> Result<QueryExecution, SearchError> {
     run_graph_search_after_scope(
         store,
@@ -68,6 +71,7 @@ pub fn run_graph_search(
         lane,
         explain,
         scope,
+        page_match_scope,
         #[cfg(test)]
         || {},
     )
@@ -82,6 +86,7 @@ fn run_graph_search_after_scope(
     lane: Option<&str>,
     explain: bool,
     scope: Option<Scope>,
+    page_match_scope: Option<FriendlyPageMatchScope>,
     #[cfg(test)] after_scope: impl FnOnce(),
 ) -> Result<QueryExecution, SearchError> {
     let view = store.whole_graph().map_err(SearchError::Load)?;
@@ -99,6 +104,7 @@ fn run_graph_search_after_scope(
         page_limit,
         block_limit,
         explain,
+        page_match_scope,
     };
     #[cfg(test)]
     after_scope();
@@ -262,6 +268,7 @@ mod tests {
             None,
             false,
             Some(scope),
+            None,
             || {
                 let writer = Arc::clone(&store);
                 std::thread::spawn(move || {

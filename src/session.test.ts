@@ -153,6 +153,7 @@ describe("persisted split session", () => {
           sourceKind: "search",
           source: "alpha -draft",
           presentation: "search",
+          pageMatchScope: "content",
         }],
         pos: 0,
         pinned: true,
@@ -169,6 +170,7 @@ describe("persisted split session", () => {
         sourceKind: "search",
         source: "alpha -draft",
         presentation: "search",
+        pageMatchScope: "content",
       }],
     });
     expect(JSON.stringify(parsed)).not.toContain("results");

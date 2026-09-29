@@ -1,4 +1,5 @@
 import type { PageKind } from "./types";
+import type { FriendlyPageMatchScope } from "./editor/queryIr";
 
 export interface PageTarget {
   name: string;
@@ -14,6 +15,8 @@ export interface QueryRoute {
   sourceKind: "search" | "dsl";
   source: string;
   presentation: QueryPresentation;
+  /** Omitted means the historical names/aliases-only page membership. */
+  pageMatchScope?: FriendlyPageMatchScope;
 }
 
 export type Route =

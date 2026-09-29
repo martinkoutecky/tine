@@ -22,10 +22,10 @@ function PageText(props: { hit: QueryPageHit }): JSX.Element {
     ? <mark>{part.text}</mark> : part.text}</For>;
 }
 
-/** Navigation-only page rows. Alias evidence labels the owning page, never a
- * separate phantom result. Order and result bounds come from graph search.
- * Rendering costs O(returned rows and their visible names); navigation errors
- * belong to the host's `onOpen` operation. */
+/** Navigation-only page rows. Alias evidence labels its physical owner, and
+ * content membership shows the matched block excerpt under that owner's name.
+ * Order and bounds come from graph search. Rendering costs O(returned rows and
+ * their displayed text); navigation failures belong to `onOpen`. */
 export function QueryPageResults(props: {
   hits: QueryPageHit[];
   presentation: QueryPresentation;
@@ -40,6 +40,12 @@ export function QueryPageResults(props: {
   ><span class="switcher-kind">page</span><span class="search-result-body">
     <span class="search-result-context">{hit.page.kind === "journal" ? "Journal" : "Page"}</span>
     <span class="search-result-excerpt"><PageText hit={hit} /></span>
+    <Show when={hit.evidence.some((item) => item.field === "visible_content")}>
+      <span class="search-result-excerpt query-page-content-excerpt"><For each={buildSearchExcerpt(hit.display_text,
+        hit.evidence.filter((item) => item.field === "visible_content").flatMap((item) => item.spans))}>
+        {(part) => part.marked ? <mark>{part.text}</mark> : part.text}
+      </For></span>
+    </Show>
     <Show when={hit.matched_alias}><span class="query-page-alias">matched alias {hit.matched_alias}</span></Show>
   </span></button>;
   return <Switch>

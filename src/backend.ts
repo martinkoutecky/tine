@@ -431,14 +431,17 @@ export interface Backend {
    *  appeared or vanished). Returns an unlisten fn. */
   onConflictsChanged(cb: () => void): Promise<() => void>;
   search(query: string, limit: number, lane?: string): Promise<RefGroup[]>;
-  /** One Rust-authoritative graph selection plan for page and block hits. */
+  /** One Rust-authoritative graph scan for bounded page and block hits. Page
+   * membership defaults to names/aliases; content and both scan block text.
+   * Cost O(graph text) off the UI thread; native errors reject the promise. */
   runGraphSearch(
     source: string,
     pageLimit: number,
     blockLimit: number,
     lane?: string,
     explain?: boolean,
-    scope?: QueryPageScope
+    scope?: QueryPageScope,
+    pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope
   ): Promise<QueryExecution>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   /** Capture-only page/tag completion capability. It is intentionally not the
@@ -948,8 +951,8 @@ class TauriBackend implements Backend {
   search(query: string, limit: number, lane?: string) {
     return this.call<RefGroup[]>("search", { query, limit, lane });
   }
-  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope) {
-    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null });
+  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope) {
+    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null });
     return {
       ...execution,
       has_more: execution.has_more ?? { pages: false, blocks: false },

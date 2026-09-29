@@ -3,7 +3,7 @@
 import type { PageKind, RefGroup } from "../types";
 /** Display drafts are typed by Q4b's `queryDisplayDraft`; opaque here so this mirror stays the one seam. */
 export type QueryDisplayDraft = Record<string, unknown>;
-export type FriendlyPageMatchScope = string;
+export type FriendlyPageMatchScope = "names" | "content" | "both";
 
 // Scalars
 
