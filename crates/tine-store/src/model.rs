@@ -4708,14 +4708,14 @@ fn page_walk_errors(root: &Path, dir: &Path) -> Vec<(String, String)> {
     unreadable
 }
 
-/// True if any block in the subtree has a non-empty line that isn't a `key::`
-/// property line — i.e. the page is more than an empty/placeholder bullet.
+/// True if journal text requires skipping template insertion, including hash-prefixed prose.
 fn doc_has_content(blocks: &[DocBlock]) -> bool {
     blocks.iter().any(|b| {
-        b.raw()
-            .lines()
-            .any(|l| !l.trim().is_empty() && tine_core::doc::parse_property_line(l).is_none())
-            || doc_has_content(&b.children)
+        b.raw().lines().any(|l| {
+            !l.trim().is_empty()
+                && (l.trim_start().starts_with('#')
+                    || tine_core::doc::parse_property_line(l).is_none())
+        }) || doc_has_content(&b.children)
     })
 }
 

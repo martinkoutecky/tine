@@ -178,7 +178,7 @@ function Field(props: { scope: PropsPanelScope; spec: PagePropSpec; write: Write
     if (write(v().trim() || null)) saved = v();
   };
   // A key with no preset is removable; presets clear by emptying the field. A
-  // key outside the editable grammar (e.g. non-ASCII, from the file) is shown
+  // A key outside the editable grammar is shown
   // read-only: rewriting it would keep a key some Tine readers cannot see.
   const removable = !PAGE_PROP_SPECS.some((spec) => spec.key === props.spec.key);
   const editable = isEditablePropertyKey(props.spec.key);
@@ -193,7 +193,7 @@ function Field(props: { scope: PropsPanelScope; spec: PagePropSpec; write: Write
       <input
         class="pp-input"
         disabled={!editable}
-        title={editable ? undefined : "Tine can remove this key but not rewrite it: keys must be ASCII letters, digits, - or _."}
+        title={editable ? undefined : "Tine can remove this key but not rewrite it: keys may use letters, numbers, _, ., / or -."}
         value={v()}
         placeholder={props.spec.kind === "list" ? "comma, separated" : ""}
         onInput={(e) => setV(e.currentTarget.value)}
@@ -227,7 +227,7 @@ function AddRow(props: { scope: PropsPanelScope; write: Write }): JSX.Element {
   const refusal = createMemo(() => {
     const k = trimmed();
     if (!k) return null;
-    if (!isEditablePropertyKey(k)) return "Keys may use only ASCII letters, digits, - and _, so every Tine reader finds them again.";
+    if (!isEditablePropertyKey(k)) return "Keys may use only letters, numbers, _, ., / or -, so every Tine reader finds them again.";
     if (machineManaged(k)) return `"${k}" is managed by Tine and cannot be set here.`;
     if (readOne(props.scope, k) !== null) return `"${k}" already exists; edit its row above.`;
     return null;

@@ -6,16 +6,15 @@ import { transitionFence, type FenceState } from "./fences";
 /** Ordinary `key:: value` lines share the page-header key class at column zero. */
 export const PROP_LINE = /^([\p{L}\p{M}\p{N}_./-]+):: ?(.*)$/u;
 
-/** Whether the properties panel may write `key` (GH #164): ASCII letters,
- *  digits, `-` and `_` only — the intersection of every Tine property reader
- *  (Rust `doc::parse_property_line` and `logbook::is_md_property_line`, TS
- *  {@link PROP_LINE}, the Org drawer/directive readers and lsdoc), so a written
- *  key is found again everywhere. Syntactic only: machine-managed keys (`id`,
+/** Whether the properties panel may write `key` (GH #164): letters, marks,
+ *  digits, `_`, `.`, `/` or `-` — the intersection of Tine's Markdown page
+ *  header, Org drawer/directive readers and lsdoc. The Rust block-property
+ *  reader now accepts this class too. Syntactic only: machine-managed keys (`id`,
  *  `collapsed`, `tine.*`) pass here and callers refuse them separately.
  *  Pinned by crates/tine-core/tests/fixtures/editable-property-keys.txt, which
  *  the Rust readers test too. Cost O(key). */
 export function isEditablePropertyKey(key: string): boolean {
-  return /^[A-Za-z0-9_-]+$/.test(key);
+  return /^[\p{L}\p{M}\p{N}_./-]+$/u.test(key);
 }
 
 const PAGE_HEADER_KEY = /^[\p{L}\p{M}\p{N}_./-]+$/u;
@@ -192,7 +191,7 @@ export type PropFormat = "md" | "org";
  *  null if the line isn't a `:key: value` drawer entry. The `:PROPERTIES:` and
  *  `:END:` wrapper lines return null (they aren't `key value` pairs). */
 function orgDrawerKey(line: string): string | null {
-  const m = /^\s*:([A-Za-z0-9_@.-]+):(?:\s|$)/.exec(line);
+  const m = /^\s*:([\p{L}\p{M}\p{N}_@./-]+):(?:\s|$)/u.exec(line);
   const k = m ? m[1].toLowerCase() : null;
   return k === "properties" || k === "end" ? null : k;
 }

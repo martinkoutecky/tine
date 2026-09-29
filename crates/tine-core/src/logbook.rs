@@ -327,15 +327,7 @@ fn leading_properties_end(lines: &[&str], format: LogbookFormat) -> usize {
 }
 
 fn is_md_property_line(line: &str) -> bool {
-    let t = line.trim_start();
-    let Some((key, _)) = t.split_once("::") else {
-        return false;
-    };
-    let key = key.trim();
-    !key.is_empty()
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '/'))
+    crate::doc::parse_property_line(line).is_some()
 }
 
 fn logbook_bounds<T: AsRef<str>>(lines: &[T]) -> Option<(usize, usize)> {
@@ -505,8 +497,8 @@ mod tests {
     /// og 14 Q5 follow-up: the TypeScript properties panel writes only keys in
     /// this shared fixture's accepted list (`src/editor/editablePropertyKeys.test.ts`
     /// pins the TS side). Both Rust property readers must find every one again,
-    /// and must accept the whole class the TS validator allows (ASCII letters,
-    /// digits, `-`, `_`). Widening the panel means widening these readers first.
+    /// and must accept the whole class the TS validator allows (Unicode letters,
+    /// marks, numbers, `_`, `.`, `/`, `-`). Widening the panel means widening these readers first.
     #[test]
     fn editable_property_keys_fixture() {
         let fixture = include_str!("../tests/fixtures/editable-property-keys.txt");
@@ -518,16 +510,30 @@ mod tests {
         let class = ('a'..='z')
             .chain('A'..='Z')
             .chain('0'..='9')
-            .chain(['-', '_'])
+            .chain(['-', '_', '.', '/', 'é', '本'])
             .map(|c| format!("a{c}b"));
         for key in accepted.iter().map(|k| k.to_string()).chain(class) {
             let line = format!("{key}:: v");
             assert_eq!(
                 crate::doc::parse_property_line(&line),
-                Some((key.clone(), "v".to_string())),
+                Some((key.as_str(), "v")),
                 "{key}"
             );
             assert!(is_md_property_line(&line), "{key}");
+        }
+    }
+
+    #[test]
+    fn markdown_logbook_properties_use_the_core_recognizer() {
+        for line in ["klíč:: v", "a.b:: v", "\tkey:: v", "empty::"] {
+            assert_eq!(
+                is_md_property_line(line),
+                crate::doc::parse_property_line(line).is_some(),
+                "{line:?}"
+            );
+        }
+        for line in ["key::value", "a b:: value"] {
+            assert!(!is_md_property_line(line), "{line:?}");
         }
     }
 

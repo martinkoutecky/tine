@@ -133,7 +133,7 @@ describe("properties panel binding (og 14 Q5 follow-up)", () => {
     }
   });
 
-  it("the add-row explains a refused key and does not write it", async () => {
+  it("edits an existing Unicode key and adds another through the page panel", async () => {
     load("klíč:: hodnota");
     openPageProps("Notes", 20, 20);
     const { host, dispose } = mount(() => <PageProps />);
@@ -144,13 +144,16 @@ describe("properties panel binding (og 14 Q5 follow-up)", () => {
       key.value = "nový";
       key.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true }));
       await tick();
-      expect(host.querySelector<HTMLButtonElement>("button.pp-add-commit")!.disabled).toBe(true);
-      expect(host.querySelector(".pp-add .pp-error")?.textContent ?? "").toMatch(/ASCII/);
-      // An existing key outside the grammar is listed, shown read-only, and removable.
-      expect(field(host, "klíč").disabled).toBe(true);
-      host.querySelector<HTMLButtonElement>('button.pp-remove[title="Remove klíč"]')!.click();
+      expect(host.querySelector<HTMLButtonElement>("button.pp-add-commit")!.disabled).toBe(false);
+      expect(field(host, "klíč").disabled).toBe(false);
+      const value = host.querySelector<HTMLInputElement>("input.pp-add-value")!;
+      value.value = "value";
+      value.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true }));
       await tick();
-      expect(readPageProperty("Notes", "klíč")).toBeNull();
+      host.querySelector<HTMLButtonElement>("button.pp-add-commit")!.click();
+      await tick();
+      expect(readPageProperty("Notes", "nový")).toBe("value");
+      expect(readPageProperty("Notes", "klíč")).toBe("hodnota");
     } finally {
       dispose();
     }
