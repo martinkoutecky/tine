@@ -48,12 +48,15 @@ function trimSearchWhitespace(value: string): string {
   return chars.slice(start, end).join("");
 }
 
-/** Reject regex constructs whose Rust and browser meanings differ. */
+/** Reject regex constructs whose Rust and browser meanings differ (backreferences,
+ * look-around, inline flags). `\d \w \s \b` are accepted as on master; on non-ASCII
+ * text Rust's are Unicode-aware and JavaScript's `\d \w \b` are ASCII (known
+ * divergence; ASCII input agrees). */
 function commonRegexPattern(pattern: string): boolean {
   let inClass = false;
   for (let i = 0; i < pattern.length; i++) {
     if (pattern[i] === "\\") {
-      if (/[1-9wWdDsSbB]/.test(pattern[i + 1] ?? "")) return false;
+      if (/[1-9]/.test(pattern[i + 1] ?? "")) return false;
       i++;
     } else if (pattern[i] === "[") inClass = true;
     else if (pattern[i] === "]" && inClass) inClass = false;
