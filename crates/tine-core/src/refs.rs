@@ -334,7 +334,7 @@ pub fn rename_refs_multi(
             // can't match it — rewrite the filename stem so the link survives the
             // rename (L1). Only for org; markdown has no `file:` page links.
             if is_org && rest.starts_with("[[") {
-                if let Some(end) = rest[2..].find("]]") {
+                if let Some(end) = link_end(&rest[2..]) {
                     if let Some(rw) =
                         rewrite_org_file_link(&rest[2..2 + end], renames, file_name_format)
                     {
@@ -345,7 +345,7 @@ pub fn rename_refs_multi(
                 }
             }
             if let Some(after) = rest.strip_prefix("[[") {
-                if let Some(end) = after.find("]]") {
+                if let Some(end) = link_end(after) {
                     if let Some(to) = renames.get(&normalize(&after[..end])) {
                         out.push_str(&format!("[[{to}]]"));
                     } else {
@@ -357,7 +357,7 @@ pub fn rename_refs_multi(
             }
             if tag_boundary(raw, i) {
                 if let Some(after) = rest.strip_prefix("#[[") {
-                    if let Some(end) = after.find("]]") {
+                    if let Some(end) = link_end(after) {
                         if let Some(to) = renames.get(&normalize(&after[..end])) {
                             out.push_str(&tag_for(to));
                         } else {
@@ -392,6 +392,24 @@ pub fn rename_refs_multi(
         i += end;
     }
     out
+}
+
+/// End of a `[[…]]` body (the offset of its first `]]`), unless another `[[`
+/// opens before it. That opener is then not a link for rename: OG rewrites a
+/// literal `[[Old]]` wherever it stands (`replace-page-ref!`), so the scan
+/// resumes after one `[` and still finds `[[Old]]` in `use [[ to link [[Old]]`
+/// and inside a nested `[[a [[Old]] c]]` (C3W W3, L03), where taking the span to
+/// the first `]]` used to swallow the real reference and leave it stale.
+fn link_end(after: &str) -> Option<usize> {
+    let end = after.find("]]")?;
+    (!after[..end].contains("[[")).then_some(end)
+}
+
+/// Whether `ch` separates the members of a linkable (`tags::`/`alias::`)
+/// property value: ASCII `,` or the full-width `，`. The single answer for the
+/// reference evidence and the rename rewrite (C3W W3).
+pub fn is_linkable_property_separator(ch: char) -> bool {
+    ch == ',' || ch == '，'
 }
 
 /// Rewrite an org `[[file:…]]` link's inner text if its target file's basename
@@ -493,23 +511,38 @@ fn tags_value_start(line: &str) -> Option<usize> {
 /// segment whose trimmed, **bare** name normalizes to `target`, swap the name
 /// for `to`, keeping the segment's surrounding whitespace.
 fn rewrite_bare_tags(valpart: &str, renames: &std::collections::HashMap<String, String>) -> String {
-    valpart
-        .split(',')
-        .map(|seg| {
-            let trimmed = seg.trim();
-            if trimmed.is_empty() || trimmed.starts_with("[[") || trimmed.starts_with('#') {
-                return seg.to_string(); // empty, or handled by rename_refs
+    let mut out = String::with_capacity(valpart.len());
+    let mut rest = valpart;
+    loop {
+        let (seg, sep) = match rest.find(is_linkable_property_separator) {
+            Some(at) => {
+                let len = rest[at..].chars().next().map_or(1, char::len_utf8);
+                (&rest[..at], Some(&rest[at..at + len]))
             }
-            if let Some(to) = renames.get(&normalize(trimmed)) {
+            None => (rest, None),
+        };
+        let trimmed = seg.trim();
+        let to = (!trimmed.is_empty() && !trimmed.starts_with("[[") && !trimmed.starts_with('#'))
+            .then(|| renames.get(&normalize(trimmed)))
+            .flatten(); // empty, or handled by rename_refs
+        match to {
+            Some(to) => {
                 let lead = seg.len() - seg.trim_start().len();
                 let trail = seg.trim_end().len();
-                format!("{}{}{}", &seg[..lead], to, &seg[trail..])
-            } else {
-                seg.to_string()
+                out.push_str(&seg[..lead]);
+                out.push_str(to);
+                out.push_str(&seg[trail..]);
             }
-        })
-        .collect::<Vec<_>>()
-        .join(",")
+            None => out.push_str(seg),
+        }
+        match sep {
+            Some(sep) => {
+                out.push_str(sep);
+                rest = &rest[seg.len() + sep.len()..];
+            }
+            None => return out,
+        }
+    }
 }
 
 #[cfg(test)]
