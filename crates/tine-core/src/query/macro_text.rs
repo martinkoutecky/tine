@@ -208,7 +208,10 @@ fn page_ref_end(text: &str, at: usize) -> usize {
 ///
 /// Both parts come back trimmed, exactly as the TypeScript helper trims them:
 /// the map's own extent is unaffected (it starts at `{` and ends at `}`), and
-/// re-emitting `form + " " + options` is then idempotent.
+/// re-emitting `form + " " + options` is then idempotent. An argument above the
+/// shared 64 KiB source ceiling is returned unchanged as the form, with empty
+/// options; the parser refuses it before calling this splitter. Cost is linear
+/// in the admitted argument length, with no I/O or failure path.
 pub fn split_trailing_map(argument: &str, family: FormFamily) -> (String, String) {
     // Public callers may use the lexical splitter directly. Bound its scan
     // with the same answerer the parse entry uses for the complete argument.
