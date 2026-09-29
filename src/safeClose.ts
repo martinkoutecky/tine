@@ -100,7 +100,7 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
         }
         if (!discard) return "rejected";
         try {
-          await bounded(deps.recordDiscard?.(reason) ?? Promise.resolve(), 1000, undefined);
+          await writeOwned(owner, bounded(deps.recordDiscard?.(reason) ?? Promise.resolve(), 1000, undefined));
         } catch {
           dbg("close discard not recorded"); // diagnostics never block a confirmed close
         }

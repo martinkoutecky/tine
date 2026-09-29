@@ -606,6 +606,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async gpuEnv() {
       return { software_forced: false, appimage: false };
     },
+    async appArchitecture() {
+      return "unknown";
+    },
     async debugInfo() {
       return { enabled: false, path: "", recorderActive: false, previousExitUnclean: false };
     },

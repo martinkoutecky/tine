@@ -82,8 +82,8 @@ function errorText(error: unknown): string {
     }
     if (typeof current !== "object" || seen.has(current)) break;
     seen.add(current);
-    const message = (current as { message?: unknown }).message;
-    if (typeof message === "string" && message.trim()) parts.push(message);
+    const said = (current as { message?: unknown }).message;
+    if (typeof said === "string" && said.trim()) parts.push(said);
     current = (current as { cause?: unknown }).cause;
   }
   return parts.join(" caused by ") || "unknown updater failure";

@@ -29,12 +29,11 @@ export function DiagnosticsTab(): JSX.Element {
   const [busy, setBusy] = createSignal(false);
   let disposed = false;
   onCleanup(() => { disposed = true; });
-  const owner = () => ownedWhen(() => !disposed);
 
   const createReport = async () => {
     setBusy(true);
     try {
-      const result = await readOwned(owner(), backend().diagnosticReport(__GIT_COMMIT__, __BUILD_TIME__));
+      const result = await readOwned(ownedWhen(() => !disposed), backend().diagnosticReport(__GIT_COMMIT__, __BUILD_TIME__));
       if (result.kind === "current") setReport(result.value);
     } catch (error) {
       dbg(`diagnostic report failed: ${String(error)}`);
@@ -58,7 +57,7 @@ export function DiagnosticsTab(): JSX.Element {
 
   const clearReport = async () => {
     try {
-      const result = await writeOwned(owner(), backend().clearDiagnostics());
+      const result = await writeOwned(ownedWhen(() => !disposed), backend().clearDiagnostics());
       if (result.kind === "current") setReport(null);
       pushToast("Recorded diagnostic events cleared", "success");
     } catch (error) {
