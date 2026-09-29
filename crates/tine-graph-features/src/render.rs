@@ -1,7 +1,7 @@
 //! HTML byte rendering for print and static publication.
 
-use crate::print::PrintOpts;
 use crate::render_query_cache::{BoundedGroups, QueryCache, QueryCacheKey, SharedQueryCache};
+use crate::{macro_budget::within as budgeted, print::PrintOpts};
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -256,7 +256,7 @@ fn page_slug(ctx: &Ctx, name: &str) -> String {
         .unwrap_or_else(|| slug(name))
 }
 
-fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -1361,8 +1361,7 @@ fn render_embedded_block(b: &DocBlock, out: &mut String, ctx: &Ctx, depth: u8, t
     out.push_str("</li>");
 }
 
-/// Expand one `{{macro …}}`. Bounded by `depth` (a page can embed a block that embeds
-/// a page …; a circular embed would otherwise loop). With no graph in context, macros drop.
+/// Expand one `{{macro …}}` within `depth` (circular embeds) and `macro_budget` (fan-out, I-22).
 fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
     let Some(graph) = ctx.graph else {
         return String::new();
@@ -1372,12 +1371,12 @@ fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
     }
     let arg0 = args.first().map(|s| s.as_str()).unwrap_or("").trim();
     match name {
-        "query" => render_query(graph, arg0, false, ctx, depth + 1),
-        "tine-query" => render_query(graph, arg0, true, ctx, depth + 1),
-        "embed" => render_embed(graph, arg0, ctx, depth + 1),
+        "embed" | "query" | "tine-query" => budgeted(name, depth, || match name {
+            "embed" => render_embed(graph, arg0, ctx, depth + 1),
+            _ => render_query(graph, arg0, name == "tine-query", ctx, depth + 1),
+        }),
         "video" => render_video(arg0),
         "namespace" => render_namespace(graph, arg0, ctx),
-        // Unknown / can't-render-statically macro → muted literal (better than a blank).
         _ => format!(
             "<span class=\"macro-raw\">{{{{{} {}}}}}</span>",
             esc(name),

@@ -33,7 +33,10 @@ pub fn parse_block_json(raw: &str, is_org: bool) -> String {
 #[wasm_bindgen]
 pub fn parse_document_json(text: &str, is_org: bool) -> String {
     let fmt = if is_org { "org" } else { "md" };
-    lsdoc::projection_to_json(&lsdoc::parse_format(text, fmt)).unwrap_or_else(|_| "{}".to_string())
+    // Too deep for the bounded door (I-22) ⇒ the same "{}" as a failed encode.
+    lsdoc_block_parse::parse_text_bounded(text, fmt)
+        .and_then(|projection| lsdoc::projection_to_json(&projection).ok())
+        .unwrap_or_else(|| "{}".to_string())
 }
 
 /// Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render

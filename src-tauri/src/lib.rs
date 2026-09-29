@@ -67,13 +67,12 @@ use concord::{
     vcs_marker_conflict_diff,
 };
 use debug::{
-    debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, diag_private,
-    install_panic_logger,
+    debug_header, debug_info, debug_init, debug_log, diag, diag_private, install_panic_logger,
 };
 use graph::{
     app_platform, approve_external_assets, capture_graph_binding, capture_target, create_graph,
     default_graph_parent, inspect_graph_access, load_graph, local_clock, open_graph_window,
-    resolve_root, startup_graph_path, warm_done,
+    startup_graph_path, warm_done,
 };
 use pdf_crop_rollback::rollback_pdf_area_image;
 use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
@@ -704,86 +703,14 @@ pub fn run() {
             }
             #[cfg(desktop)]
             schedule_main_window_reveal_fallback(app.handle());
-            // Eagerly open the graph if one was configured at startup.
-            let startup_root = resolve_root("")
-                .or_else(|| graph::usable_last_graph_path(settings::last_graph_path(app.handle())));
-            if let Some(root) = startup_root {
-                let state = app.state::<AppState>();
-                graph::load_graph_for_label(root, app.handle(), "main", &state)?;
-                let slot = state::slot_for_window(&state, "main")?;
-                // These diagnostics build a whole-graph inventory on the cold-cache critical
-                // path to first paint, before warm_cache_async. The format! args
-                // are evaluated regardless of whether diag() ends up writing, so
-                // gate the whole block on debug to keep it off the 99% hot launch.
-                if debug_enabled() {
-                    let meta = state::graph_meta(&slot);
-                    let config = slot.store.config();
-                    let journals = slot.store.scan_area(tine_store::Area::Journals, None).ok();
-                    let pages = slot.store.scan_area(tine_store::Area::Pages, None).ok();
-                    let inventory = matches!(slot.store.is_graph_ready(), Ok(true))
-                        .then(|| slot.store.whole_graph().ok().map(|view| view.inventory()))
-                        .flatten();
-                    let physical: Vec<_> = inventory
-                        .iter()
-                        .flat_map(|items| &items.0)
-                        .flat_map(|entry| match &entry.target {
-                            tine_store::Resolved::Existing { id, others } => std::iter::once(id)
-                                .chain(others.iter())
-                                .map(|id| (entry, id))
-                                .collect::<Vec<_>>(),
-                            _ => Vec::new(),
-                        })
-                        .collect();
-                    diag_private("graph-root", format!("graph root: {}", meta.root));
-                    diag_private(
-                        "graph-inventory",
-                        format!(
-                            "journals dir: {} (.md files={:?})",
-                            config.journals_dir,
-                            journals.as_ref().map(|listing| listing
-                                .files
-                                .iter()
-                                .filter(|entry| entry.rel.ends_with(".md"))
-                                .count())
-                        ),
-                    );
-                    diag_private(
-                        "graph-inventory",
-                        format!(
-                            "pages dir: {} (.md files={:?})",
-                            config.pages_dir,
-                            pages.as_ref().map(|listing| listing
-                                .files
-                                .iter()
-                                .filter(|entry| entry.rel.ends_with(".md"))
-                                .count())
-                        ),
-                    );
-                    diag_private(
-                        "graph-inventory",
-                        format!(
-                            "journals recognized as dates: {} | total page entries: {}",
-                            physical
-                                .iter()
-                                .filter(|(entry, _)| entry.is_journal && entry.day.is_some())
-                                .count(),
-                            physical.len()
-                        ),
-                    );
-                    let sample: Vec<_> = physical
-                        .iter()
-                        .filter(|(entry, id)| entry.is_journal && id.as_str().ends_with(".md"))
-                        .filter_map(|(_, id)| id.as_str().rsplit('/').next())
-                        .take(3)
-                        .collect();
-                    diag_private(
-                        "graph-inventory",
-                        format!("sample journal files: {sample:?}"),
-                    );
-                }
-            } else {
-                diag("NO graph root resolved — set TINE_GRAPH=/path/to/graph");
-            }
+            // The visible webview owns startup graph loading through the ordinary
+            // `load_graph` command (master abf7af831). A remembered graph that
+            // resolves but fails to open (a synced dangling `assets` link, a
+            // synced `config.edn` with an unsafe `:pages-directory`, a disk
+            // error) then lands on the Welcome open-failure card. Returning that
+            // error from `.setup` makes Tauri panic, which crashed every launch
+            // (I-22); `src/startupReveal.test.ts` keeps graph opening out of here.
+            diag("setup() defers graph open to the visible webview");
             // Watch for external changes (reads whichever graph is current).
             diag("setup() done — watcher started, handing off to webview");
             // Spell checking (WebKitGTK): apply the persisted prefs to every window.

@@ -1076,7 +1076,10 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
       };
       const results = [];
       for (const spec of specs.slice(0, 64)) {
-        const groups = spec.advanced
+        // Fixture approximation of the store's one answerer
+        // (`tine_core::query::is_advanced`); the real backend ignores callers.
+        const advanced = /^\s*(\[\s*:find\b|\{\s*:query\b)/.test(spec.query);
+        const groups = advanced
           ? (await this.runAdvancedQuery(spec.query)).groups
           : await this.runQuery(spec.query);
         const total = groups.reduce((sum, group) => sum + group.blocks.length, 0);

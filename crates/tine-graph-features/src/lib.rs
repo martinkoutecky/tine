@@ -10,6 +10,7 @@ pub mod conflicts;
 pub mod guide;
 pub mod journals;
 pub mod live_conflict;
+mod macro_budget;
 pub mod pages;
 mod parsed_text;
 pub mod pdf;

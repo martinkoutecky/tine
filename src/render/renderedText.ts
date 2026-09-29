@@ -11,6 +11,7 @@
 // user's `:block-hidden-properties` (graph state).
 
 import { parseBlock } from "./parse";
+import { createExpansionGate, MACRO_EXPANSION_LIMIT_LABEL, MAX_MACRO_EXPANSION_DEPTH } from "./expansionBudget";
 import { typographic } from "./typography";
 import { isRenderHiddenProp } from "./block";
 import type { Block, Format, Inline, ListItem, TimestampInline, TimestampPoint, Url } from "./ast";
@@ -59,8 +60,9 @@ export interface RenderedTextResolvedLeaf {
   text?: string;
 }
 
-const MAX_RENDERED_TEXT_RESOLVE_DEPTH = 12;
-let renderedTextResolveDepth = 0;
+// Resolved block refs and macros share one gate: depth cap plus the per-tree
+// expansion budget of the DOM renderer (expansionBudget.ts, I-22).
+const resolveGate = createExpansionGate();
 
 function urlDest(url: Url): string {
   switch (url.type) {
@@ -79,37 +81,32 @@ function macroLiteral(name: string, args: string[]): string {
   return args.length ? `{{${name} ${args.join(", ")}}}` : `{{${name}}}`;
 }
 
-function renderResolvedLeaf<T>(fallback: T, render: () => T): T {
-  if (renderedTextResolveDepth >= MAX_RENDERED_TEXT_RESOLVE_DEPTH) return fallback;
-  renderedTextResolveDepth++;
-  try {
-    return render();
-  } finally {
-    renderedTextResolveDepth--;
-  }
+/** Expand one resolved leaf: `fallback` past the depth cap, `fallback` plus the
+ *  visible limit marker past the tree's budget. */
+function expandResolved(fallback: string, resolved: RenderedTextResolvedLeaf, o: RenderedTextOptions, shape: (text: string) => string): string {
+  return resolveGate.expand(
+    (resolved.text ?? resolved.raw).length,
+    () => fallback,
+    () => `${fallback} (${MACRO_EXPANSION_LIMIT_LABEL})`,
+    () => shape(resolved.text ?? renderedBlockText(resolved.raw, resolved.format, o)),
+  );
 }
 
 function resolvedBlockRefText(uuid: string, o: RenderedTextOptions): string {
-  if (renderedTextResolveDepth >= MAX_RENDERED_TEXT_RESOLVE_DEPTH) return uuid;
-  return renderResolvedLeaf(uuid, () => {
-    // No resolver: the caller asked for the id itself (byte-compatible text).
-    if (!o.resolveBlockRef) return uuid;
-    const resolved = o.resolveBlockRef(uuid);
-    // Unresolved: the reference's source text, as OG shows it (GH #589).
-    if (!resolved) return `((${uuid}))`;
-    const text = resolved.text ?? renderedBlockText(resolved.raw, resolved.format, o);
-    return o.resolveBlockRefsFully ? text : (text.split("\n")[0] ?? "");
-  });
+  // No resolver: the caller asked for the id itself (byte-compatible text).
+  if (resolveGate.depth() >= MAX_MACRO_EXPANSION_DEPTH || !o.resolveBlockRef) return uuid;
+  const resolved = o.resolveBlockRef(uuid);
+  // Unresolved: the reference's source text, as OG shows it (GH #589).
+  if (!resolved) return `((${uuid}))`;
+  return expandResolved(uuid, resolved, o, (text) => (o.resolveBlockRefsFully ? text : (text.split("\n")[0] ?? "")));
 }
 
 function resolvedMacroText(name: string, args: string[], o: RenderedTextOptions): string {
   const fallback = macroLiteral(name, args);
-  if (renderedTextResolveDepth >= MAX_RENDERED_TEXT_RESOLVE_DEPTH) return fallback;
-  return renderResolvedLeaf(fallback, () => {
-    const resolved = o.resolveMacro?.(name, args);
-    if (!resolved) return fallback;
-    return resolved.text ?? renderedBlockText(resolved.raw, resolved.format, o);
-  });
+  if (resolveGate.depth() >= MAX_MACRO_EXPANSION_DEPTH) return fallback;
+  const resolved = o.resolveMacro?.(name, args);
+  if (!resolved) return fallback;
+  return expandResolved(fallback, resolved, o, (text) => text);
 }
 
 const SUPERSCRIPT: Record<string, string> = {

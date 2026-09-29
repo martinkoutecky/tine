@@ -329,8 +329,10 @@ fn macro_at(raw: &str, start: usize) -> Option<MacroExtent> {
     let name = QUERY_MACRO_NAMES
         .iter()
         .filter(|candidate| {
-            rest.len() >= candidate.len()
-                && rest[..candidate.len()].eq_ignore_ascii_case(candidate)
+            // `get`, not `[..n]`: `{{中文}}` puts a multibyte character at
+            // the probed offset, which is text, not a panic (I-22).
+            rest.get(..candidate.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(candidate))
                 && matches!(
                     rest.as_bytes().get(candidate.len()),
                     None | Some(b' ') | Some(b'\t') | Some(b'}')
@@ -348,7 +350,8 @@ fn macro_at(raw: &str, start: usize) -> Option<MacroExtent> {
     let end = argument_start + close.at + 1;
     // Everything between the name and the LAST closing brace is the argument;
     // one leading space is the macro's separator, not part of it.
-    let argument = &raw[argument_start..end - 2];
+    // Two non-adjacent closing braces (`{{query a}é}`) are not a `}}` close.
+    let argument = raw.get(argument_start..end - 2)?;
     Some(MacroExtent {
         start,
         end,
@@ -443,7 +446,11 @@ pub fn recognizable_macro(name: &str, argument: &str) -> Result<(), Diagnostic> 
     let expected_end = wrapped.len() - usize::from(!options.is_empty());
 
     for format in ["md", "org"] {
-        let nodes = lsdoc::inline(&wrapped, format);
+        let Some(nodes) = crate::render::parse_inline_bounded(&wrapped, format) else {
+            return refuse(format!(
+                "the `{{{{{name}}}}}` macro is nested too deeply to read"
+            ));
+        };
         let recognized = matches!(
             nodes.first(),
             Some(lsdoc::ast::Inline::Macro {

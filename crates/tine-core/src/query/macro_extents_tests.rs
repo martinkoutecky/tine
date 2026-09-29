@@ -97,3 +97,21 @@ fn the_shared_corpus_covers_both_names_and_the_named_hazards() {
         "no multi-macro case (X2)"
     );
 }
+
+/// I-22 (og C3 L02): multibyte text where the scanner probes a byte offset
+/// is ordinary block text. It is not a query macro and must not panic.
+#[test]
+fn multibyte_text_at_a_probed_offset_is_not_a_panic() {
+    for raw in [
+        "{{中文}}",
+        "{{ 名前 }}",
+        "{{ščř",
+        "{{query a}é}",
+        "{{中文}} {{tine-quer",
+    ] {
+        assert!(query_macro_extents(raw).is_empty(), "{raw}");
+    }
+    let found = query_macro_extents("{{中文}} {{query (task TODO)}}");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].argument, "(task TODO)");
+}

@@ -26,7 +26,8 @@
 //! 4. else (**Q21**): split the trimmed text on `,`/`，` into `Plain` atoms —
 //!    Tine's intentional divergence from OG, which keeps one string here.
 //!
-//! The value is parsed with `lsdoc::inline(value, format)` — the transcription
+//! The value is parsed with `lsdoc::inline(value, format)` (through the bounded
+//! door `render::parse_inline_bounded`, I-22) — the transcription
 //! of OG parsing the value with mldoc in `extract-refs-by-commas` /
 //! `extract-refs-from-mldoc-ast`. It is **not** read off
 //! `BlockProjection.refs_page`, which aggregates the whole block's refs without
@@ -443,7 +444,9 @@ pub fn property_atoms_in(
     // Step 3 — refs, plus comma segments for a comma-configured key. Skipped
     // entirely for a step-1 key (A1).
     if !suppressed {
-        let nodes = lsdoc::inline(trimmed, format.lsdoc_name());
+        // Too deep for the bounded door (I-22) ⇒ no ref or comma atoms.
+        let nodes =
+            crate::render::parse_inline_bounded(trimmed, format.lsdoc_name()).unwrap_or_default();
         let mut refs: Vec<String> = Vec::new();
         for node in &nodes {
             ref_from_inline(node, &mut refs);

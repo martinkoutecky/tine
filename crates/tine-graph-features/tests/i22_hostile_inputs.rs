@@ -113,10 +113,13 @@ fn hostile_inputs_survive_all_entry_points() {
         "deep_edn",
         "deep_callouts",
         "deep_org_quote",
+        "deep_spaced_quote",
+        "deep_bulleted_quote",
         "deep_org_headlines",
         "deep_lists",
         "wide_callouts",
         "wide_quotes",
+        "wide_spaced_quote",
         "wide_lists",
         "wide_emphasis",
         "wide_outline",
@@ -201,6 +204,17 @@ fn hostile_child() {
         }
         "deep_org_quote" => {
             fs::write(&page, format!("* root\n{}x\n", ">".repeat(20_000))).unwrap();
+        }
+        // lsdoc recurses on `> > >` and `- > >` while parsing; the page
+        // admission once counted only a contiguous `>>>` run (og C3 L03).
+        "deep_spaced_quote" => {
+            fs::write(&page, format!("- root\n  {}x\n", "> ".repeat(20_000))).unwrap();
+        }
+        "deep_bulleted_quote" => {
+            fs::write(&page, format!("- root\n  - {}x\n", "> ".repeat(20_000))).unwrap();
+        }
+        "wide_spaced_quote" => {
+            fs::write(&page, format!("- root\n  {}x\n", "> ".repeat(128))).unwrap();
         }
         "deep_org_headlines" => {
             let mut text = String::new();
