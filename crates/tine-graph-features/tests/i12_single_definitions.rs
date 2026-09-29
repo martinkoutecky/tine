@@ -18,7 +18,8 @@ fn violations(file: &str, source: &str) -> Vec<String> {
     if file.ends_with("pages.rs") && !source.contains("tine_core::model::encode_page_name") {
         found.push("page feature does not call canonical encoder".to_owned());
     }
-    if ["model.rs", "watch.rs", "store.rs"]
+    // Match whole file names: `restore.rs` must not count as `store.rs`.
+    if ["/model.rs", "/watch.rs", "/store.rs"]
         .iter()
         .any(|name| file.ends_with(name))
         && !source.contains("is_graph_text_path")
@@ -83,6 +84,7 @@ fn shared_answers_have_one_definition() {
         "crates/tine-graph-features/src/pages.rs",
         "crates/tine-store/src/restore.rs",
         "src-tauri/src/backup.rs",
+        "src-tauri/src/backup/restore.rs",
         "crates/tine-store/src/model.rs",
         "crates/tine-store/src/watch.rs",
         "crates/tine-store/src/store.rs",

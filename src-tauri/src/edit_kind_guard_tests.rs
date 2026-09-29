@@ -32,7 +32,7 @@ fn calls(body: &str, marker: &str) -> bool {
 fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     const COMMANDS: &str = include_str!("commands.rs");
     const CONCORD: &str = include_str!("commands/concord.rs");
-    const BACKUP: &str = include_str!("backup.rs");
+    const BACKUP: &str = include_str!("backup/restore.rs");
     const PAGES: &str = include_str!("../../crates/tine-graph-features/src/pages.rs");
     const CONFLICTS: &str = include_str!("../../crates/tine-graph-features/src/conflicts.rs");
     const LIVE: &str = include_str!("../../crates/tine-graph-features/src/live_conflict.rs");
