@@ -4372,6 +4372,23 @@ fn page_header_properties_only(raw: &str) -> bool {
     saw_property
 }
 
+/// Properties that describe the block they sit on, never a page. A first
+/// bullet carrying one is an outline block even when it has no text yet: an
+/// empty numbered-list item is `logseq.order-list-type:: number` and nothing
+/// else. OG keeps such a bullet a bullet because the property sits below an
+/// empty title line, and its serializer promotes only a first block whose FIRST
+/// line holds `:: ` (`file/core.cljs` `transform-content`); Tine's raw has no
+/// empty title line, so the key itself must decide (GH #540). `id` marks a
+/// referenced outline block. Mirrored by `BLOCK_SCOPED_PROPERTY_KEYS` in
+/// `src/document/convert.ts`; `src/i12PageHeader.test.ts` keeps them equal.
+pub(crate) const BLOCK_SCOPED_PROPERTY_KEYS: &[&str] = &[
+    "id",
+    "heading",
+    "collapsed",
+    "background-color",
+    "logseq.order-list-type",
+];
+
 fn first_root_is_promotable_page_header(doc: &Document) -> bool {
     let Some(first) = doc.roots.first() else {
         return false;
@@ -4379,7 +4396,11 @@ fn first_root_is_promotable_page_header(doc: &Document) -> bool {
     first.children.is_empty()
         && page_header_properties_only(first.raw())
         && !first.raw().split('\n').any(|line| {
-            page_header_property_line(line).is_some_and(|(key, _)| key.eq_ignore_ascii_case("id"))
+            page_header_property_line(line).is_some_and(|(key, _)| {
+                BLOCK_SCOPED_PROPERTY_KEYS
+                    .iter()
+                    .any(|scoped| key.eq_ignore_ascii_case(scoped))
+            })
         })
 }
 

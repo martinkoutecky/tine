@@ -737,6 +737,7 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
     },
     async bindCaptureGraph() {},
     async forgetKnownGraph() {},
+    async revealKnownGraph() {},
     async appPlatform(): Promise<"android" | "ios" | "desktop"> {
       const requested = new URLSearchParams(globalThis.location?.search ?? "").get("platform");
       if (requested === "android" || requested === "ios") return requested;
@@ -1115,18 +1116,11 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
       }
       return out;
     },
-    async setFavorites(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async setPreferredWorkflow(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async setTimetrackingEnabled(): Promise<void> {
-      // no-op in the browser mock
-    },
-    async setShowBrackets(): Promise<void> {
-      // no-op in the browser mock
-    },
+    async setFavorites(): Promise<void> {},
+    async setDefaultHome(): Promise<void> {},
+    async setPreferredWorkflow(): Promise<void> {},
+    async setTimetrackingEnabled(): Promise<void> {},
+    async setShowBrackets(): Promise<void> {},
     async setDocModeEnterForNewBlock(): Promise<void> {
       // no-op in the browser mock
     },
@@ -1530,6 +1524,7 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
     async onGraphChanged(): Promise<() => void> {
       return () => {}; // no external watcher in the browser mock
     },
+    async onGraphConfigChanged(): Promise<() => void> { return () => {}; },
     async getBackupKeep(): Promise<number> {
       return 12;
     },

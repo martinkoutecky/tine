@@ -151,16 +151,34 @@ function toDto(id: string): BlockDto {
   return { id: n.id, raw, collapsed: n.collapsed, children: n.children.map(toDto) };
 }
 
+/** Properties that describe the block they sit on, never a page: a first
+ *  bullet carrying one stays an outline block. An empty numbered-list item is
+ *  exactly `logseq.order-list-type:: number`, and folding it into the page
+ *  header turned the list into page properties and jammed every later save
+ *  (GH #540). Mirror of Rust `BLOCK_SCOPED_PROPERTY_KEYS` (tine-store
+ *  model.rs), which carries the OG provenance. */
+export const BLOCK_SCOPED_PROPERTY_KEYS: readonly string[] = [
+  "id",
+  "heading",
+  "collapsed",
+  "background-color",
+  "logseq.order-list-type",
+];
+
 /** Mirror of Rust `first_root_is_promotable_page_header` (model.rs): a childless
  *  first root whose raw is exactly canonical page-header properties and carries
- *  no `id::` line (an id-bearing block is a real referenced outline block, not a
- *  header, and the Rust promote branch/firewall both leave it as a bullet). */
+ *  no block-scoped property (an `id::` block is a real referenced outline block,
+ *  an empty numbered item a list item; the Rust promote branch/firewall both
+ *  leave them as bullets). */
 function isPromotablePageHeaderRoot(node: Node): boolean {
   const canonicalRaw = node.raw.replace(/\n+$/, "");
   return (
     node.children.length === 0 &&
     isPageHeaderPropertiesOnly(canonicalRaw) &&
-    !canonicalRaw.split("\n").some((line) => parsePageHeaderPropertyLine(line)?.key.toLowerCase() === "id")
+    !canonicalRaw.split("\n").some((line) => {
+      const key = parsePageHeaderPropertyLine(line)?.key.toLowerCase();
+      return key !== undefined && BLOCK_SCOPED_PROPERTY_KEYS.includes(key);
+    })
   );
 }
 

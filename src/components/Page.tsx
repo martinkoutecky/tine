@@ -292,7 +292,7 @@ export function PageView(): JSX.Element {
     );
     void (async () => {
       try {
-        if (r.kind === "query") {
+        if (r.kind === "query" || r.kind === "pdf" || r.kind === "invalid") {
           // Query workspaces are rendered by PaneLeaf, not PageView. Keep this
           // guard so the page loader never interprets a virtual route as a file.
           setLoadedRoute(r);
@@ -529,7 +529,7 @@ export function PageView(): JSX.Element {
   const pagesToRender = () => {
     const r = loadedRoute() ?? currentRoute();
     if (r.kind === "journals") return mainPages();
-    if (r.kind === "query") return [];
+    if (r.kind !== "page") return [];
     const p = pageByName(r.name);
     const target = pageTargetFromRoute(r);
     return p && target && pageTargetMatchesLoaded(target, p) ? [p] : [];

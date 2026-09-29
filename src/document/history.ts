@@ -2,7 +2,7 @@ import { FeedPage, Node, doc, pageByName, setDoc, docHasBlockIdentity } from "./
 import { addDirty, persistTogether, scheduleSave, type TransferEdge } from "./save/engine";
 import { type Route } from "../routeTypes";
 import { type HistorySidebarContext, captureHistorySidebarContext, restoreHistorySidebarContext } from "../ui";
-import { type HistoryEditorContext, captureHistoryEditorContext, editingId, endEdit, restoreHistoryEditorContext } from "../editorController";
+import { type HistoryEditorContext, captureHistoryEditorContext, captureRawHistoryViewport, editingId, endEdit, restoreHistoryEditorContext } from "../editorController";
 import { unwrap, produce } from "solid-js/store";
 import { createSignal } from "solid-js";
 import { purgePageNodes } from "./convert";
@@ -421,6 +421,7 @@ export function undo(): boolean {
   if (graphRewriteFrozen()) return false;
   const entry = popHistoryEntry(undoStack);
   if (!entry) return false;
+  const restoreViewport = entry.kind === "raw" ? captureRawHistoryViewport(entry.id) : undefined;
   const inverse = applyEntry(entry);
   if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, "replace-page", transferOrder(entry, inverse));
   redoStack.push(inverse);
@@ -429,6 +430,7 @@ export function undo(): boolean {
   endEdit("undo");
   scheduleSave();
   restoreEntryContext(entry.context);
+  restoreViewport?.();
   return true;
 }
 
@@ -447,6 +449,7 @@ export function redo() {
     pushToast("Redo skipped: a block with the same id now exists", "error");
     return;
   }
+  const restoreViewport = entry.kind === "raw" ? captureRawHistoryViewport(entry.id) : undefined;
   const inverse = applyEntry(entry);
   if (entry.kind === "snap" && entry.dirty.length > 1) void persistTogether(entry.dirty, "replace-page", transferOrder(entry, inverse));
   undoStack.push(inverse);
@@ -455,6 +458,7 @@ export function redo() {
   endEdit("redo");
   scheduleSave();
   restoreEntryContext(entry.context);
+  restoreViewport?.();
 }
 
 /** Data replay and opposite-stack insertion are complete before this function is

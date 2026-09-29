@@ -52,7 +52,9 @@ describe("calc evaluator (Logseq parity)", () => {
   it("commas stripped; comments and blank lines yield no output", () => {
     expect(out("1,000 + 1")).toEqual(["1001"]);
     expect(out("2 * 5 # double")).toEqual(["10"]);
-    expect(out("")).toEqual([null]);
+    // GH #339: an all-blank source renders no rows at all (a comment line is
+    // not blank, so it still yields its own null-output row).
+    expect(out("")).toEqual([]);
     expect(out("# just a comment")).toEqual([null]);
   });
 
@@ -145,5 +147,37 @@ describe("calc exit commit serialization", () => {
     const raw = "```calc\n1 + 2\n```\nordinary text\n- [ ] task";
     expect(serializeCalcExitCommit(raw), "calc exit rule: serializeCalcExitCommit preserves the ordinary-text suffix").toBe(raw);
     expect(serializeCalcExitCommit("2 + 3", raw)).toBe("```calc\n2 + 3\n```\nordinary text\n- [ ] task");
+  });
+});
+
+describe("trailing blank lines (GH #339)", () => {
+  it("never mints rows for the AST trailing newline (LF)", () => {
+    expect(evalCalc("1+1\n")).toHaveLength(1);
+    expect(evalCalc("1+1\n")[0]).toMatchObject({ output: "2" });
+  });
+
+  it("never mints rows for trailing blanks (CRLF, multiple, whitespace-only)", () => {
+    expect(evalCalc("1+1\r\n")).toHaveLength(1);
+    expect(evalCalc("1+1\n\n")).toHaveLength(1);
+    expect(evalCalc("1+1\n   \n\t\n")).toHaveLength(1);
+  });
+
+  it("keeps interior blank lines in their position", () => {
+    const rows = evalCalc("1+1\n\n\n2+2");
+    expect(rows).toHaveLength(4);
+    expect(rows.map((r) => r.input)).toEqual(["1+1", "", "", "2+2"]);
+    expect(rows[3]).toMatchObject({ output: "4" });
+  });
+
+  it("renders nothing for the all-blank block", () => {
+    expect(evalCalc("")).toHaveLength(0);
+    expect(evalCalc("\n")).toHaveLength(0);
+    expect(evalCalc("\n\n \n")).toHaveLength(0);
+  });
+
+  it("evaluation state is unaffected by trailing blanks (`last`, env)", () => {
+    const withTrailing = evalCalc("x = 3\nx * 2\n\n\n").map((r) => [r.input, r.output]);
+    const bare = evalCalc("x = 3\nx * 2").map((r) => [r.input, r.output]);
+    expect(withTrailing).toEqual(bare);
   });
 });

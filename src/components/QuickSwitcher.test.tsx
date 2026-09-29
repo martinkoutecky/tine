@@ -22,6 +22,20 @@ afterEach(() => {
 });
 
 describe("QuickSwitcher search syntax help", () => {
+  it("Ctrl-click opens a result in a background tab and keeps Search open", async () => {
+    setRecentPages([{ name: "Clickable", kind: "page", path: "pages/Clickable.md" }]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher();
+    await vi.waitFor(() => expect(root.querySelector(".switcher-row")).not.toBeNull());
+    root.querySelector<HTMLElement>(".switcher-row")!.dispatchEvent(new MouseEvent("mousedown", {
+      button: 0, ctrlKey: true, bubbles: true, cancelable: true,
+    }));
+    expect(tabs()).toHaveLength(2);
+    expect(root.querySelector(".switcher-overlay")).not.toBeNull();
+    dispose();
+  });
   it("does not create or navigate to a page after its resolve finishes in another graph (I-20)", async () => {
     let finish!: (result: { kind: "absent"; id: string }) => void;
     const resolve = vi.spyOn(backend(), "resolvePage").mockImplementationOnce(() =>

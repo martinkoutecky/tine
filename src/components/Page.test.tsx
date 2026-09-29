@@ -767,6 +767,45 @@ describe("zoomed block view", () => {
     }
   });
 
+  it("zooms to the unique authored ID rather than a sibling's matching runtime locator (GH #373)", async () => {
+    const claimed = "12345678-1234-8234-8234-123456789abc";
+    const intendedRuntime = "87654321-4321-8321-8321-cba987654321";
+    const pageName = "Preserved zoom identity";
+    const path = "pages/Preserved zoom identity.md";
+    setDoc({
+      byId: {
+        [claimed]: node(claimed, "Wrong structural sibling", pageName),
+        [intendedRuntime]: node(intendedRuntime, `Intended preserved block\nid:: ${claimed}`, pageName),
+      },
+      pages: [{ ...page(pageName, "page", [claimed, intendedRuntime]), id: path }],
+      feed: [],
+      loaded: true,
+    });
+    // og's routed-page door re-reads the path owner (master reuses the loaded
+    // one); serve the same blocks so the assertion stays on identity.
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue({
+      name: pageName, kind: "page", title: pageName, pre_block: null, id: path,
+      blocks: [
+        { id: claimed, raw: "Wrong structural sibling", collapsed: false, children: [] },
+        { id: intendedRuntime, raw: `Intended preserved block\nid:: ${claimed}`, collapsed: false, children: [] },
+      ],
+    });
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name: pageName, pageKind: "page", path, block: claimed });
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      expect(root.querySelector(".zoomed-page")).not.toBeNull();
+      expect(root.querySelector(`[data-block-id="${intendedRuntime}"]`)).not.toBeNull();
+      expect(root.querySelector(`[data-block-id="${claimed}"]`)).toBeNull();
+      expect(root.textContent).toContain("Intended preserved block");
+      expect(root.textContent).not.toContain("Wrong structural sibling");
+    } finally {
+      dispose();
+    }
+  });
+
   it("reveals a collapsed root's children without changing its stored collapse state", async () => {
     const parent = "11111111-1111-4111-8111-111111111111";
     const child = "22222222-2222-4222-8222-222222222222";

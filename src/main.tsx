@@ -24,6 +24,8 @@ import "./lsShimInstall";
 import "./styles/app.css";
 import "./styles/readiness.css";
 import "./styles/themePresentation.css";
+import "./styles/pdf-workspace.css";
+import "./styles/settingsControls.css";
 import "./styles/query.css";
 import "./styles/published.css";
 

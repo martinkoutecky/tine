@@ -23,7 +23,7 @@ import {
   replaceActiveRoute,
 } from "./router";
 import { setNavReuseTabs } from "./navSettings";
-import { setDoc } from "./document/model";
+import { doc, setDoc } from "./document/model";
 import { resetStore } from "./document";
 import { backend } from "./backend";
 
@@ -343,6 +343,8 @@ describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
     vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
     const path = "pages/client-b/Twin.md";
     const id = "11111111-1111-4111-8111-111111111111";
+    const external = "22222222-2222-4222-8222-222222222222";
+    const random = vi.spyOn(crypto, "randomUUID").mockReturnValue(external);
     setDoc({
       byId: {
         [id]: { id, raw: "Client B", collapsed: false, parent: null, page: "Twin", children: [] },
@@ -357,10 +359,14 @@ describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
     openFile(path, "Twin", "page");
 
     focusBlock(id);
-    await vi.waitFor(() => expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path, block: id }));
+    // GH #373: a UUID-shaped runtime key is a locator, never persisted identity.
+    await vi.waitFor(() => expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path, block: external }));
+    expect(route()).not.toMatchObject({ block: id });
+    expect(doc.byId[id].raw).toBe(`Client B\nid:: ${external}`);
 
     focusBlock(null);
     expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path });
+    random.mockRestore();
   });
 });
 

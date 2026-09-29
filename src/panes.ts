@@ -7,19 +7,23 @@ import {
   installNavigationInterceptor,
   historyRouteContextAdapter,
   mainPaneRouter,
+  makePdfRoute,
   tabRoute,
   type AdoptedTab,
   type PaneSnapshot,
   type PaneRouter,
   type Route,
   type PageTarget,
+  type PdfRoute,
 } from "./router";
+import { publishPdfNavigationIntent } from "./pdfNavigation";
 import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
 import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
 import { journalTitle } from "./journal";
 import { isMobilePlatform } from "./nativeChrome";
 import { nearestPane, takeBlockSelectionForPaneReturn } from "./paneSelect";
+import { graphScopedSignal } from "./binding";
 
 export type LayoutNode =
   | {
@@ -34,6 +38,35 @@ export const [layoutRoot, setLayoutRoot] = createSignal<LayoutNode>({
   kind: "pane",
   paneId: "main",
 });
+const maximizedPane = graphScopedSignal<string>();
+const maximizedPaneId = maximizedPane[0];
+const setMaximizedPaneId = maximizedPane[1];
+
+/** Return the pane tree shown on screen. Maximizing a pane leaves the saved
+ * split tree and ratios intact; an unknown pane id falls back to that tree.
+ * Cost: O(panes). No I/O or failure. */
+export function visibleLayoutNode(): LayoutNode {
+  const id = maximizedPaneId();
+  return id && layoutPaneIds().includes(id) ? { kind: "pane", paneId: id } : layoutRoot();
+}
+
+/** Toggle a pane's transient full-area view. Returns false when no split or
+ * target exists. Cost: O(panes); never changes the persisted layout. */
+export function togglePaneMaximize(paneId = focusedPaneId()): boolean {
+  if (maximizedPaneId() === paneId) {
+    setMaximizedPaneId(null);
+    return true;
+  }
+  if (!layoutHasMultiplePanes() || !layoutPaneIds().includes(paneId)) return false;
+  setMaximizedPaneId(paneId);
+  return true;
+}
+
+function commitLayout(node: LayoutNode) {
+  const id = maximizedPaneId();
+  if (id && !layoutPaneIds(node).includes(id)) setMaximizedPaneId(null);
+  setLayoutRoot(node);
+}
 const [focusedPaneIdAccessor, writeFocusedPaneId] = createSignal("main");
 export const focusedPaneId = focusedPaneIdAccessor;
 
@@ -215,7 +248,7 @@ export function splitPane(
   const source = paneRouter(paneId);
   const router = paneRouter(newPaneId);
   router.restoreSnapshot(opts.snapshot ?? splitSnapshotForNewPane(source));
-  setLayoutRoot(splitLayoutNodeAt(layoutRoot(), paneId, dir, newPaneId, opts.position ?? "after"));
+  commitLayout(splitLayoutNodeAt(layoutRoot(), paneId, dir, newPaneId, opts.position ?? "after"));
   if (opts.focusNew !== false) focusPane(newPaneId);
   focusedRouter().scheduleSessionSave();
   return newPaneId;
@@ -275,7 +308,7 @@ export function splitRootAtEdge(
   const newLeaf: LayoutNode = { kind: "pane", paneId: newPaneId };
   const dir = side === "left" || side === "right" ? "row" : "col";
   const newFirst = side === "left" || side === "top";
-  setLayoutRoot({
+  commitLayout({
     kind: "split",
     dir,
     ratio: 0.5,
@@ -291,7 +324,7 @@ export function closePane(paneId = focusedPaneId()): boolean {
   const closingFocusedPane = focusedPaneId() === paneId;
   const res = closeLayoutPane(layoutRoot(), paneId);
   if (!res.closed) return false;
-  setLayoutRoot(res.node);
+  commitLayout(res.node);
   if (paneId !== "main") routers.delete(paneId);
   // Closing a background pane must not manufacture a foreground visit. When
   // the focused pane closes, however, its sibling becomes the page the user is
@@ -304,6 +337,7 @@ export function closePane(paneId = focusedPaneId()): boolean {
 
 export function focusPane(paneId: string) {
   if (!layoutPaneIds().includes(paneId) || focusedPaneId() === paneId) return;
+  if (maximizedPaneId() && maximizedPaneId() !== paneId) setMaximizedPaneId(null);
   setFocusedPaneId(paneId);
   paneRouter(paneId).activateCurrentRoute();
 }
@@ -415,8 +449,31 @@ export function setSplitRatio(path: number[], ratio: number) {
         : [node.children[0], update(node.children[1], depth + 1)],
     };
   };
-  setLayoutRoot(update(layoutRoot(), 0));
+  commitLayout(update(layoutRoot(), 0));
   focusedRouter().scheduleSessionSave();
+}
+
+function panePath(node: LayoutNode, paneId: string, prefix: number[] = []): number[] | null {
+  if (node.kind === "pane") return node.paneId === paneId ? prefix : null;
+  return panePath(node.children[0], paneId, [...prefix, 0])
+    ?? panePath(node.children[1], paneId, [...prefix, 1]);
+}
+
+/** Resize a pane by five percentage points at its nearest split on `axis`.
+ * Returns false if no matching ancestor exists. Ratios clamp to 15–85% and
+ * the normal session save persists the change. Cost: O(panes). */
+export function adjustPaneSize(paneId: string, axis: "width" | "height", grow: boolean): boolean {
+  const path = panePath(layoutRoot(), paneId);
+  if (!path) return false;
+  const dir = axis === "width" ? "row" : "col";
+  for (let depth = path.length - 1; depth >= 0; depth--) {
+    const ancestor = nodeAtPath(layoutRoot(), path.slice(0, depth));
+    if (!ancestor || ancestor.kind !== "split" || ancestor.dir !== dir) continue;
+    const delta = (grow ? 0.05 : -0.05) * (path[depth] === 0 ? 1 : -1);
+    setSplitRatio(path.slice(0, depth), ancestor.ratio + delta);
+    return true;
+  }
+  return false;
 }
 
 export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId()): string | null {
@@ -432,7 +489,7 @@ export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId(
     // source context (matching the embryo-switcher flow) — openInNewTab here
     // would leave a stray duplicate tab beside the target.
     if (route.kind === "journals") router.openJournals();
-    else if (route.kind === "query") router.replaceActiveRoute(route);
+    else if (route.kind === "query" || route.kind === "pdf" || route.kind === "invalid") router.replaceActiveRoute(route);
     else if (route.block) router.openPageAtBlock(route.name, route.pageKind, route.block, route.path);
     else if (route.path) router.openFile(route.path, route.name, route.pageKind);
     else router.openPage(route.name, route.pageKind);
@@ -443,7 +500,90 @@ export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId(
   return target;
 }
 
+function pdfTab(filename: string): { paneId: string; tabId: string; route: PdfRoute } | null {
+  for (const paneId of layoutPaneIds()) {
+    for (const tab of paneRouter(paneId).tabs()) {
+      const route = tabRoute(tab);
+      if (route.kind === "pdf" && route.filename === filename) return { paneId, tabId: tab.id, route };
+    }
+  }
+  return null;
+}
+
+export interface OpenPdfOptions {
+  sourcePaneId?: string;
+  inPlace?: boolean;
+  background?: boolean;
+  anotherView?: boolean;
+}
+
+/** Open a graph PDF as an ordinary route. Reuses one view per file, keeping its
+ * page when no target is requested. Desktop uses a companion pane; mobile uses
+ * the current tab's history. Cost O(open tabs), no graph I/O. */
+export function openPdf(filename: string, label: string, page?: number,
+  highlightId?: string, options: OpenPdfOptions = {}): PdfRoute | null {
+  const ids = layoutPaneIds();
+  const sourcePaneId = options.sourcePaneId && ids.includes(options.sourcePaneId)
+    ? options.sourcePaneId : focusedPaneId();
+  const existing = options.anotherView ? null : pdfTab(filename);
+  if (existing) {
+    const router = paneRouter(existing.paneId);
+    router.setActiveTab(existing.tabId);
+    if (page !== undefined) router.updateActivePdfViewState({ page });
+    if (page !== undefined || highlightId !== undefined) {
+      publishPdfNavigationIntent(existing.route.viewId, { page, highlightId });
+    }
+    if (!options.background) focusPane(existing.paneId);
+    return existing.route;
+  }
+  // A second editable view needs shared annotation mutation ownership.
+  if (options.anotherView) return null;
+  const route = makePdfRoute(filename, label, { page });
+  publishPdfNavigationIntent(route.viewId, { page, highlightId });
+  if (isMobilePlatform || options.inPlace) {
+    paneRouter(sourcePaneId).openPdf(route);
+    return route;
+  }
+  const companion = nearestPane(layoutRoot(), sourcePaneId) ?? ids.find((id) => id !== sourcePaneId) ?? null;
+  if (companion) {
+    paneRouter(companion).openInNewTab(route, !options.background);
+    if (!options.background) focusPane(companion);
+    return route;
+  }
+  const created = splitPane(sourcePaneId, "row", { focusNew: !options.background,
+    snapshot: { tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0, scrolls: [null] } });
+  return created ? route : null;
+}
+
+/** Open a PDF's notes in the companion pane, reusing its existing page tab.
+ * On mobile the notes enter the current route history. Cost O(open tabs). */
+export function openPdfNotes(sourcePaneId: string, notesPage: string, block?: string): string | null {
+  if (isMobilePlatform) {
+    const router = paneRouter(sourcePaneId);
+    if (block) router.openPageAtBlock(notesPage, "page", block);
+    else router.openPage(notesPage, "page");
+    return sourcePaneId;
+  }
+  const targetPaneId = nearestPane(layoutRoot(), sourcePaneId);
+  if (targetPaneId) {
+    const router = paneRouter(targetPaneId);
+    const existing = router.tabs().find((tab) => {
+      const route = tabRoute(tab);
+      return route.kind === "page" && route.name === notesPage && route.pageKind === "page";
+    });
+    if (existing) {
+      router.setActiveTab(existing.id);
+      if (block) router.openPageAtBlock(notesPage, "page", block);
+      focusPane(sourcePaneId);
+      return targetPaneId;
+    }
+  }
+  return openRouteInOtherPane({ kind: "page", name: notesPage, pageKind: "page",
+    ...(block ? { block } : {}) }, sourcePaneId);
+}
+
 export function resetPaneLayoutToSingle(snapshot?: PaneSnapshot) {
+  setMaximizedPaneId(null);
   setLayoutRoot({ kind: "pane", paneId: "main" });
   if (snapshot) mainRouter().restoreSnapshot(snapshot);
   for (const id of [...routers.keys()]) {
@@ -463,7 +603,7 @@ export function restorePaneLayout(
     if (snap) paneRouter(id).restoreSnapshot(snap);
     else paneRouter(id);
   }
-  setLayoutRoot(root);
+  commitLayout(root);
   for (const id of [...routers.keys()]) {
     if (id !== "main" && !ids.includes(id)) routers.delete(id);
   }

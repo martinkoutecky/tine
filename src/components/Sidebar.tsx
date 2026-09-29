@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
-import { openSwitcher, favorites, recentPages, openPageContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
+import { openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type LoadGraphPathOutcome } from "../graph";
@@ -13,6 +13,9 @@ import { NamespaceTree } from "./Namespace";
 import { SidebarFavorites } from "./SidebarFavorites";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
+import { writeClipboardText } from "../clipboard";
+import { isMobilePlatform } from "../nativeChrome";
+import { graphRowMenuActions } from "./graphRowMenu";
 
 // Cap the rendered "All pages" list. Beyond this, rendering every row (each
 // reading route() for its active state) makes both the initial render and every
@@ -371,6 +374,21 @@ export function GraphSwitcher(props: {
                 class="ctx-item graph-switch-row"
                 classList={{ active: graph.path === graphMeta()?.root }}
                 title={graph.path}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  openActionContextMenu(event.clientX, event.clientY, graphRowMenuActions(graph, {
+                    openKnown: props.actions.openKnown,
+                    reveal: (path) => backend().revealKnownGraph(path),
+                    copyPath: writeClipboardText,
+                    forget: async (path) => {
+                      const result = await writeOwned(ownedWhen(() => alive), backend().forgetKnownGraph(path));
+                      if (result.kind === "current") await refetch();
+                    },
+                    desktop: !isMobilePlatform,
+                    isCurrent: graph.path === graphMeta()?.root,
+                  }));
+                }}
                 onClick={(event) => {
                   const newWindow = event.shiftKey;
                   close();

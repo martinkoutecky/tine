@@ -1,5 +1,6 @@
 import { graphMeta, setGraphMeta, bumpGraphEpoch } from "./graphSession";
 import { pushToast } from "./toasts";
+import { isMobilePlatform } from "./nativeChrome";
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal, useContext } from "solid-js";
 import type { JournalConflict, SyncConflict, PageKind } from "./types";
@@ -15,29 +16,13 @@ import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
 import { setJournalTitleFormat } from "./journal";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
-import { currentPdfOwnership, type PdfOwnership } from "./pdfOwnership";
 import { navigationName } from "./pageIndex";
 import { forgetDeletedFavorite, renameFavorite } from "./favorites";
 import { changeGraphSetting, writeGraphSignal } from "./graphPreferences";
 
-const THEME_KEY = "logseq-claude.theme";
-function loadTheme(): "light" | "dark" {
-  try {
-    const t = localStorage.getItem(THEME_KEY);
-    if (t === "dark" || t === "light") return t;
-  } catch {
-    if (typeof localStorage !== "undefined") pushToast("Could not load theme preference.", "error");
-  }
-  return "light";
-}
-export const [theme, setTheme] = createSignal<"light" | "dark">(loadTheme());
-
-/** Apply stored theme at startup; native system-bar update runs async and toasts on failure. */
-export function applyTheme() {
-  document.documentElement.setAttribute("data-theme", theme());
-  void backend().setSystemBarAppearance(theme() === "dark")
-    .catch(() => pushToast("Could not update system bar appearance.", "error"));
-}
+export { appearancePreference, theme, resolveTheme, applyTheme, setAppearancePreference } from "./themePreference";
+export type { ThemePreference } from "./themePreference";
+import { theme, setAppearancePreference } from "./themePreference";
 
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
 export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
@@ -109,6 +94,12 @@ function saveStr(key: string, val: string | null): boolean {
     pushToast("Could not save display preference.", "error");
     return false;
   }
+}
+
+/** Persist the device theme through the shared display-preference writer.
+ * Returns whether storage accepted it; errors show the existing toast. */
+export function persistThemePreference(key: string, value: string): boolean {
+  return saveStr(key, value);
 }
 
 const ACCENT_KEY = "logseq-claude.accent";
@@ -525,18 +516,10 @@ export async function exitFocusMode() {
   }
 }
 
+/** Toggle the resolved palette between Light and Dark. A System choice becomes
+ * the opposite manual palette; persistence and native appearance follow. */
 export function toggleTheme() {
-  const next = theme() === "light" ? "dark" : "light";
-  try {
-    localStorage.setItem(THEME_KEY, next);
-  } catch {
-    pushToast("Could not save theme preference.", "error");
-    return;
-  }
-  setTheme(next);
-  document.documentElement.setAttribute("data-theme", next);
-  void backend().setSystemBarAppearance(next === "dark")
-    .catch(() => pushToast("Could not update system bar appearance.", "error"));
+  setAppearancePreference(theme() === "light" ? "dark" : "light");
 }
 
 // Left sidebar open/collapsed — persisted (default open; store only when collapsed).
@@ -647,25 +630,6 @@ export function persistRightSidebarWidth() {
     localStorage.setItem(RS_W_KEY, String(rightSidebarWidth()));
   } catch {
     pushToast("Could not save right sidebar width.", "error");
-  }
-}
-
-const PDF_W_KEY = "logseq-claude.pdfPaneWidth";
-function loadPdfWidth(): number {
-  try {
-    const v = Number(localStorage.getItem(PDF_W_KEY));
-    if (v >= 320 && v <= 1200) return v;
-  } catch {
-    if (typeof localStorage !== "undefined") pushToast("Could not load PDF pane width.", "error");
-  }
-  return 560;
-}
-export const [pdfPaneWidth, setPdfPaneWidth] = createSignal(loadPdfWidth());
-export function persistPdfPaneWidth() {
-  try {
-    localStorage.setItem(PDF_W_KEY, String(pdfPaneWidth()));
-  } catch {
-    pushToast("Could not save PDF pane width.", "error");
   }
 }
 
@@ -1445,37 +1409,14 @@ export function closeSwitcher() {
 // collects options and calls exportPagePdf.
 export const [pdfExportPage, setPdfExportPage] = graphScopedSignal<string>();
 export function openPdfExport(name: string) {
+  if (isMobilePlatform) {
+    pushToast("PDF export needs the desktop app: a mobile WebView cannot print.", "info");
+    return;
+  }
   setPdfExportPage(name);
 }
 export function closePdfExport() {
   setPdfExportPage(null);
-}
-
-// The PDF currently open in the side pane. `filename` is the stable resource
-// identity; page/highlightId are a navigation intent within that resource.
-// Keeping those concepts separate lets a second reference into the same PDF
-// scroll precisely without tearing down the loaded document.
-export interface PdfTarget {
-  filename: string;
-  label: string;
-  owner: PdfOwnership;
-  page?: number;
-  highlightId?: string;
-}
-export const [pdfTarget, setPdfTarget] = createSignal<PdfTarget | null>(null);
-export function openPdf(filename: string, label: string, page?: number, highlightId?: string) {
-  const owner = currentPdfOwnership();
-  if (!owner) return;
-  // Logseq treats re-opening the current PDF resource without a page/highlight
-  // intent as a no-op. Preserve the reader's current location; explicit targets
-  // within the same file still publish a new reactive navigation intent.
-  const current = pdfTarget();
-  if (current?.filename === filename && current.owner.generation === owner.generation &&
-      page == null && highlightId == null) return;
-  setPdfTarget({ filename, label, owner, page, highlightId });
-}
-export function closePdf() {
-  setPdfTarget(null);
 }
 
 /** Effective graph-local OG accent-removal setting for frontend search views. */

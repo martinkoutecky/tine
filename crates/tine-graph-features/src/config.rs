@@ -6,7 +6,8 @@
 use std::io;
 
 use tine_core::config::{
-    edn_str_end, find_keyword, match_close_brace, match_close_bracket, next_value_span, skip_blank,
+    balanced_map_at, edn_str_end, find_keyword, find_keyword_at_map_level, match_close_brace,
+    match_close_bracket, next_value_span, skip_blank,
 };
 
 use tine_store::{Area, Content, FileId, FileRev, Store, StoreError};
@@ -82,6 +83,76 @@ pub fn set_favorites(store: &Store, names: &[String], page: Option<&str>) -> io:
             ":favorites",
             &format!("[{}]", names.join(" ")),
         )?;
+        Ok(content)
+    })
+}
+
+/// Set or clear the graph's Logseq `:default-home {:page "Name"}` value.
+/// Sibling entries (including `:sidebar`) and unrelated bytes are preserved.
+/// A malformed root or non-map `:default-home` is refused with InvalidData;
+/// storage conflicts retry through the usual guarded config transaction.
+/// Cost: O(config.edn bytes) per attempt, up to four attempts.
+pub fn set_default_home_page(store: &Store, name: Option<&str>) -> io::Result<()> {
+    update(store, |source| {
+        let mut content = source.to_owned();
+        let root_open = skip_blank(&content, 0);
+        let (root_open, root_close) = balanced_map_at(&content, root_open)
+            .ok_or_else(|| refuse("the top-level form is not a balanced map"))?;
+        let home = find_keyword_at_map_level(&content[root_open + 1..root_close], ":default-home")
+            .map(|relative| {
+                let start = root_open + 1 + relative;
+                let open = skip_blank(&content, start + ":default-home".len());
+                balanced_map_at(&content, open)
+                    .ok_or_else(|| refuse(":default-home exists but is not a balanced map"))
+            })
+            .transpose()?;
+        let name = name.map(str::trim).filter(|name| !name.is_empty());
+        match (home, name) {
+            (None, Some(name)) => {
+                let value = edn_string(name);
+                content.insert_str(
+                    root_open + 1,
+                    &format!("\n :default-home {{:page {value}}}\n"),
+                );
+            }
+            (Some((open, close)), Some(name)) => {
+                let value = edn_string(name);
+                if let Some(relative) =
+                    find_keyword_at_map_level(&content[open + 1..close], ":page")
+                {
+                    let after = open + 1 + relative + ":page".len();
+                    match next_value_span(&content, after, close) {
+                        Some((start, end, _)) => content.replace_range(start..end, &value),
+                        None => content.insert_str(after, &format!(" {value}")),
+                    }
+                } else {
+                    let separator = if content[open + 1..close].trim().is_empty() {
+                        ""
+                    } else {
+                        " "
+                    };
+                    content.insert_str(open + 1, &format!(":page {value}{separator}"));
+                }
+            }
+            (Some((open, close)), None) => {
+                if let Some(relative) =
+                    find_keyword_at_map_level(&content[open + 1..close], ":page")
+                {
+                    let start = open + 1 + relative;
+                    let after = start + ":page".len();
+                    let end = next_value_span(&content, after, close)
+                        .map(|(_, end, _)| end)
+                        .unwrap_or(after);
+                    let tail = content[end..close]
+                        .chars()
+                        .take_while(|ch| ch.is_whitespace() || *ch == ',')
+                        .map(char::len_utf8)
+                        .sum::<usize>();
+                    content.replace_range(start..end + tail, "");
+                }
+            }
+            (None, None) => {}
+        }
         Ok(content)
     })
 }

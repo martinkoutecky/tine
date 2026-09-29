@@ -196,7 +196,7 @@ function pagesForInPageFind(): readonly FeedPage[] {
   const router = paneRouter(currentFindPaneId());
   const r = router.route();
   if (r.kind === "journals") return mainPages();
-  if (r.kind === "query") return [];
+  if (r.kind !== "page") return [];
   const page = pageByName(r.name);
   return page ? [page] : [];
 }

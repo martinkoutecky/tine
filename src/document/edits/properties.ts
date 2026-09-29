@@ -561,6 +561,31 @@ export function writeCollapsed(id: string, collapsed: boolean) {
   if (nextRaw !== n.raw) setDoc("byId", id, "raw", nextRaw);
 }
 
+/** Expand every collapsed ancestor of `id` so the block itself renders, as one
+ *  undo step and a persisted edit (like expanding by hand: `collapsed::` is on
+ *  disk). Returns true if anything changed; false when nothing is collapsed
+ *  above it or any collapsed ancestor is read-only. A collapsed parent renders
+ *  no children, so navigating to a hidden block otherwise never reveals it
+ *  (GH #258). Cost O(depth). */
+export function expandAncestors(id: string): boolean {
+  const target = doc.byId[id];
+  if (!target) return false;
+  const collapsedAncestors: string[] = [];
+  let parent = target.parent;
+  while (parent !== null && parent !== undefined) {
+    const node = doc.byId[parent];
+    if (!node) break;
+    if (node.collapsed) collapsedAncestors.push(parent);
+    parent = node.parent;
+  }
+  if (collapsedAncestors.length === 0) return false;
+  if (!collapsedAncestors.every((ancestor) => blockWritable(ancestor))) return false;
+  pushUndo("reveal-block", [target.page]);
+  for (const ancestor of collapsedAncestors) writeCollapsed(ancestor, false);
+  markDirty(target.page, "save-block");
+  return true;
+}
+
 /** Collapse or expand a block and its entire descendant subtree. */
 export function setCollapsedDeep(id: string, collapsed: boolean) {
   if (!blockWritable(id)) return;

@@ -43,8 +43,10 @@ export interface LoadedBlockRef {
 }
 
 /** Resolve a durable external UUID back to the current live store key. The page
- * descriptor is part of the identity: even a direct `byId[uuid]` hit is rejected
- * when it belongs to another page kind or physical path. */
+ * descriptor is part of the identity. A unique authored `id` claimant wins; two
+ * authored claimants are ambiguous and resolve to null. A runtime store key is
+ * only a fallback locator for a block with no authored id, so a runtime key never
+ * acts as a second identity (GH #373). */
 export function resolveBlockRef(ref: LoadedBlockRef): string | null {
   const owner = pageByName(ref.page);
   if (
@@ -53,24 +55,31 @@ export function resolveBlockRef(ref: LoadedBlockRef): string | null {
     || (ref.path !== undefined && owner.id !== ref.path)
   ) return null;
 
-  const matches = (id: string): boolean => {
-    const node = doc.byId[id];
-    return !!node && node.page === ref.page && blockExternalId(id) === ref.uuid;
-  };
-  if (matches(ref.uuid)) return ref.uuid;
-
   const stack = [...owner.roots];
   const seen = new Set<string>();
+  let authoredClaim: string | null = null;
   while (stack.length) {
     const id = stack.pop()!;
     if (seen.has(id)) continue;
     seen.add(id);
     const node = doc.byId[id];
     if (!node || node.page !== ref.page) continue;
-    if (matches(id)) return id;
+    if (existingBlockId(node.raw, formatForBlock(id)) === ref.uuid) {
+      // A second authored claimant is ambiguous. Never guess, and never rewrite
+      // either block merely because a route exposed the conflict.
+      if (authoredClaim !== null) return null;
+      authoredClaim = id;
+    }
     stack.push(...node.children);
   }
-  return null;
+  if (authoredClaim !== null) return authoredClaim;
+
+  const runtime = doc.byId[ref.uuid];
+  return runtime
+    && runtime.page === ref.page
+    && existingBlockId(runtime.raw, formatForBlock(ref.uuid)) === null
+    ? ref.uuid
+    : null;
 }
 
 /** `raw` with a durable `id` property added in the page's on-disk format.
@@ -184,14 +193,25 @@ export function blockRef(id: string): LoadedBlockRef {
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Stamp an external UUID and wait for its page save. Existing IDs are flushed
- * too because their in-memory property may not yet be on disk. */
+ * too because their in-memory property may not yet be on disk. An ID-less block
+ * always receives a fresh random UUID: runtime keys can themselves be
+ * deterministic UUIDs, but they are locators and are never persisted as authored
+ * identity (GH #373). */
 export async function ensureStableBlockId(id: string): Promise<string | null> {
+  return stampBlockId(id, null);
+}
+
+/** Stamp exactly `committed` (or the block's existing id when `committed` is
+ * null, else a fresh UUID), flush, and return the stamped id once it is on disk.
+ * A block that already carries a different id resolves null. */
+async function stampBlockId(id: string, committed: string | null): Promise<string | null> {
   const binding = captureBinding();
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return null;
   const fmt = formatForBlock(id);
   const existing = existingBlockId(node.raw, fmt);
-  const uuid = existing ?? (UUID_RE.test(id) ? id : crypto.randomUUID());
+  if (existing && committed !== null && existing !== committed) return null;
+  const uuid = existing ?? committed ?? crypto.randomUUID();
   if (!existing) {
     setDoc("byId", id, "raw", rawWithBlockId(node.raw, uuid, fmt));
     markDirty(node.page, "save-block");
@@ -209,9 +229,12 @@ export async function persistentBlockRef(id: string): Promise<LoadedBlockRef | n
   return uuid ? blockRef(id) : null;
 }
 
-/** Find the runtime-key `uuid` on `page` (exact `path` if given), loading its
- * page if needed. Backend read errors reject; a missing, stale or unwritable
- * target resolves false. `externalId` is the ID to persist. Without a callback,
+/** Find the block that `externalId` names on `page` (exact `path` if given),
+ * loading its page if needed; `uuid` is the caller's runtime locator and the
+ * default `externalId`. Resolution goes through {@link resolveBlockRef}, so an
+ * authored id wins and a runtime key is only a fallback for an ID-less block
+ * (GH #373). Backend read errors reject; a missing, stale or unwritable
+ * target resolves false. `externalId` is the ID to persist, stamped exactly. Without a callback,
  * flush the target page and resolve true only when its ID reaches disk.
  * With `insertReference`, validate the ID first, then call it synchronously to
  * edit the source and return its page name (null aborts without a write). The
@@ -228,14 +251,8 @@ export async function persistBlockRefTarget(
   insertReference?: () => string | null,
 ): Promise<boolean> {
   const owner = graphOwner();
-  const ref: LoadedBlockRef = { uuid, page, pageKind: kind, ...(path ? { path } : {}) };
-  const runtimeTarget = (): string | null => {
-    const candidate = doc.byId[uuid];
-    const currentOwner = pageByName(page);
-    return candidate && candidate.page === page && currentOwner?.kind === kind
-      && (path === undefined || currentOwner.id === path) ? uuid : null;
-  };
-  if (!runtimeTarget() && !resolveBlockRef(ref)) {
+  const ref: LoadedBlockRef = { uuid: externalId, page, pageKind: kind, ...(path ? { path } : {}) };
+  if (!resolveBlockRef(ref)) {
     const result = await readOwned(owner, path
       ? backend().getPageByPath(path)
       : backend().getPage(page, kind));
@@ -245,13 +262,15 @@ export async function persistBlockRefTarget(
   // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
   // cache may have been rebuilt (external change) and reassigned the block a new
   // uuid — in which case there's nothing safe to stamp.
-  const id = runtimeTarget() ?? resolveBlockRef(ref);
+  const id = resolveBlockRef(ref);
   if (!id || !owner() || !blockWritable(id)) return false;
-  if (!insertReference) return (await ensureStableBlockId(id)) === externalId;
+  // `externalId` is the value the caller has committed (or will commit) as the
+  // reference, so it is stamped exactly, even when it equals the runtime key.
+  if (!insertReference) return (await stampBlockId(id, externalId)) === externalId;
   const target = doc.byId[id];
   const fmt = formatForBlock(id);
   const existing = existingBlockId(target.raw, fmt);
-  const stableId = existing ?? (UUID_RE.test(id) ? id : crypto.randomUUID());
+  const stableId = existing ?? externalId;
   if (stableId !== externalId) return false;
   const sourcePage = insertReference();
   if (!sourcePage || !owner()) return false;
