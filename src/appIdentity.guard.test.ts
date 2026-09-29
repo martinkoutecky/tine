@@ -84,6 +84,15 @@ describe("app identity switch", () => {
     expect(fs.readFileSync(path.join(ROOT, ".github/workflows/flatpak.yml"), "utf8")).toContain('["ship"] != "release"');
   });
 
+  it("the experiment config seed exists only while the build ships an experiment identity", () => {
+    // Scope D is a temporary convenience (docs/app-identity.md): when the switch
+    // ships the released identity, delete src-tauri/src/experiment_config_seed.rs
+    // (+ its tests file, `mod` line and call in lib::run, and its writer-site
+    // approval in scripts/lib/og-enforcement.mjs).
+    const seed = fs.existsSync(path.join(ROOT, "src-tauri/src/experiment_config_seed.rs"));
+    expect(seed).toBe(SHIP !== "release");
+  });
+
   it("no source outside the switch and its derived files spells an identity", () => {
     const pattern = identityLiterals();
     const scanned = [

@@ -85,6 +85,8 @@ export const PINNED_FORMAT_COUNT = 25;
 export const APPROVED_WRITER_SITES = Object.freeze({
   "src-tauri/src/flight_store.rs": { sites: 3, approval: "og QUESTIONS Q5 2026-09-29; docs/adr/0058" },
   "src-tauri/src/concord_ledger.rs": { sites: 1, approval: "og QUESTIONS Q4 2026-09-29; docs/adr/0056" },
+  // Copies census formats byte for byte (no new format); temporary, deleted at the identity flip.
+  "src-tauri/src/experiment_config_seed.rs": { sites: 2, approval: "og 20e dossier scope D (Martin 2026-09-29); docs/app-identity.md" },
 });
 
 export function checkFormatCount(formats = PERSISTED_FORMATS) {
