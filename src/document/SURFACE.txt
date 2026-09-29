@@ -37,6 +37,7 @@ ensureBlockId
 ensureEmptyBlock
 ensurePageLoaded
 ensurePagePropertyOnKeyPage  # why: one guarded document operation for a query type declaration on its key page; batch16a
+expandBlockSelection  # why: Ctrl/Cmd+A ladder in block selection (GH #262); batch17a
 exportNodesFor
 extendFeedForScroll
 extendSelectionTo
@@ -75,6 +76,7 @@ loadedPage
 mainPages
 makeOwnNumberedList
 markDirty
+mergeWithNext  # why: Delete at block end forward-merges (GH #213); batch17a
 mergeWithPrev
 moveBlock
 moveBlockFeed
@@ -120,6 +122,7 @@ restoreTodayJournalInFeed
 revealNode
 sanitizeOutlineIdsForPaste  # why: prevent off-screen ID collisions in ordinary paste; batch05
 selectBlock
+selectBlockSubtree  # why: Ctrl/Cmd+A escalation from the editor (GH #262); batch17a
 selectedIds
 selectionMarkdown
 setBlockProperty

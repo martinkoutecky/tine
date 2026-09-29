@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
-import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, persistentBlockRef, resolveBlockRef } from "./document";
+import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, persistentBlockRef, resolveBlockRef } from "./document";
 import { reloadPage, forgetPage } from "./document/workingSet";
 import { setBlockMoving } from "./document/edits/moves";
 import { loadSingle, reloadDisposition } from "./document/workingSet";
@@ -1244,6 +1244,56 @@ describe("merge (Backspace at 0)", () => {
     const after = pageByName("·capture·")!;
     expect(after.roots.length).toBe(1);
     expect(doc.byId[after.roots[0]].raw).toBe("firstsecond");
+  });
+});
+
+describe("merge forward (Delete at end)", () => {
+  it("merges the next visible block in, caret at the join point in the current block", () => {
+    const dto = load([blk("foo"), blk("bar")]);
+    const foo = dto.blocks[0].id;
+    const ok = mergeWithNext(foo);
+    expect(ok).toBe(true);
+    expect(shape()).toEqual([["foobar"]]);
+    expect(editingId()).toBe(foo);
+    expect(takeCaretFor(foo)).toBe(3);
+  });
+
+  it("represents the absorbed next block's children under the survivor", () => {
+    const dto = load([blk("a"), blk("b", [blk("b1")])]);
+    const a = dto.blocks[0].id;
+    mergeWithNext(a);
+    expect(shape()).toEqual([["ab", [["b1"]]]]);
+  });
+
+  it("keeps the survivor's id:: and drops the absorbed next block's", () => {
+    const dto = load([
+      blk("foo\nid:: 11111111-1111-4111-8111-111111111111"),
+      blk("bar\nid:: 22222222-2222-4222-8222-222222222222"),
+    ]);
+    const foo = dto.blocks[0].id;
+    mergeWithNext(foo);
+    expect(doc.byId[foo].raw).toBe("foobar\nid:: 11111111-1111-4111-8111-111111111111");
+  });
+
+  it("adopts the absorbed next block's id:: when the survivor has none", () => {
+    const dto = load([blk("foo"), blk("bar\nid:: 22222222-2222-4222-8222-222222222222")]);
+    const foo = dto.blocks[0].id;
+    mergeWithNext(foo);
+    expect(doc.byId[foo].raw).toBe("foobar\nid:: 22222222-2222-4222-8222-222222222222");
+  });
+
+  it("last block cannot merge forward", () => {
+    const dto = load([blk("only")]);
+    expect(mergeWithNext(dto.blocks[0].id)).toBe(false);
+  });
+
+  it("one undo restores both blocks and the original text", () => {
+    const dto = load([blk("foo"), blk("bar")]);
+    const foo = dto.blocks[0].id;
+    mergeWithNext(foo);
+    expect(shape()).toEqual([["foobar"]]);
+    undo();
+    expect(shape()).toEqual([["foo"], ["bar"]]);
   });
 });
 

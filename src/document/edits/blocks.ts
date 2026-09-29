@@ -13,7 +13,7 @@ import { produce } from "solid-js/store";
 import { OUTLINE_MAX_DEPTH, outlineDepth, type OutlineNode } from "../../editor/outline";
 import { splitProps, isBuiltinHidden, joinProps, isPropertiesOnly, readPropertyValue } from "../../editor/properties";
 import { startEditing, editingId, endEdit } from "../../editorController";
-import { depthOf, existingSubtreeFits, indexInSiblings, rootsOf, OutlineScope, prevVisible } from "../tree";
+import { depthOf, existingSubtreeFits, indexInSiblings, rootsOf, OutlineScope, prevVisible, nextVisible } from "../tree";
 import { existingBlockId } from "./identity";
 import { pushToast } from "../../toasts";
 
@@ -319,44 +319,66 @@ export function mergeWithPrev(
   if (!blockWritable(id)) return false;
   const prev = prevVisible(id, scope);
   if (prev === null) return false;
-  const node = doc.byId[id];
-  if (doc.byId[prev].page !== node.page) return false; // don't merge across pages
+  return absorbInto(prev, id, editingSurface);
+}
+
+/** Delete at the END of a block: absorb the NEXT visible block into this one,
+ *  caret staying at the join (GH #213). Exact mirror of `mergeWithPrev` —
+ *  same page only, one "merge" undo, returns false when nothing merged. */
+export function mergeWithNext(
+  id: string,
+  scope: OutlineScope | null = null,
+  editingSurface: string | null = null,
+): boolean {
+  if (!blockWritable(id)) return false;
+  const next = nextVisible(id, scope);
+  if (next === null) return false;
+  return absorbInto(id, next, editingSurface);
+}
+
+/** The one merge answer for Backspace-at-start and Delete-at-end: `absorbed`'s
+ *  visible text is appended to `survivor` (no separator), its children are
+ *  appended to survivor's, and it is removed. The survivor keeps its identity
+ *  and hidden props; the absorbed `id::` is kept only when the survivor has
+ *  none. Refuses (false) across pages. */
+function absorbInto(survivor: string, absorbed: string, editingSurface: string | null): boolean {
+  const node = doc.byId[absorbed];
+  if (doc.byId[survivor].page !== node.page) return false; // don't merge across pages
   pushUndo("merge", [node.page]);
-  const fmt = formatForBlock(id); // prev is same page (checked above) → same format
-  // Merge visible content only; keep the previous block's hidden props (it keeps
-  // its identity) and drop the absorbed block's — otherwise the id::/collapsed::
+  const fmt = formatForBlock(absorbed); // same page (checked above) → same format
+  // Merge visible content only; keep the survivor's hidden props (it keeps its
+  // identity) and drop the absorbed block's — otherwise the id::/collapsed::
   // lines would be concatenated mid-line and a block could end up with two ids.
-  const prevSplit = splitProps(doc.byId[prev].raw, isBuiltinHidden, fmt);
-  const curSplit = splitProps(node.raw, isBuiltinHidden, fmt);
-  const curVisible = curSplit.visible;
-  const joinOffset = prevSplit.visible.length;
+  const keepSplit = splitProps(doc.byId[survivor].raw, isBuiltinHidden, fmt);
+  const goneSplit = splitProps(node.raw, isBuiltinHidden, fmt);
+  const joinOffset = keepSplit.visible.length;
   const pageName = node.page;
 
   // Preserve the absorbed block's id if the survivor has none — otherwise inbound
   // ((id)) references to the absorbed block would orphan on merge. Match the id
   // line in the block's on-disk syntax (md `id:: x` vs org drawer `:id: x`).
-  let hidden = prevSplit.hidden;
+  let hidden = keepSplit.hidden;
   const idPresent = fmt === "org" ? /(?:^|\n):id:\s/i : /(?:^|\n)id:: /i;
   const idLine = fmt === "org" ? /(?:^|\n)(:id:\s*\S+)/i : /(?:^|\n)(id:: \S+)/i;
-  const survivorHasId = idPresent.test(prevSplit.hidden);
-  const absorbedId = idLine.exec(curSplit.hidden)?.[1];
+  const survivorHasId = idPresent.test(keepSplit.hidden);
+  const absorbedId = idLine.exec(goneSplit.hidden)?.[1];
   if (!survivorHasId && absorbedId) {
     hidden = hidden ? `${hidden}\n${absorbedId}` : absorbedId;
   }
 
   setDoc(
     produce((s) => {
-      s.byId[prev].raw = joinProps(prevSplit.visible + curVisible, hidden, fmt);
-      for (const c of node.children) s.byId[c].parent = prev;
-      s.byId[prev].children.push(...node.children);
+      s.byId[survivor].raw = joinProps(keepSplit.visible + goneSplit.visible, hidden, fmt);
+      for (const c of node.children) s.byId[c].parent = survivor;
+      s.byId[survivor].children.push(...node.children);
       const arr = node.parent === null
         ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
         : s.byId[node.parent].children;
-      arr.splice(arr.indexOf(id), 1);
-      delete s.byId[id];
+      arr.splice(arr.indexOf(absorbed), 1);
+      delete s.byId[absorbed];
     })
   );
-  startEditing(prev, joinOffset, null, editingSurface);
+  startEditing(survivor, joinOffset, null, editingSurface);
   markDirty(pageName, ["save-block", "move-blocks", "delete-blocks"]);
   return true;
 }
