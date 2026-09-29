@@ -678,4 +678,26 @@ mod og_20d_guide_tests {
         let files = include_str!("templates/files-external-edits-backups.md");
         assert!(files.contains("never rewritten by a rename"));
     }
+
+    /// og 22a: external-change freshness is user-visible — always ask, the
+    /// focus pass, bulk grouping, ignored noise folders, the polling fallback
+    /// and the Review-only banner for a live draft.
+    #[test]
+    fn guide_describes_external_change_freshness() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for control in [
+            "**Always ask before applying an external change**",
+            "**Reload from disk** / **Keep mine**",
+            "Returning to Tine asks the watcher for a fresh pass",
+            "grouped into one external revision",
+            "`.git/`",
+            "checks for external changes every 3 seconds instead",
+            "shows a banner with **Review**",
+            "under **Unsaved drafts**",
+        ] {
+            assert!(files.contains(control), "missing 22a Guide control: {control}");
+        }
+        let recovery = include_str!("templates/troubleshooting-recovery.md");
+        assert!(recovery.contains("offers only **Review**"));
+    }
 }

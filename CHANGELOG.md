@@ -10,6 +10,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **External changes stay fresh without interrupting you.** Returning to Tine
+  asks the watcher for a fresh pass before you type; a large checkout or sync
+  burst arrives as one change; `.git/` and `.stfolder/` are ignored; and if the
+  system refuses live file notifications, Tine says so and checks every 3
+  seconds instead. An optional "always ask" policy holds even clean external
+  changes for **Reload from disk** / **Keep mine**.
+- **A live-draft conflict offers Review, not a blind overwrite.** Its banner opens
+  the in-page comparison, and the Conflicts page lists such pages under
+  **Unsaved drafts**.
 - **A "changed on disk" conflict can be merged block by block at the page.** The
   panel at the top of the page compares your unsaved edits with the file as it is
   now, pre-selecting each side's own change when Tine still has the version you
@@ -38,6 +47,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   (GH #382).
 
 ### Fixed
+
+- **Choosing "Keep mine" after a conflicted alias save no longer duplicates the
+  alias's content on its owner page.** The retry replaces what already landed,
+  and refuses rather than guessing if the owner changed meanwhile (og L13).
 
 - **Hostile content cannot crash a table formula or navigate the app away** (I-22): formulas that nest past 128 levels, counting references, show an error in the cell instead of overflowing the stack, video and tweet macro links open in the system browser, and on Android and iOS a link with any other scheme (for example `intent:` or `javascript:`) no longer navigates the app.
 - **A save that fails on the disk now says which step failed** (GH #538, #590): the message names the platform call (for example the no-replace rename, or syncing the temporary file) and its OS error number, so a report can be acted on. Diagnosis only; it does not make such a save succeed.
