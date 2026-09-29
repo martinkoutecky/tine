@@ -90,7 +90,7 @@ export { pasteClipboardPayload, sanitizeOutlineIdsForPaste } from "./edits/paste
 export { appendToTodayJournal, captureToPage } from "./edits/capture";
 export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, collapsibleDescendantIds, expandAncestors, finishPageHeaderEdit, makeOwnNumberedList, orderedListMarker, pageHeaderProperties, promotePagePreamble, readPageProperties, readPageProperty, readSchedule, removeOwnNumberedList, setBlockProperty, setCollapsedDeep, setCollapsedDescendants, setHeading, setPageProperty, setSchedule, stopOwnNumberedListOnEmptyEnter, toggleBlockProperty, toggleListItemAtIndex, toggleOwnNumberedList } from "./edits/properties";
 export { ensurePagePropertyOnKeyPage } from "./edits/propertyDeclaration";
-export { blockExternalId, blockRef, ensureBlockId, persistBlockRefTarget, persistentBlockRef, resolveBlockRef } from "./edits/identity";
+export { blockExternalId, blockRef, ensureBlockId, isBlockRefUuid, persistBlockRefTarget, persistentBlockRef, resolveBlockRef } from "./edits/identity";
 export { blockSubtreeMarkdown, buildClipboardPayload, dtoSubtreeMarkdown, exportNodesFor } from "./edits/serialize";
 export { clearSelection, cycleSelectionTasks, deleteSelection, expandBlockSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, moveSelection, outdentSelection, selectBlock, selectBlockSubtree, selectedIds, selectionMarkdown, setSelectionHeading } from "./edits/selection";
 export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlocksRelative, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, setFeedExtender, withBlockMoving } from "./edits/moves";

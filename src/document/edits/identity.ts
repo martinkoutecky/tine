@@ -192,6 +192,13 @@ export function blockRef(id: string): LoadedBlockRef {
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Whether a block reference's id can name a block at all. OG resolves `((id))`
+ *  only when `parse-uuid` accepts the id; `(((uuid)))` parses as the id `(uuid`,
+ *  which it shows as an invalid reference (GH #589). */
+export function isBlockRefUuid(id: string): boolean {
+  return UUID_RE.test(id);
+}
+
 /** Stamp an external UUID and wait for its page save. Existing IDs are flushed
  * too because their in-memory property may not yet be on disk. An ID-less block
  * always receives a fresh random UUID: runtime keys can themselves be

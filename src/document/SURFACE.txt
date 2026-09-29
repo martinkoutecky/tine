@@ -66,6 +66,7 @@ installHistoryRouteContextAdapter
 installPageIdentityNavigation  # why: route/tab rekey must precede exact-path working-set identity adoption; batch11e
 installRenameRefreshHandler
 isBlockMoving
+isBlockRefUuid  # why: an unresolved ((id)) that is not a UUID is shown, never looked up (GH #589); batch20b
 isConflicted
 isDirty
 isLoaded

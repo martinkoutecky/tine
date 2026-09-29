@@ -2759,6 +2759,21 @@ mod tests {
         let u = render_body("[X](((deadbeef-0000-0000-0000-000000000000)))", &refs);
         assert!(u.contains(r#"<span class="block-ref">X</span>"#), "{u}");
         assert!(!u.contains("((deadbeef"), "{u}");
+        // Unresolved bare ref -> its source text in full, as OG shows it, not
+        // lsdoc's eight-character placeholder (GH #589, master 34272cf6b).
+        let bare = render_body("((deadbeef-0000-0000-0000-000000000000))", &refs);
+        assert!(
+            bare.contains(
+                r#"<span class="block-ref">((deadbeef-0000-0000-0000-000000000000))</span>"#
+            ),
+            "{bare}"
+        );
+        // `(((uuid)))` parses (mldoc and lsdoc alike) as the id `(uuid` plus `)`.
+        let wrapped = render_body("(((deadbeef-0000-0000-0000-000000000000)))", &refs);
+        assert!(
+            wrapped.contains("(((deadbeef-0000-0000-0000-000000000000))</span>)"),
+            "{wrapped}"
+        );
         // A real URL with parentheses is captured whole (no truncation at first ')').
         let w = render_body(
             "[wiki](https://en.wikipedia.org/wiki/Foo_(bar))",
