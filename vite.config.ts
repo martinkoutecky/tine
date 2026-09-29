@@ -90,6 +90,13 @@ export default defineConfig({
   server: {
     port: 5181,
     strictPort: true,
+    // Build output and toolchains are not sources. Rust `target/` holds tens of
+    // thousands of directories per worktree; watching them exhausts inotify
+    // (ENOSPC) and kills the dev server / vite-node. Guard:
+    // src/viteWatchIgnore.guard.test.ts.
+    watch: {
+      ignored: ["**/target/**", "**/.toolchain/**", "**/.cargo/**", "**/dist/**"],
+    },
   },
   build: {
     target: "esnext",

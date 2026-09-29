@@ -25,8 +25,6 @@
     "ui:check-sidebar-row-hitbox": "node scripts/check-sidebar-row-hitbox.mjs",
     "ui:check-outline-guide-hitbox": "node scripts/check-outline-guide-hitbox.mjs",
     "ui:check-sidebar-resizer-scrollbar": "node scripts/check-sidebar-resizer-scrollbar.mjs",
-    "ui:check-outline-guide-hitbox": "node scripts/check-outline-guide-hitbox.mjs",
-    "ui:check-sidebar-resizer-scrollbar": "node scripts/check-sidebar-resizer-scrollbar.mjs",
     "ui:check-mobile-safe-area": "node scripts/check-mobile-safe-area.mjs",
     "ui:check-mobile-drawers": "node scripts/check-mobile-drawers.mjs",
     "ui:check-selection-toolbar": "node scripts/check-selection-toolbar.mjs",
