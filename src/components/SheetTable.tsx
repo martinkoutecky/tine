@@ -30,6 +30,7 @@ import { beginCellPointerSelection, isSheetPointerInteractive, sheetGridIdFromEv
 import {
   cycleField,
   fieldIdsForBlocks,
+  toggleStateMarkerLabel,
   fieldLabel,
   isFormulaField,
   readField,
@@ -1320,7 +1321,7 @@ function FieldCell(props: {
     props.freezeColumns();
     select();
     if (!editable()) return;
-    if (props.field === "state") cycleField(props.row.id, "state");
+    if (props.field === "state") toggleStateMarkerLabel(props.row.id);
     else if (props.field === "priority") cycleField(props.row.id, "priority");
     else if (props.field === "scheduled" || props.field === "deadline") {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();

@@ -6,6 +6,7 @@ import { type FieldType } from "../sheet/config";
 import { formulaValueText } from "../sheet/formulaEval";
 import type { FormulaValue } from "../sheet/formula";
 import { parseIsoDateLike } from "../sheet/typed";
+import { markerLabelClickable } from "../editor/repeat";
 
 /** Render one field value in its declared presentation; read-only and O(value length). */
 export function FieldValueView(props: {
@@ -28,6 +29,7 @@ export function FieldValueView(props: {
       <Show when={props.field === "state"}>
         <span
           class={`block-marker marker-${(props.value?.raw ?? "").toLowerCase()}`}
+          classList={{ "marker-clickable": markerLabelClickable(props.value?.raw) }}
           onClick={props.onControlClick}
           onDblClick={stopControlDoubleClick}
         >

@@ -230,6 +230,8 @@ mod parity_guide_tests {
         // GH #558: an alias row in `[[` completion names the page it belongs to.
         let welcome = include_str!("templates/welcome.md");
         assert!(welcome.contains("labelled **alias of** its page"));
+        // GH #259: a marker-label click toggles the open pair only.
+        assert!(welcome.contains("flips between the pair and never clears `DONE`"));
     }
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { hasRepeater, rollRepeat, cycleMarkerSmart, toggleTaskDone } from "./repeat";
+import { hasRepeater, rollRepeat, cycleMarkerSmart, toggleTaskDone, markerLabelClickable, toggleMarkerLabel } from "./repeat";
 
 describe("repeaters", () => {
   it("detects a repeater on scheduled/deadline", () => {
@@ -62,5 +62,16 @@ describe("repeaters", () => {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     expect(d.getTime()).toBeGreaterThan(todayStart.getTime());
+  });
+
+  it("marker-label clicks use Logseq's two-state toggle instead of the keyboard cycle", () => {
+    expect(toggleMarkerLabel("TODO buy milk")).toBe("DOING buy milk");
+    expect(toggleMarkerLabel("DOING buy milk")).toBe("TODO buy milk");
+    expect(toggleMarkerLabel("LATER buy milk")).toBe("NOW buy milk");
+    expect(toggleMarkerLabel("NOW buy milk")).toBe("LATER buy milk");
+    expect(toggleMarkerLabel("DONE buy milk")).toBeNull();
+    expect(toggleMarkerLabel("CANCELED buy milk")).toBeNull();
+    expect(["TODO", "DOING", "LATER", "NOW"].every(markerLabelClickable)).toBe(true);
+    expect(markerLabelClickable("DONE")).toBe(false);
   });
 });

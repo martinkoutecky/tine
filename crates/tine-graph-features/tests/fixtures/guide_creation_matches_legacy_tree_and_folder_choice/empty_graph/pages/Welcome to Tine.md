@@ -5,7 +5,7 @@ icon:: 👋
 	- **Everything you see here is a real Markdown file** in this graph's `pages/` folder. Open that folder in your file manager and look — nothing is locked away.
 - ## Try the basics right now
 	- Click any bullet to edit it. **Enter** makes a new bullet, **Tab** indents, **Shift+Tab** outdents. Drag a bullet's dot to move it (and everything under it).
-	- Tasks — type `TODO` / `DOING` / `DONE` at the start of a bullet, or press **Ctrl+Enter** to cycle one:
+	- Tasks — type `TODO` / `DOING` / `DONE` at the start of a bullet, or press **Ctrl+Enter** to cycle one; clicking a `TODO`/`DOING` (or `LATER`/`NOW`) label flips between the pair and never clears `DONE`:
 		- TODO Click this checkbox to complete me
 		- DONE This one is already done
 	- Rich text: **bold**, *italic*, ==highlight==, `inline code`, and even math like $e^{i\pi} + 1 = 0$.

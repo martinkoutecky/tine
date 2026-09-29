@@ -2,7 +2,7 @@ import { formatForBlock, setRaw, setBlockProperty, setSchedule, blockPageReadOnl
 import { facetsFromDto, facetsOf, inlineText, parseBody, tagIdentityKey, type Facets } from "../render/facets";
 import { isRenderHiddenProp } from "../render/block";
 import { leadingMarker, nextMarker, setMarker } from "../editor/marker";
-import { cycleMarkerSmart } from "../editor/repeat";
+import { cycleMarkerSmart, toggleMarkerLabel } from "../editor/repeat";
 import { MARKERS, matchLeadingMarker } from "../markers";
 import { workflow, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
 import type { Inline } from "../render/ast";
@@ -312,6 +312,21 @@ export function writeTagDelta(id: string, delta: { add?: string; remove?: string
       setRaw(id, raw, { timetracking: false });
     });
   }
+  return true;
+}
+
+/** A state-cell label click: OG's two-state toggle, never the keyboard cycle. */
+export function toggleStateMarkerLabel(id: string): boolean {
+  if (blockPageReadOnly(id)) return false;
+  const n = docNode(id);
+  if (!n) return false;
+  const raw = toggleMarkerLabel(n.raw, {
+    format: formatForBlock(id),
+    enabled: timetrackingEnabled(),
+    withSeconds: logbookWithSecondSupport(),
+  });
+  if (raw === null) return false;
+  setRaw(id, raw, { timetracking: false });
   return true;
 }
 

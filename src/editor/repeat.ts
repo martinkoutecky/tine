@@ -3,7 +3,7 @@
 // repeating task is cycled to DONE, OG instead advances the date(s) to the next
 // occurrence and resets the marker to the workflow's open state. Pure + tested.
 
-import { leadingMarker, nextMarker, cycleMarker, type Workflow } from "./marker";
+import { leadingMarker, nextMarker, cycleMarker, setMarker, type Workflow } from "./marker";
 import { taskCheckboxState } from "../markers";
 import { applyMarkerTransition } from "../logbook";
 import type { Format } from "../types";
@@ -91,6 +91,27 @@ export function rollRepeat(raw: string, workflow: Workflow): string | null {
  *  `now` workflow). Returns the new raw, or null if the block has no checkbox
  *  (no leading marker, or a CANCELED/CANCELLED one). Only line 0's marker word
  *  is rewritten; the rest of the block (properties, SCHEDULED/DEADLINE) is kept. */
+/** Whether a marker label click does anything (see toggleMarkerLabel). */
+export function markerLabelClickable(marker: string | null | undefined): boolean {
+  return marker === "TODO" || marker === "DOING" || marker === "LATER" || marker === "NOW";
+}
+
+/** Logseq's marker-label click is deliberately separate from its keyboard
+ * cycle: TODO <-> DOING and LATER <-> NOW. DONE and all other markers are not
+ * clickable, so a stray label click can never remove completion state. */
+export function toggleMarkerLabel(raw: string, time?: MarkerTimeOptions): string | null {
+  const current = leadingMarker(raw);
+  const target =
+    current === "TODO" ? "DOING" :
+    current === "DOING" ? "TODO" :
+    current === "LATER" ? "NOW" :
+    current === "NOW" ? "LATER" :
+    null;
+  if (!target) return null;
+  const next = setMarker(raw, target);
+  return time ? applyMarkerTransition(raw, next, time.format, time.enabled, time.withSeconds) : next;
+}
+
 export function toggleTaskDone(raw: string, workflow: Workflow, time?: MarkerTimeOptions): string | null {
   const cur = leadingMarker(raw);
   const state = taskCheckboxState(cur);

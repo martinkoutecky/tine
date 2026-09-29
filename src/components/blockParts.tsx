@@ -6,17 +6,20 @@
  * for the two toggles, the block they name. */
 import { For, type JSX } from "solid-js";
 import { node as docNode, pageByName, setRaw } from "../document";
-import { cycleMarkerSmart, toggleTaskDone } from "../editor/repeat";
+import { toggleMarkerLabel, toggleTaskDone } from "../editor/repeat";
 import type { LogbookInfo } from "../logbook";
 import { logbookWithSecondSupport, timetrackingEnabled, workflow } from "../ui";
 
-// Cycle the task marker on a block (OG order), used by the marker chip click.
-export function cycleBlockMarker(id: string) {
-  const { raw } = cycleMarkerSmart(docNode(id).raw, workflow(), {
+// Marker-label clicks follow OG's separate two-state toggle (TODO <-> DOING,
+// LATER <-> NOW). Keyboard marker cycling remains cycleMarkerSmart and may
+// still reach DONE / no marker; a label click never removes completion.
+export function toggleBlockMarkerLabel(id: string) {
+  const raw = toggleMarkerLabel(docNode(id).raw, {
     format: formatForBlockId(id),
     enabled: timetrackingEnabled(),
     withSeconds: logbookWithSecondSupport(),
   });
+  if (raw === null) return;
   setRaw(id, raw, { timetracking: false });
 }
 

@@ -4110,9 +4110,10 @@ html[data-system-insets="native-viewport"] {
   border-radius: 4px;
   background: color-mix(in srgb, currentColor 15%, transparent);
   color: var(--marker-color);
-  cursor: pointer;
+  cursor: default;
   vertical-align: 1px;
 }
+.block-marker.marker-clickable { cursor: pointer; }
 
 /* GFM `[ ]`/`[x]` checklist checkbox (distinct from TODO markers). */
 .block-checkbox {

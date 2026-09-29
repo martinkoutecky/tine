@@ -98,7 +98,7 @@ import { graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../ow
 import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
-import { cycleMarkerSmart } from "../editor/repeat";
+import { cycleMarkerSmart, markerLabelClickable } from "../editor/repeat";
 import { setMarker } from "../editor/marker";
 import { registerTransientLayer } from "../transientLayers";
 import { taskCheckboxState } from "../markers";
@@ -140,7 +140,7 @@ import { SheetContainer } from "./SheetContainer";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
-import { CalGlyph, ClockBadge, blockFirstLine, cycleBlockMarker, formatForBlockId, listLineAt, nearestScrollableY, timeStamp, toggleBlockCheckbox } from "./blockParts";
+import { CalGlyph, ClockBadge, blockFirstLine, toggleBlockMarkerLabel, formatForBlockId, listLineAt, nearestScrollableY, timeStamp, toggleBlockCheckbox } from "./blockParts";
 
 type SheetSlashView = "grid" | "table" | "board";
 
@@ -639,9 +639,10 @@ function Rendered(props: {
       <Show when={facets().marker}>
         <span
           class={`block-marker marker-${facets().marker?.toLowerCase()}`}
+          classList={{ "marker-clickable": markerLabelClickable(facets().marker) }}
           onClick={(e) => {
             e.stopPropagation();
-            cycleBlockMarker(props.id);
+            toggleBlockMarkerLabel(props.id);
           }}
         >
           {facets().marker}
