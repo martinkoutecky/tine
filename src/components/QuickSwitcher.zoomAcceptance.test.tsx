@@ -43,7 +43,8 @@ describe("Reset zoom through the rendered command palette", () => {
       activeIndex: 0,
     });
     const pdfPane = splitRootAtEdge("right", "main")!;
-    paneRouter(pdfPane).openInNewTab({ kind: "pdf", viewId: "reading-view", filename: "assets/paper.pdf", label: "Paper", page: 7, scale: 1.8 }, true);
+    // og shows a PDF in its own pane (activePane below), not as a pane route.
+    paneRouter(pdfPane).openInNewTab({ kind: "page", name: "Paper", pageKind: "page" }, true);
     focusPane(pdfPane);
     const paneIds = layoutPaneIds();
     const snapshots = paneIds.map((id) => paneRouter(id).snapshot());

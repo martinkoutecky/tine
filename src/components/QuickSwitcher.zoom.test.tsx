@@ -20,10 +20,12 @@ afterEach(() => {
 describe("Reset interface zoom command (GH #522)", () => {
   it.each([
     { name: "enlarged notes", adjust: zoomIn, current: { kind: "page", name: "Notes", pageKind: "page", block: "focused-block" } },
-    { name: "reduced PDF", adjust: zoomOut, current: { kind: "pdf", viewId: "reading", filename: "paper.pdf", label: "Paper", page: 4, scale: 1.7 } },
+    // og shows PDFs in their own pane (activePane) rather than as a pane route.
+    { name: "reduced PDF", adjust: zoomOut, current: { kind: "journals" }, pdf: true },
     { name: "already default", adjust: zoomReset, current: { kind: "journals" } },
-  ] satisfies { name: string; adjust: () => void; current: Route }[])("resets $name through the searchable palette without navigating", async ({ adjust, current }) => {
+  ] satisfies { name: string; adjust: () => void; current: Route; pdf?: boolean }[])("resets $name through the searchable palette without navigating", async ({ adjust, current, pdf }) => {
     resetPaneLayoutToSingle({ tabs: [{ history: [current], pos: 0, pinned: false }], activeIndex: 0 });
+    setActivePane(pdf ? "pdf" : "notes");
     adjust();
     if (interfaceZoom() !== 1) {
       expect(localStorage.getItem("logseq-claude.zoom")).toBe(String(interfaceZoom()));
@@ -48,6 +50,7 @@ describe("Reset interface zoom command (GH #522)", () => {
     expect(switcherOpen()).toBe(false);
     expect(route()).toEqual(previousRoute);
     expect(focusedPaneId()).toBe(previousPane);
+    setActivePane("notes");
   });
 
   // og keeps the PDF in its own pane (activePane), where master routes PDFs inside
