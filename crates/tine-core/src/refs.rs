@@ -4,6 +4,8 @@
 
 use unicode_normalization::UnicodeNormalization;
 
+use crate::config::FileNameFormat;
+
 /// The ONE page-name identity key: trimmed + **Unicode** lowercase + NFC (the
 /// OG/Logseq fold). Use this — never a bare
 /// `to_ascii_lowercase`/`eq_ignore_ascii_case` on a
@@ -160,7 +162,7 @@ fn inline_code_spans(line: &str, base: usize, out: &mut Vec<std::ops::Range<usiz
 }
 
 /// Whether byte `pos` is inside a code range, using a monotone cursor. The callers
-/// (`rename_refs`, `rename_tags_property`) scan left-to-right with a monotonically
+/// (`rename_refs_multi`, `rename_tags_property`) scan left-to-right with a monotonically
 /// increasing `pos`, and `ranges` are ascending + non-overlapping (see
 /// `code_ranges_for`), so we advance `cursor` past spent ranges instead of scanning
 /// ALL ranges for every byte — making rename O(n) instead of O(n·ranges).
@@ -301,18 +303,6 @@ pub fn as_block_ref(url: &str) -> Option<&str> {
         .map(str::trim)
 }
 
-/// Rewrite every reference to page `from` (case-insensitive) as `to`, returning
-/// the new text. Handles `[[from]]`, `#from`, and `#[[from]]`. A `#tag` becomes
-/// `#[[to]]` when `to` contains characters that aren't valid in a bare tag
-/// (e.g. spaces), matching Logseq.
-pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
-    // Single-target is just the one-entry multi case — keep ONE rewriter so the
-    // single- and multi-target callers can never drift on matching/escaping rules.
-    let mut map = std::collections::HashMap::with_capacity(1);
-    map.insert(normalize(from), to.to_string());
-    rename_refs_multi(raw, &map, is_org)
-}
-
 /// Rewrite every reference to ANY page in `renames` (keyed by `normalize(from)`,
 /// valued by the display `to`) in a SINGLE left-to-right pass, computing the
 /// code/fence ranges ONCE. This is the namespace-rename hot path: a primary page
@@ -320,11 +310,15 @@ pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
 /// per `(old,new)` pair); now each file is scanned once against the whole rename
 /// set. Each matched ref is mapped by its own normalized name (no chaining — a
 /// reference to `A` always becomes `renames[A]`, even if some other pair renames
-/// to `A`).
+/// to `A`). Org `[[file:…]]` links decode and re-encode their target stem
+/// through the graph's `file_name_format`, the codec the page move itself uses
+/// (master b8f73b9af107), so legacy, triple-lowbar and reserved-character
+/// targets name the renamed file.
 pub fn rename_refs_multi(
     raw: &str,
     renames: &std::collections::HashMap<String, String>,
     is_org: bool,
+    file_name_format: FileNameFormat,
 ) -> String {
     let code = code_ranges_for(raw, is_org);
     let mut code_cur = 0usize; // monotone cursor into `code` (i only increases)
@@ -341,7 +335,9 @@ pub fn rename_refs_multi(
             // rename (L1). Only for org; markdown has no `file:` page links.
             if is_org && rest.starts_with("[[") {
                 if let Some(end) = rest[2..].find("]]") {
-                    if let Some(rw) = rewrite_org_file_link(&rest[2..2 + end], renames) {
+                    if let Some(rw) =
+                        rewrite_org_file_link(&rest[2..2 + end], renames, file_name_format)
+                    {
                         out.push_str(&rw);
                         i += 2 + end + 2;
                         continue;
@@ -402,11 +398,12 @@ pub fn rename_refs_multi(
 /// (namespace-decoded `___`→`/`, extension stripped) normalizes to a key in
 /// `renames`. Returns the full replacement `[[file:…]]` (preserving dir,
 /// extension, and any `[desc]`), or `None` if it isn't a matching file link.
-/// Mirrors the model's `encode_page_name` (`/`→`___`) so the new stem names the
-/// renamed file.
+/// Decodes and re-encodes through the graph's shared filename policy so legacy,
+/// triple-lowbar, and reserved-character targets match the transactional move.
 fn rewrite_org_file_link(
     inner: &str,
     renames: &std::collections::HashMap<String, String>,
+    file_name_format: FileNameFormat,
 ) -> Option<String> {
     let body = inner.strip_prefix("file:")?;
     let (path_part, desc) = match body.find("][") {
@@ -419,8 +416,9 @@ fn rewrite_org_file_link(
         Some((s, e)) => (s, format!(".{e}")),
         None => (file, String::new()),
     };
-    let to = renames.get(&normalize(&stem.replace("___", "/")))?;
-    let new_stem = to.replace('/', "___");
+    let decoded = crate::model::decode_page_name(stem, file_name_format);
+    let to = renames.get(&normalize(&decoded))?;
+    let new_stem = crate::model::encode_page_name(to, file_name_format);
     let desc_part = desc.map(|d| format!("][{d}")).unwrap_or_default();
     Some(format!("[[file:{dir}{new_stem}{ext}{desc_part}]]"))
 }
@@ -435,10 +433,10 @@ fn tag_for(to: &str) -> String {
 }
 
 /// Rewrite **bare** page-name refs in `tags::` property values from `from` to
-/// `to`. `page_refs`/`rename_refs` only see inline `[[..]]`/`#..`, so bare
+/// `to`. `page_refs`/`rename_refs_multi` only see inline `[[..]]`/`#..`, so bare
 /// comma-separated tag names (`tags:: Old, Foo`) are invisible to them — yet
 /// Logseq indexes those as real references, so a rename must update them too.
-/// Bracketed (`[[..]]`) and `#`-prefixed values are left to `rename_refs`.
+/// Bracketed (`[[..]]`) and `#`-prefixed values are left to `rename_refs_multi`.
 /// `tags::` lines inside a code fence are skipped (literal text, like inline
 /// refs in code). Whitespace, commas, and the `key::` prefix are preserved
 /// verbatim for byte-exact round-tripping of everything but the matched name.
@@ -517,6 +515,14 @@ fn rewrite_bare_tags(valpart: &str, renames: &std::collections::HashMap<String, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Single-target rewrite: the one-entry case of [`rename_refs_multi`], so the
+    /// tests exercise the same rewriter the graph rename uses.
+    fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
+        let mut map = std::collections::HashMap::with_capacity(1);
+        map.insert(normalize(from), to.to_string());
+        rename_refs_multi(raw, &map, is_org, FileNameFormat::TripleLowbar)
+    }
 
     #[test]
     fn rename_literal_runs_cross_code_boundaries_and_preserve_unicode() {
@@ -651,6 +657,33 @@ mod tests {
             rename_refs("[[file:./pages/Old.org]]", "Old", "New", false),
             "[[file:./pages/Old.org]]"
         );
+    }
+
+    #[test]
+    fn org_file_link_rename_uses_safe_page_filename_codec() {
+        for (format, old_title, old_stem, new_title) in [
+            (
+                FileNameFormat::Legacy,
+                "Old.Name",
+                "Old%2EName",
+                "2026-07-23_18:01:20",
+            ),
+            (
+                FileNameFormat::TripleLowbar,
+                "Old/Name",
+                "Old___Name",
+                "CON",
+            ),
+        ] {
+            let mut renames = std::collections::HashMap::new();
+            renames.insert(normalize(old_title), new_title.to_owned());
+            let raw = format!("[[file:./pages/{old_stem}.org][page]]");
+            let expected = format!(
+                "[[file:./pages/{}.org][page]]",
+                crate::model::encode_page_name(new_title, format)
+            );
+            assert_eq!(rename_refs_multi(&raw, &renames, true, format), expected);
+        }
     }
 
     #[test]

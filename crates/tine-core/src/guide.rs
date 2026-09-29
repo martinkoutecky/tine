@@ -133,7 +133,13 @@ pub fn guide_link_renames() -> HashMap<String, String> {
 }
 
 pub fn rewrite_bundled_guide_links(markdown: &str, renames: &HashMap<String, String>) -> String {
-    crate::refs::rename_refs_multi(markdown, renames, false)
+    // Markdown has no `file:` page links, so the filename format is not consulted.
+    crate::refs::rename_refs_multi(
+        markdown,
+        renames,
+        false,
+        crate::config::FileNameFormat::TripleLowbar,
+    )
 }
 
 pub fn collect_guide_asset_refs(markdown: &str, into: &mut HashSet<String>) {

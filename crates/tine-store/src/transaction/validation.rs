@@ -5,7 +5,12 @@ use std::path::Path;
 use super::io_helpers::{content_refusal, failed};
 use super::{Content, FileId, Refusal, RenameMap, Store, Why};
 
-pub(super) fn rewrite(old: &[u8], path: &Path, map: &RenameMap) -> Result<Vec<u8>, Why> {
+pub(super) fn rewrite(
+    old: &[u8],
+    path: &Path,
+    map: &RenameMap,
+    name_format: tine_core::config::FileNameFormat,
+) -> Result<Vec<u8>, Why> {
     let text = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
     let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
     let renames: std::collections::HashMap<String, String> = map
@@ -14,7 +19,7 @@ pub(super) fn rewrite(old: &[u8], path: &Path, map: &RenameMap) -> Result<Vec<u8
         .map(|(from, to)| (tine_core::refs::normalize(from), to.clone()))
         .collect();
     let rewritten = tine_core::refs::rename_tags_property_multi(
-        &tine_core::refs::rename_refs_multi(text, &renames, is_org),
+        &tine_core::refs::rename_refs_multi(text, &renames, is_org, name_format),
         &renames,
         is_org,
     );
@@ -37,7 +42,7 @@ pub(super) fn rewrite_move(
     map: &RenameMap,
     name_format: tine_core::config::FileNameFormat,
 ) -> Result<Vec<u8>, Why> {
-    let rewritten = rewrite(old, path, map)?;
+    let rewritten = rewrite(old, path, map, name_format)?;
     let format = tine_core::model::Format::from_path(path);
     let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
         return Ok(rewritten);
