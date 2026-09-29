@@ -16,6 +16,8 @@ import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
 import { SheetTable } from "./SheetTable";
+import { TodayTaskSummary } from "./TodayTaskSummary";
+import { selectedThemePresentation } from "../themeGallery";
 import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
 import { aliasNamesOf, visibleBody } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
@@ -807,12 +809,17 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     }
   };
 
+  // Theme API 0.2 (master 1488588b8): the editorial header and the compact
+  // task summary apply to today's journal only.
+  const isTodayJournal = () => props.page.kind === "journal"
+    && props.page.name === journalTitle(localDateFromDayKey(currentDayKey()));
   return (
-    <div class="page-section">
+    <div class="page-section" classList={{ "journal-today": isTodayJournal() }}>
       <Show when={props.page.kind === "page"}>
         <NamespaceCrumb name={props.page.name} />
       </Show>
       <div class="page-title-row">
+        <div class="page-title-main">
         <Show
           when={!renaming()}
           fallback={
@@ -883,6 +890,11 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
             <EmojiText text={props.page.title} />
           </h1>
         </Show>
+        <Show when={isTodayJournal() && selectedThemePresentation().todayTaskSummary === "compact"}>
+          <TodayTaskSummary page={props.page} />
+        </Show>
+        </div>
+        <div class="page-title-actions">
         <Show when={!props.page.guide}>
           <CarryActions page={props.page} />
           <TagTableToggle page={props.page} />
@@ -932,6 +944,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
             </svg>
           </button>
         </Show>
+        </div>
       </div>
       <Show when={aliasNamesOf(headerProperties()).length}>
         <div class="page-aliases" title="Also known as — other names that link here" onClick={editPageHeader}>

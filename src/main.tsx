@@ -23,6 +23,7 @@ import "./styles/theme.css";
 import "./lsShimInstall";
 import "./styles/app.css";
 import "./styles/readiness.css";
+import "./styles/themePresentation.css";
 import "./styles/query.css";
 import "./styles/published.css";
 

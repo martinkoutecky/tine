@@ -1,0 +1,95 @@
+/* Theme API 0.2 presentation presets (master 1488588b8/670cf75bb, ADR 0059).
+ * Packages select these bounded host-owned treatments via attributes on <html>
+ * (src/themeGallery.ts); selectors, measurements, responsive behavior and
+ * content stay under Tine's control. Kept out of app.css (og size ratchet).
+ *
+ * The title row's two wrappers are layout-neutral by default, so pages without
+ * a presentation keep og's row exactly; only the editorial today header uses them. */
+.page-title-main,
+.page-title-actions {
+  display: contents;
+}
+
+/* og keeps its fixed 26px block line box (app.css .block-content/.block-editor)
+ * instead of master's --ls-block-line-height token, so the serif face changes the
+ * glyphs but never the line box the bullet column is aligned to (GH #459). */
+html[data-theme-content-typography="editorial-serif"] .page-section {
+  --tine-editable-font: "Iowan Old Style", "Palatino Linotype", "Book Antiqua",
+    Palatino, Georgia, "Noto Emoji Variable", serif;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino,
+    Georgia, serif;
+  font-size: 19px;
+}
+
+html[data-theme-journal-header="editorial"] .journal-title {
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino,
+    Georgia, serif;
+  font-size: 34px;
+  font-weight: 700;
+}
+
+html[data-theme-journal-header="editorial"] .journal-title .title-cal {
+  display: none;
+}
+
+html[data-theme-journal-header="editorial"] .page-section.journal-today .page-title-row {
+  display: block;
+}
+
+html[data-theme-journal-header="editorial"] .page-section.journal-today .page-title-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 0;
+}
+
+html[data-theme-journal-header="editorial"] .page-section.journal-today .journal-title {
+  max-width: 100%;
+  margin: 4px 0 8px;
+  font-size: 46px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+html[data-theme-journal-header="editorial"] .page-section.journal-today .page-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 9px;
+}
+
+html[data-theme-journal-header="editorial"] .page-section.journal-today .page-carry-actions {
+  margin-left: 0;
+}
+
+.today-task-summary {
+  color: var(--text-secondary);
+  font-family: var(--ls-font-family);
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+@media (hover: none) {
+  html[data-theme-journal-header="editorial"] .journal-title:hover {
+    color: var(--text-title);
+  }
+}
+
+@media (max-width: 640px) {
+  html[data-theme-journal-header="editorial"] .page-title.journal-title {
+    font-size: 28px;
+    line-height: 1.18;
+  }
+  html[data-theme-journal-header="editorial"] .page-section.journal-today .journal-title {
+    font-size: 38px;
+    white-space: normal;
+  }
+  html[data-theme-journal-header="editorial"] .page-section.journal-today .page-title-actions {
+    margin-top: 7px;
+  }
+  .today-task-summary {
+    font-size: 15px;
+  }
+}

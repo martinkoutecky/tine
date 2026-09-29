@@ -1326,6 +1326,7 @@ describe("page route loading", () => {
   it("keeps a visible readiness status while the requested page is still loading", async () => {
     // master 51185bbe3 (GH #299): the loading fallback was an empty box.
     const dto: PageRead = {
+      id: "pages/Patient page.md",
       name: "Patient page",
       kind: "page",
       title: "Patient page",
@@ -1813,6 +1814,70 @@ describe("Markdown preamble content", () => {
       expect(root.querySelector(`[data-block-id="${promoted}"] textarea`)).not.toBeNull();
     } finally {
       dispose();
+    }
+  });
+});
+
+describe("theme API 0.2 presentation on the journal title row", () => {
+  it("marks only today's journal and shows its compact task summary while the style theme selects it", async () => {
+    // master 1488588b8 / 670cf75bb (ADR 0059).
+    vi.stubGlobal("IntersectionObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const { applyTheme } = await import("../themeGallery");
+    const { installThemePackage, uninstallThemePackage } = await import("../themes/manager");
+    const { currentDayKey, localDateFromDayKey } = await import("../journal");
+    const todayDate = localDateFromDayKey(currentDayKey());
+    const today = journalTitle(todayDate);
+    const yesterday = journalTitle(new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate() - 1));
+    // The backend ships each block's marker facet (BlockDto); seed it as it would.
+    const todayDto = journalDto(today, "DOING Draft the summary");
+    todayDto.blocks[0].marker = "DOING";
+    const yesterdayDto = journalDto(yesterday, "TODO Older task");
+    yesterdayDto.blocks[0].marker = "TODO";
+    vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () => feedResponse([todayDto, yesterdayDto]));
+    const installed = await installThemePackage({
+      schemaVersion: 1,
+      id: "page.tine.theme.page-summary",
+      name: "Page summary",
+      version: "1.0.0",
+      apiVersion: "0.2",
+      description: "A bounded presentation fixture.",
+      author: "Tine",
+      license: "MIT",
+      source: "https://example.invalid/theme",
+      modes: { light: { "--ls-primary-background-color": "#fefefe" } },
+      presentation: { journalHeader: "editorial", todayTaskSummary: "compact" },
+      screenshots: [],
+    });
+    const mounted = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(mounted.root.textContent).toContain("Older task"));
+      const sections = () => Array.from(mounted.root.querySelectorAll<HTMLElement>(".page-section"));
+      const sectionFor = (name: string) => sections().find((section) =>
+        section.querySelector(".page-title")?.textContent?.includes(name))!;
+      expect(sectionFor(today).classList.contains("journal-today")).toBe(true);
+      expect(sectionFor(yesterday).classList.contains("journal-today")).toBe(false);
+      expect(mounted.root.querySelector(".today-task-summary")).toBeNull();
+
+      applyTheme(installed.key);
+      await tick();
+      const summary = sectionFor(today).querySelector(".today-task-summary");
+      expect(summary?.textContent).toBe("1 task today, 1 in progress");
+      expect(sectionFor(yesterday).querySelector(".today-task-summary")).toBeNull();
+      expect(sectionFor(today).querySelector(".page-title-main .page-title")).not.toBeNull();
+      expect(sectionFor(today).querySelector(".page-title-actions .fav-star")).not.toBeNull();
+
+      applyTheme("");
+      await tick();
+      expect(mounted.root.querySelector(".today-task-summary")).toBeNull();
+    } finally {
+      mounted.dispose();
+      applyTheme("");
+      await uninstallThemePackage(installed.key);
+      vi.unstubAllGlobals();
     }
   });
 });
