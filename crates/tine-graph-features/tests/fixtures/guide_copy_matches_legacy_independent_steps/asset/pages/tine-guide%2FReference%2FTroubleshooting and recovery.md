@@ -6,7 +6,8 @@ icon:: 🛟
 	- Meaning: the file changed elsewhere (a sync tool or another editor) while you had unsaved edits. The banner reads “*Page* changed on disk. Your unsaved changes weren't written.” Nothing was written over — your unsaved text is still on screen.
 	- 1. If the disk version is the one you want, choose **Use disk version** — Tine re-reads the file. Copy your unsaved text somewhere first if you still need parts of it.
 	- 2. If your version is right, choose **Keep mine (overwrite)** — Tine writes yours over the file.
-	- 3. What you should see: the banner clears and the page saves normally again. Until you choose, that page is skipped by saving rather than silently clobbered.
+	- 3. To keep parts of both, open the page: a panel at its top compares **Your unsaved edits** with **The file on disk now** block by block. Choose per block, then **Apply resolution**. When Tine still has the version you started editing from, it pre-selects each side's own change. If the file changes again before you apply, nothing is written and the comparison refreshes.
+	- 4. What you should see: the banner clears and the page saves normally again. Until you choose, that page is skipped by saving rather than silently clobbered. If Tine closes first, your unsaved text is kept, and the same comparison appears on that page after the next start (even when the page itself cannot be opened).
 - ## Restore a deleted page or journal
 	- 1. Open `logseq/.tine-trash/pages/` or `logseq/.tine-trash/journals/` inside your graph. Deleted files have a timestamp followed by `__` before their original name.
 	- 2. Remove the timestamp and `__`, then move the file into the configured pages or journals folder. For a page that originally lived elsewhere, you may return it to that location instead.
