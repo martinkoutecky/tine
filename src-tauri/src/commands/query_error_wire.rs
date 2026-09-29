@@ -36,7 +36,7 @@ pub(super) fn query_error(error: QueryError) -> String {
 
 /// Report a reference-read failure: a fixed budget family crosses the wire,
 /// while full query detail is written only to the opt-in private debug log.
-/// Cost is O(1); callers display their own fixed text for this family.
+/// Cost is O(error detail length); callers display fixed text for this family.
 pub(super) fn reference_error(error: QueryError) -> String {
     let bounded = matches!(&error, QueryError::ResultTooLarge { .. });
     let detail = query_error(error);
