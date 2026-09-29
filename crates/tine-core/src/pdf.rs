@@ -330,39 +330,57 @@ fn deep_merge(old: &mut Vec<(Edn, Edn)>, new: Vec<(Edn, Edn)>) {
 /// Tine's fields for one highlight, merged ONTO its existing EDN map (matched by id)
 /// so any keys the user/Logseq added — at the top level or inside content/properties —
 /// survive a highlight edit. A brand-new highlight has no existing map → just ours.
+/// Only the model fields that CHANGED are written: an untouched entry is kept
+/// value-for-value, and a recolour does not rewrite `:position`, so rects or
+/// spellings this model cannot read survive an unrelated edit.
 fn merge_highlight(existing: Option<&Edn>, h: &Highlight) -> Edn {
-    match (existing, highlight_to(h)) {
-        (Some(Edn::Map(old)), Edn::Map(new)) => {
-            let mut merged = old.clone();
-            // `:position/:bounding` is deep-merged so foreign metadata survives,
-            // but its old and current coordinate spellings must not coexist: an
-            // old `:top` would otherwise shadow newly-written `:x1` on the next
-            // read. `:rects` is replaced as a whole by deep_merge below.
-            if let Some((_, Edn::Map(position))) = merged
-                .iter_mut()
-                .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "position"))
-            {
-                if let Some((_, Edn::Map(bounding))) = position
-                    .iter_mut()
-                    .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "bounding"))
-                {
-                    bounding.retain(|(key, _)| {
-                        !matches!(
-                            key,
-                            Edn::Keyword(name)
-                                if matches!(
-                                    name.as_str(),
-                                    "top" | "left" | "x1" | "y1" | "x2" | "y2" | "width" | "height"
-                                )
-                        )
-                    });
-                }
-            }
-            deep_merge(&mut merged, new);
-            Edn::Map(merged)
+    let (Some(Edn::Map(old)), Edn::Map(mut new)) = (existing, highlight_to(h)) else {
+        return highlight_to(h);
+    };
+    if let Some(prior) = existing.and_then(highlight_from) {
+        if prior == *h {
+            return existing.cloned().unwrap_or_else(|| highlight_to(h));
         }
-        (_, ours) => ours,
+        new.retain(|(key, _)| match key {
+            Edn::Keyword(name) => match name.as_str() {
+                "page" => prior.page != h.page,
+                "position" => prior.position != h.position,
+                "content" => prior.text != h.text || prior.image != h.image,
+                "properties" => prior.color != h.color,
+                _ => true,
+            },
+            _ => true,
+        });
     }
+    let mut merged = old.clone();
+    let rewrites_position = new
+        .iter()
+        .any(|(key, _)| matches!(key, Edn::Keyword(name) if name == "position"));
+    // `:position/:bounding` is deep-merged so foreign metadata survives,
+    // but its old and current coordinate spellings must not coexist: an
+    // old `:top` would otherwise shadow newly-written `:x1` on the next
+    // read. `:rects` is replaced as a whole by deep_merge below.
+    if let Some((_, Edn::Map(position))) = merged.iter_mut().find(|(key, _)| {
+        rewrites_position && matches!(key, Edn::Keyword(name) if name == "position")
+    }) {
+        if let Some((_, Edn::Map(bounding))) = position
+            .iter_mut()
+            .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "bounding"))
+        {
+            bounding.retain(|(key, _)| {
+                !matches!(
+                    key,
+                    Edn::Keyword(name)
+                        if matches!(
+                            name.as_str(),
+                            "top" | "left" | "x1" | "y1" | "x2" | "y2" | "width" | "height"
+                        )
+                )
+            });
+        }
+    }
+    deep_merge(&mut merged, new);
+    Edn::Map(merged)
 }
 
 /// Serialize highlights to `assets/<key>.edn`, PRESERVING the foreign content of the
@@ -382,12 +400,31 @@ pub fn write_highlights(highlights: &[Highlight], existing_edn: &str) -> String 
                 .collect()
         })
         .unwrap_or_default();
-    let hl_vec = Edn::Vec(
-        highlights
-            .iter()
-            .map(|h| merge_highlight(existing_by_id.get(&h.id), h))
-            .collect(),
-    );
+    let mut hl_items: Vec<Edn> = highlights
+        .iter()
+        .map(|h| merge_highlight(existing_by_id.get(&h.id), h))
+        .collect();
+    // An entry this model cannot read (reversed rect, missing position, a
+    // foreign shape) was never shown to the user, so no caller can have
+    // deleted it: carry it through value-for-value at its original index
+    // (L01 H1; in-scope: malformed imported content, a newer OG sidecar).
+    let owned: HashSet<&str> = highlights.iter().map(|h| h.id.as_str()).collect();
+    if let Some(entries) = root
+        .as_ref()
+        .and_then(|r| r.get("highlights"))
+        .and_then(Edn::as_vec)
+    {
+        for (index, entry) in entries.iter().enumerate() {
+            let claimed = entry
+                .get("id")
+                .and_then(highlight_id)
+                .is_some_and(|id| owned.contains(id));
+            if highlight_from(entry).is_none() && !claimed {
+                hl_items.insert(index.min(hl_items.len()), entry.clone());
+            }
+        }
+    }
+    let hl_vec = Edn::Vec(hl_items);
 
     // Keep every existing root key; replace only `:highlights`; ensure `:extra` exists
     // (OG canonical). A new/empty/unparseable file yields the canonical skeleton.

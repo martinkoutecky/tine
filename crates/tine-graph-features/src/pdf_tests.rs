@@ -214,6 +214,68 @@ fn c3u_entries(raw: &str) -> Vec<tine_core::edn::Edn> {
 }
 
 #[test]
+fn unreadable_sidecar_entries_and_their_page_blocks_survive_a_highlight_add() {
+    // Each shape is one `highlight_from` rejects today.
+    let bad_shapes = [
+        // reversed bbox (x2 < x1)
+        format!(
+            r#"{{:id #uuid "{B}" :page 1 :position {{:page 1 :bounding {{:x1 10 :y1 1 :x2 5 :y2 4 :width 600 :height 800}} :rects ()}} :content {{:text "bee"}} :properties {{:color "red"}}}}"#
+        ),
+        // missing :position
+        format!(
+            r#"{{:id #uuid "{B}" :page 1 :content {{:text "bee"}} :properties {{:color "red"}}}}"#
+        ),
+        // non-int page
+        format!(
+            r#"{{:id #uuid "{B}" :page "one" :position {{:page 1 :bounding {{:top 1 :left 1 :width 2 :height 2}} :rects ()}} :content {{:text "bee"}}}}"#
+        ),
+        // source width 0
+        format!(
+            r#"{{:id #uuid "{B}" :page 1 :position {{:page 1 :bounding {{:x1 1 :y1 1 :x2 5 :y2 4 :width 0 :height 800}} :rects ()}} :content {{:text "bee"}}}}"#
+        ),
+    ];
+    for (n, bad) in bad_shapes.iter().enumerate() {
+        let root = c3u_graph(&format!("bad{n}"));
+        let sidecar = format!(
+            "{{:highlights [{} {bad}] :extra {{:page 3}}}}\n",
+            c3u_entry(A, "aye")
+        );
+        std::fs::write(root.join("assets/paper.edn"), &sidecar).unwrap();
+        std::fs::write(
+            root.join("pages/hls__paper.md"),
+            c3u_page(&[(A, "aye"), (B, "bee")]),
+        )
+        .unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let loaded = read_highlights_checked(&store, "paper.pdf").unwrap();
+        assert_eq!(loaded.len(), 1, "shape {n}: fixture must be unreadable");
+        let mut next = loaded.clone();
+        next.push(c3u_highlight(C, "sea"));
+        write_highlights(&store, "paper.pdf", "Paper", &next, &loaded).unwrap();
+
+        let written = std::fs::read_to_string(root.join("assets/paper.edn")).unwrap();
+        let bad_value = tine_core::edn::parse_strict(bad).unwrap();
+        assert!(
+            c3u_entries(&written).contains(&bad_value),
+            "shape {n}: unreadable entry dropped from sidecar:\n{written}"
+        );
+        assert_eq!(c3u_entries(&written).len(), 3, "shape {n}: {written}");
+        let page = std::fs::read_to_string(root.join("pages/hls__paper.md")).unwrap();
+        for needle in [
+            format!("id:: {B}"),
+            "my note on bee".to_string(),
+            format!("id:: {A}"),
+            "my note on aye".to_string(),
+            format!("id:: {C}"),
+        ] {
+            assert!(page.contains(&needle), "shape {n}: {needle} lost:\n{page}");
+        }
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
 fn highlight_add_before_the_sidecar_syncs_keeps_existing_annotations() {
     // Syncthing/Dropbox delivered the hls page but not (yet) its sidecar.
     let root = c3u_graph("nosidecar");
@@ -274,6 +336,57 @@ fn deleting_a_known_highlight_still_drops_its_block_and_entry() {
     assert!(!page.contains(&format!("id:: {B}")), "{page}");
     let written = std::fs::read_to_string(root.join("assets/paper.edn")).unwrap();
     assert_eq!(c3u_entries(&written).len(), 1, "{written}");
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn unchanged_entries_keep_fields_og_cannot_read_across_an_unrelated_edit() {
+    // A readable entry carrying one rect og rejects (reversed) and a symbol value.
+    let root = c3u_graph("partial");
+    let partial = format!(
+        r#"{{:id #uuid "{B}" :page 1 :position {{:page 1 :bounding {{:top 1 :left 1 :width 2 :height 2}} :rects ({{:top 1 :left 1 :width 2 :height 2}} {{:x1 9 :y1 1 :x2 3 :y2 4 :width 600 :height 800}})}} :content {{:text "bee"}} :properties {{:color "red"}} :plugin/kind foo.bar/baz}}"#
+    );
+    std::fs::write(
+        root.join("assets/paper.edn"),
+        format!(
+            "{{:highlights [{} {partial}] :extra {{}}}}\n",
+            c3u_entry(A, "aye")
+        ),
+    )
+    .unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let loaded = read_highlights_checked(&store, "paper.pdf").unwrap();
+    assert_eq!(loaded.len(), 2);
+    // Recolour B (geometry untouched) and add C.
+    let mut next = loaded.clone();
+    next[1].color = "green".into();
+    next.push(c3u_highlight(C, "sea"));
+    write_highlights(&store, "paper.pdf", "Paper", &next, &loaded).unwrap();
+    let written = std::fs::read_to_string(root.join("assets/paper.edn")).unwrap();
+    let entries = c3u_entries(&written);
+    let b = entries
+        .iter()
+        .find(|e| {
+            e.get("content")
+                .and_then(|c| c.get("text"))
+                .and_then(tine_core::edn::Edn::as_str)
+                == Some("bee")
+        })
+        .unwrap();
+    assert_eq!(
+        b.get("position")
+            .and_then(|p| p.get("rects"))
+            .and_then(tine_core::edn::Edn::as_vec)
+            .map(<[_]>::len),
+        Some(2),
+        "unreadable rect dropped by a recolour:\n{written}"
+    );
+    assert!(
+        written.contains(":plugin/kind foo.bar/baz"),
+        "symbol changed type:\n{written}"
+    );
+    assert!(written.contains(r#":color "green""#), "{written}");
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
