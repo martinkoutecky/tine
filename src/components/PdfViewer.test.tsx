@@ -172,6 +172,32 @@ describe("PdfViewer resource safety", () => {
     }
   });
 
+  it("renders visible high-zoom tiles through the mounted reader", async () => {
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 4 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const pdfPage = page(612, 792);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([pdfPage])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="large.pdf" label="Large" />, host);
+    try {
+      await flush();
+      const scroller = host.querySelector<HTMLElement>(".pdf-scroll")!;
+      const wrapper = host.querySelector<HTMLElement>(".pdf-page")!;
+      const box = (width: number, height: number) => ({ left: 0, top: 0, right: width,
+        bottom: height, width, height, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+      vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(box(900, 800));
+      vi.spyOn(wrapper, "getBoundingClientRect").mockReturnValue(box(2448, 3168));
+      TestIntersectionObserver.instances.at(-1)!.show(wrapper);
+      await vi.waitFor(() => expect(wrapper.querySelectorAll(".pdf-tile-layer canvas").length).toBeGreaterThan(0));
+      expect(pdfPage.render.mock.calls.some(([options]) => Array.isArray(options.transform)
+        && options.transform.length === 6)).toBe(true);
+    } finally {
+      dispose();
+    }
+  });
+
   it("keeps the outline usable when PDF metadata is deeply nested", async () => {
     vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
     vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));

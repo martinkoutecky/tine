@@ -196,7 +196,7 @@ let pdfViewCounter = 0;
 /** Mint a tab-local PDF view ID, avoiding IDs already restored in a session. */
 export function mintPdfViewId(used: ReadonlySet<string> = new Set()): string {
   let id: string;
-  do { id = `pdf-${Date.now().toString(36)}-${++pdfViewCounter}`; }
+  do { id = `pdf-${Date.now().toString(36)}-${(++pdfViewCounter).toString(36)}`; }
   while (used.has(id));
   return id;
 }
