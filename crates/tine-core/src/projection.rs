@@ -34,7 +34,7 @@ fn deterministic_runtime_uuid(namespace: Uuid, name: &[u8]) -> Uuid {
     hasher.update(name);
     let digest = hasher.finalize();
     let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&digest[..16]);
+    bytes.copy_from_slice(digest.get(..16).expect("SHA-256 has 32 bytes"));
     // RFC 9562 variant + version 8 (application-defined deterministic UUID).
     bytes[6] = (bytes[6] & 0x0f) | 0x80;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;

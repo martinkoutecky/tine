@@ -210,8 +210,14 @@ fn org_block_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
         let line_start = pos;
         pos += line.len();
         let kw = line.trim_start_matches([' ', '\t']).strip_prefix("#+");
-        let is_begin = kw.is_some_and(|k| k.len() >= 6 && k[..6].eq_ignore_ascii_case("begin_"));
-        let is_end = kw.is_some_and(|k| k.len() >= 4 && k[..4].eq_ignore_ascii_case("end_"));
+        let is_begin = kw.is_some_and(|k| {
+            k.get(..6)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("begin_"))
+        });
+        let is_end = kw.is_some_and(|k| {
+            k.get(..4)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("end_"))
+        });
         if depth == 0 {
             if is_begin {
                 depth = 1;

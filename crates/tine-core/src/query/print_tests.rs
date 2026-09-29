@@ -7,6 +7,87 @@ fn tql(source: &str) -> Query {
     parse_tql(source, crate::query::registry::Registry::none()).0
 }
 
+#[test]
+fn k1_disabled_rejection_survives_an_unrelated_edit_byte_exactly() {
+    for operand in [
+        "content > 'keep-me'",
+        "content  >  'café  猫'",
+        "unknown_function('authored')",
+        "content > [[My Page]]",
+        "content\n  >  [[My Page]]",
+        "content > #猫",
+        "typo = [[café]]",
+        "content > 123",
+        "unknown_function( 'a',  '猫' )",
+        "any(children, content > '猫')",
+        "any( [[My Page]], true )",
+    ] {
+        let mut query = tql(&format!("@block and off({operand}) and task = 'TODO'"));
+        assert!(
+            !query.is_invalid(),
+            "{operand}: disabled diagnostic must not invalidate the query: {:?}",
+            query.diagnostics
+        );
+        let Filter::And { items } = &mut query.filter else {
+            panic!("expected siblings")
+        };
+        items[1] = tql("task = 'DONE'").filter;
+        let printed = query_print(
+            &query,
+            &ViewSettings::default(),
+            PrintDialect::TqlMacro,
+            false,
+        )
+        .unwrap();
+        let again = tql(&printed);
+        let Filter::And { items } = &again.filter else {
+            panic!("expected siblings: {printed:?}")
+        };
+        let Filter::Off { inner } = &items[0] else {
+            panic!("off lost: {printed:?}")
+        };
+        let Filter::Raw { text, .. } = inner.as_ref() else {
+            panic!("rejected authored operand lost: {printed:?}")
+        };
+        assert_eq!(
+            text, operand,
+            "I-4: rejected disabled text is authored content"
+        );
+        assert_eq!(items[1], tql("task = 'DONE'").filter);
+        assert!(!again.is_invalid());
+    }
+}
+
+#[test]
+fn k1_rejected_disabled_run_uses_authored_coordinates() {
+    let operand = "content  >  [[café 猫]]";
+    let mut query = tql(&format!("@block\n-- {operand}\nand task = 'TODO'"));
+    assert!(!query.is_invalid());
+    let Filter::And { items } = &mut query.filter else {
+        panic!("expected siblings")
+    };
+    items[1] = tql("task = 'DONE'").filter;
+    let printed = query_print(
+        &query,
+        &ViewSettings::default(),
+        PrintDialect::TqlMacro,
+        false,
+    )
+    .unwrap();
+    let again = tql(&printed);
+    let Filter::And { items } = &again.filter else {
+        panic!("expected siblings: {printed}")
+    };
+    let Filter::Off { inner } = &items[0] else {
+        panic!("off lost: {printed}")
+    };
+    let Filter::Raw { text, .. } = inner.as_ref() else {
+        panic!("authored disabled run lost: {printed}")
+    };
+    assert_eq!(text, operand);
+    assert!(!again.is_invalid());
+}
+
 fn og(source: &str) -> (Query, ViewSettings) {
     parse_query_text(
         source,

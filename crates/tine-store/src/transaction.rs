@@ -24,6 +24,9 @@ pub(crate) use faults::FaultPoint;
 
 mod faults;
 mod io_helpers;
+#[cfg(feature = "test-faults")]
+#[path = "../tests/support/og_k1_pause.rs"]
+mod og_k1_pause;
 mod preflight;
 mod validation;
 use io_helpers::{
@@ -944,15 +947,17 @@ impl<'a> Transaction<'a> {
                 })
             }
             Step::Save { .. } | Step::Replace { .. } | Step::Rewrite { .. } => {
+                #[cfg(feature = "test-faults")]
+                og_k1_pause::before_apply(&src);
                 let new = plan.new.as_ref().expect("prepared write");
                 let old = plan.old.as_deref();
+                self.verify(&plan.src, old, index)?;
                 if old == Some(new.as_slice()) {
                     return Ok(StepResult::Unchanged {
                         file: plan.src.clone(),
                         rev: FileRev::from_bytes(new),
                     });
                 }
-                self.verify(&plan.src, old, index)?;
                 if let Some(parent) = src.parent() {
                     fs::create_dir_all(parent).map_err(failed)?;
                 }
@@ -1519,27 +1524,21 @@ impl<'a> Transaction<'a> {
         Ok(copy)
     }
 
-    /// Check all guards before writing, apply queued steps, then publish the
-    /// final state before returning. Each guard hashes its current disk file.
-    /// A changed transaction can scan O(P) page and journal metadata and
-    /// may wait for the initial graph parse. It blocks other writes for its
-    /// duration without a timeout. On apply failure, attempts undo and reports
-    /// remaining disk differences; a process crash can leave partial changes.
-    /// Preflight reports the first failing step. Neither a preflight nor an
-    /// apply guard conflict publishes the observed external bytes by itself;
-    /// a changed final state after undo can publish. Apply rechecks each changed
-    /// source against the preflight bytes after syncing the replacement temp
-    /// file and immediately before rename, subject to the remaining external
-    /// writer window between that check and rename. Undo
-    /// stages live bytes in recoverable conflict trash and uses no-replace
-    /// moves; another writer can still race those filesystem operations.
-    /// Depending on ordering, racing bytes can remain live, be moved to
-    /// conflict recovery, or be overwritten by a later external write. Inspect
-    /// final disk state and `rollback` rather than assuming a winner.
-    /// Prior page bytes are kept in memory until commit finishes, so undo can
-    /// require O(changed bytes) memory and additional file reads and writes.
-    /// A clean undo that restores every starting byte publishes no change and
-    /// leaves the graph revision unchanged.
+    /// Check guards, apply queued steps, then publish final state. Each guard
+    /// hashes its disk file; apply checks preflight bytes even for unchanged
+    /// output (I-2, external-editor race). Changed writes check again after temp
+    /// sync, before rename; the external check-to-rename window remains.
+    /// A changed transaction can scan O(P) page/journal metadata and wait for
+    /// initial parsing. It blocks other writes for its duration without timeout.
+    /// Preflight reports the first failing step. Guard conflicts alone do not
+    /// publish external bytes; apply failure attempts undo and reports remaining
+    /// differences. A process crash can leave partial changes.
+    /// Undo stages live bytes in recoverable conflict trash and uses no-replace
+    /// moves. Racing external bytes may remain live, enter recovery, or be
+    /// overwritten by a later external write: inspect disk state and `rollback`.
+    /// Prior page bytes stay in memory through commit, so undo can require
+    /// O(changed bytes) memory and extra file reads/writes. A clean undo publishes
+    /// no change and leaves the graph revision unchanged.
     pub fn commit(mut self) -> TxOutcome {
         // OG-RULES Rule 8: a raw step that touches a page file runs in a
         // transaction that declared its edit kind (`save_page` asserts its own).

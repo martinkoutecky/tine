@@ -10,6 +10,8 @@ use super::*;
 
 pub(super) struct PrePass {
     pub(super) sql: String,
+    /// SQL byte boundaries mapped back to authored byte boundaries.
+    pub(super) origins: Vec<usize>,
     pub(super) anchor: Anchor,
     /// The anchor token was the whole query: every row of the anchor.
     pub(super) empty: bool,
@@ -73,6 +75,7 @@ pub(super) fn pre_pass(text: &str, diagnostics: &mut Vec<Diagnostic>) -> PrePass
     if rest.trim().is_empty() {
         return PrePass {
             sql: "true".to_string(),
+            origins: vec![offset; 5],
             anchor,
             empty: true,
             offset: None,
@@ -83,11 +86,16 @@ pub(super) fn pre_pass(text: &str, diagnostics: &mut Vec<Diagnostic>) -> PrePass
     // part of the surrounding text lets it swallow the next ACTIVE row, which
     // is exactly the defect `-- task = '` followed by a valid row exposes.
     // Each run's payload is desugared in isolation with this same scanner.
-    let lifted = lift_disabled_runs(&rest, diagnostics);
-    let sql = desugar(&lifted, diagnostics);
+    let (lifted, lifted_origins) = lift_disabled_runs(&rest, diagnostics);
+    let mut origins = Vec::new();
+    let sql = desugar_mapped(&lifted, diagnostics, &mut origins);
+    for origin in &mut origins {
+        *origin = offset + lifted_origins[*origin];
+    }
     let unchanged = sql == rest;
     PrePass {
         sql,
+        origins,
         anchor,
         empty: false,
         offset: unchanged.then_some(offset),
@@ -171,9 +179,19 @@ pub(super) enum Prev {
 
 /// Step 2: sugar. `[[x]]` → `ref('x')`, `#x` → `ref('x')`, except in value
 /// position where both become the string literal `'x'`.
+#[cfg(test)]
 pub(super) fn desugar(text: &str, diagnostics: &mut Vec<Diagnostic>) -> String {
+    desugar_mapped(text, diagnostics, &mut Vec::new())
+}
+
+fn desugar_mapped(
+    text: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    origins: &mut Vec<usize>,
+) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
+    origins.push(0);
     let mut prev = Prev::Start;
     // One entry per open paren: whether it is the list of an `in`, and
     // whether the pre-pass inserted an outer paren around a quantifier call.
@@ -185,6 +203,8 @@ pub(super) fn desugar(text: &str, diagnostics: &mut Vec<Diagnostic>) -> String {
         let value_position = prev == Prev::Cmp
             || (matches!(prev, Prev::Open | Prev::Comma)
                 && parens.last().is_some_and(|(in_list, _)| *in_list));
+        let input_start = i;
+        let output_start = out.len();
         match bytes[i] {
             b' ' | b'\t' | b'\r' | b'\n' => {
                 out.push(bytes[i] as char);
@@ -320,6 +340,17 @@ pub(super) fn desugar(text: &str, diagnostics: &mut Vec<Diagnostic>) -> String {
                 i += ch.len_utf8();
             }
         }
+        let emitted = out.get(output_start..).expect("emitted boundary");
+        let unchanged = text.get(input_start..i) == Some(emitted);
+        origins.extend((1..=emitted.len()).map(|n| {
+            if unchanged {
+                input_start + n
+            } else if n == emitted.len() {
+                i
+            } else {
+                input_start
+            }
+        }));
     }
     out
 }
@@ -453,15 +484,17 @@ pub(super) struct DisabledRun {
     last_line: usize,
     indent: String,
     payload: String,
+    origins: Vec<usize>,
 }
 
 /// Step 3 (Q12): a maximal run of `-- ` lines becomes a positional
 /// `<connector> off(<rest>)`. Positional replacement is what makes nesting free:
 /// a run inside a parenthesized group becomes an `off()` operand of that group.
-pub(super) fn lift_disabled_runs(text: &str, diagnostics: &mut Vec<Diagnostic>) -> String {
+fn lift_disabled_runs(text: &str, diagnostics: &mut Vec<Diagnostic>) -> (String, Vec<usize>) {
     let spans = literal_spans(text);
     let mut lines: Vec<String> = Vec::new();
-    let mut kinds: Vec<Option<(String, String)>> = Vec::new();
+    let mut kinds: Vec<Option<(String, String, Vec<usize>)>> = Vec::new();
+    let mut line_origins = Vec::new();
     let mut offset = 0usize;
     for line in text.split('\n') {
         let indent_len = line.len() - line.trim_start().len();
@@ -471,8 +504,16 @@ pub(super) fn lift_disabled_runs(text: &str, diagnostics: &mut Vec<Diagnostic>) 
             None
         } else {
             let rest = trimmed[3..].trim();
-            (!rest.is_empty()).then(|| (line[..indent_len].to_string(), rest.to_string()))
+            let start = offset + (rest.as_ptr() as usize - line.as_ptr() as usize);
+            (!rest.is_empty()).then(|| {
+                (
+                    line[..indent_len].to_string(),
+                    rest.to_string(),
+                    (start..=start + rest.len()).collect(),
+                )
+            })
         };
+        line_origins.push((offset..=offset + line.len()).collect::<Vec<_>>());
         kinds.push(payload);
         lines.push(line.to_string());
         offset += line.len() + 1;
@@ -481,14 +522,16 @@ pub(super) fn lift_disabled_runs(text: &str, diagnostics: &mut Vec<Diagnostic>) 
     let mut runs: Vec<DisabledRun> = Vec::new();
     let mut index = 0usize;
     while index < kinds.len() {
-        let Some((indent, payload)) = kinds[index].clone() else {
+        let Some((indent, payload, mut origins)) = kinds[index].clone() else {
             index += 1;
             continue;
         };
         let first_line = index;
         let mut joined = payload;
         index += 1;
-        while let Some(Some((_, next))) = kinds.get(index) {
+        while let Some(Some((_, next, next_origins))) = kinds.get(index) {
+            origins.push(next_origins[0]);
+            origins.extend_from_slice(&next_origins[1..]);
             joined.push(' ');
             joined.push_str(next);
             index += 1;
@@ -498,6 +541,7 @@ pub(super) fn lift_disabled_runs(text: &str, diagnostics: &mut Vec<Diagnostic>) 
             last_line: index - 1,
             indent,
             payload: joined,
+            origins,
         });
     }
 
@@ -508,7 +552,12 @@ pub(super) fn lift_disabled_runs(text: &str, diagnostics: &mut Vec<Diagnostic>) 
         // Its diagnostics are disabled: a broken row a user turned off must not
         // invalidate the query (§3.5).
         let mut inner_diagnostics = Vec::new();
-        let sugared = desugar(rest, &mut inner_diagnostics);
+        let rest_start = run.payload.len() - rest.len();
+        let mut payload_origins = Vec::new();
+        let sugared = desugar_mapped(rest, &mut inner_diagnostics, &mut payload_origins);
+        for origin in &mut payload_origins {
+            *origin = run.origins[rest_start + *origin];
+        }
         let parses = parse_expr_guarded(&sugared).is_ok();
         if parses {
             for diagnostic in inner_diagnostics {
@@ -535,12 +584,34 @@ pub(super) fn lift_disabled_runs(text: &str, diagnostics: &mut Vec<Diagnostic>) 
                 encode_raw_hex(rest)
             )
         };
+        // Carry the source coordinates from the rewrite itself. A second line
+        // scanner would disagree on multiline literals and continuation runs.
+        let prefix = run.indent.len() + connector.len() + 4; // inserted `off(`
+        let start = run.origins[rest_start];
+        let end = *run.origins.last().unwrap();
+        let mut replacement_origins = vec![start; replacement.len() + 1];
+        if parses {
+            replacement_origins[prefix..=prefix + sugared.len()].copy_from_slice(&payload_origins);
+        }
+        *replacement_origins.last_mut().unwrap() = end;
+        line_origins[run.first_line] = replacement_origins;
         lines[run.first_line] = replacement;
         for line in run.first_line + 1..=run.last_line {
             lines[line] = String::new();
+            line_origins[line].truncate(1);
         }
     }
-    lines.join("\n")
+    let mut origins = vec![0];
+    for (index, map) in line_origins.into_iter().enumerate() {
+        if index > 0 {
+            origins.push(map[0]);
+        }
+        // A generated prefix may begin at its payload, rather than at the
+        // preceding newline's end. The boundary belongs to the next token.
+        *origins.last_mut().unwrap() = map[0];
+        origins.extend_from_slice(&map[1..]);
+    }
+    (lines.join("\n"), origins)
 }
 
 pub(super) fn split_connector(payload: &str) -> (&'static str, &str) {
