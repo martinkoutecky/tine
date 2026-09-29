@@ -8,7 +8,7 @@
 //   ADR 0061), whose record is the only copy of that draft after a restart.
 // Derived on every read; nothing here is stored.
 import { untrack } from "solid-js";
-import { conflictReason, liveConflictDraft } from "./document";
+import { conflictReason, conflicts, liveConflictDraft, pageByName } from "./document";
 import { earlierDrafts } from "./draftStore";
 import type { ConflictObject, DraftRecord, LiveConflictDraft, PageKind } from "./types";
 
@@ -48,3 +48,20 @@ export function liveConflictForPage(name: string, path: string | undefined): Con
     page: record.page, base_rev: record.base_rev ?? null, restored: true, record_id: record.id,
   });
 }
+
+/** Every live-draft conflict, for the overview's "Unsaved drafts" group
+ *  (master ConflictOverview): each open editor's disk-changed draft, then each
+ *  restored record whose page has none. O(conflicts + records). */
+export function liveConflictObjects(): ConflictObject[] {
+  const open = conflicts().flatMap((name) => {
+    const path = pageByName(name)?.id;
+    const live = path && conflictReason(name)?.kind === "disk-changed" ? liveConflictForPage(name, path) : undefined;
+    return live && !live.live?.restored ? [live] : [];
+  });
+  const paths = new Set(open.map((conflict) => conflict.page_path));
+  const restored = earlierDrafts().flatMap((record) => record.kind === "live-conflict" && record.path && !paths.has(record.path)
+    ? [liveObject(record.page_name, record.path, record.page.kind, { page: record.page, base_rev: record.base_rev ?? null, restored: true, record_id: record.id })]
+    : []);
+  return [...open, ...restored];
+}
+

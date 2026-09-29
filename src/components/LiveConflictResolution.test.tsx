@@ -12,7 +12,9 @@ import { conflictReason } from "../document/save/engine";
 import { doc } from "../document/model";
 import { earlierDrafts, installDraftStore, REFRESH_MS, writeAtRisk } from "../draftStore";
 import { bumpGraphEpoch, setGraphMeta } from "../graphSession";
-import { liveConflictForPage } from "../liveConflicts";
+import { liveConflictForPage, liveConflictObjects } from "../liveConflicts";
+import { ConflictOverview } from "./ConflictOverview";
+import type { PaneRouter } from "../router";
 import { setToasts, toasts } from "../toasts";
 import { PageConflictResolution } from "./ConflictResolution";
 import type { BlockDto, ConflictObject, DiffRow, DraftRecord, GraphMeta, PageDto, SyncConflictDiff } from "../types";
@@ -214,4 +216,23 @@ describe("Concord live-draft conflicts (og 8e)", () => {
     expect(store.has("earlier:P")).toBe(true);
     dispose();
   });
+
+  it("22a: the overview lists open and restored drafts under Unsaved drafts, and opens the page to review", async () => {
+    await conflictedDraft("open draft");
+    expect(liveConflictObjects().map((c) => [c.page_name, c.live?.restored])).toEqual([["P", false]]);
+    await settle();
+    await killAndReopen(page("r2", "theirs on disk"));
+    expect(liveConflictObjects().map((c) => [c.page_name, c.live?.restored])).toEqual([["P", true]]);
+    const opened: unknown[] = [];
+    vi.spyOn(api, "listSyncConflicts").mockResolvedValue([]);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <ConflictOverview router={{ openPageTarget: (t: unknown) => opened.push(t) } as unknown as PaneRouter} />, host);
+    const group = host.querySelector('[aria-label="Unsaved drafts"]')!;
+    expect(group.textContent).toContain("kept draft from an earlier session");
+    (group.querySelector(".conflict-overview-open") as HTMLButtonElement).click();
+    expect(opened).toEqual([{ name: "P", pageKind: "page", path: PATH }]);
+    dispose();
+  });
 });
+

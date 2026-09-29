@@ -5,6 +5,7 @@ import type { PaneRouter } from "../router";
 import { pushToast } from "../toasts";
 import type { ConflictObject, ConflictSource, SyncConflict } from "../types";
 import { conflictQueue, openPageInSidebar, refreshSyncConflicts, syncConflicts } from "../ui";
+import { liveConflictObjects } from "../liveConflicts";
 
 // Concord overview (og 8c): every page that needs a decision, in one place,
 // rendered from the derived conflict queue and never written to the graph. It
@@ -12,12 +13,14 @@ import { conflictQueue, openPageInSidebar, refreshSyncConflicts, syncConflicts }
 // vanish as the queue re-derives after each Apply.
 
 const GROUPS: { source: ConflictSource; title: string }[] = [
+  { source: "live-save", title: "Unsaved drafts" },
   { source: "sync-copy", title: "Sync conflict copies" },
   { source: "vcs-markers", title: "Version-control merge markers" },
 ];
 
 export function conflictSourceLabel(conflict: ConflictObject): string {
   const side = (role: "mine" | "theirs") => conflict.sides.find((s) => s.role === role)?.label;
+  if (conflict.source === "live-save") return conflict.live?.restored ? "kept draft from an earlier session" : "unsaved draft";
   return conflict.source === "sync-copy"
     ? `sync copy · ${side("theirs") ?? "conflict copy"}`
     : `merge markers · ${side("mine") ?? "local"} vs ${side("theirs") ?? "merged-in"}`;
@@ -63,7 +66,7 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
     if (event.shiftKey || event.button === 1) openPageInSidebar(target);
     else props.router.openPageTarget(target);
   };
-  const total = () => conflictQueue().length + orphans().length;
+  const total = () => conflictQueue().length + orphans().length + liveConflictObjects().length;
   return (
     <div class="conflict-overview">
       <h1 class="page-title">Conflicts</h1>
@@ -77,7 +80,8 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
         </p>
         <For each={GROUPS}>
           {(group) => {
-            const rows = () => conflictQueue().filter((c) => c.source === group.source);
+            // A live draft is not on disk, so it is not in the derived queue.
+            const rows = () => group.source === "live-save" ? liveConflictObjects() : conflictQueue().filter((c) => c.source === group.source);
             const extra = () => (group.source === "sync-copy" ? orphans() : []);
             return (
               <Show when={rows().length || extra().length}>
