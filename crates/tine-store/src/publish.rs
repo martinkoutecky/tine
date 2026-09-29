@@ -233,13 +233,25 @@ impl Store {
         let mut out = Vec::new();
         let mut remaining = 32 * 1024 * 1024u64;
         for name in names {
-            let id = self.file_id(crate::Area::Assets, &name)?;
+            // The scanner over-collects on purpose (orphan detection must not
+            // miss a reference), so a candidate may be prose after `assets/`
+            // rather than a file name. One that cannot name a file is simply
+            // not an asset: skip it like a missing one instead of failing the
+            // whole publication. A real read failure of an asset still fails.
+            let Ok(id) = self.file_id(crate::Area::Assets, &name) else {
+                continue;
+            };
             match self.read(&id, Some(remaining)) {
                 Ok((bytes, _)) => {
                     remaining = remaining.saturating_sub(bytes.len() as u64);
                     out.push((format!("assets/{name}"), bytes));
                 }
                 Err(crate::StoreError::NotFound) => {}
+                Err(crate::StoreError::Io(error))
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::InvalidFilename | std::io::ErrorKind::NotADirectory
+                    ) => {}
                 Err(error) => return Err(error),
             }
         }
