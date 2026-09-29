@@ -1,7 +1,8 @@
-import { Show, Switch, Match, For, createMemo, type JSX } from "solid-js";
-import { pageByName, blockPageReadOnly, depthOf, blockExternalId, node as docNode, type OutlineScope } from "../document";
+import { Show, Switch, Match, For, type JSX } from "solid-js";
+import { pageByName, blockPageReadOnly, blockExternalId, type OutlineScope } from "../document";
+import type { ReadonlyNode } from "../document/model";
 import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "../render/block";
-import { effectiveHeadingLevel, facetsOf } from "../render/facets";
+import type { Facets } from "../render/facets";
 import { AstBody } from "../render/body";
 import { InlineText } from "../render/inline";
 import { DeferredStandaloneMacro } from "./DeferredStandaloneMacro";
@@ -32,8 +33,17 @@ export function detectMacro(raw: string): { kind: "query" | "embed"; inner: stri
   return m ? { kind: "embed", inner: `${m[1]}${m[2]}` } : null;
 }
 
+// `Block` already keeps the node, page format, header facets, heading level and
+// macro detection of this very block, so they arrive as accessors instead of
+// being recomputed here: one store read, one parent walk, one facet lookup and
+// one macro detection per block rather than two (master 0350c00b6).
 export function Rendered(props: {
   id: string;
+  node: () => ReadonlyNode;
+  fmt: () => "md" | "org";
+  facets: () => Facets;
+  headingLevel: () => number | null;
+  macro: () => ReturnType<typeof detectMacro>;
   owner?: string;
   // The reference-count badge. It is a RIGHT FLOAT and must be the FIRST child of
   // `.block-content`: a float attaches to the line box current where the browser
@@ -42,29 +52,30 @@ export function Rendered(props: {
   refCountBadge?: JSX.Element;
   outlineScope?: OutlineScope | null;
 }): JSX.Element {
-  const node = () => docNode(props.id);
-  const fmt = () => pageByName(node().page)?.format ?? "md";
+  const node = props.node;
+  const fmt = props.fmt;
   // Header facets (marker/priority/heading/scheduled/deadline/properties) off the
   // ONE lsdoc parse — read from the cache the store seeded from the backend DTO (no
   // parse on load), recomputed from a single wasm parse only for the edited block.
-  const facets = createMemo(() => facetsOf(node().raw, fmt()));
-  const headingLevel = createMemo(() => effectiveHeadingLevel(facets(), depthOf(props.id)));
-  const clock = createMemo((): LogbookInfo | null => {
+  const facets = props.facets;
+  const headingLevel = props.headingLevel;
+  // Plain functions, not memos: a leaf block allocates no reactive node for them.
+  const clock = (): LogbookInfo | null => {
     if (!timetrackingEnabled()) return null;
     const marker = facets().marker;
     if (marker !== "DONE" && marker !== "TODO" && marker !== "LATER") return null;
     const info = logbookInfo(node().raw);
     return info.seconds > 0 ? info : null;
-  });
+  };
   const readOnly = () => blockPageReadOnly(props.id);
 
-  const macro = createMemo(() => detectMacro(node().raw));
+  const macro = props.macro;
 
   // PDF highlight (annotation) blocks render a colored, clickable swatch
   // (AnnotationBody) that opens the PDF at the highlight's page; notes go in
   // child blocks. The detection + rendering live in editor/annotation +
   // components/AnnotationBody.
-  const annotation = createMemo(() => annotationInfo(facets().properties));
+  const annotation = () => annotationInfo(facets().properties);
   // The highlight text shown in the annotation swatch = the first visible (non-
   // property) line of the block (cheap; the shared line recognizer).
   const annotationLine = () => node().raw.split("\n").find((l) => !isPropertyLine(l) && l.trim() !== "") ?? "";
@@ -143,6 +154,10 @@ export function Rendered(props: {
       onMouseDown={onMouseDown}
     >
       {props.refCountBadge}
+      {/* One gate for the whole leading chip group: every chip below needs a
+          marker or a priority, so an ordinary prose block (most of a large page)
+          evaluates one condition and allocates nothing for chips it never shows. */}
+      <Show when={facets().marker || facets().priority}>
       <Show when={taskCheckboxState(facets().marker) !== null}>
         <span
           class="block-task-checkbox"
@@ -174,10 +189,15 @@ export function Rendered(props: {
       <Show when={facets().priority}>
         <span class={`block-priority priority-${facets().priority}`}>[#{facets().priority}]</span>{" "}
       </Show>
+      </Show>
       {/* Heading size is applied inside AstBody to ONLY the heading's first line
           (see renderBlocks headingLevel), so a `> quote`/table/etc. continuation in
           the same block renders at normal size — matching OG. */}
       {body}
+      {/* Same gate for the trailing chips. `clock()` is only non-null for a
+          DONE/TODO/LATER block, so keying on the marker also keeps `logbookInfo`
+          off every ordinary block's raw text. */}
+      <Show when={facets().marker || facets().scheduled || facets().deadline || displayProps().length > 0}>
       <Show when={clock()}>
         {(info) => <ClockBadge info={info()} />}
       </Show>
@@ -219,6 +239,7 @@ export function Rendered(props: {
             )}
           </For>
         </span>
+      </Show>
       </Show>
     </div>
     </Show>

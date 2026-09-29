@@ -445,10 +445,19 @@ function renderBody(raw: string, format: Format, blockId?: string, headingLevel?
  *  The parser is initialized once before first paint (main.tsx / capture.tsx). The
  *  `<Show>` fallback renders the raw text literally and only triggers if the wasm
  *  parser failed to load (degraded mode), so content is never silently blank. */
+/** Deferred (off-screen) placeholder text: raw minus property lines (cheap, no
+ *  parse) — a good height proxy, replaced by the real render once near. Split out
+ *  of `AstBody` so a block ALREADY near (render-once-keep latches every block that
+ *  has scrolled in) never computes a placeholder it will not show, and the line
+ *  split happens once for the height reserve and the text together. */
+function placeholderLines(raw: string): string[] {
+  return raw.split("\n").filter((l) => !isPropertyLine(l));
+}
+function PlaceholderText(props: { raw: string }): JSX.Element {
+  return <>{placeholderLines(props.raw).join("\n")}</>;
+}
+
 export function AstBody(props: { raw: string; blockId?: string; format?: Format; headingLevel?: number | null; macroExpansion?: boolean }): JSX.Element {
-  // Deferred (off-screen) placeholder text: raw minus property lines (cheap, no
-  // parse) — a good height proxy, replaced by the real render once near.
-  const placeholder = createMemo(() => props.raw.split("\n").filter((l) => !isPropertyLine(l)).join("\n"));
   // P1 block-render virtualization (see docs/adr): defer the synchronous parse +
   // AST→DOM build until the block is near the viewport. Render-once-keep: once a
   // block has rendered (latched by id in `renderedBlocks`) it renders eagerly
@@ -472,14 +481,14 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
       fallback={
         <span
           class="ast-fallback ast-deferred"
-          style={estimateBodyReserve(placeholder().split("\n"), props.headingLevel ?? null)}
+          style={estimateBodyReserve(placeholderLines(props.raw), props.headingLevel ?? null)}
           ref={observe}
         >
-          {placeholder()}
+          <PlaceholderText raw={props.raw} />
         </span>
       }
     >
-      <Show when={parserReady()} fallback={<span class="ast-fallback">{placeholder()}</span>}>
+      <Show when={parserReady()} fallback={<span class="ast-fallback"><PlaceholderText raw={props.raw} /></span>}>
         {renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false)}
       </Show>
     </Show>

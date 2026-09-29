@@ -32,7 +32,7 @@ import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -71,7 +71,7 @@ import {
   secondarySelectionActions,
   type SelectionAction,
 } from "../editor/selectionActions";
-import { effectiveHeadingLevel, facetsOf } from "../render/facets";
+import { effectiveHeadingLevel, facetsOf, EMPTY_FACETS, type Facets } from "../render/facets";
 import { CopyButton } from "../render/inline";
 import {
   assetMarkdown,
@@ -87,6 +87,7 @@ import { runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor } from "./Macro";
 import { Rendered, detectMacro } from "./Rendered";
+import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { dataRev, graphEpoch } from "../graphSession";
@@ -208,7 +209,11 @@ export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(n
 /** Render and edit one document block through the document door. Work scales
  * with its visible descendants; a failed structured paste shows fixed text. */
 export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean; dragHostId?: string }): JSX.Element {
-  const node = () => docNode(props.id);
+  // ONE store read per block for the node itself: every derivation below reads
+  // `node()` several times over, and each raw `doc.byId[id]` costs two Solid store
+  // proxy traps plus a wrap (master 0350c00b6: the largest app-attributable cost
+  // in the bigLoad profile).
+  const node = createMemo(() => docNode(props.id));
   // Unique per rendered instance, so when one block uuid appears in several
   // surfaces only the instance that was clicked mounts the editor (the rest stay
   // rendered and reflect edits live). null owner = unscoped (keyboard nav).
@@ -237,44 +242,40 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   };
   const hasChildren = () => node().children.length > 0;
   const collapsed = () => collapseSurface?.collapsed(props.id, node().collapsed) ?? node().collapsed;
-  const collapsibleDescendants = createMemo(() => collapsibleDescendantIds(props.id));
-  const hasCollapsedDescendant = createMemo(() =>
-    collapsibleDescendants().some((id) => {
-      const descendant = docNode(id);
-      return descendant
-        ? collapseSurface?.collapsed(id, descendant.collapsed) ?? descendant.collapsed
-        : false;
-    })
-  );
-  const toggleCollapsedDescendants = () => {
-    const ids = collapsibleDescendants();
-    if (!ids.length || (readOnly() && !collapseSurface)) return;
-    // OG semantics: any folded descendant means “expand all”; only a completely
-    // open subtree means “collapse all”. The guide parent itself stays open.
-    const next = !hasCollapsedDescendant();
-    if (collapseSurface) collapseSurface.setMany(ids, next);
-    else setCollapsedDescendants(props.id, next);
-  };
-  const fmt = () => pageByName(node().page)?.format ?? "md";
-  const blockFacets = createMemo(() => {
+  const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
+  const blockFacets = createMemo<Facets>(() => {
     const n = node();
-    return n ? facetsOf(n.raw, fmt()) : null;
+    return n ? facetsOf(n.raw, fmt()) : EMPTY_FACETS;
   });
   // The children-source sheet this block owns (a query block's table/board is the macro's).
-  const sheet = createMemo(() => childrenSheetConfig(blockFacets()?.properties ?? [], node().raw));
+  const sheet = createMemo(() => childrenSheetConfig(blockFacets().properties, node().raw));
+  // `thread-lines` only decorates the ordinary outline container below this row,
+  // so a leaf (most blocks of a large flat page) does not subscribe to plugin
+  // installation/settings at all. Collapsed parents stay eligible so their
+  // decoration is already current when they expand (master ce9a796fb). A plain
+  // function, not a memo: a memo would allocate a reactive node per block to
+  // answer "false" thousands of times.
+  const threadLineDecoration = (): ThreadLineDecoration => {
+    if (!(hasChildren() && sheet().view === null)) return NO_THREAD_LINES;
+    return {
+      enabled: pluginManager.hasDeclarativeDecoration("thread-lines"),
+      active: pluginManager.declarativeDecorationSetting("thread-lines", "display") === "active",
+      standard: pluginManager.declarativeDecorationSetting("thread-lines", "intensity") === "standard",
+    };
+  };
   // Heading level of THIS block's first line, so the bullet column can match the
-  // (taller) heading line box and the bullet stays centered on it.
-  const headingLevel = createMemo(() => {
-    const facets = blockFacets();
-    return facets ? effectiveHeadingLevel(facets, depthOf(props.id)) : null;
-  });
-  const editorVisibleValue = createMemo(() => {
+  // (taller) heading line box and the bullet stays centered on it. Shared with
+  // `Rendered`, so the `depthOf` parent walk happens once per block, not twice.
+  const headingLevel = createMemo(() => effectiveHeadingLevel(blockFacets(), depthOf(props.id)));
+  // Editor-only derivations, read solely while THIS block is being edited: lazy,
+  // so a page load never runs `splitProps` over every block's raw text.
+  const editorVisibleValue = () => {
     const n = node();
     if (!n) return "";
-    const fmt = pageByName(n.page)?.format === "org" ? "org" : "md";
-    return splitProps(n.raw, isBuiltinHidden, fmt).visible;
-  });
-  const editorIsUniline = createMemo(() => !editorVisibleValue().includes("\n"));
+    const format = pageByName(n.page)?.format === "org" ? "org" : "md";
+    return splitProps(n.raw, isBuiltinHidden, format).visible;
+  };
+  const editorIsUniline = () => !editorVisibleValue().includes("\n");
   // Block-level "linked references" panel toggled by the reference-count badge.
   const [showRefs, setShowRefs] = createSignal(false);
   createEffect(() => {
@@ -291,8 +292,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // outline. Showing both this storage block's controls and the referenced root's
   // controls produces two consecutive bullets. Keep the referenced root controls
   // (they own collapse/zoom/sidebar behavior) and suppress only the macro host.
+  const macro = createMemo(() => detectMacro(node().raw)); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => {
-    const m = detectMacro(node().raw);
+    const m = macro();
     return m?.kind === "embed" && /^embed\s*\(\([^)]+\)\)\s*$/i.test(m.inner);
   });
 
@@ -302,9 +304,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       classList={{
         collapsed: collapsed(),
         "block-embed-host": blockEmbedHost(),
-        "plugin-thread-lines": pluginManager.hasDeclarativeDecoration("thread-lines"),
-        "plugin-thread-lines-active": pluginManager.declarativeDecorationSetting("thread-lines", "display") === "active",
-        "plugin-thread-lines-standard": pluginManager.declarativeDecorationSetting("thread-lines", "intensity") === "standard",
+        ...rowDecorationClasses(threadLineDecoration()),
       }}
       data-block-id={props.id}
       data-block-ref={blockExternalId(props.id) ?? props.id}
@@ -404,6 +404,11 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             fallback={
               <Rendered
                 id={props.id}
+                node={node}
+                fmt={fmt}
+                facets={blockFacets}
+                headingLevel={headingLevel}
+                macro={macro}
                 owner={instanceId}
                 outlineScope={outlineScope}
                 refCountBadge={
@@ -459,18 +464,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           </Match>
           <Match when={true}>
             <div class="block-children-container">
-              <button
-                type="button"
-                class="block-children-left-border"
-                aria-label={hasCollapsedDescendant() ? "Expand all descendants" : "Collapse all descendants"}
-                aria-expanded={!hasCollapsedDescendant()}
-                disabled={collapsibleDescendants().length === 0 || (readOnly() && !collapseSurface)}
-                title={hasCollapsedDescendant() ? "Expand all descendants" : "Collapse all descendants"}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleCollapsedDescendants();
-                }}
-              />
+              <CollapseAllBorder id={props.id} readOnly={readOnly()} surface={collapseSurface} />
               <div class="block-children">
                 <For each={node().children}>{(cid) => <Block id={cid} />}</For>
               </div>
