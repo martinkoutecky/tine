@@ -87,7 +87,7 @@ import {
 import { paneSel, samePaneTarget } from "./paneSelect";
 import { SurfaceContext } from "./components/Block";
 import { endEdit } from "./editorController";
-import { installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
+import { exitAndroidActivity, installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
 import { createSafeCloseCoordinator } from "./safeClose";
 import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
 import { hlsPageName } from "./pdf";
@@ -128,10 +128,7 @@ const safeClose = createSafeCloseCoordinator({
 async function closeAndroidRootSafely(): Promise<void> {
   await requestAndroidRootClose(
     safeClose,
-    async () => {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("plugin:app|exit");
-    },
+    () => exitAndroidActivity(),
     () => pushToast("Couldn't close the app. Your graph remains open.", "error"),
   );
 }
@@ -542,7 +539,11 @@ export function App(): JSX.Element {
       dismissTransient: () => dismissTopTransient("back"),
       dismissDrawer: () => dismissMobileDrawer("back"),
       restoreDrawerFocus: () => restoreDrawerFocus("back"),
-      historyBack: () => window.history.back(),
+      historyBack: () => {
+        if (!canGoBack()) return false;
+        goBack();
+        return true;
+      },
       closeRoot: () => { void closeAndroidRootSafely(); },
       // No JS listener means the inspected AppPlugin retains its native WebView
       // history/activity fallback. Do not install a competing recovery owner.

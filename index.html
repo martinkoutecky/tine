@@ -7,9 +7,16 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <title>Tine</title>
+    <link rel="stylesheet" href="/src/styles/startup.css" />
+    <script src="/assets/startup-theme.js"></script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="startup-shell" role="status" aria-live="polite">
+        <span class="startup-shell-mark" aria-hidden="true"></span>
+        <span>Opening Tine…</span>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

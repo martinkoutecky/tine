@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { backend, type LegacyPluginRegistryCache, type PluginRegistryCacheLoad } from "../backend";
+import { backend, type PluginRegistryCacheLoad } from "../backend";
 import { ownedWhen, writeOwned } from "../owned";
 import {
   PLUGIN_API_VERSION,
@@ -12,9 +12,9 @@ import {
   type PluginPlatform,
 } from "./manifest";
 import { pluginManager } from "./manager";
-import { THEME_API_VERSION, parseThemeManifest } from "../themes/manifest";
+import { SUPPORTED_THEME_API_VERSIONS, parseThemeManifest, type ThemeApiVersion } from "../themes/manifest";
 import { applyThemeRevocations, installThemePackage, themeVersionIsRevoked } from "../themes/manager";
-import { applyTheme, selectedGalleryTheme } from "../themeGallery";
+import { reapplyThemeSelection } from "../themeGallery";
 import { pushToast } from "../toasts";
 
 export const COMMUNITY_REGISTRY_URL =
@@ -317,7 +317,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
         },
         publishedAt: text(version.publishedAt, `${id}.publishedAt`, 80),
       };
-    }).filter((version) => version.apiVersion === THEME_API_VERSION);
+    }).filter((version) => SUPPORTED_THEME_API_VERSIONS.includes(version.apiVersion as ThemeApiVersion));
     const ai = item.aiDevelopment;
     if (ai !== "none" && ai !== "assisted" && ai !== "primary") throw new Error(`${id} has invalid AI provenance`);
     return {
@@ -445,31 +445,18 @@ export async function loadVerifiedCachedRegistry(
     return { kind: "unsafe", reason: error instanceof Error ? error.message : String(error) };
   }
   if (loaded.kind === "absent" || loaded.kind === "unsafe") return loaded;
-  const candidate = loaded.kind === "envelope" ? loaded.envelope : loaded;
+  const candidate = loaded.envelope;
   try {
     const verified = snapshot(await verifiedIndex(candidate.indexJson, candidate.signature));
-    if (loaded.kind === "legacy") {
-      const expectedLegacy: LegacyPluginRegistryCache = {
-        indexJson: loaded.indexJson,
-        signature: loaded.signature,
-      };
-      try {
-        await backend().storePluginRegistryCache(loaded.indexJson, loaded.signature, expectedLegacy);
-        setRegistryPersistenceError(null);
-      } catch (error) {
-        setRegistryPersistenceError(`Verified registry cache migration was not persisted: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    } else {
-      setRegistryPersistenceError(null);
-    }
-    return { kind: "verified", snapshot: verified, source: loaded.kind };
+    setRegistryPersistenceError(null);
+    return { kind: "verified", snapshot: verified, source: "envelope" };
   } catch (error) {
     return { kind: "unsafe", reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
 export type VerifiedCachedRegistryLoad =
-  | { kind: "verified"; snapshot: VerifiedRegistrySnapshot; source: "envelope" | "legacy" }
+  | { kind: "verified"; snapshot: VerifiedRegistrySnapshot; source: "envelope" }
   | { kind: "absent" }
   | { kind: "unsafe"; reason: string };
 
@@ -504,7 +491,7 @@ async function applyLiveSnapshot(
     setCommunityPlugins(current.index.plugins);
     setCommunityThemes(current.index.themes);
     applyThemeRevocations(current.revoked);
-    applyTheme(selectedGalleryTheme());
+    reapplyThemeSelection();
     hasVerifiedRegistry = true;
     unsafeCacheHeld = false;
     setRegistryState("ready");
