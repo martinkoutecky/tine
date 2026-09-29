@@ -86,6 +86,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **An edit typed while another graph is opening is kept** (og-T). It is saved
+  as a draft of the graph you left and offered for review when you reopen it,
+  instead of being dropped by the switch.
+- **Editing a block keeps its blank and under-indented lines byte for byte**
+  (og-T). A whitespace-only line inside the edited block was written empty, and
+  a continuation line indented less than usual was re-indented.
+- **A broken `:hidden` setting fails safe** (master, og-T). If `:hidden` in
+  `config.edn` cannot be read, Tine shows no graph pages until it is fixed,
+  rather than showing pages you meant to hide; entries with Unicode spaces at
+  either edge are ignored.
+- **A page's `title::` is read from the page's own preamble only** (og-T).
+  Properties after a leading `# heading` belong to that heading block, so
+  opening, renaming and linking agree on the page's name.
+- **Android follows external file changes with native events by default**
+  (master, og-T), like every other platform; polling stays a setting.
 - **Red error messages stay until you close them, and offer Copy.** Every error
   is also noted in the privacy-safe diagnostic report (not its text) and, with
   `TINE_DEBUG=1`, written in full to the debug log (og OG-TOAST).
