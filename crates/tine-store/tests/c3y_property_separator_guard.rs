@@ -32,7 +32,11 @@ fn full_width_comma_separator_has_one_definition() {
         .filter(|path| !path.components().any(|c| c.as_os_str() == "target"))
         .flat_map(|path| {
             let text = fs::read_to_string(path).unwrap_or_default();
-            let rel = path.strip_prefix(&root).unwrap_or(path).display().to_string();
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(path)
+                .display()
+                .to_string();
             text.lines()
                 .enumerate()
                 .filter(|(_, line)| line.contains("'，'"))
