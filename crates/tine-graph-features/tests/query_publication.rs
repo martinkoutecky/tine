@@ -274,7 +274,10 @@ fn live_publication_of_a_graph_without_public_pages_exports_nothing() {
     fs::write(graph.join("pages/Public.md"), "- alpha body\n").unwrap();
     store.scan_refresh().unwrap();
     let receipt = publish_live(&store, &output, "Nothing public", false, &bundle()).unwrap();
-    assert_eq!(receipt.pages, 0, "publication is the public-page capability");
+    assert_eq!(
+        receipt.pages, 0,
+        "publication is the public-page capability"
+    );
     let mut stack = vec![output.join("nothing-public")];
     while let Some(dir) = stack.pop() {
         for entry in fs::read_dir(&dir).unwrap() {
