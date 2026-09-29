@@ -139,3 +139,35 @@ fn pages_named_like_site_files_publish_beside_them() {
     store.close();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// I-12: a "referenced by" link and the referring block's `<li id>` come from
+/// one anchor answer, also when an authored `id::` looks like a generated one.
+#[test]
+fn reverse_ref_links_land_on_the_referring_block() {
+    let target = "66666666-6666-4666-8666-666666666666";
+    let source =
+        "- authored first\n  id:: b0\n- REFERRER_TEXT ((66666666-6666-4666-8666-666666666666))\n";
+    let dir = graph(
+        "anchors",
+        "{:publishing/all-pages-public? true}\n",
+        &[
+            ("Target.md", &format!("- target block\n  id:: {target}\n")),
+            ("Source.md", source),
+        ],
+    );
+    let store = Store::open(&dir, Default::default()).unwrap().0;
+    let (out, _) = publish::publish_html(&store).unwrap();
+    let files = site(Path::new(&out));
+    let source_html = &files["source.html"];
+    let li = source_html.find("REFERRER_TEXT").unwrap();
+    let open = source_html[..li].rfind("<li id=\"").unwrap() + "<li id=\"".len();
+    let anchor = &source_html[open..open + source_html[open..].find('"').unwrap()];
+    assert_eq!(anchor, "b1", "generated anchors skip the authored b0");
+    assert!(
+        files["target.html"].contains(&format!("href=\"source.html#{anchor}\"")),
+        "{}",
+        files["target.html"]
+    );
+    store.close();
+    let _ = fs::remove_dir_all(&dir);
+}

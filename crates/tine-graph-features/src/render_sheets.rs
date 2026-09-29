@@ -19,8 +19,8 @@
 //! `MAX_TOTAL_CELLS` cells of data are accepted (I-22).
 
 use super::{
-    ast_plain_text, block_anchor, body_blocks, decorate, esc, esc_attr, md_opts, render_block,
-    render_facets, Ctx, PrintOpts,
+    ast_plain_text, body_blocks, decorate, esc, esc_attr, md_opts, render_block, render_facets,
+    Ctx, PageAnchors, PrintOpts,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -433,17 +433,16 @@ pub(super) struct Emit<'a, 'b> {
     pub ctx: &'a Ctx<'b>,
     pub slug: &'a str,
     pub title: &'a str,
-    pub counter: &'a mut u32,
-    pub authored_ids: &'a HashSet<String>,
+    pub anchors: &'a PageAnchors,
     pub index: &'a mut Vec<serde_json::Value>,
     pub opts: PrintOpts,
     pub tree_depth: usize,
 }
 
-/// Anchor (and search-index entry) for one row/card block, in the same lock-step
-/// numbering as `render_block`.
+/// Anchor (and search-index entry) for one row/card block, from the page's one
+/// `PageAnchors` answer that `render_block` uses.
 fn row_anchor(row: &DocBlock, e: &mut Emit) -> String {
-    let anchor = block_anchor(row, e.counter, e.authored_ids);
+    let anchor = e.anchors.get(row);
     let text = ast_plain_text(&body_blocks(row.raw()));
     if !text.is_empty() {
         e.index
@@ -593,8 +592,7 @@ fn render_grid(owner: &DocBlock, at: &SheetPath, body: &Body, e: &mut Emit, out:
                         e.ctx,
                         e.slug,
                         e.title,
-                        e.counter,
-                        e.authored_ids,
+                        e.anchors,
                         e.index,
                         e.opts,
                         ords[c],

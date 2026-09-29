@@ -385,16 +385,12 @@ fn collect_reverse_refs(
     blocks: &[DocBlock],
     slug: &str,
     page: &str,
-    counter: &mut u32,
+    anchors: &PageAnchors,
     public_targets: &RefIndex,
     reverse: &mut ReverseRefIndex,
 ) {
     for block in blocks {
-        let anchor = block_id(block.raw()).unwrap_or_else(|| {
-            let anchor = format!("b{}", *counter);
-            *counter += 1;
-            anchor
-        });
+        let anchor = anchors.get(block);
         let mut seen = HashSet::new();
         for target in &block.projection().block_refs {
             if !public_targets.contains_key(target) || !seen.insert(target.as_str()) {
@@ -411,7 +407,7 @@ fn collect_reverse_refs(
             &block.children,
             slug,
             page,
-            counter,
+            anchors,
             public_targets,
             reverse,
         );
@@ -1645,18 +1641,39 @@ fn load_page_doc<'a>(graph: &RenderGraph<'a>, name: &str) -> Option<&'a doc::Doc
     graph.lookups.doc_named(graph.corpus, name)
 }
 
-/// A block's stable anchor: its `id::` value, else a generated per-page `b{n}`
-/// that skips every authored id.
-fn block_anchor(b: &DocBlock, counter: &mut u32, authored_ids: &HashSet<String>) -> String {
-    if let Some(id) = block_id(b.raw()) {
-        return id;
-    }
-    loop {
-        let a = format!("b{}", *counter);
-        *counter += 1;
-        if !authored_ids.contains(&a) {
-            return a;
+/// Every block's anchor on one page: its `id::` value, else `b{n}` in source
+/// pre-order skipping every authored id. The one answer for `<li id>`, search
+/// entries, sheet rows and "referenced by" links (I-12). Keyed by block address
+/// within the one document that is rendered; never dereferenced.
+pub(super) struct PageAnchors(HashMap<*const DocBlock, String>);
+
+impl PageAnchors {
+    fn of(roots: &[DocBlock]) -> Self {
+        let mut authored = HashSet::new();
+        let mut stack: Vec<&DocBlock> = roots.iter().rev().collect();
+        let mut order = Vec::new();
+        while let Some(block) = stack.pop() {
+            authored.extend(block_id(block.raw()));
+            order.push(block);
+            stack.extend(block.children.iter().rev());
         }
+        let mut counter = 0u32;
+        let mut anchors = HashMap::with_capacity(order.len());
+        for block in order {
+            let anchor = block_id(block.raw()).unwrap_or_else(|| loop {
+                let generated = format!("b{counter}");
+                counter += 1;
+                if !authored.contains(&generated) {
+                    break generated;
+                }
+            });
+            anchors.insert(block as *const DocBlock, anchor);
+        }
+        Self(anchors)
+    }
+
+    pub(super) fn get(&self, block: &DocBlock) -> String {
+        (self.0.get(&(block as *const DocBlock)).cloned()).unwrap_or_default()
     }
 }
 
@@ -1666,8 +1683,7 @@ fn render_block(
     ctx: &Ctx,
     slug: &str,
     title: &str,
-    counter: &mut u32,
-    authored_ids: &HashSet<String>,
+    anchors: &PageAnchors,
     index: &mut Vec<serde_json::Value>,
     opts: PrintOpts,
     ord: Ordinal,
@@ -1694,7 +1710,7 @@ fn render_block(
     // `id::` value when present, else a generated per-page `b{n}` that skips all
     // authored IDs. Emitting the `<li id>` and the search-index entry in the SAME place
     // keeps the HTML anchor and the index in lock-step.
-    let anchor = block_anchor(b, counter, authored_ids);
+    let anchor = anchors.get(b);
     let class = if ord.marker().is_some() {
         " class=\"ol-item\""
     } else {
@@ -1781,8 +1797,7 @@ fn render_block(
             ctx,
             slug,
             title,
-            counter,
-            authored_ids,
+            anchors,
             index,
             opts,
             tree_depth,
@@ -1798,8 +1813,7 @@ fn render_block(
                     ctx,
                     slug,
                     title,
-                    counter,
-                    authored_ids,
+                    anchors,
                     index,
                     opts,
                     child_ord,
@@ -1813,20 +1827,6 @@ fn render_block(
     out.push_str("</li>");
 }
 
-fn authored_block_ids(roots: &[DocBlock]) -> HashSet<String> {
-    fn collect(blocks: &[DocBlock], ids: &mut HashSet<String>) {
-        for block in blocks {
-            if let Some(id) = block_id(block.raw()) {
-                ids.insert(id);
-            }
-            collect(&block.children, ids);
-        }
-    }
-    let mut ids = HashSet::new();
-    collect(roots, &mut ids);
-    ids
-}
-
 fn page_html(
     title: &str,
     slug: &str,
@@ -1838,8 +1838,7 @@ fn page_html(
 ) -> String {
     let mut body = String::new();
     body.push_str("<ul class=\"outline\">");
-    let mut counter = 0u32;
-    let authored_ids = authored_block_ids(&doc.roots);
+    let anchors = PageAnchors::of(&doc.roots);
     for (i, (b, ord)) in doc
         .roots
         .iter()
@@ -1853,8 +1852,7 @@ fn page_html(
             ctx,
             slug,
             title,
-            &mut counter,
-            &authored_ids,
+            &anchors,
             blocks,
             PrintOpts::default(),
             ord,
@@ -2058,8 +2056,7 @@ pub fn page_print_html(
     let mut blocks: Vec<serde_json::Value> = Vec::new();
     let mut body = String::new();
     body.push_str("<ul class=\"outline\">");
-    let mut counter = 0u32;
-    let authored_ids = authored_block_ids(&parsed.roots);
+    let anchors = PageAnchors::of(&parsed.roots);
     for (i, (b, ord)) in parsed
         .roots
         .iter()
@@ -2072,8 +2069,7 @@ pub fn page_print_html(
             &ctx,
             &slug,
             &entry.name,
-            &mut counter,
-            &authored_ids,
+            &anchors,
             &mut blocks,
             opts,
             ord,
@@ -2400,12 +2396,11 @@ pub(crate) fn publish_graph(
         .collect();
     let mut reverse_refs = ReverseRefIndex::new();
     for (name, _, parsed, _) in &public {
-        let mut counter = 0;
         collect_reverse_refs(
             &parsed.roots,
             &slug_of(name),
             name,
-            &mut counter,
+            &PageAnchors::of(&parsed.roots),
             &refs,
             &mut reverse_refs,
         );
