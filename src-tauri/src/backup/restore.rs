@@ -715,4 +715,49 @@ mod tests {
             let _ = std::fs::remove_dir_all(root);
         }
     }
+
+    /// Differential with master ffb4cb3d7: master's own fixture
+    /// (`graph_wide_snapshot_preserves_eligible_paths_and_excludes_internal_trees`)
+    /// through og's `Area::Graph` selection copies exactly master's three files.
+    #[test]
+    fn graph_text_selection_matches_masters_fixture() {
+        let root = scratch("master-fixture-differential");
+        let graph = root.join("graph");
+        write(
+            &graph.join("logseq/config.edn"),
+            "{:hidden [\"private\"]}\n",
+        );
+        for (rel, bytes) in [
+            ("Root.md", "root\n"),
+            ("pages/Normal.org", "* normal\n"),
+            ("archive/自由/Elsewhere.Markdown", "elsewhere\n"),
+            ("assets/ignored.md", "asset\n"),
+            ("logseq/.tine-trash/pages/ignored.md", "trash\n"),
+            (".hidden/ignored.md", "hidden\n"),
+            ("private/ignored.md", "private\n"),
+        ] {
+            write(&graph.join(rel), bytes);
+        }
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let dest = root.join("snapshot/graph");
+        let (copied, failed, failure) =
+            copy_store_area(&store, Area::Graph, &dest, is_graph_text, &|| false);
+        assert_eq!((copied, failed), (3, 0), "{failure:?}");
+        let mut got: Vec<String> = snapshot_inventory(&dest)
+            .unwrap()
+            .into_iter()
+            .map(|file| file.path)
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                "Root.md",
+                "archive/自由/Elsewhere.Markdown",
+                "pages/Normal.org"
+            ]
+        );
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
