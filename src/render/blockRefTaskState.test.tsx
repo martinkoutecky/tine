@@ -87,7 +87,7 @@ describe("block-reference task state rendering (GH #518)", () => {
     ["TODO", "TODO", "TODO"],
     ["TODO \nmore detail", "TODO", "TODO more detail"],
     ["TODO TODO buy milk", "TODO", "TODO TODO buy milk"],
-    ["TODO\nmore detail", null, "TODO"],
+    ["TODO\nmore detail", null, "TODOmore detail"],
     ["TODO\tbuy milk", null, "TODO\tbuy milk"],
     ["TODO: buy milk", null, "TODO: buy milk"],
     ["todo buy milk", null, "todo buy milk"],

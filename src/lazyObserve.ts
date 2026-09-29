@@ -59,3 +59,9 @@ export function unobserveNear(el: Element) {
 // Bounded in practice by the set of blocks ever brought near the viewport (the
 // working set), so it does not grow without use.
 export const renderedBlocks = new Set<string>();
+
+export function resetNearObserverForTests() {
+  sharedNearIO?.disconnect();
+  sharedNearIO = null;
+  renderedBlocks.clear();
+}

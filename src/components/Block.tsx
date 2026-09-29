@@ -71,6 +71,7 @@ import {
   secondarySelectionActions,
   type SelectionAction,
 } from "../editor/selectionActions";
+import { DeferredStandaloneMacro } from "./DeferredStandaloneMacro";
 import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "../render/block";
 import { effectiveHeadingLevel, facetsOf } from "../render/facets";
 import { AstBody } from "../render/body";
@@ -617,14 +618,16 @@ function Rendered(props: {
       when={!macro()}
       fallback={
         <div class="block-content macro-host" onMouseDown={onMouseDown}>
-          <Switch>
-            <Match when={macro()!.kind === "query"}>
-              <QueryMacro body={macro()!.inner} blockId={props.id} sourceExtent={macro()!.sourceExtent} sourceRaw={macro()!.sourceExtent && node().raw.slice(macro()!.sourceExtent!.start, macro()!.sourceExtent!.end)} />
-            </Match>
-            <Match when={macro()!.kind === "embed"}>
-              <EmbedMacro body={macro()!.inner} blockId={props.id} />
-            </Match>
-          </Switch>
+          <DeferredStandaloneMacro blockId={props.id} raw={node().raw}>
+            <Switch>
+              <Match when={macro()!.kind === "query"}>
+                <QueryMacro body={macro()!.inner} blockId={props.id} sourceExtent={macro()!.sourceExtent} sourceRaw={macro()!.sourceExtent && node().raw.slice(macro()!.sourceExtent!.start, macro()!.sourceExtent!.end)} />
+              </Match>
+              <Match when={macro()!.kind === "embed"}>
+                <EmbedMacro body={macro()!.inner} blockId={props.id} />
+              </Match>
+            </Switch>
+          </DeferredStandaloneMacro>
         </div>
       }
     >
