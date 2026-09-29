@@ -95,6 +95,42 @@ describe("independent empty query workspaces (GH #172)", () => {
   });
 });
 
+describe("a query workspace edit is validated as one atomic patch (og E, master P5C)", () => {
+  it("refuses an unreadable display, presentation or membership without touching the route", () => {
+    openQueryInNewTab("alpha", "search", true);
+    updateActiveQuery({ pageDisplay: { columns: ["prop:owner"] } });
+    const before = JSON.stringify(route());
+    for (const bad of [
+      { pageDisplay: { columns: ["bad;name"] } },
+      { blockDisplay: { sort: [["priority", "sideways"]] } },
+      { pageDisplay: { group_by: "status" } },
+      { pageDisplay: "not-an-object" },
+      { pagePresentation: "gallery" },
+      { presentation: "gallery", source: "beta" },
+      { pageMatchScope: "both-and-more" },
+      { sourceKind: "sql" },
+    ]) {
+      updateActiveQuery(bad as never);
+      expect(JSON.stringify(route()), JSON.stringify(bad)).toBe(before);
+    }
+  });
+
+  it("keeps an untouched draft, clears on explicit undefined, and stores fresh normalized copies", () => {
+    openQueryInNewTab("alpha", "search", true);
+    updateActiveQuery({ pageDisplay: {}, blockDisplay: { columns: ["state"] } });
+    updateActiveQuery({ source: "beta" });
+    expect(route()).toMatchObject({ source: "beta", pageDisplay: {}, blockDisplay: { columns: ["state"] } });
+    const columns = ["prop:a"];
+    updateActiveQuery({ pageDisplay: { columns } });
+    columns.push("prop:b");
+    expect(route()).toMatchObject({ pageDisplay: { columns: ["prop:a"] } });
+    updateActiveQuery({ blockDisplay: undefined, pageMatchScope: "both" });
+    const now = route();
+    expect(Object.hasOwn(now, "blockDisplay")).toBe(false);
+    expect(now).toMatchObject({ pageMatchScope: "both" });
+  });
+});
+
 describe("reuse already-open tabs on user navigation", () => {
   it("edits a virtual query in one stable history entry and can materialize it in place", () => {
     openQueryInNewTab("alpha", "search", true);

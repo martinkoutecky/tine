@@ -975,7 +975,7 @@ export function QueryMacro(props: {
                               queryDisplay={{ view: reading()?.view ?? {}, apply: (next) => void applyDisplay(next) }} />
                           </Match>
                           <Match when={blockFace() === "board"}>
-                            <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={sheet()?.groupBy} groups={groups()} />
+                            <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet()?.groupBy} groups={groups()} />
                           </Match>
                         </Switch>
                       </SheetContainer>

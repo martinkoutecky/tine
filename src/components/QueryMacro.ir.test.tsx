@@ -834,8 +834,14 @@ describe("B6: directive migration for blocks that stay {{query}}", () => {
     }
   });
 
-  // Q4b: the full six-field save patch is `queryViewProperties` (Q4b's write set);
-  // og's Q4a save writes only unspelled group/aggregate (and TQL sort/sample) keys.
+  // Not og's design (og E, family 3, verified 2026-09-29): master's save writes the
+  // full six-field `queryViewPropertyPatch` against the persisted block; og's save
+  // (`materializeView`) writes only the facts its dialect's reprint would drop, and a
+  // Display edit writes its own complete patch (`displayPropertyPatch`, tested in
+  // QueryDisplay/QueryWorkspace tests). The observable outcomes differ only where the
+  // test's mocked parse invents a view no real block can carry (columns/view kind live
+  // only in properties, so a filter save cannot lose them) or where og writes no
+  // redundant `tine.sort::` beside a `(sort-by …)` OG spelling. Left skipped on purpose.
   it.skip("keeps (sort-by a desc) in the OG text AND gains tine.sort:: a desc", async () => {
     load('{{query (task TODO) (sort-by a desc)}}');
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
@@ -854,8 +860,14 @@ describe("B6: directive migration for blocks that stay {{query}}", () => {
     }
   });
 
-  // Q4b: the full six-field save patch is `queryViewProperties` (Q4b's write set);
-  // og's Q4a save writes only unspelled group/aggregate (and TQL sort/sample) keys.
+  // Not og's design (og E, family 3, verified 2026-09-29): master's save writes the
+  // full six-field `queryViewPropertyPatch` against the persisted block; og's save
+  // (`materializeView`) writes only the facts its dialect's reprint would drop, and a
+  // Display edit writes its own complete patch (`displayPropertyPatch`, tested in
+  // QueryDisplay/QueryWorkspace tests). The observable outcomes differ only where the
+  // test's mocked parse invents a view no real block can carry (columns/view kind live
+  // only in properties, so a filter save cannot lose them) or where og writes no
+  // redundant `tine.sort::` beside a `(sort-by …)` OG spelling. Left skipped on purpose.
   it.skip("drops tine.sort when the sort is removed, so the removal survives a reparse", async () => {
     load('{{query (task TODO)}}\ntine.sort:: a desc');
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
@@ -877,8 +889,14 @@ describe("B6: directive migration for blocks that stay {{query}}", () => {
     }
   });
 
-  // Q4b: the full six-field save patch is `queryViewProperties` (Q4b's write set);
-  // og's Q4a save writes only unspelled group/aggregate (and TQL sort/sample) keys.
+  // Not og's design (og E, family 3, verified 2026-09-29): master's save writes the
+  // full six-field `queryViewPropertyPatch` against the persisted block; og's save
+  // (`materializeView`) writes only the facts its dialect's reprint would drop, and a
+  // Display edit writes its own complete patch (`displayPropertyPatch`, tested in
+  // QueryDisplay/QueryWorkspace tests). The observable outcomes differ only where the
+  // test's mocked parse invents a view no real block can carry (columns/view kind live
+  // only in properties, so a filter save cannot lose them) or where og writes no
+  // redundant `tine.sort::` beside a `(sort-by …)` OG spelling. Left skipped on purpose.
   it.skip("persists all six §7.6 fields, so the block re-parses to the saved view", async () => {
     load('{{query (task TODO)}}');
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));

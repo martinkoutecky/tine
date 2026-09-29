@@ -1,12 +1,13 @@
 import { backend } from "./backend";
-import { normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
-import type { QueryPresentation } from "./routeTypes";
+import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
+import type { QueryRoute } from "./routeTypes";
 import { graphOwner, readOwned, writeOwned } from "./owned";
 import { dismissToast, pushToastUnique } from "./toasts";
 import { isSinglePaneShell } from "./nativeChrome";
 import {
   installSessionPersistence,
   mintPdfViewId,
+  normalizeQueryPresentation,
   sameRoute,
   type PaneSnapshot,
   type Route,
@@ -105,25 +106,25 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
   if (o.kind === "journals") return { kind: "journals" };
   if (o.kind === "conflicts") return { kind: "conflicts" };
   if (o.kind === "query") {
+    const presentation = normalizeQueryPresentation(o.presentation);
     if (!(typeof o.id === "string" && o.id.length > 0 && o.id.length <= 128
       && (o.sourceKind === "search" || o.sourceKind === "dsl")
       && typeof o.source === "string" && o.source.length <= 65_536
-      && (o.presentation === "search" || o.presentation === "list"
-        || o.presentation === "table" || o.presentation === "board"))) return null;
-    if (o.pageMatchScope !== undefined && o.pageMatchScope !== "names"
-      && o.pageMatchScope !== "content" && o.pageMatchScope !== "both") return null;
+      && presentation)) return null;
+    // A malformed OPTIONAL field costs only that field: the tab (and its history
+    // entry) survives, and a bad membership mode is dropped, never widened.
+    const optional: Partial<QueryRoute> = {};
+    const scope = o.pageMatchScope === undefined ? null : normalizeFriendlyPageMatchScope(o.pageMatchScope);
+    if (scope) optional.pageMatchScope = scope;
     for (const key of ["pagePresentation", "blockPresentation"] as const) {
-      if (o[key] !== undefined && o[key] !== "search" && o[key] !== "list"
-        && o[key] !== "table" && o[key] !== "board") return null;
+      const value = o[key] === undefined ? null : normalizeQueryPresentation(o[key]);
+      if (value) optional[key] = value;
     }
-    const pageDisplay = o.pageDisplay === undefined ? undefined : normalizeQueryDisplayDraft(o.pageDisplay);
-    const blockDisplay = o.blockDisplay === undefined ? undefined : normalizeQueryDisplayDraft(o.blockDisplay);
-    if (o.pageDisplay !== undefined && pageDisplay === null || o.blockDisplay !== undefined && blockDisplay === null) return null;
-    return { kind: "query", id: o.id, sourceKind: o.sourceKind, source: o.source, presentation: o.presentation,
-      ...(o.pageMatchScope ? { pageMatchScope: o.pageMatchScope } : {}),
-      ...(o.pagePresentation ? { pagePresentation: o.pagePresentation as QueryPresentation } : {}),
-      ...(o.blockPresentation ? { blockPresentation: o.blockPresentation as QueryPresentation } : {}),
-      ...(pageDisplay ? { pageDisplay } : {}), ...(blockDisplay ? { blockDisplay } : {}) };
+    for (const key of ["pageDisplay", "blockDisplay"] as const) {
+      const value = o[key] === undefined ? null : normalizeQueryDisplayDraft(o[key]);
+      if (value) optional[key] = value;
+    }
+    return { kind: "query", id: o.id, sourceKind: o.sourceKind, source: o.source, presentation, ...optional };
   }
   if (o.kind === "invalid") {
     const detail = o.message;

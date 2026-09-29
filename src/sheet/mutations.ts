@@ -376,7 +376,13 @@ export function setColumnAggregate(ownerId: string, key: string, fn: AggregateFn
 export function setBoardGroupBy(gridId: string, field: FieldId): void {
   const page = gridPage(gridId);
   if (!page) return;
-  withUndoUnit("sheet:group-by", [page], () => setBlockProperty(gridId, "tine.group-by", field));
+  withUndoUnit("sheet:group-by", [page], () => {
+    setBlockProperty(gridId, "tine.group-by", field);
+    // A query block's Display grouping (`tine.group-field`) outranks the legacy
+    // key in the engine's one resolver, so a board choice must move it too or the
+    // dropdown would silently do nothing on a block that carries one.
+    if (blockProperty(gridId, "tine.group-field") !== null) setBlockProperty(gridId, "tine.group-field", field);
+  });
 }
 
 export function sheetSelectionText(sel: SheetMutationSelection): { text: string; html: string } {

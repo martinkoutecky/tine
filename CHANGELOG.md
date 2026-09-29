@@ -78,6 +78,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Query board and table settings survive and apply** (master P5A/P5B, og E).
+  A board now groups by the query's own Display grouping (it ignored it before), and its Group by
+  control changes that setting. A `tine.fields` list of column names on a query block is no longer
+  mistaken for a typed schema: its columns are not marked stray, and declaring a schema moves the
+  list to `tine.columns` in the same undo step. A saved query tab or window state with one malformed
+  display setting keeps the tab and drops only that setting.
+
 - **An edit made while a graph switch was already under way is no longer
   dropped** (og A). Tine saves once more right before it opens the other graph,
   and stays on the current graph if that edit cannot be saved.
