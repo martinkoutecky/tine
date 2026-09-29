@@ -21,34 +21,51 @@ import {
   type RegistryPlugin,
   type RegistryVersion,
 } from "../plugins/registry";
-import { ownedWhen, readOwned } from "../owned";
+import { latestOwner, ownedWhen, readOwned } from "../owned";
 import { readOr } from "../resourceRead";
+
+/** The tab's one busy slot. `hold(key)` marks it busy and returns the release,
+ * which clears the slot only while this is still the newest hold: an earlier
+ * operation finishing (or a cancelled confirm) can never clear the flag of a
+ * later one still in flight (master cdd0eda4b; OG-I2 O7). O(1). */
+function busySlot(): { busy: () => string | null; hold: (key: string) => () => void } {
+  const scope = {};
+  const [busy, setBusy] = createSignal<string | null>(null);
+  return {
+    busy,
+    hold: (key) => {
+      const mine = latestOwner(scope, "busy");
+      setBusy(key);
+      return () => { if (mine()) setBusy(null); };
+    },
+  };
+}
 
 function PluginSettingsForm(props: {
   plugin: ManagedPlugin;
   busy: () => string | null;
-  setBusy: (value: string | null) => void;
+  hold: (key: string) => () => void;
 }): JSX.Element {
   const operationKey = () => `${props.plugin.manifest.id}@${props.plugin.manifest.version}:settings`;
   const update = async (key: string, value: string | number | boolean) => {
-    props.setBusy(operationKey());
+    const release = props.hold(operationKey());
     try {
       await pluginManager.setSetting(props.plugin.manifest.id, props.plugin.manifest.version, key, value);
     } catch (error) {
       pushToast(`Plugin setting could not be saved: ${String(error)}`, "error");
     } finally {
-      props.setBusy(null);
+      release();
     }
   };
   const reset = async (key?: string) => {
-    props.setBusy(operationKey());
+    const release = props.hold(operationKey());
     try {
       if (key) await pluginManager.resetSetting(props.plugin.manifest.id, props.plugin.manifest.version, key);
       else await pluginManager.resetSettings(props.plugin.manifest.id, props.plugin.manifest.version);
     } catch (error) {
       pushToast(`Plugin settings could not be reset: ${String(error)}`, "error");
     } finally {
-      props.setBusy(null);
+      release();
     }
   };
 
@@ -142,7 +159,7 @@ export function PluginsTab(): JSX.Element {
   let alive = true;
   onCleanup(() => { alive = false; });
   let packageInput: HTMLInputElement | undefined;
-  const [busy, setBusy] = createSignal<string | null>(null);
+  const { busy, hold } = busySlot();
   const [view, setView] = createSignal<"browse" | "installed">("browse");
   const [selectedPluginKey, setSelectedPluginKey] = createSignal<string | null>(null);
   const [currentPlatformResource] = createResource(platformKind);
@@ -167,7 +184,7 @@ export function PluginsTab(): JSX.Element {
       pushToast("Plugin package is too large (manifest ≤ 64 KiB, .wasm ≤ 8 MiB).", "error");
       return;
     }
-    setBusy("install");
+    const release = hold("install");
     try {
       const manifest: unknown = JSON.parse(await manifestFile.text());
       const plugin = await pluginManager.install(manifest, new Uint8Array(await wasmFile.arrayBuffer()));
@@ -177,40 +194,40 @@ export function PluginsTab(): JSX.Element {
     } catch (error) {
       pushToast(`Plugin installation failed: ${String(error)}`, "error");
     } finally {
-      setBusy(null);
+      release();
       if (packageInput) packageInput.value = "";
     }
   };
 
   const togglePlugin = async (id: string, version: string, enabled: boolean) => {
-    setBusy(`${id}@${version}`);
+    const release = hold(`${id}@${version}`);
     try {
       if (enabled) await pluginManager.disable(id);
       else await pluginManager.enable(id, version);
     } catch (error) {
       pushToast(`Plugin could not be ${enabled ? "disabled" : "enabled"}: ${String(error)}`, "error");
     } finally {
-      setBusy(null);
+      release();
     }
   };
 
   const uninstallPlugin = async (plugin: ReturnType<typeof installedPlugins>[number]) => {
     const { id, name, version } = plugin.manifest;
-    const result = await readOwned(ownedWhen(() => alive), backend().confirm(
-      `Uninstall ${name} ${version}?\n\nThis removes the plugin from this device. It does not change your graph or notes.`,
-      "Uninstall plugin?"
-    ));
-    if (result.kind === "stale") return;
-    if (!result.value) return;
-    setBusy(`${id}@${version}:uninstall`);
+    // Held across the confirm too: the other controls stay disabled while it is open.
+    const release = hold(`${id}@${version}:uninstall`);
     try {
+      const result = await readOwned(ownedWhen(() => alive), backend().confirm(
+        `Uninstall ${name} ${version}?\n\nThis removes the plugin from this device. It does not change your graph or notes.`,
+        "Uninstall plugin?"
+      ));
+      if (result.kind === "stale" || !result.value) return;
       await pluginManager.uninstall(id, version);
       pushToast(`${name} ${version} was uninstalled.`, "info");
       if (selectedPluginKey() === `${id}@${version}`) setSelectedPluginKey(null);
     } catch (error) {
       pushToast(`Plugin could not be uninstalled: ${String(error)}`, "error");
     } finally {
-      setBusy(null);
+      release();
     }
   };
 
@@ -220,7 +237,7 @@ export function PluginsTab(): JSX.Element {
   };
 
   const installCommunity = async (plugin: RegistryPlugin, version: RegistryVersion) => {
-    setBusy(`${plugin.id}@${version.version}`);
+    const release = hold(`${plugin.id}@${version.version}`);
     try {
       const installed = await installCommunityPlugin(plugin, version);
       pushToast(`${installed.manifest.name} installed disabled. Enable it after reviewing its capabilities.`, "info");
@@ -229,7 +246,7 @@ export function PluginsTab(): JSX.Element {
     } catch (error) {
       pushToast(`Community plugin installation failed: ${String(error)}`, "error");
     } finally {
-      setBusy(null);
+      release();
     }
   };
 
@@ -265,7 +282,7 @@ export function PluginsTab(): JSX.Element {
               )}
             </Show>
             <div class="settings-section">Settings</div>
-            <PluginSettingsForm plugin={plugin} busy={busy} setBusy={setBusy} />
+            <PluginSettingsForm plugin={plugin} busy={busy} hold={hold} />
             <div class="settings-section">Package</div>
             <div class="plugin-detail-actions">
               <button class="settings-btn" onClick={() => void backend().openExternal(plugin.manifest.source)}>Details &amp; screenshots</button>
