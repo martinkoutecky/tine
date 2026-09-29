@@ -226,9 +226,9 @@ impl QueryMemo {
             return;
         }
         for (entry, before, after) in edits {
-            let old_facts = PageFacts::of(entry, before);
-            let new_facts = PageFacts::of(entry, after);
-            let rows_moved = old_facts.rows_digest() != new_facts.rows_digest();
+            let old_facts = PageFacts::of(entry, before, parse_config);
+            let new_facts = PageFacts::of(entry, after, parse_config);
+            let rows_moved = old_facts.registry_rows_differ(&new_facts);
             memo.entries.retain(|_, cached| {
                 let Some(plan) = &cached.plan else {
                     return true;

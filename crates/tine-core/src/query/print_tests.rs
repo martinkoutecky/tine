@@ -852,10 +852,19 @@ fn a_page_reference_operand_prints_into_a_macro_the_parser_reads_back() {
     ] {
         let query = tql(source);
         assert!(!query.is_invalid(), "{source}");
-        let persisted = query_print(&query, &ViewSettings::default(), PrintDialect::TqlMacro, false)
-            .unwrap_or_else(|d| panic!("{source} was refused: {}", d.message));
+        let persisted = query_print(
+            &query,
+            &ViewSettings::default(),
+            PrintDialect::TqlMacro,
+            false,
+        )
+        .unwrap_or_else(|d| panic!("{source} was refused: {}", d.message));
         assert!(persisted.starts_with("@block and "), "{persisted}");
-        assert_eq!(tql(&persisted).filter, query.filter, "{source} → {persisted}");
+        assert_eq!(
+            tql(&persisted).filter,
+            query.filter,
+            "{source} → {persisted}"
+        );
         assert!(
             !print_tql(&query).contains("([["),
             "the pane text keeps the plain spelling: {}",
@@ -866,11 +875,28 @@ fn a_page_reference_operand_prints_into_a_macro_the_parser_reads_back() {
     // never re-spelled, so a literal `, [[` stays a refusal — loud, and the
     // only shape left that the macro form cannot say.
     let query = tql("content like '%a, [[b]]%'");
-    let refused = query_print(&query, &ViewSettings::default(), PrintDialect::TqlMacro, false)
-        .expect_err("a `, [[` inside a string cannot be a macro argument");
-    assert!(refused.message.contains("does not read this back"), "{}", refused.message);
+    let refused = query_print(
+        &query,
+        &ViewSettings::default(),
+        PrintDialect::TqlMacro,
+        false,
+    )
+    .expect_err("a `, [[` inside a string cannot be a macro argument");
+    assert!(
+        refused.message.contains("does not read this back"),
+        "{}",
+        refused.message
+    );
     let query = tql("content like '%a b%' and any(children, [[c]])");
-    let persisted = query_print(&query, &ViewSettings::default(), PrintDialect::TqlMacro, false)
-        .expect("a string without a comma is untouched");
-    assert!(persisted.contains("'%a b%'") && persisted.contains("([[c]])"), "{persisted}");
+    let persisted = query_print(
+        &query,
+        &ViewSettings::default(),
+        PrintDialect::TqlMacro,
+        false,
+    )
+    .expect("a string without a comma is untouched");
+    assert!(
+        persisted.contains("'%a b%'") && persisted.contains("([[c]])"),
+        "{persisted}"
+    );
 }
