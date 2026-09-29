@@ -119,6 +119,40 @@ pub fn path_for_os_handoff(
         .map_err(AssetAccessError::Store)
 }
 
+/// Probe child used to locate the assets root through the Store's containment
+/// gate; it need not (and normally does not) exist.
+const ASSETS_ROOT_PROBE: &str = ".tine-assets-root-probe";
+
+/// Return the canonical path of an existing asset file OR directory for an OS
+/// opener; the empty name is the assets root (GH #367, OG's `[p](./assets/)`).
+/// Same name validation and Store containment as `path_for_os_handoff` (the
+/// live `assets/` must be the approved root; the resolved target may not
+/// escape it through a symlink), which keeps its regular-file gate for edit
+/// handoffs. Refuses a name that exists as neither file nor directory
+/// (deleted or replaced by sync or an external editor after the click; I-8 row
+/// "`tine-store::store` read, scan and handoff"). Cost O(path components).
+pub fn path_for_os_open(store: &Store, name: &str) -> Result<std::path::PathBuf, AssetAccessError> {
+    let root = name.is_empty();
+    let id = named_asset(store, if root { ASSETS_ROOT_PROBE } else { name })?;
+    let path = store
+        .path_for_os_handoff(&id, false)
+        .map_err(AssetAccessError::Store)?;
+    let target = if root {
+        path.parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or(path)
+    } else {
+        path
+    };
+    if target.is_file() || target.is_dir() {
+        Ok(target)
+    } else {
+        Err(AssetAccessError::Store(StoreError::InvalidTarget(format!(
+            "assets/{name}"
+        ))))
+    }
+}
+
 /// A device import failed during filename selection or streaming.
 /// Choose and validate an import name from an explicit name or the device
 /// source's final component. No path is opened. Cost O(name bytes).

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { createNewGraph, loadGraphPath } from "./graph";
+import { createNewGraph, ensureJournalTemplateForDay, loadGraphPath } from "./graph";
 import { journalTitle } from "./journal";
 import { flushPage, pageByName, resetStore, setRaw } from "./document";
 import { loadSingle } from "./document/workingSet";
@@ -40,6 +40,8 @@ describe("graph creators that bypass the save engine", () => {
       });
       const result = template ? await loadGraphPath(ROOT) : await createNewGraph();
       expect(result.kind).toBe("loaded");
+      // The visible Journals surface materializes the template (master 5bb8ce020).
+      if (template) expect(await ensureJournalTemplateForDay(new Date())).toBe("ready");
       expect(files.size).toBe(1);
       const [id, created] = [...files.entries()][0];
       expect(created.dto.kind).toBe("journal");

@@ -62,12 +62,12 @@ function planningOf(raw: string, tag: "SCHEDULED" | "DEADLINE"): string | undefi
   const m = new RegExp(`^${tag}:\\s*<([^>]+)>`, "m").exec(raw);
   return m?.[1];
 }
-function tagsOf(raw: string): string[] {
+/** Tags in `raw`: first-seen, case-insensitively deduped, `[#A]` excluded. No lookbehind: pre-16.4 WebKit (GH #256). */
+export function tagsOf(raw: string): string[] {
   const out: string[] = [];
-  // (?<!\[) keeps the [#A] priority token from leaking a fake #A tag.
-  const re = /#\[\[([^\]]+)\]\]|(?<!\[)#([\w/_.-]+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(raw))) {
+  const re = /#\[\[([^\]]+)\]\]|#([\w/_.-]+)/g;
+  for (let m: RegExpExecArray | null; (m = re.exec(raw)); ) {
+    if (m[2] !== undefined && m.index > 0 && raw[m.index - 1] === "[") continue;
     const tag = (m[1] ?? m[2]).trim();
     if (tag && !out.some((t) => t.toLowerCase() === tag.toLowerCase())) out.push(tag);
   }

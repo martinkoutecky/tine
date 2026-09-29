@@ -1,4 +1,4 @@
-import { Show, Suspense, createEffect, lazy, onCleanup, onMount, type JSX } from "solid-js";
+import { Show, Suspense, createEffect, createSignal, lazy, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
@@ -266,6 +266,58 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
   );
 }
 
+/** A pane's `.main-content` scroller and its page column.
+ *  Contract: `natural-content-overflow` is set exactly while the column's
+ *  natural height exceeds the scroller's, re-measured on either one resizing.
+ *  The end-of-page slack keys off that (app.css), so long pages keep 40% tail
+ *  room through read/edit transitions and fitting panes never scroll (GH #369,
+ *  #390). `identifyPane: false` omits `data-pane-id` (the multi-pane leaf
+ *  carries it on its wrapper). */
+function PaneScroller(props: {
+  paneId: string;
+  router: PaneRouter;
+  class?: string;
+  identifyPane?: boolean;
+  children: JSX.Element;
+}): JSX.Element {
+  let scroller!: HTMLElement;
+  let inner!: HTMLDivElement;
+  const [naturalOverflow, setNaturalOverflow] = createSignal(false);
+  const measure = () => {
+    if (!scroller?.isConnected || !inner?.isConnected) return;
+    setNaturalOverflow(inner.scrollHeight > scroller.clientHeight + 1);
+  };
+  onMount(() => {
+    measure();
+    const frame = requestAnimationFrame(measure);
+    if (typeof ResizeObserver === "undefined") {
+      onCleanup(() => cancelAnimationFrame(frame));
+      return;
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroller);
+    observer.observe(inner);
+    onCleanup(() => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    });
+  });
+  return (
+    <main
+      class={`main-content${props.class ? ` ${props.class}` : ""}`}
+      classList={{ "natural-content-overflow": naturalOverflow() }}
+      tabindex="-1"
+      data-pane-id={props.identifyPane === false ? undefined : props.paneId}
+      ref={(el) => {
+        scroller = el;
+        props.router.setScrollerElement(el);
+      }}
+    >
+      <div class="main-content-inner" ref={inner}>{props.children}</div>
+    </main>
+  );
+}
+
 function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClass?: string }): JSX.Element {
   const route = () => props.router.route();
   createEffect(() => {
@@ -274,11 +326,10 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
   return (
     <Show when={route().kind === "pdf" ? route() as PdfRoute : null} fallback={
       <Show when={route().kind === "invalid" ? route() as InvalidRoute : null} fallback={
-        <main class={`main-content ${props.scrollerClass ?? ""}`} tabindex="-1"
-          data-pane-id={props.scrollerClass ? undefined : props.paneId}
-          ref={(el) => props.router.setScrollerElement(el)}>
-          <div class="main-content-inner"><PaneContent router={props.router} /></div>
-        </main>
+        <PaneScroller paneId={props.paneId} router={props.router} class={props.scrollerClass}
+          identifyPane={!props.scrollerClass}>
+          <PaneContent router={props.router} />
+        </PaneScroller>
       }>
         {(invalid) => <div class="pane-route-error" role="alert">
           <h2>{invalid().title}</h2>

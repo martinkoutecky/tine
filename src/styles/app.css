@@ -557,10 +557,7 @@ textarea {
   right: -3px;
 }
 
-.tab-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+.tab-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; } /* close pinned right; titles ellipsize */
 
 .tab-pin {
   flex: none;
@@ -570,16 +567,10 @@ textarea {
   font-size: 13px;
 }
 
-.tab-close {
-  opacity: 0;
-  font-size: 11px;
-  border-radius: 3px;
-  padding: 0 3px;
-}
+.tab-close { flex: none; opacity: 0; padding: 0 3px; border: 0; border-radius: 3px; cursor: pointer;
+  background: none; color: inherit; font: inherit; font-size: 11px; }
 
-.tab:hover .tab-close {
-  opacity: 0.6;
-}
+.tab:hover .tab-close, .tab-close:focus-visible { opacity: 0.6; }
 
 .tab-close:hover {
   opacity: 1;
@@ -747,7 +738,14 @@ textarea {
   flex: 1;
   min-width: 0; /* shrink horizontally when the right sidebar/PDF pane is open */
   overflow-y: auto;
+  display: flex; flex-direction: column; /* column context for the ::after slack (GH #369) */
 }
+
+.main-content:focus { outline: none; } /* GH #345: no UA frame on the tabindex=-1 scroller */
+/* End-of-page slack (GH #369/#390): a pane-relative spacer; only naturally
+   overflowing pages (PaneScroller, App.tsx) keep 40% room, fitting panes never scroll. */
+.main-content::after { content: ""; flex: 1 1 0; }
+.main-content.natural-content-overflow::after { flex: 1 0 40%; }
 
 /* Solo-pane shell: a non-scrolling, positioned wrapper so the pane-select
    overlays (edge segment, tab-split preview) don't scroll with the content.
@@ -1021,9 +1019,10 @@ textarea {
 }
 
 .main-content-inner {
+  flex: 0 0 auto; width: 100%; /* natural height, full width as a flex item (GH #369, #382) */
   max-width: var(--ls-main-content-max-width);
   margin: 0 auto;
-  padding: 12px 48px 40vh;
+  padding: 12px 48px 0;
 }
 
 /* Wide mode: drop the reading-width cap. */
@@ -2628,7 +2627,7 @@ textarea {
 }
 @media (max-width: 640px) {
   .main-content-inner {
-    padding: 8px 12px 40vh;
+    padding: 8px 12px 0;
   }
   .page-title-row {
     gap: 6px;
@@ -3312,8 +3311,8 @@ textarea {
 /* Block background color (set via the context menu). */
 .block-content.has-bg {
   border-radius: 5px;
-  padding: 1px 6px;
-  margin: -1px -6px;
+  padding: 1px 4px;
+  margin: -1px -4px;
 }
 
 /* Numbered list: the block's OWN bullet becomes its ordinal (OG numbers the
@@ -3322,6 +3321,7 @@ textarea {
 .bullet-container.ordered {
   width: auto;
   min-width: 18px;
+  margin-right: 4px;
 }
 .bullet-order {
   color: var(--text-secondary);
@@ -3643,7 +3643,7 @@ textarea {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  margin-right: 4px;
+  margin-right: 6px;
   cursor: pointer;
 }
 

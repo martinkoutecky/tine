@@ -42,7 +42,7 @@ import {
   layoutHasMultiplePanes,
   layoutPaneIds,
   layoutRoot,
-  moveActiveTabToPane,
+  moveActiveTabInDirection,
   paneRouter,
   splitPane,
   splitPaneAtSeam,
@@ -138,10 +138,10 @@ function focusPaneInDirection(dir: PaneDirection) {
   if (target) focusPane(target);
 }
 
-function moveActiveTabInDirection(dir: PaneDirection) {
-  if (!layoutHasMultiplePanes()) return;
-  const target = nearestPaneInDirection(layoutRoot(), focusedPaneId(), dir);
-  if (target) moveActiveTabToPane(focusedPaneId(), target);
+// With no pane in the requested direction, panes.ts grows the layout instead
+// of no-op'ing (GH #282), so the focus commands' single-pane gate does not apply.
+function moveActiveTab(dir: PaneDirection) {
+  moveActiveTabInDirection(focusedPaneId(), dir);
 }
 
 function enterPaneSelectFromFocus() {
@@ -306,10 +306,10 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/focus-right", binding: "mod+alt+right", label: "Focus pane right", scope: "global", run: () => focusPaneInDirection("right"), global: true },
   { id: "pane/focus-up", binding: "mod+alt+up", label: "Focus pane up", scope: "global", run: () => focusPaneInDirection("up"), global: true },
   { id: "pane/focus-down", binding: "mod+alt+down", label: "Focus pane down", scope: "global", run: () => focusPaneInDirection("down"), global: true },
-  { id: "pane/move-tab-left", binding: "mod+alt+shift+left", label: "Move tab to pane left", scope: "global", run: () => moveActiveTabInDirection("left"), global: true },
-  { id: "pane/move-tab-right", binding: "mod+alt+shift+right", label: "Move tab to pane right", scope: "global", run: () => moveActiveTabInDirection("right"), global: true },
-  { id: "pane/move-tab-up", binding: "mod+alt+shift+up", label: "Move tab to pane up", scope: "global", run: () => moveActiveTabInDirection("up"), global: true },
-  { id: "pane/move-tab-down", binding: "mod+alt+shift+down", label: "Move tab to pane down", scope: "global", run: () => moveActiveTabInDirection("down"), global: true },
+  { id: "pane/move-tab-left", binding: "mod+alt+shift+left", label: "Move tab to pane left", scope: "global", run: () => moveActiveTab("left"), global: true },
+  { id: "pane/move-tab-right", binding: "mod+alt+shift+right", label: "Move tab to pane right", scope: "global", run: () => moveActiveTab("right"), global: true },
+  { id: "pane/move-tab-up", binding: "mod+alt+shift+up", label: "Move tab to pane up", scope: "global", run: () => moveActiveTab("up"), global: true },
+  { id: "pane/move-tab-down", binding: "mod+alt+shift+down", label: "Move tab to pane down", scope: "global", run: () => moveActiveTab("down"), global: true },
   { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
   { id: "ui/reset-zoom", binding: "", label: "Reset interface zoom", scope: "global", run: zoomReset, global: true },
   { id: "ui/toggle-brackets", binding: "mod+c mod+b", label: "Toggle reference brackets", scope: "global", run: () => changeShowBrackets(!showBrackets()), global: true },
