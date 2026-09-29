@@ -330,13 +330,46 @@ pub(crate) fn record_save(failure: Option<&str>, pages: usize, elapsed: std::tim
     record_fixed_event("direct.save", fields);
 }
 
+/// How one external batch fared in the watcher: milliseconds and counts, never
+/// a path. Carried by `watcher.batch` events and the watcher's devtools ring.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct WatcherTiming {
+    /// "inotify" or "poll" (a poll cycle, chosen or after a refused watch).
+    pub(crate) mode: &'static str,
+    /// Exact event paths in the batch (0 for a pure full diff).
+    pub(crate) event_paths: usize,
+    /// Whether the full stat diff ran (poll, unclassifiable event, burst).
+    pub(crate) full_diff: bool,
+    /// First notification -> reconcile start; `None` for a poll cycle.
+    pub(crate) event_to_reconcile_ms: Option<u64>,
+    /// Reconcile start -> last window event emitted.
+    pub(crate) reconcile_ms: u64,
+    /// First notification -> last window event emitted.
+    pub(crate) event_to_emit_ms: Option<u64>,
+}
+
 /// Record one externally caused graph publication that reached a window
-/// (`watcher.batch`): how many page events it carried and whether the sync
-/// conflict list changed. No page names or paths.
-pub(crate) fn record_watcher_batch(pages: usize, conflicts_changed: bool) {
+/// (`watcher.batch`): how many page events it carried, whether the sync
+/// conflict list changed and, when the watcher measured it, the batch's timing
+/// (so a report can show that external edits arrived slowly). No page names or
+/// paths. Unit cost: one ring line of about 200 bytes per external batch; an
+/// edit of your own writes none.
+pub(crate) fn record_watcher_batch(
+    pages: usize,
+    conflicts_changed: bool,
+    timing: Option<&WatcherTiming>,
+) {
     let mut fields = Map::new();
     fields.insert("pages".into(), json!(pages));
     fields.insert("conflictsChanged".into(), json!(conflicts_changed));
+    if let Some(timing) = timing {
+        fields.insert("mode".into(), json!(timing.mode));
+        fields.insert("eventPaths".into(), json!(timing.event_paths));
+        fields.insert("fullDiff".into(), json!(timing.full_diff));
+        fields.insert("eventToReconcileMs".into(), json!(timing.event_to_reconcile_ms));
+        fields.insert("reconcileMs".into(), json!(timing.reconcile_ms));
+        fields.insert("eventToEmitMs".into(), json!(timing.event_to_emit_ms));
+    }
     record_fixed_event("watcher.batch", fields);
 }
 
@@ -711,6 +744,36 @@ mod tests {
         }
     }
 
+    /// Master 271885b20: a report shows how slowly external edits arrived.
+    /// The batch event carries timings and counts, never a path or a name.
+    #[test]
+    fn a_report_carries_watcher_batch_timings_but_no_paths() {
+        let timing = WatcherTiming {
+            mode: "inotify",
+            event_paths: 2,
+            full_diff: false,
+            event_to_reconcile_ms: Some(731_001),
+            reconcile_ms: 17,
+            event_to_emit_ms: Some(731_018),
+        };
+        record_watcher_batch(3, true, Some(&timing));
+        let report = build_diagnostic_report(Some(1), String::new(), String::new());
+        let report: Value = serde_json::from_str(&report.text).unwrap();
+        let batch = report["sessions"]["current"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|event| event["event"] == "watcher.batch" && event["eventToEmitMs"] == 731_018)
+            .expect("a timed watcher.batch event");
+        assert_eq!(batch["mode"], "inotify");
+        assert_eq!(batch["eventPaths"], 2);
+        assert_eq!(batch["fullDiff"], false);
+        assert_eq!(batch["eventToReconcileMs"], 731_001);
+        assert_eq!(batch["reconcileMs"], 17);
+        assert_eq!(batch["pages"], 3);
+        assert_eq!(batch["conflictsChanged"], true);
+    }
+
     #[test]
     fn a_fast_successful_save_is_not_an_event() {
         let before: Vec<String> = FLIGHT.lock().unwrap().lines.iter().cloned().collect();
@@ -926,7 +989,7 @@ mod tests {
             return;
         };
         flight_init();
-        record_watcher_batch(3, false); // recorded before the store exists
+        record_watcher_batch(3, false, None); // recorded before the store exists
         persist_init(PathBuf::from(dir));
         match std::env::var("TINE_FLIGHT_PROBE_MODE").unwrap().as_str() {
             "report" => {
@@ -951,7 +1014,7 @@ mod tests {
             }
             "flood" => {
                 for pages in 0..40_000 {
-                    record_watcher_batch(pages, pages % 2 == 0);
+                    record_watcher_batch(pages, pages % 2 == 0, None);
                 }
                 flush_now();
                 std::process::abort();

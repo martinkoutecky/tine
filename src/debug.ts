@@ -86,6 +86,9 @@ export async function initDebug(): Promise<void> {
     void recordDiagnostic("error_toast");
     dbg(`error toast: ${message}`);
   });
+  // Console-only (GH #337): release builds ship the devtools, and a reporter needs
+  // one named callable to reach the watcher's receipt ring. No UI beyond this.
+  window.__tineWatcherLatency = () => backend().watcherLatencyRecent();
   let expected = performance.now() + HEARTBEAT_MS;
   window.setInterval(() => {
     const now = performance.now();

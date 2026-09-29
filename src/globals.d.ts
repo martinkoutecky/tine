@@ -7,6 +7,8 @@ declare const __TINE_COMMUNITY_REGISTRY__: boolean;
 interface Window {
   __tineApplyTheme?: (id: string) => void;
   __tineMockCustomCss?: string;
+  /** Devtools-only: the watcher's recent external-change latency receipts (GH #337). */
+  __tineWatcherLatency?: () => Promise<unknown[]>;
 }
 
 // KaTeX's mhchem extension ships no types; it's imported only for its global

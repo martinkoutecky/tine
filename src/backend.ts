@@ -735,6 +735,10 @@ export interface Backend {
   localClock(): Promise<{ offset_minutes: number; unix_ms: number }>;
   /** The CPU architecture of this binary (`x86`, `x86_64`, `aarch64`, …). */
   appArchitecture(): Promise<string>;
+  /** The last 64 external-change latency receipts, oldest first: counts and
+   *  milliseconds only, no path. O(64). Backs the devtools helper
+   *  `window.__tineWatcherLatency()` (GH #337). */
+  watcherLatencyRecent(): Promise<unknown[]>;
 }
 
 export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, GraphConfigChange } from "./backendTypes";
@@ -1450,6 +1454,9 @@ class TauriBackend implements Backend {
   }
   appArchitecture() {
     return this.call<string>("app_architecture");
+  }
+  watcherLatencyRecent() {
+    return this.call<unknown[]>("watcher_latency_recent");
   }
   getSmoothScroll() {
     return this.call<boolean>("get_smooth_scroll");

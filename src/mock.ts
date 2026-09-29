@@ -1601,6 +1601,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       return { offset_minutes: -new Date(now).getTimezoneOffset(), unix_ms: now };
     },
     async appArchitecture(): Promise<string> { return "x86_64"; },
+    async watcherLatencyRecent(): Promise<unknown[]> { return []; },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },
