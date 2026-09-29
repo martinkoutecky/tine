@@ -732,30 +732,6 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     const id = beginPageHeaderEdit(props.page.name);
     if (id) startEditing(id, docNode(id).raw.length, null, editSurface());
   };
-  const focusTrailing = () => {
-    const roots = rootsToRender();
-    if (!roots.length) {
-      const id = ensureEmptyBlock(props.page.name, { afterProperties: true });
-      if (id) startEditing(id, 0, null, editSurface());
-      return;
-    }
-    // GH #158: always add a fresh root-level block (never reuse the trailing empty
-    // leaf). Reuse stranded users whose last block is an empty *indented* bullet —
-    // clicking could only ever re-focus that indented block, never give them a new
-    // unindented last block. Stacking empty last blocks is intentionally allowed.
-    const id = insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
-    if (id) startEditing(id, 0, null, editSurface());
-    else pushToast("Could not add a block to this page.", "error");
-  };
-  // A page emptied of its last block (explicit Delete bypasses the Backspace
-  // last-block guard) would render nothing to type into. Re-seed the phantom empty
-  // bullet — same shape a brand-new day gets — so there's always a bullet present;
-  // it only persists once the user types (ensureEmptyBlock leaves it non-dirty).
-  createEffect(() => {
-    if (rootsToRender().length === 0 && !props.page.readOnly) {
-      ensureEmptyBlock(props.page.name, { afterProperties: true });
-    }
-  });
   const startRename = () => {
     if (renameInFlight) return;
     if (props.page.guide || props.page.readOnly) return;
@@ -1011,10 +987,56 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         <For each={rootsToRender()}>{(id) => <Block id={id} />}</For>
       </div>
       {props.children}
-      <Show when={!props.page.readOnly && !props.page.guide}>
-        <TrailingBlockTarget onActivate={focusTrailing} />
-      </Show>
+      <PageTypingTarget page={() => props.page} surface={editSurface()} />
     </div>
+  );
+}
+
+/** The one answer to "where does the caret go on this page".
+ *
+ *  Every surface that renders a page's roots renders this too. It re-seeds the
+ *  phantom empty bullet whenever the body has nothing in it (the shape a
+ *  brand-new day gets; non-dirty until the user types) and offers the trailing
+ *  "+ Add block" for appending below the last block. GH #483 is what a surface
+ *  without it looks like: a page created and never opened in the main pane, then
+ *  opened in the right sidebar, rendered an empty box with nowhere to put a caret.
+ *  `ensureEmptyBlock` is the emptiness authority (a page whose only root is its
+ *  `key:: value` header counts as empty, and it returns null once a body exists),
+ *  so no caller carries its own predicate. */
+export function PageTypingTarget(props: {
+  page: () => FeedPage | undefined;
+  surface?: string | null;
+}): JSX.Element {
+  const focusTrailing = () => {
+    const page = props.page();
+    if (!page || page.readOnly || page.guide) return;
+    const seeded = ensureEmptyBlock(page.name, { afterProperties: true });
+    if (seeded) {
+      startEditing(seeded, 0, null, props.surface ?? null);
+      return;
+    }
+    // GH #158: always add a fresh root-level block (never reuse the trailing empty
+    // leaf). Reuse stranded users whose last block is an empty *indented* bullet:
+    // clicking could only ever re-focus that indented block, never give them a new
+    // unindented last block. Stacking empty last blocks is intentionally allowed.
+    const roots = page.roots;
+    const id = insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
+    if (id) startEditing(id, 0, null, props.surface ?? null);
+    else pushToast("Could not add a block to this page.", "error");
+  };
+  // A page emptied of its last block (explicit Delete bypasses the Backspace
+  // last-block guard) would render nothing to type into. `ensureEmptyBlock` is a
+  // no-op once a body exists, so this only ever fires on a genuinely empty page.
+  createEffect(() => {
+    const page = props.page();
+    if (!page || page.readOnly) return;
+    page.roots.length; // track: a page emptied while rendered must re-seed
+    ensureEmptyBlock(page.name, { afterProperties: true });
+  });
+  return (
+    <Show when={props.page() && !props.page()!.readOnly && !props.page()!.guide}>
+      <TrailingBlockTarget onActivate={focusTrailing} />
+    </Show>
   );
 }
 

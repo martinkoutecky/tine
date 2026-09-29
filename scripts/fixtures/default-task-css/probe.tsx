@@ -17,7 +17,7 @@ const targetId="39400000-0000-4000-8000-000000000001";
 const blocks=MARKERS.map((marker,i)=>({id:`task-${marker.toLowerCase()}`,raw:`${marker} Task ${i+1}: plain **bold** and [[linked page]]`,marker,collapsed:false,children:[]}));
 blocks.push({id:targetId,raw:`DONE Referenced task\nid:: ${targetId}`,marker:"DONE",collapsed:false,children:[]});
 blocks.push({id:"completed-ref",raw:`DONE Completed containing ((${targetId}))`,marker:"DONE",collapsed:false,children:[]});
-const page={name,title:name,kind:"journal" as const,pre_block:null,blocks};
+const page={id:`journals/${name}.md`,name,title:name,kind:"journal" as const,pre_block:null,blocks};
 backend().journalFeedPage=async()=>({pages:[page],as_of_day:localDayKey(),next_before_day:null,done:true});
 backend().resolveBlocks=async()=>[{page:name,kind:"journal",blocks:[blocks[MARKERS.length]]}];
 render(()=><main style="max-width:900px;margin:32px auto"><PageView />
