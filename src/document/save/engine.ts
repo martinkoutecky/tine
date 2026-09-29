@@ -9,7 +9,8 @@ import { backend, saveOnePage, type SavePageEntry } from "../../backend";
 import { forgetPage, reloadPage, loadSingle, rekeyPageIdentityByPath } from "../workingSet";
 import { pagePropertyEntries } from "../../editor/properties";
 import { graphOwner, readOwned } from "../../owned";
-import { pushToast } from "../../toasts";
+import { dismissToast, pushToast } from "../../toasts";
+import { openUnsavedRecovery } from "../../unsavedRecovery";
 import { errorFamily } from "../../errorFamily";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import type { EditKind, EditKinds } from "../../editKind";
@@ -98,7 +99,7 @@ export async function createPage(
       setPageId(name, id);
       setBaseRev(name, rev);
       clearConflict(name);
-      lastSaveFailure.delete(name);
+      forgetSaveFailure(name);
     }
     if (options.baseRev == null) bumpPageInventoryRev();
     bumpDataRev();
@@ -182,6 +183,21 @@ let graphToken = 0;
 type SaveResult = boolean | "deferred";
 const saveChain = new Map<string, Promise<SaveResult>>();
 const lastSaveFailure = new Map<string, string>();
+const saveFailureToasts = new Map<string, number>();
+/** Say once per failure family that `name` did not save, and keep saying it (a
+ * sticky toast with the way to the draft) until it saves or leaves (GH #540). */
+function reportSaveFailure(name: string, family: string, message: string) {
+  if (lastSaveFailure.get(name) === family) return;
+  forgetSaveFailure(name);
+  lastSaveFailure.set(name, family);
+  saveFailureToasts.set(name, pushToast(message, "error", { sticky: true, action: { label: "Review unsaved", run: openUnsavedRecovery } }));
+}
+function forgetSaveFailure(name: string) {
+  lastSaveFailure.delete(name);
+  const toast = saveFailureToasts.get(name);
+  saveFailureToasts.delete(name);
+  if (toast !== undefined) dismissToast(toast);
+}
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let saveBurstStart: number | null = null;
 let dataRevTimer: ReturnType<typeof setTimeout> | null = null;
@@ -393,10 +409,7 @@ function failGroup(g: SaveGroup, failure: { index: number; family: string; diskR
     if (family === "alias-owner-busy") markConflict(culprit, { kind: "alias-owner-busy" });
     else if (["conflict", "deleted", "twin", "read-only", "invalid-target"].includes(family))
       markConflict(culprit, { kind: "disk-changed" }, family === "deleted" ? null : failure.diskRev);
-    else if (lastSaveFailure.get(culprit) !== family) {
-      pushToast(`Couldn't save “${culprit}” — ${family}.`, "error");
-      lastSaveFailure.set(culprit, family);
-    }
+    else reportSaveFailure(culprit, family, `Couldn't save “${culprit}” — ${family}.`);
   }
   for (const path of failure.undoFailed) {
     const index = entryPaths.indexOf(path);
@@ -501,7 +514,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
       if (writtenHeader) adoptFoldedPageHeader(name, writtenHeader);
       if (entries[i].baseRev === null) bumpPageInventoryRev();
       if (forcedConflicts.has(name) && conflictReason(name) === forcedConflicts.get(name)) clearConflict(name);
-      lastSaveFailure.delete(name);
+      forgetSaveFailure(name);
     }
     dissolveGroup(g);
     for (let i = 0; i < order.length; i++) {
@@ -589,6 +602,19 @@ export function dirtyPages(): Iterable<string> {
 export function unsavedPageCount(): number {
   return new Set([...dirty, ...saveChain.keys()]).size;
 }
+export type UnsavedState = "Saving" | "Conflict" | "Not saved";
+/** Every page whose edits are not yet on disk, with the loaded draft to recover
+ *  (GH #540 recovery panel and close prompt). Read-only; O(dirty + saving +
+ *  conflicts) plus one DTO conversion per page. */
+export function unsavedDrafts(): { name: string; state: UnsavedState; path: string | null; page: PageDto | null }[] {
+  const names = new Set([...dirty, ...saveChain.keys(), ...conflicts()]);
+  return [...names].map((name) => ({
+    name,
+    state: saveChain.has(name) ? "Saving" : conflictReasons()[name] ? "Conflict" : "Not saved",
+    path: pageByName(name)?.id ?? null,
+    page: pageToDto(name),
+  }));
+}
 /** Is a save currently queued/in flight for this page? (a cross-page move must
  *  flush the source first so it isn't written after being emptied). */
 export function isSaving(name: string): boolean {
@@ -623,7 +649,7 @@ export function rekeyPageSaveState(oldName: string, newName: string, rev: string
   if (kinds) kindLedger.set(newName, kinds);
   baseRev.delete(oldName);
   baseRev.set(newName, rev);
-  lastSaveFailure.delete(oldName);
+  forgetSaveFailure(oldName);
   if (titleIdentityIntents.delete(oldName) && dirty.has(newName)) titleIdentityIntents.add(newName);
   const generation = pageInstanceGenerations.get(oldName);
   pageInstanceGenerations.delete(oldName);
@@ -669,7 +695,7 @@ export function forgetSaveState(name: string) {
   dirty.delete(name);
   kindLedger.delete(name);
   baseRev.delete(name);
-  lastSaveFailure.delete(name);
+  forgetSaveFailure(name);
   titleIdentityIntents.delete(name);
 }
 /** After flushAll has drained before a graph switch, cancel timers, invalidate
@@ -699,7 +725,7 @@ export function resetSaveState() {
   groupOf.clear();
   sealedGroups.clear();
   saveAttempts.clear();
-  lastSaveFailure.clear();
+  for (const name of [...lastSaveFailure.keys()]) forgetSaveFailure(name);
   setConflictReasons({});
 }
 
@@ -840,7 +866,7 @@ async function doSave(
         aliasDraftRouteHandler?.(owner.name, owner.kind);
         pushToast(`Moved “${name}” into its alias owner “${owner.name}”.`, "info");
         bumpPageInventoryRev();
-        lastSaveFailure.delete(name);
+        forgetSaveFailure(name);
         return true;
       }
       id = resolved.id;
@@ -859,7 +885,7 @@ async function doSave(
       if (dto.pre_block) adoptFoldedPageHeader(name, dto.pre_block);
       await settleSavedTitleIdentity(name, id, dto, rev);
       if (baseline === null) bumpPageInventoryRev();
-      lastSaveFailure.delete(name);
+      forgetSaveFailure(name);
       return true;
     }
     return false;
@@ -874,10 +900,8 @@ async function doSave(
       } else {
         dirty.add(name); // keep pending — retried on next edit / flush
       }
-      if (family !== "conflict" && lastSaveFailure.get(name) !== family) {
-        pushToast(`Couldn't save “${name}” — ${family === "deleted" ? "the file was deleted on disk; your edits remain in the editor" : String(e)}`, "error");
-        lastSaveFailure.set(name, family);
-      }
+      if (family !== "conflict")
+        reportSaveFailure(name, family, `Couldn't save “${name}” — ${family === "deleted" ? "the file was deleted on disk; your edits remain in the editor" : String(e)}`);
     }
     return false;
   }

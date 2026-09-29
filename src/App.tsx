@@ -51,7 +51,7 @@ import { pushToast } from "./toasts";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { flushAll, appendToTodayJournal, captureToPage, unsavedPageCount } from "./document";
+import { flushAll, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
@@ -90,6 +90,8 @@ import { SurfaceContext } from "./components/Block";
 import { endEdit } from "./editorController";
 import { exitAndroidActivity, installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
 import { createSafeCloseCoordinator } from "./safeClose";
+import { openUnsavedRecovery } from "./unsavedRecovery";
+import { UnsavedRecovery } from "./components/UnsavedRecovery";
 import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
 import { hlsPageName } from "./pdf";
 import type { InvalidRoute } from "./routeTypes";
@@ -101,7 +103,7 @@ const Settings = lazy(() => import("./components/Settings").then((module) => ({ 
 
 /** The single persistence transaction used by both desktop close and Android
  * root Back.  Callers choose only the final platform action. */
-const safeClose = createSafeCloseCoordinator({
+export const safeClose = createSafeCloseCoordinator({
   blurActive() {
     const active = document.activeElement;
     if (active instanceof HTMLElement) active.blur();
@@ -111,10 +113,20 @@ const safeClose = createSafeCloseCoordinator({
   },
   flushPdfWork: drainPdfWork,
   flushAll,
-  confirmDiscard: () => backend().confirm(
-    "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nClose this window anyway and lose them?",
-    "Unsaved changes",
-  ),
+  confirmDiscard: async (reason) => {
+    // GH #540: name the pages at risk; "No" opens the recovery panel.
+    const pages = unsavedDrafts();
+    const explanation = reason === "still-saving"
+      ? "Tine is still writing your changes and is taking longer than expected — a slow or network drive can do this."
+      : "Tine has changes that could not be saved (a conflict or a stuck save).";
+    const inventory = pages.map((p) => `• ${p.name} — ${p.state}`).join("\n") || "Pending attachments or storage work; no page draft identified.";
+    const discard = await backend().confirm(
+      `${explanation}\n\n${inventory}\n\nChoose No to review, retry saving, or copy your drafts. Close this window anyway and lose them?`,
+      "Unsaved changes",
+    );
+    if (!discard) openUnsavedRecovery();
+    return discard;
+  },
   recordDiscard: (reason) => recordDiagnostic("close_discarded_unsaved", { closeReason: reason, pages: unsavedPageCount() }),
   flushSession,
   setTransition: setGraphTransitioning,
@@ -1179,6 +1191,7 @@ export function App(): JSX.Element {
       </DrawerBackground>
       <PageProps />
       <ExportModal />
+      <UnsavedRecovery />
       <PdfExportDialog />
       <QueryExportDialog request={queryExportRequest} />
       <Show when={settingsOpen()}>
