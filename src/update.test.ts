@@ -32,8 +32,8 @@ async function loadUpdate(opts: {
   const appArchitectureMock = vi.fn(async () => opts.architecture ?? "x86_64");
   const getVersionMock = vi.fn(async () => opts.version ?? "0.5.3");
   const updaterCheckMock = opts.updaterReject
-    ? vi.fn(async () => { throw opts.updaterReject; })
-    : vi.fn(async () => opts.updaterUpdate ?? offerFromChannel(opts.version ?? "0.5.3"));
+    ? vi.fn<() => Promise<unknown>>(async () => { throw opts.updaterReject; })
+    : vi.fn<() => Promise<unknown>>(async () => opts.updaterUpdate ?? offerFromChannel(opts.version ?? "0.5.3"));
   const relaunchMock = vi.fn(async () => {});
 
   vi.doMock("./backend", () => ({
