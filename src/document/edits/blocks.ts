@@ -386,17 +386,36 @@ function absorbInto(survivor: string, absorbed: string, editingSurface: string |
 /** Insert parsed outline siblings after `afterId`. Returns the last inserted id
  *  for focus, or null for empty input, read-only, missing host or excess depth. */
 export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): string | null {
+  return insertOutlineBeside(afterId, nodes, "after", "paste");
+}
+
+/** Insert parsed outline siblings BEFORE `beforeId` — the only way to put a
+ *  block above one that owns its own Enter key (a code block first on a page,
+ *  GH #480). Returns the FIRST inserted id for focus, or null under the same
+ *  refusals as `insertOutlineAfter`. One "insert-block" undo. */
+export function insertOutlineBefore(beforeId: string, nodes: OutlineNode[]): string | null {
+  return insertOutlineBeside(beforeId, nodes, "before", "insert-block");
+}
+
+/** Shared body of insertOutlineAfter/Before. Focus answer: the inserted block
+ *  the reading order ends on beside the anchor — last after it, first before. */
+function insertOutlineBeside(
+  anchorId: string,
+  nodes: OutlineNode[],
+  side: "before" | "after",
+  undoLabel: string,
+): string | null {
   if (!nodes.length) return null;
   // Read-only gate at the choke point — file drops (and any future caller)
   // must not mutate a page the round-trip self-check marked read-only
   // (Phase-6 review finding, validated).
-  if (!blockWritable(afterId) || !outlineFits(afterId, nodes)) return null;
-  pushUndo("paste", [doc.byId[afterId].page]);
-  const parent = doc.byId[afterId].parent;
-  const pageName = doc.byId[afterId].page;
+  if (!blockWritable(anchorId) || !outlineFits(anchorId, nodes)) return null;
+  pushUndo(undoLabel, [doc.byId[anchorId].page]);
+  const parent = doc.byId[anchorId].parent;
+  const pageName = doc.byId[anchorId].page;
   const format = formatForPage(pageName);
   const incoming = new Set<string>();
-  let lastId = afterId;
+  let focusId = anchorId;
   setDoc(
     produce((s) => {
       const create = (n: OutlineNode, par: string | null): string => {
@@ -404,7 +423,7 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
         const childIds = n.children.map((c) => create(c, id));
         s.byId[id] = {
           id,
-          raw: rawWithInheritedOrderListType(outlineRaw(n.raw, format, incoming), format, afterId),
+          raw: rawWithInheritedOrderListType(outlineRaw(n.raw, format, incoming), format, anchorId),
           collapsed: false,
           parent: par,
           page: pageName,
@@ -417,12 +436,12 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
         parent === null
           ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
           : s.byId[parent].children;
-      sibs.splice(sibs.indexOf(afterId) + 1, 0, ...created);
-      lastId = created[created.length - 1];
+      sibs.splice(sibs.indexOf(anchorId) + (side === "after" ? 1 : 0), 0, ...created);
+      focusId = side === "after" ? created[created.length - 1] : created[0];
     })
   );
   markDirty(pageName, "insert-blocks");
-  return lastId;
+  return focusId;
 }
 
 /** Replace one empty leaf with a parsed outline in one transaction and undo

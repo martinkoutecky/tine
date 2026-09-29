@@ -3,7 +3,8 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { ContextMenu, deletePageMenuLabel, pageMenuAvailability } from "./ContextMenu";
 import { initParser } from "../render/parse";
-import { blockProperty, resetStore } from "../document";
+import { blockProperty, pageByName, resetStore } from "../document";
+import { editingId, endEdit } from "../editorController";
 import { type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { closeContextMenu, closeExportModal, closePageProps, exportModal, openContextMenu, openPageContextMenu, pagePropsPanel } from "../ui";
@@ -460,6 +461,102 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     expect(labels).not.toContain("Collapse all");
     expect(labels).not.toContain("Numbered list");
     expect(document.querySelector(".ctx-headings")).toBeNull();
+    dispose();
+  });
+});
+
+// GH #480. The keyboard route to "a block above this one" is Enter at offset 0,
+// which splits. A code block owns its own Enter key (it inserts a newline and
+// never splits), so when a code block is the FIRST block of a page there is
+// neither a keyboard route nor an earlier block to insert after — the top of the
+// page was simply unreachable. `blockActions` now carries the route.
+describe("BlockMenu — insert a block above (GH #480)", () => {
+  beforeAll(async () => {
+    await initParser();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    endEdit("page-navigation");
+    resetStore();
+    closeContextMenu();
+    clearTransientLayersForTest();
+    document.body.innerHTML = "";
+  });
+
+  function mount(node: () => JSX.Element): () => void {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    return render(node, root);
+  }
+
+  const CODE = "```js\nconst a = 1;\n```";
+
+  /** A page whose FIRST root is a code block — the reporter's shape exactly. */
+  function loadCodeFirst() {
+    setDoc({
+      byId: {
+        code: { id: "code", raw: CODE, collapsed: false, parent: null, page: "P", children: [] },
+        after: { id: "after", raw: "plain text", collapsed: false, parent: null, page: "P", children: [] },
+      },
+      pages: [{ name: "P", kind: "page", title: "P", preBlock: null, roots: ["code", "after"], format: "md", readOnly: false, guide: false }],
+      feed: ["P"],
+      loaded: true,
+    });
+  }
+
+  function clickItem(label: string) {
+    const item = [...document.querySelectorAll<HTMLElement>(".ctx-item")]
+      .find((el) => el.textContent?.trim() === label);
+    expect(item, `no "${label}" item in the block menu`).toBeDefined();
+    item!.click();
+  }
+
+  it("puts an empty block above the first block of a page and moves the caret into it", () => {
+    loadCodeFirst();
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "code");
+    clickItem("Insert block above");
+
+    const roots = pageByName("P")!.roots;
+    expect(roots).toHaveLength(3);
+    expect(roots.slice(1)).toEqual(["code", "after"]);
+    const inserted = roots[0];
+    expect(doc.byId[inserted].raw).toBe("");
+    // The code block itself is untouched — this inserts, it does not split.
+    expect(doc.byId.code.raw).toBe(CODE);
+    expect(editingId()).toBe(inserted);
+    dispose();
+  });
+
+  it("inserts before a nested block without leaving its parent", () => {
+    setDoc({
+      byId: {
+        parent: { id: "parent", raw: "Parent", collapsed: false, parent: null, page: "P", children: ["kid"] },
+        kid: { id: "kid", raw: CODE, collapsed: false, parent: "parent", page: "P", children: [] },
+      },
+      pages: [{ name: "P", kind: "page", title: "P", preBlock: null, roots: ["parent"], format: "md", readOnly: false, guide: false }],
+      feed: ["P"],
+      loaded: true,
+    });
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "kid");
+    clickItem("Insert block above");
+
+    const children = doc.byId.parent.children;
+    expect(children).toHaveLength(2);
+    expect(children[1]).toBe("kid");
+    expect(doc.byId[children[0]].parent).toBe("parent");
+    expect(pageByName("P")!.roots).toEqual(["parent"]);
+    dispose();
+  });
+
+  it("does not offer it on a read-only page", () => {
+    loadCodeFirst();
+    setDoc("pages", 0, "readOnly", true);
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "code");
+    const labels = [...document.querySelectorAll(".ctx-item")].map((e) => e.textContent?.trim() ?? "");
+    expect(labels).not.toContain("Insert block above");
     dispose();
   });
 });

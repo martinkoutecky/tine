@@ -158,6 +158,8 @@ fn guide_explains_following_the_link_at_the_caret() {
     assert!(tips
         .markdown
         .contains("press it again to select the block with its children"));
+    // GH #480: the menu route above a bullet that owns its Enter key.
+    assert!(tips.markdown.contains("choose **Insert block above**"));
 }
 
 #[test]

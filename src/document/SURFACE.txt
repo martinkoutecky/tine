@@ -56,6 +56,7 @@ indentBlock
 indentSelection
 insertEmptyChildBlock
 insertOutlineAfter
+insertOutlineBefore  # why: Insert block above any bullet (GH #480); batch17a
 insertOutlineChildren
 installAliasDraftRouteHandler
 installExternalChangeUiHandler
