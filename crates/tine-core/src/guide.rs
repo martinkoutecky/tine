@@ -216,7 +216,8 @@ mod parity_guide_tests {
             "Toggle maximize active pane",
             "Open in new tab",
             "Settings → Help & diagnostics",
-            "**Copy report**; nothing is uploaded",
+            "**Copy report**, or on desktop **Save report…**; nothing is uploaded",
+            "If Tine did not close cleanly last time, it says so",
         ] {
             assert!(tips.contains(phrase), "Tips missing {phrase}");
         }
