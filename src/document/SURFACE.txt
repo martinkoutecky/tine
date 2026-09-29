@@ -37,6 +37,7 @@ ensureBlockId
 ensureEmptyBlock
 ensurePageLoaded
 ensurePagePropertyOnKeyPage  # why: one guarded document operation for a query type declaration on its key page; batch16a
+expandAncestors  # why: navigation reveals a block hidden in collapsed ancestors (GH #258); batch17a
 expandBlockSelection  # why: Ctrl/Cmd+A ladder in block selection (GH #262); batch17a
 exportNodesFor
 extendFeedForScroll
