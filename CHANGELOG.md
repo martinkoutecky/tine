@@ -56,6 +56,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **A page marked `public:: false` stays out of every export.** With
+  `:publishing/all-pages-public? true` in `config.edn`, or **Include every page**
+  ticked, Tine published such pages anyway; like Logseq it now leaves them out,
+  and their blocks no longer reach another page's embeds, queries or references.
+  A query's own **Export…** is unchanged.
 - **Choosing "Keep mine" after a conflicted alias save no longer duplicates the
   alias's content on its owner page.** The retry replaces what already landed,
   and refuses rather than guessing if the owner changed meanwhile (og L13).

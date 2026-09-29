@@ -32,7 +32,7 @@ pub fn publish_html(store: &Store) -> io::Result<(String, usize)> {
         .publish_site(&mut |writer| {
             count = render::publish_graph(
                 &graph,
-                config.all_pages_public,
+                render::PageSelection::every_page(config.all_pages_public),
                 &config.favorites,
                 &mut |name, bytes| {
                     writer

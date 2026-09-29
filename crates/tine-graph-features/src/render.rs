@@ -9,7 +9,7 @@ use std::io;
 use std::sync::Arc;
 use tine_core::doc::{self, DocBlock};
 use tine_core::lsdoc::ast::{Block, Inline, Url};
-use tine_core::model::{BlockDto, BlockPreview, PageKind, RefGroup};
+use tine_core::model::{BlockDto, BlockPreview, Format, PageKind, RefGroup};
 use tine_core::query::ir::{ExecutionContext, QueryRows};
 use tine_core::query::wire_parse::{anchored_view, parse_query_pair, QueryTextDialect};
 use tine_core::refs::block_id;
@@ -2260,18 +2260,61 @@ const APP_JS: &str = r#"(function () {
 })();
 "#;
 
-/// True if a page's property pre-block marks it `public:: true`.
-pub(crate) fn page_is_public(pre_block: Option<&str>) -> bool {
-    let Some(pre) = pre_block else { return false };
-    pre.lines().any(|l| {
-        let t = l.trim();
-        t.starts_with("public::") && t["public::".len()..].trim() == "true"
-    })
+/// Which pages one publication includes. OG `publishing/db.cljs`: only
+/// `public:: true` pages, or with all pages public every page except one marked
+/// `public:: false` (`clean-export!` drops its blocks too, so no embed, query or
+/// ref reaches them). `Preselected`: the caller already chose the page set.
+#[derive(Clone, Copy)]
+pub(crate) enum PageSelection {
+    Marked,
+    AllButOptedOut,
+    Preselected,
+}
+
+impl PageSelection {
+    pub(crate) fn every_page(all: bool) -> Self {
+        if all {
+            Self::AllButOptedOut
+        } else {
+            Self::Marked
+        }
+    }
+
+    pub(crate) fn includes(self, page: &CorpusPage) -> bool {
+        match (self, page_public_flag(page)) {
+            (Self::Preselected, _) => true,
+            (_, Some(flag)) => flag,
+            (selection, None) => matches!(selection, Self::AllButOptedOut),
+        }
+    }
+}
+
+/// A page's `public` property: Markdown `public:: v` or Org `#+public: v`, with
+/// OG's exact `true`/`false` values (`text.cljs` parse-non-string-property-value).
+/// An explicit `false` wins over any other line.
+fn page_public_flag(page: &CorpusPage) -> Option<bool> {
+    let org = Format::from_path(page.id.as_str().as_ref()) == Format::Org;
+    let mut flag = None;
+    for line in page.document.pre_block.as_deref()?.lines() {
+        let value = match tine_core::doc::parse_property_line(line) {
+            Some((key, value)) => (doc::property_key_norm(key) == "public").then_some(value),
+            None if org => (line.trim().split_once(':'))
+                .filter(|(key, _)| key.eq_ignore_ascii_case("#+public"))
+                .map(|(_, value)| value.trim()),
+            None => None,
+        };
+        match value {
+            Some("false") => return Some(false),
+            Some("true") => flag = Some(true),
+            _ => {}
+        }
+    }
+    flag
 }
 /// Emit the complete site's files and return the public page count.
-pub fn publish_graph(
+pub(crate) fn publish_graph(
     graph: &RenderGraph<'_>,
-    all_public: bool,
+    selection: PageSelection,
     favorites: &[String],
     emit: &mut dyn FnMut(&str, &[u8]) -> io::Result<()>,
 ) -> io::Result<usize> {
@@ -2306,13 +2349,12 @@ pub fn publish_graph(
     // this public projection.
     let mut public: Vec<(&str, PageKind, Arc<doc::Document>)> = Vec::new();
     for e in entries {
-        let mut parsed = e.document.as_ref().clone();
-        let is_public = all_public || page_is_public(parsed.pre_block.as_deref());
-        tine_core::projection::assign_doc_runtime_ids(&mut parsed.roots, e.id.as_str());
-        let parsed = Arc::new(parsed);
-        if !is_public {
+        if !selection.includes(e) {
             continue;
         }
+        let mut parsed = e.document.as_ref().clone();
+        tine_core::projection::assign_doc_runtime_ids(&mut parsed.roots, e.id.as_str());
+        let parsed = Arc::new(parsed);
         if source_identity_counts
             .get(&tine_core::refs::page_key(&e.name))
             .copied()

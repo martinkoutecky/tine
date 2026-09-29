@@ -79,7 +79,8 @@ fn parser_sources_accept_every_graph_text_extension() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("tine-source-ext-{}-{unique}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!("tine-source-ext-{}-{unique}", std::process::id()));
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::write(root.join("pages/a.markdown"), b"- a\n").unwrap();
     fs::write(root.join("pages/B.MD"), b"- b\n").unwrap();

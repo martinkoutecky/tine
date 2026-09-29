@@ -312,7 +312,7 @@ fn collect_static(
     let mut used = 0usize;
     render::publish_graph(
         &render_graph,
-        true,
+        render::PageSelection::Preselected,
         &config.favorites,
         &mut |name, bytes| {
             used = used
@@ -729,11 +729,8 @@ pub fn publish_live_with_sheets(
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
     let mut corpus = graph.corpus();
-    if !all_pages {
-        corpus
-            .pages
-            .retain(|p| render::page_is_public(p.document.pre_block.as_deref()));
-    }
+    let selection = render::PageSelection::every_page(all_pages);
+    corpus.pages.retain(|page| selection.includes(page));
     if corpus.pages.len() > MAX_PAGES {
         return Err(refusal("live export selects too many pages"));
     }
@@ -767,11 +764,8 @@ pub fn publish_static(
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
     let mut corpus = graph.corpus();
-    if !all_pages {
-        corpus
-            .pages
-            .retain(|p| render::page_is_public(p.document.pre_block.as_deref()));
-    }
+    let selection = render::PageSelection::every_page(all_pages);
+    corpus.pages.retain(|page| selection.includes(page));
     if corpus.pages.len() > MAX_PAGES {
         return Err(refusal("static export selects too many pages"));
     }

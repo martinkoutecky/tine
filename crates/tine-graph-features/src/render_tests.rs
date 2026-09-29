@@ -31,10 +31,15 @@ mod tests {
             sheets: None,
         };
         let mut files = HashMap::<String, String>::new();
-        publish_graph(&graph, true, &[], &mut |name, bytes| {
-            files.insert(name.to_owned(), String::from_utf8(bytes.to_vec()).unwrap());
-            Ok(())
-        })
+        publish_graph(
+            &graph,
+            PageSelection::AllButOptedOut,
+            &[],
+            &mut |name, bytes| {
+                files.insert(name.to_owned(), String::from_utf8(bytes.to_vec()).unwrap());
+                Ok(())
+            },
+        )
         .unwrap();
         assert!(files["source.html"].contains("href=\"actual.html\""));
         assert!(!files["source.html"].contains("href=\"other.html\""));
@@ -77,10 +82,15 @@ mod tests {
             sheets: None,
         };
         let mut files = HashMap::<String, String>::new();
-        publish_graph(&graph, true, &[], &mut |name, bytes| {
-            files.insert(name.to_owned(), String::from_utf8(bytes.to_vec()).unwrap());
-            Ok(())
-        })
+        publish_graph(
+            &graph,
+            PageSelection::AllButOptedOut,
+            &[],
+            &mut |name, bytes| {
+                files.insert(name.to_owned(), String::from_utf8(bytes.to_vec()).unwrap());
+                Ok(())
+            },
+        )
         .unwrap();
         let html = &files["facets.html"];
         // The hidden LOGBOOK drawer still yields its elapsed-time badge.
@@ -173,12 +183,17 @@ mod tests {
             sheets: None,
         };
         let mut dashboard = Vec::new();
-        publish_graph(&graph, true, &[], &mut |name, bytes| {
-            if name == "dashboard.html" {
-                dashboard = bytes.to_vec();
-            }
-            Ok(())
-        })
+        publish_graph(
+            &graph,
+            PageSelection::AllButOptedOut,
+            &[],
+            &mut |name, bytes| {
+                if name == "dashboard.html" {
+                    dashboard = bytes.to_vec();
+                }
+                Ok(())
+            },
+        )
         .unwrap();
         let dashboard = String::from_utf8(dashboard).unwrap();
         assert_eq!(dashboard.matches("shared embed target").count(), 4);
