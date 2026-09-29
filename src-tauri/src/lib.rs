@@ -1078,6 +1078,23 @@ mod platform_lifecycle_guard_tests {
         );
     }
 
+    /// GH #572: apps get the WebKit that shipped with macOS (a Safari update
+    /// does not change it), and Tine needs the Safari 15.4 engine, which first
+    /// shipped in macOS 12.3. The bundle declares that floor so an older Mac is
+    /// refused at install/launch instead of running a half-working app.
+    #[test]
+    fn macos_bundle_declares_the_webkit_floor() {
+        let config: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tauri.macos.conf.json"))
+                .expect("read src-tauri/tauri.macos.conf.json"),
+        )
+        .expect("tauri.macos.conf.json is JSON");
+        assert_eq!(
+            config["bundle"]["macOS"]["minimumSystemVersion"], "12.3",
+            "GH #572: macOS bundles must require 12.3 (the Safari 15.4 engine)"
+        );
+    }
+
     /// GH #241: the updater ships on every desktop target (Windows, Linux,
     /// macOS) and on no mobile target (Android, iOS). Windows uses native-tls
     /// (Schannel) plus Reqwest's system-proxy reader; Linux/macOS keep rustls.
