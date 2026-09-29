@@ -4,8 +4,7 @@ import { isBuiltinHidden } from "../editor/properties";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "./spans";
-import { PaneContext } from "../panes";
-import { createPaneRouter } from "../router";
+import { PaneContext, focusPane, paneRouter, resetPaneLayoutToSingle, splitPane } from "../panes";
 
 beforeAll(async () => {
   await initParser();
@@ -246,12 +245,18 @@ describe("shift+click ref suppresses native selection (GH #42)", () => {
 });
 
 describe("split-pane link navigation", () => {
-  it("opens a middle-clicked page ref in the source pane (GH #87)", () => {
+  it("opens a middle-clicked page ref in the already-active pane, not the source pane (GH #87)", () => {
+    resetPaneLayoutToSingle();
+    const sourcePaneId = splitPane("main", "row", { focusNew: false })!;
+    focusPane("main");
     const host = document.createElement("div");
     document.body.appendChild(host);
-    const source = createPaneRouter("source-pane");
+    const source = paneRouter(sourcePaneId);
+    const active = paneRouter("main");
+    const sourceTabsBefore = source.tabs().length;
+    const activeTabsBefore = active.tabs().length;
     const dispose = render(() => (
-      <PaneContext.Provider value={{ paneId: "source-pane", router: source }}>
+      <PaneContext.Provider value={{ paneId: sourcePaneId, router: source }}>
         <div class="block-content"><AstBody raw="see [[Target]]" /></div>
       </PaneContext.Provider>
     ), host);
@@ -259,11 +264,13 @@ describe("split-pane link navigation", () => {
       const link = host.querySelector("a.page-ref");
       expect(link).toBeTruthy();
       link!.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
-      expect(source.tabs()).toHaveLength(2);
-      expect(source.tabs().some((tab) => tab.history.some((route) => route.kind === "page" && route.name === "Target"))).toBe(true);
+      expect(source.tabs()).toHaveLength(sourceTabsBefore);
+      expect(active.tabs()).toHaveLength(activeTabsBefore + 1);
+      expect(active.tabs().some((tab) => tab.history.some((route) => route.kind === "page" && route.name === "Target"))).toBe(true);
     } finally {
       dispose();
       host.remove();
+      resetPaneLayoutToSingle();
     }
   });
 });

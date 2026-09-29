@@ -51,4 +51,14 @@ describe("pane focus tracker", () => {
     document.getElementById("pane-neutral")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
     expect(calls).toEqual([]);
   });
+
+  it("does not retarget pane focus for a middle-button background-tab gesture (GH #87)", () => {
+    (document.getElementById("inside") as HTMLInputElement).focus();
+    calls = [];
+    document.getElementById("outside")!.dispatchEvent(new MouseEvent("pointerdown", {
+      bubbles: true,
+      button: 1,
+    }));
+    expect(calls).toEqual([]);
+  });
 });
