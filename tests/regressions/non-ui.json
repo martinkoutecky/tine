@@ -142,7 +142,7 @@
       "coverage": {
         "tests": [
           "crates/tine-store/src/model.rs",
-          "crates/tine-store/src/onboarding.rs"
+          "crates/tine-graph-features/tests/legacy_onboarding.rs"
         ],
         "scenario": "filesystem.absent-publish-no-replace",
         "failBefore": "source-proven"
@@ -164,7 +164,7 @@
       "coverage": {
         "tests": [
           "crates/tine-store/src/model.rs",
-          "crates/tine-store/src/onboarding.rs"
+          "crates/tine-graph-features/tests/legacy_onboarding.rs"
         ],
         "scenario": "filesystem.guide-copy-containment",
         "failBefore": "source-proven"
@@ -772,8 +772,8 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-store/tests/issue137_investigation.rs::issue137_alias_component_is_transitive_and_unions_duplicate_owners",
-          "crates/tine-store/tests/issue137_investigation.rs::issue137_fail_before_duplicate_alias_is_deterministic"
+          "crates/tine-store/src/issue137_investigation_tests.rs::issue137_alias_component_is_transitive_and_unions_duplicate_owners",
+          "crates/tine-store/src/issue137_investigation_tests.rs::issue137_fail_before_duplicate_alias_is_deterministic"
         ],
         "scenario": "references.alias-transitive-connected-component",
         "failBefore": "proven"
@@ -796,7 +796,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-store/tests/issue137_investigation.rs::issue137_fail_before_occurrence_count_is_not_silently_truncated",
+          "crates/tine-store/src/issue137_investigation_tests.rs::issue137_fail_before_occurrence_count_is_not_silently_truncated",
           "crates/tine-core/src/reference_evidence.rs::tests::occurrence_cap_reports_total_and_truncation",
           "src/components/UnlinkedReferences.test.tsx"
         ],
@@ -1030,7 +1030,7 @@
       "status": "covered",
       "coverage": {
         "tests": [
-          "crates/tine-store/tests/gh221_malformed_html.rs"
+          "crates/tine-store/src/gh221_malformed_html_tests.rs"
         ],
         "scenario": null,
         "failBefore": "proven"

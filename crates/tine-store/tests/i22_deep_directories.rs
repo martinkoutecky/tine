@@ -21,15 +21,18 @@ fn deep_tree(base: &Path) -> PathBuf {
     dir
 }
 
-fn graph(name: &str) -> PathBuf {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target")
-        .join(format!("i22-deep-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+/// Self-deleting fixture graph: bind it before the store (`let dir = graph(..)`)
+/// so it drops last, and a panicking test leaves nothing behind.
+fn graph(name: &str) -> tempfile::TempDir {
+    let dir = tempfile::Builder::new()
+        .prefix(&format!("i22-deep-{name}-"))
+        .tempdir()
+        .unwrap();
+    let root = dir.path();
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::create_dir_all(root.join("assets")).unwrap();
-    root
+    dir
 }
 
 fn on_small_stack(work: impl FnOnce() + Send) {
@@ -45,7 +48,8 @@ fn on_small_stack(work: impl FnOnce() + Send) {
 
 #[test]
 fn deep_trash_directory_is_counted_and_purged_iteratively() {
-    let root = graph("trash");
+    let dir = graph("trash");
+    let root = dir.path().to_path_buf();
     let entry = root.join("logseq/.tine-trash/assets/entry");
     deep_tree(&entry);
     let store = Store::open(&root, Default::default()).unwrap().0;
@@ -58,12 +62,12 @@ fn deep_trash_directory_is_counted_and_purged_iteratively() {
     });
     assert!(!entry.exists(), "the whole deep entry is purged");
     store.close();
-    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
 fn deep_asset_directory_is_scanned_iteratively() {
-    let root = graph("scan");
+    let dir = graph("scan");
+    let root = dir.path().to_path_buf();
     deep_tree(&root.join("assets"));
     let store = Store::open(&root, Default::default()).unwrap().0;
     on_small_stack(|| {
@@ -74,12 +78,12 @@ fn deep_asset_directory_is_scanned_iteratively() {
             .any(|file| file.rel.ends_with("/d/leaf.png")));
     });
     store.close();
-    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
 fn restore_retires_extras_from_a_deep_page_directory_iteratively() {
-    let root = graph("restore");
+    let dir = graph("restore");
+    let root = dir.path().to_path_buf();
     fs::create_dir_all(root.join("logseq")).unwrap();
     let leaf = deep_tree(&root.join("pages"));
     fs::write(leaf.join("stray.md"), b"- stray\n").unwrap();
@@ -92,5 +96,4 @@ fn restore_retires_extras_from_a_deep_page_directory_iteratively() {
     });
     assert!(!leaf.join("stray.md").exists(), "the stray page is retired");
     store.close();
-    let _ = fs::remove_dir_all(&root);
 }
