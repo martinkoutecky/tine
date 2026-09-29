@@ -59,4 +59,13 @@ export const mockQueryCommands = {
   async queryExplainEmpty(query: Query): Promise<ExplainEmptyResult> {
     return { rows: [], diagnostics: query.diagnostics ?? [], report: { ran: [], ignored: [], supported: false } };
   },
+  async publishQueryPlan(): Promise<never> {
+    throw new Error("Query publication requires the desktop graph engine.");
+  },
+  async publishQuery(): Promise<never> {
+    throw new Error("Query publication requires the desktop graph engine.");
+  },
+  async publishLive(): Promise<never> {
+    throw new Error("Live publication requires the desktop graph engine.");
+  },
 };

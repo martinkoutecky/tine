@@ -52,6 +52,32 @@ export interface QueryExportBatch {
   omitted_queries: number;
 }
 
+/** One reviewed query publication over the same text and host properties sent
+ * to `parseQuery`. Publication writes a create-only leaf under a user-picked
+ * external folder and refuses a changed fingerprint. */
+export interface QueryPublicationRequest {
+  argument: string;
+  dialect: import("./editor/queryIr").QueryTextDialect;
+  properties: [string, string][];
+  currentPage?: string | null;
+  hostBlockId?: string | null;
+  name: string;
+}
+
+export interface QueryPublicationPlan {
+  anchor: "block" | "page";
+  rowCount: number;
+  pages: { name: string; path: string; journal: boolean }[];
+  folder: string;
+  fingerprint: string;
+}
+
+export interface PublicationReceipt {
+  path: string;
+  pages: number;
+  files: number;
+}
+
 /** On-disk page format: markdown (default) or org. */
 export type Format = "md" | "org";
 

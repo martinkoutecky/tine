@@ -5,6 +5,7 @@
 
 import { For, type JSX } from "solid-js";
 import emojiRegex from "emoji-regex";
+import { isPublishedExport } from "../publishedBackend";
 
 // Twemoji filename rule (its `grabTheRightIcon`): codepoints joined by '-', with
 // the U+FE0F variation selector dropped UNLESS the sequence is a ZWJ (U+200D)
@@ -49,7 +50,7 @@ export function EmojiText(props: { text: string }): JSX.Element {
   return (
     <For each={emojiSplit(props.text)}>
       {(p) =>
-        p.t === "text" ? (
+        p.t === "text" || isPublishedExport() ? (
           <>{p.v}</>
         ) : (
           <img

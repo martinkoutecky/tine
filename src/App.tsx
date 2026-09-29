@@ -31,6 +31,7 @@ import {
 import { PageProps } from "./components/PageProps";
 import { ExportModal } from "./components/ExportModal";
 import { PdfExportDialog } from "./components/PdfExportDialog";
+import { QueryExportDialog } from "./components/QueryExportDialog";
 import { InPageFind } from "./components/InPageFind";
 import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
@@ -52,6 +53,8 @@ import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "
 import { flushAll, appendToTodayJournal, captureToPage } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri } from "./backend";
+import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
+import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishedPermalink } from "./publishedPermalink";
 import { graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
@@ -488,8 +491,29 @@ export function App(): JSX.Element {
       // on first run (the empty/`""` path legitimately has no graph yet).
       dbg(`graph load failed: ${String(e)}`);
     } finally {
+      if (isPublishedExport() && window.location.hash) {
+        try {
+          openPublishedPermalink(await loadPublishedSnapshot(), window.location.hash, paneRouter(focusedPaneId()));
+        } catch (error) { console.error("published permalink unavailable", error); }
+      }
       if (owner()) setFirstLoadDone(true);
     }
+  });
+
+  createEffect(() => {
+    if (!isPublishedExport() || !firstLoadDone() || !graphMeta()) return;
+    const panes = layoutPaneIds();
+    const router = paneRouter(panes[0] ?? focusedPaneId());
+    const target = publishedPermalinkForWorkspace(panes.length, router.tabs().length, router.route());
+    if (target !== undefined) replacePublishedPermalink(target);
+  });
+  onMount(() => {
+    if (!isPublishedExport()) return;
+    const onHash = () => { void loadPublishedSnapshot().then((snapshot) => {
+      openPublishedPermalink(snapshot, window.location.hash, paneRouter(focusedPaneId()));
+    }); };
+    window.addEventListener("hashchange", onHash);
+    onCleanup(() => window.removeEventListener("hashchange", onHash));
   });
 
   // Warn (loudly) if the webview is painting on the CPU — Tine's whole pitch is
@@ -842,7 +866,7 @@ export function App(): JSX.Element {
         >
           <div class="left-sidebar-scroll">
             <div class="sidebar-header workspace-sidebar-header" data-workspace-switcher-sidebar>
-              <WorkspaceSwitcher />
+              <Show when={!isPublishedExport()}><WorkspaceSwitcher /></Show>
             </div>
             <Show when={mobileDrawerMode()}>
               <button class="mobile-drawer-close" type="button" aria-label="Close navigation sidebar" onClick={() => dismissDrawerAndRestore("explicit")}>Close</button>
@@ -927,7 +951,7 @@ export function App(): JSX.Element {
           {/* A collapsed sidebar has no mounted sidebar header. Keep a compact
               one-tap workspace path in the toolbar without putting its full
               non-shrinking label back in this no-wrap row. */}
-          <Show when={!sidebarOpen()}>
+          <Show when={!sidebarOpen() && !isPublishedExport()}>
             <WorkspaceSwitcher compact />
           </Show>
           {/* The tab strip is a desktop feature; on a phone it only crowds the
@@ -996,7 +1020,7 @@ export function App(): JSX.Element {
             />
             {/* Settings sits apart at the far right (separated by a divider) so
                 it reads as app-level config, not another content control. */}
-            <span class="topbar-sep" />
+            <Show when={!isPublishedExport()}><span class="topbar-sep" />
             <button class="icon-btn" title="Settings (t s)" onClick={() => openSettings()}>
               <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
                 <path
@@ -1004,7 +1028,7 @@ export function App(): JSX.Element {
                   d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
                 />
               </svg>
-            </button>
+            </button></Show>
             {/* Frameless-window controls live at the very right, where the native
                 title bar's buttons used to be. Hidden when the OS draws its own
                 (macOS Overlay always; Linux/Windows when the native-frame toggle
@@ -1085,6 +1109,7 @@ export function App(): JSX.Element {
       <PageProps />
       <ExportModal />
       <PdfExportDialog />
+      <QueryExportDialog />
       <Settings />
       <HelpPopup />
       {/* First-run onboarding: covers the (empty) app when no graph is configured.

@@ -7,6 +7,7 @@ import { applyTheme, applyAccent } from "./ui";
 import { pushToast } from "./toasts";
 import { startCommunityExtensions } from "./plugins/startup";
 import { isTauri } from "./backend";
+import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
@@ -22,10 +23,12 @@ import "./styles/theme.css";
 import "./lsShimInstall";
 import "./styles/app.css";
 import "./styles/query.css";
+import "./styles/published.css";
 
 applyTheme();
 applyAccent();
-const communityExtensionsReady = startCommunityExtensions()
+if (isPublishedExport()) document.documentElement.classList.add("tine-published");
+const communityExtensionsReady = isPublishedExport() ? Promise.resolve() : startCommunityExtensions()
   .then(({ pluginInitialization }) => {
     void pluginInitialization.catch((error) =>
       pushToast(`Plugins unavailable: ${String(error)}`, "error")
@@ -53,12 +56,20 @@ const mount = () => {
     console.error("failed to reveal the main window")
   );
 };
+const publishedSnapshotReady = isPublishedExport()
+  ? loadPublishedSnapshot().then(() => undefined, (error) => {
+      console.error("published snapshot unavailable", error);
+      document.getElementById("root")!.textContent = "Couldn't load snapshot.json — serve this folder over HTTP";
+      throw error;
+    })
+  : Promise.resolve();
 // Init the in-browser wasm parser before first paint so blocks render
 // synchronously (no IPC, no fallback flash). Runs concurrently with the (capped)
 // session restore; a parser-init failure is caught so it can't block startup —
 // the legacy fallback renderer still covers that case during the transition.
 void Promise.all([
   initParser().catch(() => console.error("lsdoc-wasm init failed")),
-  Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))]),
+  isPublishedExport() ? Promise.resolve() : Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))]),
   communityExtensionsReady,
-]).then(mount, mount);
+  publishedSnapshotReady,
+]).then(mount, (error) => { if (!isPublishedExport()) mount(); else console.error(error); });
