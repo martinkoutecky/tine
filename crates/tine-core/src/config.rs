@@ -38,6 +38,11 @@ pub struct Config {
     /// `:block-hidden-properties #{:a :b}` — extra property keys to hide from the
     /// rendered properties area, on top of the built-in internal set.
     pub block_hidden_properties: Vec<String>,
+    /// `:ref/linked-references-collapsed-threshold` — a page's Linked References
+    /// section starts collapsed once the TOTAL backlink count reaches this
+    /// (OG `(>= total threshold)`, `components/reference.cljs`). Absent or
+    /// non-integer means OG's default 100; zero collapses always (GH #479).
+    pub linked_references_collapsed_threshold: u32,
     /// `:property/separated-by-commas #{:a :b}` — keys added to the built-in
     /// `alias`/`aliases`/`tags` set. Tine already comma-splits EVERY key's plain
     /// value (Q21), so this only matters for a value that also contains refs: the
@@ -174,6 +179,7 @@ impl Default for Config {
             all_pages_public: false,
             start_of_week: 6, // Logseq's default (Sunday) — see field doc
             block_hidden_properties: Vec::new(),
+            linked_references_collapsed_threshold: 100, // OG default — see field doc
             separated_by_commas: Vec::new(),
             ignored_page_references_keywords: Vec::new(),
             property_pages_enabled: true,
@@ -238,6 +244,9 @@ impl Config {
             }
         }
         cfg.block_hidden_properties = parse_keyword_set(edn, ":block-hidden-properties");
+        if let Some(n) = int_value(edn, ":ref/linked-references-collapsed-threshold") {
+            cfg.linked_references_collapsed_threshold = n;
+        }
         cfg.separated_by_commas = parse_keyword_set(edn, ":property/separated-by-commas");
         cfg.ignored_page_references_keywords =
             parse_keyword_set(edn, ":ignored-page-references-keywords");
@@ -1209,6 +1218,31 @@ mod tests {
         let absent = Config::parse("{}");
         assert!(absent.separated_by_commas.is_empty());
         assert!(absent.ignored_page_references_keywords.is_empty());
+    }
+
+    #[test]
+    fn linked_references_collapsed_threshold_reads_the_og_key() {
+        // GH #479. OG: `(>= total threshold)`, default 100 when the key is absent
+        // or not an integer. Zero is a real setting — collapse always.
+        assert_eq!(
+            Config::parse("{}").linked_references_collapsed_threshold,
+            100
+        );
+        assert_eq!(
+            Config::parse("{:ref/linked-references-collapsed-threshold 0}")
+                .linked_references_collapsed_threshold,
+            0
+        );
+        assert_eq!(
+            Config::parse("{:ref/linked-references-collapsed-threshold 50}")
+                .linked_references_collapsed_threshold,
+            50
+        );
+        assert_eq!(
+            Config::parse("{:ref/linked-references-collapsed-threshold \"50\"}")
+                .linked_references_collapsed_threshold,
+            100
+        );
     }
 
     #[test]

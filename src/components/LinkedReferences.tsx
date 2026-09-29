@@ -4,6 +4,7 @@ import { errorFamily } from "../errorFamily";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, searchRemoveAccents } from "../ui";
+import { graphMeta } from "../graphSession";
 import { LiveRefGroup } from "./LiveRefGroup";
 import type { BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, RefGroup } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
@@ -104,7 +105,12 @@ function fallbackFilterEntry(block: BlockDto): SearchableFilterEntry {
 // The "Linked References" section (backlinks). Live, editable, collapsible, and
 // filterable by co-referenced page (click a chip: include → exclude → off),
 // mirroring OG's reference filter.
+// GH #479: the graph's `:ref/linked-references-collapsed-threshold` decides;
+// 100 is OG's fallback when the key is absent. Zero is a real setting
+// ("always collapsed"), so this never treats a falsy threshold as unset.
 const OG_REFERENCE_COLLAPSE_THRESHOLD = 100;
+const referenceCollapseThreshold = () =>
+  graphMeta()?.linked_references_collapsed_threshold ?? OG_REFERENCE_COLLAPSE_THRESHOLD;
 
 /** Show bounded backlinks for one page. Text filters and OR include / cumulative
  * exclude chips use the same source-root context; export snapshots visible rows.
@@ -288,7 +294,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   };
   const count = () => shown().reduce((acc, g) => acc + g.blocks.length, 0);
   const totalCount = () => mergedGroups().reduce((acc, g) => acc + g.blocks.length, 0);
-  const collapsed = () => collapsedOverride() ?? totalCount() >= OG_REFERENCE_COLLAPSE_THRESHOLD;
+  const collapsed = () => collapsedOverride() ?? totalCount() >= referenceCollapseThreshold();
   const occurrenceLimit = createMemo(() => {
     let shown = 0;
     let total = 0;

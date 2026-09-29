@@ -781,6 +781,11 @@ pub struct PageDto {
     #[serde(default)]
     pub guide: bool,
 }
+/// OG's default when `:ref/linked-references-collapsed-threshold` is absent.
+fn default_linked_references_collapsed_threshold() -> u32 {
+    100
+}
+
 /// Effective graph settings returned when opening a store.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -797,6 +802,10 @@ pub struct GraphMeta {
     pub start_of_week: u32,
     /// Extra property keys to hide from the rendered properties area.
     pub block_hidden_properties: Vec<String>,
+    /// Backlink count at which a page opens its Linked References collapsed
+    /// (`:ref/linked-references-collapsed-threshold`, OG default 100).
+    #[serde(default = "default_linked_references_collapsed_threshold")]
+    pub linked_references_collapsed_threshold: u32,
     /// Template name for the caller to apply to a new, empty journal page (if
     /// configured); match it exactly against `TemplateDto.name`. The store
     /// does not insert its body on save.
@@ -914,6 +923,7 @@ impl GraphMeta {
             shortcuts: config.shortcuts.clone(),
             start_of_week: config.start_of_week,
             block_hidden_properties: config.block_hidden_properties.clone(),
+            linked_references_collapsed_threshold: config.linked_references_collapsed_threshold,
             default_journal_template: config.default_journal_template.clone(),
             default_home: config.default_home.clone(),
             favorites: config.favorites.clone(),

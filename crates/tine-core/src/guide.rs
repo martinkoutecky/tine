@@ -217,6 +217,7 @@ mod parity_guide_tests {
             "Open in new tab",
             "Settings → Help & diagnostics",
             "**Copy report**; nothing is uploaded",
+            ":ref/linked-references-collapsed-threshold",
         ] {
             assert!(tips.contains(phrase), "Tips missing {phrase}");
         }

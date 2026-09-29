@@ -37,7 +37,7 @@ const record = (id: string, name: string) => ({
 function graphMeta(root: string): GraphMeta {
   return {
     root, journals_dir: "journals", pages_dir: "pages", preferred_workflow: "now",
-    shortcuts: {}, start_of_week: 6, block_hidden_properties: [], default_journal_template: null,
+    shortcuts: {}, start_of_week: 6, block_hidden_properties: [], linked_references_collapsed_threshold: 100, default_journal_template: null,
     favorites: [], journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "yyyy_MM_dd",
     preferred_format: "md", macros: {}, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
     logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true,

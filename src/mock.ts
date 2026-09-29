@@ -697,7 +697,7 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
         preferred_workflow: "todo",
         shortcuts: {},
         start_of_week: 0,
-        block_hidden_properties: [],
+        block_hidden_properties: [], linked_references_collapsed_threshold: 100,
         default_journal_template: null,
         favorites: [],
         journal_page_title_format: "MMM do, yyyy",

@@ -319,7 +319,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
           preferred_workflow: "todo",
           shortcuts: {},
           start_of_week: 6,
-          block_hidden_properties: [],
+          block_hidden_properties: [], linked_references_collapsed_threshold: 100,
           default_journal_template: null,
           default_home: snapshot.home,
           favorites: [],

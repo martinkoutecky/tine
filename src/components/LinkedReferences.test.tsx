@@ -5,6 +5,7 @@ import { backend } from "../backend";
 import type { BacklinkFilterContext, BlockDto, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
 import { resetReferenceSectionState } from "../referenceSectionState";
+import { setGraphMeta } from "../graphSession";
 
 vi.mock("./LiveRefGroup", () => ({
   LiveRefGroup: (props: { blocks: BlockDto[]; showBreadcrumb?: boolean }) => (
@@ -369,5 +370,56 @@ describe("Linked References filters", () => {
     expect(root.querySelector(".test-ref-group")?.textContent).toBe("with-task");
 
     dispose();
+  });
+});
+
+// GH #479 (master 97b26be8a). A page opens its Linked References collapsed
+// once the TOTAL backlink count reaches `:ref/linked-references-collapsed-threshold`
+// (OG `(>= total threshold)`, default 100). Zero means "always collapsed".
+describe("Linked References honor :ref/linked-references-collapsed-threshold (GH #479)", () => {
+  const backlinks = (count: number): RefGroup[] => [{
+    page: "Source",
+    kind: "page",
+    blocks: Array.from({ length: count }, (_, index) => block(`b${index}`, `[[Target]] ${index}`)),
+  }];
+
+  async function mountWithThreshold(count: number, threshold?: number) {
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue(backlinks(count));
+    setGraphMeta(
+      threshold === undefined
+        ? ({ root: "/graphs/A" } as never)
+        : ({ root: "/graphs/A", linked_references_collapsed_threshold: threshold } as never),
+    );
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <LinkedReferences name="Target" />, root);
+    await tick(); await tick();
+    return { root, dispose: () => { dispose(); setGraphMeta(null); } };
+  }
+
+  it("starts collapsed at a threshold of 0, however few backlinks there are", async () => {
+    const { root, dispose } = await mountWithThreshold(3, 0);
+    expect(root.querySelector(".test-ref-group")).toBeNull();
+    dispose();
+  });
+
+  it("starts expanded below a configured threshold and collapsed at it", async () => {
+    const below = await mountWithThreshold(4, 5);
+    expect(below.root.querySelector(".test-ref-group")).not.toBeNull();
+    below.dispose();
+
+    const at = await mountWithThreshold(5, 5);
+    expect(at.root.querySelector(".test-ref-group")).toBeNull();
+    at.dispose();
+  });
+
+  it("falls back to OG's 100 when the graph does not set the key", async () => {
+    const under = await mountWithThreshold(99);
+    expect(under.root.querySelector(".test-ref-group")).not.toBeNull();
+    under.dispose();
+
+    const over = await mountWithThreshold(100);
+    expect(over.root.querySelector(".test-ref-group")).toBeNull();
+    over.dispose();
   });
 });
