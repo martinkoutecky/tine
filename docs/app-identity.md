@@ -33,6 +33,18 @@ To flip it, run `node scripts/set-app-identity.mjs release` (or
 | Native E2E journeys | `scripts/lib/app-identity.mjs` (`APP_ID`, `IDENTITY`) |
 | Flatpak (`.github/workflows/flatpak.yml`) | refuses to build unless `ship` is `release`; the manifest id is the release identifier |
 
+A few identity-bearing places need no file of their own:
+
+- The iOS bundle id is Tauri's `identifier`. No `gen/apple` project is
+  checked in.
+- The Linux window class, Wayland `app_id` and `.desktop` file come from
+  `TINE_APP_IDENTIFIER`.
+- The Cargo binary is `tine` in both settings; only the deploy name differs.
+
+A desktop keyboard shortcut or dock pin bound to `page.tine.Tine.desktop` does
+not apply to an experiment build, because its window reports
+`page.tine.TineOG`. It applies again once the switch ships `release`.
+
 `node scripts/set-app-identity.mjs --check` exits 1 if any derived file has
 drifted. `src/appIdentity.guard.test.ts` enforces the switch. It checks that
 every derived file matches it, that both settings round-trip, and that the
@@ -61,6 +73,19 @@ rewritten into another format, and none is deleted or made into an error.
 | `backups/…/.partial-*` | cleaned | A crashed, never-published snapshot. It is cleaned by whichever Tine runs, and the single-instance lock means it is never a live one. |
 | `direct-files-projections/`, `direct-move-recovery/`, `conflict-capsules/`, `mediakeys/`, `hsts-storage.sqlite`, `WebKitCache/` | master-only | og has no reader and never opens them. They are byte-identical after an og run. |
 | `concord-ledger/<root>/` | **conflict (open)** | Same path and schema number, but a different layout. Each build's prune deletes the other's pin files. See Open items. |
+
+Inside the graph dir, master writes these `.tine*` entries, and og treats them
+as follows:
+
+- `logseq/.tine-trash/` and `assets/.tine-restore-recovery/` are shared.
+  og writes and reads the same layouts.
+- `.tine-sync/` (ex-Managed Storage, ADR 0066) is read by neither build and
+  left alone.
+- The write-probe sentinels (`.tine-capability-*`, `.tine-write-probe-*`) are
+  transient.
+
+Opening a graph writes nothing into it on either build, and the differential
+checks that the whole graph dir is byte-identical.
 
 Rollback (C) means master opens a dir og has used with the user's config
 intact. It holds because og writes only the shared formats above, in the same

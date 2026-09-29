@@ -10,8 +10,8 @@
 //            theme and page (no Welcome, scope D/E), leave master's dir
 //            byte-identical, and copy no master-only artifact.
 //   inplace  A release-identity og build (OG_RELEASE_APP) starts on another
-//            copy: same visible config (B/E); every master-only artifact and
-//            every master backup snapshot byte-identical.
+//            copy: same visible config (B/E); every master-only artifact,
+//            every master backup snapshot and the graph dir byte-identical.
 //   rollback MASTER_APP starts again on the dir og just used (C).
 //
 // Usage: MASTER_APP=… OG_EXPERIMENT_APP=… OG_RELEASE_APP=… GRAPH_SRC=… \
@@ -138,6 +138,10 @@ fs.rmSync(TMP, { recursive: true, force: true });
 fs.mkdirSync(TMP, { recursive: true });
 const graph = `${TMP}/graph`;
 fs.cpSync(GRAPH_SRC, graph, { recursive: true });
+// An ex-Managed-Storage graph still carries master's old `.tine-sync/` (ADR 0066):
+// neither build reads it, and og must leave it byte-identical.
+fs.mkdirSync(`${graph}/.tine-sync/v1`, { recursive: true });
+fs.writeFileSync(`${graph}/.tine-sync/v1/state.json`, "{\"schema\":1}\n");
 const masterHome = `${TMP}/master-home`;
 
 // --- master writes its own app-data dir -------------------------------------
@@ -159,6 +163,13 @@ const masterData = `${masterHome}/.local/share/${RELEASE_ID}`;
 const pristine = `${TMP}/master-home.pristine`;
 copyHome(masterHome, pristine);
 const masterTree = hashTree(masterData);
+// Opening a graph writes nothing into it on either build; any master-written
+// `.tine*` entry in the graph dir must survive og byte for byte.
+const graphTree = hashTree(graph);
+const graphUnchanged = (phase) => {
+  const changed = changedKeys(graphTree, hashTree(graph));
+  expect(phase, changed.length === 0, `graph dir changed: ${changed.join(", ")}`);
+};
 report.phases.master.files = Object.keys(masterTree).sort();
 expect("master", Object.keys(masterTree).some(isMasterOnly), "fixture has no master-only artifact to protect");
 expect("master", Object.keys(masterTree).some(isMasterSnapshot), "fixture has no master backup snapshot");
@@ -183,6 +194,7 @@ if (PHASES.includes("seed")) {
     .filter((rel) => (isMasterOnly(rel) || isMasterSnapshot(rel)) && ownTree[rel] === masterTree[rel]);
   report.phases.seed = { seen, masterChanged, copiedMasterOnly };
   matchesMaster("seed", seen);
+  graphUnchanged("seed");
   expect("seed", masterChanged.length === 0, `master's dir changed: ${masterChanged.join(", ")}`);
   expect("seed", copiedMasterOnly.length === 0, `master-only artifacts copied: ${copiedMasterOnly.join(", ")}`);
 }
@@ -196,6 +208,7 @@ if (PHASES.includes("inplace") || PHASES.includes("rollback")) {
     isMasterOnly(rel) || (isMasterSnapshot(rel) && rel in masterTree));
   report.phases.inplace = { seen, changed, protectedChanged };
   matchesMaster("inplace", seen);
+  graphUnchanged("inplace");
   expect("inplace", protectedChanged.length === 0, `master-only artifacts changed: ${protectedChanged.join(", ")}`);
   expect("inplace", !fs.existsSync(`${home}/.local/share/${EXPERIMENT_ID}`), "a release build created an experiment dir");
 
@@ -203,6 +216,7 @@ if (PHASES.includes("inplace") || PHASES.includes("rollback")) {
     const back = await withApp("rollback", MASTER_APP, home, {}, visibleConfig);
     report.phases.rollback = { seen: back };
     matchesMaster("rollback", back);
+    graphUnchanged("rollback");
   }
 }
 
