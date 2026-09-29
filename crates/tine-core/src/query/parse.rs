@@ -148,8 +148,9 @@ fn advanced_form(form: &str) -> bool {
 /// `MacroQuery` apply **no** limit here: the whole text is stored in
 /// `Source::Advanced.original` and the limits are enforced only at
 /// [`resolve_for_execution`], where an oversize form resolves as unsupported.
-/// The options map of a macro input is never size-checked. Callers admitting
-/// untrusted text should call [`admit_source`](super::admit_source) first.
+/// The complete macro argument, including its options map, must fit the shared
+/// byte ceiling before the splitter scans it. The advanced form is still
+/// inspected at execution time; an oversized macro is refused here.
 pub fn parse_query_input(
     text: &str,
     input: QueryInput,
@@ -161,6 +162,9 @@ pub fn parse_query_input(
         QueryInput::Advanced => advanced_source_query(text, String::new()),
         QueryInput::Tql => parse_query_text_with_registry(text, QueryDialect::Tql, today, registry),
         QueryInput::MacroTql => {
+            if !query_source_within_limit(text) {
+                return refuse_tql_source(text, String::new());
+            }
             let (form, og_options) =
                 macro_text::split_trailing_map(text, macro_text::FormFamily::Tql);
             if !query_source_within_limit(&form) {
@@ -169,6 +173,9 @@ pub fn parse_query_input(
             tql::parse_tql_with_options(&form, og_options, registry)
         }
         QueryInput::MacroQuery => {
+            if !query_source_within_limit(text) {
+                return parse_query_source(text, today);
+            }
             let (form, og_options) =
                 macro_text::split_trailing_map(text, macro_text::FormFamily::Edn);
             // A whole advanced map is the FORM, never options: the splitter

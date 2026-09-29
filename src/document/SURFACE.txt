@@ -36,6 +36,7 @@ emptyPage
 ensureBlockId
 ensureEmptyBlock
 ensurePageLoaded
+ensurePagePropertyOnKeyPage  # why: one guarded document operation for a query type declaration on its key page; batch16a
 exportNodesFor
 extendFeedForScroll
 extendSelectionTo

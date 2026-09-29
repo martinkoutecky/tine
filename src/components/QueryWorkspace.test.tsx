@@ -118,6 +118,15 @@ describe("materializeQueryWorkspace", () => {
     expect(pageInventoryRev()).toBeGreaterThan(beforeInventory);
   });
 
+  it("saves page-content membership as a query block property", async () => {
+    const deps = materializeDeps();
+    const result = await materializeQueryWorkspace({ title: "Content search", sourceKind: "search", source: "alpha",
+      presentation: "search", pageMatchScope: "content", routeId: "content" }, deps);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.message);
+    expect(result.page.blocks[0].raw).toBe('{{query (search "alpha")}}\ntine.view:: search\ntine.page-match-scope:: content');
+  });
+
   it("preserves canonical raw DSL and writes a presentation property only when needed", async () => {
     const listDeps = materializeDeps();
     const list = await materializeQueryWorkspace({
@@ -274,6 +283,74 @@ async function waitFor(check: () => void): Promise<void> {
 }
 
 describe("QueryWorkspace", () => {
+  it("routes and persists page match scope through the search control", async () => {
+    const route: QueryRoute = { kind: "query", id: "scope-test", sourceKind: "search", source: "alpha", presentation: "search" };
+    const deps = workspaceDeps();
+    const router = routerMock(route);
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={router} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(deps.runGraphSearch).toHaveBeenCalledWith("alpha", 40, 100, "query-workspace:scope-test", false, undefined, "names"));
+      const select = root.querySelector<HTMLSelectElement>('[aria-label="Pages match"]')!;
+      select.value = "content";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      await waitFor(() => expect(deps.runGraphSearch).toHaveBeenCalledWith("alpha", 40, 100, "query-workspace:scope-test", false, undefined, "content"));
+      expect(router.updateActiveQuery).toHaveBeenCalledWith({ pageMatchScope: "content" });
+    } finally { dispose(); }
+  });
+  it("keeps Pages and Blocks as separate result sections, including an empty family", async () => {
+    const route: QueryRoute = { kind: "query", id: "section-test", sourceKind: "search", source: "alpha", presentation: "search" };
+    const deps = workspaceDeps();
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(root.querySelectorAll("[data-query-result-kind]")).toHaveLength(2));
+      expect([...root.querySelectorAll("[data-query-result-kind] h3")].map((heading) => heading.textContent?.split(" ")[0])).toEqual(["Pages", "Blocks"]);
+      await waitFor(() => expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("Alpha notes"));
+      expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("Alpha notes");
+      expect(root.querySelector('[data-query-result-kind="block"]')?.textContent).toContain("An alpha result");
+      vi.mocked(deps.runGraphSearch).mockResolvedValue({ ...executionFixture(false), hits: executionFixture(false).hits.filter((hit) => hit.entity === "block") });
+      const input = root.querySelector<HTMLInputElement>(".query-workspace-source")!;
+      input.value = "beta"; input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await waitFor(() => expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("No matching pages."));
+      expect(root.querySelector('[data-query-result-kind="block"]')?.textContent).toContain("An alpha result");
+    } finally { dispose(); }
+  });
+  it("opens an alias match through the owner path and marks each family's truncation", async () => {
+    const route: QueryRoute = { kind: "query", id: "alias-section", sourceKind: "search", source: "nickname", presentation: "search" };
+    const deps = workspaceDeps();
+    vi.mocked(deps.runGraphSearch).mockResolvedValue({
+      ...executionFixture(false),
+      hits: [{ entity: "page", page: { name: "Owner", kind: "page", path: "pages/owner.md", date_key: null },
+        display_text: "Nickname", evidence: [], score: 100, matched_alias: "Nickname" }],
+      has_more: { pages: true, blocks: false },
+    });
+    const router = routerMock(route);
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={router} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("matched alias Nickname"));
+      expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("More pages match than are shown.");
+      expect(root.querySelector('[data-query-result-kind="block"]')?.textContent).not.toContain("More blocks");
+      root.querySelector<HTMLButtonElement>('[data-query-result-kind="page"] .query-result-row')!.click();
+      expect(router.openPageTarget).toHaveBeenCalledWith({ name: "Owner", pageKind: "page", path: "pages/owner.md" });
+    } finally { dispose(); }
+  });
+  it("shows the block excerpt that admitted a page by content", async () => {
+    const route: QueryRoute = { kind: "query", id: "content-excerpt", sourceKind: "search", source: "needle", presentation: "search", pageMatchScope: "content" };
+    const deps = workspaceDeps();
+    vi.mocked(deps.runGraphSearch).mockResolvedValue({ ...executionFixture(false), hits: [{
+      entity: "page", page: { name: "Owner", kind: "page", path: "pages/Owner.md", date_key: null },
+      display_text: "a hidden needle", evidence: [{ clause_id: 2, field: "visible_content", mode: "contains", spans: [{ start: 9, end: 15 }] }], score: 1,
+    }] });
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(root.querySelector(".query-page-content-excerpt")?.textContent).toBe("a hidden needle"));
+      expect(root.querySelector(".query-page-content-excerpt mark")?.textContent).toBe("needle");
+      expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("Owner");
+    } finally { dispose(); }
+  });
   // Ported from master src/components/QueryWorkspace.test.tsx (same title).
   it("peels a QueryBuilder child before its Advanced parent and preserves the draft", async () => {
     const route: QueryRoute = {
@@ -448,7 +525,7 @@ describe("QueryWorkspace", () => {
     const explain = root.querySelector(".query-explain-toggle") as HTMLButtonElement;
     explain.click();
     await waitFor(() => expect(root.querySelector(".query-workspace-explanation")?.textContent).toContain("contains alpha"));
-    expect(deps.runGraphSearch).toHaveBeenLastCalledWith("alpha", 40, 100, "query-workspace:query-test", true);
+    expect(deps.runGraphSearch).toHaveBeenLastCalledWith("alpha", 40, 100, "query-workspace:query-test", true, undefined, "names");
 
     dispose();
   });

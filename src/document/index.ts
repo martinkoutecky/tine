@@ -31,6 +31,9 @@
  * in one ordered group. A crash between those writes may leave an unreferenced
  * ID, never a dangling reference. Failure returns null or false. Cost is one
  * page or grouped save, plus a page lookup when the target is not loaded.
+ * `ensurePagePropertyOnKeyPage` writes a property declaration on its normalized
+ * key page: one page read, then one guarded page edit. It rejects
+ * graph changes, conflicts and read-only pages; callers report the error.
  *
  * Saving. Pages save as whole-page snapshots, never as operations. `markDirty`
  * requires an edit kind and schedules a trailing 400 ms save, capped at 3 s
@@ -86,6 +89,7 @@ export { deleteBlock, ensureEmptyBlock, indentBlock, insertEmptyChildBlock, inse
 export { pasteClipboardPayload, sanitizeOutlineIdsForPaste } from "./edits/paste";
 export { appendToTodayJournal, captureToPage } from "./edits/capture";
 export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, collapsibleDescendantIds, finishPageHeaderEdit, makeOwnNumberedList, orderedListMarker, pageHeaderProperties, promotePagePreamble, readPageProperties, readPageProperty, readSchedule, removeOwnNumberedList, setBlockProperty, setCollapsedDeep, setCollapsedDescendants, setHeading, setPageProperty, setSchedule, stopOwnNumberedListOnEmptyEnter, toggleBlockProperty, toggleListItemAtIndex, toggleOwnNumberedList } from "./edits/properties";
+export { ensurePagePropertyOnKeyPage } from "./edits/propertyDeclaration";
 export { blockExternalId, blockRef, ensureBlockId, persistBlockRefTarget, persistentBlockRef, resolveBlockRef } from "./edits/identity";
 export { blockSubtreeMarkdown, buildClipboardPayload, dtoSubtreeMarkdown, exportNodesFor } from "./edits/serialize";
 export { clearSelection, cycleSelectionTasks, deleteSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, moveSelection, outdentSelection, selectBlock, selectedIds, selectionMarkdown } from "./edits/selection";

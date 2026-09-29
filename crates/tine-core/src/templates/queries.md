@@ -12,6 +12,7 @@ icon:: 🔎
 	- 4. Tick two or more rows in the same list and press **Group selected ▾** to make them one **All of**, **Any of** or **None of** group. A group's ⋮ **Ungroup** puts its rows back.
 	- 5. What you should see: pressing **Escape** (or clicking away) closes the sheet and leaves the sentence, updated. The results show as blocks grouped by page, or as pages when the query finds pages; switch **Search**, **List**, **Table** or **Board** to change how they are shown — the matches stay the same.
 - ## Query text
+	- **Open all results** from Ctrl+K for a friendly search tab with separate **Pages** and **Blocks** sections. An alias result opens its owner page. Choose **Pages match** to search names and aliases, containing block text, or both; saving that search writes `tine.page-match-scope:: content` or `both` beside the ordinary query block.
 	- The foot of every open sheet has a **query text** box: the same query the rows show, written in Tine's text query language (`@block` or `@page`, then conditions joined with `and`, `or`, `not`). Type in it and Tine re-reads it as you go; press **Save query text** to make it the block's query.
 	- When Tine cannot read the text it names the problem, and a **Show me** button selects the part of the text it points at when it knows where that is.
 	- A `{{tine-query …}}` block holds this language directly and runs like any other query block.
@@ -28,6 +29,10 @@ icon:: 🔎
 		- `(sort-by priority desc)`, `(sample 10)` — order the results (by `priority`, `page`, `scheduled`, `deadline` or any property), or keep only the first N after sorting.
 		- A bare word or quoted text finds block content; Tine's `(search "cafe")` predicate uses the search syntax. Both respect `:feature/enable-search-remove-accents? false` in `logseq/config.edn`, so `cafe` then differs from `café`.
 	- A block property on the query block itself can set the view: `tine.sort:: priority desc` and `tine.sample:: 10` win over the same directive in the query text.
+- ## Display and property types
+	- Open the query sheet and press **Display** to choose Search, List, Table or Board; add ordered sort fields and table columns, choose grouping, add count/sum/average summaries, or set a sample limit. Choosing **Page** in the column picker shows each block's owning page. The controls save on the query block as `tine.*` properties; `tine.fields::` remains the table's schema and is not changed by a column choice.
+	- The condition picker lists properties found in this graph with their observed type and the number of blocks or pages that carry them. A key found on both blocks and pages has separate choices for those scopes. You can type a key that has not appeared yet.
+	- Beside a property condition, **declare type…** writes `tine.type:: number`, `date`, `checkbox`, `ref` or `text` on the page named for that property key. Select **list of** for multiple values, or remove the declaration. The badge distinguishes an observed type from a declared one and shows mismatches against a declaration.
 - ## Advanced (datalog) queries
 	- `{{query {:query [:find (pull ?b [*]) :where …]}}}` and `#+BEGIN_QUERY` blocks run a supported subset of Logseq's datalog: task markers, priority, page references, properties, page, namespace, page tags, scheduled/deadline and journal date ranges.
 	- A note above the results lists which clauses **ran** and which were **ignored**. An ignored clause did not filter the results; a query with no supported clause shows a notice instead of results.
@@ -39,5 +44,3 @@ icon:: 🔎
 - ## Publish a query
 	- Use **Export…** on a query's result header. Review the complete pages selected by the result, then choose an external folder. Tine creates a new named site there, with a read-only browser view and static HTML fallback. A block result publishes its whole owner page, so review those pages before continuing.
 	- In **Settings → Graph → Publish live site**, choose an external folder to publish pages marked `public:: true`. **Include all pages** is an explicit choice for a graph meant to be public. The exported site can be served as ordinary static files.
-- ## Not in this build yet
-	- The query's **Display** panel (columns, grouping and totals chosen from the sheet) and the property chooser's observed types and counts are not in this build yet; set those with `tine.*` block properties.

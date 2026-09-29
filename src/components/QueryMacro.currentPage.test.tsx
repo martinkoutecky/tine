@@ -15,6 +15,8 @@ import type { QueryExecution, RefGroup } from "../types";
 import { queryMacroExtent } from "../editor/queryMacro";
 import { backendReadsQueries, blockRunResult } from "../tests/queryReadingsTestkit";
 import type { Query, QueryResult } from "../editor/queryIr";
+import { setGraphMeta } from "../graphSession";
+import { journalTitle } from "../journal";
 
 // GH #301 (approved): a query whose text explicitly carries `<% current page %>`
 // binds that marker to the FOCUSED pane's route page and re-runs when that page
@@ -33,6 +35,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   resetSharedQueryResultsForTests();
   resetStore();
+  setGraphMeta(null);
   resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
   localStorage.clear();
   document.body.innerHTML = "";
@@ -237,6 +240,19 @@ describe("query `<% current page %>` dispatch to the focused pane (GH #301)", ()
     } finally {
       dispose();
     }
+  });
+
+  it("binds a typed current-page input to home, then today, when the focused route is journals", async () => {
+    loadQueryDoc("{{query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p]] :inputs [:current-page]}}", "advanced");
+    setGraphMeta({ root: "/tmp/current-page-home", default_home: "Home" } as Parameters<typeof setGraphMeta>[0]);
+    const runQuery = vi.spyOn(backend(), "queryRun")
+      .mockResolvedValue(blockRunResult(groupsFor("todo"), { ran: ["current-page-ref"] }));
+    const { dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(runQuery.mock.calls.at(-1)?.[2]).toEqual({ current_page: "Home" }));
+      setGraphMeta({ root: "/tmp/current-page-home", default_home: null } as Parameters<typeof setGraphMeta>[0]);
+      await vi.waitFor(() => expect(runQuery.mock.calls.at(-1)?.[2]).toEqual({ current_page: journalTitle(new Date()) }));
+    } finally { dispose(); }
   });
 
   it("keeps an advanced query without the live keyword owner-bound and navigation-independent", async () => {

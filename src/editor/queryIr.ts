@@ -1,9 +1,9 @@
 // **The TypeScript mirror of the Rust query IR** (SPEC §3.1, §7.1).
 
 import type { PageKind, RefGroup } from "../types";
-/** Display drafts are typed by Q4b's `queryDisplayDraft`; opaque here so this mirror stays the one seam. */
-export type QueryDisplayDraft = Record<string, unknown>;
-export type FriendlyPageMatchScope = string;
+/** The validated, non-presentation half of a workspace display. */
+export type QueryDisplayDraft = Omit<ViewSettings, "view">;
+export type FriendlyPageMatchScope = "names" | "content" | "both";
 
 // Scalars
 

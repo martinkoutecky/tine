@@ -182,6 +182,24 @@ mod journal_guide_tests {
 #[cfg(test)]
 mod search_guide_tests {
     #[test]
+    fn friendly_search_sections_scope_and_save_are_documented() {
+        let tips = include_str!("templates/tips.md");
+        for text in [
+            "**Pages** and **Blocks**",
+            "Pages match",
+            "Names or content",
+            "Save page",
+            "tine.page-match-scope:: content",
+        ] {
+            assert!(
+                tips.contains(text),
+                "missing friendly search Guide detail: {text}"
+            );
+        }
+        let queries = include_str!("templates/queries.md");
+        assert!(queries.contains("An alias result opens its owner page"));
+    }
+    #[test]
     fn search_fold_and_graph_opt_out_are_documented() {
         let tips = include_str!("templates/tips.md");
         for text in [
@@ -313,13 +331,24 @@ mod query_guide_tests {
                 "missing query Guide control: {control}"
             );
         }
-        let not_yet = &queries[queries
-            .find("## Not in this build yet")
-            .expect("the Not-yet section")..];
-        for shipped in ["tine-query", "explain which part", "visual builder"] {
+        assert!(!queries.contains("## Not in this build yet"));
+    }
+
+    #[test]
+    fn query_display_and_type_declarations_are_documented() {
+        let queries = include_str!("templates/queries.md");
+        for control in [
+            "press **Display**",
+            "Choosing **Page** in the column picker",
+            "`tine.fields::` remains the table's schema",
+            "number of blocks or pages",
+            "**declare type…**",
+            "**list of**",
+            "mismatches against a declaration",
+        ] {
             assert!(
-                !not_yet.contains(shipped),
-                "shipped capability still listed as missing: {shipped}"
+                queries.contains(control),
+                "missing Q4b Guide control: {control}"
             );
         }
     }

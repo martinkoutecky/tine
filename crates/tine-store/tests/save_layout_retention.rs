@@ -136,6 +136,20 @@ fn structural_saves_keep_untouched_block_bytes() {
 }
 
 #[test]
+fn insert_after_unclosed_fence_survives_save_and_reopen() {
+    let page = Page::new("- open\n  ```js\n  code\n");
+    let written = page.save(EditKind::InsertBlocks, |doc| {
+        doc.blocks.push(block("after"));
+    });
+    assert_eq!(written, "- open\n  ```js\n  code\n- after\n");
+    let reopened_store = Store::open(&page.root, Default::default()).unwrap().0;
+    let reopened = reopened_store.page(&page.id).unwrap().doc;
+    assert_eq!(reopened.blocks.len(), 2);
+    assert_eq!(reopened.blocks[1].raw, "after");
+    reopened_store.close();
+}
+
+#[test]
 fn indent_and_outdent_rebase_only_the_moved_subtree() {
     let indented = saved(SOURCE, EditKind::MoveBlocks, |doc| {
         let two = doc.blocks.remove(1);

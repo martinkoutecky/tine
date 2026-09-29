@@ -44,6 +44,7 @@ import { graphOwner, ownedWhen, readOwned } from "../owned";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
 import { registerTransientLayer } from "../transientLayers";
+import { QueryDisplay } from "./QueryDisplay";
 
 // **The visual query builder: a resting SENTENCE that expands into a SHEET** (SPEC §7.2–§7.4).
 
@@ -497,7 +498,10 @@ export function QueryBuilder(props: {
   onStale?: (stale: boolean) => void;
   blockId?: string;
   parentTransientId?: string;
-  // Q4b seam: the inline Display panel (`inlineDisplay`, `displayFormulas`, `display`) plugs in here.
+  /** Display writes use the host's guarded query save. Workspace callers may
+   * leave it absent until their route owns a display draft. */
+  display?: { view: () => ViewSettings; apply: (view: ViewSettings) => void | Promise<boolean>;
+    formulas?: () => readonly string[] };
 }): JSX.Element {
   // The pane's last-good parse, not yet saved.
   const [paneQuery, setPaneQuery] = createSignal<Query | null>(null);
@@ -701,7 +705,10 @@ export function QueryBuilder(props: {
 
   const footer = () => (
     <>
-      {/* Q4b seam: the Display control renders here, above the text pane. */}
+      <Show when={props.display}>{(display) => <QueryDisplay
+        view={display().view} apply={display().apply} registry={registry} formulas={display().formulas}
+        rowKind={() => session()?.query.anchor ?? "block"}
+        parentTransientId={props.sheetAlwaysOpen ? props.parentTransientId : sheetLayerId} />}</Show>
       {/* **Visible and editable, always, inside an open sheet (§7.5).** It was a
           collapsed `<details>`, which meant the one control that can express
           everything the rows cannot was the one control a user had to know to

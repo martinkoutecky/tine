@@ -89,8 +89,9 @@ pub fn internal_property_keys() -> &'static [&'static str] {
 
 /// Maximum query source length accepted by evaluators, in UTF-8 bytes.
 pub const QUERY_SOURCE_MAX_BYTES: usize = 64 * 1024;
-/// Maximum parenthesis depth either query parser accepts.
-pub(crate) const QUERY_NESTING_MAX: usize = 64;
+/// Maximum parenthesis depth either query parser accepts, matching the
+/// document parser's 128-level input ceiling.
+pub(crate) const QUERY_NESTING_MAX: usize = 128;
 
 /// Reason a query source cannot enter an evaluator or cache.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

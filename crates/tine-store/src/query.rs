@@ -2331,7 +2331,7 @@ mod tests {
 
     #[test]
     fn query_parsers_fail_closed_past_the_shared_depth_and_size_limits() {
-        const DEPTH: usize = 64;
+        const DEPTH: usize = 128;
         let graph = one_page("Test", None, &block("TODO x"));
         let simple_at_limit = nested_boolean("and", DEPTH - 1, "(task TODO)");
         assert_eq!(run_query(&graph, &simple_at_limit).len(), 1);
@@ -3184,6 +3184,7 @@ mod tests {
                 page_kind: PageKind::Page,
             }),
             false,
+            tine_core::query::ir::FriendlyPageMatchScope::Names,
         ));
         assert_eq!(scoped, ["foo safe"]);
     }

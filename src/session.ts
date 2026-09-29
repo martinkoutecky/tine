@@ -106,7 +106,10 @@ function validRoute(r: unknown): Route | null {
       && typeof o.source === "string" && o.source.length <= 65_536
       && (o.presentation === "search" || o.presentation === "list"
         || o.presentation === "table" || o.presentation === "board"))) return null;
-    return { kind: "query", id: o.id, sourceKind: o.sourceKind, source: o.source, presentation: o.presentation };
+    if (o.pageMatchScope !== undefined && o.pageMatchScope !== "names"
+      && o.pageMatchScope !== "content" && o.pageMatchScope !== "both") return null;
+    return { kind: "query", id: o.id, sourceKind: o.sourceKind, source: o.source, presentation: o.presentation,
+      ...(o.pageMatchScope ? { pageMatchScope: o.pageMatchScope } : {}) };
   }
   if (o.kind !== "page" || typeof o.name !== "string" || o.name.length > 4096
     || (o.pageKind !== "journal" && o.pageKind !== "page")) return null;

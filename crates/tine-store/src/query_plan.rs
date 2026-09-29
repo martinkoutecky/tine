@@ -9,6 +9,7 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use tine_core::doc::DocBlock;
 use tine_core::model::{PageEntry, PageKind};
+use tine_core::query::ir::FriendlyPageMatchScope;
 use tine_core::query_plan::{
     ExplainNode, MatchEvidence, MatchSpan, ObjectiveMatchClass, QueryDiagnostic, QueryExecution,
     QueryExplanation, QueryHasMore, QueryHit, TextField, TextMatchMode,
@@ -81,6 +82,7 @@ pub(crate) struct QueryPlan {
     page_exact: Option<String>,
     regexes: HashMap<u32, Regex>,
     remove_accents: bool,
+    page_match_scope: FriendlyPageMatchScope,
 }
 
 impl QueryPlan {
@@ -101,11 +103,30 @@ impl QueryPlan {
     }
 
     /// The production constructor; `remove_accents` comes from the graph config.
+    #[cfg(test)]
     pub(crate) fn friendly_with_policy(
         query: &str,
         page_limit: usize,
         block_limit: usize,
         remove_accents: bool,
+    ) -> Self {
+        Self::friendly_with_scope(
+            query,
+            page_limit,
+            block_limit,
+            remove_accents,
+            FriendlyPageMatchScope::Names,
+        )
+    }
+
+    /// Graph-scale friendly search with explicit page membership. Names is the
+    /// historical default; Content admits physical owners of matching blocks.
+    pub(crate) fn friendly_with_scope(
+        query: &str,
+        page_limit: usize,
+        block_limit: usize,
+        remove_accents: bool,
+        page_match_scope: FriendlyPageMatchScope,
     ) -> Self {
         let matcher = Matcher::parse_with_policy(query, remove_accents);
         let mut next_id = 1;
@@ -158,6 +179,7 @@ impl QueryPlan {
             page_exact: (!query.trim().is_empty()).then(|| identity_fold(query.trim())),
             regexes,
             remove_accents,
+            page_match_scope,
         }
     }
 
@@ -223,6 +245,7 @@ impl QueryPlan {
             page_exact: Some(identity_fold(&value)),
             regexes: HashMap::new(),
             remove_accents,
+            page_match_scope: FriendlyPageMatchScope::Names,
         }
     }
 
@@ -274,6 +297,7 @@ impl QueryPlan {
             page_exact: None,
             regexes,
             remove_accents,
+            page_match_scope: FriendlyPageMatchScope::Names,
         }
     }
 
@@ -309,6 +333,7 @@ impl QueryPlan {
             page_exact: None,
             regexes: HashMap::new(),
             remove_accents,
+            page_match_scope: FriendlyPageMatchScope::Names,
         }
     }
 
@@ -635,67 +660,11 @@ fn match_text(plan: &QueryPlan, pred: &TextPredicate, original: &str) -> Option<
 #[path = "query_plan/fold.rs"]
 mod fold;
 use fold::{casefold_substring_spans, fuzzy_evidence};
-
-#[derive(Debug)]
-enum PageCandidate {
-    File(usize),
-    Referenced(PageEntry),
-}
-
-#[derive(Debug)]
-struct ScoredPage {
-    score: i32,
-    match_class: ObjectiveMatchClass,
-    matched_text: String,
-    matched_alias: Option<String>,
-    tie_key: String,
-    candidate: PageCandidate,
-}
-
-impl ScoredPage {
-    fn is_better_than(&self, other: &Self) -> bool {
-        self.match_class.rank() > other.match_class.rank()
-            || (self.match_class == other.match_class
-                && (self.score > other.score
-                    || (self.score == other.score && self.tie_key < other.tie_key)))
-    }
-}
-
-impl PartialEq for ScoredPage {
-    fn eq(&self, other: &Self) -> bool {
-        self.match_class == other.match_class
-            && self.score == other.score
-            && self.tie_key == other.tie_key
-    }
-}
-impl Eq for ScoredPage {}
-impl PartialOrd for ScoredPage {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for ScoredPage {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // Max-heap root is the WORST retained candidate, ready for eviction.
-        other
-            .match_class
-            .rank()
-            .cmp(&self.match_class.rank())
-            .then_with(|| other.score.cmp(&self.score))
-            .then_with(|| self.tie_key.cmp(&other.tie_key))
-    }
-}
-
-fn push_page(heap: &mut BinaryHeap<ScoredPage>, limit: usize, candidate: ScoredPage) {
-    if heap.len() < limit {
-        heap.push(candidate);
-    } else if heap
-        .peek()
-        .is_some_and(|worst| candidate.is_better_than(worst))
-    {
-        *heap.peek_mut().unwrap() = candidate;
-    }
-}
+#[path = "query_plan/pages.rs"]
+mod pages;
+#[cfg(test)]
+use pages::best_page_match;
+use pages::execute_pages;
 
 #[derive(Debug, Clone, Copy)]
 struct BlockRelevance {
@@ -994,246 +963,6 @@ fn fuzzy_name_score(lower_name: &str, lower_query: &str) -> Option<(i32, Objecti
     }
 }
 
-/// Match + page relevance in one cached-lowercase pass. AND takes the best
-/// positive clause; OR uses the first matching branch, mirroring
-/// `Matcher::score_name`.
-fn page_base_score(
-    plan: &QueryPlan,
-    expr: &QueryExpr,
-    original: &str,
-    lower: &str,
-) -> Option<(i32, ObjectiveMatchClass)> {
-    match expr {
-        QueryExpr::Never => None,
-        QueryExpr::Text(pred) if pred.field != TextField::PageName => None,
-        QueryExpr::Text(pred) => match pred.mode {
-            TextMatchMode::Fuzzy => fuzzy_name_score(lower, &pred.value).map(|(score, class)| {
-                if class == ObjectiveMatchClass::Exact
-                    && plan
-                        .page_exact
-                        .as_ref()
-                        .is_some_and(|exact| identity_fold(original) != *exact)
-                {
-                    (1000, ObjectiveMatchClass::Prefix)
-                } else {
-                    (score, class)
-                }
-            }),
-            TextMatchMode::Regex => plan
-                .regexes
-                .get(&pred.clause_id)
-                .is_some_and(|regex| regex.is_match(original))
-                .then_some((500, ObjectiveMatchClass::Substring)),
-            TextMatchMode::Contains | TextMatchMode::Phrase => {
-                if lower == pred.value {
-                    if plan
-                        .page_exact
-                        .as_ref()
-                        .is_some_and(|exact| identity_fold(original) != *exact)
-                    {
-                        Some((1000, ObjectiveMatchClass::Prefix))
-                    } else {
-                        Some((1500, ObjectiveMatchClass::Exact))
-                    }
-                } else if lower.starts_with(&pred.value) {
-                    Some((1000, ObjectiveMatchClass::Prefix))
-                } else if lower.contains(&pred.value) {
-                    Some((500, ObjectiveMatchClass::Substring))
-                } else {
-                    None
-                }
-            }
-        },
-        QueryExpr::And(children) => {
-            let mut score = 0;
-            let mut class = ObjectiveMatchClass::Exact;
-            for child in children {
-                let (child_score, child_class) = page_base_score(plan, child, original, lower)?;
-                score = score.max(child_score);
-                if child_class.rank() < class.rank() {
-                    class = child_class;
-                }
-            }
-            Some((score, class))
-        }
-        QueryExpr::Or(children) => children
-            .iter()
-            .find_map(|child| page_base_score(plan, child, original, lower)),
-        QueryExpr::Not(child) => {
-            (!eval_expr_fast(plan, child, TextField::PageName, original, lower))
-                // A successful exclusion contributes no positive relevance and
-                // therefore must not weaken the class supplied by an AND sibling.
-                .then_some((0, ObjectiveMatchClass::Exact))
-        }
-    }
-}
-
-fn best_page_match(
-    plan: &QueryPlan,
-    expr: &QueryExpr,
-    page_name: &str,
-    aliases: &[String],
-) -> Option<(i32, ObjectiveMatchClass, String, Option<String>)> {
-    let page_match = page_base_score(plan, expr, page_name, &plan.fold(page_name));
-    let mut best = page_match.map(|(score, class)| (score, class, page_name.to_string(), None));
-    for alias in aliases {
-        let Some((score, class)) = page_base_score(plan, expr, alias, &plan.fold(alias)) else {
-            continue;
-        };
-        let replace = best.as_ref().is_none_or(|(best_score, best_class, _, _)| {
-            class.rank() > best_class.rank() || (class == *best_class && score > *best_score)
-        });
-        if replace {
-            best = Some((score, class, alias.clone(), Some(alias.clone())));
-        }
-    }
-    // Upgrade only an outcome that already satisfied the parsed expression.
-    // This repairs the objective class for ordinary multi-word titles without
-    // bypassing NOT/OR/regex membership semantics for syntax-looking names.
-    if let Some(exact) = plan.page_exact.as_deref() {
-        if page_match.is_some() && identity_fold(page_name) == exact {
-            return Some((
-                1500,
-                ObjectiveMatchClass::Exact,
-                page_name.to_string(),
-                None,
-            ));
-        }
-        if let Some(alias) = aliases.iter().find(|alias| {
-            identity_fold(alias) == exact
-                && page_base_score(plan, expr, alias, &plan.fold(alias)).is_some()
-        }) {
-            return Some((
-                1500,
-                ObjectiveMatchClass::Exact,
-                alias.clone(),
-                Some(alias.clone()),
-            ));
-        }
-    }
-    best
-}
-
-fn execute_pages(
-    plan: &QueryPlan,
-    graph: &impl GraphRead,
-    branch: &QueryBranch,
-    cancelled: &impl Fn() -> bool,
-) -> Option<(Vec<QueryHit>, bool)> {
-    if branch.limit == 0 {
-        return Some((Vec::new(), false));
-    }
-    let file_pages = graph.page_list_arc();
-    let mut aliases_by_owner: HashMap<String, Vec<String>> = HashMap::new();
-    for (alias, _, owner_rel_path) in graph.page_aliases_with_owners() {
-        aliases_by_owner
-            .entry(owner_rel_path)
-            .or_default()
-            .push(alias);
-    }
-    let mut heap = BinaryHeap::new();
-    let mut has_more = false;
-    for (index, page) in file_pages.iter().enumerate() {
-        if cancelled() {
-            return None;
-        }
-        let aliases = aliases_by_owner
-            .get(page.rel_path_str())
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        if let Some((base_score, match_class, matched_text, matched_alias)) =
-            best_page_match(plan, &branch.predicate, &page.name, aliases)
-        {
-            has_more |= heap.len() >= branch.limit;
-            push_page(
-                &mut heap,
-                branch.limit,
-                ScoredPage {
-                    score: base_score - page.name.len() as i32,
-                    match_class,
-                    matched_text,
-                    matched_alias,
-                    tie_key: page.rel_path_str().to_owned(),
-                    candidate: PageCandidate::File(index),
-                },
-            );
-        }
-    }
-    let have: HashSet<String> = file_pages
-        .iter()
-        .map(|page| identity_fold(&page.name))
-        .collect();
-    for name in graph.referenced_page_names() {
-        if cancelled() {
-            return None;
-        }
-        let key = identity_fold(&name);
-        if have.contains(&key) {
-            continue;
-        }
-        if let Some((base_score, match_class, matched_text, matched_alias)) =
-            best_page_match(plan, &branch.predicate, &name, &[])
-        {
-            has_more |= heap.len() >= branch.limit;
-            let score = base_score - name.len() as i32;
-            push_page(
-                &mut heap,
-                branch.limit,
-                ScoredPage {
-                    score,
-                    match_class,
-                    matched_text,
-                    matched_alias,
-                    tie_key: tine_core::refs::page_key(&name),
-                    candidate: PageCandidate::Referenced(PageEntry {
-                        name,
-                        kind: PageKind::Page,
-                        date_key: None,
-                        rel_path: None,
-                        path: std::path::PathBuf::new(),
-                    }),
-                },
-            );
-        }
-    }
-    let mut winners = heap.into_vec();
-    winners.sort_by(|a, b| {
-        b.match_class
-            .rank()
-            .cmp(&a.match_class.rank())
-            .then_with(|| b.score.cmp(&a.score))
-            .then_with(|| a.tie_key.cmp(&b.tie_key))
-    });
-    Some((
-        winners
-            .into_iter()
-            .map(|winner| {
-                let page = match winner.candidate {
-                    PageCandidate::File(index) => file_pages[index].clone(),
-                    PageCandidate::Referenced(page) => page,
-                };
-                let evidence = eval_expr(
-                    plan,
-                    &branch.predicate,
-                    TextField::PageName,
-                    &winner.matched_text,
-                )
-                .map(|matched| matched.evidence)
-                .unwrap_or_default();
-                QueryHit::Page {
-                    display_text: winner.matched_text,
-                    page,
-                    evidence,
-                    score: winner.score,
-                    match_class: winner.match_class,
-                    matched_alias: winner.matched_alias,
-                }
-            })
-            .collect(),
-        has_more,
-    ))
-}
-
 fn walk_blocks<'a>(
     blocks: &'a [DocBlock],
     ancestors: &mut Vec<&'a DocBlock>,
@@ -1426,6 +1155,7 @@ mod tests {
                 8,
                 None,
                 false,
+                FriendlyPageMatchScope::Names,
             )
         };
         let default = run(snapshot_for_dir(&dir), "cafe");
@@ -1905,6 +1635,62 @@ mod tests {
             "a unique page name must retain ordinary alias matching"
         );
 
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn page_content_scope_admits_physical_owners_and_keeps_names_default() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("tine-page-content-{}-{nonce}", std::process::id()));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(dir.join("pages/Alpha.md"), "- hiddenneedle in a block\n").unwrap();
+        fs::write(dir.join("pages/Hiddenneedle.md"), "- unrelated\n").unwrap();
+        let graph = snapshot_for_dir(&dir);
+        let names = QueryPlan::friendly_with_scope(
+            "hiddenneedle",
+            10,
+            0,
+            true,
+            FriendlyPageMatchScope::Names,
+        )
+        .execute(&graph, || false);
+        let content = QueryPlan::friendly_with_scope(
+            "hiddenneedle",
+            10,
+            0,
+            true,
+            FriendlyPageMatchScope::Content,
+        )
+        .execute(&graph, || false);
+        let both = QueryPlan::friendly_with_scope(
+            "hiddenneedle",
+            10,
+            0,
+            true,
+            FriendlyPageMatchScope::Both,
+        )
+        .execute(&graph, || false);
+        let names_of = |result: &QueryExecution| {
+            result
+                .hits
+                .iter()
+                .filter_map(|hit| match hit {
+                    QueryHit::Page { page, .. } => Some(page.name.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names_of(&names), ["Hiddenneedle"]);
+        assert_eq!(names_of(&content), ["Alpha"]);
+        assert_eq!(names_of(&both).len(), 2);
+        assert!(
+            matches!(content.hits.first(), Some(QueryHit::Page { evidence, .. }) if evidence.iter().any(|item| item.field == TextField::VisibleContent))
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 

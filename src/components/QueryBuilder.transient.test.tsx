@@ -185,7 +185,7 @@ describe("QueryBuilder transient ownership (post-GH #161)", () => {
   });
 
   it("renders a bounded ⟨advanced⟩ chip instead of recursing through a hostile query tree", () => {
-    // 64 levels still PARSE (`QUERY_NESTING_MAX`); what is bounded here is the
+    // 64 levels still PARSE (under `QUERY_NESTING_MAX`); what is bounded here is the
     // drawing. Both the sentence and the rows stop at the rendering cap, so a
     // query written by outside content cannot make either of them big (I-22).
     const depth = 64;

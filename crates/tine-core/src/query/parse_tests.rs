@@ -446,3 +446,21 @@ fn tql_at_the_source_ceiling_is_accepted_and_one_byte_over_is_refused() {
         .iter()
         .any(|d| d.kind == DiagnosticKind::Size));
 }
+
+#[test]
+fn macro_argument_limit_applies_before_splitting_an_options_map() {
+    use super::{parse_query_input, QueryInput};
+    use crate::query::registry::Registry;
+
+    let oversized = format!(
+        "(task TODO) {{:title \"{}\"}}",
+        "x".repeat(QUERY_SOURCE_MAX_BYTES)
+    );
+    for input in [QueryInput::MacroQuery, QueryInput::MacroTql] {
+        let (query, _) = parse_query_input(&oversized, input, TODAY, Registry::none());
+        assert!(query
+            .diagnostics
+            .iter()
+            .any(|d| d.kind == DiagnosticKind::Size));
+    }
+}

@@ -412,20 +412,26 @@ await withApp(0, async (browser) => {
   const dialog = await browser.$(".query-advanced-modal");
   await dialog.waitForExist({ timeout: 5_000 });
   if (!(await dialog.getText()).includes("All of these words")) throw new Error("friendly advanced fields are missing");
-  // The visual builder popover is a semantic child of Advanced. Reactivating
-  // the modal itself must not let its parent jump ahead of the still-visible
-  // child; one Escape closes only the child and preserves the draft/modal.
+  // The visual query sheet's actions menu is a semantic child of Advanced.
+  // Escape first dismisses the child without closing the parent. A pointer
+  // press back on the modal then proves outside dismissal preserves it too.
   await browser.$(".query-switch-to-dsl").click();
-  await browser.$(".qb-bar").waitForExist({ timeout: 5_000 });
-  await browser.$(".qb-chip").click();
-  await browser.$(".qb-menu").waitForExist({ timeout: 5_000 });
+  await browser.$(".query-advanced-modal .qs-sheet").waitForExist({ timeout: 5_000 });
+  await browser.$(".query-advanced-modal .qs-row-menu").click();
+  await browser.$(".qs-menu").waitForExist({ timeout: 5_000 });
+  await browser.keys(["Escape"]);
+  await browser.$(".qs-menu").waitForExist({ reverse: true, timeout: 5_000 });
+  if (!(await browser.$(".query-advanced-modal").isExisting())) {
+    throw new Error("Query sheet child Escape also closed its Advanced parent");
+  }
+  await browser.$(".query-advanced-modal .qs-row-menu").click();
+  await browser.$(".qs-menu").waitForExist({ timeout: 5_000 });
   await browser.execute(() => document.querySelector(".query-advanced-header")?.dispatchEvent(
     new MouseEvent("pointerdown", { bubbles: true, cancelable: true })
   ));
-  await browser.keys(["Escape"]);
-  await browser.$(".qb-menu").waitForExist({ reverse: true, timeout: 5_000 });
+  await browser.$(".qs-menu").waitForExist({ reverse: true, timeout: 5_000 });
   if (!(await browser.$(".query-advanced-modal").isExisting())) {
-    throw new Error("QueryBuilder child Escape also closed its Advanced parent");
+    throw new Error("Query sheet child dismissal also closed its Advanced parent");
   }
   await browser.keys(["Escape"]);
   await browser.$(".query-advanced-modal").waitForExist({ reverse: true, timeout: 5_000 });

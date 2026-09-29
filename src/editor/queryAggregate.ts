@@ -1,56 +1,78 @@
-// Pure result-aggregation helpers for {{query}} summaries (1a). The directives
-// (`(aggregate …)` / `(group-by …)`) ride in the DSL and are parse-but-ignored by
-// the Rust engine, which returns the full block set; the math is computed here in
-// the frontend from the returned rows. Kept DOM-free + unit-testable.
+// Query summaries format backend statistics from the same snapshot as the rows.
 
-export interface AggDirective {
-  agg: "count" | "sum" | "avg";
-  field: string | null;
+/** The three functions a QUERY aggregate can name (contract §4). The sheet's
+ *  own seventeen-name footer vocabulary is a different, wider set, and is
+ *  deliberately not reachable from here. */
+export type QueryAggFn = "count" | "sum" | "avg";
+
+/** One `tine.col-aggregates` entry as the QUERY reads it (contract §4): a bare
+ *  `count` has an empty field and means the whole-result count. */
+export type QueryAggregateEntry = readonly [field: string, fn: QueryAggFn];
+
+export interface QuerySummaryCell {
+  text: string;
+  /** Rows that could not contribute — sum/avg over an absent or non-numeric
+   *  value. Always 0 for a count. */
+  skipped: number;
 }
 
-// The minimal row shape the aggregation needs: a page (group key) and its parsed
-// properties. Matches the `Row` the query renderer flattens from the block DTOs.
-export interface AggRow {
-  page: string;
-  props: Record<string, string>;
+export interface QuerySummaryGroup {
+  /** The group's own key; `null` for the rows that carry no value. */
+  key: string | null;
+  label: string;
+  count: number;
+  /** One cell per requested aggregate, in the requested order. */
+  cells: QuerySummaryCell[];
 }
 
-export interface AggResult {
-  text: string; // the aggregate value, formatted
-  skipped: number; // rows that couldn't contribute (sum/avg: absent/non-numeric)
+export interface QuerySummary {
+  notice?: string | null;
+  /** One column per REQUESTED aggregate, in the requested order — repeats and a
+   *  bare whole-result count included, because the view carries a LIST. */
+  columns: { label: string; entry: QueryAggregateEntry }[];
+  overall: QuerySummaryCell[];
+  /** `null` when the result is not grouped. */
+  groups: QuerySummaryGroup[] | null;
+  /** The grouping field's label, for the breakdown's first column head. */
+  groupLabel: string | null;
+  /** Whether one row can sit in SEVERAL groups (tags), so the surface can say
+   *  so rather than imply the groups partition the result. */
+  multiMembership: boolean;
 }
 
-/** Fold a row set to the active aggregate. `null`/count → the row count. Sum/avg
- *  parse the chosen property with parseFloat (so "3 hrs" contributes 3); rows whose
- *  value is absent or non-numeric are counted as `skipped`. */
-export function foldAggregate(set: AggRow[], agg: AggDirective | null): AggResult {
-  if (!agg || agg.agg === "count") return { text: `${set.length}`, skipped: 0 };
-  const field = agg.field ?? "";
-  let sum = 0;
-  let n = 0;
-  let skipped = 0;
-  for (const r of set) {
-    const v = parseFloat((r.props[field] ?? "").trim());
-    if (Number.isFinite(v)) {
-      sum += v;
-      n++;
-    } else skipped++;
-  }
-  const val = agg.agg === "sum" ? sum : n ? sum / n : 0;
-  // Round to 3 decimals to avoid float noise; integer results print without a dot.
-  return { text: `${Math.round(val * 1000) / 1000}`, skipped };
+/** The user-facing name of one aggregate column. */
+export function queryAggregateLabel([field, fn]: QueryAggregateEntry): string {
+  const verb = fn === "count" ? "Count" : fn === "sum" ? "Sum" : "Avg";
+  return field ? `${verb} of ${field}` : verb;
 }
 
-/** Bucket rows by a group field. `"page"` groups by the source page; any other
- *  field groups by that property's value (absent → "(none)"). Insertion order is
- *  preserved (first-seen key first). */
-export function groupRows(set: AggRow[], field: string): Map<string, AggRow[]> {
-  const map = new Map<string, AggRow[]>();
-  for (const r of set) {
-    const key = field === "page" ? r.page : r.props[field] ?? "(none)";
-    const bucket = map.get(key);
-    if (bucket) bucket.push(r);
-    else map.set(key, [r]);
-  }
-  return map;
+/** Format the snapshot's complete statistics. Rows and live editor facets never
+ * participate in this adapter. An absent answer is not a numeric zero. */
+export function querySummary(input: {
+  statistics?: import("./queryIr").QueryStatistics | null;
+  groupLabel?: string | null;
+}): QuerySummary | null {
+  const statistics = input.statistics;
+  if (!statistics) return null;
+  const format = (cell: import("./queryIr").QueryStatisticsCell): QuerySummaryCell => {
+    if (cell.kind === "marker") return {
+      text: `Unavailable (${cell.reason.replaceAll("_", " ")})`, skipped: cell.skipped,
+    };
+    // Avoid overflowing a finite large number while rounding for display.
+    const scaled = cell.value * 1000;
+    const value = Number.isFinite(scaled) ? Math.round(scaled) / 1000 : cell.value;
+    return { text: `${value}`, skipped: cell.skipped };
+  };
+  return {
+    columns: statistics.aggregates.map((entry) => ({ label: queryAggregateLabel(entry), entry })),
+    overall: statistics.overall.map(format),
+    groups: statistics.groups?.map((group) => ({
+      key: group.key, label: group.key ?? "(none)", count: group.count, cells: group.cells.map(format),
+    })) ?? null,
+    groupLabel: input.groupLabel ?? statistics.group_by,
+    multiMembership: statistics.group_by === "tags",
+    notice: statistics.grouping_status === "unsupported_formula"
+      ? "Exact statistics by formula are not supported yet. Overall statistics are shown."
+      : null,
+  };
 }

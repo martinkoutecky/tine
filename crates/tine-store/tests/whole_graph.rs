@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use tine_core::model::{BacklinkFilterTarget, PageEntry, PageKind};
+use tine_core::query::ir::FriendlyPageMatchScope;
 use tine_core::query::QueryExportSpec;
 use tine_store::{
     Area, Cancel, FacetPolicy, PageId, QueryDialect, QueryError, QueryResult, Resolved,
@@ -250,6 +251,7 @@ fn query_and_scoped_search_use_page_identity() {
                 page_limit: 10,
                 block_limit: 10,
                 explain: false,
+                page_match_scope: None,
             },
             &Cancel(Arc::new(AtomicBool::new(false))),
         )
@@ -265,6 +267,7 @@ fn query_and_scoped_search_use_page_identity() {
             page_limit: 10,
             block_limit: 10,
             explain: false,
+            page_match_scope: None,
         },
         &Cancel(Arc::new(AtomicBool::new(true))),
     );
@@ -278,7 +281,8 @@ fn query_and_scoped_search_use_page_identity() {
                     within: Some(id),
                     page_limit: 1,
                     block_limit: 1,
-                    explain: false
+                    explain: false,
+                    page_match_scope: None,
                 },
                 &Cancel(Arc::new(AtomicBool::new(false)))
             ),
@@ -303,11 +307,44 @@ fn scoped_search_keeps_block_allowance_when_page_limit_is_large() {
                 page_limit: 20_000,
                 block_limit: 10,
                 explain: false,
+                page_match_scope: None,
             },
             &Cancel(Arc::new(AtomicBool::new(false))),
         )
         .unwrap();
     assert!(!hits.hits.is_empty());
+}
+
+#[test]
+fn public_search_request_routes_page_content_membership() {
+    let fixture = Fixture::new();
+    let view = fixture.view();
+    let cancel = Cancel(Arc::new(AtomicBool::new(false)));
+    let search = |page_match_scope| {
+        view.search(
+            &SearchRequest {
+                text: "searchable".into(),
+                within: None,
+                page_limit: 10,
+                block_limit: 0,
+                explain: false,
+                page_match_scope,
+            },
+            &cancel,
+        )
+        .unwrap()
+    };
+    let names = search(None);
+    let content = search(Some(FriendlyPageMatchScope::Content));
+    let both = search(Some(FriendlyPageMatchScope::Both));
+    assert!(!names.hits.iter().any(|hit| matches!(hit,
+        tine_core::query_plan::QueryHit::Page { page, .. } if page.name == "Source")));
+    for result in [content, both] {
+        assert!(result.hits.iter().any(|hit| matches!(hit,
+            tine_core::query_plan::QueryHit::Page { page, evidence, .. }
+            if page.rel_path_str() == "pages/Source.md"
+                && evidence.iter().any(|item| item.field == tine_core::query_plan::TextField::VisibleContent))));
+    }
 }
 
 #[test]
@@ -319,7 +356,7 @@ fn simple_query_rejects_source_and_nesting_limits() {
         graph.query(&oversized, QueryDialect::Simple),
         Err(QueryError::Parse(_))
     ));
-    let nested = format!("{}x{}", "(".repeat(65), ")".repeat(65));
+    let nested = format!("{}x{}", "(".repeat(129), ")".repeat(129));
     assert!(matches!(
         graph.query(&nested, QueryDialect::Simple),
         Err(QueryError::Parse(_))
@@ -335,7 +372,7 @@ fn advanced_query_rejects_source_and_nesting_limits() {
         graph.query(&oversized, QueryDialect::Advanced),
         Err(QueryError::Parse(_))
     ));
-    let nested = format!("{}x{}", "(".repeat(65), ")".repeat(65));
+    let nested = format!("{}x{}", "(".repeat(129), ")".repeat(129));
     assert!(matches!(
         graph.query(&nested, QueryDialect::Advanced),
         Err(QueryError::Parse(_))

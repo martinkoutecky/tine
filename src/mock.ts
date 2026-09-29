@@ -1200,7 +1200,7 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
       }
       return groups.filter((g) => g.blocks.length > 0);
     },
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope): Promise<QueryExecution> {
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope, pageMatchScope: import("./editor/queryIr").FriendlyPageMatchScope = "names"): Promise<QueryExecution> {
       // Browser-preview approximation only (ADR 0016). Production matching,
       // diagnostics, and UTF-16 evidence come from Rust's QueryPlan evaluator.
       const matcher = parseSearchQuery(source, removeAccents);
@@ -1213,9 +1213,17 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
         };
       }
       const bare = simpleTerm(matcher);
+      const contentOwners = pageMatchScope === "names" ? new Set<string>() : new Set(
+        collect((block) => matcherMatches(matcher, fold(block.raw), block.raw))
+          .map((group) => `${group.kind}:${identity(group.page)}`)
+      );
       const pageMatches = scope ? [] : all
         .map((page) => ({ page, score: bare ? fuzzyScore(bare, fold(page.name)) : 0 }))
-        .filter(({ page, score }) => bare ? score > 0 : matcherMatches(matcher, fold(page.name), page.name))
+        .filter(({ page, score }) => {
+          const nameHit = pageMatchScope !== "content" && (bare ? score > 0 : matcherMatches(matcher, fold(page.name), page.name));
+          const contentHit = contentOwners.has(`${page.kind}:${identity(page.name)}`);
+          return nameHit || contentHit;
+        })
         .sort((a, b) => b.score - a.score);
       const pages = pageMatches
         .slice(0, pageLimit)
