@@ -448,12 +448,11 @@ function evalMember(object: Ast, name: string, args: readonly Ast[] | null, ctx:
 
 /** I-22 (master b61bb9d25303): total evaluation nesting, counting every
  *  formula a formula references. Malformed or hostile imported Markdown could
- *  chain 128 references to formulas nested 1024 deep (the parser's own cap),
+ *  chain references to formulas nested up to the parser's 1024-level cap,
  *  overflow the JS stack and throw out of rendering; past this bound the cell
- *  shows an error value instead. It admits the deepest formula the parser
- *  accepts, referenced from another; the iterative left spine keeps long sums
- *  from counting. */
-export const MAX_FORMULA_EVAL_DEPTH = 1280;
+ *  shows an error value instead. 128 is master's bound (parity); the iterative
+ *  left spine keeps long sums from counting. */
+export const MAX_FORMULA_EVAL_DEPTH = 128;
 let evalDepth = 0;
 
 function evalAst(ast: Ast, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
