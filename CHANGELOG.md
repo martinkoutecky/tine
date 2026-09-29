@@ -121,7 +121,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **A voice memo stopped from another block is kept** (master b3d64add, og H). On
   mobile, starting a recording in one block and tapping Stop while editing another
   used to discard the recording silently; it is now saved to `assets/` and Tine says
-  it was not inserted. A failed stop or import is always reported.
+  it was not inserted. A failed stop or import is always reported. A recording or
+  photo that finishes after you switched graphs is saved to the `assets/` of the graph
+  it was started in, never the new one, and Tine names that graph and the file.
 - **An edit typed while another graph is opening is kept** (og-T). It is saved
   as a draft of the graph you left and offered for review when you reopen it,
   instead of being dropped by the switch.

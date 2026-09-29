@@ -468,6 +468,13 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn a_capture_finished_after_a_graph_switch_is_documented() {
+        // og H1b: kept in the graph it was started in, never the new one.
+        let mobile = include_str!("templates/platforms-and-mobile.md");
+        assert!(mobile.contains("saved into the graph it was started in and not inserted"));
+    }
+
+    #[test]
     fn in_page_find_guide_says_the_match_itself_is_revealed() {
         // GH #253 (master 46a5290a2): Find scrolls to the occurrence, not its block.
         let search = include_str!("templates/pages-links-references-search.md");

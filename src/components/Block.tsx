@@ -93,7 +93,7 @@ import { dataRev, graphEpoch } from "../graphSession";
 import { pushToast, dismissToast } from "../toasts";
 import { copyBlockLink } from "./blockLinkCopy";
 import { seedAssetBlob } from "../assetCache";
-import { assetEditorIsCurrent, captureAssetEditor, reportStaleAsset, type AssetEditorToken } from "../assetLanding";
+import { assetEditorIsCurrent, captureAssetEditor, importCaptureToOrigin, reportStaleAsset, type AssetEditorToken } from "../assetLanding";
 import { captureBinding, stillBound } from "../binding";
 import { graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { blockRefCount } from "../blockRefCounts";
@@ -1294,8 +1294,8 @@ export function Editor(props: { id: string }): JSX.Element {
     if (res.status === "ok" && res.path) {
       const candidate = captureAssetFileName(res.ext || "jpg");
       try {
-        const stored = await trackAssetWrite(backend().importNativeCapture(res.path, candidate, editorToken.binding.backendGeneration));
-        insertStoredAssets(editorToken, [{ stored }]);
+        const stored = await trackAssetWrite(importCaptureToOrigin(editorToken, res.path, candidate));
+        if (stored) insertStoredAssets(editorToken, [{ stored }]);
       } catch (err) {
         pushToast(`Couldn’t import the photo (${String(err)})`, "error");
       }
@@ -1319,8 +1319,8 @@ export function Editor(props: { id: string }): JSX.Element {
       if (res.status === "ok" && res.path) {
         const candidate = captureAssetFileName(res.ext || "m4a");
         try {
-          const stored = await trackAssetWrite(backend().importNativeCapture(res.path, candidate, editorToken.binding.backendGeneration));
-          insertStoredAssets(editorToken, [{ stored }]);
+          const stored = await trackAssetWrite(importCaptureToOrigin(editorToken, res.path, candidate));
+          if (stored) insertStoredAssets(editorToken, [{ stored }]);
         } catch (err) {
           pushToast(`Couldn’t import the recording (${String(err)})`, "error");
         }

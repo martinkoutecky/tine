@@ -58,8 +58,8 @@ const EXEMPT: Record<string, string> = {
 // Exact backend methods and occurrence counts inside each exempt function.
 // A new call to the same method or any new method must fail the guard.
 const EXEMPT_CALLS: Record<string, string[]> = {
-  "src/components/Block.tsx#Editor.capturePhotoCmd": ["capturePhoto", "importNativeCapture"],
-  "src/components/Block.tsx#Editor.voiceMemoToggle": ["stopRecording", "importNativeCapture", "startRecording"],
+  "src/components/Block.tsx#Editor.capturePhotoCmd": ["capturePhoto"],
+  "src/components/Block.tsx#Editor.voiceMemoToggle": ["stopRecording", "startRecording"],
   "src/debug.ts#initDebug": ["debugInfo"],
   "src/graph.ts#loadGraphPath": ["loadGraph"],
   "src/plugins/manager.ts#uninstall": ["uninstallPlugin", "setAppString"],

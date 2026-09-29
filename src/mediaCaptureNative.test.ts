@@ -22,7 +22,7 @@ describe("Android voice-recording bounds", () => {
 
     const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
     expect(commands).toMatch(/pub\(crate\) fn import_native_capture/);
-    expect(commands).toMatch(/import_asset_file\(\s*&slot\.store,\s*&name,/);
+    expect(commands).toMatch(/import_asset_file\(\s*target\.store\(\),\s*&name,/);
     expect(commands).toMatch(/Content::Stream\s*\{\s*source: capture\.into_std\(\),\s*max_bytes,\s*\}/);
     const bridge = readFileSync("src-tauri/src/android_media.rs", "utf8");
     const result = bridge.slice(
@@ -31,7 +31,9 @@ describe("Android voice-recording bounds", () => {
     );
     expect(result).toMatch(/path:\s*Option<String>/);
     const block = readFileSync("src/components/Block.tsx", "utf8");
-    expect(block).toMatch(/backend\(\)\.importNativeCapture\(res\.path, candidate, editorToken\.binding\.backendGeneration\)/);
+    expect(block).toMatch(/voiceMemoToggle[\s\S]*importCaptureToOrigin\(editorToken, res\.path, candidate\)/);
+    // og H1b: the capture names the graph it was started in.
+    expect(readFileSync("src/assetLanding.ts", "utf8")).toMatch(/backend\(\)\.importNativeCapture\(path, candidate, generation, origin\)/);
   });
 
   it("streams captured and picked photos through a bounded native cache token", () => {
@@ -52,6 +54,6 @@ describe("Android voice-recording bounds", () => {
     expect(commands).toMatch(/tine_photo_/);
     expect(commands).toMatch(/MAX_PHOTO_BYTES/);
     const block = readFileSync("src/components/Block.tsx", "utf8");
-    expect(block).toMatch(/capturePhoto[\s\S]*importNativeCapture\(res\.path, candidate, editorToken\.binding\.backendGeneration\)/);
+    expect(block).toMatch(/capturePhoto[\s\S]*importCaptureToOrigin\(editorToken, res\.path, candidate\)/);
   });
 });
