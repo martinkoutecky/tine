@@ -558,10 +558,13 @@ fn rename_page_after_inventory(
         let mut skipped = Vec::new();
         for id in candidates {
             let file = id.file();
-            let (content, rev) = match read_text(store, &file) {
-                Ok(value) => value,
-                Err(_) => continue, // v0.6.5 model.rs 3699 skips unreadable candidates.
-            };
+            // A candidate the rename cannot read (non-UTF-8, over the size or
+            // depth cap: malformed imported/synced content) fails the rename,
+            // naming the file. Skipping it (v0.6.5 model.rs 3699) left a moved
+            // page under Old while every referrer said New (C3W W2, I-2);
+            // master page_rename.rs fails the same way (audit R15-09).
+            let (content, rev) = read_text(store, &file)
+                .map_err(|e| error(e.kind(), &format!("{}: {e}", file.as_str())))?;
             let org = id.as_str().ends_with(".org");
             let updated = refs::rename_tags_property_multi(
                 &refs::rename_refs_multi(&content, &lookup, org, store.config().file_name_format),
