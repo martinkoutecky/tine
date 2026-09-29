@@ -379,6 +379,66 @@ fn a_copy_arriving_with_the_winner_admission_pins_the_ancestor() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// The copy-equal artifact (why og's `pick_base` departs from master's
+/// winner-only rule): the page was saved once by Tine on this device
+/// ("Desktop"); the other device's edit ("Desktop 5 kk") wins the winner name
+/// and Syncthing renames this device's bytes to the copy, in one scan. No pin
+/// exists (the only retained text equals the copy), and after the admission the
+/// winner's retained texts are [delivered, this device's save]. Master's rule
+/// would take this device's save — the copy's own bytes — as the ancestor and
+/// pre-select "mine" (the delivered text) on the row both devices edited,
+/// discarding this device's edit. og keeps that review 2-way instead.
+#[test]
+fn a_base_equal_to_the_copys_own_bytes_is_not_used_as_the_ancestor() {
+    let dir = scratch("copy-artifact");
+    std::fs::write(dir.join("graph/pages/Desk.md"), body("seed")).unwrap();
+    let (slot, sub) = open_slot(&dir, dir.join("appdata"));
+    save(&slot, "pages/Desk.md", "Desktop");
+    pump(&slot, &sub);
+    std::fs::write(dir.join("graph").join(COPY), body("Desktop")).unwrap();
+    external(&slot, "pages/Desk.md", &body("Desktop 5 kk"));
+    pump(&slot, &sub);
+    let ledger = slot.concord_ledger.get().unwrap();
+    assert_eq!(ledger.files().pinned(COPY), None);
+    let bases = ledger.conflict_bases(COPY, "pages/Desk.md");
+    assert_eq!(bases, vec![body("Desktop 5 kk"), body("Desktop")]);
+    let diff = conflicts::sync_conflict_diff(&slot.store, "pages/Desk.md", COPY, &bases)
+        .unwrap()
+        .unwrap();
+    assert!(
+        diff.rows
+            .iter()
+            .all(|row| row.suggestion.as_deref() != Some("mine")),
+        "no row may pre-select discarding this device's edit: {:?}",
+        diff.rows
+    );
+    assert!(!diff.three_way && diff.merge_base_rev.is_none());
+    drop(slot);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A genuine ancestor equal to the copy is indistinguishable from the
+/// artifact above: the review stays 2-way rather than suggesting "mine"
+/// everywhere, and it never falls back to an older base, which could turn a
+/// winner-side revert into a "theirs" suggestion.
+#[test]
+fn a_copy_equal_to_the_newest_base_stays_two_way_without_reaching_older_bases() {
+    let dir = scratch("copy-equals-base");
+    std::fs::write(dir.join("graph/pages/Desk.md"), body("seed")).unwrap();
+    let (slot, _sub) = open_slot(&dir, dir.join("appdata"));
+    std::fs::write(dir.join("graph/pages/Desk.md"), body("reverted")).unwrap();
+    std::fs::write(dir.join("graph").join(COPY), body("ancestor")).unwrap();
+    slot.store.scan_refresh().unwrap();
+    let bases = vec![body("ancestor"), body("reverted-from")];
+    let diff = conflicts::sync_conflict_diff(&slot.store, "pages/Desk.md", COPY, &bases)
+        .unwrap()
+        .unwrap();
+    assert!(!diff.three_way && diff.merge_base_rev.is_none(), "{diff:?}");
+    assert!(diff.rows.iter().all(|row| row.suggestion.is_none()));
+    drop(slot);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// Contract 2: an unwritable ledger location (a file where the directory
 /// should be) never blocks, delays or fails a save or a resolve; the review
 /// degrades to the 2-way diff.

@@ -59,10 +59,17 @@ honest concurrent instance moved the ledger). Every other decision never reads
 the base.
 
 **Choosing the base.** `conflict_bases(copy, winner)` answers the pin, then the
-winner's retained texts. The diff takes the first that differs from **both**
-sides' current texts: equal to the winner is the admission artifact (master's
-rule); equal to the copy would symmetrically blanket-suggest "mine" (Tine
-addition).
+winner's retained texts. The diff takes the newest candidate that differs from
+the winner (master's rule: one equal to the winner is the admission artifact).
+If that candidate equals the copy, the review stays 2-way (Tine addition): on
+og it is normally the copy's own bytes — this device's last save, renamed to
+the copy by Syncthing when the other device's edit won the winner name — and
+3-way against it would pre-select discarding this device's edit. A copy that
+genuinely equals the ancestor is indistinguishable, and falling back to an
+older base could turn a winner-side revert into a "theirs" suggestion, so no
+side is pre-selected (`concord_ledger_tests`
+`a_base_equal_to_the_copys_own_bytes_is_not_used_as_the_ancestor`,
+`a_copy_equal_to_the_newest_base_stays_two_way_without_reaching_older_bases`).
 
 **Unit cost** (I-25; measured by
 `concord_ledger::tests::unit_cost_per_recorded_save_is_one_blob_plus_one_index`,

@@ -192,23 +192,27 @@ pub fn list_sync_conflicts(store: &Store) -> Vec<SyncConflict> {
 }
 
 /// The ancestor a sync-copy 3-way review uses: the newest candidate that
-/// differs from both sides' current bytes. A base identical to the winner is
-/// almost always the admission artifact (the winner's post-sync bytes became
-/// the newest ledger entry before this diff ran); 3-way against it would
-/// blanket-suggest "theirs", so it is skipped. A base identical to the copy
-/// would symmetrically blanket-suggest "mine" (Tine addition to master's
-/// rule). Returns the base and its identity token (sha256 hex of its bytes).
+/// differs from the winner's current bytes (master's rule: a base identical
+/// to the winner is almost always the admission artifact, the winner's
+/// post-sync bytes recorded before this diff ran, and 3-way against it would
+/// blanket-suggest "theirs"). When that candidate equals the copy's current
+/// bytes the review stays 2-way (Tine addition): on og this is normally the
+/// copy's own artifact — this device's last save, which Syncthing renamed to
+/// the copy when the other device's edit won the winner name — and 3-way
+/// against it would pre-select discarding this device's edit everywhere. A
+/// copy that genuinely equals the ancestor cannot be told apart from it, and
+/// an older base could turn a winner-side revert into a "theirs" suggestion,
+/// so neither side is pre-selected. Returns the base and its identity token
+/// (sha256 hex of its bytes).
 fn pick_base<'a>(candidates: &'a [String], mine: &str, theirs: &str) -> Option<(&'a str, String)> {
     use sha2::{Digest, Sha256};
-    candidates
-        .iter()
-        .find(|base| base.as_str() != mine && base.as_str() != theirs)
-        .map(|base| {
-            (
-                base.as_str(),
-                format!("{:x}", Sha256::digest(base.as_bytes())),
-            )
-        })
+    let base = candidates.iter().find(|base| base.as_str() != mine)?;
+    (base.as_str() != theirs).then(|| {
+        (
+            base.as_str(),
+            format!("{:x}", Sha256::digest(base.as_bytes())),
+        )
+    })
 }
 
 /// Structural diff of two exact files. `bases` are candidate common
