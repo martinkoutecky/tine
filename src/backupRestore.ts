@@ -31,7 +31,7 @@ export async function restoreBackupFromSettings(
   const ownsTransition = ownedWhen(() => owner() || (!!root && graphMeta()?.root === root));
   const confirmed = await readOwned(owner, backend().confirm(
     `Restore the snapshot from ${when}?\n\n` +
-      `This overwrites journals/ and pages/ with the ${backup.files} file(s) in that backup. ` +
+      `This restores the ${backup.files} file(s) in that backup to their original locations. ` +
       `Your current state is snapshotted first, so this is reversible.`
   ));
   if (confirmed.kind === "stale" || !confirmed.value) return;

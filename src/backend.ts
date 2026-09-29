@@ -616,7 +616,7 @@ export interface Backend {
   setWatchMode(mode: string): Promise<void>;
   /** Available snapshots for the current graph, newest first. */
   listBackups(): Promise<BackupInfo[]>;
-  /** Restore a snapshot (overwrites journals/pages/config; snapshots current
+  /** Restore a snapshot (graph text at original paths, config, and sidecars; snapshots current
    *  state first). Destructive — confirm before calling. */
   restoreBackup(stamp: string, kind: "replace-page"): Promise<void>;
   /** Load the persisted UI session JSON (open tabs / active tab / zoom), or null.

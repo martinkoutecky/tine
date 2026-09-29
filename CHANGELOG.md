@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **The Guide grows thirteen task pages.** Start (Where things are, Bring an
+  existing graph), Workflows (Keep context visible, Structure repeated
+  information, Capture and plan your day, Find and revisit, Research a document,
+  Extend Tine) and Reference (Files, external edits and backups; Troubleshooting
+  and recovery; Journals, tasks and scheduling; Pages, links, references and
+  search; Platforms and mobile). Each describes only what this build does.
 - **A part of Tine that fails now says so, where it failed, with a Retry — instead
   of leaving the window blank.** The page, the sidebar, Linked and Unlinked
   References and the conflict panel each fail on their own; the message says how

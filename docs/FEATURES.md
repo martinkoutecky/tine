@@ -529,11 +529,11 @@ within a column; merged cells are still v2+.
   keep-copy / keep-both** choice (and page-property merge); **Discard copy** trashes
   it. The merge writes through the normal save path (base-revision-guarded, atomic)
   and moves the copy to the recoverable **trash** — never auto-merged, never unlinked.
-- **Pages in sub-folders are found** — like Logseq, Tine scans `pages/` (and
-  `journals/`) **recursively**, so pages you've filed into real sub-directories
-  (e.g. archiving `pages/client-a/…`) show up in the page list and are searchable
-  and linkable. A nested page is keyed by its **file name** (`pages/client-a/foo.md`
-  → page `foo`), matching Logseq; edits save back to the file in place. (Namespaces
+- **Pages throughout the graph are found** — like Logseq, Tine finds eligible
+  Markdown/Org pages at the graph root and in nested directories, not only under
+  `pages/` and `journals/`. A nested page is keyed by its **file name**
+  (`archive/client-a/foo.md` → page `foo`), and edits save back to the exact file.
+  Hidden/internal trees, assets, publish output, and provider conflict copies stay out. (Namespaces
   — `parent/child` — are still the flat `parent___child.md` filename form, not real
   folders, exactly as in Logseq.)
 - **Org-mode graphs** — opens, renders, and edits `.org` pages and journals
@@ -543,14 +543,14 @@ within a column; merged cells are still v2+.
   pages/journals use. A `.org` file is rewritten only when Tine can reproduce it
   **byte-for-byte** — anything it can't round-trip loads **read-only**, so it can
   never corrupt an org graph.
-- **Launch snapshots** (configurable keep-count) with a restore UI that takes a
-  safety snapshot first; page delete moves to a recoverable **trash**; `atomic_write`
-  + fsync.
+- **Launch snapshots** (configurable keep-count) cover eligible graph text at its
+  exact path, config, and asset sidecars; restore takes a safety snapshot first.
+  Page delete moves to a recoverable **trash**; `atomic_write` + fsync.
 - **Switch graphs** right from the sidebar header — click the current graph name
   (under the "Tine" wordmark) for **Open graph…** (native folder picker) and
-  **New graph…**. Also openable from the command line: `tine /path/to/graph` or
-  the `TINE_GRAPH` env var. (No saved recent-graphs list yet — you pick the folder
-  each time.)
+  **New graph…**. Previously opened graphs remain in this menu for one-click
+  switching. Also openable from the command line: `tine /path/to/graph` or the
+  `TINE_GRAPH` env var.
 
 ## Plugins & token themes
 
