@@ -828,17 +828,24 @@ mod tests {
             conflicts |= dirty;
             payloads.extend(asset_event_payload(&change, 7));
         }
+        // The background poll cycle may publish part of the batch first; the
+        // contract is one event per publication, each asset reported once, the
+        // own write never, and the graph binding on every payload.
+        assert!(payloads
+            .iter()
+            .all(|payload| payload["binding_generation"] == 7));
+        let mut paths: Vec<_> = payloads
+            .iter()
+            .flat_map(|payload| payload["paths"].as_array().unwrap().iter())
+            .map(|path| path.as_str().unwrap().to_owned())
+            .collect();
+        paths.sort();
         assert_eq!(
-            payloads.len(),
-            1,
-            "one publication carries the external assets"
-        );
-        assert_eq!(
-            payloads[0],
-            serde_json::json!({
-                "paths": ["pic.png", "sub/pic.sync-conflict-20260705-120000-ABCDEFG.png"],
-                "binding_generation": 7,
-            })
+            paths,
+            [
+                "pic.png",
+                "sub/pic.sync-conflict-20260705-120000-ABCDEFG.png"
+            ]
         );
         assert_eq!(page_events, 1, "only pages/P.md is a page event");
         assert!(!conflicts, "an asset is never a conflict copy");

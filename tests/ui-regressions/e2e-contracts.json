@@ -77,7 +77,8 @@
       "stability": "stable"
     },
     "scripts/e2e-external-assets.mjs": {
-      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "An approved external asset directory is read and written through its exact canonical graph and target identity.", "blocking": true, "authority": "Tine external-asset consent and canonical-path contract" }],
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "An approved external asset directory is read and written through its exact canonical graph and target identity.", "blocking": true, "authority": "Tine external-asset consent and canonical-path contract" },
+        { "class": "stateful-ux", "userOutcome": "An image replaced outside the app refreshes where it is shown, and one deleted outside shows the missing-image placeholder, without reloading the page.", "blocking": true, "authority": "og-J2 (master d017d1afc: external asset observation)" }],
       "acceptableVariations": ["The native file-picker implementation and media presentation may vary after consent is established."],
       "nonRequirements": ["Exact dialog appearance or host file-manager behavior."],
       "stability": "stable"

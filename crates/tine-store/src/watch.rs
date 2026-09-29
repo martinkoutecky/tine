@@ -1148,15 +1148,49 @@ fn install_watch(
             .watch(dir, notify::RecursiveMode::Recursive)
             .map_err(|error| error.to_string())?;
     }
-    // An approved external assets root lies outside the graph, so the
-    // graph-root watch may not reach it (links are followed on inotify only).
-    // Refusal is reported like any refused watch and polling covers the gap.
-    if let Some(dir) = core.assets.scope().external_root(&dirs[0]) {
-        created
-            .watch(dir, notify::RecursiveMode::Recursive)
-            .map_err(|error| format!("assets directory: {error}"))?;
-    }
     Ok(created)
+}
+
+/// Watch the approved external assets root, which lies outside the graph so
+/// the graph-root watch may not reach it (links are followed on inotify only).
+/// A refusal is secondary: only that root is affected. It is retried every
+/// cycle and covered by a stat pass of the root on the same cycle, the graph's
+/// own watch stays live, and no graph-level status is raised. The failure is
+/// logged once per distinct message through the diagnostic line channel
+/// (a fixed line, no path: I-5; it reaches the `--debug` log).
+fn watch_external_assets(
+    core: &Core,
+    watcher: &mut notify::RecommendedWatcher,
+    root: &Path,
+    last_failure: &mut Option<String>,
+) -> bool {
+    #[cfg(test)]
+    let refused = REFUSED_ROOTS.lock().unwrap().iter().any(|dir| dir == root);
+    #[cfg(not(test))]
+    let refused = false;
+    let result = if refused {
+        Err("watch refused by test".to_owned())
+    } else {
+        notify::Watcher::watch(watcher, root, notify::RecursiveMode::Recursive)
+            .map_err(|error| error.to_string())
+    };
+    match result {
+        Ok(()) => {
+            *last_failure = None;
+            // The root was unobserved until now: catch anything it missed.
+            core.observe_assets(&HashSet::new(), true);
+            true
+        }
+        Err(message) => {
+            if last_failure.as_ref() != Some(&message) {
+                tine_core::diag_line::diagnostic_line(
+                    "Tine could not watch the external assets folder; polling it instead",
+                );
+                *last_failure = Some(message);
+            }
+            false
+        }
+    }
 }
 
 fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Receiver<()>) {
@@ -1165,6 +1199,8 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
     let mut active = None;
     let mut active_dirs: Option<[PathBuf; 1]> = None;
     let mut active_dir_ids: Option<[Option<u128>; 1]> = None;
+    let mut assets_watched = false;
+    let mut assets_failure: Option<String> = None;
     while !core.closed.load(Ordering::Acquire) {
         let selected = *mode.lock().unwrap();
         let dirs = core.dirs.read().unwrap().clone();
@@ -1179,6 +1215,7 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
         {
             let retrying = retry && active == Some(selected);
             watcher = None;
+            assets_watched = false;
             active = Some(selected);
             active_dirs = Some(dirs.clone());
             active_dir_ids = Some(dir_ids);
@@ -1200,10 +1237,27 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
                 let _ = core.reconcile(None, true, false);
             }
         }
+        let external_assets = core
+            .assets
+            .scope()
+            .external_root(&dirs[0])
+            .map(Path::to_path_buf);
+        let assets_polled = match (watcher.as_mut(), external_assets) {
+            (Some(live), Some(root)) if !assets_watched => {
+                assets_watched = watch_external_assets(&core, live, &root, &mut assets_failure);
+                !assets_watched
+            }
+            _ => false,
+        };
         if watcher.is_some() {
             match rx.recv_timeout(Duration::from_secs(3)) {
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if assets_polled && core.ready() {
+                        core.observe_assets(&HashSet::new(), true);
+                    }
+                    continue;
+                }
                 Ok(()) => {}
             }
             std::thread::sleep(Duration::from_millis(200));
@@ -1236,8 +1290,8 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
                 );
             }
             // A rescan/unusable event hides asset changes too: scan them.
-            if full || assets.1 || !assets.0.is_empty() {
-                core.observe_assets(&assets.0, full || assets.1);
+            if full || assets.1 || assets_polled || !assets.0.is_empty() {
+                core.observe_assets(&assets.0, full || assets.1 || assets_polled);
             }
         } else {
             // Poll mode has no event paths: every cycle re-checks the config
@@ -1431,6 +1485,78 @@ mod tests {
             );
         }
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// og-J2 (master runtime.rs watches per directory): a refused watch of the
+    /// approved external assets root affects only that root. The graph's own
+    /// watch stays live (page edits arrive by events, not the poll path), no
+    /// graph-level refusal is raised, the root is stat-polled on the existing
+    /// cycle, and the watch is retried until it is installed. In-scope
+    /// scenario: inotify's per-user watch limit reached while installing the
+    /// second watch, or an external volume without notifications.
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_external_assets_watch_never_demotes_the_graph_watch() {
+        let root = std::fs::canonicalize(temp_root("refused-assets")).unwrap();
+        let external = std::fs::canonicalize(temp_root("refused-assets-real")).unwrap();
+        fs::write(external.join("pic.png"), b"first").unwrap();
+        std::os::unix::fs::symlink(&external, root.join("assets")).unwrap();
+        REFUSED_ROOTS.lock().unwrap().push(external.clone());
+        let store = Store::open(
+            &root,
+            OpenOptions {
+                approved_external_assets: Some(external.clone()),
+                watch: WatchMode::Notify,
+            },
+        )
+        .unwrap()
+        .0;
+        store.whole_graph().unwrap();
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&statuses);
+        let subscription = store.subscribe();
+        subscription.observe_watch_status(move |status| sink.lock().unwrap().push(status));
+        std::thread::sleep(Duration::from_millis(400));
+
+        fs::write(root.join("pages/Live.md"), "- seen by events\n").unwrap();
+        let change = wait_for(&subscription, |change| {
+            change
+                .files
+                .iter()
+                .any(|(id, _, _)| id.as_str() == "pages/Live.md")
+        });
+        let batch = change.watch.unwrap();
+        assert!(
+            !batch.poll && batch.first_event_at.is_some(),
+            "page edit took the poll path"
+        );
+
+        fs::write(external.join("pic.png"), b"second, longer").unwrap();
+        wait_for(&subscription, |change| {
+            change.origin == crate::store::Origin::External
+                && change.files.iter().any(|(id, kind, _)| {
+                    id.as_str() == "assets/pic.png" && *kind == ChangeKind::Modified
+                })
+        });
+
+        REFUSED_ROOTS
+            .lock()
+            .unwrap()
+            .retain(|refused| refused != &external);
+        std::thread::sleep(Duration::from_millis(3500));
+        fs::write(external.join("pic.png"), b"third, longer still").unwrap();
+        wait_for(&subscription, |change| {
+            change
+                .files
+                .iter()
+                .any(|(id, _, _)| id.as_str() == "assets/pic.png")
+        });
+        assert!(
+            statuses.lock().unwrap().is_empty(),
+            "a secondary refusal raised a graph-level status: {:?}",
+            statuses.lock().unwrap()
+        );
+        store.close();
     }
 
     /// I-9: the OS refusing live notifications degrades to polling, is
