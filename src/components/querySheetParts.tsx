@@ -52,33 +52,12 @@ import { PropertyType } from "./PropertyType";
 import { registryRowFor, effectiveTypeOf } from "../editor/queryPropertyType";
 import { DATE_PRESETS, previewDate } from "../editor/dateExpr";
 import type { QuerySheetDropTarget } from "./querySheetReorder";
-import { registerTransientLayer, type TransientLayer } from "../transientLayers";
+import { dismissOnOutsidePointer, registerTransientLayer, type TransientLayer } from "../transientLayers";
 
 export { stop, Listbox, type ListboxOption };
 
 /** `openMenu`'s key for the "Group selected ▾" chooser. */
 export const GROUP_SELECTED_MENU_KEY = "group-selected";
-
-/** "The user pressed outside" for the query popovers: dismiss when a pointer
- *  goes down outside every `inside` element. Listeners live only while open. */
-export function dismissOnOutsidePointer(options: {
-  open: () => boolean;
-  inside: () => (HTMLElement | null | undefined)[];
-  dismiss: () => void;
-}): void {
-  createEffect(() => {
-    if (!options.open() || typeof document === "undefined") return;
-    const onDown = (event: Event) => {
-      const target = event.target as Node | null;
-      if (options.inside().some((element) => element && target && element.contains(target))) return;
-      options.dismiss();
-    };
-    for (const type of ["pointerdown", "mousedown"] as const) {
-      document.addEventListener(type, onDown, true);
-      onCleanup(() => document.removeEventListener(type, onDown, true));
-    }
-  });
-}
 
 export { registryRowFor, effectiveTypeOf } from "../editor/queryPropertyType";
 
