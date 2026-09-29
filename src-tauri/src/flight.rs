@@ -760,8 +760,7 @@ mod tests {
     #[test]
     fn an_error_toast_is_recorded_without_its_text() {
         let (event, fields) =
-            frontend_event_fields("error_toast", None, None, None, None, None, None, None)
-                .unwrap();
+            frontend_event_fields("error_toast", None, None, None, None, None, None, None).unwrap();
         assert_eq!(event, "frontend.error_toast");
         assert!(fields.is_empty());
     }

@@ -37,7 +37,11 @@ export function dbg(line: string): void {
  * is noted in the opt-in debug log. O(1) plus one IPC call. */
 export function recordDiagnostic(kind: DiagnosticFrontendKind, fields?: DiagnosticFrontendFields): Promise<void> {
   if (diagnosticsUnavailable) return Promise.resolve();
-  return writeOwned(ownedWhen(), backend().diagnosticFrontendEvent(kind, fields)).then(
+  // A backend without the command throws synchronously; that is the same
+  // "recorder unavailable" refusal, and must not escape into pushToast.
+  let accepted: Promise<void>;
+  try { accepted = backend().diagnosticFrontendEvent(kind, fields); } catch (error) { accepted = Promise.reject(error); }
+  return writeOwned(ownedWhen(), accepted).then(
     () => undefined,
     () => {
       diagnosticsUnavailable = true;
