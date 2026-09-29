@@ -82,6 +82,7 @@ mergeWithNext  # why: Delete at block end forward-merges (GH #213); batch17a
 mergeWithPrev
 moveBlock
 moveBlockFeed
+moveBlocksRelative  # why: bullet drag moves the captured selection relative to a target (GH #240); batch19b
 moveItem
 moveSelection
 moveSelectionItems
@@ -136,6 +137,7 @@ setHeading
 setPageProperty
 setRaw
 setSchedule
+setSelectionHeading  # why: context-menu heading applies to the whole selection in one undo (GH #240); batch19b
 splitBlock
 stopOwnNumberedListOnEmptyEnter
 switcherPage

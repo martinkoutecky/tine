@@ -3,15 +3,15 @@
  *
  * - `beginDrag(id, e)` arms a bullet drag from a mousedown. Past a 4 px
  *   threshold it ends editing, tracks a drop indicator (`dropInd`) under the
- *   pointer and, on mouseup, moves the block with one `moveBlock` call. The move
- *   is refused when the graph changed during the drag (binding check) or when the
- *   target is the dragged block's own descendant. O(depth) per drop.
+ *   pointer and, on mouseup, moves the active selection (or just the block) with
+ *   one `moveBlocksRelative` call. The move is refused when the graph changed
+ *   during the drag (binding check) or when the target is inside a moved subtree.
  * - `beginEditGesture(...)` resolves a rendered-content mousedown at mouseup:
  *   a click starts editing at the captured offset; a drag that crosses into another
  *   block escalates to block selection. Callers need not know the listeners. */
 import { createSignal } from "solid-js";
 import { captureBinding, stillBound } from "../binding";
-import { clearSelection, extendSelectionTo, moveBlock, pageRoots, selectBlock, node as docNode, type OutlineScope } from "../document";
+import { clearSelection, extendSelectionTo, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
 import { endEdit, startEditing } from "../editorController";
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
 
@@ -30,24 +30,18 @@ export function bulletDragMoved(): boolean {
 /** The block being dragged by its bullet, and the current drop indicator. */
 export { dragId, dropInd };
 
-function siblingIndex(id: string): number {
-  const n = docNode(id);
-  if (!n) return -1;
-  const sibs =
-    n.parent === null
-      ? pageRoots(n.page)
-      : docNode(n.parent).children;
-  return sibs.indexOf(id);
-}
-
 export function beginDrag(id: string, e: MouseEvent) {
   const binding = captureBinding(), startX = e.clientX;
   const startY = e.clientY;
+  let capturedIds: string[] | null = null;
   dragMoved = false;
   const onMove = (ev: MouseEvent) => {
     if (!dragMoved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
     if (!dragMoved) {
       dragMoved = true;
+      // A bullet drag moves the active selection when there is one (GH #240).
+      const selected = selectedIds();
+      capturedIds = selected.length ? [...selected] : [id];
       setDragId(id);
       endEdit("drag-start");
       // Moving a block is not a text gesture. WebKit otherwise runs its own
@@ -61,7 +55,7 @@ export function beginDrag(id: string, e: MouseEvent) {
       ".ls-block"
     ) as HTMLElement | null;
     const tid = el?.dataset.blockId;
-    if (tid && tid !== id) {
+    if (tid) {
       const main = el!.querySelector(".block-main")!.getBoundingClientRect();
       setDropInd({ id: tid, before: ev.clientY < main.top + main.height / 2 });
     } else {
@@ -74,20 +68,9 @@ export function beginDrag(id: string, e: MouseEvent) {
     setDragSelectionSuppressed(false);
     const ind = dropInd();
     if (stillBound(binding) && dragMoved && ind && docNode(ind.id)) {
-      const tgt = docNode(ind.id);
-      // can't drop onto own descendant
-      let p: string | null = ind.id;
-      let ok = true;
-      while (p !== null) {
-        if (p === id) {
-          ok = false;
-          break;
-        }
-        p = docNode(p).parent;
-      }
-      // Pass the target's page so a root-to-root drop across pages (e.g. between
-      // journal days) lands on the page it was dropped onto, not the source page.
-      if (ok) void moveBlock(id, tgt.parent, siblingIndex(ind.id) + (ind.before ? 0 : 1), tgt.page, ind.id);
+      // One transaction: normalizes nested captures, refuses a drop into a
+      // moved subtree, and persists a cross-page move as one save group.
+      void moveBlocksRelative(capturedIds ?? [id], ind.id, ind.before ? "before" : "after");
     }
     setDragId(null);
     setDropInd(null);

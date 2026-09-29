@@ -4,7 +4,8 @@ import { createSignal, createRoot, createMemo } from "solid-js";
 import { endEdit, editingId } from "../../editorController";
 import { installClearOutlineSelection, notifyOutlineSelectionStarted } from "../../modeHooks";
 import { clearOnBindingInvalidated } from "../../binding";
-import { blockWritable, writeCollapsed } from "./properties";
+import { blockWritable, rawWithHeading, writeCollapsed, type HeadingState } from "./properties";
+import { formatForBlock } from "../model";
 import { pushUndo } from "../history";
 import { produce } from "solid-js/store";
 import { cycleMarkerSmart } from "../../editor/repeat";
@@ -358,4 +359,24 @@ export function selectionMarkdown(): string {
   return topSelected()
     .map((id) => blockSubtreeMarkdown(id, 0, true, stripCollapsed, onlySel))
     .join("\n");
+}
+
+/** Apply a context heading command to the active selection, falling back to the
+ * pointer block only when no selection is active (master 6eea5b70c, GH #240).
+ * The preflight makes a mixed writable/read-only selection an exact no-op. */
+export function setSelectionHeading(pointerId: string, state: HeadingState): boolean {
+  const selected = selectedIds();
+  const ids = selected.length ? selected : [pointerId];
+  if (!ids.length || ids.some((id) => !blockWritable(id))) return false;
+  const changes = ids
+    .map((id) => ({ id, page: doc.byId[id].page, raw: rawWithHeading(doc.byId[id].raw, formatForBlock(id), state) }))
+    .filter((change) => change.raw !== doc.byId[change.id].raw);
+  if (!changes.length) return true;
+  const pages = [...new Set(changes.map((change) => change.page))];
+  pushUndo("heading-selection", pages);
+  setDoc(produce((stateDoc) => {
+    for (const change of changes) stateDoc.byId[change.id].raw = change.raw;
+  }));
+  for (const page of pages) markDirty(page, "save-block");
+  return true;
 }

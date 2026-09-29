@@ -427,6 +427,18 @@ const setMarkdownHeading = (raw: string, level: number): string => {
     : prefix + raw.trimStart();
 };
 
+/** Pure format-aware heading transition shared by single-block and selection
+ * commands so their Markdown/Org serialization cannot drift apart. */
+export function rawWithHeading(raw: string, format: Format, state: HeadingState): string {
+  const level = typeof state === "number" && state >= 1 && state <= 6 ? state : null;
+  if (format === "org") {
+    return orgRawWithProperty(raw, "heading", state === true ? "true" : level === null ? null : String(level));
+  }
+  if (state === true) return markdownRawWithProperty(clearMarkdownHeading(raw), "heading", "true");
+  if (level !== null) return setMarkdownHeading(markdownRawWithProperty(raw, "heading", null), level);
+  return markdownRawWithProperty(clearMarkdownHeading(raw), "heading", null);
+}
+
 /** Switch between boolean automatic headings and explicit numeric headings.
  * Markdown writes ATX prefixes for numeric state and `heading:: true` for auto;
  * Org writes both states through its property drawer. Each transition clears the
@@ -437,17 +449,7 @@ const setMarkdownHeading = (raw: string, level: number): string => {
 export function setHeading(id: string, state: HeadingState) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
-  const level = typeof state === "number" && state >= 1 && state <= 6 ? state : null;
-  let next: string;
-  if (formatForBlock(id) === "org") {
-    next = orgRawWithProperty(node.raw, "heading", state === true ? "true" : level === null ? null : String(level));
-  } else if (state === true) {
-    next = markdownRawWithProperty(clearMarkdownHeading(node.raw), "heading", "true");
-  } else if (level !== null) {
-    next = setMarkdownHeading(markdownRawWithProperty(node.raw, "heading", null), level);
-  } else {
-    next = markdownRawWithProperty(clearMarkdownHeading(node.raw), "heading", null);
-  }
+  const next = rawWithHeading(node.raw, formatForBlock(id), state);
   if (next === node.raw) return;
   pushUndo(`heading:${id}`, [node.page]);
   setDoc("byId", id, "raw", next);

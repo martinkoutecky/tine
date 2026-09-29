@@ -1,4 +1,4 @@
-import { doc, setDoc, formatForBlock, formatForPage, DocState } from "../model";
+import { doc, setDoc, formatForBlock, formatForPage, pageByName, DocState } from "../model";
 import { blockWritable, pageWritable, orderListTypeFromRaw, rawWithInheritedOrderListType } from "./properties";
 import { produce } from "solid-js/store";
 import { markDirty, persistTogether, refuseConflictedMove } from "../save/engine";
@@ -131,6 +131,136 @@ export async function moveBlock(
     void persistTogether([oldPage, newPage], ["move-blocks", "save-block"], [[oldPage, newPage]]);
   } else {
     markDirty(oldPage, ["move-blocks", "save-block"]);
+  }
+  return true;
+}
+
+interface RelativeMovePlan {
+  roots: string[];
+  sourcePages: string[];
+  destinationPage: string;
+}
+
+/** Build the complete target-relative move plan without mutating (master
+ * 6eea5b70c, GH #240). Captured IDs are stable-deduped, then descendants of
+ * another captured ID are subsumed. Any malformed tree, read-only page, a
+ * target inside a moved subtree, or an outline-depth overflow refuses the whole
+ * move before anything changes. */
+function relativeMovePlan(capturedIds: readonly string[], targetId: string): RelativeMovePlan | null {
+  const unique = [...new Set(capturedIds)];
+  if (!unique.length || unique.some((id) => !doc.byId[id])) return null;
+  const captured = new Set(unique);
+  const roots: string[] = [];
+  for (const id of unique) {
+    const seen = new Set([id]);
+    let parent = doc.byId[id].parent;
+    let subsumed = false;
+    while (parent !== null) {
+      if (seen.has(parent)) return null;
+      seen.add(parent);
+      if (captured.has(parent)) { subsumed = true; break; }
+      const ancestor = doc.byId[parent];
+      if (!ancestor) return null;
+      parent = ancestor.parent;
+    }
+    if (!subsumed) roots.push(id);
+  }
+  if (!roots.length) return null;
+
+  const target = doc.byId[targetId];
+  if (!target || !pageWritable(target.page)) return null;
+  const destinationParent = target.parent;
+  if (destinationParent !== null) {
+    const parent = doc.byId[destinationParent];
+    if (!parent || parent.page !== target.page || !blockWritable(destinationParent)) return null;
+  }
+  const siblingsOf = (parent: string | null, page: string) => parent === null ? pageByName(page)?.roots : doc.byId[parent]?.children;
+  const targetSiblings = siblingsOf(destinationParent, target.page);
+  if (!targetSiblings || targetSiblings.filter((id) => id === targetId).length !== 1) return null;
+
+  const moved = new Set<string>();
+  const visit = (id: string, page: string, ancestry: Set<string>): boolean => {
+    const node = doc.byId[id];
+    if (!node || node.page !== page || moved.has(id) || ancestry.has(id)) return false;
+    moved.add(id);
+    if (new Set(node.children).size !== node.children.length) return false;
+    const nextAncestry = new Set(ancestry).add(id);
+    return node.children.every((childId) => doc.byId[childId]?.parent === id && visit(childId, page, nextAncestry));
+  };
+  const sourcePages: string[] = [];
+  for (const id of roots) {
+    const node = doc.byId[id];
+    if (!blockWritable(id)) return null;
+    const siblings = siblingsOf(node.parent, node.page);
+    if (!siblings || siblings.filter((sibling) => sibling === id).length !== 1) return null;
+    if (node.parent !== null && doc.byId[node.parent]?.page !== node.page) return null;
+    if (!visit(id, node.page, new Set())) return null;
+    if (!existingSubtreeFits(id, destinationParent)) return null;
+    sourcePages.push(node.page);
+  }
+  if (moved.has(targetId)) return null;
+  const uniqueSources = [...new Set(sourcePages)];
+  if (uniqueSources.some((page) => !pageWritable(page))) return null;
+  return { roots, sourcePages: uniqueSources, destinationPage: target.page };
+}
+
+/** Move captured selection roots together before/after a live target ID, as
+ * one transaction (one undo unit, one publication). Cross-page moves persist
+ * every touched page through the same `persistTogether` group as `moveBlock`,
+ * so the destination and emptied sources are saved as one unit (an honest
+ * concurrent instance or external editor sees either the whole move or none);
+ * a page with an unresolved conflict refuses the move (`refuseConflictedMove`,
+ * same scenario as a single-block drag). */
+export async function moveBlocksRelative(
+  capturedIds: readonly string[],
+  targetId: string,
+  position: "before" | "after",
+): Promise<boolean> {
+  const plan = relativeMovePlan(capturedIds, targetId);
+  if (!plan) return false;
+  const pages = [...new Set([plan.destinationPage, ...plan.sourcePages])];
+  const crossSources = plan.sourcePages.filter((page) => page !== plan.destinationPage);
+  if (crossSources.length && refuseConflictedMove(pages)) return false;
+  const destinationFormat = formatForPage(plan.destinationPage);
+  const movedRaw = new Map(plan.roots.map((id) => {
+    const sourceRaw = doc.byId[id].raw;
+    const raw = orderListTypeFromRaw(sourceRaw, formatForBlock(id)) !== null
+      ? sourceRaw
+      : rawWithInheritedOrderListType(sourceRaw, destinationFormat, targetId);
+    return [id, raw] as const;
+  }));
+  pushUndo("move-selection-relative", pages);
+  setDoc(produce((state) => {
+    const siblingsFor = (id: string): string[] => {
+      const node = state.byId[id];
+      return node.parent === null
+        ? state.pages.find((page) => page.name === node.page)!.roots
+        : state.byId[node.parent].children;
+    };
+    for (const id of plan.roots) {
+      const siblings = siblingsFor(id);
+      siblings.splice(siblings.indexOf(id), 1);
+    }
+    const target = state.byId[targetId];
+    const destination = target.parent === null
+      ? state.pages.find((page) => page.name === target.page)!.roots
+      : state.byId[target.parent].children;
+    const targetIndex = destination.indexOf(targetId);
+    for (const id of plan.roots) {
+      state.byId[id].parent = target.parent;
+      state.byId[id].raw = movedRaw.get(id)!;
+    }
+    destination.splice(targetIndex + (position === "after" ? 1 : 0), 0, ...plan.roots);
+    const reassign = (id: string) => {
+      state.byId[id].page = plan.destinationPage;
+      for (const child of state.byId[id].children) reassign(child);
+    };
+    for (const id of plan.roots) reassign(id);
+  }));
+  if (crossSources.length) {
+    void persistTogether(pages, ["move-blocks", "save-block"], crossSources.map((source) => [source, plan.destinationPage] as [string, string]));
+  } else {
+    markDirty(plan.destinationPage, ["move-blocks", "save-block"]);
   }
   return true;
 }

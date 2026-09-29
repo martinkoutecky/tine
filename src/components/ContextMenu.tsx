@@ -12,7 +12,7 @@ import { backend } from "../backend";
 import { carryDay } from "../carry";
 import { journalTitle } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { ensureBlockId, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setHeading, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
+import { ensureBlockId, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
@@ -317,31 +317,39 @@ function ShowChildrenAsSubmenu(props: { id: string; close: () => void }): JSX.El
 function BlockMenu(props: { id: string; x: number; y: number; close: () => void }): JSX.Element {
   const hasChildren = () => (docNode(props.id)?.children.length ?? 0) > 0;
   const readOnly = () => blockPageReadOnly(props.id);
+  // A heading command applies to the active selection when there is one (GH #240).
+  const headingTargets = () => {
+    const selected = selectedIds();
+    return selected.length ? selected : [props.id];
+  };
+  const headingsWritable = () => headingTargets().length > 0 && headingTargets().every(blockWritable);
   return (
     <>
       <Show when={!readOnly()}>
         {/* Color row */}
         <ColorPalette id={props.id} close={props.close} />
+      </Show>
 
+      <Show when={headingsWritable()}>
         {/* Heading row */}
         <div class="ctx-row ctx-headings">
-          <button class="ctx-h" title="Automatic heading" onClick={() => { setHeading(props.id, true); props.close(); }}>
+          <button class="ctx-h" title="Automatic heading" onClick={() => { setSelectionHeading(props.id, true); props.close(); }}>
             Auto
           </button>
           <For each={[1, 2, 3, 4, 5, 6]}>
             {(h) => (
-              <button class="ctx-h" title={`Heading ${h}`} onClick={() => { setHeading(props.id, h); props.close(); }}>
+              <button class="ctx-h" title={`Heading ${h}`} onClick={() => { setSelectionHeading(props.id, h); props.close(); }}>
                 H{h}
               </button>
             )}
           </For>
-          <button class="ctx-h" title="Remove heading" onClick={() => { setHeading(props.id, null); props.close(); }}>
+          <button class="ctx-h" title="Remove heading" onClick={() => { setSelectionHeading(props.id, null); props.close(); }}>
             ⌫
           </button>
         </div>
-
-        <div class="ctx-sep" />
       </Show>
+
+      <Show when={!readOnly() || headingsWritable()}><div class="ctx-sep" /></Show>
 
       <For each={blockActions(props.id, props.x, props.y)}>
         {(it) => (
