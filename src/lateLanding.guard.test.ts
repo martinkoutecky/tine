@@ -122,7 +122,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "openPdf", "writeHighlights", "writePdfViewState", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setCaptureEnterFiles", "setLinkFirstMatch", "setWatchMode", "restoreBackup",
   "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
-  "debugLog",
+  "debugLog", "diagnosticFrontendEvent", "clearDiagnostics",
 ]);
 // All remaining Backend methods are reads, resource subscriptions, dialogs,
 // transient OS controls, or graph-binding controls. Adding a method requires
@@ -145,6 +145,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "readHighlights", "onGraphChanged", "onGraphConfigChanged", "getBackupKeep", "getCaptureEnterFiles", "getLinkFirstMatch",
   "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "gpuEnv", "getSmoothScroll",
   "getAppBool", "getAppString", "listSpellcheckDictionaries", "debugInfo",
+  "diagnosticReport", "appArchitecture",
 ]);
 // These helpers receive Owner from audited constructor call sites. Arbitrary
 // Owner parameters do not prove provenance to this syntax scan.

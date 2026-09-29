@@ -34,6 +34,18 @@ describe("Settings progressive disclosure and search", () => {
     dispose();
   });
 
+  it("opens Help & diagnostics, the Diagnostics action's target, with the report and the parser comparison (GH #343)", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    openSettings("diagnostics");
+    await tick();
+    expect(root.querySelector(".diagnostics-tab h2")?.textContent).toBe("Help & diagnostics");
+    expect(root.textContent).toContain("Create diagnostic report");
+    expect(root.querySelector(".improve-run")).not.toBeNull();
+    dispose();
+  });
+
   it("remembers Settings maximize across close and reopen", async () => {
     const root = document.createElement("div");
     document.body.append(root);

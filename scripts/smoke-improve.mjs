@@ -27,7 +27,7 @@ try {
   await sleep(400);
   await page.locator('button.icon-btn[title^="Settings"]').first().click();
   await page.waitForSelector(".settings-modal", { timeout: 3000 });
-  await page.locator(".settings-nav-item", { hasText: "Help improve Tine" }).first().click();
+  await page.locator(".settings-nav-item", { hasText: "Help & diagnostics" }).first().click();
   await page.waitForSelector(".improve-tab", { timeout: 3000 });
 
   console.log("clicking Run (real lsdoc + mldoc)…");

@@ -30,7 +30,7 @@ import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlock, moveBlockFeed, moveItem, selectBlock, extendSelectionTo, clearSelection, moveSelection, isSelected, ensureBlockId, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode, pageRoots } from "../document";
+import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, ensureBlockId, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, collapsibleDescendantIds, setCollapsedDescendants, blockExternalId, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock } from "../blockRefActions";
 import {
   clearFocusSurface,
@@ -72,7 +72,7 @@ import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "../render/b
 import { effectiveHeadingLevel, facetsOf } from "../render/facets";
 import { AstBody } from "../render/body";
 import { InlineText } from "../render/inline";
-import { editorOffsetFromRenderedRange } from "../render/spans";
+import { clickBeyondRenderedEnd, editorOffsetFromRenderedRange } from "../render/spans";
 import {
   assetMarkdown,
   assetFileName,
@@ -86,7 +86,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro, youtubeTimestampMacroFor } from "./Macro";
-import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
+import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, timetrackingEnabled, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { graphMeta, dataRev, graphEpoch } from "../graphSession";
 import { pushToast, dismissToast } from "../toasts";
 import { seedAssetBlob } from "../assetCache";
@@ -96,7 +96,7 @@ import { graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../ow
 import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
-import { cycleMarkerSmart, toggleTaskDone } from "../editor/repeat";
+import { cycleMarkerSmart } from "../editor/repeat";
 import { setMarker } from "../editor/marker";
 import { registerTransientLayer } from "../transientLayers";
 import { taskCheckboxState } from "../markers";
@@ -110,7 +110,7 @@ import {
 import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { QUERY_MACRO_SCAFFOLD, queryMacroExtents, singleQueryMacroExtent, type MacroExtent } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
-import { caretOnOpeningFence } from "../editor/fences";
+import { caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { AnnotationBody } from "./AnnotationBody";
 import { logbookInfo, type LogbookInfo } from "../logbook";
@@ -136,6 +136,9 @@ import { blockBackgroundColor } from "../blockColors";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
+import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
+import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
+import { CalGlyph, ClockBadge, blockFirstLine, cycleBlockMarker, formatForBlockId, listLineAt, nearestScrollableY, timeStamp, toggleBlockCheckbox } from "./blockParts";
 
 type SheetSlashView = "grid" | "table" | "board";
 
@@ -176,71 +179,6 @@ function bodyContainsQueryMacro(raw: string): boolean {
 
 // (Rendered-property hidden set lives in render/block.ts as RENDER_HIDDEN_PROPS /
 // isRenderHiddenProp, shared with body.tsx's renderProps.)
-
-// Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
-const [dragId, setDragId] = createSignal<string | null>(null);
-const [dropInd, setDropInd] = createSignal<{ id: string; before: boolean } | null>(null);
-let dragMoved = false;
-
-function siblingIndex(id: string): number {
-  const n = docNode(id);
-  if (!n) return -1;
-  const sibs =
-    n.parent === null
-      ? pageRoots(n.page)
-      : docNode(n.parent).children;
-  return sibs.indexOf(id);
-}
-
-function beginDrag(id: string, e: MouseEvent) {
-  const binding = captureBinding(), startX = e.clientX;
-  const startY = e.clientY;
-  dragMoved = false;
-  const onMove = (ev: MouseEvent) => {
-    if (!dragMoved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
-    if (!dragMoved) {
-      dragMoved = true;
-      setDragId(id);
-      endEdit("drag-start");
-    }
-    const el = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest(
-      ".ls-block"
-    ) as HTMLElement | null;
-    const tid = el?.dataset.blockId;
-    if (tid && tid !== id) {
-      const main = el!.querySelector(".block-main")!.getBoundingClientRect();
-      setDropInd({ id: tid, before: ev.clientY < main.top + main.height / 2 });
-    } else {
-      setDropInd(null);
-    }
-  };
-  const onUp = () => {
-    document.removeEventListener("mousemove", onMove);
-    document.removeEventListener("mouseup", onUp);
-    const ind = dropInd();
-    if (stillBound(binding) && dragMoved && ind && docNode(ind.id)) {
-      const tgt = docNode(ind.id);
-      // can't drop onto own descendant
-      let p: string | null = ind.id;
-      let ok = true;
-      while (p !== null) {
-        if (p === id) {
-          ok = false;
-          break;
-        }
-        p = docNode(p).parent;
-      }
-      // Pass the target's page so a root-to-root drop across pages (e.g. between
-      // journal days) lands on the page it was dropped onto, not the source page.
-      if (ok) void moveBlock(id, tgt.parent, siblingIndex(ind.id) + (ind.before ? 0 : 1), tgt.page, ind.id);
-    }
-    setDragId(null);
-    setDropInd(null);
-    setTimeout(() => (dragMoved = false), 0);
-  };
-  document.addEventListener("mousemove", onMove);
-  document.addEventListener("mouseup", onUp);
-}
 
 // Set ONLY by the quick-capture window (capture.tsx). Flows through the Block
 // tree to every Editor so the capture's submit/cancel gestures and Enter mode
@@ -439,7 +377,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             }}
             onClick={(e) => {
               e.stopPropagation();
-              if (dragMoved) return; // was a drag, not a click
+              if (bulletDragMoved()) return; // was a drag, not a click
               if (e.shiftKey) void openDurableBlock(props.id, "sidebar");
               else zoomInto(props.id);
             }}
@@ -552,20 +490,6 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   );
 }
 
-// --- Click / drag gesture on rendered block content -------------------------
-//
-// The caret offset is captured at MOUSEDOWN (before the previously-edited
-// block's blur reflows the layout — the coordinates are only valid then), but
-// editing starts at MOUSEUP and only for a CLICK (pointer moved < threshold).
-// A drag instead selects: within the origin block it is the browser's native
-// text selection of the RENDERED text (copy gives the glyphs you see); the
-// moment it crosses into another block it escalates to Tine's block selection
-// (muscle memory from OG — but deterministic: the escalation rule is purely
-// "did the pointer enter a different block", never timing).
-//
-// Deliberately NOT OG's mousedown-instant-edit: that races the native
-// selection against the DOM swap (the inconsistency Martin observed in OG).
-const DRAG_THRESHOLD_PX = 4;
 const SHEET_CELL_BLOCKED_EDITOR_COMMANDS = new Set([
   "editor/indent",
   "editor/outdent",
@@ -573,65 +497,10 @@ const SHEET_CELL_BLOCKED_EDITOR_COMMANDS = new Set([
   "editor/move-block-down",
   "editor/select-block-up",
   "editor/select-block-down",
+  // The grid owns mod+a (whole-grid selection) — a cell editor must not
+  // escalate into outline block selection.
+  "editor/select-all",
 ]);
-
-interface EditGesture {
-  blockId: string;
-  offset: number;
-  owner: string | null;
-  startX: number;
-  startY: number;
-  escalated: boolean;
-  outlineScope: OutlineScope | null;
-}
-
-function blockIdAtPoint(x: number, y: number): string | null {
-  const el = document.elementFromPoint(x, y);
-  const row = el?.closest?.(".ls-block");
-  return row?.getAttribute("data-block-id") ?? null;
-}
-
-/** Arm a click-or-drag gesture from a rendered-content mousedown. Document-level
- *  listeners resolve it, so post-blur layout shifts can't misroute the mouseup. */
-function beginEditGesture(
-  e: MouseEvent,
-  blockId: string,
-  offset: number,
-  owner: string | null,
-  outlineScope: OutlineScope | null,
-): void {
-  clearSelection(); // a plain gesture replaces any active block selection (shift-click returns before this)
-  const g: EditGesture = { blockId, offset, owner, startX: e.clientX, startY: e.clientY, escalated: false, outlineScope };
-  const onMove = (ev: MouseEvent) => {
-    const moved =
-      Math.abs(ev.clientX - g.startX) > DRAG_THRESHOLD_PX || Math.abs(ev.clientY - g.startY) > DRAG_THRESHOLD_PX;
-    if (!moved) return;
-    const over = blockIdAtPoint(ev.clientX, ev.clientY);
-    if (g.escalated) {
-      if (over) extendSelectionTo(over, g.outlineScope);
-      return;
-    }
-    if (over && over !== g.blockId) {
-      // Crossed into another block: escalate to block selection for the rest of
-      // the gesture (never de-escalate — flipping modes mid-drag is jarring).
-      g.escalated = true;
-      window.getSelection()?.removeAllRanges();
-      selectBlock(g.blockId, g.outlineScope);
-      extendSelectionTo(over, g.outlineScope);
-    }
-  };
-  const onUp = (ev: MouseEvent) => {
-    document.removeEventListener("mousemove", onMove, true);
-    document.removeEventListener("mouseup", onUp, true);
-    if (g.escalated) return; // block selection stands
-    const moved =
-      Math.abs(ev.clientX - g.startX) > DRAG_THRESHOLD_PX || Math.abs(ev.clientY - g.startY) > DRAG_THRESHOLD_PX;
-    if (moved) return; // an in-block text selection (or a stray drag) — not a click
-    startEditing(g.blockId, g.offset, g.owner);
-  };
-  document.addEventListener("mousemove", onMove, true);
-  document.addEventListener("mouseup", onUp, true);
-}
 
 function Rendered(props: {
   id: string;
@@ -674,9 +543,14 @@ function Rendered(props: {
   const clickOffset = (e: MouseEvent): number | null => {
     if (!contentRef) return null;
     const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
+    const fmt = pageByName(node().page)?.format === "org" ? "org" : "md";
+    // GH #465: a click in the empty run-out past the last glyph means "the end",
+    // whatever the block ends with. Asked before the span map, because a trailing
+    // construct with an invisible closing delimiter (`*italic*`) maps that click
+    // to a legitimate-looking interior offset just before the delimiter.
+    if (clickBeyondRenderedEnd(contentRef, e.clientX, e.clientY)) return splitProps(node().raw, isBuiltinHidden, fmt).visible.length;
     const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
     if (!range) return null;
-    const fmt = pageByName(node().page)?.format === "org" ? "org" : "md";
     return editorOffsetFromRenderedRange(contentRef, range, node().raw, isBuiltinHidden, fmt);
   };
   // For annotation blocks the editor shows only the highlight text (metadata
@@ -826,64 +700,6 @@ function Rendered(props: {
   );
 }
 
-// Cycle the task marker on a block (OG order), used by the marker chip click.
-function cycleBlockMarker(id: string) {
-  const { raw } = cycleMarkerSmart(docNode(id).raw, workflow(), {
-    format: formatForBlockId(id),
-    enabled: timetrackingEnabled(),
-    withSeconds: logbookWithSecondSupport(),
-  });
-  setRaw(id, raw, { timetracking: false });
-}
-
-// Toggle the task checkbox (OG check/uncheck): open → DONE (rolling a repeater
-// forward instead), DONE → the workflow's open marker. Used by the block checkbox.
-function toggleBlockCheckbox(id: string) {
-  const raw = toggleTaskDone(docNode(id).raw, workflow(), {
-    format: formatForBlockId(id),
-    enabled: timetrackingEnabled(),
-    withSeconds: logbookWithSecondSupport(),
-  });
-  if (raw !== null) setRaw(id, raw, { timetracking: false });
-}
-
-function formatForBlockId(id: string): "md" | "org" {
-  return pageByName(docNode(id)?.page)?.format ?? "md";
-}
-
-function ClockBadge(props: { info: LogbookInfo }): JSX.Element {
-  const rows = () => props.info.rows.slice().reverse().slice(0, 10);
-  return (
-    <span class="clock-badge" tabIndex={0}>
-      <span class="clock-badge-label">{props.info.summary}</span>
-      <span class="clock-tooltip" role="tooltip">
-        <table>
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Start</th>
-              <th>End</th>
-              <th>Span</th>
-            </tr>
-          </thead>
-          <tbody>
-            <For each={rows()}>
-              {(r) => (
-                <tr>
-                  <td>{r.type}</td>
-                  <td>{r.start}</td>
-                  <td>{r.end ?? ""}</td>
-                  <td>{r.span ?? ""}</td>
-                </tr>
-              )}
-            </For>
-          </tbody>
-        </table>
-      </span>
-    </span>
-  );
-}
-
 interface AcItem {
   label: string;
   /** Secondary, dimmer line (e.g. the page a block-ref candidate lives on). */
@@ -902,65 +718,6 @@ interface AcItem {
   propertyValue?: string;
 }
 
-/** Nearest ancestor that actually scrolls vertically — used to pin the scroll
- *  position across a textarea autosize measure (WebKitGTK reveals the caret on
- *  the transient height:auto collapse, jumping tall blocks to the bottom). */
-function nearestScrollableY(el: HTMLElement): HTMLElement | null {
-  let n: HTMLElement | null = el.parentElement;
-  while (n) {
-    if (n.scrollHeight > n.clientHeight) {
-      const oy = getComputedStyle(n).overflowY;
-      if (oy === "auto" || oy === "scroll" || oy === "overlay") return n;
-    }
-    n = n.parentElement;
-  }
-  return null;
-}
-
-/** First visible (non-`key:: value`) line of a block's raw markdown — what the
- *  block-reference picker shows as the candidate's label. */
-function blockFirstLine(raw: string): string {
-  for (const line of raw.split("\n")) {
-    if (!/^\s*[\w-]+:: /.test(line) && line.trim() !== "") return line.trim();
-  }
-  return "";
-}
-
-/** If the caret sits on an in-block markdown list line (`+`/`*`/ordered — NOT the
- *  outline bullet `-`), return its parts, for caret-context list editing. */
-// In-block list markers differ by format (see body.tsx): Markdown uses `+`/`*`
-// (a leading `-` is the outline bullet), Org uses `-`/`+` (a leading `*` is a
-// headline). Numbered works in both.
-const LIST_LINE_MD = /^(\s*)([+*]|\d+[.)])(\s+)(\[[ xX]\]\s+)?/;
-const LIST_LINE_ORG = /^(\s*)([-+]|\d+[.)])(\s+)(\[[ xX]\]\s+)?/;
-function listLineAt(
-  text: string,
-  caret: number,
-  format: "md" | "org" = "md",
-): { indent: string; marker: string; hasCheckbox: boolean; lineStart: number; prefixLen: number } | null {
-  const lineStart = text.lastIndexOf("\n", caret - 1) + 1;
-  let lineEnd = text.indexOf("\n", caret);
-  if (lineEnd === -1) lineEnd = text.length;
-  const re = format === "org" ? LIST_LINE_ORG : LIST_LINE_MD;
-  const m = re.exec(text.slice(lineStart, lineEnd));
-  if (!m) return null;
-  return { indent: m[1], marker: m[2], hasCheckbox: !!m[4], lineStart, prefixLen: m[0].length };
-}
-
-// Small calendar glyph for date chips (SVG, not emoji — emoji tofu on WebKitGTK).
-function CalGlyph(): JSX.Element {
-  return (
-    <svg class="chip-cal" viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
-      <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="2" />
-    </svg>
-  );
-}
-
-function timeStamp(d = new Date()): string {
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-// Template support: session-cached list of templates, dynamic-var substitution,
 // and DTO→outline conversion for insertion.
 let templateCache: import("../types").TemplateDto[] | null = null;
 let templateCacheRev = -1;
@@ -1005,6 +762,8 @@ export function Editor(props: { id: string }): JSX.Element {
   // transclusion the user is looking at.
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
   let ref!: HTMLTextAreaElement;
+  let pendingScrollAnchor: ReturnType<typeof captureEditorScrollAnchor> | undefined;
+  onCleanup(() => pendingScrollAnchor?.cancel());
   let pluginSlashInvocation = 0;
   let editorMounted = true;
   onCleanup(() => {
@@ -1081,6 +840,12 @@ export function Editor(props: { id: string }): JSX.Element {
     // dirty or push undo — avoids churn and can't rewrite the block's bytes.
     if (next === node().raw) return;
     const setRawOpts = opts && "timetracking" in opts ? { timetracking: opts.timetracking } : undefined;
+    // GH #515: capture once for the autosize frame, before live mirrors above react.
+    if (pendingScrollAnchor === undefined) {
+      pendingScrollAnchor = ref && document.activeElement === ref
+        ? captureEditorScrollAnchor(ref, nearestScrollableY(ref)) : null;
+    }
+    autosize();
     setRaw(props.id, next, setRawOpts);
   };
 
@@ -1360,6 +1125,17 @@ export function Editor(props: { id: string }): JSX.Element {
     setHasSel(selected);
     if (!selected) setSelectionOverflowOpen(false);
   };
+  onMount(() => {
+    const owner = ref.ownerDocument;
+    const syncNativeSelection = () => {
+      if (owner.activeElement === ref) updateSel();
+    };
+    // Native selection may notify the document or textarea without select or
+    // mouseup (Android WebView, GH #375). Capture both, but only update the
+    // editor that owns focus.
+    owner.addEventListener("selectionchange", syncNativeSelection, true);
+    onCleanup(() => owner.removeEventListener("selectionchange", syncNativeSelection, true));
+  });
   createEffect(() => {
     if (!selectionOverflowOpen() || !hasSel()) return;
     const unregister = registerTransientLayer({
@@ -2144,6 +1920,8 @@ export function Editor(props: { id: string }): JSX.Element {
     autosizeRaf = requestAnimationFrame(() => {
       autosizeRaf = undefined;
       resizeNow();
+      pendingScrollAnchor?.restore();
+      pendingScrollAnchor = undefined;
     });
   };
 
@@ -2156,6 +1934,10 @@ export function Editor(props: { id: string }): JSX.Element {
       const end = Math.min(historySelection.end, v.length);
       const start = Math.min(historySelection.start, end);
       ref.setSelectionRange(start, end);
+      return;
+    }
+    if (want !== null && typeof want === "object" && "start" in want) {
+      ref.setSelectionRange(want.start, want.end, want.direction);
       return;
     }
     let offset: number;
@@ -2189,6 +1971,7 @@ export function Editor(props: { id: string }): JSX.Element {
       owner: editingOwner(),
       surface: surfaceKey,
       selection: () => ({ start: ref.selectionStart, end: ref.selectionEnd }),
+      viewport: () => ({ editor: ref, scroller: nearestScrollableY(ref) }),
       focused: () => typeof document !== "undefined" && document.activeElement === ref,
     });
     onCleanup(unregisterHistoryTarget);
@@ -2356,16 +2139,21 @@ export function Editor(props: { id: string }): JSX.Element {
   // reorder briefly blurs the textarea; cross-day it remounts).
   const moveBlockCmd = (e: KeyboardEvent, dir: 1 | -1): boolean => {
     e.preventDefault();
-    const start = ref.selectionStart;
-    const end = ref.selectionEnd;
-    const direction = ref.selectionDirection;
+    const movedEditor = ref;
+    const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
+    const restore = () => restoreMovedSelection(ref, props.id, selection.start, selection.end, selection.direction);
     commit(ref.value);
     void withBlockMoving(docNode(props.id)?.page ?? "", async () => {
-      startEditing(props.id, start);
-      if (outlineScope) moveItem(props.id, dir);
-      else await moveBlockFeed(props.id, dir);
+      startEditing(props.id, selection);
+      // A sibling reorder happens synchronously (a feed move's own sync part)
+      // and keeps this textarea. Restore it in the same gesture: waiting a
+      // frame lets Android dismiss the IME despite the later focus.
+      const move = outlineScope ? moveItem(props.id, dir) : moveBlockFeed(props.id, dir);
+      if (ref === movedEditor && movedEditor.isConnected && editingId() === props.id
+        && (document.activeElement === movedEditor || document.activeElement === document.body)) restore();
+      await move;
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      restoreMovedSelection(ref, props.id, start, end, direction);
+      if (document.activeElement !== ref) restore();
     }).catch(() => console.error("Block move failed"));
     return true;
   };
@@ -2463,6 +2251,18 @@ export function Editor(props: { id: string }): JSX.Element {
     "editor/expand": (e) => { e.preventDefault(); setCollapsed(props.id, false); return true; },
     "editor/select-block-up": (e) => selectBlockCmd(e, -1),
     "editor/select-block-down": (e) => selectBlockCmd(e, 1),
+    "editor/select-all": (e) => {
+      // GH #262: first press keeps the native select-all-text behaviour
+      // (return false without preventDefault). A press with the text already
+      // fully selected escalates to a block-level subtree selection; later
+      // presses climb ancestors in selection mode (keybindings.ts).
+      const fullySelected = ref.selectionStart === 0 && ref.selectionEnd === ref.value.length;
+      if (!fullySelected) return false;
+      e.preventDefault();
+      commit(ref.value);
+      selectBlockSubtree(props.id, outlineScope);
+      return true;
+    },
     "editor/cycle-todo": (e) => { e.preventDefault(); cycleTodoCmd(); return true; },
     "editor/indent": (e) => {
       e.preventDefault();
@@ -2470,8 +2270,9 @@ export function Editor(props: { id: string }): JSX.Element {
       const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll) { nudgeListItem(ll, +2); return true; }
       if (outlineScope?.roots.includes(props.id)) return true;
+      const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
       commit(ref.value);
-      if (indentBlock(props.id, ref.selectionStart) === false) pushToast("Outline is too deep to indent", "error");
+      if (indentBlock(props.id, selection) === false) pushToast("Outline is too deep to indent", "error");
       return true;
     },
     "editor/outdent": (e) => {
@@ -2479,7 +2280,8 @@ export function Editor(props: { id: string }): JSX.Element {
       const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll && ll.indent.length > 0) { nudgeListItem(ll, -2); return true; }
       if (outlineScope?.forceExpandedRoot === docNode(props.id)?.parent) return true;
-      commit(ref.value); outdentBlock(props.id, ref.selectionStart); return true;
+      const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
+      commit(ref.value); outdentBlock(props.id, selection); return true;
     },
   };
   const mobileKeyEvent = { preventDefault() {} } as KeyboardEvent;
@@ -2862,13 +2664,16 @@ export function Editor(props: { id: string }): JSX.Element {
       (!e.shiftKey || (docModeEnterForNewLine && !e.altKey))
     ) {
       const inFence = !isAnnot() && caretInFence(raw, start);
+      // GH #278: a multi-line `$$ … $$` environment behaves like a fence for
+      // Enter. See caretInDisplayMath — a deliberate divergence from OG.
+      const inMath = !isAnnot() && !inFence && caretInDisplayMath(raw, start);
       const inPageProperties = !isAnnot() && isFirstPagePropertiesBlock(raw);
       // Double-Enter escape: the first Enter creates a trailing blank line; the
       // second removes that sentinel and creates a normal sibling. Keep the text
       // trim and structural insertion in one undo unit so one Undo restores the
       // exact pre-exit special block and removes the sibling.
-      if ((isCalc() || inFence || inPageProperties) && start === end) {
-        const kind = isCalc() ? "calc" : inFence ? "fence" : "properties";
+      if ((isCalc() || inFence || inMath || inPageProperties) && start === end) {
+        const kind = isCalc() ? "calc" : inFence ? "fence" : inMath ? "math" : "properties";
         const trimmed = multilineExitTrim(raw, start, kind);
         if (trimmed !== null) {
           e.preventDefault();
@@ -2901,7 +2706,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // — GH #66). caretInFence treats a still-unterminated fence (being typed) as
       // inside too, and returns false when the caret sits on a ``` delimiter line,
       // so Enter on the closing fence still exits the block.
-      if (!isAnnot() && (inFence || caretOnOpeningFence(raw, start))) {
+      if (!isAnnot() && (inFence || inMath || caretOnOpeningFence(raw, start))) {
         softNewlineCmd();
         return;
       }
@@ -2980,6 +2785,46 @@ export function Editor(props: { id: string }): JSX.Element {
         if (n && splitProps(n.raw, hideFn(), pageFmt()).visible.trim() === "" && n.children.length === 0 && next && docNode(next)?.page === n.page) {
           e.preventDefault();
           deleteBlock(props.id);
+          startEditing(next, 0, null, editSurface());
+        }
+      }
+    } else if (e.key === "Delete" && end === start && start === raw.length) {
+      // GH #213: forward-delete merges with the NEXT block — the mirror of
+      // Backspace's merge with the previous one. Never merge a highlight or
+      // calc block itself (same rule as Backspace), and never absorb an
+      // annotation/calc block's raw text into this one.
+      if (isAnnot() || isCalc()) return;
+      const next = nextVisible(props.id, outlineScope);
+      if (next) {
+        const nextRaw = docNode(next)?.raw ?? "";
+        if (isAnnotationBlock(nextRaw) || calcSource(nextRaw) !== null) return;
+        commit(raw);
+        if (mergeWithNext(props.id, outlineScope, editSurface())) {
+          e.preventDefault();
+          const caretAt = start; // join point = the block's pre-merge end
+          queueMicrotask(() => {
+            ref.setSelectionRange(caretAt, caretAt);
+            autosize();
+          });
+        }
+      }
+    } else if (e.key === "ArrowLeft" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // GH #213: at the very start, move into the END of the previous visible
+      // editor. Shift keeps native selection; Ctrl/Meta keep native word/line jumps.
+      if (start === end && start === 0) {
+        const prev = prevVisible(props.id, outlineScope);
+        if (prev) {
+          e.preventDefault();
+          // A number caret clamps to the new editor's full text length at mount.
+          startEditing(prev, Number.MAX_SAFE_INTEGER, null, editSurface());
+        }
+      }
+    } else if (e.key === "ArrowRight" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // GH #213: at the very end, move into the START of the next visible editor.
+      if (start === end && start === raw.length) {
+        const next = nextVisible(props.id, outlineScope);
+        if (next) {
+          e.preventDefault();
           startEditing(next, 0, null, editSurface());
         }
       }
@@ -3137,7 +2982,8 @@ export function Editor(props: { id: string }): JSX.Element {
       return;
     }
     const start = ref.selectionStart;
-    const syntaxSensitive = sheetCell || isCalc() || caretInFence(ref.value, start) || caretOnOpeningFence(ref.value, start);
+    const syntaxSensitive = sheetCell || isCalc() || caretInFence(ref.value, start)
+      || caretOnOpeningFence(ref.value, start) || caretInDisplayMath(ref.value, start);
     const slot = peekClipboardSlot();
     if (!syntaxSensitive) {
       if (slot && text !== "" && normalize(text) === normalize(slot.text)) {

@@ -144,6 +144,39 @@ fn guide_explains_favorites_groups_nesting_and_page_storage() {
 }
 
 #[test]
+fn guide_explains_following_the_link_at_the_caret() {
+    // GH #274: Ctrl+O / Ctrl+Shift+O follow the link nearest the caret.
+    let tips = bundled_guide_pages()
+        .into_iter()
+        .find(|page| page.title == "Features/Tips & shortcuts")
+        .expect("tips guide is bundled");
+    assert!(tips.markdown.contains("**Ctrl+O** opens that page"));
+    assert!(tips
+        .markdown
+        .contains("**Ctrl+Shift+O** opens it in the right sidebar"));
+    // GH #262: the Ctrl+A ladder from text to subtree to the whole page.
+    assert!(tips
+        .markdown
+        .contains("press it again to select the block with its children"));
+    // GH #480: the menu route above a bullet that owns its Enter key.
+    assert!(tips.markdown.contains("choose **Insert block above**"));
+    // GH #352: the export content choice names its output.
+    assert!(tips
+        .markdown
+        .contains("choose **Plain text** for the text as displayed"));
+    // GH #522: the palette resets interface zoom.
+    assert!(tips.markdown.contains("**Reset interface zoom**"));
+    // GH #523: unbinding keeps the command; Reset restores the default.
+    assert!(tips.markdown.contains("**Unbind**"));
+    assert!(tips.markdown.contains("**Reset** restores its default"));
+    let capture = bundled_guide_pages()
+        .into_iter()
+        .find(|page| page.title == "Features/Quick capture")
+        .expect("capture guide is bundled");
+    assert!(capture.markdown.contains("**File capture** button"));
+}
+
+#[test]
 fn pdf_guide_explains_conflict_discard_and_crop_cleanup_retry() {
     let pdf = bundled_guide_pages()
         .into_iter()

@@ -1,5 +1,5 @@
 import { backend } from "./backend";
-import { resolveGuideBlockRef } from "./document";
+import { blockRef, node as docNode, resolveGuideBlockRef } from "./document";
 import { dataRev, graphEpoch } from "./graphSession";
 import { graphOwner, readOwned } from "./owned";
 import type { RefGroup } from "./types";
@@ -73,4 +73,18 @@ export function resolveBlockBatched(id: string): Promise<RefGroup | null> {
 export function resolvedBlockRefSync(id: string): RefGroup | null {
   ensureCacheRev();
   return resolvedCache.get(id) ?? null;
+}
+
+/** Where navigation to block `uuid` should go, given its resolved group `g`.
+ *
+ *  Contract: a block loaded in the working set answers through the document's
+ *  `blockRef` (durable uuid plus its owner's exact path); otherwise the backend
+ *  group's page and kind answer. Pure: no navigation, no IPC. The one answerer
+ *  for "rendered/raw `((uuid))` → open target", shared by the inline block-ref
+ *  click and the Ctrl+O follow-link command (GH #274). */
+export function blockRefTarget(
+  uuid: string,
+  g: RefGroup,
+): { uuid: string; page: string; pageKind: RefGroup["kind"]; path?: string } {
+  return docNode(uuid) ? blockRef(uuid) : { uuid, page: g.page, pageKind: g.kind };
 }

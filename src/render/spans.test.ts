@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties";
 import {
+  beyondFinalGlyph,
   literalSpanAttrs,
   rebulletedSourceByteToRawByte,
   sourceByteFromPlainTextByte,
@@ -104,5 +105,62 @@ describe("span offset helpers", () => {
     const fenced = "```\nid:: visible\n```\nid:: hidden\nz";
     expect(rawOffsetToVisibleOffset(fenced, fenced.indexOf("visible"), isBuiltinHidden)).toBe("```\nid:: ".length);
     expect(rawOffsetToVisibleOffset(fenced, fenced.indexOf("hidden"), isBuiltinHidden)).toBe("```\nid:: visible\n```".length);
+  });
+});
+
+// GH #465: which clicks count as "past the end of the block". The rule is
+// geometric on purpose — see beyondFinalGlyph's comment — so these are the
+// cases that decide whether the caret goes to the true source end.
+describe("beyondFinalGlyph (GH #465)", () => {
+  // One 20px line box from x=100 to x=200, then a shorter wrapped second line.
+  const twoLines = [
+    { top: 0, bottom: 20, right: 200 },
+    { top: 20, bottom: 40, right: 150 },
+  ];
+
+  it("is true only in the run-out past the last line's final glyph", () => {
+    expect(beyondFinalGlyph(twoLines, 160, 30)).toBe(true);
+    expect(beyondFinalGlyph(twoLines, 140, 30)).toBe(false); // still over text
+    expect(beyondFinalGlyph(twoLines, 150, 30)).toBe(false); // exactly at the edge
+  });
+
+  it("leaves a click past an earlier wrapped line to the ordinary span mapping", () => {
+    // x=180 is past nothing on line 1 (it runs to 200) and would be past the
+    // end of line 2 — but the click is on line 1, so it is not "the end".
+    expect(beyondFinalGlyph(twoLines, 180, 10)).toBe(false);
+    // Even beyond line 1's own right edge: that caret belongs at line 1's end,
+    // which is not the end of the block.
+    expect(beyondFinalGlyph(twoLines, 220, 10)).toBe(false);
+  });
+
+  it("ignores vertical space outside the block", () => {
+    expect(beyondFinalGlyph(twoLines, 300, 60)).toBe(false);
+    expect(beyondFinalGlyph(twoLines, 300, -10)).toBe(false);
+  });
+
+  it("finds the bottom band by coordinate, not by DOM order", () => {
+    // A float or inline-block can emit the visually-last rect first. Taking the
+    // last entry would measure the wrong line.
+    const outOfOrder = [
+      { top: 20, bottom: 40, right: 150 },
+      { top: 0, bottom: 20, right: 200 },
+    ];
+    expect(beyondFinalGlyph(outOfOrder, 160, 30)).toBe(true);
+    expect(beyondFinalGlyph(outOfOrder, 140, 30)).toBe(false);
+  });
+
+  it("treats sub-pixel line-box splits as one line", () => {
+    // Two rects of the same visual line whose bottoms differ by rounding: the
+    // rightmost must still count, or a click past the true end reads as "inside".
+    const split = [
+      { top: 0, bottom: 20, right: 120 },
+      { top: 0, bottom: 19.7, right: 200 },
+    ];
+    expect(beyondFinalGlyph(split, 210, 10)).toBe(true);
+    expect(beyondFinalGlyph(split, 160, 10)).toBe(false);
+  });
+
+  it("says nothing about a block that rendered no line boxes", () => {
+    expect(beyondFinalGlyph([], 100, 100)).toBe(false);
   });
 });

@@ -282,3 +282,101 @@ export function editorOffsetFromRenderedRange(
   const rawUtf16 = utf8ByteToUtf16Offset(raw, rawByte);
   return rawOffsetToVisibleOffset(raw, rawUtf16, isHidden, format);
 }
+
+/** Rectangles of one rendered block's content, one per visual line box.
+ *  Narrower than `DOMRectList` so tests can hand in plain objects. */
+export interface LineBox {
+  readonly top: number;
+  readonly bottom: number;
+  readonly right: number;
+}
+
+/** True when (x, y) lies horizontally past the last glyph of the FINAL visual
+ *  line of `boxes` — i.e. in the empty run-out at the end of the block.
+ *
+ *  This is the whole of GH #465, and it is deliberately geometric rather than
+ *  syntactic. A block ending in `*text*` renders an `<em>` whose span map stops
+ *  before the closing `*`, so a click past the end maps to a perfectly valid
+ *  interior source offset — one byte before the invisible delimiter — and no
+ *  "mapping failed" fallback ever fires. Asking where the click landed instead
+ *  of what it landed on covers every trailing construct with a hidden closing
+ *  delimiter at once, in Markdown and Org alike, rather than accumulating a
+ *  special case per syntax.
+ *
+ *  Only the final line qualifies: a click past the right edge of an earlier
+ *  wrapped line belongs at that line's end, which the ordinary span mapping
+ *  already gets right. */
+export function beyondFinalGlyph(boxes: ArrayLike<LineBox>, x: number, y: number): boolean {
+  if (boxes.length === 0) return false;
+  // Line boxes arrive in DOM order, which is visual order for text but need not
+  // be once floats or inline-blocks are involved, so find the bottom band by
+  // coordinate rather than by taking the last entry.
+  let bottom = -Infinity;
+  for (let i = 0; i < boxes.length; i++) bottom = Math.max(bottom, boxes[i].bottom);
+  let top = Infinity;
+  let right = -Infinity;
+  for (let i = 0; i < boxes.length; i++) {
+    const box = boxes[i];
+    // Half a pixel of slack: sub-pixel line heights otherwise split one visual
+    // line into two bands that each look like "not the last one".
+    if (box.bottom < bottom - 0.5) continue;
+    top = Math.min(top, box.top);
+    right = Math.max(right, box.right);
+  }
+  return y >= top && y <= bottom && x > right;
+}
+
+/** {@link beyondFinalGlyph} against a live element's rendered line boxes.
+ *  Measures the CONTENTS, not the element: a block-level container is full
+ *  width, so its own border box says nothing about where the text ends. */
+export function clickBeyondRenderedEnd(root: Element, x: number, y: number): boolean {
+  const doc = root.ownerDocument;
+  const range = doc.createRange();
+  // An environment with no layout engine has no line boxes to ask about: jsdom
+  // does not implement Range.getClientRects at all, and calling it there threw
+  // out of the click handler and took the whole edit gesture with it. Declining
+  // is the right answer, not an approximation — the caller falls back to the
+  // ordinary span mapping, which is what ran before GH #465.
+  if (typeof range.getClientRects !== "function") return false;
+  const view = doc.defaultView;
+  const boxes: LineBox[] = [];
+  for (const child of Array.from(root.childNodes)) collectInFlowRects(child, view, range, boxes);
+  range.detach?.();
+  return beyondFinalGlyph(boxes, x, y);
+}
+
+/** Line boxes of the IN-FLOW content of `node`, appended to `out`.
+ *
+ *  A single range over the whole block also picks up its floats, and a float is
+ *  drawn hard against the block's right edge. A float TALLER than the line it
+ *  rides then owns the bottom band, and the block reports its text as ending at
+ *  the full content width — so no click in it can ever be past the end.
+ *  `{{img … right}}` is the live case: measured in the running app, its wrapper
+ *  box was right 1080 / bottom 545.2 against text right 665.5 / bottom 542.2,
+ *  and the past-the-end caret was dead in that block. The wrapper sits inside
+ *  the inline tree rather than directly under `.block-content`, hence the
+ *  recursion. (The reference-count badge floats too but is shorter than the
+ *  line, so it never defines the bottom band and never had this effect —
+ *  measured, not assumed, after a synthetic fixture wrongly said it did.) */
+function collectInFlowRects(node: Node, view: Window | null, range: Range, out: LineBox[]): void {
+  if (node.nodeType === 1) {
+    const el = node as Element;
+    // Positive tests, not `float !== "none"`: a stylesheet-less environment
+    // reports "" for everything, and treating that as out-of-flow would discard
+    // the whole block.
+    const style = view?.getComputedStyle(el);
+    const f = style?.float;
+    const p = style?.position;
+    if (f === "left" || f === "right" || p === "absolute" || p === "fixed") return;
+    if (el.childElementCount > 0) {
+      for (const child of Array.from(el.childNodes)) collectInFlowRects(child, view, range, out);
+      return;
+    }
+  }
+  // A leaf: a text node, or an element with no element children — including a
+  // replaced one such as an image, which has no contents to measure but does
+  // occupy a box on the line. Hence selectNode, not selectNodeContents.
+  range.selectNode(node);
+  const rects = range.getClientRects();
+  for (let i = 0; i < rects.length; i++) out.push(rects[i]);
+}

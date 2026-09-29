@@ -373,6 +373,29 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
+  it("a cell editor's Mod+A does not escalate into the outline block selection ladder (GH #262 boundary)", async () => {
+    loadSheetDoc();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    selectBlock("grid");
+    keydown(window, "Enter"); // outline selection → cell selection
+    expect(cellSel()?.kind).toBe("cell");
+    keydown(window, "Enter"); // cell selection → cell editor
+    await tick();
+    const textarea = activeEditor(root);
+    expect(textarea.value.length).toBeGreaterThan(0);
+
+    // In a cell editor, the grid owns Mod+A: one press must NOT enter the
+    // outline block-selection ladder (no block selection at all; the cell's
+    // own text selection stays a browser-local affair).
+    keydown(textarea, "a", { ctrlKey: true });
+    await tick();
+    expect(hasSelection()).toBe(false);
+    expect(editingId()).not.toBeNull(); // still editing the same cell
+    endEdit("select-block");
+    dispose();
+  });
+
   it("enters a uniquely rendered nested grid from outline selection", async () => {
     loadSheetDocWithSubgrid();
     disposeKeys = installKeybindings();

@@ -18,7 +18,7 @@ use tine_store::{SaveBase, SaveOutcome, SavePagesOutcome};
 mod save_wire;
 #[cfg(test)]
 use save_wire::save_outcome_to_wire;
-use save_wire::save_pages_outcome_to_wire;
+use save_wire::{record_save_wire, save_pages_outcome_to_wire, store_failure_to_wire};
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
@@ -97,20 +97,6 @@ fn store_error(error: StoreError) -> String {
         StoreError::TooLarge { .. } => "asset-too-large".into(),
         StoreError::Io(error) => error.to_string(),
         StoreError::Closed => "store closed".into(),
-    }
-}
-
-fn save_store_error(error: StoreError) -> String {
-    match error {
-        StoreError::NotFound => "deleted".into(),
-        StoreError::InvalidTarget(_)
-        | StoreError::PageSource(_)
-        | StoreError::StreamSymlink(_)
-        | StoreError::Undecodable
-        | StoreError::Unparseable(_) => "invalid-target".into(),
-        StoreError::TooLarge { .. } => "asset-too-large".into(),
-        StoreError::Io(error) => format!("io:{:?}", error.kind()),
-        StoreError::Closed => "closed".into(),
     }
 }
 
@@ -672,6 +658,7 @@ fn log_save_kinds(entries: &[SavePageEntry]) {
 /// binding or empty kinds returns command Err; preparation and transaction
 /// failures return a Failed wire value. Force reads current UTF-8 bytes for
 /// each affected base. Empty input returns Failed at placeholder index 0.
+/// A failed or slow call is recorded as a fixed-shape `direct.save` event.
 #[tauri::command]
 pub(crate) fn save_pages(
     entries: Vec<SavePageEntry>,
@@ -694,21 +681,13 @@ pub(crate) fn save_pages(
             )
         })
         .collect();
-    let outcome = match tine_graph_features::pages::save_pages(&slot.store, &entries) {
-        Ok(outcome) => outcome,
-        Err((index, error)) => {
-            return Ok(SavePagesWire::Failed {
-                failed: SavePagesFailure {
-                    index,
-                    family: save_store_error(error),
-                    disk_rev: None,
-                    undo_failed: Vec::new(),
-                    publication_errors: Vec::new(),
-                },
-            })
-        }
+    let started = std::time::Instant::now();
+    let wire = match tine_graph_features::pages::save_pages(&slot.store, &entries) {
+        Ok(outcome) => save_pages_outcome_to_wire(outcome),
+        Err((index, error)) => store_failure_to_wire(index, error),
     };
-    Ok(save_pages_outcome_to_wire(outcome))
+    record_save_wire(&wire, entries.len(), started.elapsed());
+    Ok(wire)
 }
 
 #[cfg(test)]

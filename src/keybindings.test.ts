@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal } from "./keybindings";
-import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
+import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
+import { makePdfRoute } from "./router";
 import { bumpGraphEpoch, setGraphMeta } from "./graphSession";
 import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
@@ -191,7 +192,6 @@ afterEach(() => {
   endEdit("blur");
   resetStore();
   clearTransientLayersForTest();
-  setPdfTarget(null);
   setWorkflow("now");
   setFocusMode(false);
   setGraphMeta(null);
@@ -322,6 +322,35 @@ describe("plugin command context", () => {
 });
 
 describe("keyboard binding strings", () => {
+  it("keeps an unbound global command in the palette while suppressing its chord", () => {
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "go/find-in-page": "false" });
+
+    const key = modFEvent();
+    fake.dispatchCaptureKeydown(key.event);
+
+    expect(inPageFindOpen()).toBe(false);
+    expect(key.prevented()).toBe(false);
+    const command = paletteCommands().find((candidate) => candidate.id === "go/find-in-page");
+    expect(command).toMatchObject({ binding: "" });
+    command!.run();
+    expect(inPageFindOpen()).toBe(true);
+    dispose();
+  });
+
+  it("records physical Control distinctly from Command on macOS (GH #378)", async () => {
+    vi.resetModules();
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    try {
+      const macBindings = await import("./keybindings");
+      expect(macBindings.eventToBindingString(keyEvent({ key: "k", code: "KeyK", ctrlKey: true }))).toBe("ctrl+k");
+      expect(macBindings.eventToBindingString(keyEvent({ key: "k", code: "KeyK", metaKey: true }))).toBe("mod+k");
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+
   it("binds Insert link to Mod-L by default", () => {
     const byId = Object.fromEntries(commandDefaults().map((c) => [c.id, c]));
     expect(byId["editor/insert-link"]).toMatchObject({ binding: "mod+l", scope: "editor" });
@@ -433,6 +462,52 @@ describe("editable Tab ownership (GH #157)", () => {
   });
 });
 
+describe("Alt-only shortcuts while editing (GH #461)", () => {
+  const twoTabSnapshot = (): PaneSnapshot => ({
+    tabs: [
+      { history: [{ kind: "page", name: "First", pageKind: "page" }], pos: 0, pinned: false },
+      { history: [{ kind: "page", name: "Second", pageKind: "page" }], pos: 0, pinned: false },
+    ],
+    activeIndex: 0,
+  });
+
+  it("fires a bare-Alt global shortcut with the caret in a block", () => {
+    resetPaneLayoutToSingle(twoTabSnapshot());
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "tab/next": "alt+s" });
+    const editor = editableTarget("TEXTAREA", { blockEditor: true });
+    const pressed = trackedKeyEvent({ key: "s", code: "KeyS", altKey: true, target: editor });
+    fake.dispatchCaptureKeydown(pressed.event);
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Second" });
+    expect(pressed.prevented()).toBe(true);
+    dispose();
+  });
+
+  it("still refuses unmodified keys while editing, so a sequence cannot fire", () => {
+    resetPaneLayoutToSingle(twoTabSnapshot());
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "tab/next": "alt+s" });
+    const editor = editableTarget("TEXTAREA", { blockEditor: true });
+    const typed = trackedKeyEvent({ key: "s", code: "KeyS", target: editor });
+    fake.dispatchCaptureKeydown(typed.event);
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "First" });
+    expect(typed.prevented()).toBe(false);
+    dispose();
+  });
+
+  it("leaves an Alt chord nothing is bound to for the textarea (Option-composed characters)", () => {
+    resetPaneLayoutToSingle(twoTabSnapshot());
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "tab/next": "alt+s" });
+    const editor = editableTarget("TEXTAREA", { blockEditor: true });
+    const deadKey = trackedKeyEvent({ key: "e", code: "KeyE", altKey: true, target: editor });
+    fake.dispatchCaptureKeydown(deadKey.event);
+    expect(deadKey.prevented()).toBe(false);
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "First" });
+    dispose();
+  });
+});
+
 describe("find-in-page routing", () => {
   it("opens notes find on mod+f when no PDF is open", () => {
     const fake = installFakeWindow();
@@ -452,11 +527,7 @@ describe("find-in-page routing", () => {
     const fake = installFakeWindow();
     const dispose = installKeybindings();
     const e = modFEvent();
-    setPdfTarget({
-      filename: "paper.pdf",
-      label: "Paper",
-      owner: { graphRoot: "/test/keybindings", generation: 1 },
-    });
+    paneRouter("main").openPdf(makePdfRoute("paper.pdf", "Paper"));
 
     fake.dispatchCaptureKeydown(e.event);
 

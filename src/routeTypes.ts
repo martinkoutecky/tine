@@ -26,7 +26,27 @@ export interface QueryRoute {
   pageMatchScope?: FriendlyPageMatchScope;
 }
 
+/** One reader tab. viewId identifies the tab's view, while filename identifies
+ * the asset; page and scale are saved per view in the graph session. */
+export interface PdfRoute {
+  kind: "pdf";
+  viewId: string;
+  filename: string;
+  label: string;
+  page?: number;
+  scale?: number;
+}
+
+/** A bad saved PDF tab stays closable without discarding its containing pane. */
+export interface InvalidRoute {
+  kind: "invalid";
+  title: string;
+  message: string;
+}
+
 export type Route =
   | { kind: "journals" }
   | QueryRoute
+  | PdfRoute
+  | InvalidRoute
   | (PageTarget & { kind: "page"; block?: string; path?: string });

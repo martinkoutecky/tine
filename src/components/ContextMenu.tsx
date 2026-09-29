@@ -1,5 +1,6 @@
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openBlockProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
+import { isMobilePlatform } from "../nativeChrome";
 import { pushToast } from "../toasts";
 import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { isConflicted } from "../document";
@@ -11,7 +12,7 @@ import { backend } from "../backend";
 import { carryDay } from "../carry";
 import { journalTitle } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { ensureBlockId, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setHeading, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, node as docNode } from "../document";
+import { ensureBlockId, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setHeading, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
@@ -861,7 +862,7 @@ function PageMenu(props: {
           .catch(() => { if (owner()) pushToast("Couldn't copy page as Markdown.", "error"); });
       },
     },
-    { id: "export-pdf", label: "Export to PDF…", run: () => openPdfExport(props.name) },
+    ...(!isMobilePlatform ? [{ id: "export-pdf", label: "Export to PDF…", run: () => openPdfExport(props.name) }] : []),
     ...(props.fileActions && !pageByName(props.name)?.guide
       ? [
           { id: "show-in-folder", label: "Show in folder", run: () => void runFileAction(true) },
@@ -1052,6 +1053,16 @@ function blockActions(id: string, x: number, y: number): { label: string; run: (
     { label: "Open in new tab", run: () => { void openDurableBlock(id, "tab"); } },
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: "Properties…", run: () => openBlockProps(id, x, y) },
+    // The keyboard route to "a block above this one" is Enter at offset 0, which
+    // splits; a code block owns its Enter key, so a code block first on a page
+    // (or first in any subtree) left the top unreachable (GH #480).
+    {
+      label: "Insert block above",
+      run: () => {
+        const inserted = insertOutlineBefore(id, [{ raw: "", children: [] }]);
+        if (inserted) startEditing(inserted, 0);
+      },
+    },
     { label: "Copy block ref", run: () => void copyBlockRef(id, (u) => `((${u}))`, "Copied block ref") },
     { label: "Copy block embed", run: () => void copyBlockRef(id, (u) => `{{embed ((${u}))}}`, "Copied block embed") },
     { label: "Copy block", run: () => copyBlock(id) },

@@ -37,6 +37,8 @@ ensureBlockId
 ensureEmptyBlock
 ensurePageLoaded
 ensurePagePropertyOnKeyPage  # why: one guarded document operation for a query type declaration on its key page; batch16a
+expandAncestors  # why: navigation reveals a block hidden in collapsed ancestors (GH #258); batch17a
+expandBlockSelection  # why: Ctrl/Cmd+A ladder in block selection (GH #262); batch17a
 exportNodesFor
 extendFeedForScroll
 extendSelectionTo
@@ -55,6 +57,7 @@ indentBlock
 indentSelection
 insertEmptyChildBlock
 insertOutlineAfter
+insertOutlineBefore  # why: Insert block above any bullet (GH #480); batch17a
 insertOutlineChildren
 installAliasDraftRouteHandler
 installExternalChangeUiHandler
@@ -75,6 +78,7 @@ loadedPage
 mainPages
 makeOwnNumberedList
 markDirty
+mergeWithNext  # why: Delete at block end forward-merges (GH #213); batch17a
 mergeWithPrev
 moveBlock
 moveBlockFeed
@@ -120,6 +124,7 @@ restoreTodayJournalInFeed
 revealNode
 sanitizeOutlineIdsForPaste  # why: prevent off-screen ID collisions in ordinary paste; batch05
 selectBlock
+selectBlockSubtree  # why: Ctrl/Cmd+A escalation from the editor (GH #262); batch17a
 selectedIds
 selectionMarkdown
 setBlockProperty
@@ -143,6 +148,7 @@ toggleUndoRedoMode
 trackAssetWrite
 undo
 undoTopTag  # why: the query crossing notice offers Undo only while its own save is still the top undo step; batch14q4a
+unsavedPageCount  # why: a close that discards drafts records how many pages it dropped, as a count only; batch18a
 visibleOrder
 waitingFor  # why: show unresolved group member; batch03
 waitingOn  # why: show pages blocked by conflict; batch03

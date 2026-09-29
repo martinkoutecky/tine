@@ -6,6 +6,10 @@ export interface SafeCloseDeps {
   flushPdfWork(): Promise<boolean>;
   flushAll(): Promise<boolean>;
   confirmDiscard(): Promise<boolean>;
+  /** The user accepted losing work. Recorded (fixed reason, page count) so a
+   *  run that discarded drafts is distinguishable in the diagnostic report
+   *  (GH #540). Bounded to one second; its failure never blocks the close. */
+  recordDiscard?(reason: DiscardReason): Promise<void>;
   flushSession(): Promise<void>;
   setTransition(active: boolean): void;
   notifyPdfFailure(): void;
@@ -18,6 +22,9 @@ export interface SafeCloseCoordinator {
   reset(): void;
   inFlight(): boolean;
 }
+
+/** The flush fallback when saves were still running at the four-second bound. */
+const STILL_RUNNING = Symbol("still-running");
 
 function runBounded<T>(operation: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
   return Promise.race([
@@ -71,16 +78,17 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
         return "rejected";
       }
 
-      let saved = false;
+      let saved: boolean | typeof STILL_RUNNING = false;
       try {
-        const result = await writeOwned(owner, bounded(deps.flushAll(), 4000, false));
+        const result = await writeOwned(owner, bounded<boolean | typeof STILL_RUNNING>(deps.flushAll(), 4000, STILL_RUNNING));
         if (result.kind === "stale") return "rejected";
         saved = result.value;
       } catch {
         saved = false;
       }
 
-      if (!saved) {
+      if (saved !== true) {
+        const reason: DiscardReason = saved === STILL_RUNNING ? "still-saving" : "failed";
         let discard = false;
         try {
           const result = await readOwned(owner, deps.confirmDiscard());
@@ -91,6 +99,11 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
           return "rejected";
         }
         if (!discard) return "rejected";
+        try {
+          await writeOwned(owner, bounded(deps.recordDiscard?.(reason) ?? Promise.resolve(), 1000, undefined));
+        } catch {
+          dbg("close discard not recorded"); // diagnostics never block a confirmed close
+        }
       }
 
       try {
@@ -110,3 +123,5 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
   return { prepare, reset, inFlight: () => closing };
 }
 import { advanceRevision, readOwned, revisionOwner, writeOwned } from "./owned";
+import { dbg } from "./debug";
+import type { DiscardReason } from "./backend";
