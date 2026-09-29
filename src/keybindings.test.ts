@@ -310,6 +310,19 @@ describe("plugin command context", () => {
 });
 
 describe("keyboard binding strings", () => {
+  it("records physical Control distinctly from Command on macOS (GH #378)", async () => {
+    vi.resetModules();
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    try {
+      const macBindings = await import("./keybindings");
+      expect(macBindings.eventToBindingString(keyEvent({ key: "k", code: "KeyK", ctrlKey: true }))).toBe("ctrl+k");
+      expect(macBindings.eventToBindingString(keyEvent({ key: "k", code: "KeyK", metaKey: true }))).toBe("mod+k");
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+
   it("binds Insert link to Mod-L by default", () => {
     const byId = Object.fromEntries(commandDefaults().map((c) => [c.id, c]));
     expect(byId["editor/insert-link"]).toMatchObject({ binding: "mod+l", scope: "editor" });
@@ -417,6 +430,52 @@ describe("editable Tab ownership (GH #157)", () => {
     fake.dispatchCaptureKeydown(trackedSuper.event);
     expect(trackedSuper.prevented()).toBe(false);
     fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Super", code: "SuperLeft", type: "keyup" }).event);
+    dispose();
+  });
+});
+
+describe("Alt-only shortcuts while editing (GH #461)", () => {
+  const twoTabSnapshot = (): PaneSnapshot => ({
+    tabs: [
+      { history: [{ kind: "page", name: "First", pageKind: "page" }], pos: 0, pinned: false },
+      { history: [{ kind: "page", name: "Second", pageKind: "page" }], pos: 0, pinned: false },
+    ],
+    activeIndex: 0,
+  });
+
+  it("fires a bare-Alt global shortcut with the caret in a block", () => {
+    resetPaneLayoutToSingle(twoTabSnapshot());
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "tab/next": "alt+s" });
+    const editor = editableTarget("TEXTAREA", { blockEditor: true });
+    const pressed = trackedKeyEvent({ key: "s", code: "KeyS", altKey: true, target: editor });
+    fake.dispatchCaptureKeydown(pressed.event);
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Second" });
+    expect(pressed.prevented()).toBe(true);
+    dispose();
+  });
+
+  it("still refuses unmodified keys while editing, so a sequence cannot fire", () => {
+    resetPaneLayoutToSingle(twoTabSnapshot());
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "tab/next": "alt+s" });
+    const editor = editableTarget("TEXTAREA", { blockEditor: true });
+    const typed = trackedKeyEvent({ key: "s", code: "KeyS", target: editor });
+    fake.dispatchCaptureKeydown(typed.event);
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "First" });
+    expect(typed.prevented()).toBe(false);
+    dispose();
+  });
+
+  it("leaves an Alt chord nothing is bound to for the textarea (Option-composed characters)", () => {
+    resetPaneLayoutToSingle(twoTabSnapshot());
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "tab/next": "alt+s" });
+    const editor = editableTarget("TEXTAREA", { blockEditor: true });
+    const deadKey = trackedKeyEvent({ key: "e", code: "KeyE", altKey: true, target: editor });
+    fake.dispatchCaptureKeydown(deadKey.event);
+    expect(deadKey.prevented()).toBe(false);
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "First" });
     dispose();
   });
 });

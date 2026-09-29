@@ -92,6 +92,9 @@ function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {
 
 interface Chord {
   mod: boolean;
+  // Physical Control is distinct from portable `mod` on macOS. Elsewhere the
+  // same key remains `mod`, preserving existing cross-platform bindings (GH #378).
+  ctrl: boolean;
   shift: boolean;
   alt: boolean;
   // The Super/Win key on Linux/Windows (distinct from `mod`); on macOS Cmd is
@@ -566,9 +569,13 @@ function isModifierKey(e: KeyboardEvent): boolean {
 
 function parseChord(s: string): Chord {
   const parts = s.toLowerCase().split("+");
-  const chord: Chord = { mod: false, shift: false, alt: false, meta: false, key: "" };
+  const chord: Chord = { mod: false, ctrl: false, shift: false, alt: false, meta: false, key: "" };
   for (const p of parts) {
-    if (p === "mod" || p === "ctrl" || p === "cmd") chord.mod = true;
+    if (p === "mod" || p === "cmd") chord.mod = true;
+    else if (p === "ctrl") {
+      if (isMac) chord.ctrl = true;
+      else chord.mod = true;
+    }
     else if (p === "meta" || p === "super" || p === "win") chord.meta = true;
     else if (p === "shift") chord.shift = true;
     else if (p === "alt" || p === "option") chord.alt = true;
@@ -601,6 +608,7 @@ function eventToChord(e: KeyboardEvent): Chord {
   key = normKey(key);
   return {
     mod: isMac ? e.metaKey : e.ctrlKey,
+    ctrl: isMac && e.ctrlKey,
     shift: e.shiftKey,
     alt: e.altKey,
     // Super/Win on non-Mac (on Mac, metaKey is already `mod`). Fall back to the
@@ -624,7 +632,7 @@ export function isPermittedTabGesture(e: KeyboardEvent, chord = eventToChord(e))
 }
 
 function chordEq(a: Chord, b: Chord): boolean {
-  return a.mod === b.mod && a.shift === b.shift && a.alt === b.alt && a.meta === b.meta && a.key === b.key;
+  return a.mod === b.mod && a.ctrl === b.ctrl && a.shift === b.shift && a.alt === b.alt && a.meta === b.meta && a.key === b.key;
 }
 
 // Merged binding table (defaults + config overrides), populated by
@@ -718,6 +726,7 @@ export function eventToBindingString(e: KeyboardEvent): string | null {
   const c = eventToChord(e);
   if (!c.key) return null;
   const parts: string[] = [];
+  if (c.ctrl) parts.push("ctrl");
   if (c.mod) parts.push("mod");
   if (c.meta) parts.push("super"); // the Super/Windows key (clearer than "meta")
   if (c.alt) parts.push("alt");
@@ -944,7 +953,12 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     }
 
     // While typing, only modifier chords are eligible (so "g j" doesn't fire).
-    if (editing && !chord.mod) {
+    // Alt counts as a modifier here (GH #461): Chrome and VS Code fire Alt
+    // shortcuts with a text field focused. Only `scope: "global"` commands with
+    // a `run` are matched below, so the editor's own bare-Alt bindings are
+    // untouched, and an Alt chord nothing is bound to still reaches the textarea
+    // unprevented (dead keys and Option-composed characters keep working).
+    if (editing && !chord.mod && !chord.ctrl && !chord.alt) {
       // Cancel GTK/browser focus traversal on Tab/Shift+Tab in the capture
       // phase (WebKitGTK grabs it before an outline editor can), but still let
       // that editor receive its owned gesture. Native form controls retain
