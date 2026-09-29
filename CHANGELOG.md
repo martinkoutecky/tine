@@ -107,6 +107,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **A page with an unresolved save conflict can be opened on disk again** (og I1d, master 6f8531344, GH #490).
   "Open with default app" and "Show in folder" refused while a conflict was pending. Both now open the
   file as it stands on disk and say so; your unsaved changes stay in Tine until you resolve the conflict.
+- **Carrying tasks no longer moves them into a second file for today** (og I1e).
+  When two files existed for today (a duplicate day from sync or a changed journal date format) and the
+  other one was open under today's name, carry moved the tasks into it and said "Carried", while
+  today's journal in the feed never got them. Carry now stops and names both files.
 - **Closing no longer offers to throw away a save that is still running** (og I1b, master fea3c314b).
   If writing your changes took more than four seconds — a slow or network drive is enough — the close
   asked whether to lose them. It now says it is still saving and waits up to another 26 seconds; it
