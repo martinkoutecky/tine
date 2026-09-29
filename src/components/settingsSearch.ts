@@ -6,7 +6,9 @@ type Tab = SettingsTabId;
 
 export type SettingSearchEntry = { tab: Tab; label: string; description: string; aliases?: string[]; level?: "advanced" };
 export const SETTING_SEARCH: SettingSearchEntry[] = [
-  { tab: "appearance", label: "Theme", description: "light dark system gallery colors" },
+  { tab: "appearance", label: "Theme mode", description: "light dark system" },
+  { tab: "appearance", label: "Style", description: "typography journal headings presentation theme" },
+  { tab: "appearance", label: "Color scheme", description: "default nord solarized gruvbox theme gallery package colors" },
   { tab: "appearance", label: "Accent color", description: "interface highlight color" },
   { tab: "appearance", label: "Interface size", description: "zoom scale Ctrl scroll" },
   { tab: "appearance", label: "Wide mode", description: "reading width" },

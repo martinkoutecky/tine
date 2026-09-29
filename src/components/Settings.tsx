@@ -3,7 +3,7 @@ import { DiagnosticsTab } from "./DiagnosticsTab";
 import { errorFamily } from "../errorFamily";
 import { AboutTab } from "./AboutTab";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
-import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, theme, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, syncConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
+import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, syncConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
 import { setJournalTemplate, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
@@ -40,15 +40,7 @@ import {
 import { MEDIA_EDITORS, type MediaEditor } from "../mediaEditors";
 import { detectMediaEditorCommand, mediaEditorCommand, setMediaEditorCommand } from "../mediaEditorSettings";
 import { formatAssetName } from "../media";
-import { galleryThemes, selectedGalleryTheme, applyTheme as applyGalleryTheme } from "../themeGallery";
-import type { GalleryTheme } from "../styles/themes";
 import { platformKind } from "../platform";
-import {
-  installThemePackage,
-  installedThemes,
-  themeVersionIsRevoked,
-  uninstallThemePackage,
-} from "../themes/manager";
 import { openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
@@ -57,6 +49,7 @@ import { HomePageSetting } from "./HomePageSetting";
 import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
+import { ThemeSettings } from "./ThemeSettings";
 import { flushAll } from "../document";
 import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
@@ -68,9 +61,7 @@ import { PLUGIN_MANIFEST_MAX_BYTES, PLUGIN_WASM_MAX_BYTES } from "../plugins/man
 import {
   COMMUNITY_REGISTRY_ENABLED,
   communityPlugins,
-  communityThemes,
   installCommunityPlugin,
-  installCommunityTheme,
   loadSafetyReport,
   refreshCommunityRegistry,
   registryPersistenceError,
@@ -922,94 +913,7 @@ function AdvancedSection(props: { tab: Tab; forceOpen: boolean; children: JSX.El
   );
 }
 
-function galleryBadge(theme: GalleryTheme): string {
-  if (theme.modes.length === 1) return theme.modes[0] === "light" ? "Light-only" : "Dark-only";
-  return theme.compat === "full" ? "Full" : "Partial";
-}
-
-function ThemeGalleryCard(props: {
-  id: string;
-  name: string;
-  author: string;
-  badge: string;
-  thumbnail: string;
-  selected: boolean;
-}): JSX.Element {
-  return (
-    <button
-      class="theme-gallery-card"
-      classList={{ selected: props.selected }}
-      aria-pressed={props.selected}
-      onClick={() => applyGalleryTheme(props.id)}
-    >
-      <span class="theme-gallery-thumb">
-        <img src={props.thumbnail} alt="" loading="lazy" />
-      </span>
-      <span class="theme-gallery-card-body">
-        <span class="theme-gallery-card-top">
-          <span class="theme-gallery-name">{props.name}</span>
-          <span class="theme-gallery-badge">{props.badge}</span>
-        </span>
-        <span class="theme-gallery-author">{props.author}</span>
-      </span>
-    </button>
-  );
-}
-
 function AppearanceTab(props: { search: string }): JSX.Element {
-  let alive = true;
-  onCleanup(() => { alive = false; });
-  let themePackageInput: HTMLInputElement | undefined;
-  const [themePackageBusy, setThemePackageBusy] = createSignal<string | null>(null);
-  const installThemeFile = async (files: FileList | null) => {
-    const file = files?.[0];
-    if (!file) return;
-    if (file.size > 64 * 1024) {
-      pushToast("Theme manifest exceeds the 64 KiB limit.", "error");
-      return;
-    }
-    setThemePackageBusy("install");
-    try {
-      const installed = await installThemePackage(JSON.parse(await file.text()));
-      pushToast(`${installed.manifest.name} ${installed.manifest.version} installed.`, "info");
-    } catch (error) {
-      pushToast(`Theme installation failed: ${String(error)}`, "error");
-    } finally {
-      setThemePackageBusy(null);
-      if (themePackageInput) themePackageInput.value = "";
-    }
-  };
-  const uninstallTheme = async (key: string, name: string) => {
-    const result = await readOwned(ownedWhen(() => alive), backend().confirm(
-      `Uninstall ${name}?\n\nThis removes the theme from this device. It does not change your graph or custom.css.`,
-      "Uninstall theme?"
-    ));
-    if (result.kind === "stale") return;
-    const confirmed = result.value;
-    if (!confirmed) return;
-    setThemePackageBusy(key);
-    try {
-      if (selectedGalleryTheme() === key) applyGalleryTheme("");
-      await uninstallThemePackage(key);
-      pushToast(`${name} was uninstalled.`, "info");
-    } catch (error) {
-      pushToast(`Theme could not be uninstalled: ${String(error)}`, "error");
-    } finally {
-      setThemePackageBusy(null);
-    }
-  };
-  const installRegistryTheme = async (themeEntry: ReturnType<typeof communityThemes>[number]) => {
-    const version = themeEntry.versions[themeEntry.versions.length - 1];
-    setThemePackageBusy(`${themeEntry.id}@${version.version}`);
-    try {
-      const installed = await installCommunityTheme(themeEntry, version);
-      pushToast(`${installed.manifest.name} ${installed.manifest.version} installed.`, "info");
-    } catch (error) {
-      pushToast(`Community theme installation failed: ${String(error)}`, "error");
-    } finally {
-      setThemePackageBusy(null);
-    }
-  };
   const [savingNativeFrame, setSavingNativeFrame] = createSignal(false);
   const changeNativeFrame = async () => {
     if (savingNativeFrame()) return;
@@ -1028,142 +932,11 @@ function AppearanceTab(props: { search: string }): JSX.Element {
   return (
     <>
       <div class="settings-row">
-        <span class="settings-label">Theme</span>
+        <span class="settings-label">Mode</span>
         <ThemeChoice />
       </div>
 
-      <div class="settings-section">Themes</div>
-      <div class="theme-gallery-grid">
-        <ThemeGalleryCard
-          id=""
-          name="Default"
-          author="Tine"
-          badge="Stock"
-          thumbnail="/theme-thumbnails/default.png"
-          selected={selectedGalleryTheme() === ""}
-        />
-        <For each={galleryThemes}>
-          {(theme) => (
-            <ThemeGalleryCard
-              id={theme.id}
-              name={theme.name}
-              author={theme.author}
-              badge={galleryBadge(theme)}
-              thumbnail={theme.thumbnail}
-              selected={selectedGalleryTheme() === theme.id}
-            />
-          )}
-        </For>
-      </div>
-      <div class="settings-hint theme-gallery-hint">
-        Themes recolor Tine using Logseq's <code>--ls-*</code> variables. If you keep your own <code>logseq/custom.css</code>, it still takes priority.
-      </div>
-
-      <Show when={COMMUNITY_REGISTRY_ENABLED}>
-      <div class="settings-section">Theme packages</div>
-      <Show when={communityThemes().length > 0}>
-        <div class="settings-hint theme-gallery-hint">Signed community themes · inert token manifests · immutable audit digests.</div>
-        <For each={communityThemes()}>
-          {(themeEntry) => {
-            const version = () => themeEntry.versions[themeEntry.versions.length - 1];
-            const key = () => `${themeEntry.id}@${version().version}`;
-            const installed = () => installedThemes().some((theme) => theme.key === key());
-            const revoked = () => themeVersionIsRevoked(key());
-            return (
-              <div class="settings-field">
-                <div class="settings-field-row">
-                  <div>
-                    <div class="settings-label">{themeEntry.name} <span class="settings-hint">v{version().version}</span></div>
-                    <div class="settings-hint settings-field-hint">
-                      {themeEntry.description}<br />{themeEntry.license} · {version().modes.join(" + ")} · {revoked() ? "Revoked by the signed registry" : version().audit.manualApproval ? "Human-reviewed" : "Low-risk automated pass"}
-                    </div>
-                  </div>
-                  <div class="settings-field-control">
-                    <button class="settings-link" onClick={() => void backend().openExternal(themeEntry.source)}>Details &amp; screenshots</button>
-                    <button
-                      class="settings-btn"
-                      disabled={installed() || revoked() || themePackageBusy() !== null || version().audit.status !== "passed"}
-                      onClick={() => void installRegistryTheme(themeEntry)}
-                    >
-                      {revoked() ? "Revoked" : installed() ? "Installed" : themePackageBusy() === key() ? "Verifying…" : "Install"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          }}
-        </For>
-      </Show>
-      </Show>
-      <div class="settings-row">
-        <div>
-          <div class="settings-label">Install a token theme</div>
-          <div class="settings-hint">Theme packages contain only whitelisted color tokens and metadata—no scripts, selectors, imports, or remote assets.</div>
-        </div>
-        <div>
-          <input
-            ref={themePackageInput}
-            type="file"
-            accept="application/json,.json"
-            style={{ display: "none" }}
-            onChange={(event) => void installThemeFile(event.currentTarget.files)}
-          />
-          <button class="settings-btn" disabled={themePackageBusy() !== null} onClick={() => themePackageInput?.click()}>
-            {themePackageBusy() === "install" ? "Validating…" : "Choose theme.json…"}
-          </button>
-        </div>
-      </div>
-      <Show when={installedThemes().length > 0} fallback={<p class="settings-hint">No theme packages installed.</p>}>
-        <div class="installed-theme-list">
-          <For each={installedThemes()}>
-            {(installed) => {
-              const previewMode = () => installed.manifest.modes[theme()] ?? installed.manifest.modes.light ?? installed.manifest.modes.dark ?? {};
-              const revoked = () => themeVersionIsRevoked(installed.key);
-              return (
-                <div class="settings-field installed-theme-row">
-                  <div class="settings-field-row">
-                    <div class="installed-theme-identity">
-                      <span
-                        class="installed-theme-swatch"
-                        aria-hidden="true"
-                        style={{
-                          background: previewMode()["--ls-primary-background-color"] ?? "var(--bg-secondary)",
-                          color: previewMode()["--ls-active-primary-color"] ?? "var(--accent)",
-                        }}
-                      >●</span>
-                      <div>
-                        <div class="settings-label">{installed.manifest.name} <span class="settings-hint">v{installed.manifest.version}</span></div>
-                        <div class="settings-hint">{installed.manifest.author} · {installed.manifest.license} · {Object.keys(installed.manifest.modes).join(" + ")}{revoked() ? " · Revoked and disabled" : ""}</div>
-                      </div>
-                    </div>
-                    <div class="settings-field-control">
-                      <button
-                        class="settings-btn"
-                        disabled={revoked() || selectedGalleryTheme() === installed.key}
-                        onClick={() => applyGalleryTheme(installed.key)}
-                      >
-                        {revoked() ? "Revoked" : selectedGalleryTheme() === installed.key ? "Selected" : "Use theme"}
-                      </button>
-                      <button class="settings-link" onClick={() => void backend().openExternal(installed.manifest.source)}>Details</button>
-                      <button
-                        class="settings-btn settings-btn-danger"
-                        disabled={themePackageBusy() !== null}
-                        onClick={() => void uninstallTheme(installed.key, installed.manifest.name)}
-                      >
-                        {themePackageBusy() === installed.key ? "Uninstalling…" : "Uninstall…"}
-                      </button>
-                    </div>
-                  </div>
-                  <div class="settings-hint settings-field-hint">{installed.manifest.description}</div>
-                  <Show when={installed.manifest.portedFrom} keyed>
-                    {(origin) => <div class="settings-hint">Behavioral port of {origin.name} for {origin.ecosystem}, credited to {origin.authors.join(", ")}.</div>}
-                  </Show>
-                </div>
-              );
-            }}
-          </For>
-        </div>
-      </Show>
+      <ThemeSettings />
 
       <div class="settings-row">
         <span class="settings-label">Accent color</span>

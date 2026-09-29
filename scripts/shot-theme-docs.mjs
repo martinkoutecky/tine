@@ -50,7 +50,7 @@ async function installAndUse(page, root) {
   await page.locator('input[type="file"][accept="application/json,.json"]').setInputFiles(`${root}/theme.json`);
   await page.locator(".toast-msg", { hasText: `${manifest.name} ${manifest.version} installed` }).waitFor();
   const installed = page.locator(".installed-theme-row", { hasText: manifest.name });
-  await installed.getByRole("button", { name: "Use theme", exact: true }).click();
+  await installed.getByRole("button", { name: "Use colors", exact: true }).click();
   await installed.getByRole("button", { name: "Selected", exact: true }).waitFor();
 }
 

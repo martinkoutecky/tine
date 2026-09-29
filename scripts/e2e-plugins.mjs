@@ -123,7 +123,7 @@ try {
   await devTheme.getByRole("button", { name: "Install", exact: true }).click();
   await page.getByText(/Dev Theme Colors .* installed\./).waitFor({ timeout: 15_000 });
   const installedTheme = page.locator(".installed-theme-row", { hasText: "Dev Theme Colors" });
-  await installedTheme.getByRole("button", { name: "Use theme", exact: true }).waitFor();
+  await installedTheme.getByRole("button", { name: "Use colors", exact: true }).waitFor();
   page.once("dialog", (dialog) => void dialog.accept());
   await installedTheme.getByRole("button", { name: "Uninstall…", exact: true }).click();
   await page.getByText(/Dev Theme Colors was uninstalled\./).waitFor();

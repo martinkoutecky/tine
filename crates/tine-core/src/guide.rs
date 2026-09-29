@@ -441,6 +441,7 @@ mod theme_presentation_guide_tests {
     fn declarative_theme_presentation_is_documented_in_the_bundled_guide() {
         let plugins = include_str!("templates/plugins.md");
         assert!(plugins.contains("bounded Tine-owned presentation styles"));
+        assert!(plugins.contains("are chosen independently"));
         assert!(plugins.contains("The theme receives neither those tasks"));
         assert!(!plugins.contains("Token themes live under"));
     }
