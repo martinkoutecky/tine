@@ -1802,7 +1802,8 @@ fn render_block(
         }
     }
     out.push_str("</div>");
-    emit_trailer_facets(b.scheduled(), b.deadline(), b.raw(), &b.properties(), out);
+    let props = render_sheets::chip_props(b.properties(), ctx, title, at);
+    emit_trailer_facets(b.scheduled(), b.deadline(), b.raw(), &props, out);
     if let (Some(id), Some(reverse)) = (block_id(b.raw()), ctx.reverse_refs) {
         if let Some(referrers) = reverse.get(&id).filter(|items| !items.is_empty()) {
             let count = referrers.len();
