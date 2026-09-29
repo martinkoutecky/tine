@@ -2,7 +2,7 @@ import { Show, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { graphMeta } from "../graphSession";
 import { switchGraph } from "../graph";
-import { graphOwner, writeOwned } from "../owned";
+import { graphOwner, readOwned, writeOwned } from "../owned";
 
 /** The Graph settings publication control. A picked external folder receives
  * one create-only site; the app snapshot and static HTML contain only the
@@ -13,9 +13,10 @@ export function GraphPublish(): JSX.Element {
   const [busy, setBusy] = createSignal(false);
   const [message, setMessage] = createSignal("");
   const publish = async () => {
-    const destination = await backend().pickFolder("Choose a folder outside this graph for the export");
-    if (!destination) return;
     const owner = graphOwner();
+    const selected = await readOwned(owner, backend().pickFolder("Choose a folder outside this graph for the export"));
+    if (selected.kind !== "current" || !selected.value) return;
+    const destination = selected.value;
     setBusy(true);
     setMessage("Exporting…");
     try {
@@ -23,7 +24,7 @@ export function GraphPublish(): JSX.Element {
       if (result.kind === "current") setMessage(`Exported ${result.value.pages} pages to ${result.value.path}`);
     } catch (error) {
       if (owner()) setMessage(`Export failed: ${String((error as Error)?.message ?? error)}`);
-    } finally { setBusy(false); }
+    } finally { if (owner()) setBusy(false); }
   };
   return <>
     <div class="settings-row"><span class="settings-label">Graph</span><div>

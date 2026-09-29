@@ -32,6 +32,7 @@ import { PageProps } from "./components/PageProps";
 import { ExportModal } from "./components/ExportModal";
 import { PdfExportDialog } from "./components/PdfExportDialog";
 import { QueryExportDialog } from "./components/QueryExportDialog";
+import { queryExportRequest } from "./ui";
 import { InPageFind } from "./components/InPageFind";
 import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
@@ -494,7 +495,7 @@ export function App(): JSX.Element {
       if (isPublishedExport() && window.location.hash) {
         try {
           openPublishedPermalink(await loadPublishedSnapshot(), window.location.hash, paneRouter(focusedPaneId()));
-        } catch (error) { console.error("published permalink unavailable", error); }
+        } catch { console.error("published permalink unavailable"); }
       }
       if (owner()) setFirstLoadDone(true);
     }
@@ -1109,7 +1110,7 @@ export function App(): JSX.Element {
       <PageProps />
       <ExportModal />
       <PdfExportDialog />
-      <QueryExportDialog />
+      <QueryExportDialog request={queryExportRequest} />
       <Settings />
       <HelpPopup />
       {/* First-run onboarding: covers the (empty) app when no graph is configured.

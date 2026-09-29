@@ -58,7 +58,7 @@ const mount = () => {
 };
 const publishedSnapshotReady = isPublishedExport()
   ? loadPublishedSnapshot().then(() => undefined, (error) => {
-      console.error("published snapshot unavailable", error);
+      console.error("published snapshot unavailable");
       document.getElementById("root")!.textContent = "Couldn't load snapshot.json — serve this folder over HTTP";
       throw error;
     })
@@ -72,4 +72,4 @@ void Promise.all([
   isPublishedExport() ? Promise.resolve() : Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))]),
   communityExtensionsReady,
   publishedSnapshotReady,
-]).then(mount, (error) => { if (!isPublishedExport()) mount(); else console.error(error); });
+]).then(mount, () => { if (!isPublishedExport()) mount(); else console.error("published app startup failed"); });

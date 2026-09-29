@@ -209,17 +209,6 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     const alias = snapshot.aliases.find(([from]) => identityFold(from) === wanted);
     return alias ? snapshot.pages.find((page) => identityFold(page.name) === identityFold(alias[1])) ?? null : null;
   };
-  const emptyReadOnlyPage = (name: string, kind: "journal" | "page"): PublishedPage => ({
-    name,
-    kind,
-    title: name,
-    pre_block: null,
-    blocks: [],
-    rev: null,
-    format: "md",
-    read_only: true,
-    path: "",
-  });
   const walk = (blocks: BlockDto[], visit: (block: BlockDto, ancestors: string[]) => void, ancestors: string[] = []) => {
     for (const block of blocks) {
       visit(block, ancestors);
@@ -375,8 +364,8 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async getPage(name: string, kind: "journal" | "page") {
       const snapshot = await load();
       const page = pageByName(snapshot, name);
-      const selected = page ?? emptyReadOnlyPage(name, kind);
-      return { ...structuredClone(selected), id: selected.path } satisfies PageRead;
+      if (!page || page.kind !== kind) return null;
+      return { ...structuredClone(page), id: page.path } satisfies PageRead;
     },
     async getPageByPath(path: string) {
       const snapshot = await load();
@@ -409,14 +398,6 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return snapshot.entries
         .filter((entry) => entry.kind === "journal" && entry.date_key !== null)
         .map((entry) => entry.date_key as number);
-    },
-    async referencedPageNames(knownDigest?: number | null) {
-      await load();
-      // Nothing exists "only through references" in a closed export.
-      return { digest: 0, names: knownDigest === 0 ? null : [] };
-    },
-    async pageAliases() {
-      return structuredClone((await load()).aliases);
     },
     async pageIcons(names: string[]) {
       const snapshot = await load();

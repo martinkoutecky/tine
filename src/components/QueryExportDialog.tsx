@@ -1,14 +1,15 @@
-import { For, Show, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, onCleanup, onMount, type Accessor, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { closeQueryExport, queryExportRequest } from "../ui";
+import { closeQueryExport } from "../ui";
 import { pushToast } from "../toasts";
+import { graphOwner, readOwned, writeOwned } from "../owned";
 import type { QueryPublicationRequest } from "../types";
 
 /** Review complete owner pages, then pick an external folder for a create-only
  * static site and read-only browser app. The backend rechecks the fingerprint
  * before writing, so a graph edit between review and confirm is a refusal. */
-export function QueryExportDialog(): JSX.Element {
-  return <Show when={queryExportRequest()}>{(request) => <Dialog request={request()} />}</Show>;
+export function QueryExportDialog(props: { request: Accessor<QueryPublicationRequest | null> }): JSX.Element {
+  return <Show when={props.request()}>{(request) => <Dialog request={request()} />}</Show>;
 }
 
 function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
@@ -24,23 +25,27 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   });
   const reviewed = () => plan.error === undefined ? plan() : undefined;
   const choose = async () => {
-    const selected = await backend().pickFolder("Choose a folder outside the graph for this export");
-    if (selected) setDestination(selected);
+    const owner = graphOwner();
+    const selected = await readOwned(owner, backend().pickFolder("Choose a folder outside the graph for this export"));
+    if (selected.kind === "current" && selected.value) setDestination(selected.value);
   };
   const publish = async () => {
     const selection = reviewed();
     const parent = destination();
     if (!selection || !parent || busy() || (selection.anchor === "block" && !acknowledged())) return;
+    const owner = graphOwner();
     setBusy(true);
     setError("");
     try {
-      const receipt = await backend().publishQuery({ ...props.request, name: plannedName() }, selection.fingerprint, parent);
-      closeQueryExport();
-      pushToast(`Exported ${receipt.pages} pages to ${receipt.path}`, "success", { sticky: true });
+      const receipt = await writeOwned(owner, backend().publishQuery({ ...props.request, name: plannedName() }, selection.fingerprint, parent));
+      if (receipt.kind === "current") {
+        closeQueryExport();
+        pushToast(`Exported ${receipt.value.pages} pages to ${receipt.value.path}`, "success", { sticky: true });
+      }
     } catch (cause) {
-      setError(String((cause as Error)?.message ?? cause));
+      if (owner()) setError(String((cause as Error)?.message ?? cause));
     } finally {
-      setBusy(false);
+      if (owner()) setBusy(false);
     }
   };
   onMount(() => {
