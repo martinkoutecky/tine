@@ -450,6 +450,21 @@ export interface Backend {
   ): Promise<void>;
   /** Discard a conflict copy without merging (move it to the recoverable trash). */
   trashSyncConflict(conflict: string, kind: "delete-page"): Promise<void>;
+  /** Two-way diff of a duplicate journal day's canonical file against one
+   *  stray; null for a cross-format pair, which cannot be folded. Read-only. */
+  duplicateJournalDiff(canonical: string, stray: string): Promise<SyncConflictDiff | null>;
+  /** Fold one stray of a duplicate journal day into the day's canonical file
+   *  per the reviewed decisions and trash the stray (recoverable). Throws
+   *  "conflict" when either file changed since the review. */
+  resolveDuplicateJournalDay(
+    canonical: string,
+    stray: string,
+    decisions: Record<string, MergeDecision>,
+    baseRev: string,
+    strayRev: string,
+    kinds: EditKinds,
+    preChoice?: "mine" | "theirs" | "union"
+  ): Promise<void>;
   /** The conflict listings and the derived queue, one answer; never stored.
    *  Cost: the first call per graph walks every page file (O(graph text
    *  bytes)); later calls answer from the backend's change-fed queue. */
@@ -1180,6 +1195,22 @@ class TauriBackend implements Backend {
       conflictRev,
       mergeBaseRev: mergeBaseRev ?? null,
       preChoice: preChoice ?? "union",
+    });
+  }
+  duplicateJournalDiff(canonical: string, stray: string) {
+    return this.call<SyncConflictDiff | null>("duplicate_journal_diff", { canonical, stray });
+  }
+  resolveDuplicateJournalDay(
+    canonical: string,
+    stray: string,
+    decisions: Record<string, MergeDecision>,
+    baseRev: string,
+    strayRev: string,
+    _kinds: EditKinds,
+    preChoice?: "mine" | "theirs" | "union"
+  ) {
+    return this.call<void>("resolve_duplicate_journal_day", {
+      canonical, stray, decisions, baseRev, strayRev, preChoice: preChoice ?? "union",
     });
   }
   trashSyncConflict(conflict: string) {

@@ -319,9 +319,10 @@ export interface SyncConflictDiff {
 /** A user's per-row merge decision. */
 export type MergeDecision = "mine" | "theirs" | "both" | "merged";
 
-/** Where a conflict object came from: a sync tool's copy, VCS markers, or an
- *  editor draft whose save was refused because the file changed (og 8e). */
-export type ConflictSource = "sync-copy" | "vcs-markers" | "live-save";
+/** Where a conflict object came from: a sync tool's copy, VCS markers, an
+ *  editor draft whose save was refused because the file changed (og 8e), or a
+ *  journal day with more than one file (master 9dc54e4a7). */
+export type ConflictSource = "sync-copy" | "vcs-markers" | "live-save" | "duplicate-journal";
 
 /** The editor draft of a `live-save` conflict object. */
 export interface LiveConflictDraft {
@@ -348,7 +349,7 @@ export interface ConflictSide {
 /** One item of the conflict queue: DERIVED from disk on every refresh and never
  *  persisted, so it survives a restart by being recomputed. */
 export interface ConflictObject {
-  /** Stable derived id: `copy:<copy path>` / `markers:<path>`. */
+  /** Stable derived id: `copy:<copy path>` / `markers:<path>` / `journal:<keeper path>`. */
   id: string;
   source: ConflictSource;
   page_name: string;

@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **A duplicate journal day resolves on the day itself** (master 9dc54e4a7, og A).
+  A day with two files (a date-named one and a title-named one) joins the
+  conflict badge and the Conflicts page, and its page compares the two files
+  block by block: the pre-selected choice keeps everything, and applying folds
+  the other file in and moves it to the recoverable trash. Each file keeps its
+  Open, Rename and Trash actions; the startup toast is gone, and Settings keeps
+  the list as a fallback.
 - **Right-sidebar items can be reordered by dragging their header** (GH #211, og 22b); a short press still opens the item.
 - **External changes stay fresh without interrupting you.** Returning to Tine
   asks the watcher for a fresh pass before you type; a large checkout or sync

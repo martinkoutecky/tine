@@ -105,6 +105,57 @@ pub(crate) fn trash_sync_conflict(conflict: String, state: GraphContext<'_>) -> 
     outcome
 }
 
+/// Two-way diff of a duplicate journal day's canonical file against one stray
+/// (master 9dc54e4a7); `None` for a cross-format pair, which the UI shows as
+/// file rows without row choices. Read-only.
+#[tauri::command]
+pub(crate) async fn duplicate_journal_diff(
+    canonical: String,
+    stray: String,
+    state: GraphContext<'_>,
+) -> Result<Option<tine_core::sync_diff::SyncConflictDiff>, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::conflicts::duplicate_journal_diff(&slot.store, &canonical, &stray)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Fold one stray of a duplicate journal day into the day's canonical file per
+/// the reviewed row decisions and trash the stray recoverably. Guarded to two
+/// files of ONE duplicate day; "conflict" when either file changed since the
+/// review (nothing written).
+#[tauri::command]
+pub(crate) async fn resolve_duplicate_journal_day(
+    canonical: String,
+    stray: String,
+    decisions: std::collections::HashMap<String, String>,
+    base_rev: String,
+    stray_rev: String,
+    pre_choice: Option<String>,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = tine_graph_features::conflicts::resolve_duplicate_journal_day(
+            &slot.store,
+            &canonical,
+            &stray,
+            &decisions,
+            &base_rev,
+            &stray_rev,
+            pre_choice.as_deref().unwrap_or("union"),
+        )
+        .map_err(sync_conflict_error);
+        settle_queue(&slot, &[&canonical, &stray]);
+        outcome
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 /// The derived conflict queue: sync-tool copies paired with their winner and
 /// marker-bearing pages (memory only, never stored). The first call per graph
 /// walks every page file, so it runs on the blocking pool; later calls answer

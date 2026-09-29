@@ -217,7 +217,7 @@ export async function loadGraphPath(
   // blocking graph open.
   bumpGraphEpoch();
   applyConfigDerivedState(meta, null);
-  void refreshJournalConflicts(true); // tell the user if any day has duplicate journal files
+  void refreshJournalConflicts(); // duplicate days surface through the conflict queue, not a toast
   void refreshSyncConflicts(); // conflict copies + VCS markers feed the sidebar badge
   if (path) {
     try {
