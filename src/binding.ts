@@ -23,6 +23,15 @@ export function captureBinding(): Binding {
   };
 }
 
+/** The identity of the current graph binding alone: the store-reset generation
+ * and the backend binding generation, WITHOUT the display epoch. Display-only
+ * repaints (page rename, typography, journal-title format) bump `graphEpoch`
+ * but keep the same graph, so work that must survive them (a plugin command in
+ * flight) compares this instead of `stillBound`. O(1); never throws. */
+export function bindingIdentity(): string {
+  return `${resetGeneration}:${backend().graphBindingGeneration?.() ?? 0}`;
+}
+
 export function stillBound(binding: Binding): boolean {
   return binding.epoch === graphEpoch()
     && binding.resetGeneration === resetGeneration

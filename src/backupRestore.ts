@@ -29,15 +29,19 @@ export async function restoreBackupFromSettings(
 ): Promise<void> {
   const owner = graphOwner(), root = graphMeta()?.root ?? "";
   const ownsTransition = ownedWhen(() => owner() || (!!root && graphMeta()?.root === root));
-  const confirmed = await readOwned(owner, backend().confirm(
-    `Restore the snapshot from ${when}?\n\n` +
-      `This restores the ${backup.files} file(s) in that backup to their original locations. ` +
-      `Your current state is snapshotted first, so this is reversible.`
-  ));
-  if (confirmed.kind === "stale" || !confirmed.value) return;
+  // Busy is held from the click, across the confirmation, so a second Restore
+  // cannot start while the first one's dialog is open.
   setBusy(true);
-  setGraphTransitioning(true);
+  let transitioning = false;
   try {
+    const confirmed = await readOwned(owner, backend().confirm(
+      `Restore the snapshot from ${when}?\n\n` +
+        `This restores the ${backup.files} file(s) in that backup to their original locations. ` +
+        `Your current state is snapshotted first, so this is reversible.`
+    ));
+    if (confirmed.kind === "stale" || !confirmed.value) return;
+    setGraphTransitioning(true);
+    transitioning = true;
     if (!(await flushAll())) {
       if (owner()) pushToast("Some pages couldn't be saved — resolve conflicts before restoring.", "error");
       return;
@@ -56,7 +60,7 @@ export async function restoreBackupFromSettings(
   } catch (error) {
     pushToast(`Restore failed: ${String(error)}`, "error");
   } finally {
-    if (ownsTransition()) setGraphTransitioning(false);
+    if (transitioning && ownsTransition()) setGraphTransitioning(false);
     setBusy(false);
   }
 }

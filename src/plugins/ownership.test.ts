@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { bindingIdentity, invalidateBinding } from "../binding";
 import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
 import { setGraphTransitioning } from "../ui";
 import type { GraphMeta } from "../types";
@@ -34,10 +35,10 @@ afterEach(() => {
 });
 
 describe("plugin graph ownership", () => {
-  it("captures a frozen host-only owner and rejects root, epoch, and transition changes", () => {
+  it("captures a frozen host-only owner, ignores repaint, and rejects binding/root/transition changes", () => {
     setGraphMeta(meta("/graph-a"));
     const owner = capturePluginGraphOwner();
-    expect(owner).toEqual({ graphRoot: "/graph-a", generation: graphEpoch() });
+    expect(owner).toEqual({ graphRoot: "/graph-a", generation: bindingIdentity() });
     expect(Object.isFrozen(owner)).toBe(true);
     expect(isPluginGraphOwnerCurrent(owner!)).toBe(true);
 
@@ -45,6 +46,9 @@ describe("plugin graph ownership", () => {
     expect(isPluginGraphOwnerCurrent(owner!)).toBe(false);
     setGraphTransitioning(false);
     bumpGraphEpoch();
+    expect(graphEpoch()).toBeGreaterThan(0);
+    expect(isPluginGraphOwnerCurrent(owner!)).toBe(true);
+    invalidateBinding();
     expect(isPluginGraphOwnerCurrent(owner!)).toBe(false);
     setGraphMeta(meta("/graph-b"));
     expect(isPluginGraphOwnerCurrent(owner!)).toBe(false);

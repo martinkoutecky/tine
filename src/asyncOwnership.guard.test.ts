@@ -33,7 +33,7 @@ describe("async ownership guard", () => {
     check("src/mediaEditorSettings.ts", "export async function detectMediaEditorCommand", "export async function initMediaEditorSettings", [/latestOwner\(commandProbes, ed\.settingKey, revisionOwner\(key, currentRevision\(key\)\)\)/, /readOwned\(owner, backend\(\)\.detectMediaEditor/, /result\.kind === "stale"/, /command: mediaEditorCommand\(ed\.settingKey\), applied: false/]);
     const restore = readFileSync("src/backupRestore.ts", "utf8");
     expect(restore, `${RULE}: backup restore must retain its graph owner across confirmation and writes`).toMatch(/graphOwner\(\)[\s\S]*readOwned\(owner, backend\(\)\.confirm[\s\S]*confirmed\.kind === "stale"[\s\S]*writeOwned\(owner, backend\(\)\.restoreBackup/);
-    expect(restore, `${RULE}: an old restore must not release a newer graph transition`).toMatch(/if \(ownsTransition\(\)\) setGraphTransitioning\(false\)/);
+    expect(restore, `${RULE}: an old restore must not release a newer graph transition`).toMatch(/if \(transitioning && ownsTransition\(\)\) setGraphTransitioning\(false\)/);
     const session = readFileSync("src/session.ts", "utf8");
     expect(session, `${RULE}: session restore must discard a stale graph read`).toMatch(/export async function restoreSession[\s\S]*graphOwner\(\)[\s\S]*readOwned\(owner, backend\(\)\.loadSession[\s\S]*result\.kind === "stale"/);
   });
