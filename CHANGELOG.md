@@ -95,6 +95,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **The parser comparison no longer offers known intentional differences as bugs**
+  (master c0c2ff11b, og H). Dollar math inside Markdown emphasis (`**…$x$…**`),
+  which Tine keeps on purpose, is re-verified in isolation and listed under a
+  "known intentional parser difference(s) suppressed" count instead of a reportable
+  divergence.
 - **The "new sync conflicts need review" notice goes away once they are resolved**
   (master 042054c1b, og H). It used to stay beside the green "Merged" confirmation
   until dismissed by hand; it now closes when none of the conflicts it announced is

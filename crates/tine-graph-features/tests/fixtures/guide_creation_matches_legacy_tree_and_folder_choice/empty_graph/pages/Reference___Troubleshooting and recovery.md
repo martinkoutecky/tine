@@ -69,6 +69,6 @@ icon:: 🛟
 	- 3. What you should see: either “The source file sets and bytes match”, or lists named **Only on this device**, **Only on the other device** and **Different bytes** with the file paths. The report holds paths and checksums, never file contents; nothing is uploaded and nothing in your graph changes.
 	- 4. If a file changed while Tine was reading it, the report says **Incomplete** and no match is confirmed: let the sync settle and create the report again.
 - ## Something parses or renders wrong
-	- 1. Open Settings → **Help & diagnostics** → **Help improve Tine's parser**, choose what to run (**Both**, **Divergences**, or **Speed**) and press **Run comparison**: Tine runs its own parser and Logseq's parser over your graph, locally, and lists the places they disagree.
+	- 1. Open Settings → **Help & diagnostics** → **Help improve Tine's parser**, choose what to run (**Both**, **Divergences**, or **Speed**) and press **Run comparison**: Tine runs its own parser and Logseq's parser over your graph, locally, and lists the places they disagree. Known intentional parser differences are not offered as bugs; they are counted under the details.
 	- 2. Copy the report shown there — every snippet is anonymized (page names and words are scrubbed, markup shape kept) and re-verified to still reproduce the divergence before it is shown. Nothing is uploaded.
 	- 3. What you should see: a local report that you can paste into an issue.

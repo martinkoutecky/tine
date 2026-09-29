@@ -468,6 +468,14 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn parser_comparison_guide_says_intentional_differences_are_not_bugs() {
+        // Master c0c2ff11b: a known intentional lsdoc difference is suppressed,
+        // not offered as a reportable parser bug.
+        let recovery = include_str!("templates/troubleshooting-recovery.md");
+        assert!(recovery.contains("Known intentional parser differences are not offered as bugs"));
+    }
+
+    #[test]
     fn the_conflict_review_stays_reachable_while_scrolling_in_the_guide() {
         // Master 61ea6600c: a pinned bar unrolls the review in place.
         let files = include_str!("templates/files-external-edits-backups.md");
