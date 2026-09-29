@@ -24,6 +24,15 @@ body {
 }
 
 :root {
+  /* The FIRST LINE of an ordinary block, owned in one place (GH #459). The
+     bullet column, `.block-content` and `.block-editor` all derive their height
+     from these two tokens, so they cannot disagree. The bullet column used to be
+     a literal 26px: it matched the line-height but not the content's 2px top
+     padding, putting every bullet 2px above the middle of its own first line. A
+     typography preset retunes the token, not three rules. Integer px, not a
+     unitless ratio: see `.block-content`. */
+  --ls-block-line-height: 26px;
+  --ls-block-content-pad-y: 2px;
   /* One named owner for system-inset gutters (GH #205). Browser/iOS surfaces
      use CSS env() values. MainActivity already sizes Android's WebView inside
      the native insets, so main.tsx selects `native-viewport` before render and
@@ -3501,10 +3510,12 @@ html[data-system-insets="native-viewport"] {
   user-select: none;
 }
 
+/* Exactly one first line of block text tall, so centring inside it centres the
+   bullet ON that line (GH #459). Derived, never a literal. */
 .block-controls {
   display: flex;
   align-items: center;
-  height: 26px;
+  height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
   flex: 0 0 auto;
 }
 
@@ -3645,18 +3656,18 @@ html[data-system-insets="native-viewport"] {
   cursor: text;
   white-space: pre-wrap;
   word-break: break-word;
-  padding: 2px 0;
+  padding: var(--ls-block-content-pad-y) 0;
   /* Integer-px line-height (not unitless 1.6) so each line box is a whole number of
      px and the rendered box height equals the editor textarea's integer scrollHeight
      EXACTLY — otherwise the 25.6px fractional line rounds up on focus and the block
      shifts ~0.4px on every click (issue #12). Headings re-assert their own ratio below. */
-  line-height: 26px;
+  line-height: var(--ls-block-line-height);
   /* Full 1-line box height = line-height 26 + padding (2+2). An EMPTY block has no
      line box, so without this it collapses to a 26px border-box (padding only) — 4px
      SHORTER than the editor textarea, which always reserves one line (30px). That gap
      made a blank block jump +4px on click (issue #12 residual). Match 30px so the
      rendered box == the editor box whether or not the block has content. */
-  min-height: 30px;
+  min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
   /* calt OFF. Inter's contextual alternates (calt) drew `->` as an arrow, but the
      SAME feature contextually re-positions the asterisk (`*(` centered vs `)*`
      raised — a visible glitch while editing `*(…)*`). Arrows now come from an
@@ -4031,10 +4042,10 @@ html[data-system-insets="native-viewport"] {
      full 1-line box (line-height 26 + padding 4); it floors the empty-value editor at
      the same height as the rendered empty block so entering/leaving edit on a blank
      block never changes height (and the editor can't shrink below the block). */
-  line-height: 26px;
-  min-height: 30px;
+  line-height: var(--ls-block-line-height);
+  min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
   color: var(--text-primary);
-  padding: 2px 0;
+  padding: var(--ls-block-content-pad-y) 0;
   margin: 0;
   /* calt OFF while editing too (see .block-content): consistent asterisk heights,
      and the raw `->` stays raw in the textarea (the arrow glyph appears on render). */

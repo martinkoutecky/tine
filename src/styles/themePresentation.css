@@ -10,15 +10,16 @@
   display: contents;
 }
 
-/* og keeps its fixed 26px block line box (app.css .block-content/.block-editor)
- * instead of master's --ls-block-line-height token, so the serif face changes the
- * glyphs but never the line box the bullet column is aligned to (GH #459). */
+/* The serif face needs a taller line. Retune the block's line-box token, not
+ * `.block-content`/`.block-editor`, so the bullet column (one line box tall) grows
+ * with the text instead of being left behind at the default 26px (GH #459). */
 html[data-theme-content-typography="editorial-serif"] .page-section {
   --tine-editable-font: "Iowan Old Style", "Palatino Linotype", "Book Antiqua",
     Palatino, Georgia, var(--tine-editable-emoji-font), serif;
   font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino,
     Georgia, serif;
   font-size: 19px;
+  --ls-block-line-height: 30px;
 }
 
 html[data-theme-journal-header="editorial"] .journal-title {

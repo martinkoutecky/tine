@@ -425,7 +425,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                 id={props.id}
                 owner={instanceId}
                 outlineScope={outlineScope}
-                trailing={
+                refCountBadge={
                   // OG's per-block reference-count badge: shown only when the block
                   // is referenced. Plain click toggles the referrers panel below;
                   // shift-click opens the block in the sidebar (matching OG and the
@@ -516,7 +516,11 @@ const SHEET_CELL_BLOCKED_EDITOR_COMMANDS = new Set([
 function Rendered(props: {
   id: string;
   owner?: string;
-  trailing?: JSX.Element;
+  // The reference-count badge. It is a RIGHT FLOAT and must be the FIRST child of
+  // `.block-content`: a float attaches to the line box current where the browser
+  // reaches it, so emitting it last parked it on a wrapped block's LAST line
+  // (GH #454).
+  refCountBadge?: JSX.Element;
   outlineScope?: OutlineScope | null;
 }): JSX.Element {
   const node = () => docNode(props.id);
@@ -618,6 +622,7 @@ function Rendered(props: {
       style={bgColor() ? { background: bgColor() } : undefined}
       onMouseDown={onMouseDown}
     >
+      {props.refCountBadge}
       <Show when={taskCheckboxState(facets().marker) !== null}>
         <span
           class="block-task-checkbox"
@@ -695,7 +700,6 @@ function Rendered(props: {
           </For>
         </span>
       </Show>
-      {props.trailing}
     </div>
     </Show>
   );
