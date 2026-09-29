@@ -1,0 +1,30 @@
+icon:: 📂
+
+- # Bring an existing graph
+	- Tine works directly on the same Markdown/Org files as Logseq — no import, no export, no lock-in.
+- ## Open your graph
+	- 1. On the Welcome screen, choose **Open an existing graph** and pick the graph's top-level folder — usually the one containing `pages/`, `journals/`, and `logseq/`. On Android, grant "All files access" when asked, then tap **Open** again.
+	- 2. Later, use the graph-name menu at the top of the left sidebar → **Open graph…**, or Settings (**t s**) → **Graph** → **Open another graph…**. Graphs you have opened appear in the same sidebar menu for one-click switching.
+	- 3. On desktop, from the command line, `tine /path/to/graph` (or `tine open /path/to/graph`, or `TINE_GRAPH=/path/to/graph`) opens a graph directly.
+	- 4. What you should see: the same pages and journals Logseq finds. Existing Markdown and Org pages may be at the graph root or in nested folders, not only under `pages/` and `journals/`.
+	- If the graph you used last time cannot be opened at launch — the folder moved, a drive is unplugged, a file is unreadable — the Welcome screen says so in a card that names the graph and the reason, with **Try again** and **Copy details** buttons. Nothing was changed on disk; you can also open another graph from the same screen.
+- ## What Tine reads
+	- The usual layout is `pages/`, `journals/`, `assets/`, and `logseq/config.edn`, but Tine also finds eligible `.md`, `.markdown`, and `.org` pages elsewhere inside the graph.
+	- Root-level and nested pages are named from their file names (or their `title::`) and save back to their exact existing paths. Tine skips hidden/internal trees, assets, publish output, and sync-provider conflict copies; `:hidden` prefixes in `config.edn` are honored too.
+	- Your journal settings are honored: Tine reads the journal date formats from `config.edn`, so old files are recognized and new journals are created in your format.
+	- An Org file Tine cannot reproduce byte-for-byte opens **read-only** rather than being rewritten imperfectly.
+- ## What Tine writes
+	- Edits save automatically into the same file each page came from, preserving that file's exact formatting; files with no changes are not rewritten.
+	- New pages and journals are ordinary `.md` or `.org` files in the configured pages and journals folders (Settings → **Editor** → **File format** chooses what new files use).
+	- A Tine view (grid, table, board) attaches harmless `tine.*` properties to its own block; Logseq shows them as ordinary property lines — see [[tine-guide/Features/Sheets]].
+- ## Coexisting with other tools
+	- While Tine is open, it watches the files, so changes made by Logseq, another editor, or a sync tool appear automatically (Settings → **Files** → **Watch for external edits** switches to polling on filesystems where the live watcher is unreliable).
+	- Avoid editing the same graph in two apps at once. A second Tine window on the same graph is refused; concurrent edits across other apps or devices are handled as conflicts, not assumed safe.
+	- If a page changes on disk while you have unsaved edits, Tine overwrites nothing — a banner offers **Use disk version** and **Keep mine (overwrite)**. The mechanics are in [[tine-guide/Reference/Files, external edits, and backups]].
+	- Syncthing and Dropbox keep working on the folder as before; Tine detects their conflict copies, shows an **N conflicts** badge in the left sidebar, and helps you merge them — also in [[tine-guide/Reference/Files, external edits, and backups]].
+- ## First safety checks
+	- 1. Confirm you opened the graph root: Settings (**t s**) → **Graph** shows the current graph path. In a standard Logseq graph, this is the folder containing `pages/`, `journals/`, and `logseq/config.edn`.
+	- 2. Skim [[tine-guide/Reference/Files, external edits, and backups]] now — know where snapshots, conflict copies, and the trash live before you need them.
+	- 3. What you should see: no conflict banner, your existing pages in their original locations, and edits from Tine landing in the same files Logseq reads.
+- ## Where next
+	- [[tine-guide/Start/Where things are]] maps the page, sidebars, tabs, and Settings and Help you will meet on the way; [[tine-guide/Workflows/Capture and plan your day]] starts the journal-first daily flow.

@@ -11,6 +11,7 @@ icon:: 📄
 	- If the highlight file changes outside Tine, choose **Keep mine** to merge your edits or **Use disk version** to discard them. If the disk highlight file cannot be read, **Discard my changes** asks for confirmation, clears only your local highlight edits, and leaves the disk file untouched; an unused local area image may remain.
 	- If an area image cannot be cleaned up after a highlight saves, choose **Retry cleanup** in the PDF viewer. Closing or switching graphs waits until that cleanup succeeds.
 	- It's how you turn a paper into linked, searchable notes without ever leaving Tine.
+	- For the end-to-end path from dropping a PDF in to quoting its passages, see [[tine-guide/Workflows/Research a document]].
 - ## Create one yourself
 	- 1. Put a PDF in your graph's `assets/` folder, or drop it into a page.
 	- 2. Open the PDF from its asset link. On desktop, its tab can be moved into another pane or split. On a phone, use **Back** to return to the page with the link.
