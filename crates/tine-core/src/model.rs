@@ -295,9 +295,15 @@ pub fn sync_conflict_base(stem: &str) -> Option<&str> {
         }
     }
     // Dropbox: "<base> (conflicted copy …)" or "<base> (<user>'s conflicted copy …)".
-    if let Some(i) = stem.find(" (") {
-        if stem[i..].contains("conflicted copy") {
-            return Some(&stem[..i]);
+    // Parsed from the END, like Seafile: the base may itself hold parentheses
+    // (`Meeting (draft) (X's conflicted copy …)` shadows `Meeting (draft)`, never
+    // `Meeting`; C3 L01), and a name that merely contains the words stays a page.
+    if let Some(inner) = stem.strip_suffix(')') {
+        if let Some(i) = inner.rfind(" (") {
+            let args = &inner[i + 2..];
+            if args.contains("conflicted copy") && !args.contains(['(', ')']) {
+                return Some(&stem[..i]);
+            }
         }
     }
     None

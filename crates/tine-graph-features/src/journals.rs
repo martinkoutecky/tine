@@ -290,14 +290,11 @@ pub fn feed_journals_desc_through(store: &Store, cutoff: Day) -> Vec<(Day, PageI
 
 fn migration_target(entry: &FileEntry, fmt: &JournalFormat) -> Option<String> {
     let source_stem = stem(entry)?;
-    if JournalDate::from_file_stem(source_stem).is_some() {
+    if fmt.is_canonical_stem(source_stem) {
         return None;
     }
     let date = fmt.parse(source_stem)?;
     let wanted = fmt.file_stem(date);
-    if wanted == source_stem {
-        return None;
-    }
     let ext = entry.rel.rsplit_once('.')?.1;
     let target = format!("{wanted}.{ext}");
     Some(target)
@@ -511,8 +508,7 @@ pub fn journal_conflicts(store: &Store) -> Vec<JournalConflict> {
                         name,
                         path: entry.id.as_str().to_owned(),
                         preview: preview(store, entry),
-                        canonical: stem(&entry)
-                            .is_some_and(|stem| JournalDate::from_file_stem(stem).is_some()),
+                        canonical: stem(&entry).is_some_and(|stem| fmt.is_canonical_stem(stem)),
                     }
                 })
                 .collect();

@@ -51,6 +51,7 @@ import { dbg } from "./debug";
 import { assetFileName } from "./media";
 import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
+import type { SheetExport, SheetInput } from "./sheet/staticExport";
 import { isPublishedExport, publishedBackend } from "./publishedBackend";
 
 export interface SavePageEntry {
@@ -293,14 +294,19 @@ export interface Backend {
   publishQueryPlan(request: QueryPublicationRequest): Promise<QueryPublicationPlan>;
   /** Recheck the plan and publish a create-only site under a user-picked folder
    * outside the graph. Rejects a stale plan, collision or I/O failure. */
-  publishQuery(request: QueryPublicationRequest, fingerprint: string, destination: string): Promise<PublicationReceipt>;
+  publishQuery(request: QueryPublicationRequest, fingerprint: string, destination: string, sheets: SheetExport[]): Promise<PublicationReceipt>;
   /** Publish a whole-graph read-only app plus static fallback under a picked
    * folder. `allPages` explicitly includes private pages; default public only. */
-  publishLive(destination: string, name: string, allPages: boolean): Promise<PublicationReceipt>;
+  publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]): Promise<PublicationReceipt>;
+  /** The `tine.view` sheet blocks of the named pages (every page when omitted)
+   * with the data the sheet evaluator needs to compute each for a static export.
+   * The `sheets` argument of publishLive/publishQuery/pagePrintHtml answers it
+   * (see sheet/exportSheets.ts); without it a sheet exports as its plain outline. */
+  sheetExportInputs(pages?: string[]): Promise<SheetInput[]>;
   /** Render one page to a self-contained HTML document (assets inlined, no
    *  sidebar) for the print-to-PDF export, with the dialog's options. Rejects if
    *  the page doesn't exist. */
-  pagePrintHtml(name: string, opts: PrintOpts): Promise<string>;
+  pagePrintHtml(name: string, opts: PrintOpts, sheets: SheetExport[]): Promise<string>;
   /** Resolve all Copy / Export query macros under one cumulative native budget. */
   exportQuerySubtrees(specs: QueryExportSpec[]): Promise<QueryExportBatch>;
   /** Parse text and host `tine.*` properties through the Rust query engine.
@@ -611,6 +617,13 @@ export interface Backend {
   rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number): Promise<void>;
   /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
+  /** Watcher freshness (family 10), native only: a checkout-sized batch as one
+   *  event, a refused/restored OS watch, and a focus rescan (one full stat
+   *  diff) whose returned sequence completes after its page events. */
+  onGraphChangedBulk?(cb: (bulk: { changes: GraphChange[]; binding_generation?: number }) => void): Promise<() => void>;
+  onGraphWatchStatus?(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void): Promise<() => void>;
+  onGraphRescanComplete?(cb: (sequence: number) => void): Promise<() => void>;
+  rescanGraphNow?(): Promise<number>;
   /** Subscribe to effective config.edn changes for this window. The event
    * carries a fresh graph meta snapshot after the store reloaded the file. */
   onGraphConfigChanged(cb: (change: GraphConfigChange) => void): Promise<() => void>;
@@ -700,67 +713,8 @@ export interface Backend {
   appArchitecture(): Promise<string>;
 }
 
-export interface DebugInfo {
-  enabled: boolean;
-  path: string;
-  /** The flight recorder is persisted in app data for this run. */
-  recorderActive: boolean;
-  /** The previous run ended without an orderly shutdown. */
-  previousExitUnclean: boolean;
-}
-
-export interface DiagnosticReport {
-  text: string;
-  suggestedFileName: string;
-}
-
-export type DiagnosticFrontendKind =
-  | "uncaught_error" | "unhandled_rejection" | "heartbeat_delay"
-  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved";
-
-/** Why a close discarded drafts: a save failed, or saves were still running. */
-export type DiscardReason = "failed" | "still-saving";
-
-export interface DiagnosticFrontendFields {
-  line?: number;
-  column?: number;
-  delayMs?: number;
-  updaterStage?: string;
-  updaterCause?: string;
-  closeReason?: DiscardReason;
-  pages?: number;
-}
-
-/** Backend-visible rendering-environment facts (Linux-relevant; all false on
- *  macOS/Windows where the env vars don't exist). */
-export interface GpuEnv {
-  /** GPU compositing is off because an env var disabled it (TINE_GPU=0 or
-   *  WEBKIT_DISABLE_DMABUF_RENDERER / WEBKIT_DISABLE_COMPOSITING_MODE). */
-  software_forced: boolean;
-  /** Running from an AppImage (`$APPIMAGE` set) — its bundled GL stack is the
-   *  usual culprit for a silent CPU fallback; steer the user to the deb/rpm. */
-  appimage: boolean;
-}
-
-export interface BackupInfo {
-  /** `YYYY-MM-DD_HH-MM-SS` (UTC). */
-  stamp: string;
-  files: number;
-}
-
-export interface GraphChange {
-  binding_generation?: number;
-  path?: string;
-  name: string;
-  kind: "journal" | "page";
-  created: boolean;
-  removed: boolean;
-}
-
-export interface GraphConfigChange {
-  binding_generation: number;
-  meta: GraphMeta;
-}
+export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, GraphConfigChange } from "./backendTypes";
+import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, GraphConfigChange } from "./backendTypes";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -1011,14 +965,17 @@ class TauriBackend implements Backend {
   publishQueryPlan(request: QueryPublicationRequest) {
     return this.call<QueryPublicationPlan>("publish_query_plan", { request });
   }
-  publishQuery(request: QueryPublicationRequest, fingerprint: string, destination: string) {
-    return this.call<PublicationReceipt>("publish_query", { request, fingerprint, destination });
+  publishQuery(request: QueryPublicationRequest, fingerprint: string, destination: string, sheets: SheetExport[]) {
+    return this.call<PublicationReceipt>("publish_query", { request, fingerprint, destination, sheets });
   }
-  publishLive(destination: string, name: string, allPages: boolean) {
-    return this.call<PublicationReceipt>("publish_live", { destination, name, allPages });
+  publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]) {
+    return this.call<PublicationReceipt>("publish_live", { destination, name, allPages, sheets });
   }
-  pagePrintHtml(name: string, opts: PrintOpts) {
-    return this.call<string>("page_print_html", { name, opts });
+  sheetExportInputs(pages?: string[]) {
+    return this.call<SheetInput[]>("sheet_export_inputs", { pages: pages ?? null });
+  }
+  pagePrintHtml(name: string, opts: PrintOpts, sheets: SheetExport[]) {
+    return this.call<string>("page_print_html", { name, opts, sheets });
   }
   exportQuerySubtrees(specs: QueryExportSpec[]) {
     return this.call<QueryExportBatch>("export_query_subtrees", { specs });
@@ -1357,14 +1314,18 @@ class TauriBackend implements Backend {
   rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number) {
     return this.assetCall<void>("rollback_pdf_area_image", { pdf, page, id, stamp }, bindingGeneration);
   }
-  async onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void> {
-    const { listen } = await import("@tauri-apps/api/event");
-    return listen<GraphChange>("graph-changed", (e) => cb(e.payload));
+  private async on<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
+    return (await import("@tauri-apps/api/event")).listen<T>(event, (e) => cb(e.payload));
   }
-  async onGraphConfigChanged(cb: (change: GraphConfigChange) => void): Promise<() => void> {
-    const { listen } = await import("@tauri-apps/api/event");
-    return listen<GraphConfigChange>("graph-config-changed", (event) => cb(event.payload));
+  onGraphChanged(cb: (c: GraphChange) => void) { return this.on("graph-changed", cb); }
+  onGraphChangedBulk(cb: (bulk: { changes: GraphChange[]; binding_generation?: number }) => void) { return this.on("graph-changed-bulk", cb); }
+  async onGraphWatchStatus(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void) {
+    const [a, b] = await Promise.all([true, false].map((refused) => this.on<{ message: string }>(`graph-watch-${refused ? "refused" : "restored"}`, (p) => cb({ ...p, refused }))));
+    return () => { a(); b(); };
   }
+  onGraphRescanComplete(cb: (sequence: number) => void) { return this.on("graph-rescan-complete", cb); }
+  rescanGraphNow() { return this.call<number>("rescan_graph_now"); }
+  onGraphConfigChanged(cb: (change: GraphConfigChange) => void) { return this.on("graph-config-changed", cb); }
   getBackupKeep() {
     return this.call<number>("get_backup_keep");
   }

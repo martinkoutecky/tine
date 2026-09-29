@@ -1,10 +1,12 @@
 import { backend, type GraphChange } from "../backend";
-import { captureBinding } from "../binding";
+import { captureBinding, stillBound } from "../binding";
+import { conflictPolicyAlwaysAsk, holdExternalChange, installHeldExternalChangeApplier } from "../conflictPolicy";
+import { pushToast } from "../toasts";
 import { graphOwner, readOwned } from "../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { toLoadablePage } from "./convert";
 import { doc, feedNames, pageByName } from "./model";
-import { markConflict } from "./save/engine";
+import { isConflicted, markConflict } from "./save/engine";
 import { deferExternalReload, installDeferredReloadReplay } from "./deferredReload";
 import { rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, restoreTodayJournalInFeed } from "./workingSet";
 
@@ -25,6 +27,10 @@ installDeferredReloadReplay({
   run: (change) => void applyGraphChange(change),
 });
 
+// "Always ask" (conflictPolicy.ts): Reload from disk re-enters this handler with
+// the policy bypassed for that one change.
+installHeldExternalChangeApplier((change) => void applyGraphChange(change, true));
+
 let captureExternalChangeUi: (() => ExternalChangeUi) | null = null;
 export function installExternalChangeUiHandler(capture: () => ExternalChangeUi): void {
   captureExternalChangeUi = capture;
@@ -35,15 +41,46 @@ export function installExternalChangeUiHandler(capture: () => ExternalChangeUi):
  * notify route/feed UI about a removal. The watcher/backend has already
  * updated disk and its cache; this function does not persist the change.
  * Page reads may reject. Cost follows the affected page and current UI state. */
-export async function applyGraphChange(c: GraphChange): Promise<void> {
+export async function applyGraphChange(c: GraphChange, bypassPolicy = false): Promise<void> {
   const binding = captureBinding();
-  const owner = graphOwner();
   if (c.binding_generation !== undefined && c.binding_generation !== binding.backendGeneration) return;
   // The watcher has already updated the backend graph cache. Invalidate even
   // when this page is outside the bounded frontend working set.
   bumpDataRev();
   if (c.created || c.removed) bumpPageInventoryRev();
+  await applyObservedChange(c, captureExternalChangeUi?.(), bypassPolicy);
+}
+
+/** One checkout-sized watcher batch (`graph-changed-bulk`, over 32 pages;
+ *  master 1229f32fb): revisions move once, only pages something loads, shows
+ *  or holds are applied (each through the same per-page decision), the journal
+ *  feed restarts at most once, and one summary toast replaces per-page work.
+ *  Cost O(changes) plus one page read per loaded or shown page. */
+export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; binding_generation?: number }): Promise<void> {
+  const binding = captureBinding();
+  if (bulk.binding_generation !== undefined && bulk.binding_generation !== binding.backendGeneration) return;
+  const changes = bulk.changes;
+  if (!changes.length) return;
+  bumpDataRev();
+  if (changes.some((c) => c.created || c.removed)) bumpPageInventoryRev();
   const ui = captureExternalChangeUi?.();
+  let restart = false, conflicts = 0;
+  const batchUi = ui && { ...ui, restartJournalFeed: () => { restart = true; } };
+  for (const c of changes) {
+    if (!stillBound(binding)) return;
+    const name = (c.path && doc.pages.find((page) => page.id === c.path)?.name) || c.name;
+    // A page nothing loads or shows is refetched on navigation anyway.
+    if (!c.removed && !ui?.pageOpen(c.name) && !pageByName(name) && reloadDisposition(name) === "reload") continue;
+    await applyObservedChange(c, batchUi, false);
+    if (isConflicted(name)) conflicts++;
+  }
+  if (!stillBound(binding)) return;
+  if (restart || (ui?.journalsOpen && changes.some((c) => c.kind === "journal"))) ui?.restartJournalFeed();
+  pushToast(`${changes.length} pages updated externally${conflicts ? ` · ${conflicts} conflict${conflicts === 1 ? "" : "s"} to review` : ""}`, "info");
+}
+
+async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefined, bypassPolicy: boolean): Promise<void> {
+  const owner = graphOwner();
   const restartJournalFeed = () => {
     if (c.kind === "journal") ui?.restartJournalFeed();
   };
@@ -88,6 +125,13 @@ export async function applyGraphChange(c: GraphChange): Promise<void> {
   if (disp === "conflict" || disp === "skip") {
     if (disp === "skip") deferExternalReload(currentName, c);
     restartJournalFeed();
+    return;
+  }
+  // "Always ask": reached only after the conflict/skip branches, so it turns
+  // the one SILENT case (a loaded, clean page) into an asked one and changes
+  // nothing that already asked or deferred.
+  if (!bypassPolicy && conflictPolicyAlwaysAsk() && pageByName(currentName)) {
+    holdExternalChange(currentName, c);
     return;
   }
   if (c.path && loadedName && loadedName !== c.name) {

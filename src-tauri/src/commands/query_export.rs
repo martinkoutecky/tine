@@ -7,6 +7,7 @@ use tauri::Manager;
 use tine_graph_features::publish_query::{
     self, ExportReceipt, QueryExportPlan, QueryExportRequest,
 };
+use tine_graph_features::{SheetExport, SheetInput};
 
 fn embedded_bundle(app: &tauri::AppHandle) -> Vec<(String, Vec<u8>)> {
     let resolver = app.asset_resolver();
@@ -49,17 +50,19 @@ pub(crate) async fn publish_query(
     request: QueryExportRequest,
     fingerprint: String,
     destination: String,
+    sheets: Vec<SheetExport>,
     state: GraphContext<'_>,
 ) -> Result<ExportReceipt, String> {
     let slot = slot_for_context(&state)?;
     let bundle = embedded_bundle(state.window.app_handle());
     tauri::async_runtime::spawn_blocking(move || {
-        publish_query::publish_query(
+        publish_query::publish_query_with_sheets(
             &slot.store,
             &request,
             &fingerprint,
             &PathBuf::from(destination),
             &bundle,
+            sheets,
         )
         .map_err(|e| e.to_string())
     })
@@ -74,19 +77,39 @@ pub(crate) async fn publish_live(
     destination: String,
     name: String,
     all_pages: bool,
+    sheets: Vec<SheetExport>,
     state: GraphContext<'_>,
 ) -> Result<ExportReceipt, String> {
     let slot = slot_for_context(&state)?;
     let bundle = embedded_bundle(state.window.app_handle());
     tauri::async_runtime::spawn_blocking(move || {
-        publish_query::publish_live(
+        publish_query::publish_live_with_sheets(
             &slot.store,
             &PathBuf::from(destination),
             &name,
             all_pages,
             &bundle,
+            sheets,
         )
         .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The sheet blocks (`tine.view`) of the named pages, or of every page, with the
+/// data the frontend's sheet evaluator needs to compute each for a static export
+/// (print or publish). The frontend answers with one `SheetExport` per block;
+/// the Rust publisher lays them out and computes nothing itself (I-12).
+#[tauri::command]
+pub(crate) async fn sheet_export_inputs(
+    pages: Option<Vec<String>>,
+    state: GraphContext<'_>,
+) -> Result<Vec<SheetInput>, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::publish::sheet_export_inputs(&slot.store, pages.as_deref())
+            .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?

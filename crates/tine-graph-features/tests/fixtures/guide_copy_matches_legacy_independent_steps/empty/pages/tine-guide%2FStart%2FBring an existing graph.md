@@ -20,7 +20,7 @@ icon:: 📂
 - ## Coexisting with other tools
 	- While Tine is open, it watches the files, so changes made by Logseq, another editor, or a sync tool appear automatically (Settings → **Files** → **Watch for external edits** switches to polling on filesystems where the live watcher is unreliable).
 	- Avoid editing the same graph in two apps at once. A second Tine window on the same graph is refused; concurrent edits across other apps or devices are handled as conflicts, not assumed safe.
-	- If a page changes on disk while you have unsaved edits, Tine overwrites nothing — a banner offers **Use disk version** and **Keep mine (overwrite)**. The mechanics are in [[tine-guide/Reference/Files, external edits, and backups]].
+	- If a page changes on disk while you have unsaved edits, Tine overwrites nothing — a banner offers **Review**, which compares your draft with the disk version on the page. The mechanics are in [[tine-guide/Reference/Files, external edits, and backups]].
 	- Syncthing and Dropbox keep working on the folder as before; Tine detects their conflict copies, shows an **N conflicts** badge in the left sidebar, and helps you merge them — also in [[tine-guide/Reference/Files, external edits, and backups]].
 - ## First safety checks
 	- 1. Confirm you opened the graph root: Settings (**t s**) → **Graph** shows the current graph path. In a standard Logseq graph, this is the folder containing `pages/`, `journals/`, and `logseq/config.edn`.

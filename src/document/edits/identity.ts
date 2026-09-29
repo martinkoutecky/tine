@@ -6,7 +6,8 @@ import { blockWritable } from "./properties";
 import { markDirty, flushPage, isConflicted, persistTogether } from "../save/engine";
 import { backend } from "../../backend";
 import { ensurePageLoaded } from "../workingSet";
-import { orgBlockDrawerRange } from "../../editor/properties";
+import { orgBlockDrawerRange, orgLinesWithNewDrawer } from "../../editor/properties";
+import { literalBlockOfLine } from "../../editor/literalLines";
 
 /** The block's existing durable `id` — a markdown `id:: <uuid>` trailer or an
  *  org `:PROPERTIES:` drawer `:id: <uuid>` line — case-insensitively, or null.
@@ -14,7 +15,16 @@ import { orgBlockDrawerRange } from "../../editor/properties";
  *  reads the drawer, not a `key::` line); so an org block's real id lives in its
  *  `:PROPERTIES:` drawer and must be matched there (GH #25). */
 export function existingBlockId(raw: string, format: Format): string | null {
-  if (format !== "org") return /(?:^|\n)id:: *(\S+)/i.exec(raw)?.[1] ?? null;
+  if (format !== "org") {
+    // An `id::` line inside a code/src block is code, not the block's id (C3 L13).
+    const literal = literalBlockOfLine(raw, "md");
+    const lines = raw.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const id = literal[i] === -1 ? /^id:: *(\S+)/i.exec(lines[i])?.[1] : undefined;
+      if (id) return id;
+    }
+    return null;
+  }
   const lines = raw.split("\n");
   const drawer = orgBlockDrawerRange(lines);
   if (!drawer) return null;
@@ -102,15 +112,7 @@ export function rawWithBlockId(raw: string, uuid: string, format: Format): strin
   }
   // No drawer: title, SCHEDULED*, DEADLINE*, :PROPERTIES: drawer, rest-of-body —
   // OG groups planning lines above the drawer (util/property.cljs insert-property).
-  const [title, ...rest] = lines;
-  const isSched = (l: string) => l.startsWith("SCHEDULED");
-  const isDead = (l: string) => l.startsWith("DEADLINE");
-  const scheduled = rest.filter(isSched);
-  const deadline = rest.filter(isDead);
-  const body = rest.filter((l) => !isSched(l) && !isDead(l));
-  return [title, ...scheduled, ...deadline, ":PROPERTIES:", `:id: ${uuid}`, ":END:", ...body].join(
-    "\n"
-  );
+  return orgLinesWithNewDrawer(lines, [`:id: ${uuid}`]).join("\n");
 }
 
 /** `raw` with an org drawer property set/updated/removed. Operates ONLY on the

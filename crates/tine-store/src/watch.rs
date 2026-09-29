@@ -7,15 +7,65 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use notify::Watcher;
 
 use crate::model::{Graph, SyncFileResult};
 use crate::store::{
     journal_ids_from_entries, ChangeFeed, ChangeKind, ConfigState, Day, FileId, FileRev, LoadError,
-    LoadState, LoadStatus, Origin, PageId, WatchMode,
+    LoadState, LoadStatus, Origin, PageId, WatchBatch, WatchMode,
 };
+
+/// Boundary between "a burst of ordinary edits" and "an external revision"
+/// (a VCS checkout, branch switch or first big sync; master 1229f32fb, GH
+/// #337). One atomic save is at most two paths and a human-scale sync delta is
+/// single digits to low tens; a checkout is typically hundreds. Above it a
+/// drained batch escalates to the full stat diff, where an unchanged file
+/// costs one stat instead of a hash, and the window adapter announces the
+/// revision as one bulk event.
+pub(crate) const BULK_CHANGE_THRESHOLD: usize = 32;
+
+/// Directory names whose churn can never describe graph text: a repository or
+/// a sync client's bookkeeping parked inside the graph (`git gc`, an index
+/// lock per command, a `.stversions` sweep; master cd2d7562a). Every name is
+/// outside graph text on its own (`graph_text_directory_scannable` refuses
+/// dot-directories and `node_modules`); `tool_noise_dirs_never_hold_graph_text`
+/// pins that, so this list can never hide a page. Matched relative to the
+/// graph root, so a graph that itself lives under `.git/` is unaffected.
+const TOOL_NOISE_DIRS: &[&str] = &[
+    ".bzr",
+    ".git",
+    ".hg",
+    ".jj",
+    ".stfolder",
+    ".stversions",
+    ".svn",
+    "node_modules",
+];
+
+fn path_is_tool_noise(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root).is_ok_and(|relative| {
+        relative.components().any(|component| {
+            component
+                .as_os_str()
+                .to_str()
+                .is_some_and(|name| TOOL_NOISE_DIRS.contains(&name))
+        })
+    })
+}
+
+/// True only when EVERY path of the event is tool noise. Never for a
+/// rescan-required or pathless event, and never for a rename with one
+/// ordinary side (a file moved out of `.git` must still be seen).
+fn event_is_tool_noise(event: &notify::Event, root: &Path) -> bool {
+    !event.need_rescan()
+        && !event.paths.is_empty()
+        && event
+            .paths
+            .iter()
+            .all(|path| path_is_tool_noise(root, path))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Stamp {
@@ -284,18 +334,27 @@ fn incremental_paths(event: &notify::Event) -> Option<Vec<PathBuf>> {
 struct Pending {
     paths: HashSet<PathBuf>,
     full: bool,
+    /// First admitted notification of the batch now accumulating, for the
+    /// latency receipt (one stamp per batch, none per path).
+    first_event_at: Option<Instant>,
 }
 
 impl Pending {
+    /// Admit one notification; false when it can never change graph text
+    /// (tool noise), in which case the watcher is not woken at all.
     fn add(
         &mut self,
         event: notify::Result<notify::Event>,
         dirs: &[PathBuf; 1],
         config: &tine_core::Config,
-    ) {
+    ) -> bool {
+        if matches!(&event, Ok(event) if event_is_tool_noise(event, &dirs[0])) {
+            return false;
+        }
+        self.first_event_at.get_or_insert_with(Instant::now);
         let Ok(event) = event else {
             self.full = true;
-            return;
+            return true;
         };
         if event.need_rescan() {
             self.full |= event.paths.is_empty()
@@ -303,7 +362,7 @@ impl Pending {
                     .paths
                     .iter()
                     .any(|path| dirs.iter().any(|dir| path.starts_with(dir)));
-            return;
+            return true;
         }
         if let Some(paths) = incremental_paths(&event) {
             self.paths.extend(
@@ -319,6 +378,16 @@ impl Pending {
         {
             self.full = true;
         }
+        true
+    }
+
+    /// Take the accumulated batch: its exact paths, whether it needs the full
+    /// stat diff (unclassifiable events, or a burst above the bulk threshold),
+    /// and its first-notification stamp.
+    fn drain(&mut self) -> (HashSet<PathBuf>, bool, Option<Instant>) {
+        let paths = std::mem::take(&mut self.paths);
+        let full = std::mem::take(&mut self.full) || paths.len() > BULK_CHANGE_THRESHOLD;
+        (paths, full, self.first_event_at.take())
     }
 }
 
@@ -347,6 +416,12 @@ pub(crate) struct Core {
 }
 
 impl Core {
+    /// Record the live-notification state on the change feed, which tells
+    /// its subscriber (see `ChangeFeed::set_watch_refusal`).
+    fn set_refusal(&self, now: Option<String>, restored: bool) {
+        self.changes.set_watch_refusal(now, restored);
+    }
+
     fn path_for_id(&self, id: &FileId) -> PathBuf {
         if let Some(rel) = id.as_str().strip_prefix("assets/") {
             self.graph.assets_path().join(rel)
@@ -404,12 +479,32 @@ impl Core {
         self.reconcile_locked(paths, include_config, scan_semantics)
     }
 
+    /// One watcher cycle; its publication carries `batch` for latency receipts.
+    fn reconcile_batch(
+        &self,
+        paths: Option<&HashSet<PathBuf>>,
+        batch: WatchBatch,
+    ) -> Result<(), LoadError> {
+        let _writer = self.writer.lock().unwrap();
+        self.reconcile_inner(paths, false, false, Some(batch))
+    }
+
     // Caller holds writer through reconciliation and any recovery publication.
     fn reconcile_locked(
         &self,
         paths: Option<&HashSet<PathBuf>>,
         include_config: bool,
         scan_semantics: bool,
+    ) -> Result<(), LoadError> {
+        self.reconcile_inner(paths, include_config, scan_semantics, None)
+    }
+
+    fn reconcile_inner(
+        &self,
+        paths: Option<&HashSet<PathBuf>>,
+        include_config: bool,
+        scan_semantics: bool,
+        batch: Option<WatchBatch>,
     ) -> Result<(), LoadError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(LoadError::Closed);
@@ -608,8 +703,14 @@ impl Core {
         };
         drop(snapshot);
         if !files.is_empty() || config_changed || unreadable_changed {
-            self.changes
-                .publish(Origin::External, files, config_changed, pages);
+            self.changes.publish_watched(
+                Origin::External,
+                files,
+                config_changed,
+                pages,
+                || {},
+                batch,
+            );
         }
         Ok(())
     }
@@ -897,6 +998,44 @@ impl WatchHandle {
     }
 }
 
+#[cfg(test)]
+static REFUSED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// Install live notifications for the graph root, or say why the OS refused
+/// (inotify's per-user watch limit, a network mount, a missing root).
+fn install_watch(
+    core: &Arc<Core>,
+    dirs: &[PathBuf; 1],
+    pending: &Arc<Mutex<Pending>>,
+    wake: &Sender<()>,
+) -> Result<notify::RecommendedWatcher, String> {
+    #[cfg(test)]
+    if REFUSED_ROOTS.lock().unwrap().contains(&dirs[0]) {
+        return Err("watch refused by test".into());
+    }
+    let pending = Arc::clone(pending);
+    let wake = wake.clone();
+    let callback_dirs = dirs.clone();
+    let callback_graph = Arc::clone(&core.graph);
+    let mut created = notify::recommended_watcher(move |event| {
+        let admitted =
+            pending
+                .lock()
+                .unwrap()
+                .add(event, &callback_dirs, &callback_graph.current_config());
+        if admitted {
+            let _ = wake.send(());
+        }
+    })
+    .map_err(|error| error.to_string())?;
+    for dir in dirs {
+        created
+            .watch(dir, notify::RecursiveMode::Recursive)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(created)
+}
+
 fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Receiver<()>) {
     let pending = Arc::new(Mutex::new(Pending::default()));
     let mut watcher: Option<notify::RecommendedWatcher> = None;
@@ -907,39 +1046,33 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
         let selected = *mode.lock().unwrap();
         let dirs = core.dirs.read().unwrap().clone();
         let dir_ids = [directory_identity(&dirs[0])];
-        if active != Some(selected)
+        // A refused watch is retried every cycle: polling covers the gap (I-9:
+        // the refusal was reported, so it is never silent staleness).
+        let retry = selected == WatchMode::Notify && watcher.is_none();
+        if retry
+            || active != Some(selected)
             || active_dirs.as_ref() != Some(&dirs)
             || active_dir_ids.as_ref() != Some(&dir_ids)
         {
+            let retrying = retry && active == Some(selected);
             watcher = None;
             active = Some(selected);
             active_dirs = Some(dirs.clone());
             active_dir_ids = Some(dir_ids);
             if selected == WatchMode::Notify {
-                let pending = Arc::clone(&pending);
-                let wake = wake.clone();
-                let callback_dirs = dirs.clone();
-                let callback_graph = Arc::clone(&core.graph);
-                if let Ok(mut created) = notify::recommended_watcher(move |event| {
-                    pending.lock().unwrap().add(
-                        event,
-                        &callback_dirs,
-                        &callback_graph.current_config(),
-                    );
-                    let _ = wake.send(());
-                }) {
-                    let mut watched = true;
-                    for dir in &dirs {
-                        watched &= created.watch(dir, notify::RecursiveMode::Recursive).is_ok();
-                    }
-                    if watched {
+                match install_watch(&core, &dirs, &pending, &wake) {
+                    Ok(created) => {
                         watcher = Some(created);
+                        core.set_refusal(None, true);
                     }
+                    Err(message) => core.set_refusal(Some(message), true),
                 }
+            } else {
+                core.set_refusal(None, false);
             }
-            if core.ready() {
-                // A recreated root can already contain files before its new
-                // backend watch is installed. Reconcile that gap once.
+            if core.ready() && (watcher.is_some() || !retrying) {
+                // A recreated root, or a watch installed after polling, can
+                // already contain files it never reported. Reconcile once.
                 let _ = core.reconcile(None, false, false);
             }
         }
@@ -957,18 +1090,28 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
             if !core.ready() {
                 continue;
             }
-            let mut pending = pending.lock().unwrap();
-            let full = pending.full;
-            let paths = std::mem::take(&mut pending.paths);
-            pending.full = false;
-            drop(pending);
+            let (paths, full, first_event_at) = pending.lock().unwrap().drain();
             if full || !paths.is_empty() {
-                let _ = core.reconcile(if full { None } else { Some(&paths) }, false, false);
+                let batch = WatchBatch {
+                    first_event_at,
+                    reconcile_started: Instant::now(),
+                    poll: false,
+                    full_diff: full,
+                    event_paths: paths.len(),
+                };
+                let _ = core.reconcile_batch(if full { None } else { Some(&paths) }, batch);
             }
         } else {
             let _ = rx.recv_timeout(Duration::from_secs(3));
             if core.ready() && !core.closed.load(Ordering::Acquire) {
-                let _ = core.reconcile(None, false, false);
+                let batch = WatchBatch {
+                    first_event_at: None,
+                    reconcile_started: Instant::now(),
+                    poll: true,
+                    full_diff: true,
+                    event_paths: 0,
+                };
+                let _ = core.reconcile_batch(None, batch);
             }
         }
     }
@@ -978,6 +1121,193 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
 mod tests {
     use super::*;
     use crate::store::{OpenOptions, Store};
+
+    fn temp_root(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "tine-{tag}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::create_dir_all(root.join("journals")).unwrap();
+        root
+    }
+
+    fn modify(paths: Vec<PathBuf>) -> notify::Event {
+        notify::Event {
+            kind: notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Any,
+            )),
+            paths,
+            attrs: Default::default(),
+        }
+    }
+
+    /// Receive until `until` holds for a received change, or panic after 10 s.
+    fn wait_for(
+        subscription: &crate::store::Subscription,
+        until: impl Fn(&crate::store::Change) -> bool,
+    ) -> crate::store::Change {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match subscription.try_recv().unwrap() {
+                Some(change) if until(&change) => return change,
+                Some(_) => {}
+                None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+                None => panic!("the watcher never published the expected change"),
+            }
+        }
+    }
+
+    /// Master cd2d7562a: a repository or sync client parked inside the graph
+    /// never wakes the watcher, and never escalates a full rescan; a rename
+    /// out of `.git` is still seen.
+    #[test]
+    fn tool_noise_never_wakes_the_watcher_and_never_hides_a_page() {
+        let root = temp_root("noise");
+        let config = tine_core::Config::default();
+        for name in TOOL_NOISE_DIRS {
+            let dir = root.join(name);
+            assert!(
+                !crate::model::graph_text_directory_scannable(&root, &dir, &config)
+                    && !crate::model::graph_text_watch_relevant(&root, &dir.join("Page.md"), &config),
+                "{name} must be outside graph text on its own, or the noise filter could hide a page"
+            );
+            let mut pending = Pending::default();
+            let admitted = pending.add(
+                Ok(modify(vec![dir.join("index"), dir.join("sub/Page.md")])),
+                &[root.clone()],
+                &config,
+            );
+            assert!(
+                !admitted && !pending.full && pending.paths.is_empty(),
+                "{name}"
+            );
+            assert!(pending.first_event_at.is_none());
+        }
+        let page = root.join("pages/A.md");
+        fs::write(&page, "- a\n").unwrap();
+        let mut pending = Pending::default();
+        let rename = notify::Event {
+            kind: notify::EventKind::Modify(notify::event::ModifyKind::Name(
+                notify::event::RenameMode::Both,
+            )),
+            paths: vec![root.join(".git/A.md"), page.clone()],
+            attrs: Default::default(),
+        };
+        assert!(pending.add(Ok(rename), &[root.clone()], &config));
+        assert!(pending.full || pending.paths.contains(&page));
+        let mut overflow = Pending::default();
+        assert!(overflow.add(
+            Ok(modify(Vec::new()).set_flag(notify::event::Flag::Rescan)),
+            &[root.clone()],
+            &config
+        ));
+        assert!(overflow.full, "a kernel queue overflow is never noise");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Master 1229f32fb (GH #337): a drained batch above the bulk threshold
+    /// takes the full stat diff (one stat per unchanged file instead of a hash
+    /// per evented path); at the threshold it stays incremental.
+    #[test]
+    fn a_checkout_sized_burst_escalates_to_one_full_diff() {
+        let root = temp_root("burst");
+        let config = tine_core::Config::default();
+        for (count, escalates) in [
+            (BULK_CHANGE_THRESHOLD, false),
+            (BULK_CHANGE_THRESHOLD + 1, true),
+        ] {
+            let mut pending = Pending::default();
+            for index in 0..count {
+                let page = root.join(format!("pages/P{index}.md"));
+                fs::write(&page, "- checked out\n").unwrap();
+                assert!(pending.add(Ok(modify(vec![page])), &[root.clone()], &config));
+            }
+            let (paths, full, first) = pending.drain();
+            assert_eq!((paths.len(), full), (count, escalates));
+            assert!(first.is_some());
+            assert_eq!(
+                pending.drain(),
+                (HashSet::new(), false, None),
+                "drain empties the batch"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// I-9: the OS refusing live notifications degrades to polling, is
+    /// reported with its reason, is retried every cycle, and the restored
+    /// watch is reported too. In-scope scenario: inotify's per-user watch
+    /// limit reached by a second large graph, or a network mount.
+    #[test]
+    fn a_refused_watch_polls_reports_and_recovers() {
+        let root = temp_root("refused");
+        REFUSED_ROOTS.lock().unwrap().push(root.clone());
+        let store = Store::open(
+            &root,
+            OpenOptions {
+                approved_external_assets: None,
+                watch: WatchMode::Notify,
+            },
+        )
+        .unwrap()
+        .0;
+        store.whole_graph().unwrap();
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&statuses);
+        let subscription = store.subscribe();
+        subscription.observe_watch_status(move |status| sink.lock().unwrap().push(status));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while statuses.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            *statuses.lock().unwrap(),
+            vec![Some("watch refused by test".to_owned())]
+        );
+        fs::write(root.join("pages/Polled.md"), "- seen by polling\n").unwrap();
+        let change = wait_for(&subscription, |change| {
+            change
+                .files
+                .iter()
+                .any(|(id, _, _)| id.as_str() == "pages/Polled.md")
+        });
+        assert!(change
+            .watch
+            .is_some_and(|batch| batch.poll && batch.full_diff));
+        std::thread::sleep(Duration::from_millis(3500));
+        assert_eq!(
+            statuses.lock().unwrap().len(),
+            1,
+            "a retry failing the same way stays quiet"
+        );
+        REFUSED_ROOTS
+            .lock()
+            .unwrap()
+            .retain(|refused| refused != &root);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while statuses.lock().unwrap().len() < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(statuses.lock().unwrap()[1], None, "restored");
+        std::thread::sleep(Duration::from_millis(150));
+        fs::write(root.join("pages/Live.md"), "- seen live\n").unwrap();
+        let change = wait_for(&subscription, |change| {
+            change
+                .files
+                .iter()
+                .any(|(id, _, _)| id.as_str() == "pages/Live.md")
+        });
+        let batch = change.watch.unwrap();
+        assert!(!batch.poll && batch.first_event_at.is_some());
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn watcher_inventory_and_incremental_path_share_hidden_policy() {

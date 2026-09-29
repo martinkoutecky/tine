@@ -792,7 +792,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     onGraphConfigChanged: unsubscribed,
     onGraphReopened: unsubscribed,
     onQueryProjectionChanged: unsubscribed,
-    onGraphWatchError: unsubscribed,
+    onGraphWatchStatus: unsubscribed,
     onGraphUnreadablePages: unsubscribed,
     onGraphVerificationProgress: unsubscribed,
   };
@@ -934,7 +934,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "onGraphConfigChanged",
   "onGraphReopened",
   "onQueryProjectionChanged",
-  "onGraphWatchError",
+  "onGraphWatchStatus",
   "onGraphUnreadablePages",
   "onGraphVerificationProgress",
 ] as const;
@@ -945,6 +945,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
 export const PUBLISHED_REFUSED_METHODS = [
   "savePages",
   "publishLive",
+  "sheetExportInputs",
   "approveExternalAssets",
   "openGraphWindow",
   "forgetKnownGraph",

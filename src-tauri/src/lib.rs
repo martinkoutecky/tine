@@ -80,7 +80,7 @@ use plugins::{
     install_plugin, list_installed_plugins, load_plugin_registry_cache, read_plugin_entry,
     set_plugin_enabled, store_plugin_registry_cache, uninstall_plugin, verify_plugin_registry,
 };
-use query_export::{publish_live, publish_query, publish_query_plan};
+use query_export::{publish_live, publish_query, publish_query_plan, sheet_export_inputs};
 use query_ir::{
     query_explain_empty, query_og_expressible, query_parse, query_print, query_registry, query_run,
 };
@@ -100,7 +100,7 @@ use std::sync::{Mutex, RwLock};
 #[cfg(desktop)]
 use tauri::Emitter;
 use tauri::Manager;
-use watcher::{get_watch_mode, set_watch_mode};
+use watcher::{get_watch_mode, rescan_graph_now, set_watch_mode, watcher_latency_recent};
 
 #[cfg(desktop)]
 const MAIN_WINDOW_REVEAL_FALLBACK_MS: u64 = 3_000;
@@ -774,6 +774,7 @@ pub fn run() {
             publish_query_plan,
             publish_query,
             publish_live,
+            sheet_export_inputs,
             page_print_html,
             export_query_subtrees,
             run_graph_search,
@@ -855,6 +856,8 @@ pub fn run() {
             set_link_first_match,
             get_watch_mode,
             set_watch_mode,
+            rescan_graph_now,
+            watcher_latency_recent,
             list_backups,
             restore_backup,
             load_session,

@@ -35,6 +35,7 @@ import { PagePropertyValue } from "./PagePropertyValue";
 import { PageConflictResolution } from "./ConflictResolution";
 import { conflictForPage } from "../conflictQueue";
 import { liveConflictForPage } from "../liveConflicts";
+import { ExternalChangeBar } from "./ExternalChangeBar";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -1010,6 +1011,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           round-trip yet, so it won't be edited here.
         </div>
       </Show>
+      <ExternalChangeBar name={props.page.name} />
       {/* Concord: a queued conflict is resolved AT the page, block by block. */}
       <Show when={conflictForPage(props.page.id) ?? liveConflictForPage(props.page.name, props.page.id)}>
         {(conflict) => (

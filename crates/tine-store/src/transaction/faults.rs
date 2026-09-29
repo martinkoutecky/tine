@@ -61,6 +61,9 @@ pub enum FaultPoint {
     /// Abort the process after a marker resolution staged the pre-resolution
     /// bytes in conflict trash, before the replacement; requires `test-faults`.
     AbortAfterMarkerStage,
+    /// Abort the process after undo withdrew a replaced file's new bytes to
+    /// conflict trash, before it rewrote the old bytes; requires `test-faults`.
+    AbortAfterUndoWithdraw,
 }
 
 #[cfg(not(any(test, feature = "test-faults")))]
@@ -86,6 +89,7 @@ pub(crate) enum FaultPoint {
     AbortAfterMoveRewrite,
     MoveAfterTrashCopyIo,
     AbortAfterMarkerStage,
+    AbortAfterUndoWithdraw,
 }
 
 #[cfg(any(test, feature = "test-faults"))]

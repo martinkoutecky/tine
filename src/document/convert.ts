@@ -5,7 +5,7 @@ import { trimBlockTrailingSpace } from "../editor/format";
 import { isPageHeaderPropertiesOnly, parsePageHeaderPropertyLine } from "../editor/properties";
 import { journalTitle, appNow } from "../journal";
 import { rawWithCollapsed } from "./edits/properties";
-import { orgRawWithProperty } from "./edits/identity";
+import { existingBlockId, orgRawWithProperty } from "./edits/identity";
 
 /** Wire DTO constructors live here; callers choose the intent and supply content. */
 export function emptyPage(name: string, kind: "journal" | "page"): PageDto {
@@ -73,10 +73,26 @@ export function favoritesArrangementBlocks(blocks: readonly BlockDto[], format: 
 }
 
 export function appendAliasDraft(owner: PageDto, draft: PageDto): PageDto {
-  const draftBlocks = draft.pre_block
+  return { ...owner, blocks: [...owner.blocks, ...aliasDraftBlocks(draft)] };
+}
+
+/** The blocks an alias draft contributes to its owner, as appended. */
+export function aliasDraftBlocks(draft: PageDto): BlockDto[] {
+  return draft.pre_block
     ? [{ id: "", raw: draft.pre_block, collapsed: false, children: [] }, ...draft.blocks]
     : draft.blocks;
-  return { ...owner, blocks: [...owner.blocks, ...draftBlocks] };
+}
+
+/** `owner` with the copy of a draft that already landed at its end (`landed`)
+ *  replaced by the draft's current blocks, or null when the owner's tail is no
+ *  longer exactly that copy (the owner changed since: the caller refuses).
+ *  Compared by text and nesting; block ids are assigned per load. O(owner). */
+export function replaceLandedAliasDraft(owner: PageDto, landed: BlockDto[], draft: PageDto): PageDto | null {
+  const shape = (blocks: BlockDto[]): string =>
+    JSON.stringify(blocks.map(function strip(b): unknown { return [b.raw.trimEnd(), b.children.map(strip)]; }));
+  const keep = owner.blocks.length - landed.length;
+  if (keep < 0 || shape(owner.blocks.slice(keep)) !== shape(landed)) return null;
+  return { ...owner, blocks: [...owner.blocks.slice(0, keep), ...aliasDraftBlocks(draft)] };
 }
 
 // ---------------------------------------------------------------------------
@@ -263,8 +279,7 @@ export function pageToDto(pageName: string): PageDto | null {
 /** The block id (`id:: <uuid>` trailer) a guide node exposes to `((uuid))`
  *  references — matching the backend, which keys a block by its persisted id::. */
 function guideBlockDurableId(raw: string): string | null {
-  const m = /(?:^|\n)id:: *(\S+)/i.exec(raw);
-  return m ? m[1] : null;
+  return existingBlockId(raw, "md");
 }
 
 function findGuideNode(ids: string[], uuid: string): string | null {

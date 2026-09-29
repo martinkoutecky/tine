@@ -4,6 +4,7 @@ icon:: 🛟
 	- Only recovery paths Tine actually ships, each as numbered actions with the outcome to expect. For where everything lives, see [[tine-guide/Reference/Files, external edits, and backups]].
 - ## “Changed on disk” banner
 	- Meaning: the file changed elsewhere (a sync tool or another editor) while you had unsaved edits. The banner reads “*Page* changed on disk. Your unsaved changes weren't written.” Nothing was written over — your unsaved text is still on screen.
+	- If the banner reads “*Page* changed on disk while you were editing it” and offers only **Review**, choose it and continue at step 3: Tine never overwrites the file with a draft you have not compared.
 	- 1. If the disk version is the one you want, choose **Use disk version** — Tine re-reads the file. Copy your unsaved text somewhere first if you still need parts of it.
 	- 2. If your version is right, choose **Keep mine (overwrite)** — Tine writes yours over the file.
 	- 3. To keep parts of both, open the page: a panel at its top compares **Your unsaved edits** with **The file on disk now** block by block. Choose per block, then **Apply resolution**. When Tine still has the version you started editing from, it pre-selects each side's own change. If the file changes again before you apply, nothing is written and the comparison refreshes.

@@ -153,3 +153,25 @@ blockquote.md-quote{margin:.5rem 0;padding:.2rem 0 .2rem .9rem;border-left:3px s
 .index-list .k{color:var(--muted);font-size:.8rem;margin-left:.4rem}
 .md-hr,hr{border:none;border-top:1px solid var(--line);margin:1.2rem 0}
 footer{margin-top:64px;color:var(--muted);font-size:.78rem;border-top:1px solid var(--line);padding-top:12px}
+/* sheets: read-only renderings of tine.view blocks (data computed by the app's sheet evaluator) */
+.sheet-scroll{max-width:min(100%,calc(100vw - 72px));overflow-x:auto;margin:.5rem 0;contain:inline-size}
+table.sheet-table,table.sheet-grid{border-collapse:collapse;font-size:.94em;margin:0}
+table.sheet-table th,table.sheet-table td,table.sheet-grid th,table.sheet-grid td{border:1px solid var(--line);padding:.3em .6em;text-align:left;vertical-align:top}
+table.sheet-table thead th,table.sheet-grid thead th{background:var(--code);font-weight:650}
+table.sheet-table tfoot td{color:var(--muted);font-size:.92em;white-space:nowrap}
+.sheet-agg-label{font-weight:650;letter-spacing:.02em;margin-right:.35em}
+.sheet-formula-marker{color:var(--muted);margin-right:.25em}
+.sheet-formula-error{color:var(--accent)}
+.sheet-chip{display:inline-block;padding:0 .45em;border-radius:999px;background:var(--code);font-size:.9em}
+.sheet-date{color:var(--muted);font-size:.92em}
+.sheet-note{color:var(--muted);font-style:italic;font-size:.9em;margin:.3rem 0}
+.sheet-board{display:flex;align-items:stretch;gap:.8rem;overflow-x:auto;margin:.5rem 0;max-width:min(100%,calc(100vw - 72px));contain:inline-size}
+.sheet-board-col{flex:1 1 11rem;min-width:10rem;border:1px solid var(--line);border-radius:8px}
+.sheet-board-col>h3{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--code);margin:0;padding:.3em .7em;border-radius:8px 8px 0 0;font-weight:650}
+.sheet-board-count{margin-left:.35em;font-weight:400}
+.sheet-board-col>ul{list-style:none;margin:0;padding:.3rem .7rem}
+.sheet-board-col li{margin:.3rem 0;position:static}
+.sheet-board-col li::before{display:none}
+.sheet-card-chips{margin-top:.15rem;font-size:.9em}
+ul.sheet-cell-list{list-style:none;margin:0;padding:0}
+ul.sheet-cell-list>li::before{display:none}
