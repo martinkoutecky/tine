@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use tine_graph_features::publish::sheet_export_inputs;
+use tine_graph_features::publish::{sheet_export_inputs, SheetScope};
 use tine_graph_features::publish_query::{publish_live, publish_live_with_sheets};
 use tine_graph_features::SheetExport;
 use tine_store::Store;
@@ -74,7 +74,7 @@ fn sheets_html(base: &Path) -> String {
 #[test]
 fn inputs_for_the_fixture_match_the_golden_handoff() {
     let (_base, store) = open_fixture();
-    let inputs = sheet_export_inputs(&store, None).unwrap();
+    let inputs = sheet_export_inputs(&store, None, None).unwrap();
     let actual = serde_json::to_string_pretty(&inputs).unwrap() + "\n";
     let golden = fixtures().join("inputs.json");
     if std::env::var_os("BLESS_SHEETS").is_some() {
@@ -344,7 +344,7 @@ fn inputs_sent_to_the_app_are_bounded() {
     }
     fs::write(base.join("graph/pages/Big.md"), page).unwrap();
     store.scan_refresh().unwrap();
-    let inputs = sheet_export_inputs(&store, Some(&["Big".to_owned()])).unwrap();
+    let inputs = sheet_export_inputs(&store, Some(&["Big".to_owned()]), None).unwrap();
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].rows.len(), 5_000);
     assert_eq!(inputs[0].omitted, 100);
@@ -362,7 +362,7 @@ fn a_sheet_inside_a_grid_cell_is_found_by_its_path_and_laid_out_in_the_cell() {
     )
     .unwrap();
     store.scan_refresh().unwrap();
-    let inputs = sheet_export_inputs(&store, Some(&["Nested".to_owned()])).unwrap();
+    let inputs = sheet_export_inputs(&store, Some(&["Nested".to_owned()]), None).unwrap();
     let paths: Vec<_> = inputs.iter().map(|i| i.path.clone()).collect();
     assert_eq!(
         paths,
@@ -520,10 +520,9 @@ fn export_html_of(all: &[Value]) -> (Scratch, String) {
 }
 
 #[test]
-fn a_query_sheet_over_an_unpublished_page_keeps_the_filtered_result_list() {
-    // A table's cells, counts and aggregates would carry the private row, so a query
-    // sheet with any row on a page the export does not publish falls back to the list,
-    // which drops that row.
+fn a_query_sheet_leaves_out_a_row_on_an_unpublished_page_and_keeps_the_rest() {
+    // Master filters the row and keeps the sheet. The row is dropped BEFORE the app
+    // computes cells, counts and aggregates, so no trace of it can reach the table.
     let (base, store) = open_fixture();
     fs::write(
         base.join("graph/pages/Secret.md"),
@@ -531,13 +530,24 @@ fn a_query_sheet_over_an_unpublished_page_keeps_the_filtered_result_list() {
     )
     .unwrap();
     store.scan_refresh().unwrap();
-    let inputs = sheet_export_inputs(&store, Some(&["Tail-queries".to_owned()])).unwrap();
+    let scope = SheetScope::Live { all_pages: false };
+    let inputs =
+        sheet_export_inputs(&store, Some(&["Tail-queries".to_owned()]), Some(&scope)).unwrap();
     let table = &inputs[0];
-    let query = table.query.as_ref().expect("the query table has rows");
+    let query = table
+        .query
+        .as_ref()
+        .expect("the query table still has rows");
     assert!(
-        query.pages.iter().any(|p| p == "Secret"),
-        "the app sees the private row"
+        query.pages.iter().all(|p| p != "Secret")
+            && query
+                .rows
+                .iter()
+                .all(|r| !r.raw.contains("hidden-secret-row")),
+        "the private row never reaches the app: {:?}",
+        query.pages
     );
+    assert!(query.rows.iter().any(|r| r.raw.contains("First")));
     let answer: Vec<SheetExport> = serde_json::from_value(serde_json::json!([{
         "page": table.page, "path": table.path, "fp": query.fp, "query": true, "view": "table",
         "columns": [{"label": "Block", "formula": false}],
@@ -555,14 +565,27 @@ fn a_query_sheet_over_an_unpublished_page_keeps_the_filtered_result_list() {
     )
     .unwrap();
     let html = tail_queries_html(&base);
-    assert!(!html.contains("<table class=\"sheet-table\">"), "{html}");
+    assert!(
+        html.contains("<table class=\"sheet-table\">") && html.contains("First"),
+        "the sheet stays, with the public rows: {html}"
+    );
     assert!(
         !html.contains("hidden-secret-row"),
-        "the private row never publishes: {html}"
-    );
-    assert!(
-        html.contains("First"),
-        "the public results still list: {html}"
+        "the private row appears nowhere in the export: {html}"
     );
     store.close();
+}
+
+#[test]
+fn the_scope_the_app_sends_deserializes_as_the_wire_shape() {
+    // `src/sheet/staticExport.ts::SheetScope` is the other half of this contract.
+    let live: SheetScope =
+        serde_json::from_value(serde_json::json!({"kind": "live", "allPages": true})).unwrap();
+    assert!(matches!(live, SheetScope::Live { all_pages: true }));
+    let query: SheetScope = serde_json::from_value(serde_json::json!({
+        "kind": "query",
+        "request": {"argument": "(task TODO)", "dialect": "macro_query", "properties": [], "name": "n"}
+    }))
+    .unwrap();
+    assert!(matches!(query, SheetScope::Query { .. }));
 }

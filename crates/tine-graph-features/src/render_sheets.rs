@@ -284,10 +284,14 @@ fn is_candidate(block: &DocBlock) -> bool {
 /// Every candidate sheet block of the named pages (all pages when `pages` is
 /// `None`), with the data the app needs to compute it. Bounded by `MAX_SHEETS`,
 /// `MAX_INPUT_ROWS` and `MAX_INPUT_COLS`; cost O(blocks of the pages).
+/// `published` holds the `page_key` of every page the export will publish
+/// (`None` = no publication boundary, as in print): a query sheet's row on any
+/// other page is left out of the app's input.
 pub fn sheet_inputs(
     corpus: &Corpus,
     pages: Option<&[String]>,
     graph: Option<&RenderGraph<'_>>,
+    published: Option<&HashSet<String>>,
 ) -> Vec<SheetInput> {
     let mut query_budget = MAX_QUERY_SHEETS;
     let wanted: Option<HashSet<&str>> = pages.map(|p| p.iter().map(String::as_str).collect());
@@ -331,7 +335,9 @@ pub fn sheet_inputs(
                 let query = graph.filter(|_| query_budget > 0).and_then(|graph| {
                     let found = sole_query_macro(block)?;
                     query_budget -= 1;
-                    query_rows(graph, block, &found)
+                    query_rows(graph, block, &found, &|name| {
+                        published.is_none_or(|keys| keys.contains(&tine_core::refs::page_key(name)))
+                    })
                 });
                 out.push(SheetInput {
                     page: page.name.clone(),
@@ -405,12 +411,13 @@ fn query_fingerprint(
 
 /// Run a sheet block's query the way the live block does and flatten the result
 /// rows. `None` (the flat result list stays) when the query is refused, exceeds
-/// its bounds, answers pages, matches nothing, or has more rows than one sheet
-/// takes.
+/// its bounds, answers pages, matches nothing (after rows on unpublished pages
+/// are dropped), or has more rows than one sheet takes.
 fn query_rows(
     graph: &RenderGraph<'_>,
     owner: &DocBlock,
     found: &(String, String),
+    published: &dyn Fn(&str) -> bool,
 ) -> Option<QueryRowsInput> {
     let (name, argument) = found;
     if !tine_core::query::query_source_within_limit(argument)
@@ -431,6 +438,11 @@ fn query_rows(
     let mut pages = Vec::new();
     let mut rows = Vec::new();
     for group in bounded.groups {
+        // A row on a page this export does not publish is left out here, before
+        // the app computes cells, counts and aggregates from it.
+        if !published(&group.page) {
+            continue;
+        }
         for block in group.blocks {
             pages.push(group.page.clone());
             rows.push(block);
@@ -800,9 +812,8 @@ pub(super) fn emit(owner: &DocBlock, at: &SheetPath, e: &mut Emit, out: &mut Str
 /// Lay out the app's answer for a query-backed sheet block in place of its
 /// `{{query}}` macro's flat result list. False (the caller renders the list,
 /// which also states what it omits) when there is no answer, the query's
-/// result is no longer the one the app computed from, or any row sits on a
-/// page this export does not publish, since a table or board would otherwise
-/// carry that row's cells, counts and aggregates.
+/// result is no longer the one the app computed from. Rows on pages this export
+/// does not publish were left out before the app computed the sheet.
 pub(super) fn emit_query(
     owner: &DocBlock,
     at: &SheetPath,
@@ -822,7 +833,9 @@ pub(super) fn emit_query(
     if !export.query {
         return false;
     }
-    let Some(rows) = query_rows(graph, owner, found) else {
+    let Some(rows) = query_rows(graph, owner, found, &|page| {
+        publish_page_allowed(e.ctx, page)
+    }) else {
         return false;
     };
     if export.fp != rows.fp {
@@ -831,13 +844,6 @@ pub(super) fn emit_query(
             "This query changed while the export was prepared; showing its results.",
             None,
         ));
-        return false;
-    }
-    if !rows
-        .pages
-        .iter()
-        .all(|page| publish_page_allowed(e.ctx, page))
-    {
         return false;
     }
     match &export.body {

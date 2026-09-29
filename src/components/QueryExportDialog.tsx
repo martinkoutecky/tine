@@ -39,7 +39,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     setBusy(true);
     setError("");
     try {
-      const receipt = await writeOwned(owner, backend().publishQuery({ ...props.request, name: plannedName() }, selection.fingerprint, parent, await exportSheets()));
+      const receipt = await writeOwned(owner, backend().publishQuery({ ...props.request, name: plannedName() }, selection.fingerprint, parent, await exportSheets(undefined, { kind: "query", request: { ...props.request, name: plannedName() } })));
       if (receipt.kind === "current") {
         closeQueryExport();
         pushToast(`Exported ${receipt.value.pages} pages to ${receipt.value.path}`, "success", { sticky: true });

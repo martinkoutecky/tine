@@ -9,7 +9,7 @@ import { appNow } from "../journal";
 import { facetsFromDto } from "../render/facets";
 import { visibleBody } from "../render/block";
 import { blockBackgroundColor } from "../blockColors";
-import type { BlockDto } from "../types";
+import type { BlockDto, QueryPublicationRequest } from "../types";
 import { aggregate, AGGREGATE_LABELS, collectAggregateColumns } from "./aggregate";
 import { boardCardChips, boardGroupField, boardRowTitle, buildBoardColumns } from "./boardColumns";
 import { cellView, displayFieldValue, type CellView } from "./cellPresentation";
@@ -30,6 +30,12 @@ import { queryColumnFieldId } from "./tablePresentation";
 import type { ViewSettings } from "../editor/queryIr";
 
 /** What the Rust publisher sends per candidate sheet block. */
+/** Which pages the export consuming a sheet's inputs publishes; a query sheet's
+ * rows on any other page never reach the evaluator. No scope (print) = no boundary. */
+export type SheetScope =
+  | { kind: "live"; allPages: boolean }
+  | { kind: "query"; request: QueryPublicationRequest };
+
 export interface SheetInput {
   page: string;
   /** Child-index path from the page root to the owner block. */
