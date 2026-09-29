@@ -24,6 +24,44 @@ use unicode_normalization::char::canonical_combining_class;
 use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
 
+fn is_search_whitespace(ch: char) -> bool {
+    matches!(ch, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}'
+        | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}'
+        | '\u{205f}' | '\u{3000}' | '\u{feff}')
+}
+
+fn common_regex_pattern(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let (mut i, mut in_class) = (0, false);
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            if i + 1 < bytes.len()
+                && matches!(
+                    bytes[i + 1],
+                    b'1'..=b'9' | b'w' | b'W' | b'd' | b'D' | b's' | b'S' | b'b' | b'B'
+                )
+            {
+                return false;
+            }
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'[' {
+            in_class = true;
+        } else if bytes[i] == b']' && in_class {
+            in_class = false;
+        } else if !in_class
+            && bytes[i] == b'('
+            && bytes.get(i + 1) == Some(&b'?')
+            && bytes.get(i + 2) != Some(&b':')
+        {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 fn is_nonspacing_mark(ch: char) -> bool {
     if ch.is_ascii() {
         return false;
@@ -222,7 +260,7 @@ impl Matcher {
 
     /// Parse using the graph's OG accent-removal setting.
     pub fn parse_with_policy(query: &str, remove_accents: bool) -> Matcher {
-        let q = query.trim();
+        let q = query.trim_matches(is_search_whitespace);
         if q.is_empty() {
             return Matcher::Empty;
         }
@@ -231,6 +269,11 @@ impl Matcher {
         // treat it as a literal boolean term instead.)
         if q.len() >= 3 && q.starts_with('/') && q.ends_with('/') {
             let pat = &q[1..q.len() - 1];
+            if !common_regex_pattern(pat) {
+                return Matcher::InvalidRegex(
+                    "regex feature is not supported by both search engines".into(),
+                );
+            }
             return match regex::Regex::new(pat) {
                 Ok(re) => Matcher::Regex(re),
                 Err(e) => Matcher::InvalidRegex(e.to_string()),
@@ -342,14 +385,14 @@ fn tokenize(q: &str) -> Vec<Token> {
     let mut out: Vec<Token> = Vec::new();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i].is_whitespace() {
+        if is_search_whitespace(chars[i]) {
             i += 1;
             continue;
         }
         let mut negated = false;
         // A leading `-` negates, but only when something follows it (a lone `-`
         // is treated as a literal term).
-        if chars[i] == '-' && i + 1 < chars.len() && !chars[i + 1].is_whitespace() {
+        if chars[i] == '-' && i + 1 < chars.len() && !is_search_whitespace(chars[i + 1]) {
             negated = true;
             i += 1;
         }
@@ -368,7 +411,7 @@ fn tokenize(q: &str) -> Vec<Token> {
         } else {
             // Bare token: read to the next whitespace.
             let start = i;
-            while i < chars.len() && !chars[i].is_whitespace() {
+            while i < chars.len() && !is_search_whitespace(chars[i]) {
                 i += 1;
             }
             (chars[start..i].iter().collect::<String>(), false)
@@ -402,6 +445,45 @@ mod tests {
     // Convenience: match against text (folds the boolean side once).
     fn hit(q: &str, text: &str) -> bool {
         m(q).matches(&canonical_fold(text), text)
+    }
+
+    #[test]
+    fn shared_whitespace_and_regex_contract() {
+        assert_eq!(
+            Matcher::parse("\u{feff}foo\u{feff}").simple_term(),
+            Some("foo")
+        );
+        assert_eq!(
+            Matcher::parse("\u{85}foo\u{85}").simple_term(),
+            Some("\u{85}foo\u{85}")
+        );
+        assert!(hit("foo\u{2003}bar", "bar then foo"));
+        assert!(hit(r"/\p{L}+/", "café"));
+        for query in [r"/foo(?=bar)/", r"/(a)\1/", r"/(?i)abc/"] {
+            assert!(matches!(m(query), Matcher::InvalidRegex(_)), "{query}");
+        }
+    }
+
+    #[test]
+    fn shared_parser_contract_fixtures() {
+        let rows: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/search-query-contract.json"
+        ))
+        .unwrap();
+        for row in rows.as_array().unwrap() {
+            let query = row["query"].as_str().unwrap();
+            let body = row["match"].as_str().unwrap();
+            let matcher = m(query);
+            let kind = match matcher {
+                Matcher::Boolean(_) => "boolean",
+                Matcher::Regex(_) => "regex",
+                Matcher::InvalidRegex(_) => "invalid",
+                Matcher::Empty => "empty",
+            };
+            assert_eq!(kind, row["kind"], "{query}");
+            assert_eq!(matcher.simple_term(), row["simple"].as_str(), "{query}");
+            assert_eq!(hit(query, body), kind != "invalid", "{query}");
+        }
     }
 
     #[test]

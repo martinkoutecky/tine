@@ -1,0 +1,14 @@
+[
+  {"query":"\ufefffoo\ufeff","kind":"boolean","simple":"foo","match":"FOO"},
+  {"query":"\u0085foo\u0085","kind":"boolean","simple":"\u0085foo\u0085","match":"\u0085foo\u0085"},
+  {"query":"foo\u2003bar","kind":"boolean","simple":null,"match":"bar then foo"},
+  {"query":"/\\p{L}+/","kind":"regex","simple":null,"match":"café"},
+  {"query":"/foo(?=bar)/","kind":"invalid","simple":null,"match":"foobar"},
+  {"query":"/(a)\\1/","kind":"invalid","simple":null,"match":"aa"},
+  {"query":"/\\w/","kind":"invalid","simple":null,"match":"é"},
+  {"query":"/\\d/","kind":"invalid","simple":null,"match":"٣"},
+  {"query":"/\\s/","kind":"invalid","simple":null,"match":"\u0085"},
+  {"query":"/\\bfoo/","kind":"invalid","simple":null,"match":"foo"},
+  {"query":"/(?i)abc/","kind":"invalid","simple":null,"match":"ABC"},
+  {"query":"/[(?]+/","kind":"regex","simple":null,"match":"(?"}
+]

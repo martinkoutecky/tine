@@ -94,6 +94,18 @@ function load(raw: string, { readOnly = false }: { readOnly?: boolean } = {}): v
 const TQL_MACRO = "{{tine-query -- task TODO}}";
 
 describe("B1: a TQL block executes through query_run", () => {
+  it("renders a scoped block board without a singular tine.view property", async () => {
+    load("{{tine-query -- task TODO}}\ntine.block-view:: board");
+    const parse = backend().parseQuery.bind(backend());
+    vi.spyOn(backend(), "parseQuery").mockImplementation(async (...args) => ({
+      ...await parse(...args), block_presentation: "board",
+    }));
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".sheet-board")).not.toBeNull());
+    } finally { dispose(); }
+  });
   it("coalesces twenty identical visible query runs after a save revision", async () => {
     const ids = Array.from({ length: 20 }, (_, index) => `query-${index}`);
     setDoc({

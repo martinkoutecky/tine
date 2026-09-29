@@ -290,7 +290,8 @@ export function QueryMacro(props: {
     const view = blockProperty(props.blockId, "tine.view");
     return view === "search" || view === "table" || view === "board" ? view : "list";
   };
-  const sheetFace = () => currentView() === "table" || currentView() === "board";
+  const blockFace = (): QueryView => runnable()?.block_presentation ?? currentView();
+  const sheetFace = () => blockFace() === "table" || blockFace() === "board";
   const legacyTable = () => currentView() === "list" && /:table-view\?\s+true/.test(opts());
   const setQueryView = (next: QueryView) => {
     const blockId = props.blockId;
@@ -345,9 +346,14 @@ export function QueryMacro(props: {
       const landed = await readOwned(owner, sharedQueryResult(
         scope,
         `friendly-search\0${request.key}`,
-        () => backend().runGraphSearch(
-          searchSource, 500, 5_000, `inline-query:${props.blockId ?? currentPage() ?? "global"}`, false,
-        ),
+        () => request.query.page_match_scope
+          ? backend().runGraphSearch(
+            searchSource, 500, 5_000, `inline-query:${props.blockId ?? currentPage() ?? "global"}`, false,
+            undefined, request.query.page_match_scope,
+          )
+          : backend().runGraphSearch(
+            searchSource, 500, 5_000, `inline-query:${props.blockId ?? currentPage() ?? "global"}`, false,
+          ),
       ));
       if (landed.kind === "stale") return undefined;
       // The Search presentation renders these hits directly, so the host block
@@ -944,14 +950,14 @@ export function QueryMacro(props: {
                 </Match>
                 <Match when={sheetFace()}>
                   <Show when={groups().length > 0} fallback={empty()}>
-                    <Show when={(sheet()?.view === "table" || sheet()?.view === "board") && props.blockId}>
+                    <Show when={!!props.blockId}>
                       <SheetContainer>
                         <Switch>
-                          <Match when={sheet()?.view === "table"}>
+                          <Match when={blockFace() === "table"}>
                             <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
                               queryDisplay={{ view: reading()?.view ?? {}, apply: (next) => void applyDisplay(next) }} />
                           </Match>
-                          <Match when={sheet()?.view === "board"}>
+                          <Match when={blockFace() === "board"}>
                             <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={sheet()?.groupBy} groups={groups()} />
                           </Match>
                         </Switch>

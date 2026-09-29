@@ -2318,6 +2318,9 @@ pub struct SearchRequest {
     pub block_limit: usize,
     /// Include an explanation of query planning.
     pub explain: bool,
+    /// Page membership: names/aliases, contained block text, or both. Defaults
+    /// to names when absent; a file-scoped request remains block-only.
+    pub page_match_scope: Option<tine_core::query::ir::FriendlyPageMatchScope>,
 }
 /// Syntax used to evaluate a `{{query}}` expression.
 pub enum QueryDialect {
@@ -3011,8 +3014,9 @@ impl WholeGraph {
     /// omitted hits in enabled categories; a zero category limit is not
     /// checked. A successful result has `cancelled == false` through this
     /// API; the lower-level execution type also represents cancelled work.
-    /// A cold search can scan O(P + B + text bytes); result construction is
-    /// bounded by the requested hit limits.
+    /// A cold search can scan O(P + B + text bytes); content page membership
+    /// adds one block scan and keeps at most one candidate per matching physical
+    /// page before applying the requested hit limits.
     pub fn search(
         &self,
         req: &SearchRequest,
@@ -3042,6 +3046,8 @@ impl WholeGraph {
             block_limit,
             scope,
             req.explain,
+            req.page_match_scope
+                .unwrap_or(tine_core::query::ir::FriendlyPageMatchScope::Names),
         );
         if result.cancelled {
             Err(QueryError::Cancelled)
@@ -3848,6 +3854,7 @@ mod rev5_tests {
                     page_limit: 10,
                     block_limit: 10,
                     explain: false,
+                    page_match_scope: None,
                 },
                 &Cancel(Arc::new(AtomicBool::new(false))),
             )
@@ -5051,7 +5058,8 @@ mod rev5_tests {
                             within: None,
                             page_limit: 10,
                             block_limit: 10,
-                            explain: false
+                            explain: false,
+                            page_match_scope: None,
                         },
                         &cancel
                     )

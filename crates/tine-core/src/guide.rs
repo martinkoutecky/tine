@@ -182,6 +182,24 @@ mod journal_guide_tests {
 #[cfg(test)]
 mod search_guide_tests {
     #[test]
+    fn friendly_search_sections_scope_and_save_are_documented() {
+        let tips = include_str!("templates/tips.md");
+        for text in [
+            "**Pages** and **Blocks**",
+            "Pages match",
+            "Names or content",
+            "Save page",
+            "tine.page-match-scope:: content",
+        ] {
+            assert!(
+                tips.contains(text),
+                "missing friendly search Guide detail: {text}"
+            );
+        }
+        let queries = include_str!("templates/queries.md");
+        assert!(queries.contains("An alias result opens its owner page"));
+    }
+    #[test]
     fn search_fold_and_graph_opt_out_are_documented() {
         let tips = include_str!("templates/tips.md");
         for text in [
