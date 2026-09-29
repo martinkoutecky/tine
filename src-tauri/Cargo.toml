@@ -50,10 +50,11 @@ clap = { version = "4.5", features = ["derive"] }
 tine-core = { path = "../crates/tine-core" }
 tine-store = { path = "../crates/tine-store" }
 tine-graph-features = { path = "../crates/tine-graph-features" }
+# data_home: probe the app-data home with an unnamed temporary file (og I1a).
+tempfile = "3"
 
 [dev-dependencies]
 clap_mangen = "0.2"
-tempfile = "3"
 tine-store = { path = "../crates/tine-store", features = ["test-faults"] }
 
 # Mobile + Windows: open http/mailto URLs via the OS — an ACTION_VIEW Intent on

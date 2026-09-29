@@ -20,8 +20,8 @@
 //! naming the failure family and exits 1 (scenario: disk error / a filesystem
 //! the user cannot write — docs/storage-contract.md, `src-tauri::data_home`).
 //! Desktop Linux only: Android/iOS use sandboxed app dirs and no report exists
-//! for Windows/macOS. Cost: one create+remove of an empty probe file per
-//! launch; nothing persisted.
+//! for Windows/macOS. Cost: one unnamed temporary file per launch, released
+//! at once; nothing persisted.
 
 #[cfg(all(desktop, target_os = "linux"))]
 use crate::debug::{diag, diag_private};
@@ -34,8 +34,11 @@ static RELOCATED_TO: Mutex<Option<String>> = Mutex::new(None);
 
 /// Can files be created under `base` the way Tauri and WebKitGTK are about to?
 /// `create_dir_all` alone succeeds on an existing directory nobody may write,
-/// which is exactly the reported case, so write and remove a probe file in the
-/// app dir when it exists (its own mode matters then) and in the base otherwise.
+/// which is exactly the reported case, so create an unnamed temporary file in
+/// the app dir when it exists (its own mode matters then) and in the base
+/// otherwise. `tempfile_in` uses `O_TMPFILE` where the filesystem has it (no
+/// name ever exists, so a crash mid-probe leaves nothing behind) and otherwise
+/// creates and immediately unlinks a random name; nothing is persisted.
 #[cfg(all(desktop, target_os = "linux"))]
 fn probe_writable(base: &Path, identifier: &str) -> std::io::Result<()> {
     let app_dir = base.join(identifier);
@@ -45,10 +48,7 @@ fn probe_writable(base: &Path, identifier: &str) -> std::io::Result<()> {
         base.to_path_buf()
     };
     std::fs::create_dir_all(&target)?;
-    let probe = target.join(format!(".tine-write-probe-{}", std::process::id()));
-    std::fs::write(&probe, b"")?;
-    std::fs::remove_file(&probe)?;
-    Ok(())
+    tempfile::tempfile_in(&target).map(drop)
 }
 
 /// Fallback data homes, best first: the home directory (survives a reboot),
@@ -156,7 +156,7 @@ mod tests {
     fn a_writable_base_probes_clean_and_leaves_nothing_behind() {
         let base = tmp("clean");
         std::fs::create_dir_all(&base).unwrap();
-        probe_writable(&base, "page.tine.TineOG").unwrap();
+        probe_writable(&base, "test.app.identifier").unwrap();
         let residue: Vec<_> = std::fs::read_dir(&base).unwrap().flatten().collect();
         assert!(residue.is_empty(), "probe left {residue:?} behind");
         std::fs::remove_dir_all(&base).ok();
@@ -169,7 +169,7 @@ mod tests {
         set_mode(&base, 0o555);
         // The exact trap: this is what Tauri relies on, and it reports success.
         assert!(std::fs::create_dir_all(&base).is_ok());
-        let error = probe_writable(&base, "page.tine.TineOG").unwrap_err();
+        let error = probe_writable(&base, "test.app.identifier").unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
         set_mode(&base, 0o755);
         std::fs::remove_dir_all(&base).ok();
@@ -178,10 +178,10 @@ mod tests {
     #[test]
     fn an_unwritable_existing_app_dir_is_rejected_under_a_writable_base() {
         let base = tmp("ro-app");
-        let app = base.join("page.tine.TineOG");
+        let app = base.join("test.app.identifier");
         std::fs::create_dir_all(&app).unwrap();
         set_mode(&app, 0o555);
-        assert!(probe_writable(&base, "page.tine.TineOG").is_err());
+        assert!(probe_writable(&base, "test.app.identifier").is_err());
         set_mode(&app, 0o755);
         std::fs::remove_dir_all(&base).ok();
     }
