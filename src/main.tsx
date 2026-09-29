@@ -24,6 +24,8 @@ import "./lsShimInstall";
 import { installSystemInsetOwner } from "./systemInsets";
 import "./styles/app.css";
 import "./styles/topbar.css";
+import "./styles/readiness.css";
+import "./styles/themePresentation.css";
 import "./styles/pdf-workspace.css";
 import "./styles/settingsControls.css";
 import "./styles/query.css";
@@ -56,7 +58,11 @@ async function revealMainWindowAfterStableFrame(): Promise<void> {
 }
 
 const mount = () => {
-  render(() => <App />, document.getElementById("root")!);
+  const root = document.getElementById("root")!;
+  // index.html owns the immediate, dependency-free readiness frame. Remove it
+  // only when Solid is ready to synchronously install the real application.
+  root.replaceChildren();
+  render(() => <App />, root);
   void revealMainWindowAfterStableFrame().catch((error) =>
     console.error("failed to reveal the main window")
   );

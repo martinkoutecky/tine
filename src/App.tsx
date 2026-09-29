@@ -128,7 +128,7 @@ const safeClose = createSafeCloseCoordinator({
 async function closeAndroidRootSafely(): Promise<void> {
   await requestAndroidRootClose(
     safeClose,
-    exitAndroidActivity,
+    () => exitAndroidActivity(),
     () => pushToast("Couldn't close the app. Your graph remains open.", "error"),
   );
 }
@@ -488,8 +488,6 @@ export function App(): JSX.Element {
       dismissTransient: () => dismissTopTransient("back"),
       dismissDrawer: () => dismissMobileDrawer("back"),
       restoreDrawerFocus: () => restoreDrawerFocus("back"),
-      // The router's own back, not the WebView's: it knows whether Tine has an
-      // entry to pop, and it is what every other Back affordance already uses.
       historyBack: () => {
         if (!canGoBack()) return false;
         goBack();

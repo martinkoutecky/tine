@@ -15,4 +15,5 @@
          put white icons on a white strip whenever the two disagreed (GH #467). -->
     <color name="tine_system_bar_light">#FFFFFFFF</color>
     <color name="tine_system_bar_dark">#FF1A1B1E</color>
+    <color name="tine_window_background">#FFFFFFFF</color>
 </resources>

@@ -1,4 +1,5 @@
-export const THEME_API_VERSION = "0.1" as const;
+export const THEME_API_VERSION = "0.2" as const;
+export const SUPPORTED_THEME_API_VERSIONS = ["0.1", THEME_API_VERSION] as const;
 
 export const THEME_TOKENS = [
   "--ls-active-primary-color",
@@ -27,6 +28,13 @@ export const THEME_TOKENS = [
 export type ThemeToken = (typeof THEME_TOKENS)[number];
 export type ThemeMode = "light" | "dark";
 export type ThemeTokens = Partial<Record<ThemeToken, string>>;
+export type ThemeApiVersion = (typeof SUPPORTED_THEME_API_VERSIONS)[number];
+
+export interface ThemePresentation {
+  contentTypography?: "default" | "editorial-serif";
+  journalHeader?: "default" | "editorial";
+  todayTaskSummary?: "hidden" | "compact";
+}
 
 export interface ThemePortProvenance {
   ecosystem: "logseq" | "obsidian" | "other";
@@ -43,12 +51,13 @@ export interface ThemeManifest {
   id: string;
   name: string;
   version: string;
-  apiVersion: typeof THEME_API_VERSION;
+  apiVersion: ThemeApiVersion;
   description: string;
   author: string;
   license: string;
   source: string;
   modes: Partial<Record<ThemeMode, ThemeTokens>>;
+  presentation?: ThemePresentation;
   screenshots: string[];
   portedFrom?: ThemePortProvenance;
   aiDevelopment?: "none" | "assisted" | "primary";
@@ -131,14 +140,40 @@ function parseProvenance(value: unknown): ThemePortProvenance | undefined {
   };
 }
 
+function parsePresentation(value: unknown): ThemePresentation | undefined {
+  if (value === undefined) return undefined;
+  const obj = record(value, "presentation");
+  knownKeys(obj, "presentation", ["contentTypography", "journalHeader", "todayTaskSummary"]);
+  if (obj.contentTypography !== undefined && obj.contentTypography !== "default" && obj.contentTypography !== "editorial-serif") {
+    throw new ThemeManifestError("presentation.contentTypography is unsupported");
+  }
+  if (obj.journalHeader !== undefined && obj.journalHeader !== "default" && obj.journalHeader !== "editorial") {
+    throw new ThemeManifestError("presentation.journalHeader is unsupported");
+  }
+  if (obj.todayTaskSummary !== undefined && obj.todayTaskSummary !== "hidden" && obj.todayTaskSummary !== "compact") {
+    throw new ThemeManifestError("presentation.todayTaskSummary is unsupported");
+  }
+  return {
+    ...(obj.contentTypography === undefined ? {} : { contentTypography: obj.contentTypography }),
+    ...(obj.journalHeader === undefined ? {} : { journalHeader: obj.journalHeader }),
+    ...(obj.todayTaskSummary === undefined ? {} : { todayTaskSummary: obj.todayTaskSummary }),
+  };
+}
+
 export function parseThemeManifest(value: unknown): ThemeManifest {
   const obj = record(value, "theme manifest");
   knownKeys(obj, "theme manifest", [
     "schemaVersion", "id", "name", "version", "apiVersion", "description", "author", "license",
-    "source", "modes", "screenshots", "portedFrom", "aiDevelopment",
+    "source", "modes", "presentation", "screenshots", "portedFrom", "aiDevelopment",
   ]);
   if (obj.schemaVersion !== 1) throw new ThemeManifestError("schemaVersion must be 1");
-  if (obj.apiVersion !== THEME_API_VERSION) throw new ThemeManifestError(`apiVersion must be ${THEME_API_VERSION}`);
+  if (!SUPPORTED_THEME_API_VERSIONS.includes(obj.apiVersion as ThemeApiVersion)) {
+    throw new ThemeManifestError(`apiVersion must be one of ${SUPPORTED_THEME_API_VERSIONS.join(", ")}`);
+  }
+  const apiVersion = obj.apiVersion as ThemeApiVersion;
+  if (apiVersion === "0.1" && obj.presentation !== undefined) {
+    throw new ThemeManifestError("presentation requires theme API 0.2");
+  }
   const id = text(obj.id, "id", 64);
   if (!ID_RE.test(id) || !id.includes(".")) throw new ThemeManifestError("id must be a lowercase dotted identifier");
   const version = text(obj.version, "version", 64);
@@ -158,7 +193,7 @@ export function parseThemeManifest(value: unknown): ThemeManifest {
     id,
     name: text(obj.name, "name", 80),
     version,
-    apiVersion: THEME_API_VERSION,
+    apiVersion,
     description: text(obj.description, "description", 500),
     author: text(obj.author, "author", 160),
     license: text(obj.license, "license", 80),
@@ -167,6 +202,7 @@ export function parseThemeManifest(value: unknown): ThemeManifest {
       ...(modesObj.light === undefined ? {} : { light: parseTokens(modesObj.light, "modes.light") }),
       ...(modesObj.dark === undefined ? {} : { dark: parseTokens(modesObj.dark, "modes.dark") }),
     },
+    ...(obj.presentation === undefined ? {} : { presentation: parsePresentation(obj.presentation) }),
     screenshots: obj.screenshots.map((url, index) => httpsUrl(url, `screenshots[${index}]`)),
     ...(obj.portedFrom === undefined ? {} : { portedFrom: parseProvenance(obj.portedFrom) }),
     ...(aiDevelopment === undefined ? {} : { aiDevelopment }),

@@ -10,8 +10,6 @@ const MAX_WASM_BYTES: usize = 8 * 1024 * 1024;
 const MAX_REGISTRY_INDEX_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REGISTRY_SIGNATURE_BYTES: usize = 1024;
 const REGISTRY_CACHE_KEY: &str = "plugin_registry_cache";
-const LEGACY_REGISTRY_INDEX_KEY: &str = "plugin-registry-index";
-const LEGACY_REGISTRY_SIGNATURE_KEY: &str = "plugin-registry-signature";
 static INSTALL_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const REGISTRY_PUBLIC_KEY: [u8; 32] = [
     0x6c, 0x25, 0xa1, 0xfd, 0x0c, 0x6d, 0xbc, 0x60, 0xca, 0xb7, 0xa4, 0x8c, 0x23, 0x6a, 0xa9, 0x18,
@@ -26,24 +24,12 @@ pub(crate) struct PluginRegistryCacheEnvelope {
     signature: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct LegacyPluginRegistryCache {
-    index_json: String,
-    signature: String,
-}
-
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum PluginRegistryCacheLoad {
     Absent,
     Envelope {
         envelope: PluginRegistryCacheEnvelope,
-    },
-    Legacy {
-        #[serde(rename = "indexJson")]
-        index_json: String,
-        signature: String,
     },
     Unsafe {
         reason: String,
@@ -91,38 +77,16 @@ fn load_plugin_registry_cache_at(path: &Path) -> PluginRegistryCacheLoad {
         return PluginRegistryCacheLoad::Envelope { envelope };
     }
 
-    let legacy_index = root.get(LEGACY_REGISTRY_INDEX_KEY);
-    let legacy_signature = root.get(LEGACY_REGISTRY_SIGNATURE_KEY);
-    match (legacy_index, legacy_signature) {
-        (None, None) => PluginRegistryCacheLoad::Absent,
-        (Some(index), Some(signature)) => {
-            let Some(index_json) = index.as_str() else {
-                return unsafe_cache("legacy registry index has the wrong type");
-            };
-            let Some(signature) = signature.as_str() else {
-                return unsafe_cache("legacy registry signature has the wrong type");
-            };
-            if index_json.is_empty()
-                || index_json.len() > MAX_REGISTRY_INDEX_BYTES
-                || signature.trim().is_empty()
-                || signature.len() > MAX_REGISTRY_SIGNATURE_BYTES
-            {
-                return unsafe_cache("legacy registry cache violates its size contract");
-            }
-            PluginRegistryCacheLoad::Legacy {
-                index_json: index_json.to_string(),
-                signature: signature.to_string(),
-            }
-        }
-        _ => unsafe_cache("legacy registry cache is torn"),
-    }
+    // The pre-envelope `plugin-registry-index`/`-signature` pair is a retired,
+    // disposable cache shape (master 4b752120f): it is ignored, and the live
+    // registry refetch republishes a verified envelope.
+    PluginRegistryCacheLoad::Absent
 }
 
 fn store_plugin_registry_cache_at(
     path: &Path,
     index_json: String,
     signature: String,
-    expected_legacy: Option<LegacyPluginRegistryCache>,
 ) -> Result<(), String> {
     if index_json.is_empty() || index_json.len() > MAX_REGISTRY_INDEX_BYTES {
         return Err("plugin registry index is empty or too large".to_string());
@@ -138,27 +102,8 @@ fn store_plugin_registry_cache_at(
         signature,
     };
     crate::settings::update_settings_strict_at(path, |json| {
-        if let Some(expected) = &expected_legacy {
-            let actual_index = json
-                .get(LEGACY_REGISTRY_INDEX_KEY)
-                .and_then(serde_json::Value::as_str);
-            let actual_signature = json
-                .get(LEGACY_REGISTRY_SIGNATURE_KEY)
-                .and_then(serde_json::Value::as_str);
-            if json.get(REGISTRY_CACHE_KEY).is_some()
-                || actual_index != Some(expected.index_json.as_str())
-                || actual_signature != Some(expected.signature.as_str())
-            {
-                return Err("legacy registry cache changed during migration".to_string());
-            }
-        }
         json[REGISTRY_CACHE_KEY] =
             serde_json::to_value(&envelope).map_err(|error| error.to_string())?;
-        let object = json
-            .as_object_mut()
-            .ok_or_else(|| "device settings root is not an object".to_string())?;
-        object.remove(LEGACY_REGISTRY_INDEX_KEY);
-        object.remove(LEGACY_REGISTRY_SIGNATURE_KEY);
         Ok(())
     })
 }
@@ -175,11 +120,10 @@ pub(crate) fn load_plugin_registry_cache(app: tauri::AppHandle) -> PluginRegistr
 pub(crate) fn store_plugin_registry_cache(
     index_json: String,
     signature: String,
-    expected_legacy: Option<LegacyPluginRegistryCache>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let path = crate::settings::settings_path(&app).ok_or("no app-data dir")?;
-    store_plugin_registry_cache_at(&path, index_json, signature, expected_legacy)
+    store_plugin_registry_cache_at(&path, index_json, signature)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -237,50 +181,243 @@ fn safe_version(value: &str) -> bool {
     })
 }
 
-/// Publish a plugin package durably (og 15a K09, I-2), mirroring `atomic_file`:
-/// each file is fsynced and published in the private staging directory (which
-/// is then synced), the staging directory is renamed into place, and the
-/// directories that gained an entry are synced. A crash therefore leaves either
-/// no package or a complete one, never a torn manifest or wasm at `target`.
-/// On Windows the files are flushed but no directory entry is
-/// (`sync_directory_entry` is a no-op there), so after a power loss the new
-/// package can be missing even though the install reported success.
+/// The two regular files every complete package holds.
+const PACKAGE_FILES: &[&str] = &["manifest.json", "plugin.wasm"];
+/// Transient root entries; neither prefix can be a valid plugin id
+/// (`safe_component` rejects a leading dot), so they never shadow a package.
+const INSTALL_PREFIX: &str = ".install-";
+const RETIRED_PREFIX: &str = ".retired-";
+
+/// How an install ended: a new immutable version, or byte-identical bytes that
+/// were already present (a repeated install is a no-op, not an error).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PackagePublishOutcome {
+    Published,
+    AlreadyPresentExact,
+}
+
+/// Serializes this process's package-store mutations (publish, retire,
+/// recovery) so concurrent Tauri commands cannot interleave inside one store.
+/// Other processes are handled by the no-replace moves themselves.
+fn lock_plugin_store() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn unique_transient_name(prefix: &str, id: &str, version: &str) -> String {
+    let sequence = INSTALL_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}{id}-{version}-{}-{sequence}", std::process::id())
+}
+
+/// Remove one store entry without following a symlink out of plugin storage,
+/// then make the removal durable. An already-absent entry is success.
+fn reclaim_entry(parent: &Path, name: &std::ffi::OsStr) -> std::io::Result<()> {
+    let path = parent.join(name);
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        std::fs::remove_file(&path)?;
+    } else {
+        std::fs::remove_dir_all(&path)?;
+    }
+    tine_store::directory_durability::sync_directory_entry(parent)
+}
+
+/// True when `dir` is a real directory holding every [`PACKAGE_FILES`] entry
+/// as a regular file (symlinks do not count).
+fn package_has_required_shape(dir: &Path) -> std::io::Result<bool> {
+    let regular = |path: &Path| match std::fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(Some(metadata.file_type())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    };
+    if !regular(dir)?.is_some_and(|kind| kind.is_dir()) {
+        return Ok(false);
+    }
+    for name in PACKAGE_FILES {
+        if !regular(&dir.join(name))?.is_some_and(|kind| kind.is_file()) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Reclaim crash residue in one plugin store (master e6f131c09 semantics on
+/// og's plain-`std::fs` store). In-scope threat: crash or power loss during an
+/// install or uninstall. It removes every `.install-*` staging and
+/// `.retired-*` retirement entry, every version directory that lacks a
+/// required regular file (a crash inside an older build's `remove_dir_all`
+/// uninstall leaves one, and it would otherwise block reinstalling that
+/// version), and every id directory left empty. It never follows a symlinked
+/// id directory. A missing store is already clean. Cost O(store entries).
+fn recover_plugin_store_at(root: &Path) -> Result<(), String> {
+    let _guard = lock_plugin_store();
+    recover_plugin_store_locked(root).map_err(|error| error.to_string())
+}
+
+fn recover_plugin_store_locked(root: &Path) -> std::io::Result<()> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let name = entry?.file_name();
+        let text = name.to_string_lossy();
+        if text.starts_with(INSTALL_PREFIX) || text.starts_with(RETIRED_PREFIX) {
+            reclaim_entry(root, &name)?;
+            continue;
+        }
+        let id_dir = root.join(&name);
+        let metadata = std::fs::symlink_metadata(&id_dir)?;
+        if text.starts_with('.') || metadata.file_type().is_symlink() || !metadata.is_dir() {
+            continue;
+        }
+        for version in std::fs::read_dir(&id_dir)? {
+            let version = version?.file_name();
+            if !package_has_required_shape(&id_dir.join(&version))? {
+                reclaim_entry(&id_dir, &version)?;
+            }
+        }
+        if std::fs::read_dir(&id_dir)?.next().is_none() {
+            match std::fs::remove_dir(&id_dir) {
+                Ok(()) => tine_store::directory_durability::sync_directory_entry(root)?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Store roots this process has already recovered.
+static RECOVERED_PLUGIN_STORES: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Reclaim residue once per process per store root, at first use (master
+/// 3f9dcdbdb). Recovering on every command would let one honest instance's
+/// plugin listing delete another live instance's in-flight `.install-*`
+/// staging (in-scope: honest concurrent instances). A previous process's
+/// crash residue is still reclaimed at the next first use.
+fn recover_plugin_store_once(root: &Path) -> Result<(), String> {
+    let mut recovered = RECOVERED_PLUGIN_STORES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if recovered.iter().any(|known| known == root) {
+        return Ok(());
+    }
+    recover_plugin_store_at(root)?;
+    recovered.push(root.to_path_buf());
+    Ok(())
+}
+
+/// The store root every plugin command uses: `root`, recovered once per process.
+fn plugin_store_root(root: PathBuf) -> Result<PathBuf, String> {
+    recover_plugin_store_once(&root)?;
+    Ok(root)
+}
+
+/// `Some(true)` when `target` already holds exactly `files` as regular files,
+/// `Some(false)` when it holds anything else, `None` when it is absent.
+fn existing_package_exact(target: &Path, files: &[(&str, &[u8])]) -> std::io::Result<Option<bool>> {
+    match std::fs::symlink_metadata(target) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Ok(Some(false))
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    }
+    for (name, bytes) in files {
+        let path = target.join(name);
+        if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_file()) {
+            return Ok(Some(false));
+        }
+        if read_bounded(&path, bytes.len())?.as_deref() != Some(*bytes) {
+            return Ok(Some(false));
+        }
+    }
+    Ok(Some(true))
+}
+
+const IMMUTABLE_VERSION_COLLISION: &str =
+    "that immutable plugin version is already installed with different bytes";
+
+/// Publish one immutable plugin version without ever replacing one (og 15a K09,
+/// I-2; no-clobber per master e6f131c09). Each file is fsynced inside a private
+/// `.install-*` staging directory, which is moved to `<id>/<version>` with a
+/// no-replace move, and the directories that changed are synced. A crash
+/// leaves no package or a complete one; staging residue is reclaimed by
+/// [`recover_plugin_store_at`]. Identical bytes already present are
+/// `AlreadyPresentExact`. Refusal: different bytes under an installed version
+/// are refused (in-scope threat: an honest concurrent instance or command
+/// installing another build of the same immutable version); the first
+/// complete winner is kept. On Windows directory syncs are no-ops and the move
+/// is write-through.
 fn publish_package(
     root: &Path,
-    target: &Path,
     id: &str,
     version: &str,
     manifest: &[u8],
     wasm: &[u8],
-) -> Result<(), String> {
+) -> Result<PackagePublishOutcome, String> {
+    let files: [(&str, &[u8]); 2] = [("manifest.json", manifest), ("plugin.wasm", wasm)];
+    let exact = |target: &Path| match existing_package_exact(target, &files) {
+        Ok(Some(true)) => Ok(PackagePublishOutcome::AlreadyPresentExact),
+        Ok(_) => Err(IMMUTABLE_VERSION_COLLISION.to_string()),
+        Err(error) => Err(error.to_string()),
+    };
     let sync = tine_store::directory_durability::sync_directory_entry;
-    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
-    let temp = unique_install_dir(root, id, version)?;
-    let parent = target.parent().unwrap_or(root);
-    let result = (|| -> std::io::Result<()> {
-        crate::device_io::atomic_write_new(&temp.join("manifest.json"), manifest)?;
-        crate::device_io::atomic_write_new(&temp.join("plugin.wasm"), wasm)?;
-        std::fs::create_dir_all(parent)?;
-        sync(root)?; // the staging directory and a new `<id>` directory
-        std::fs::rename(&temp, target)?;
-        sync(parent)?; // `<version>` appeared
-        sync(root) // the staging entry left
-    })();
-    if result.is_err() && temp.exists() {
-        let _ = std::fs::remove_dir_all(&temp);
+    let target = package_dir(root, id, version)?;
+    let _guard = lock_plugin_store();
+    if std::fs::symlink_metadata(&target).is_ok() {
+        return exact(&target);
     }
-    result.map_err(|e| e.to_string())
+    let io = |error: std::io::Error| error.to_string();
+    std::fs::create_dir_all(root).map_err(io)?;
+    let id_dir = root.join(id);
+    match std::fs::create_dir(&id_dir) {
+        Ok(()) => sync(root).map_err(io)?,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    let id_meta = std::fs::symlink_metadata(&id_dir).map_err(io)?;
+    if id_meta.file_type().is_symlink() || !id_meta.is_dir() {
+        return Err("installed plugin directory is unsafe".to_string());
+    }
+    let (staging_name, staging) = unique_install_dir(root, id, version)?;
+    let staged = files.iter().try_for_each(|(name, bytes)| {
+        crate::device_io::atomic_write_new(&staging.join(name), bytes)
+    });
+    if let Err(error) = staged {
+        let _ = reclaim_entry(root, staging_name.as_ref());
+        return Err(error.to_string());
+    }
+    match crate::device_io::move_file_noreplace(&staging, &target) {
+        Ok(()) => {
+            sync(&id_dir).map_err(io)?; // `<version>` appeared
+            sync(root).map_err(io)?; // the staging entry left
+            Ok(PackagePublishOutcome::Published)
+        }
+        Err(error) => {
+            let _ = reclaim_entry(root, staging_name.as_ref());
+            match std::fs::symlink_metadata(&target) {
+                Ok(_) => exact(&target),
+                Err(_) => Err(error.to_string()),
+            }
+        }
+    }
 }
 
-fn unique_install_dir(root: &Path, id: &str, version: &str) -> Result<PathBuf, String> {
+/// Create a private, never-before-used `.install-*` staging directory.
+fn unique_install_dir(root: &Path, id: &str, version: &str) -> Result<(String, PathBuf), String> {
     for _ in 0..128 {
-        let sequence = INSTALL_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let candidate = root.join(format!(
-            ".install-{id}-{version}-{}-{sequence}",
-            std::process::id()
-        ));
+        let name = unique_transient_name(INSTALL_PREFIX, id, version);
+        let candidate = root.join(&name);
         match std::fs::create_dir(&candidate) {
-            Ok(()) => return Ok(candidate),
+            Ok(()) => return Ok((name, candidate)),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error.to_string()),
         }
@@ -337,11 +474,15 @@ fn manifest_identity(manifest_json: &str) -> Result<(String, String), String> {
     Ok((id.to_string(), version.to_string()))
 }
 
+/// App-owned plugin storage, recovered once per process (see
+/// [`plugin_store_root`]).
 fn plugins_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app.path()
+    let root = app
+        .path()
         .app_data_dir()
         .map(|dir| dir.join("plugins"))
-        .map_err(|_| "no app-data dir".to_string())
+        .map_err(|_| "no app-data dir".to_string())?;
+    plugin_store_root(root)
 }
 
 fn package_dir(root: &Path, id: &str, version: &str) -> Result<PathBuf, String> {
@@ -402,14 +543,77 @@ fn validate_uninstall_target(
 /// symlink out of plugin storage. Returns true when no versions of this plugin
 /// remain and the now-empty id directory was removed too.
 fn uninstall_package(root: &Path, id: &str, version: &str) -> Result<bool, String> {
+    uninstall_package_with(root, id, version, || Ok(()))
+}
+
+/// [`uninstall_package`] with a test hook after the retirement move. The
+/// version leaves `<id>/<version>` in one no-replace move to a root
+/// `.retired-*` name and only then is deleted, so a crash or power loss
+/// mid-uninstall (in-scope) never leaves a half-removed package that could be
+/// listed or block reinstalling; the residue is reclaimed by
+/// [`recover_plugin_store_at`].
+fn uninstall_package_with(
+    root: &Path,
+    id: &str,
+    version: &str,
+    after_move: impl FnOnce() -> std::io::Result<()>,
+) -> Result<bool, String> {
+    let sync = tine_store::directory_durability::sync_directory_entry;
+    let _guard = lock_plugin_store();
     let (id_dir, target, _) = validate_uninstall_target(root, id, version)?;
-    std::fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
-    let mut remaining = std::fs::read_dir(&id_dir).map_err(|error| error.to_string())?;
-    if remaining.next().is_none() {
-        std::fs::remove_dir(&id_dir).map_err(|error| error.to_string())?;
+    let mut retired = None;
+    for _ in 0..128 {
+        let name = unique_transient_name(RETIRED_PREFIX, id, version);
+        match crate::device_io::move_file_noreplace(&target, &root.join(&name)) {
+            Ok(()) => {
+                retired = Some(name);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    let retired = retired.ok_or("could not allocate a private plugin retirement name")?;
+    let io = |error: std::io::Error| error.to_string();
+    after_move().map_err(io)?;
+    sync(&id_dir).map_err(io)?;
+    sync(root).map_err(io)?;
+    reclaim_entry(root, retired.as_ref()).map_err(io)?;
+    if std::fs::read_dir(&id_dir).map_err(io)?.next().is_none() {
+        std::fs::remove_dir(&id_dir).map_err(io)?;
+        sync(root).map_err(io)?;
         Ok(true)
     } else {
         Ok(false)
+    }
+}
+
+/// Drop the settings an uninstall makes stale: the selected/enabled state when
+/// this version is selected or is the last one, and the per-plugin settings
+/// with the last version.
+fn clear_uninstalled_plugin_settings(
+    json: &mut serde_json::Value,
+    id: &str,
+    version: &str,
+    last_version: bool,
+) {
+    let selected_version = json
+        .get("plugin_states")
+        .and_then(|states| states.get(id))
+        .and_then(|state| state.get("version"))
+        .and_then(|value| value.as_str());
+    if last_version || selected_version == Some(version) {
+        if let Some(states) = json
+            .get_mut("plugin_states")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            states.remove(id);
+        }
+    }
+    if last_version {
+        if let Some(root) = json.as_object_mut() {
+            root.remove(&format!("plugin-settings:{id}"));
+        }
     }
 }
 
@@ -462,29 +666,7 @@ pub(crate) fn install_plugin(
     }
     let digest = sha256(&wasm);
     let root = plugins_dir(&app)?;
-    let target = package_dir(&root, &id, &version)?;
-    if target.exists() {
-        let existing =
-            read_bounded(&target.join("plugin.wasm"), MAX_WASM_BYTES).map_err(|e| e.to_string())?;
-        let existing_manifest = read_manifest_bounded(&target.join("manifest.json"));
-        if existing.map(|bytes| sha256(&bytes)) != Some(digest.clone())
-            || existing_manifest.as_deref() != Some(manifest_json.as_str())
-        {
-            return Err(
-                "that immutable plugin version is already installed with different bytes"
-                    .to_string(),
-            );
-        }
-    } else {
-        publish_package(
-            &root,
-            &target,
-            &id,
-            &version,
-            manifest_json.as_bytes(),
-            &wasm,
-        )?;
-    }
+    publish_package(&root, &id, &version, manifest_json.as_bytes(), &wasm)?;
     Ok(InstalledPlugin {
         id,
         version,
@@ -508,24 +690,7 @@ pub(crate) fn uninstall_plugin(
     let root = plugins_dir(&app)?;
     let (_, _, last_version) = validate_uninstall_target(&root, &id, &version)?;
     crate::settings::update_settings(&app, |json| {
-        let selected_version = json
-            .get("plugin_states")
-            .and_then(|states| states.get(&id))
-            .and_then(|state| state.get("version"))
-            .and_then(|value| value.as_str());
-        if last_version || selected_version == Some(version.as_str()) {
-            if let Some(states) = json
-                .get_mut("plugin_states")
-                .and_then(serde_json::Value::as_object_mut)
-            {
-                states.remove(&id);
-            }
-        }
-        if last_version {
-            if let Some(root) = json.as_object_mut() {
-                root.remove(&format!("plugin-settings:{id}"));
-            }
-        }
+        clear_uninstalled_plugin_settings(json, &id, &version, last_version)
     })?;
     uninstall_package(&root, &id, &version)?;
     Ok(())
@@ -648,6 +813,10 @@ fn set_plugin_enabled_at(
 }
 
 #[cfg(test)]
+#[path = "plugin_store_tests.rs"]
+mod store_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -670,10 +839,10 @@ mod tests {
     #[test]
     fn plugin_install_publishes_a_complete_package_durably() {
         // og 15a K09 (I-2): the install path fsyncs each file and every
-        // directory that gains an entry before and after the rename, as
-        // `atomic_file` does (directory syncs are no-ops on Windows). Power
-        // loss cannot be simulated, so the fsync shape is pinned at the source
-        // and the result checked behaviourally.
+        // directory that gains or loses an entry, as `atomic_file` does
+        // (directory syncs are no-ops on Windows), and publishes with a
+        // no-replace move. Power loss cannot be simulated, so the fsync shape
+        // is pinned at the source and the result checked behaviourally.
         let source = include_str!("plugins.rs");
         let production = source.split("#[cfg(test)]").next().unwrap();
         let install = &production[production.find("pub(crate) fn install_plugin(").unwrap()..];
@@ -688,26 +857,30 @@ mod tests {
             publish
                 .matches("crate::device_io::atomic_write_new(")
                 .count(),
-            2
+            1,
+            "both package files go through the one fsyncing create-new writer"
         );
         assert!(
             publish.contains("sync_directory_entry")
-                && publish.matches("sync(parent)").count() == 1
+                && publish.contains("sync(&id_dir)")
+                && publish.contains("crate::device_io::move_file_noreplace(")
         );
 
-        let root = std::env::temp_dir().join(format!("tine-plugin-publish-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("plugins");
         let target = package_dir(&root, "dev.tine.demo", "1.0.0").unwrap();
         let manifest = test_manifest("dev.tine.demo", "1.0.0");
-        publish_package(
-            &root,
-            &target,
-            "dev.tine.demo",
-            "1.0.0",
-            manifest.as_bytes(),
-            b"\0asm\x01\0\0\0",
-        )
-        .unwrap();
+        assert_eq!(
+            publish_package(
+                &root,
+                "dev.tine.demo",
+                "1.0.0",
+                manifest.as_bytes(),
+                b"\0asm\x01\0\0\0",
+            )
+            .unwrap(),
+            PackagePublishOutcome::Published
+        );
         assert_eq!(
             std::fs::read_to_string(target.join("manifest.json")).unwrap(),
             manifest
@@ -735,11 +908,10 @@ mod tests {
             "no temp file left behind"
         );
         assert!(
-            publish_package(&root, &target, "dev.tine.demo", "1.0.0", b"{}", b"x").is_err(),
+            publish_package(&root, "dev.tine.demo", "1.0.0", b"{}", b"x").is_err(),
             "an installed version is not replaced"
         );
         assert_eq!(names(&root), vec!["dev.tine.demo"]);
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -807,7 +979,6 @@ mod tests {
             &path,
             SIGNED_CONTROL_INDEX.to_string(),
             SIGNED_CONTROL_SIGNATURE.to_string(),
-            None,
         )
         .unwrap();
 
@@ -818,8 +989,6 @@ mod tests {
             persisted[REGISTRY_CACHE_KEY],
             envelope(SIGNED_CONTROL_INDEX, SIGNED_CONTROL_SIGNATURE)
         );
-        assert!(persisted.get(LEGACY_REGISTRY_INDEX_KEY).is_none());
-        assert!(persisted.get(LEGACY_REGISTRY_SIGNATURE_KEY).is_none());
         assert!(matches!(
             load_plugin_registry_cache_at(&path),
             PluginRegistryCacheLoad::Envelope { .. }
@@ -840,15 +1009,22 @@ mod tests {
             PluginRegistryCacheLoad::Absent
         );
 
+        std::fs::write(&path, r#"{"plugin-registry-index":"index"}"#).unwrap();
+        assert_eq!(
+            load_plugin_registry_cache_at(&path),
+            PluginRegistryCacheLoad::Absent,
+            "the retired settings-cache shape is disposable and must trigger a refetch"
+        );
         std::fs::write(
             &path,
-            format!(r#"{{"{LEGACY_REGISTRY_INDEX_KEY}":"index"}}"#),
+            r#"{"plugin-registry-index":"index","plugin-registry-signature":"sig"}"#,
         )
         .unwrap();
-        assert!(matches!(
+        assert_eq!(
             load_plugin_registry_cache_at(&path),
-            PluginRegistryCacheLoad::Unsafe { .. }
-        ));
+            PluginRegistryCacheLoad::Absent,
+            "a complete retired pair is not migrated; the live registry refetches it"
+        );
         std::fs::write(&path, format!(r#"{{"{REGISTRY_CACHE_KEY}":{{"schemaVersion":1,"indexJson":"x","signature":"y","extra":true}}}}"#)).unwrap();
         assert!(matches!(
             load_plugin_registry_cache_at(&path),
@@ -862,57 +1038,6 @@ mod tests {
     }
 
     #[test]
-    fn guarded_legacy_migration_removes_both_keys_or_publishes_nothing() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("tine-settings.json");
-        let legacy = LegacyPluginRegistryCache {
-            index_json: SIGNED_CONTROL_INDEX.to_string(),
-            signature: SIGNED_CONTROL_SIGNATURE.to_string(),
-        };
-        let initial = serde_json::json!({
-            "keep": 7,
-            LEGACY_REGISTRY_INDEX_KEY: legacy.index_json,
-            LEGACY_REGISTRY_SIGNATURE_KEY: legacy.signature,
-        });
-        std::fs::write(
-            &path,
-            format!("{}\n", serde_json::to_string_pretty(&initial).unwrap()),
-        )
-        .unwrap();
-
-        let mismatched = LegacyPluginRegistryCache {
-            index_json: "other".to_string(),
-            signature: SIGNED_CONTROL_SIGNATURE.to_string(),
-        };
-        let before = std::fs::read(&path).unwrap();
-        assert!(store_plugin_registry_cache_at(
-            &path,
-            SIGNED_CONTROL_INDEX.to_string(),
-            SIGNED_CONTROL_SIGNATURE.to_string(),
-            Some(mismatched),
-        )
-        .is_err());
-        assert_eq!(std::fs::read(&path).unwrap(), before);
-
-        store_plugin_registry_cache_at(
-            &path,
-            SIGNED_CONTROL_INDEX.to_string(),
-            SIGNED_CONTROL_SIGNATURE.to_string(),
-            Some(legacy),
-        )
-        .unwrap();
-        let persisted: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(persisted["keep"], 7);
-        assert!(persisted.get(LEGACY_REGISTRY_INDEX_KEY).is_none());
-        assert!(persisted.get(LEGACY_REGISTRY_SIGNATURE_KEY).is_none());
-        assert_eq!(
-            persisted[REGISTRY_CACHE_KEY],
-            envelope(SIGNED_CONTROL_INDEX, SIGNED_CONTROL_SIGNATURE)
-        );
-    }
-
-    #[test]
     fn invalid_or_unpublishable_registry_cache_never_replaces_last_good_bytes() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("tine-settings.json");
@@ -923,7 +1048,6 @@ mod tests {
             &path,
             SIGNED_CONTROL_INDEX.to_string(),
             "invalid".to_string(),
-            None,
         )
         .is_err());
         assert_eq!(std::fs::read(&path).unwrap(), before);
@@ -931,7 +1055,6 @@ mod tests {
             &path,
             "x".repeat(MAX_REGISTRY_INDEX_BYTES + 1),
             SIGNED_CONTROL_SIGNATURE.to_string(),
-            None,
         )
         .is_err());
         assert_eq!(std::fs::read(&path).unwrap(), before);
@@ -942,7 +1065,6 @@ mod tests {
             &path,
             SIGNED_CONTROL_INDEX.to_string(),
             SIGNED_CONTROL_SIGNATURE.to_string(),
-            None,
         )
         .is_err());
         assert_eq!(std::fs::read(&path).unwrap(), malformed);
@@ -967,7 +1089,6 @@ mod tests {
             &path,
             SIGNED_CONTROL_INDEX.to_string(),
             SIGNED_CONTROL_SIGNATURE.to_string(),
-            None,
         );
         std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(original_mode))
             .unwrap();
@@ -994,7 +1115,6 @@ mod tests {
                 writer_path.as_ref(),
                 SIGNED_CONTROL_INDEX.to_string(),
                 SIGNED_CONTROL_SIGNATURE.to_string(),
-                None,
             )
             .unwrap();
         });

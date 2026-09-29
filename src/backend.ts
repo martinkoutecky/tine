@@ -171,15 +171,9 @@ export interface PluginRegistryCacheEnvelope {
   signature: string;
 }
 
-export interface LegacyPluginRegistryCache {
-  indexJson: string;
-  signature: string;
-}
-
 export type PluginRegistryCacheLoad =
   | { kind: "absent" }
   | { kind: "envelope"; envelope: PluginRegistryCacheEnvelope }
-  | { kind: "legacy"; indexJson: string; signature: string }
   | { kind: "unsafe"; reason: string };
 
 export type LoadGraphResult =
@@ -224,8 +218,7 @@ export interface Backend {
   loadPluginRegistryCache(): Promise<PluginRegistryCacheLoad>;
   storePluginRegistryCache(
     indexJson: string,
-    signature: string,
-    expectedLegacy?: LegacyPluginRegistryCache
+    signature: string
   ): Promise<void>;
   /** Keep Android's edge-to-edge status/navigation icon appearance readable
    *  against Tine's explicit in-app theme. Other platforms are a no-op. */
@@ -873,13 +866,11 @@ class TauriBackend implements Backend {
   }
   storePluginRegistryCache(
     indexJson: string,
-    signature: string,
-    expectedLegacy?: LegacyPluginRegistryCache
+    signature: string
   ) {
     return this.call<void>("store_plugin_registry_cache", {
       indexJson,
       signature,
-      expectedLegacy: expectedLegacy ?? null,
     });
   }
   setSystemBarAppearance(dark: boolean) {

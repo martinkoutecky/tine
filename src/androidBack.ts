@@ -9,13 +9,27 @@ export interface AndroidBackListener {
   unregister(): Promise<void> | void;
 }
 
+type AndroidProcessApi = { exit(code?: number): Promise<void> };
+
+/** Exit only after the safe-close coordinator has made graph state durable.
+ * Tauri exposes Activity/process exit through plugin-process (capability
+ * `process:allow-exit`); plugin:app has no exit command on the Rust side, so
+ * `invoke("plugin:app|exit")` never closed the app (master cb7a10fd3). */
+export async function exitAndroidActivity(
+  loadProcess: () => Promise<AndroidProcessApi> = () => import("@tauri-apps/plugin-process"),
+): Promise<void> {
+  const { exit } = await loadProcess();
+  await exit(0);
+}
+
 export interface AndroidBackDispatchDeps {
   dismissTransient(): boolean;
   dismissDrawer(): boolean;
   restoreDrawerFocus(): void;
-  /** Go back one step in Tine's own router and say whether it moved. The
-   * WebView's `canGoBack` cannot answer this: its stack can hold entries that
-   * are not Tine's, and the mobile router pushes same-URL entries. */
+  /** Whether Tine actually went back. The WebView's own `canGoBack` cannot
+   * answer this: the mobile router pushes same-URL entries, so its history
+   * moves without the address or the entry count changing, and entries that
+   * are not Tine's can sit in the same stack. Only the router knows. */
   historyBack(): boolean;
   closeRoot(): void;
 }
@@ -23,8 +37,9 @@ export interface AndroidBackDispatchDeps {
 export type AndroidBackDisposition = "transient" | "drawer" | "history" | "root";
 
 /** Synchronous ordering matters: a hardware Back gesture selects exactly one
- * rung (transient, drawer, router history, root close) and never synthesizes a
- * KeyboardEvent or a second router back action. The payload is not consulted. */
+ * rung and never synthesizes a KeyboardEvent or a second router back action.
+ * The history rung is taken iff the router moved (master 07cb27262); the
+ * native `canGoBack` payload is not consulted. */
 export function dispatchAndroidBack(
   _payload: AndroidBackPayload,
   deps: AndroidBackDispatchDeps,
@@ -34,9 +49,8 @@ export function dispatchAndroidBack(
     deps.restoreDrawerFocus();
     return "drawer";
   }
-  // The rung is chosen by whether the router moved, not by the WebView's
-  // opinion of its own stack: `canGoBack` could be true with nothing for the
-  // router to pop, so Back landed here and silently did nothing, forever.
+  // `canGoBack` was true on a phone whose router had nothing to pop, so Back
+  // landed on the history rung and silently did nothing, forever.
   if (deps.historyBack()) return "history";
   deps.closeRoot();
   return "root";
@@ -49,7 +63,7 @@ export interface AndroidBackInstallDeps extends AndroidBackDispatchDeps {
 }
 
 /** On Android, register one AppPlugin Back listener for this installation.
- * Dispatch dismisses a transient, then a drawer, then WebView history, then
+ * Dispatch dismisses a transient, then a drawer, then router history, then
  * requests root close. Other platforms install nothing. Setup failures call
  * setupFailed when supplied and do not reject through the returned cleanup
  * function. Cleanup unregisters an installed listener; dispatch is O(1). */
@@ -78,19 +92,6 @@ export function installAndroidBackHandler(deps: AndroidBackInstallDeps): () => v
 }
 
 export type AndroidRootCloseResult = SafeClosePrepareResult | "exit_requested" | "exit_failed";
-
-type AndroidProcessApi = { exit(code?: number): Promise<void> };
-
-/** End the Android activity through the installed process plugin. Tauri's
- * `plugin:app` has no exit command, so invoking it failed and left a gray,
- * unusable screen after the root Back (GH #386). Call only after the
- * safe-close coordinator accepted; rejects when the plugin call fails. */
-export async function exitAndroidActivity(
-  loadProcess: () => Promise<AndroidProcessApi> = () => import("@tauri-apps/plugin-process"),
-): Promise<void> {
-  const { exit } = await loadProcess();
-  await exit(0);
-}
 
 /** Root close shares the desktop coordinator.  A failed native invoke resets
  * the accepted transaction so the next hardware Back can safely retry. */

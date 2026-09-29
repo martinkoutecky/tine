@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   dispatchAndroidBack,
-  exitAndroidActivity,
   installAndroidBackHandler,
   type AndroidBackDispatchDeps,
   type AndroidBackListener,
@@ -18,16 +17,16 @@ function deferred<T>() {
 function dispatchDeps(): AndroidBackDispatchDeps & {
   transient: boolean;
   drawer: boolean;
-  routerHasBack: boolean;
+  movedBack: boolean;
 } {
   const state = {
     transient: false,
     drawer: false,
-    routerHasBack: true,
+    movedBack: true,
     dismissTransient: vi.fn(() => state.transient),
     dismissDrawer: vi.fn(() => state.drawer),
     restoreDrawerFocus: vi.fn(),
-    historyBack: vi.fn(() => state.routerHasBack),
+    historyBack: vi.fn(() => state.movedBack),
     closeRoot: vi.fn(),
   };
   return state;
@@ -52,46 +51,54 @@ describe("GH #161 official Android AppPlugin Back owner", () => {
     expect(deps.historyBack).toHaveBeenCalledOnce();
     expect(deps.closeRoot).not.toHaveBeenCalled();
 
-    deps.routerHasBack = false;
+    // Root is reached by the router having nothing left to pop, which is the
+    // only thing that distinguishes it from the rung above.
+    deps.movedBack = false;
     expect(dispatchAndroidBack({ canGoBack: false }, deps)).toBe("root");
     expect(deps.historyBack).toHaveBeenCalledTimes(2);
     expect(deps.closeRoot).toHaveBeenCalledOnce();
   });
 
-  // Master 393973956 -> 07cb27262: the WebView's canGoBack can be true while
-  // Tine's router has nothing to pop. Choosing the history rung from it made
-  // Back silently do nothing, forever; the router decides instead.
-  it("closes the root when the router cannot go back even though the WebView says it can", () => {
+  it("takes the router's answer, not the WebView's, for the history rung", () => {
+    // master 07cb27262: a phone reported canGoBack=true with nothing for the
+    // router to pop, so Back landed on the history rung and silently did
+    // nothing. The rung is chosen by whether the router actually moved.
     const deps = dispatchDeps();
-    deps.routerHasBack = false;
+    deps.movedBack = false;
     expect(dispatchAndroidBack({ canGoBack: true }, deps)).toBe("root");
     expect(deps.historyBack).toHaveBeenCalledOnce();
     expect(deps.closeRoot).toHaveBeenCalledOnce();
+
+    deps.movedBack = true;
+    expect(dispatchAndroidBack({ canGoBack: false }, deps)).toBe("history");
+    expect(deps.closeRoot).toHaveBeenCalledOnce();
+  });
+
+  it("hands a safely prepared root close to Tauri's installed process exit API", async () => {
+    // master cb7a10fd3/b3bdcb36f: plugin:app has no exit command on the Rust
+    // side, so `invoke("plugin:app|exit")` never closed the app.
+    const { exitAndroidActivity } = await import("./androidBack");
+    const exit = vi.fn(async (_code?: number) => {});
+
+    await exitAndroidActivity(async () => ({ exit }));
+
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("wires the router's history answer and the plugin-process exit with its capability", () => {
+    const app = readFileSync("src/App.tsx", "utf8");
+    const capability = JSON.parse(readFileSync("src-tauri/capabilities/default.json", "utf8"));
+    expect(app).not.toContain("plugin:app|exit");
+    expect(app).toContain("exitAndroidActivity");
+    expect(app).not.toContain("historyBack: () => window.history.back()");
+    expect(app).toMatch(/historyBack: \(\) => \{\s*if \(!canGoBack\(\)\) return false;\s*goBack\(\);\s*return true;/);
+    expect(capability.permissions).toContain("process:allow-exit");
   });
 
   it("goes back through the router even when the WebView reports no history", () => {
     const deps = dispatchDeps();
     expect(dispatchAndroidBack({ canGoBack: false }, deps)).toBe("history");
     expect(deps.closeRoot).not.toHaveBeenCalled();
-  });
-
-  // GH #386: Tauri's plugin:app has no exit command, so the root close left a
-  // gray, unusable screen. The installed process plugin exits.
-  it("hands a safely prepared root close to Tauri's installed process exit API", async () => {
-    const exit = vi.fn(async (_code?: number) => {});
-    await exitAndroidActivity(async () => ({ exit }));
-    expect(exit).toHaveBeenCalledWith(0);
-  });
-
-  it("wires App.tsx to the router rung and the process exit, with the exit permission granted", () => {
-    const app = readFileSync("src/App.tsx", "utf8");
-    const capability = JSON.parse(readFileSync("src-tauri/capabilities/default.json", "utf8")) as {
-      permissions: string[];
-    };
-    expect(app).not.toContain("plugin:app|exit");
-    expect(app).toContain("    exitAndroidActivity,\n");
-    expect(app).toMatch(/historyBack: \(\) => \{\s*if \(!canGoBack\(\)\) return false;\s*goBack\(\);\s*return true;/);
-    expect(capability.permissions).toContain("process:allow-exit");
   });
 
   it("subscribes exactly once only on Android and unregisters idempotently", async () => {
