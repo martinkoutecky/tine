@@ -144,23 +144,23 @@ export function installDraftKeeper(keeper: DraftKeeper | null) { draftKeeper = k
 function noteRisk(name: string) {
   draftKeeper?.(name, !!conflictReasons()[name] || lastSaveFailure.has(name));
 }
-/** The one verdict on a watcher observation of a page holding unsaved edits,
- *  in BOTH directions (og I1c, master c68c0b6e7; Direct Files audit F17).
- *  `observedRev` is the file's revision now (`null` = absent, `undefined` = the
- *  read failed). A revision other than this editor's baseline — or a missing
- *  file it had loaded, or an unreadable one — raises a disk-changed conflict.
- *  The baseline itself (a temp+rename or mid-delivery sync gap that came back,
- *  or our own echo) raises nothing, and lifts an existing disk-changed conflict:
- *  its claim is false, and the edit it froze is re-armed and saved against that
- *  baseline. Other conflict kinds are not about file bytes and stay. O(1). */
+/** A watcher observation of a page holding unsaved edits (og I1c, master
+ *  c68c0b6e7; Direct Files audit F17). `observedRev` is the file's revision now
+ *  (`null` = absent, `undefined` = the read failed). Raising stays og's
+ *  conservative rule: every such observation marks a disk-changed conflict.
+ *  The one exception is the lift: when the page already holds a disk-changed
+ *  conflict and the file provably holds this editor's loaded baseline again
+ *  (a temp+rename or mid-delivery sync gap that came back), the conflict's
+ *  claim is false, so it is cleared and the edit it froze is re-armed and
+ *  saved against that baseline. Other conflict kinds are not about file bytes
+ *  and stay. O(1). */
 export function applyObservedDivergence(name: string, observedRev: string | null | undefined): void {
-  const baseline = baseRev.get(name) ?? null;
-  const diverged = observedRev === undefined || (observedRev === null ? baseline !== null : observedRev !== baseline);
-  if (diverged) {
+  const baseline = baseRev.get(name);
+  const backToBaseline = typeof observedRev === "string" && observedRev === baseline;
+  if (!backToBaseline || conflictReasons()[name]?.kind !== "disk-changed") {
     markConflict(name, { kind: "disk-changed" }, observedRev);
     return;
   }
-  if (conflictReasons()[name]?.kind !== "disk-changed") return;
   clearConflict(name);
   const page = pageByName(name);
   if (!page || page.readOnly || page.guide) return;
