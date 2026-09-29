@@ -404,7 +404,9 @@ const UPDATER_CAUSES: [&str; 7] = [
 /// from closed lists), `updater_manual_only` (`updater.manual_only`: a build
 /// that updates manually by policy, not a failure — GH #594) and
 /// `close_discarded_unsaved` (`runtime.close_discarded_unsaved`: reason
-/// `failed`/`still-saving` and a page count — GH #540). Any other kind, or a
+/// `failed`/`still-saving` and a page count — GH #540) and `error_toast`
+/// (`frontend.error_toast`: that an error toast was shown; never its text,
+/// which may name pages — the opt-in debug log has it). Any other kind, or a
 /// token outside its list, drops the event.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -452,6 +454,7 @@ fn frontend_event_fields(
             fields.insert("pages".into(), json!(pages.unwrap_or(0)));
             Some(("runtime.close_discarded_unsaved", fields))
         }
+        "error_toast" => Some(("frontend.error_toast", fields)),
         "updater_manual_only" => {
             fields.insert("reason".into(), json!("x86"));
             Some(("updater.manual_only", fields))
@@ -750,6 +753,17 @@ mod tests {
         assert_eq!(event, "updater.manual_only");
         assert_eq!(fields.get("reason"), Some(&json!("x86")));
         assert_eq!(fields.len(), 1);
+    }
+
+    /// OG-TOAST: every error toast leaves a fixed-shape trace in the persisted
+    /// recorder, with no text field at all.
+    #[test]
+    fn an_error_toast_is_recorded_without_its_text() {
+        let (event, fields) =
+            frontend_event_fields("error_toast", None, None, None, None, None, None, None)
+                .unwrap();
+        assert_eq!(event, "frontend.error_toast");
+        assert!(fields.is_empty());
     }
 
     #[test]

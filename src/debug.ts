@@ -11,7 +11,7 @@
 import { backend, type DiagnosticFrontendFields, type DiagnosticFrontendKind } from "./backend";
 import { platformKind } from "./nativeChrome";
 import { ownedWhen, writeOwned } from "./owned";
-import { pushToast, pushToastUnique } from "./toasts";
+import { pushToast, pushToastUnique, recordErrorToastsWith } from "./toasts";
 
 let enabled = false;
 let initialized = false;
@@ -72,6 +72,12 @@ export async function initDebug(): Promise<void> {
   window.addEventListener("unhandledrejection", (e) => {
     void recordDiagnostic("unhandled_rejection");
     dbg(`unhandledrejection: ${String((e as PromiseRejectionEvent).reason)}`);
+  });
+  // Every error toast: its occurrence in the persisted recorder (fixed kind,
+  // no text: it may name pages), its full text in the opt-in debug log.
+  recordErrorToastsWith((message) => {
+    void recordDiagnostic("error_toast");
+    dbg(`error toast: ${message}`);
   });
   let expected = performance.now() + HEARTBEAT_MS;
   window.setInterval(() => {
