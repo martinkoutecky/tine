@@ -10,6 +10,7 @@
 import { untrack } from "solid-js";
 import { conflictReason, conflicts, liveConflictDraft, pageByName } from "./document";
 import { earlierDrafts } from "./draftStore";
+import { conflictQueue, syncConflicts } from "./conflictQueue";
 import type { ConflictObject, DraftRecord, LiveConflictDraft, PageKind } from "./types";
 
 function liveObject(name: string, path: string, kind: PageKind, live: LiveConflictDraft): ConflictObject {
@@ -65,3 +66,12 @@ export function liveConflictObjects(): ConflictObject[] {
   return [...open, ...restored];
 }
 
+
+/** THE count of items needing a decision, one answer for the sidebar badge,
+ *  the Settings pointer and the Conflicts overview (master counts its one
+ *  combined queue): the derived artifact queue, a copy whose page is gone
+ *  (nothing else points at it), and every live-draft conflict.
+ *  O(conflicts + records). */
+export function pendingConflictCount(): number {
+  return conflictQueue().length + syncConflicts().filter((c) => !c.base_path).length + liveConflictObjects().length;
+}

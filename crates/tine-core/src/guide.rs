@@ -442,6 +442,32 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn duplicate_journal_days_resolve_from_the_conflict_queue_in_the_guide() {
+        // Master 9dc54e4a7: a duplicate journal day is a queue object resolved
+        // on the day itself; Settings keeps the per-file list as a fallback.
+        let recovery = include_str!("templates/troubleshooting-recovery.md");
+        for control in [
+            "open the day from the **Duplicate journal days** group",
+            "lists each file with **Open**, **Rename**, and **Trash** actions",
+            "A Markdown file and an Org file for one day cannot be folded together",
+        ] {
+            assert!(
+                recovery.contains(control),
+                "missing duplicate-day Guide control: {control}"
+            );
+        }
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("the day joins the **N conflicts** queue"));
+    }
+
+    #[test]
+    fn the_conflict_review_stays_reachable_while_scrolling_in_the_guide() {
+        // Master 61ea6600c: a pinned bar unrolls the review in place.
+        let files = include_str!("templates/files-external-edits-backups.md");
+        assert!(files.contains("A pinned notice keeps the review reachable while you scroll"));
+    }
+
+    #[test]
     fn rename_merge_and_journal_rename_proposals_are_documented_in_the_bundled_guide() {
         let tips = include_str!("templates/tips.md");
         for control in [

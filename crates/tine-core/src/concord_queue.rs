@@ -151,6 +151,10 @@ pub enum ConflictSource {
     SyncCopy,
     /// A VCS merge left conflict markers inside the page file itself.
     VcsMarkers,
+    /// One journal day resolves to more than one file (a date-stem file plus a
+    /// title-named one, usually left by a journal date-format change). The
+    /// filename migration never clobbers, so both survive (master 9dc54e4a7).
+    DuplicateJournal,
 }
 
 /// Which version of the page a side is. Three roles, not two — the base is a

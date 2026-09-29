@@ -500,10 +500,33 @@ pub fn resolve_sync_conflict(
             "the conflict copy does not shadow this page; not merging",
         ));
     }
-    let page = store.as_page(&win).ok_or_else(invalid_path)?;
+    fold_pair(
+        store,
+        (&win, &conf),
+        decisions,
+        (base_rev, conflict_rev),
+        merge_base_rev,
+        bases,
+        pre_choice,
+    )
+}
+
+/// The guarded two-file fold shared by a sync copy and a duplicate journal
+/// day, once the caller has proved the pairing: `conf` is merged into `win`
+/// per the row decisions and trashed recoverably, in one transaction.
+fn fold_pair(
+    store: &Store,
+    (win, conf): (&FileId, &FileId),
+    decisions: &HashMap<String, String>,
+    (base_rev, conflict_rev): (&str, &str),
+    merge_base_rev: Option<&str>,
+    bases: &[String],
+    pre_choice: &str,
+) -> io::Result<()> {
+    let page = store.as_page(win).ok_or_else(invalid_path)?;
     crate::retry_on_conflict("conflict files changed repeatedly during merge", || {
-        let (mine, win_rev) = read_text(store, &win)?;
-        let (theirs, conf_rev) = read_text(store, &conf)?;
+        let (mine, win_rev) = read_text(store, win)?;
+        let (theirs, conf_rev) = read_text(store, conf)?;
         if String::from(win_rev.clone()) != base_rev {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -516,7 +539,7 @@ pub fn resolve_sync_conflict(
                 "conflict copy changed on disk",
             ));
         }
-        let fmt = format(&win);
+        let fmt = format(win);
         if fmt == Format::Org
             && (!tine_core::org::org_editable(&mine) || !tine_core::org::org_editable(&theirs))
         {
@@ -526,7 +549,7 @@ pub fn resolve_sync_conflict(
             ));
         }
         let mine_doc = parse(&mine, fmt);
-        let their_doc = parse(&theirs, format(&conf));
+        let their_doc = parse(&theirs, format(conf));
         // Only a `"merged"` row reads the base (mine/theirs/both do not), so a
         // base that is gone or different blocks nothing else: a ledger read
         // failure never refuses a resolve. For a merged row, scenario:
@@ -568,7 +591,7 @@ pub fn resolve_sync_conflict(
             SaveBase::Existing(win_rev),
             &merged,
         );
-        tx.trash(&conf, conf_rev);
+        tx.trash(conf, conf_rev);
         Ok(crate::commit_retry(tx.commit())?.then_some(()))
     })
 }
@@ -594,6 +617,129 @@ pub fn trash_sync_conflict(store: &Store, conflict: &str) -> io::Result<()> {
             "no such conflict file",
         )
     })
+}
+
+/// Two-way diff of a duplicate journal day's canonical file against one stray
+/// (master 9dc54e4a7). The two files have no common ancestor (two files that
+/// came to claim one day, not one document that diverged), so the diff is
+/// always 2-way. A cross-format `.md`/`.org` pair cannot be folded and returns
+/// `None`, which the queue shows as file rows without row choices. Cost
+/// O(both file bytes + blocks).
+pub fn duplicate_journal_diff(
+    store: &Store,
+    canonical: &str,
+    stray: &str,
+) -> io::Result<Option<SyncConflictDiff>> {
+    let (Ok(keep), Ok(other)) = (id(store, canonical), id(store, stray)) else {
+        return Ok(None);
+    };
+    if format(&keep) != format(&other) {
+        return Ok(None);
+    }
+    sync_conflict_diff(store, canonical, stray, &[])
+}
+
+/// Fold one stray of a duplicate journal day into the day's canonical file per
+/// the reviewed row decisions and trash the stray recoverably, through the
+/// same guarded fold as a sync copy (revision guards, org round-trip firewall,
+/// one transaction). Refusals, each with its scenario: the two paths are not
+/// files of ONE duplicate day, or `canonical` is not that day's keeper (a stale
+/// review after sync-service delivery, an external rename or a journal-format
+/// change re-sorted the day; never a merge of two unrelated pages); a
+/// cross-format pair (malformed pairing: an Org body would be rewritten as
+/// Markdown or the reverse). Cost O(journal listing + both file bytes).
+pub fn resolve_duplicate_journal_day(
+    store: &Store,
+    canonical: &str,
+    stray: &str,
+    decisions: &HashMap<String, String>,
+    base_rev: &str,
+    stray_rev: &str,
+    pre_choice: &str,
+) -> io::Result<()> {
+    let refuse = |kind, why| Err(io::Error::new(kind, why));
+    if canonical == stray {
+        return refuse(
+            io::ErrorKind::InvalidInput,
+            "canonical and stray are the same file",
+        );
+    }
+    let Some(day) = crate::journals::journal_conflicts(store)
+        .into_iter()
+        .find(|day| day.files.iter().any(|file| file.path == canonical))
+    else {
+        return refuse(
+            io::ErrorKind::NotFound,
+            "not a file of a duplicate journal day",
+        );
+    };
+    if !day.files.iter().any(|file| file.path == stray) {
+        return refuse(
+            io::ErrorKind::InvalidInput,
+            "the two files are not the same journal day",
+        );
+    }
+    // `journal_conflicts` sorts canonical-first: files[0] is the keeper.
+    if day.files.first().map(|file| file.path.as_str()) != Some(canonical) {
+        return refuse(
+            io::ErrorKind::InvalidInput,
+            "that file is not the day's canonical file",
+        );
+    }
+    let (keep, other) = (id(store, canonical)?, id(store, stray)?);
+    if format(&keep) != format(&other) {
+        return refuse(
+            io::ErrorKind::InvalidInput,
+            "a Markdown and an Org file of one day cannot be merged",
+        );
+    }
+    fold_pair(
+        store,
+        (&keep, &other),
+        decisions,
+        (base_rev, stray_rev),
+        None,
+        &[],
+        pre_choice,
+    )
+}
+
+/// Queue objects for every duplicate journal day: the keeper is Mine, each
+/// stray a Theirs side, and the row count is the keeper against the FIRST
+/// stray (a day with three files resolves pairwise; the queue re-derives with
+/// one file fewer after each fold). Id `journal:<keeper path>` is stable for
+/// the same disk state. Cost O(journal listing + duplicate file bytes).
+fn journal_objects(store: &Store) -> Vec<ConflictObject> {
+    let mut out = Vec::new();
+    for day in crate::journals::journal_conflicts(store) {
+        let [keeper, strays @ ..] = day.files.as_slice() else {
+            continue;
+        };
+        let Some(first) = strays.first() else {
+            continue;
+        };
+        let side = |role, file: &tine_core::model::JournalFile| ConflictSide {
+            role,
+            label: file.name.clone(),
+            path: Some(file.path.clone()),
+        };
+        let diff = duplicate_journal_diff(store, &keeper.path, &first.path)
+            .ok()
+            .flatten();
+        out.push(ConflictObject {
+            id: format!("journal:{}", keeper.path),
+            source: ConflictSource::DuplicateJournal,
+            page_name: day.title.clone(),
+            page_path: keeper.path.clone(),
+            kind: PageKind::Journal,
+            sides: std::iter::once(side(SideRole::Mine, keeper))
+                .chain(strays.iter().map(|stray| side(SideRole::Theirs, stray)))
+                .collect(),
+            block_conflicts: diff.as_ref().map(|d| decidable_row_count(&d.rows)),
+            markers: Vec::new(),
+        });
+    }
+    out
 }
 
 /// The marker listing entry for one page or journal file, or `None` when it
@@ -727,6 +873,9 @@ fn marker_object(store: &Store, marked: &VcsMarkerConflict) -> ConflictObject {
     }
 }
 
+/// The graph config file as a store change names it.
+const CONFIG: &str = "logseq/config.edn";
+
 fn sort_queue(queue: &mut [ConflictObject]) {
     queue.sort_by(|a, b| a.page_name.cmp(&b.page_name).then_with(|| a.id.cmp(&b.id)));
 }
@@ -750,6 +899,7 @@ pub fn conflict_inventory(store: &Store) -> ConflictInventory {
                 .iter()
                 .map(|marked| marker_object(store, marked)),
         )
+        .chain(journal_objects(store))
         .collect();
     sort_queue(&mut queue);
     ConflictInventory {
@@ -800,6 +950,11 @@ impl ConflictQueue {
                     || inventory.sync_conflicts.iter().any(|c| {
                         c.path == path || sync_copy_winner(&c.path).as_deref() == Some(path)
                     })
+                    || path == CONFIG
+                    || inventory.queue.iter().any(|o| {
+                        o.source == ConflictSource::DuplicateJournal
+                            && o.sides.iter().any(|s| s.path.as_deref() == Some(path))
+                    })
             };
             change
                 .files
@@ -820,7 +975,8 @@ impl ConflictQueue {
     /// read the current disk). Idempotent: it re-reads the files, so applying
     /// the same change twice is harmless. Cost: one bounded read per changed
     /// page or journal file plus one diff per affected copy, O(changed bytes);
-    /// no directory walk.
+    /// a changed journal file adds one journal-directory listing to re-derive
+    /// the duplicate days (O(J)); no page-directory walk.
     pub fn refresh_files(&self, store: &Store, files: &[FileId]) -> bool {
         let mut derived = self.derived.lock().unwrap_or_else(|e| e.into_inner());
         let Some(inventory) = derived.as_mut() else {
@@ -829,10 +985,14 @@ impl ConflictQueue {
         let before = serde_json::to_string(&*inventory).ok();
         let exists = |rel: &str| id(store, rel).is_ok_and(|file| store.open_read(&file).is_ok());
         let mut copies: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        // A config change can move the journal date formats, which re-titles
+        // the duplicate days and can re-pick their keeper.
+        let mut journals = files.iter().any(|f| f.as_str() == CONFIG);
         for file in files {
-            if graph_text_title(store, file).is_none() {
+            let Some((kind, ..)) = graph_text_title(store, file) else {
                 continue;
-            }
+            };
+            journals |= kind == PageKind::Journal;
             let path = file.as_str();
             if sync_copy_winner(path).is_some() {
                 copies.insert(path.to_owned());
@@ -860,6 +1020,7 @@ impl ConflictQueue {
         inventory.vcs_markers.sort_by(|a, b| a.path.cmp(&b.path));
         sort_copies(&mut inventory.sync_conflicts);
         let touched = |object: &ConflictObject| match object.source {
+            ConflictSource::DuplicateJournal => journals,
             ConflictSource::SyncCopy => object
                 .sides
                 .iter()
@@ -878,6 +1039,12 @@ impl ConflictQueue {
                     .iter()
                     .filter(|m| files.iter().any(|f| f.as_str() == m.path))
                     .map(|m| marker_object(store, m)),
+            )
+            .chain(
+                journals
+                    .then(|| journal_objects(store))
+                    .into_iter()
+                    .flatten(),
             )
             .collect();
         inventory.queue.extend(fresh);

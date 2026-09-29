@@ -62,9 +62,9 @@ use commands::{
     write_highlights, write_pdf_view_state,
 };
 use concord::{
-    conflict_inventory, list_sync_conflicts, live_conflict_diff, resolve_live_conflict,
-    resolve_sync_conflict, resolve_vcs_marker_conflict, sync_conflict_diff, trash_sync_conflict,
-    vcs_marker_conflict_diff,
+    conflict_inventory, duplicate_journal_diff, list_sync_conflicts, live_conflict_diff,
+    resolve_duplicate_journal_day, resolve_live_conflict, resolve_sync_conflict,
+    resolve_vcs_marker_conflict, sync_conflict_diff, trash_sync_conflict, vcs_marker_conflict_diff,
 };
 use debug::{
     debug_header, debug_info, debug_init, debug_log, diag, diag_private, install_panic_logger,
@@ -821,6 +821,8 @@ pub fn run() {
             list_sync_conflicts,
             sync_conflict_diff,
             resolve_sync_conflict,
+            duplicate_journal_diff,
+            resolve_duplicate_journal_day,
             trash_sync_conflict,
             conflict_inventory,
             vcs_marker_conflict_diff,
