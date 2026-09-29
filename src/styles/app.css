@@ -8220,6 +8220,13 @@ img.emoji {
   margin: 0;
   font-size: 13px;
 }
+/* A save that COMMITTED under an input the workspace has since moved on from.
+   Deliberately not the error colour: nothing failed and nothing was undone. */
+.query-workspace-save-notice {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
 .query-workspace-status {
   min-height: 22px;
   padding: 12px 0 4px;

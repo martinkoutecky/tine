@@ -104,6 +104,7 @@ describe("materializeQueryWorkspace", () => {
       kind: "page",
       title: "Project dashboard",
       pre_block: null,
+      format: "md",
       blocks: [{
         id: "",
         raw: '{{query (search "alpha -draft")}}\ntine.view:: search',
@@ -207,6 +208,59 @@ describe("materializeQueryWorkspace", () => {
 
     expect(result).toMatchObject({ ok: false, kind: "conflict" });
     expect(deps.savePages).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes an Org graph's view and scope properties in a :PROPERTIES: drawer, not as body text (GH #25 class)", async () => {
+    const deps = materializeDeps({
+      resolvePage: vi.fn(async (name: string) => ({ kind: "absent" as const, id: `pages/${name}.org` })),
+    });
+    const result = await materializeQueryWorkspace({
+      title: "Org saved", sourceKind: "search", source: "alpha", presentation: "table",
+      pageMatchScope: "content", routeId: "query-org",
+    }, deps);
+    if (!result.ok) throw new Error(result.message);
+    expect(result.page.format).toBe("org");
+    const raw = result.page.blocks[0].raw;
+    expect(raw).toBe('{{query (search "alpha")}}\n:PROPERTIES:\n:tine.view: table\n:tine.page-match-scope: content\n:END:');
+    // The markdown spelling in an Org file is visible text that is never read back.
+    expect(raw).not.toContain("::");
+    expect(deps.savePages).toHaveBeenCalledWith([expect.objectContaining({ id: "pages/Org saved.org" })], 1);
+  });
+
+  it("keeps a markdown graph's property lines byte-identical to before", async () => {
+    const deps = materializeDeps();
+    const result = await materializeQueryWorkspace({
+      title: "Md saved", sourceKind: "search", source: "alpha", presentation: "table",
+      pageMatchScope: "content", routeId: "query-md",
+    }, deps);
+    if (!result.ok) throw new Error(result.message);
+    expect(result.page.format).toBe("md");
+    expect(result.page.blocks[0].raw).toBe('{{query (search "alpha")}}\ntine.view:: table\ntine.page-match-scope:: content');
+  });
+
+  it("refuses locally, writing nothing, when the caller's input moved on during the validation or the title lookup", async () => {
+    for (const moveAt of ["validation", "resolve"] as const) {
+      let current = true;
+      const deps = materializeDeps({
+        runGraphSearch: vi.fn(async () => {
+          if (moveAt === "validation") current = false;
+          return { hits: [], diagnostics: [], explanation: { branches: [{ description: "valid", children: [] }] }, cancelled: false };
+        }),
+        resolvePage: vi.fn(async (name: string) => {
+          if (moveAt === "resolve") current = false;
+          return { kind: "absent" as const, id: `pages/${name}.md` };
+        }),
+      });
+      const before = pageInventoryRev();
+      const result = await materializeQueryWorkspace(
+        { title: "Late", sourceKind: "search", source: "alpha", presentation: "list", routeId: `query-${moveAt}` },
+        deps,
+        () => current,
+      );
+      expect(result, moveAt).toMatchObject({ ok: false, kind: "superseded" });
+      expect(deps.savePages, moveAt).not.toHaveBeenCalled();
+      expect(pageInventoryRev(), moveAt).toBe(before);
+    }
   });
 });
 
@@ -578,6 +632,59 @@ describe("QueryWorkspace", () => {
     dispose();
   });
 
+  function typeInto(root: HTMLElement, selector: string, value: string) {
+    const input = root.querySelector<HTMLInputElement>(selector)!;
+    input.value = value;
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+  }
+  function submitSave(root: HTMLElement) {
+    (root.querySelector(".query-workspace-save") as HTMLFormElement)
+      .dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+  }
+
+  it("does not publish or route a save whose search was retyped while the title lookup was in flight", async () => {
+    const route: QueryRoute = { kind: "query", id: "query-stale", sourceKind: "search", source: "alpha", presentation: "list" };
+    const router = routerMock(route);
+    const deps = workspaceDeps();
+    let release!: (value: ResolvedPage) => void;
+    deps.resolvePage = vi.fn(() => new Promise<ResolvedPage>((resolve) => { release = resolve; }));
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={router} deps={deps} />, root);
+    await waitFor(() => expect(root.querySelector(".query-workspace-status")?.textContent).toContain("2 results"));
+    typeInto(root, ".query-workspace-save input", "Stale");
+    submitSave(root);
+    await waitFor(() => expect(deps.resolvePage).toHaveBeenCalled());
+    typeInto(root, ".query-workspace-source", "beta");
+    release({ kind: "absent", id: "pages/Stale.md" });
+    await waitFor(() => expect(root.querySelector(".query-workspace-save-error")?.textContent).toContain("Try saving again"));
+    expect(deps.savePages).not.toHaveBeenCalled();
+    expect(router.replaceActiveRoute).not.toHaveBeenCalled();
+    expect(root.querySelector<HTMLButtonElement>('.query-workspace-save button[type="submit"]')!.disabled).toBe(false);
+    dispose();
+  });
+
+  it("keeps the workspace where it is and says so when a save committed from an earlier search", async () => {
+    const route: QueryRoute = { kind: "query", id: "query-late", sourceKind: "search", source: "alpha", presentation: "list" };
+    const router = routerMock(route);
+    const deps = workspaceDeps();
+    let finish!: (value: { ok: string[] }) => void;
+    deps.savePages = vi.fn(() => new Promise<{ ok: string[] }>((resolve) => { finish = resolve; }));
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={router} deps={deps} />, root);
+    await waitFor(() => expect(root.querySelector(".query-workspace-status")?.textContent).toContain("2 results"));
+    typeInto(root, ".query-workspace-save input", "Committed");
+    submitSave(root);
+    await waitFor(() => expect(deps.savePages).toHaveBeenCalled());
+    typeInto(root, ".query-workspace-source", "beta");
+    finish({ ok: ["rev"] });
+    await waitFor(() => expect(root.querySelector(".query-workspace-save-notice")?.textContent).toContain("Committed"));
+    expect(router.replaceActiveRoute).not.toHaveBeenCalled();
+    expect(root.querySelector(".query-workspace-save-error")).toBeNull();
+    dispose();
+  });
+
   it("saves by naming and replaces the virtual route only after the guarded write succeeds", async () => {
     const route: QueryRoute = {
       kind: "query",
@@ -586,7 +693,7 @@ describe("QueryWorkspace", () => {
       source: "alpha OR beta",
       presentation: "board",
     };
-    const router = routerMock();
+    const router = routerMock(route);
     const deps = workspaceDeps();
     const root = document.createElement("div");
     document.body.append(root);

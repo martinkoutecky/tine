@@ -80,7 +80,7 @@ export type MaterializeQueryResult =
   | { ok: true; name: string; page: PageDto; rev: string }
   | {
       ok: false;
-      kind: "invalid-name" | "empty-query" | "invalid-query" | "exists" | "conflict" | "error";
+      kind: "invalid-name" | "empty-query" | "invalid-query" | "exists" | "conflict" | "error" | "superseded";
       message: string;
     };
 
@@ -98,21 +98,31 @@ export interface QueryWorkspaceProps {
   focusSource?: boolean;
 }
 
-function savedQueryRaw(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">): string {
+/** The query block's text and its properties, in the order they have always been written. */
+function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">): { query: string; properties: Array<[string, string]> } {
   const source = input.source.trim();
   const dsl = input.sourceKind === "search" ? friendlySearchToSavedDsl(source) : source;
-  const query = `{{${QUERY_MACRO_NAMES[0]} ${dsl}}}`;
-  const view = input.presentation === "list" ? "" : `\ntine.view:: ${input.presentation}`;
-  const scope = input.sourceKind === "search" && input.pageMatchScope
-    ? `\ntine.page-match-scope:: ${input.pageMatchScope}` : "";
-  const scoped = (["page", "block"] as const).flatMap((kind) => queryScopedDisplayPropertyPatch({
-    scope: kind,
-    presentation: input[kind === "page" ? "pagePresentation" : "blockPresentation"],
-    display: input[kind === "page" ? "pageDisplay" : "blockDisplay"],
-    properties: [],
-  })).filter(([, value]) => value !== null).map(([key, value]) => `\n${key}:: ${value}`).join("");
-  return `${query}${view}${scope}${scoped}`;
+  const properties: Array<[string, string]> = [];
+  if (input.presentation !== "list") properties.push(["tine.view", input.presentation]);
+  if (input.sourceKind === "search" && input.pageMatchScope) properties.push(["tine.page-match-scope", input.pageMatchScope]);
+  for (const kind of ["page", "block"] as const) {
+    for (const [key, value] of queryScopedDisplayPropertyPatch({
+      scope: kind,
+      presentation: input[kind === "page" ? "pagePresentation" : "blockPresentation"],
+      display: input[kind === "page" ? "pageDisplay" : "blockDisplay"],
+      properties: [],
+    })) if (value !== null) properties.push([key, value]);
+  }
+  return { query: `{{${QUERY_MACRO_NAMES[0]} ${dsl}}}`, properties };
 }
+
+/** Is the input this attempt captured still the one the user is looking at?
+ *  Supplied by the component that owns the workspace; a direct caller is unguarded. */
+export type IsCurrentInput = () => boolean;
+
+/** A LOCAL refusal: nothing was written, nothing was undone; saving again is the remedy. */
+const SUPERSEDED_MESSAGE =
+  "This workspace changed while it was being saved, so nothing was written. Try saving again.";
 
 /**
  * Materialize a virtual workspace as exactly one ordinary query block.
@@ -125,8 +135,12 @@ function savedQueryRaw(input: Pick<MaterializeQueryInput, "source" | "sourceKind
  */
 export async function materializeQueryWorkspace(
   input: MaterializeQueryInput,
-  deps: MaterializeQueryDependencies
+  deps: MaterializeQueryDependencies,
+  isCurrent: IsCurrentInput = () => true
 ): Promise<MaterializeQueryResult> {
+  input = { ...input };
+  const superseded = (): MaterializeQueryResult => ({ ok: false, kind: "superseded", message: SUPERSEDED_MESSAGE });
+  if (!isCurrent()) return superseded();
   const binding = captureBinding();
   const owner = graphOwner();
   const name = input.title.trim();
@@ -141,10 +155,12 @@ export async function materializeQueryWorkspace(
       const search = await readOwned(owner, deps.runGraphSearch(input.source.trim(), 0, 0, `query-workspace:${input.routeId}:materialize`, true));
       if (search.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
       const execution = search.value;
+      if (!isCurrent()) return superseded();
       if (execution.cancelled) return { ok: false, kind: "invalid-query", message: "Search validation was superseded. Try saving again." };
       if (execution.diagnostics.length) return { ok: false, kind: "invalid-query", message: execution.diagnostics.map((item) => item.message).join(" · ") };
       if (!execution.explanation.branches.length) return { ok: false, kind: "empty-query", message: "Enter a search with at least one included term before saving." };
     } catch (error) {
+      if (!isCurrent()) return superseded();
       const detail = error instanceof Error ? error.message : String(error);
       return { ok: false, kind: "invalid-query", message: detail ? `Could not validate this search: ${detail}` : "Could not validate this search." };
     }
@@ -154,6 +170,9 @@ export async function materializeQueryWorkspace(
     const resolution = await readOwned(owner, deps.resolvePage(name, "page"));
     if (resolution.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     const resolved = resolution.value;
+    // The lookup is the last await before the write: an answer about a title the
+    // workspace has moved on from no longer licenses one.
+    if (!isCurrent()) return superseded();
     if (resolved.kind === "existing") {
       return {
         ok: false,
@@ -170,7 +189,11 @@ export async function materializeQueryWorkspace(
       };
     }
 
-    const page = queryWorkspacePage(name, savedQueryRaw(input));
+    // The new page's format is its resolved id's extension (the graph's preferred
+    // format); the save path writes by that extension, so the block must be
+    // spelled for it.
+    const { query, properties } = savedQuery(input);
+    const page = queryWorkspacePage(name, query, properties, /\.org$/i.test(resolved.id) ? "org" : "md");
     const saved = await writeOwned(owner, deps.savePages([{ id: resolved.id, page, baseRev: null, force: false, kinds: ["create-page"] }], binding.backendGeneration)
       .then((result) => {
         if ("failed" in result) {
@@ -187,6 +210,7 @@ export async function materializeQueryWorkspace(
     return { ok: true, name, page, rev };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    if (!isCurrent()) return superseded();
     if (!owner()) {
       pushToast(`Could not save “${name}”: ${detail}`, "error");
       return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
@@ -646,7 +670,24 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const [advancedOpen, setAdvancedOpen] = createSignal(false);
   const [title, setTitle] = createSignal("");
   const [saveError, setSaveError] = createSignal<string | null>(null);
+  /** A stale save that COMMITTED. Not an error: the page exists, and saying so is
+   *  the only honest thing left once the write has landed. */
+  const [saveNotice, setSaveNotice] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
+  // The workspace under an in-flight save is not frozen: the user can retype the
+  // search, change the view, rename it, switch tab or graph. Every completion
+  // has to get past these before it may touch routing, messages or `saving`.
+  let alive = true;
+  let saveToken = 0;
+  // A changed-and-restored value is still a newer edit; the route object is
+  // included so its non-presentation Display draft takes part in the revision.
+  const inputRevision = createMemo((previous: number) => {
+    props.route; source(); sourceKind(); presentation(); title();
+    pageMatchScope(); pageMatchScopeExplicit();
+    pagePresentation(); blockPresentation(); pageDisplay(); blockDisplay();
+    return previous + 1;
+  }, 0);
+  onCleanup(() => { alive = false; });
   let advancedButton!: HTMLButtonElement;
   const advancedLayerId = `query-advanced-${createUniqueId()}`;
   let sourceInput: HTMLInputElement | undefined;
@@ -782,29 +823,58 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   };
   const hitSurfaceId = (hit: QueryHit) =>
     `query:${props.route.id}:${hit.entity}:${hit.entity === "page" ? hit.page.name : hit.block.id}`;
+  /** Everything one save attempt publishes, frozen at submit. */
+  const captureSave = () => ({
+    token: ++saveToken,
+    inputRevision: inputRevision(),
+    routeId: props.route.id,
+    owner: graphOwner(),
+    input: {
+      title: title(), sourceKind: sourceKind(), source: source(), presentation: presentation(),
+      pagePresentation: pagePresentation(), blockPresentation: blockPresentation(),
+      pageDisplay: pageDisplay(), blockDisplay: blockDisplay(),
+      pageMatchScope: pageMatchScopeExplicit() ? pageMatchScope() : undefined,
+    },
+  });
+  type CapturedSave = ReturnType<typeof captureSave>;
+  /** Same component, same graph binding (I-20), same ACTIVE route; only the
+   *  newest attempt owns the shared `saving` flag. */
+  const sameWorkspace = (captured: CapturedSave): boolean => {
+    if (!alive || captured.token !== saveToken || !captured.owner()) return false;
+    const active = props.router.route?.();
+    if (active && (active.kind !== "query" || active.id !== captured.routeId)) return false;
+    return props.route.id === captured.routeId;
+  };
+  /** …and does it still say what this attempt captured? A route id is not an
+   *  input: an edit under the SAME id is a different publication. */
+  const sameInput = (captured: CapturedSave): boolean =>
+    sameWorkspace(captured) && inputRevision() === captured.inputRevision;
   const save = async (event: SubmitEvent) => {
     event.preventDefault();
     if (saving()) return;
+    const captured = captureSave();
     setSaving(true);
     setSaveError(null);
+    setSaveNotice(null);
     try {
-      const result = await materializeQueryWorkspace({
-        title: title(),
-        sourceKind: sourceKind(),
-        source: source(),
-        presentation: presentation(),
-        pagePresentation: pagePresentation(), blockPresentation: blockPresentation(),
-        pageDisplay: pageDisplay(), blockDisplay: blockDisplay(),
-        pageMatchScope: pageMatchScopeExplicit() ? pageMatchScope() : undefined,
-        routeId: props.route.id,
-      }, deps());
+      const result = await materializeQueryWorkspace({ ...captured.input, routeId: captured.routeId }, deps(), () => sameInput(captured));
+      // Every branch below is about the LOCAL surface: a workspace that has moved
+      // on gets nothing written into it.
+      if (!sameWorkspace(captured)) return;
       if (!result.ok) {
         setSaveError(result.message);
         return;
       }
+      if (!sameInput(captured)) {
+        // The write had already begun when the input changed: the page is real
+        // and is not undone, but it is no longer what this workspace shows.
+        setSaveNotice(`“${result.name}” was saved from the earlier search, so this workspace was left as it is.`);
+        return;
+      }
       props.router.replaceActiveRoute({ kind: "page", name: result.name, pageKind: "page" });
     } finally {
-      setSaving(false);
+      // A superseded attempt may not re-enable a button a newer one is using.
+      if (alive && captured.token === saveToken) setSaving(false);
     }
   };
 
@@ -897,7 +967,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
             <span class="sr-only">Page title</span>
             <input
               value={title()}
-              onInput={(event) => { setTitle(event.currentTarget.value); setSaveError(null); }}
+              onInput={(event) => { setTitle(event.currentTarget.value); setSaveError(null); setSaveNotice(null); }}
               placeholder="Name this search to save it as a page"
               aria-invalid={!!saveError()}
             />
@@ -906,6 +976,9 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         </form>
         <Show when={saveError()}>
           <p class="query-workspace-save-error" role="alert">{saveError()}</p>
+        </Show>
+        <Show when={saveNotice()}>
+          <p class="query-workspace-save-notice" role="status">{saveNotice()}</p>
         </Show>
       </header>
 

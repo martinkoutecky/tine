@@ -5,6 +5,7 @@ import { trimBlockTrailingSpace } from "../editor/format";
 import { isPageHeaderPropertiesOnly, parsePageHeaderPropertyLine } from "../editor/properties";
 import { journalTitle, appNow } from "../journal";
 import { rawWithCollapsed } from "./edits/properties";
+import { orgRawWithProperty } from "./edits/identity";
 
 /** Wire DTO constructors live here; callers choose the intent and supply content. */
 export function emptyPage(name: string, kind: "journal" | "page"): PageDto {
@@ -45,8 +46,15 @@ export function switcherPage(name: string): PageDto {
   return { name, kind: "page", title: name, pre_block: null, blocks: [{ id: "", raw: "", collapsed: false, children: [] }] };
 }
 
-export function queryWorkspacePage(name: string, raw: string): PageDto {
-  return { name, kind: "page", title: name, pre_block: null, blocks: [{ id: "", raw, collapsed: false, children: [] }] };
+/** A saved query workspace: one query block whose properties are written where
+ *  the page's FORMAT keeps them. Markdown appends `key:: value` lines (the bytes
+ *  it always wrote); Org puts them in a `:PROPERTIES:` drawer, because a markdown
+ *  line in an Org file is visible body text that is never read back (GH #25).
+ *  `format` is the extension of the id the backend resolved for the new page. */
+export function queryWorkspacePage(name: string, query: string, properties: ReadonlyArray<readonly [string, string]>, format: Format): PageDto {
+  const raw = properties.reduce(
+    (text, [key, value]) => (format === "org" ? orgRawWithProperty(text, key, value) : `${text}\n${key}:: ${value}`), query);
+  return { name, kind: "page", title: name, pre_block: null, format, blocks: [{ id: "", raw, collapsed: false, children: [] }] };
 }
 
 /** The Favorites arrangement page (family 22), written whole through

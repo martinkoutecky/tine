@@ -2937,7 +2937,8 @@ impl WholeGraph {
     }
 
     /// Execute one simple or advanced query macro over this stable view.
-    /// `:current-page` inputs are not supported, as in v0.6.5. A simple
+    /// This entry carries no page context, so `:current-page` has no binding
+    /// here; the IR path binds it through `ExecutionContext::on_page`. A simple
     /// source above 64 KiB or 128 parenthesis levels returns
     /// `QueryError::Parse`; advanced unsupported clauses appear in its
     /// diagnostics. Exceeding 20,000 rows or 32 MiB returns
