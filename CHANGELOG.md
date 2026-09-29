@@ -8,6 +8,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **A part of Tine that fails now says so, where it failed, with a Retry — instead
+  of leaving the window blank.** The page, the sidebar, Linked and Unlinked
+  References and the conflict panel each fail on their own; the message says how
+  many backend operations are still outstanding and for how long when that is the
+  likely cause (GH #490, GH #332).
+- **When the graph you last used will not open, the Welcome screen says which one
+  and why**, with Try again, Copy details and Open another graph.
+- **Page width is configurable per device** (Settings → Appearance → Advanced):
+  a standard reading width, and a fill-pane or custom maximum for Wide mode
+  (GH #382).
+
 ### Fixed
 
 - **Journal days and "Today" follow the calendar zone the backend uses**
@@ -17,6 +30,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Opening a page by a differently cased name lands on the spelling that
   exists on disk** (GH #597), and renaming an Org page keeps `file:` links to
   it valid under the graph's filename format.
+- **Switching Settings sections no longer makes the whole dialog vanish and
+  reappear**, and the maximized size is remembered across restarts (GH #409,
+  GH #427).
+- **The right sidebar's spare header width is no longer a link** and the left
+  sidebar's whole row opens its page (GH #464, GH #468).
+- **The fold arrow on a block is no longer partly covered by the fold-all guide**
+  (GH #423), and **the left sidebar's scrollbar can be grabbed** with the resize
+  strip beside it instead of over it (GH #435).
 - **Application chrome no longer starts a text selection** while page content
   and editors stay selectable.
 

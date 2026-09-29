@@ -24,6 +24,9 @@ body {
 }
 
 :root {
+  /* Width of the sidebar's drag-to-resize strip, and of the gutter the sidebar
+     reserves so that strip never lands on top of the scrollbar (GH #435). */
+  --sidebar-resizer-width: 7px;
   /* One named owner for system-inset gutters (GH #205). Browser/iOS surfaces
      use CSS env() values. MainActivity already sizes Android's WebView inside
      the native insets, so main.tsx selects `native-viewport` before render and
@@ -119,6 +122,17 @@ html[data-system-insets="native-viewport"] {
 .left-sidebar-scroll {
   height: 100%;
   overflow-y: auto;
+  /* GH #435: the resize strip is absolutely positioned over this element's right
+     edge, where a classic (Windows) scrollbar lives, so the sidebar could be
+     resized but the bar never grabbed. A transparent right border moves the
+     scrollbar inboard by the strip's own width; the two occupy disjoint columns.
+     scripts/check-sidebar-resizer-scrollbar.mjs holds them apart. */
+  border-right: var(--sidebar-resizer-width) solid transparent;
+}
+
+/* The mobile drawer hides the resize strip, so the sidebar keeps its full width. */
+.app-container[data-mobile-drawer-mode="true"] .left-sidebar-scroll {
+  border-right-width: 0;
 }
 
 /* One restrained scrollbar vocabulary for the three primary outline surfaces.
@@ -189,7 +203,9 @@ html[data-system-insets="native-viewport"] {
   position: absolute;
   top: 0;
   right: 0;
-  width: 7px;
+  /* One width for the strip and for the gutter `.left-sidebar-scroll` reserves
+     for it; they must not drift apart or the strip covers the scrollbar again. */
+  width: var(--sidebar-resizer-width);
   height: 100%;
   cursor: col-resize;
   z-index: 20;
@@ -1000,14 +1016,14 @@ html[data-system-insets="native-viewport"] {
 
 .main-content-inner {
   flex: 0 0 auto; width: 100%; /* natural height, full width as a flex item (GH #369, #382) */
-  max-width: var(--ls-main-content-max-width);
+  max-width: var(--tine-main-content-max-width, var(--ls-main-content-max-width));
   margin: 0 auto;
   padding: 12px 48px 0;
 }
 
 /* Wide mode: drop the reading-width cap. */
 .wide-mode .main-content-inner {
-  max-width: 100%;
+  max-width: var(--tine-wide-content-max-width, var(--ls-main-content-max-width-wide));
 }
 
 /* Document mode: a cleaner prose view — hide bullets, collapse controls, and the
@@ -3682,14 +3698,20 @@ html[data-system-insets="native-viewport"] {
   margin-left: var(--ls-block-indent);
 }
 
+/* GH #423: this bulk "fold every descendant" target was 14px wide and, being
+   z-index:1, was painted ON TOP of the leftmost 5px of the per-block fold arrow
+   next to it, so 5 of the arrow's 18 pixels folded the whole subtree instead of
+   one block. It stops at the arrow's edge now: 5px, centred on the 1px line it
+   draws (OG's block.css uses 4px). scripts/check-outline-guide-hitbox.mjs holds
+   this geometry. */
 .block-children-left-border {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -9px;
+  left: -5px;
   z-index: 1;
-  width: 14px;
-  min-width: 14px;
+  width: 5px;
+  min-width: 5px;
   height: auto;
   margin: 0;
   padding: 0;
@@ -7794,8 +7816,13 @@ img.emoji {
   transform: rotate(90deg);
 }
 
+/* GH #464. The markup already made only this anchor the link, but a stretched
+   flex item (`1 1 auto`) made every pixel right of a short title still the <a>:
+   the hand cursor followed the pointer out over empty space. Sized to its own
+   text, the spare width belongs to the head. `min-width: 0` keeps it the element
+   that ellipsises a long title. */
 .rs-item-title {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   font-weight: 600;
   color: var(--link-color);
@@ -7807,6 +7834,9 @@ img.emoji {
 }
 
 .rs-close {
+  /* The title no longer stretches, so the close button keeps the right edge
+     itself (GH #464). */
+  margin-left: auto;
   background: none;
   border: none;
   color: var(--text-muted);

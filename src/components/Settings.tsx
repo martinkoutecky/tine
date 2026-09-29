@@ -43,6 +43,8 @@ import { platformKind } from "../platform";
 import { openConflicts, openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
+import { Field } from "./settingsField";
+import { ContentWidthFields } from "./ContentWidthFields";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
 import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
@@ -276,23 +278,6 @@ export function Settings(): JSX.Element {
         </div>
       </div>
     </Show>
-  );
-}
-
-// One setting: label + control on a line, with the explanatory hint on its own
-// full-width line below (so long hints read cleanly instead of being squeezed
-// into the right column). Pass `hint` as JSX to allow inline <code>/markup.
-function Field(props: { label: string; hint?: JSX.Element; children: JSX.Element }): JSX.Element {
-  return (
-    <div class="settings-field" data-setting-label={props.label}>
-      <div class="settings-field-row">
-        <span class="settings-label">{props.label}</span>
-        <div class="settings-field-control">{props.children}</div>
-      </div>
-      <Show when={props.hint}>
-        <div class="settings-hint settings-field-hint">{props.hint}</div>
-      </Show>
-    </div>
   );
 }
 
@@ -1046,6 +1031,7 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       </Field>
 
       <AdvancedSection tab="appearance" forceOpen={advancedMatch("appearance", props.search)}>
+        <ContentWidthFields />
         <Field
           label="Smooth scrolling (experimental)"
           hint="Animate the journal feed's scrolling to smooth out WebKitGTK's stepped mouse-wheel jumps. Off by default; this is a feel experiment — turn it off if it gets in the way."

@@ -46,6 +46,13 @@ describe("pane end-of-page slack is pane-relative (GH #369)", () => {
     expect(inner).toMatch(/\bwidth:\s*100%/);
   });
 
+  it("caps the standard column at the user's override, else the theme default; Wide mode likewise", () => {
+    const inner = ruleBody(/^\.main-content-inner\s*\{([^}]*)\}/m);
+    expect(inner).toContain("max-width: var(--tine-main-content-max-width, var(--ls-main-content-max-width))");
+    const wide = ruleBody(/^\.wide-mode \.main-content-inner\s*\{([^}]*)\}/m);
+    expect(wide).toContain("max-width: var(--tine-wide-content-max-width, var(--ls-main-content-max-width-wide))");
+  });
+
   it("lets the idle spacer absorb only real free space, never manufacture overflow", () => {
     const spacer = ruleBody(/^\.main-content::after\s*\{([^}]*)\}/m);
     // Grow through unused pane space, but start from zero and remain shrinkable:

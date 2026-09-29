@@ -13,6 +13,7 @@ import { pushToast } from "../toasts";
 import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
+import { FailureBoundary } from "./FailureBoundary";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
 import { SheetTable } from "./SheetTable";
@@ -607,12 +608,20 @@ export function PageView(): JSX.Element {
             </Show>
             <Show
               when={pagesToRender()[0].kind === "page" && !pagesToRender()[0].guide && tagTableEnabled(pagesToRender()[0].name)}
-              fallback={<Show when={!pagesToRender()[0].guide}><LinkedReferences name={pagesToRender()[0].name} /></Show>}
+              fallback={
+                <Show when={!pagesToRender()[0].guide}>
+                  <FailureBoundary region="Linked References">
+                    <LinkedReferences name={pagesToRender()[0].name} />
+                  </FailureBoundary>
+                </Show>
+              }
             >
               <TagPageTable pageName={pagesToRender()[0].name} />
             </Show>
             <Show when={!pagesToRender()[0].guide}>
-              <UnlinkedReferences name={pagesToRender()[0].name} />
+              <FailureBoundary region="Unlinked References">
+                <UnlinkedReferences name={pagesToRender()[0].name} />
+              </FailureBoundary>
             </Show>
           </Show>
         </div>
@@ -988,7 +997,11 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
       </Show>
       {/* Concord: a queued conflict is resolved AT the page, block by block. */}
       <Show when={conflictForPage(props.page.id)}>
-        {(conflict) => <PageConflictResolution conflict={conflict()} />}
+        {(conflict) => (
+          <FailureBoundary region="The conflict panel">
+            <PageConflictResolution conflict={conflict()} />
+          </FailureBoundary>
+        )}
       </Show>
       <div class="page-blocks">
         <Show when={preambleContent()}>
