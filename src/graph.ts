@@ -63,11 +63,14 @@ export function applyConfigDerivedState(meta: GraphMeta, previous: GraphMeta | n
     setWorkflow(meta.preferred_workflow === "todo" ? "todo" : "now");
   if (!previous || previous.journal_page_title_format !== meta.journal_page_title_format)
     setJournalTitleFormat(meta.journal_page_title_format);
-  const shown = favorites().map((item) => item.name);
   const incoming = meta.favorites ?? [];
   const alreadyShown = previous !== null && previous.favorites_page === meta.favorites_page
-    && shown.length === incoming.length && shown.every((name, index) => name === incoming[index]);
+    && sameNames(favorites().map((item) => item.name), incoming);
   if (!alreadyShown) seedFavorites(incoming, meta.favorites_page ?? null);
+}
+
+function sameNames(shown: string[], incoming: string[]): boolean {
+  return shown.length === incoming.length && shown.every((name, index) => name === incoming[index]);
 }
 
 export function persistedGraphPath(): string {
