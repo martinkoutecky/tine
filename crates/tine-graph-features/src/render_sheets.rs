@@ -434,21 +434,27 @@ pub(super) struct Emit<'a, 'b> {
     pub slug: &'a str,
     pub title: &'a str,
     pub anchors: &'a PageAnchors,
+    /// Rows already given their anchor: a card shown in two board columns
+    /// carries the block's `id` once, so every page anchor stays unique.
+    pub anchored: HashSet<*const DocBlock>,
     pub index: &'a mut Vec<serde_json::Value>,
     pub opts: PrintOpts,
     pub tree_depth: usize,
 }
 
-/// Anchor (and search-index entry) for one row/card block, from the page's one
-/// `PageAnchors` answer that `render_block` uses.
+/// ` id="…"` (and search-index entry) for a row/card block's first emission, from
+/// the page's one `PageAnchors` answer that `render_block` uses; empty for a repeat.
 fn row_anchor(row: &DocBlock, e: &mut Emit) -> String {
+    if !e.anchored.insert(row) {
+        return String::new();
+    }
     let anchor = e.anchors.get(row);
     let text = ast_plain_text(&body_blocks(row.raw()));
     if !text.is_empty() {
         e.index
             .push(json!({"slug": e.slug, "title": e.title, "anchor": anchor, "text": text}));
     }
-    anchor
+    format!(" id=\"{}\"", esc_attr(&anchor))
 }
 
 fn render_table(owner: &DocBlock, body: &Body, e: &mut Emit, out: &mut String) {
@@ -481,7 +487,7 @@ fn render_table(owner: &DocBlock, body: &Body, e: &mut Emit, out: &mut String) {
         let id = owner
             .children
             .get(row.ix)
-            .map(|b| format!(" id=\"{}\"", esc_attr(&row_anchor(b, e))))
+            .map(|b| row_anchor(b, e))
             .unwrap_or_default();
         out.push_str(&format!(
             "<tr{id}{}><td>{}</td>",
@@ -520,7 +526,7 @@ fn render_board(owner: &DocBlock, body: &Body, e: &mut Emit, out: &mut String) {
             let id = owner
                 .children
                 .get(card.ix)
-                .map(|b| format!(" id=\"{}\"", esc_attr(&row_anchor(b, e))))
+                .map(|b| row_anchor(b, e))
                 .unwrap_or_default();
             let c = &card.chips;
             let mut chips = String::new();

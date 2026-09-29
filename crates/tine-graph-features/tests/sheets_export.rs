@@ -395,3 +395,38 @@ fn a_sheet_inside_a_grid_cell_is_found_by_its_path_and_laid_out_in_the_cell() {
     assert!(html.contains("<td>one</td>") && html.contains("<td>two</td>"));
     store.close();
 }
+
+/// A board grouped by a multi-valued field shows one card in several columns
+/// (a block tagged #a #b sits under both). It is still one block: its anchor
+/// and search entry appear once, so every `id` names exactly one element (I-12).
+#[test]
+fn a_card_in_two_board_columns_keeps_page_anchors_unique() {
+    let (base, store) = open_fixture();
+    let mut exports: Value =
+        serde_json::from_str(&fs::read_to_string(fixtures().join("exports.json")).unwrap())
+            .unwrap();
+    let board = &mut exports[1]["columns"];
+    let card = board[3]["cards"][0].clone();
+    board[4]["cards"].as_array_mut().unwrap().push(card);
+    publish_live_with_sheets(
+        &store,
+        &base.join("output"),
+        "export",
+        false,
+        &bundle(),
+        serde_json::from_value(exports).unwrap(),
+    )
+    .unwrap();
+    let html = sheets_html(&base);
+    assert_eq!(html.matches("Write tests</div>").count(), 2, "{html}");
+    let mut ids: Vec<&str> = (html.split(" id=\"").skip(1))
+        .map(|rest| &rest[..rest.find('"').unwrap()])
+        .collect();
+    let all = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), all, "duplicate element ids: {html}");
+    let index = fs::read_to_string(base.join("output/export/search-index.js")).unwrap();
+    assert_eq!(index.matches("Write tests").count(), 1, "{index}");
+    store.close();
+}

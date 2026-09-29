@@ -1797,6 +1797,7 @@ fn render_block(
             slug,
             title,
             anchors,
+            anchored: Default::default(),
             index,
             opts,
             tree_depth,
