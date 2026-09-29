@@ -71,7 +71,7 @@ import {
 import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "../render/block";
 import { effectiveHeadingLevel, facetsOf } from "../render/facets";
 import { AstBody } from "../render/body";
-import { InlineText } from "../render/inline";
+import { InlineText, CopyButton } from "../render/inline";
 import { clickBeyondRenderedEnd, editorOffsetFromRenderedRange } from "../render/spans";
 import {
   assetMarkdown,
@@ -3165,11 +3165,14 @@ export function Editor(props: { id: string }): JSX.Element {
         rows={1}
       />
       <Show when={isCalc()}>
-        <div class="calc-results" aria-hidden="true">
+        <div class="calc-results">
           <For each={calcRows()}>
             {(r) => (
               <div class="calc-out" classList={{ "calc-error": !!r.error }}>
                 {r.output ?? ""}
+                <Show when={r.output !== null && !r.error}>
+                  <CopyButton text={r.output!} title="Copy result" class="calc-copy" />
+                </Show>
               </div>
             )}
           </For>

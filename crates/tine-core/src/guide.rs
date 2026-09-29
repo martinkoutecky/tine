@@ -219,6 +219,7 @@ mod parity_guide_tests {
             "**Copy report**; nothing is uploaded",
             ":ref/linked-references-collapsed-threshold",
             "**Ctrl/Cmd+Shift+C** copies an embed",
+            "hover a result to copy it",
         ] {
             assert!(tips.contains(phrase), "Tips missing {phrase}");
         }

@@ -6373,6 +6373,11 @@ ol.md-list { list-style: decimal; }
   color: var(--text-muted);
   font-weight: 400;
 }
+/* GH #228: hover/focus copy button beside a successful result. */
+.calc-out { position: relative; }
+.calc-copy { position: absolute; left: 100%; top: 50%; transform: translateY(-50%); margin-left: 4px; }
+.calc-out:hover .calc-copy,
+.calc-copy:focus-visible { opacity: 1; }
 /* Editor: the textarea is the middle (expression) column; the gutter and the
    live-results column flank it. */
 .calc-wrap .block-editor {

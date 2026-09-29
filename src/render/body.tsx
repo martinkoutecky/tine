@@ -67,7 +67,12 @@ export function CalcBlock(props: { src: string; spanAttrs?: SpanDomAttrs }): JSX
           <>
             <div class="calc-lineno">{i() + 1}</div>
             <div class="calc-in" classList={{ "calc-error": !!ln.error }}>{ln.input || " "}</div>
-            <div class="calc-out" classList={{ "calc-error": !!ln.error }}>{ln.output ?? ""}</div>
+            <div class="calc-out" classList={{ "calc-error": !!ln.error }}>
+              {ln.output ?? ""}
+              <Show when={ln.output !== null && !ln.error}>
+                <CopyButton text={ln.output!} title="Copy result" class="calc-copy" />
+              </Show>
+            </div>
           </>
         )}
       </For>

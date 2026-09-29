@@ -25,7 +25,7 @@ icon:: ⌨️
 	- 3. Press **Enter** on the highlighted result.
 	- 4. What you should see: Tine jumps to the page/block or runs the command without leaving your graph.
 - ## Slash commands — /
-	- Type **/** at the start of a bullet for a menu: tasks, headings, a code block, a `/calc` live calculator, dates (Scheduled / Deadline), callouts, queries, a math block, asset upload, and more. `/Code block` opens a language picker; typing a language after an opening backtick or tilde fence offers the same completion.
+	- Type **/** at the start of a bullet for a menu: tasks, headings, a code block, a `/calc` live calculator (hover a result to copy it), dates (Scheduled / Deadline), callouts, queries, a math block, asset upload, and more. `/Code block` opens a language picker; typing a language after an opening backtick or tilde fence offers the same completion.
 	- On a journal page, **/That day** inserts a link to that journal's date, even when it is an older day. **/Today** inserts today's date. Both use your graph's journal title format.
 - ## Journal days
 	- **g j** opens the Journals feed. **g h** opens the graph's home page, chosen in **Settings → Graph** or set as `:default-home {:page "Page name"}` in `logseq/config.edn`; Tine also opens it when it opens the graph. With no home page set, or when that page no longer exists, **g h** opens the Journals feed. **g n** and **g p** move to the next or previous calendar day from the journal you are viewing. From another page, they start at today.
