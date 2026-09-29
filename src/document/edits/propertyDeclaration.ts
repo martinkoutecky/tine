@@ -18,9 +18,9 @@ export async function ensurePagePropertyOnKeyPage(name: string, key: string, val
     const reading = await readOwned(graphOwner(), backend().getPage(name, "page"));
     if (reading.kind === "stale") throw new Error("The graph changed before the type could be saved.");
     const dto = reading.value ?? captureEmptyPage(name, "page");
-    ensurePageLoaded(dto);
+    const refused = ensurePageLoaded(dto);
     const admitted = pageByName(name);
-    if (!admitted || (reading.value && admitted.id !== reading.value.id))
+    if (refused || !admitted || (reading.value && admitted.id !== reading.value.id))
       throw new Error("The property key page changed before the type could be saved.");
   }
   const page = pageByName(name);

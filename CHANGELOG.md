@@ -95,6 +95,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **A second file holding a page's name is never shown or written as that page** (master 7bd793bd0, og J1).
+  When a duplicate journal day (left by sync or a date-format change) or a same-named page opened by path
+  was open with unsaved input, the journals feed showed it as the requested day, so what was typed there
+  saved to the wrong file; quick capture and "add to today" could append into it and report success; a
+  sidebar item pinned to the other file stayed blank; and a PDF-notes refresh declined during an edit was
+  dropped, leaving the notes stale. The feed now keeps its previous days and says why, loading the day once
+  that input is finished; capture refuses and names both files; the sidebar says why and retries; the
+  notes refresh applies once the edit ends.
 - **A `file:` link opens the file** (GH #444, master c817fb150, og I3). A link written
   `[Test](file://D:\test.txt)` (Logseq) or `[Test](<file:///D:\test.txt>)` (Obsidian) rendered
   as a link and did nothing; it now opens that file or folder in the application your system uses

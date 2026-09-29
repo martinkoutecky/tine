@@ -150,10 +150,10 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
 const OWNER_PARAM_HELPERS = new Set([
   "src/App.tsx#installMobileExternalLinkHandler",
   "src/carry.ts#ensureLoaded",
-  "src/carry.ts#ensureToday",
   "src/components/ExportModal.tsx#warmMacro",
   "src/components/ExportModal.tsx#warmQueryMacros",
   "src/devtools/lsdoc-diff/orchestrator.ts#runComparison",
+  "src/document/workingSet.ts#admitPageFile",
   "src/guide.ts#markGuideAnnounced",
 ]);
 

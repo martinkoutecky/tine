@@ -6,7 +6,7 @@ import { purgePageNodes, toFeedPage, emptyPage } from "./convert";
 import { invalidateAllMatrixDimensions, clearMatrixDimensionCache } from "../sheet/matrix";
 import { invalidateUndoForPage, clearUndoHistory } from "./history";
 import { captureBinding, stillBound, invalidateBinding } from "../binding";
-import { graphOwner, readOwned } from "../owned";
+import { graphOwner, readOwned, type Owner } from "../owned";
 import { backend } from "../backend";
 import { removeDeletedPageFromNavigation, rightSidebar } from "../ui";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
@@ -15,11 +15,11 @@ import { type PageTarget } from "../routeTypes";
 import { editingId, endEdit } from "../editorController";
 import { clearSeededFacets } from "../render/facets";
 import { notifyModeReset } from "../modeHooks";
-import { deferExternalReload, replayDeferredExternalReloads } from "./deferredReload";
+import { deferExternalReload, replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";
 import { isBlockMoving } from "./edits/moves";
 import { journalTitle, appNow } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
-import { pushToast } from "../toasts";
+import { pushToast, pushToastUnique } from "../toasts";
 import { resetReferenceSectionState } from "../referenceSectionState";
 
 let publishIdentityNavigation: ((from: PageTarget, to: PageTarget) => void) | null = null;
@@ -107,11 +107,58 @@ function pageContentMatches(dto: PageDto & { id?: string }, page: FeedPage): boo
   return dto.blocks.length === page.roots.length && dto.blocks.every((b, i) => eq(b, page.roots[i]));
 }
 
+/** Why a requested page file did not take its name slot (GH #254 family;
+ * master 7bd793bd0). The working set is keyed by name, so a second file with
+ * the same name (a duplicate journal day left by sync delivery or a date-format
+ * change, or a same-named page opened by path) can hold the slot. `holder` and
+ * `requested` are graph-relative paths; null means a page with no file yet.
+ * - `"unsaved-work"`: the holder has uncommitted input (an edit, a save in
+ *   flight, a conflict, an active editor, a component draft), so replacing it
+ *   would discard that input.
+ * - `"second-file"`: a write that must land in `requested` found the slot held
+ *   by another file (`admitPageFile`); writing would land in the wrong file. */
+export interface PageLoadRefusal {
+  readonly page: string;
+  readonly holder: string | null;
+  readonly requested: string | null;
+  readonly reason: "unsaved-work" | "second-file";
+}
+
+/** The one answer to "may `dto` take its name slot": null when the slot is
+ * empty, already holds the same file, or holds another file that is safe to
+ * replace. O(loaded pages). */
+function slotRefusal(dto: PageDto & { id?: string }): PageLoadRefusal | null {
+  const existing = pageByName(dto.name);
+  if (!existing || (existing.id ?? "") === (dto.id ?? "") || reloadDisposition(dto.name) === "reload") return null;
+  return { page: dto.name, holder: existing.id ?? null, requested: dto.id ?? null, reason: "unsaved-work" };
+}
+
+/** Say why a page could not be loaded or written. `doing` names the action a
+ * `"second-file"` refusal stopped. Pure; O(1). */
+export function pageLoadRefusalMessage(refusal: PageLoadRefusal, doing = "adding to it"): string {
+  const holder = refusal.holder ?? "a new page that is not saved yet";
+  const requested = refusal.requested ?? "the page";
+  return refusal.reason === "second-file"
+    ? `“${refusal.page}” is open from a second file (${holder}), not ${requested}. Resolve the duplicate before ${doing}.`
+    : `“${refusal.page}” is open from ${holder} with unsaved work, so ${requested} was not loaded. Finish or save that edit first.`;
+}
+
+/** Show `pageLoadRefusalMessage` as a sticky error (the user must act), once
+ * while an identical one is visible. Returns the message. O(visible toasts). */
+export function reportPageLoadRefusal(refusal: PageLoadRefusal, doing?: string): string {
+  const message = pageLoadRefusalMessage(refusal, doing);
+  pushToastUnique(message, "error");
+  return message;
+}
+
 /** Load a page into the working set if it isn't already there (used by
  *  satellite surfaces — sidebar / query results / embeds — so they render the
  *  same live, editable nodes as the main view). Idempotent: never clobbers an
- *  already-loaded page's in-progress edits. */
-export function ensurePageLoaded(dto: PageDto & { id?: string }) {
+ *  already-loaded page's in-progress edits. Returns null when the slot now holds
+ *  the requested file (or its live copy), else the refusal. Every caller must
+ *  act on it and never read `pageByName` as though the file loaded (guard:
+ *  `src/refusedReplacement.guard.test.ts`). Cost O(loaded pages + page blocks). */
+export function ensurePageLoaded(dto: PageDto & { id?: string }): PageLoadRefusal | null {
   const existing = doc.pages.find((p) => p.name === dto.name);
   if (existing && (existing.id ?? "") === (dto.id ?? "")) {
     // Same-content hydration still carries new disk authority (master
@@ -119,25 +166,47 @@ export function ensurePageLoaded(dto: PageDto & { id?: string }) {
     // older baseline, and the next ordinary edit would look like a new
     // conflict. Only a clean page whose content equals the DTO adopts its rev.
     if (dto.rev !== undefined && reloadDisposition(dto.name) === "reload" && pageContentMatches(dto, existing)) setBaseRev(dto.name, dto.rev);
-    return;
+    return null;
   }
-  if (existing && reloadDisposition(dto.name) !== "reload") return;
   // A path-pinned route may intentionally load a duplicate-day stray with the
   // same logical title as the canonical journal. Replace a safe name slot with
   // the exact requested file, but never discard unsaved edits or an active editor
-  // while its backend read was in flight. Full simultaneous duplicate identity
-  // is tracked by the file-identity ADR.
+  // while its backend read was in flight.
+  const refusal = slotRefusal(dto);
+  if (refusal) return refusal;
   upsertPage(dto);
   evictIfNeeded();
+  return null;
+}
+
+/** Load the file `name` resolves to as the page holding `name`, for a write
+ * that must land in that file (capture, carry). One page read. An empty slot
+ * takes the file, or `absent` when the page has no file yet; a slot held by a
+ * page with no file takes the file when safe. A slot held by ANOTHER file
+ * refuses `"second-file"` even when clean: the write would land where the
+ * journals feed and search do not show that name. "stale" when `owner` retired;
+ * a failed read rejects. */
+export async function admitPageFile(name: string, kind: PageKind, owner: Owner, absent: PageDto): Promise<PageLoadRefusal | "stale" | null> {
+  const result = await readOwned(owner, backend().getPage(name, kind));
+  if (result.kind === "stale") return "stale";
+  const file: (PageDto & { id?: string }) | null = result.value;
+  const loaded = pageByName(name);
+  if (!loaded || (file && !loaded.id)) return ensurePageLoaded(file ?? absent);
+  if (file?.id && loaded.id !== file.id) return { page: name, holder: loaded.id ?? null, requested: file.id, reason: "second-file" };
+  return null;
 }
 
 /** Admit a routed DTO when safe, retaining the live copy if replacement is unsafe.
  * Marks the document loaded so later dirty pages can save; it neither dirties this
- * page nor starts a save. Cost O(loaded pages + page blocks + cached sheet
- * dimensions), plus evicted page blocks if the working set exceeds its cap. */
-export function loadRoutedPage(dto: PageDto & { id?: string }): void {
-  ensurePageLoaded(dto);
+ * page nor starts a save. Returns the refusal when another file holding the name
+ * has unsaved work; the route must not present that file as the requested one.
+ * Cost O(loaded pages + page blocks + cached sheet dimensions), plus evicted
+ * page blocks if the working set exceeds its cap. */
+export function loadRoutedPage(dto: PageDto & { id?: string }): PageLoadRefusal | null {
+  const refusal = ensurePageLoaded(dto);
+  if (refusal) return refusal;
   setDoc("loaded", true);
+  return null;
 }
 
 /** Load/reload bundled Guide pages into the working set without making them the
@@ -341,16 +410,24 @@ export function reloadPageIfStillSafe(name: string, dto: PageDto & { id?: string
 /** After a PDF highlight write changed an `hls__` page on disk, refresh its
  *  loaded copy (main view or sidebar) so its content AND save baseline (baseRev)
  *  track disk — otherwise a later editor save would conflict against the highlight
- *  write. Skips a page with unsaved edits / an open conflict: the caller flushes
- *  those FIRST so they're on disk and merged in, rather than clobbered here. */
-export async function reloadHlsIfLoaded(name: string): Promise<void> {
-  if (!pageByName(name)) return;
-  if (isDirty(name) || isConflicted(name)) return;
+ *  write. The full replacement gate decides, before and after the read (master
+ *  7bd793bd0: an IME composition on the notes page was destroyed while the store
+ *  was clean). A page held by an editor or draft is refreshed once the hold ends;
+ *  one with unsaved edits or a conflict is left to its own save, which the caller
+ *  flushed FIRST, so a later edit surfaces as a conflict, never a clobber.
+ *  Returns whether the refresh applied now. One page read. */
+export async function reloadHlsIfLoaded(name: string): Promise<boolean> {
+  if (!pageByName(name)) return false;
+  const retryWhenFree = () => {
+    if (reloadDisposition(name) === "skip") whenPageReplaceable(name, "hls-refresh", () => void reloadHlsIfLoaded(name));
+    return false;
+  };
+  if (reloadDisposition(name) !== "reload") return retryWhenFree();
   const generation = pageInstanceGeneration(name);
   const owner = graphOwner(() => pageInstanceGeneration(name) === generation);
   const result = await readOwned(owner, backend().getPage(name, "page"));
-  if (result.kind === "current" && result.value)
-    reloadPageIfStillSafe(name, result.value);
+  if (result.kind !== "current" || !result.value) return false;
+  return reloadPageIfStillSafe(name, result.value) || retryWhenFree();
 }
 function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;
@@ -407,15 +484,20 @@ export function resetStore() {
 // the next save could write it, silently dropping the edit (GH #304 family, og 20b
 // contract 2). Same gate as the watcher: `reloadDisposition`. (reloadPage / "use
 // disk version" still replace explicitly via upsertPage — that is the user's choice.)
-function upsertUnlessDirty(dto: PageDto & { id?: string }) {
+//
+// Returns the refusal when ANOTHER file holding the name has unsaved input; the
+// caller must not publish the name as though the requested file were loaded.
+function upsertUnlessDirty(dto: PageDto & { id?: string }): PageLoadRefusal | null {
+  const refusal = slotRefusal(dto);
+  if (refusal) return refusal;
   const disp = pageByName(dto.name) ? reloadDisposition(dto.name) : "reload";
   // A held page ("skip") keeps its loaded copy, and the declined read replays
   // through the watcher's deferred reload once the hold releases, so a feed or
   // navigation read landing mid-hold is never silently dropped (master
   // ba80a151e). A "conflict" page's own save settles it.
   if (disp === "skip" && (dto.rev == null || dto.rev !== baseRevFor(dto.name))) deferExternalReload(dto.name, { name: dto.name, kind: dto.kind, path: dto.id, created: false, removed: false });
-  if (disp !== "reload") return;
-  upsertPage(dto);
+  if (disp === "reload") upsertPage(dto);
+  return null;
 }
 
 export type ReloadDisposition = "reload" | "conflict" | "skip";
@@ -443,31 +525,39 @@ export function reloadDisposition(name: string): ReloadDisposition {
   return "reload";
 }
 
-/** Load a single page and make it the main view. */
-export function loadSingle(dto: PageDto & { id?: string }, opts: { endEdit?: boolean } = {}) {
-  upsertUnlessDirty(dto);
+/** Load a single page and make it the main view; publication follows
+ * installation, so a refusal changes nothing and is returned. */
+export function loadSingle(dto: PageDto & { id?: string }, opts: { endEdit?: boolean } = {}): PageLoadRefusal | null {
+  const refusal = upsertUnlessDirty(dto);
+  if (refusal) return refusal;
   setDoc("feed", [dto.name]);
   setDoc("loaded", true);
   if (opts.endEdit !== false) endEdit("page-navigation");
   evictIfNeeded();
+  return null;
 }
 
 /** Load the journals feed as the main view. Normal refresh replaces safe pages;
  * a calendar rollover can add the returned days while retaining every existing
  * feed page and its mounted editor. An optional owner check refuses stale
- * publication. Returns false only for a stale request. Cost is O(returned page
- * blocks + loaded pages + feed days + any pages evicted at the working-set cap);
- * no disk write or failure is exposed here. */
-export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: boolean; preserveExisting?: boolean; isRequestLive?: () => boolean } = {}): boolean {
-  if (opts.isRequestLive?.() === false) return false;
+ * publication. Publication FOLLOWS installation (master 7bd793bd0): when another
+ * file holding a day's name has unsaved input, the old feed stays and the
+ * refusal is returned, so the feed never shows that file as the requested day
+ * and an edit there never saves to the wrong file; retry once it is released.
+ * Returns "published", "stale" for a request no longer live, or the refusal;
+ * none is falsy, so a caller must compare, never test truthiness. Cost is O(returned
+ * page blocks + loaded pages + feed days + any pages evicted at the working-set
+ * cap); no disk write or failure is exposed here. */
+export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: boolean; preserveExisting?: boolean; isRequestLive?: () => boolean } = {}): "published" | "stale" | PageLoadRefusal {
+  if (opts.isRequestLive?.() === false) return "stale";
   for (const d of dtos) {
     // A calendar rollover adds the new day while keeping every mounted older
     // feed page, including its editor and any unsaved text, as the same object.
     if (opts.preserveExisting && doc.feed.includes(d.name)) continue;
-    if (opts.preserveExisting) ensurePageLoaded(d);
-    else upsertUnlessDirty(d);
+    const refusal = opts.preserveExisting ? ensurePageLoaded(d) : upsertUnlessDirty(d);
+    if (refusal) return refusal;
   }
-  if (opts.isRequestLive?.() === false) return false;
+  if (opts.isRequestLive?.() === false) return "stale";
   const incoming = dtos.map((d) => d.name);
   setDoc("feed", opts.preserveExisting
     ? [...incoming, ...doc.feed.filter((name) => !incoming.includes(name))]
@@ -475,17 +565,22 @@ export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: 
   setDoc("loaded", true);
   if (opts.endEdit !== false) endEdit("page-navigation");
   evictIfNeeded();
-  return true;
+  return "published";
 }
 
-/** Append more pages to the journals feed (infinite scroll). */
-export function appendFeed(dtos: (PageDto & { id?: string })[]) {
+/** Append more pages to the journals feed (infinite scroll). A day whose name
+ * another file with unsaved input holds is left out, and its refusal returned
+ * (publication follows installation, as in `loadFeed`). */
+export function appendFeed(dtos: (PageDto & { id?: string })[]): PageLoadRefusal[] {
+  const refused: PageLoadRefusal[] = [];
   for (const d of dtos) {
     if (doc.feed.includes(d.name)) continue;
-    upsertUnlessDirty(d);
-    setDoc("feed", [...doc.feed, d.name]);
+    const refusal = upsertUnlessDirty(d);
+    if (refusal) refused.push(refusal);
+    else setDoc("feed", [...doc.feed, d.name]);
   }
   evictIfNeeded();
+  return refused;
 }
 
 /** A fresh, empty (unsaved) page: one editable blank block. Used for a page that
@@ -499,10 +594,14 @@ export function appendFeed(dtos: (PageDto & { id?: string })[]) {
  *  blank until you navigate away and back (#17). No-op if today is still in the feed
  *  (e.g. it was an OLDER day that got deleted). The placeholder is empty and
  *  writable — `upsertPage` lifts the delete tombstone, so the first keystroke saves
- *  a fresh file, exactly like reopening the journal. */
-export function restoreTodayJournalInFeed() {
+ *  a fresh file, exactly like reopening the journal. When another file holding
+ *  today's name has unsaved input, nothing is published and the refusal is
+ *  returned. */
+export function restoreTodayJournalInFeed(): PageLoadRefusal | null {
   const title = journalTitle(appNow());
-  if (doc.feed.includes(title)) return;
-  upsertUnlessDirty(emptyPage(title, "journal"));
+  if (doc.feed.includes(title)) return null;
+  const refusal = upsertUnlessDirty(emptyPage(title, "journal"));
+  if (refusal) return refusal;
   setDoc("feed", [title, ...doc.feed]);
+  return null;
 }

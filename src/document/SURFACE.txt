@@ -3,7 +3,9 @@ FeedPage
 HistoryRouteContext
 Node
 OutlineScope
+PageLoadRefusal  # why: GH #254 family: one typed answer to whether a page file took its name slot; batchJ1
 UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
+admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
 appendFeed
 appendToTodayJournal
 applyGraphChange
@@ -102,6 +104,7 @@ outdentSelection
 outlineFits  # why: one placement cap shared by editor paste and structural sheet paste; batch15b-followup
 pageByName
 pageHeaderProperties  # why: one answerer for the rendered page header and the properties panel (Rule 3); batch14q5-followup
+pageLoadRefusalMessage  # why: a surface shows why its page did not load inline; batchJ1
 pageRoots
 pageVisibleOrder
 pasteClipboardPayload
@@ -124,6 +127,7 @@ renamePageOnDisk
 replaceChildOrders
 replaceEmptyBlockWithOutline
 replayDeferredExternalReloads  # why: returning to the window replays reloads deferred mid-edit (family 10 focus refresh); batch22a
+reportPageLoadRefusal  # why: every refused load is reported the same way; batchJ1
 resetStore
 resolveBlockRef
 resolveConflict  # why: one conflict resolution intent; batch03
@@ -164,6 +168,7 @@ unsavedPageCount  # why: a close that discards drafts records how many pages it 
 visibleOrder
 waitingFor  # why: show unresolved group member; batch03
 waitingOn  # why: show pages blocked by conflict; batch03
+whenPageReplaceable  # why: a refused load retries once the holder is replaceable; batchJ1
 withBlockMoving
 withToday
 withUndoUnit

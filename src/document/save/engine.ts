@@ -6,7 +6,7 @@ import { captureBinding, type Binding, stillBound } from "../../binding";
 import { pageToDto, appendAliasDraft, aliasDraftBlocks, replaceLandedAliasDraft } from "../convert";
 import type { BlockDto, PageDto, PageKind } from "../../types";
 import { backend, saveOnePage, type SavePageEntry } from "../../backend";
-import { forgetPage, reloadPage, loadSingle, rekeyPageIdentityByPath } from "../workingSet";
+import { forgetPage, reloadPage, loadSingle, rekeyPageIdentityByPath, reportPageLoadRefusal } from "../workingSet";
 import { editingId } from "../../editorController";
 import { pagePropertyEntries } from "../../editor/properties";
 import { graphOwner, readOwned } from "../../owned";
@@ -592,8 +592,9 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
       landedAliasDrafts.delete(name);
       forgetPage(name);
       reloadPage(landed);
-      loadSingle(landed);
-      aliasDraftRouteHandler?.(target.owner.name, target.owner.kind);
+      const refused = loadSingle(landed);
+      if (refused) reportPageLoadRefusal(refused);
+      else aliasDraftRouteHandler?.(target.owner.name, target.owner.kind);
       pushToast(`Moved “${name}” into its alias owner “${target.owner.name}”.`, "info");
       bumpPageInventoryRev();
     }
@@ -940,8 +941,9 @@ async function doSave(
         landedAliasDrafts.delete(name);
         forgetPage(name);
         reloadPage(landed);
-        loadSingle(landed);
-        aliasDraftRouteHandler?.(owner.name, owner.kind);
+        const refused = loadSingle(landed);
+        if (refused) reportPageLoadRefusal(refused);
+        else aliasDraftRouteHandler?.(owner.name, owner.kind);
         pushToast(`Moved “${name}” into its alias owner “${owner.name}”.`, "info");
         bumpPageInventoryRev();
         forgetSaveFailure(name);

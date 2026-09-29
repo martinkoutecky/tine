@@ -7,7 +7,7 @@ import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, open
 import { graphEpoch, dataRev, graphMeta } from "../graphSession";
 import { captureBinding } from "../binding";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
-import { blockRef, isConflicted } from "../document";
+import { blockRef, isConflicted, pageLoadRefusalMessage, reportPageLoadRefusal, whenPageReplaceable, type PageLoadRefusal } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
@@ -158,6 +158,17 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
   finally { if (journalRefreshFlight === flight) journalRefreshFlight = null; }
 }
 
+/** A feed day whose name another file holds with unsaved work was refused
+ * (GH #254 family, og J1): say so, and refresh the feed once that holder is
+ * replaceable. Returns the message. */
+function feedDayRefused(refusal: PageLoadRefusal, owner: JournalsFeedOwner): string {
+  pendingFeedRestart = true;
+  whenPageReplaceable(refusal.page, "journal-feed", () => {
+    if (ownerIsLive(owner)) void refreshJournalFeedForCurrentDay(owner);
+  });
+  return reportPageLoadRefusal(refusal);
+}
+
 async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean, rollover: boolean): Promise<unknown | null> {
   // An already-dead watcher/surface must be entirely inert.  In particular it
   // must not steal the generation from a live request that is about to land.
@@ -190,11 +201,15 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
       return null;
     }
     pendingFeedRestart = false;
-    if (!loadFeed(withToday(response.pages), {
+    const loaded = loadFeed(withToday(response.pages), {
       endEdit: false,
       preserveExisting: rollover,
       isRequestLive: () => generation === feedGeneration && ownerIsLive(owner) && responseMatches(browserDay, response),
-    })) return null;
+    });
+    if (loaded === "stale") return null;
+    // The whole window is withheld, as master defers its feed atomically: a
+    // published feed never shows another file as a requested day.
+    if (loaded !== "published") return new Error(feedDayRefused(loaded, owner));
     publishedFeedEpoch = owner.graphEpoch;
     publishedFeedNames = feedNames();
     journalAsOfDay = response.as_of_day;
@@ -392,7 +407,8 @@ export function PageView(): JSX.Element {
           // null = page doesn't exist yet → start a fresh empty page. A failed
           // read throws and is caught below, so we never overwrite a page whose
           // load errored with empty content.
-          loadRoutedPage(dto ? toLoadablePage(dto, r.name) : emptyPage(r.name, r.pageKind));
+          const refusal = loadRoutedPage(dto ? toLoadablePage(dto, r.name) : emptyPage(r.name, r.pageKind));
+          if (refusal) throw new Error(pageLoadRefusalMessage(refusal));
           if (r.path && pageByName(r.name)?.id !== r.path)
             throw new Error("The selected file cannot replace a page with an active edit or unsaved changes.");
         }
@@ -438,7 +454,7 @@ export function PageView(): JSX.Element {
         return;
       }
       if (response.pages.length) {
-        appendFeed(response.pages);
+        for (const refusal of appendFeed(response.pages)) feedDayRefused(refusal, owner);
         publishedFeedNames = feedNames();
       }
       nextBeforeDay = response.next_before_day;

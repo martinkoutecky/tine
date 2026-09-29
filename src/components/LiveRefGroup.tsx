@@ -79,7 +79,7 @@ export function LiveRefGroup(props: {
       const after = pageByName(p);
       if (after) return after.kind === k && (!path || after.id === path);
       if (!dto || dto.name !== p || dto.kind !== k || (path && dto.id !== path)) return false;
-      ensurePageLoaded(dto);
+      if (ensurePageLoaded(dto)) return false; // declined: stay on the DTO path
       const loaded = pageByName(p);
       return loaded?.kind === k && (!path || loaded.id === path);
     }

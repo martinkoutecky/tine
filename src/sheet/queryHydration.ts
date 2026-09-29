@@ -328,7 +328,10 @@ export async function hydrateVisibleQueryPages(
       const after = pageByName(group.page);
       if (after && (!group.path || after.id === group.path)) return;
       if (!dto || dto.name !== group.page || dto.kind !== group.kind || (group.path && dto.id !== group.path)) return;
-      ensurePageLoaded(dto);
+      // Consume the refusal rather than assume installation: a declined load
+      // leaves the row DTO-only; a later interaction re-drives it (master
+      // 7bd793bd0). Nothing below may treat the page as loaded.
+      if (ensurePageLoaded(dto)) return;
     }).finally(() => {
       pageHydrations.delete(key);
       releaseClaim(claimKey, identity);

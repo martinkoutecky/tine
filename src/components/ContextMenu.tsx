@@ -12,7 +12,7 @@ import { backend } from "../backend";
 import { carryDay } from "../carry";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { ensureBlockId, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
+import { ensureBlockId, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
@@ -862,7 +862,10 @@ function PageMenu(props: {
         // Deleted a day IN the journals feed (in place, no navigation) → the feed
         // loader's withToday didn't re-run, so restore today's empty placeholder
         // here if it was the one deleted (#17). No-op for an older day.
-        if (kind === "journal") restoreTodayJournalInFeed();
+        if (kind === "journal") {
+          const refused = restoreTodayJournalInFeed();
+          if (refused) reportPageLoadRefusal(refused);
+        }
         pushToast(`Deleted “${name}”`, "success");
       })
       .catch(() => { pushToast("Delete failed", "error"); });

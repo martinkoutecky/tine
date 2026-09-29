@@ -5,7 +5,7 @@
 
 import { backend } from "./backend";
 import { graphOwner, readOwned, type Owner } from "./owned";
-import { pageByName, ensurePageLoaded, carryUnfinished, flushPage, carryTodayPage, refuseConflictedMove } from "./document";
+import { pageByName, admitPageFile, ensurePageLoaded, carryUnfinished, flushPage, carryTodayPage, refuseConflictedMove, reportPageLoadRefusal } from "./document";
 import { journalTitle, appNow } from "./journal";
 import { carryKeepsContext, carryHeaderText } from "./ui";
 import { pushToast } from "./toasts";
@@ -15,31 +15,27 @@ async function ensureLoaded(name: string, kind: "journal" | "page", owner: Owner
   if (pageByName(name)) return true;
   const result = await readOwned(owner, backend().getPage(name, kind));
   if (result.kind === "stale" || !result.value) return false;
-  ensurePageLoaded(result.value);
-  // A declined replacement leaves the slot empty: stop, never assume it loaded.
-  return !!pageByName(name);
+  // A declined replacement is a refusal: stop, never assume it loaded.
+  const refusal = ensurePageLoaded(result.value);
+  if (refusal) reportPageLoadRefusal(refusal, "carrying tasks");
+  return !refusal && !!pageByName(name);
 }
 
-/** Make sure today's journal is in the working set (synthesize an empty one if
- *  it has no file yet, like the feed does) and that the page holding today's
- *  name is today's own file. A second file for the same day — a duplicate day
- *  left by sync delivery or a journal date-format change, opened path-pinned —
- *  can hold the name slot; carrying into it would land the tasks in a file the
- *  journals feed does not show for today. That refuses with a message naming
- *  both files (og I1e; GH #254 family, master 7bd793bd0). One page read. */
+/** Make sure today's own file (or, with no file yet, an empty page) holds
+ *  today's name. A second file for the same day — a duplicate day left by sync
+ *  delivery or a journal date-format change, opened path-pinned — can hold the
+ *  name; carrying into it would land the tasks in a file the journals feed does
+ *  not show for today. That refuses with a message naming both files (og I1e;
+ *  GH #254 family, master 7bd793bd0; `admitPageFile`). One page read. */
 async function ensureToday(owner: Owner): Promise<string | null> {
   const t = journalTitle(appNow());
-  const result = await readOwned(owner, backend().getPage(t, "journal"));
-  if (result.kind === "stale") return null;
-  if (!pageByName(t)) ensurePageLoaded(result.value ?? carryTodayPage(t));
-  const loaded = pageByName(t);
-  if (!loaded) return null;
-  const canonical = result.value?.id;
-  if (loaded.id && canonical && loaded.id !== canonical) {
-    pushToast(`Today's journal is open from a second file for the same day (${loaded.id}), not ${canonical}. Resolve the duplicate day before carrying tasks.`, "error");
+  const admitted = await admitPageFile(t, "journal", owner, carryTodayPage(t));
+  if (admitted === "stale") return null;
+  if (admitted) {
+    reportPageLoadRefusal(admitted, "carrying tasks");
     return null;
   }
-  return t;
+  return pageByName(t) ? t : null;
 }
 
 async function report(n: number, today: string, owner: Owner): Promise<void> {
