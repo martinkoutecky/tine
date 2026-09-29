@@ -662,7 +662,11 @@ pub(crate) fn save_pages(
             )
         })
         .collect();
-    Ok(save_wire::save_pages_wire(&slot.store, &entries))
+    Ok(save_wire::save_pages_wire(
+        &slot.store,
+        &entries,
+        tine_graph_features::pages::save_pages,
+    ))
 }
 
 #[cfg(test)]

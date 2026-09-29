@@ -130,21 +130,25 @@ pub(super) fn store_failure_to_wire(index: usize, error: StoreError) -> SavePage
     }
 }
 
-/// Save prepared page entries through the store and encode the result, as
-/// the `save_pages` command does once its binding and edit kinds are checked;
+type SaveEntry = (
+    tine_store::PageId,
+    tine_core::model::PageDto,
+    Option<String>,
+    bool,
+    Vec<tine_store::EditKind>,
+);
+
+/// Save prepared page entries through `save` (the command names its store
+/// route, which the Rule 8 census reads) and encode the result, as the
+/// `save_pages` command does once its binding and edit kinds are checked;
 /// records the fixed-shape diagnostic event. Cost is the store save's.
 pub(super) fn save_pages_wire(
     store: &tine_store::Store,
-    entries: &[(
-        tine_store::PageId,
-        tine_core::model::PageDto,
-        Option<String>,
-        bool,
-        Vec<tine_store::EditKind>,
-    )],
+    entries: &[SaveEntry],
+    save: impl FnOnce(&tine_store::Store, &[SaveEntry]) -> Result<SavePagesOutcome, (usize, StoreError)>,
 ) -> SavePagesWire {
     let started = std::time::Instant::now();
-    let wire = match tine_graph_features::pages::save_pages(store, entries) {
+    let wire = match save(store, entries) {
         Ok(outcome) => save_pages_outcome_to_wire(outcome),
         Err((index, error)) => store_failure_to_wire(index, error),
     };

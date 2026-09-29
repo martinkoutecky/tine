@@ -1,7 +1,21 @@
 //! Master 678830a086af (GH #538, #590): a failed save names the platform step
 //! that failed, so an Android `EINVAL` from the no-replace rename can be told
 //! from one raised while creating, writing or syncing the temporary file.
-use super::save_pages_wire;
+use super::save_pages_wire as wire_for;
+use tine_graph_features::pages::save_pages;
+
+fn save_pages_wire(
+    store: &Store,
+    entries: &[(
+        PageId,
+        tine_core::model::PageDto,
+        Option<String>,
+        bool,
+        Vec<EditKind>,
+    )],
+) -> super::SavePagesWire {
+    wire_for(store, entries, save_pages)
+}
 use std::fs;
 use tine_store::{EditKind, FaultPoint, PageId, Store};
 
