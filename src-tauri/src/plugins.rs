@@ -10,8 +10,6 @@ const MAX_WASM_BYTES: usize = 8 * 1024 * 1024;
 const MAX_REGISTRY_INDEX_BYTES: usize = 2 * 1024 * 1024;
 const MAX_REGISTRY_SIGNATURE_BYTES: usize = 1024;
 const REGISTRY_CACHE_KEY: &str = "plugin_registry_cache";
-const LEGACY_REGISTRY_INDEX_KEY: &str = "plugin-registry-index";
-const LEGACY_REGISTRY_SIGNATURE_KEY: &str = "plugin-registry-signature";
 static INSTALL_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const REGISTRY_PUBLIC_KEY: [u8; 32] = [
     0x6c, 0x25, 0xa1, 0xfd, 0x0c, 0x6d, 0xbc, 0x60, 0xca, 0xb7, 0xa4, 0x8c, 0x23, 0x6a, 0xa9, 0x18,
@@ -26,24 +24,12 @@ pub(crate) struct PluginRegistryCacheEnvelope {
     signature: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct LegacyPluginRegistryCache {
-    index_json: String,
-    signature: String,
-}
-
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum PluginRegistryCacheLoad {
     Absent,
     Envelope {
         envelope: PluginRegistryCacheEnvelope,
-    },
-    Legacy {
-        #[serde(rename = "indexJson")]
-        index_json: String,
-        signature: String,
     },
     Unsafe {
         reason: String,
@@ -91,38 +77,16 @@ fn load_plugin_registry_cache_at(path: &Path) -> PluginRegistryCacheLoad {
         return PluginRegistryCacheLoad::Envelope { envelope };
     }
 
-    let legacy_index = root.get(LEGACY_REGISTRY_INDEX_KEY);
-    let legacy_signature = root.get(LEGACY_REGISTRY_SIGNATURE_KEY);
-    match (legacy_index, legacy_signature) {
-        (None, None) => PluginRegistryCacheLoad::Absent,
-        (Some(index), Some(signature)) => {
-            let Some(index_json) = index.as_str() else {
-                return unsafe_cache("legacy registry index has the wrong type");
-            };
-            let Some(signature) = signature.as_str() else {
-                return unsafe_cache("legacy registry signature has the wrong type");
-            };
-            if index_json.is_empty()
-                || index_json.len() > MAX_REGISTRY_INDEX_BYTES
-                || signature.trim().is_empty()
-                || signature.len() > MAX_REGISTRY_SIGNATURE_BYTES
-            {
-                return unsafe_cache("legacy registry cache violates its size contract");
-            }
-            PluginRegistryCacheLoad::Legacy {
-                index_json: index_json.to_string(),
-                signature: signature.to_string(),
-            }
-        }
-        _ => unsafe_cache("legacy registry cache is torn"),
-    }
+    // The pre-envelope `plugin-registry-index`/`-signature` pair is a retired,
+    // disposable cache shape (master 4b752120f): it is ignored, and the live
+    // registry refetch republishes a verified envelope.
+    PluginRegistryCacheLoad::Absent
 }
 
 fn store_plugin_registry_cache_at(
     path: &Path,
     index_json: String,
     signature: String,
-    expected_legacy: Option<LegacyPluginRegistryCache>,
 ) -> Result<(), String> {
     if index_json.is_empty() || index_json.len() > MAX_REGISTRY_INDEX_BYTES {
         return Err("plugin registry index is empty or too large".to_string());
@@ -138,27 +102,8 @@ fn store_plugin_registry_cache_at(
         signature,
     };
     crate::settings::update_settings_strict_at(path, |json| {
-        if let Some(expected) = &expected_legacy {
-            let actual_index = json
-                .get(LEGACY_REGISTRY_INDEX_KEY)
-                .and_then(serde_json::Value::as_str);
-            let actual_signature = json
-                .get(LEGACY_REGISTRY_SIGNATURE_KEY)
-                .and_then(serde_json::Value::as_str);
-            if json.get(REGISTRY_CACHE_KEY).is_some()
-                || actual_index != Some(expected.index_json.as_str())
-                || actual_signature != Some(expected.signature.as_str())
-            {
-                return Err("legacy registry cache changed during migration".to_string());
-            }
-        }
         json[REGISTRY_CACHE_KEY] =
             serde_json::to_value(&envelope).map_err(|error| error.to_string())?;
-        let object = json
-            .as_object_mut()
-            .ok_or_else(|| "device settings root is not an object".to_string())?;
-        object.remove(LEGACY_REGISTRY_INDEX_KEY);
-        object.remove(LEGACY_REGISTRY_SIGNATURE_KEY);
         Ok(())
     })
 }
@@ -175,11 +120,10 @@ pub(crate) fn load_plugin_registry_cache(app: tauri::AppHandle) -> PluginRegistr
 pub(crate) fn store_plugin_registry_cache(
     index_json: String,
     signature: String,
-    expected_legacy: Option<LegacyPluginRegistryCache>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let path = crate::settings::settings_path(&app).ok_or("no app-data dir")?;
-    store_plugin_registry_cache_at(&path, index_json, signature, expected_legacy)
+    store_plugin_registry_cache_at(&path, index_json, signature)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -807,7 +751,6 @@ mod tests {
             &path,
             SIGNED_CONTROL_INDEX.to_string(),
             SIGNED_CONTROL_SIGNATURE.to_string(),
-            None,
         )
         .unwrap();
 
@@ -818,8 +761,6 @@ mod tests {
             persisted[REGISTRY_CACHE_KEY],
             envelope(SIGNED_CONTROL_INDEX, SIGNED_CONTROL_SIGNATURE)
         );
-        assert!(persisted.get(LEGACY_REGISTRY_INDEX_KEY).is_none());
-        assert!(persisted.get(LEGACY_REGISTRY_SIGNATURE_KEY).is_none());
         assert!(matches!(
             load_plugin_registry_cache_at(&path),
             PluginRegistryCacheLoad::Envelope { .. }
@@ -840,15 +781,22 @@ mod tests {
             PluginRegistryCacheLoad::Absent
         );
 
+        std::fs::write(&path, r#"{"plugin-registry-index":"index"}"#).unwrap();
+        assert_eq!(
+            load_plugin_registry_cache_at(&path),
+            PluginRegistryCacheLoad::Absent,
+            "the retired settings-cache shape is disposable and must trigger a refetch"
+        );
         std::fs::write(
             &path,
-            format!(r#"{{"{LEGACY_REGISTRY_INDEX_KEY}":"index"}}"#),
+            r#"{"plugin-registry-index":"index","plugin-registry-signature":"sig"}"#,
         )
         .unwrap();
-        assert!(matches!(
+        assert_eq!(
             load_plugin_registry_cache_at(&path),
-            PluginRegistryCacheLoad::Unsafe { .. }
-        ));
+            PluginRegistryCacheLoad::Absent,
+            "a complete retired pair is not migrated; the live registry refetches it"
+        );
         std::fs::write(&path, format!(r#"{{"{REGISTRY_CACHE_KEY}":{{"schemaVersion":1,"indexJson":"x","signature":"y","extra":true}}}}"#)).unwrap();
         assert!(matches!(
             load_plugin_registry_cache_at(&path),
@@ -862,57 +810,6 @@ mod tests {
     }
 
     #[test]
-    fn guarded_legacy_migration_removes_both_keys_or_publishes_nothing() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("tine-settings.json");
-        let legacy = LegacyPluginRegistryCache {
-            index_json: SIGNED_CONTROL_INDEX.to_string(),
-            signature: SIGNED_CONTROL_SIGNATURE.to_string(),
-        };
-        let initial = serde_json::json!({
-            "keep": 7,
-            LEGACY_REGISTRY_INDEX_KEY: legacy.index_json,
-            LEGACY_REGISTRY_SIGNATURE_KEY: legacy.signature,
-        });
-        std::fs::write(
-            &path,
-            format!("{}\n", serde_json::to_string_pretty(&initial).unwrap()),
-        )
-        .unwrap();
-
-        let mismatched = LegacyPluginRegistryCache {
-            index_json: "other".to_string(),
-            signature: SIGNED_CONTROL_SIGNATURE.to_string(),
-        };
-        let before = std::fs::read(&path).unwrap();
-        assert!(store_plugin_registry_cache_at(
-            &path,
-            SIGNED_CONTROL_INDEX.to_string(),
-            SIGNED_CONTROL_SIGNATURE.to_string(),
-            Some(mismatched),
-        )
-        .is_err());
-        assert_eq!(std::fs::read(&path).unwrap(), before);
-
-        store_plugin_registry_cache_at(
-            &path,
-            SIGNED_CONTROL_INDEX.to_string(),
-            SIGNED_CONTROL_SIGNATURE.to_string(),
-            Some(legacy),
-        )
-        .unwrap();
-        let persisted: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(persisted["keep"], 7);
-        assert!(persisted.get(LEGACY_REGISTRY_INDEX_KEY).is_none());
-        assert!(persisted.get(LEGACY_REGISTRY_SIGNATURE_KEY).is_none());
-        assert_eq!(
-            persisted[REGISTRY_CACHE_KEY],
-            envelope(SIGNED_CONTROL_INDEX, SIGNED_CONTROL_SIGNATURE)
-        );
-    }
-
-    #[test]
     fn invalid_or_unpublishable_registry_cache_never_replaces_last_good_bytes() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("tine-settings.json");
@@ -923,7 +820,6 @@ mod tests {
             &path,
             SIGNED_CONTROL_INDEX.to_string(),
             "invalid".to_string(),
-            None,
         )
         .is_err());
         assert_eq!(std::fs::read(&path).unwrap(), before);
@@ -931,7 +827,6 @@ mod tests {
             &path,
             "x".repeat(MAX_REGISTRY_INDEX_BYTES + 1),
             SIGNED_CONTROL_SIGNATURE.to_string(),
-            None,
         )
         .is_err());
         assert_eq!(std::fs::read(&path).unwrap(), before);
@@ -942,7 +837,6 @@ mod tests {
             &path,
             SIGNED_CONTROL_INDEX.to_string(),
             SIGNED_CONTROL_SIGNATURE.to_string(),
-            None,
         )
         .is_err());
         assert_eq!(std::fs::read(&path).unwrap(), malformed);
@@ -967,7 +861,6 @@ mod tests {
             &path,
             SIGNED_CONTROL_INDEX.to_string(),
             SIGNED_CONTROL_SIGNATURE.to_string(),
-            None,
         );
         std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(original_mode))
             .unwrap();
@@ -994,7 +887,6 @@ mod tests {
                 writer_path.as_ref(),
                 SIGNED_CONTROL_INDEX.to_string(),
                 SIGNED_CONTROL_SIGNATURE.to_string(),
-                None,
             )
             .unwrap();
         });

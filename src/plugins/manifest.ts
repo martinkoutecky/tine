@@ -5,6 +5,17 @@ export const PLUGIN_API_VERSION = "0.2" as const;
 export const PLUGIN_PLATFORMS = ["desktop", "android", "ios"] as const;
 export type PluginPlatform = (typeof PLUGIN_PLATFORMS)[number];
 
+// STOP — read docs/adr/0052-ios-plugin-platform-apple-4-7-2.md before adding a
+// capability here. Every entry must be a semantic verb the HOST performs on the
+// guest's behalf. None may hand a guest native platform surface (Tauri `invoke`,
+// raw filesystem/path handles, process, sockets, shell, OS services, or any
+// pass-through that lets a guest name a native command). Apple App Review 4.7.2
+// forbids plug-ins that "extend or expose native platform APIs or technologies",
+// so one such capability forfeits plugins on iOS permanently — and a desktop-only
+// escape hatch does not help, because it would have to be removed (stranding the
+// plugins built on it) before an iOS host could ever ship. If a plugin genuinely
+// needs native reach, add a host-side verb instead; if that is impossible, it is
+// Martin's product call, not an implementation detail.
 export const PLUGIN_CAPABILITIES = [
   "commands.register",
   "slash-commands.register",

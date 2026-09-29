@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { backend, type LegacyPluginRegistryCache, type PluginRegistryCacheLoad } from "../backend";
+import { backend, type PluginRegistryCacheLoad } from "../backend";
 import { ownedWhen, writeOwned } from "../owned";
 import {
   PLUGIN_API_VERSION,
@@ -445,31 +445,18 @@ export async function loadVerifiedCachedRegistry(
     return { kind: "unsafe", reason: error instanceof Error ? error.message : String(error) };
   }
   if (loaded.kind === "absent" || loaded.kind === "unsafe") return loaded;
-  const candidate = loaded.kind === "envelope" ? loaded.envelope : loaded;
+  const candidate = loaded.envelope;
   try {
     const verified = snapshot(await verifiedIndex(candidate.indexJson, candidate.signature));
-    if (loaded.kind === "legacy") {
-      const expectedLegacy: LegacyPluginRegistryCache = {
-        indexJson: loaded.indexJson,
-        signature: loaded.signature,
-      };
-      try {
-        await backend().storePluginRegistryCache(loaded.indexJson, loaded.signature, expectedLegacy);
-        setRegistryPersistenceError(null);
-      } catch (error) {
-        setRegistryPersistenceError(`Verified registry cache migration was not persisted: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    } else {
-      setRegistryPersistenceError(null);
-    }
-    return { kind: "verified", snapshot: verified, source: loaded.kind };
+    setRegistryPersistenceError(null);
+    return { kind: "verified", snapshot: verified, source: "envelope" };
   } catch (error) {
     return { kind: "unsafe", reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
 export type VerifiedCachedRegistryLoad =
-  | { kind: "verified"; snapshot: VerifiedRegistrySnapshot; source: "envelope" | "legacy" }
+  | { kind: "verified"; snapshot: VerifiedRegistrySnapshot; source: "envelope" }
   | { kind: "absent" }
   | { kind: "unsafe"; reason: string };
 
