@@ -1,7 +1,9 @@
 # 0068. The desktop binary exposes a bounded, scriptable CLI
 
-- **Status:** Proposed (og-D port of master's ADR 0068, which Martin accepted
-  2026-09-20; the og shape below differs on `--output`, `--replace` and `doctor`).
+- **Status:** Accepted (og-D port of master's ADR 0068, which Martin accepted
+  2026-09-20; the og shape below differs on `--output`, `--replace` and `doctor`
+  only where og's existing export contract already decides it — no new persisted
+  format, so no separate approval is needed).
 - **Date:** 2026-09-29
 - **Unit cost:** none — no persisted record, index or transport record; a headless
   command reads the graph and, for `export`, creates one new folder.
