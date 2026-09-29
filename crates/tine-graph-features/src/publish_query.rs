@@ -14,7 +14,7 @@ use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::Path;
 use tine_core::model::PageKind;
@@ -215,6 +215,14 @@ fn resolve_plan(
         result.matched_total = Some(result.total);
     }
     let corpus = graph.corpus();
+    // Owner files by (kind, ASCII-folded name), built once rather than per group.
+    let mut owners: HashMap<_, Vec<&str>> = HashMap::new();
+    for page in &corpus.pages {
+        (owners
+            .entry((page.kind, page.name.to_ascii_lowercase()))
+            .or_default())
+        .push(page.id.as_str());
+    }
     let mut paths = HashSet::new();
     let anchor = match &result.rows {
         QueryRows::Page { pages } => {
@@ -225,15 +233,10 @@ fn resolve_plan(
         }
         QueryRows::Block { groups } => {
             for group in groups {
-                let matches: Vec<_> = corpus
-                    .pages
-                    .iter()
-                    .filter(|p| p.kind == group.kind && p.name.eq_ignore_ascii_case(&group.page))
-                    .collect();
-                if matches.len() != 1 {
-                    return Err(refusal("query result has an ambiguous page owner"));
-                }
-                paths.insert(matches[0].id.as_str().to_owned());
+                match owners.get(&(group.kind, group.page.to_ascii_lowercase())) {
+                    Some(files) if files.len() == 1 => paths.insert(files[0].to_owned()),
+                    _ => return Err(refusal("query result has an ambiguous page owner")),
+                };
             }
             "block"
         }
@@ -302,12 +305,7 @@ fn collect_static(
     sheets: &SheetIndex,
 ) -> io::Result<Vec<(String, Vec<u8>)>> {
     let config = store.config();
-    let render_graph = RenderGraph {
-        corpus,
-        whole: graph,
-        store,
-        sheets: Some(sheets),
-    };
+    let render_graph = RenderGraph::new(corpus, graph, store, Some(sheets));
     let mut files = Vec::new();
     let mut used = 0usize;
     render::publish_graph(
@@ -453,8 +451,14 @@ fn snapshot(
         .iter()
         .map(|p| (p.kind, p.name.to_lowercase()))
         .collect();
-    let selected_paths: HashSet<_> = corpus.pages.iter().map(|p| p.id.as_str()).collect();
     let inventory = graph.inventory();
+    // One pass over the inventory, not one per page (I-15).
+    let mut days = HashMap::new();
+    for entry in &inventory.0 {
+        if let (Resolved::Existing { id, .. }, Some(day)) = (&entry.target, entry.day) {
+            days.entry(id.as_str()).or_insert(day.0);
+        }
+    }
     for page in &corpus.pages {
         let mut read = store.page(&page.id).map_err(crate::store_error)?.doc;
         read.read_only = true;
@@ -463,10 +467,7 @@ fn snapshot(
         value["rev"] = Value::Null;
         value["activation"] = Value::Null;
         pages.push(value);
-        let day = inventory.0.iter().find_map(|entry| match &entry.target {
-            Resolved::Existing { id, .. } if id == &page.id => entry.day.map(|d| d.0),
-            _ => None,
-        });
+        let day = days.get(page.id.as_str());
         entries.push(json!({ "name": page.name, "kind": page.kind, "date_key": day, "path": page.id.as_str() }));
     }
     let mut queries = baked_queries(graph, corpus)?;
@@ -534,19 +535,17 @@ fn snapshot(
     }
     let names: Vec<_> = corpus.pages.iter().map(|p| p.name.clone()).collect();
     let icons = graph.page_icons(&names);
+    let mut owner_names = HashMap::new();
+    for page in &corpus.pages {
+        owner_names.entry(page.id.as_str()).or_insert(&page.name);
+    }
     let aliases: Vec<_> = inventory
         .0
         .iter()
         .filter_map(|entry| match &entry.target {
-            Resolved::Alias { owners }
-                if owners.len() == 1 && selected_paths.contains(owners[0].as_str()) =>
-            {
-                corpus
-                    .pages
-                    .iter()
-                    .find(|page| page.id == owners[0])
-                    .map(|page| (entry.name.clone(), page.name.clone()))
-            }
+            Resolved::Alias { owners } if owners.len() == 1 => owner_names
+                .get(owners[0].as_str())
+                .map(|owner| (entry.name.clone(), (*owner).clone())),
             _ => None,
         })
         .collect();

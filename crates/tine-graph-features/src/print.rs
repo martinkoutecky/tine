@@ -62,12 +62,7 @@ pub fn page_print_html_with_sheets(
         None
     };
     render::page_print_html(
-        &RenderGraph {
-            corpus: &corpus,
-            whole: &whole,
-            store,
-            sheets: Some(&sheets),
-        },
+        &RenderGraph::new(&corpus, &whole, store, Some(&sheets)),
         name,
         opts,
         org_document.as_ref(),

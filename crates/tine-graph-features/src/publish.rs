@@ -21,12 +21,7 @@ pub fn publish_html(store: &Store) -> io::Result<(String, usize)> {
         .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
     let corpus = whole.corpus();
     let config = store.config();
-    let graph = RenderGraph {
-        corpus: &corpus,
-        whole: &whole,
-        store,
-        sheets: None,
-    };
+    let graph = RenderGraph::new(&corpus, &whole, store, None);
     let mut count = 0;
     let receipt = store
         .publish_site(&mut |writer| {

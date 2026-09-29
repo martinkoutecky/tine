@@ -18,6 +18,8 @@ use tine_store::{Area, IrAnswer, IrRequest, Store, WholeGraph};
 
 #[path = "render_facets.rs"]
 mod render_facets;
+#[path = "render_lookups.rs"]
+mod render_lookups;
 #[path = "render_sheets.rs"]
 mod render_sheets;
 use render_facets::{emit_header_facets, emit_trailer_facets, Ordinal};
@@ -35,51 +37,42 @@ pub(crate) struct RenderGraph<'a> {
     /// The app's computed sheets (`render_sheets`); `None` when the export has no
     /// frontend, which keeps every sheet block a plain outline.
     pub sheets: Option<&'a SheetIndex>,
+    lookups: render_lookups::Lookups,
 }
 
-impl RenderGraph<'_> {
-    fn publish_preview_block(&self, uuid: &str) -> Option<BlockPreview> {
-        fn find<'a>(blocks: &'a [DocBlock], uuid: &str) -> Option<&'a DocBlock> {
-            for block in blocks {
-                if block.uuid == uuid || block.property("id").as_deref() == Some(uuid) {
-                    return Some(block);
-                }
-                if let Some(found) = find(&block.children, uuid) {
-                    return Some(found);
-                }
-            }
-            None
+impl<'a> RenderGraph<'a> {
+    pub(crate) fn new(
+        corpus: &'a Corpus,
+        whole: &'a WholeGraph,
+        store: &'a Store,
+        sheets: Option<&'a SheetIndex>,
+    ) -> Self {
+        Self {
+            corpus,
+            whole,
+            store,
+            sheets,
+            lookups: Default::default(),
         }
-        for page in &self.corpus.pages {
-            if let Some(block) = find(&page.document.roots, uuid) {
-                let total = subtree_node_count(block);
-                let mut remaining_nodes = 10_000;
-                let mut remaining_bytes = 8 * 1024 * 1024;
-                let blocks = bounded_preview_dto(block, &mut remaining_nodes, &mut remaining_bytes)
-                    .into_iter()
-                    .collect();
-                return Some(BlockPreview {
-                    group: RefGroup {
-                        page: page.name.clone(),
-                        kind: page.kind,
-                        blocks,
-                        evidence: Vec::new(),
-                    },
-                    truncated: total.saturating_sub(10_000 - remaining_nodes),
-                });
-            }
-        }
-        None
     }
 
-    fn with_pages<R>(&self, f: impl FnOnce(&[(&CorpusPage, &Arc<doc::Document>)]) -> R) -> R {
-        let pages: Vec<_> = self
-            .corpus
-            .pages
-            .iter()
-            .map(|page| (page, &page.document))
+    fn publish_preview_block(&self, uuid: &str) -> Option<BlockPreview> {
+        let (page, block) = self.lookups.block(self.corpus, uuid)?;
+        let total = subtree_node_count(block);
+        let mut remaining_nodes = 10_000;
+        let mut remaining_bytes = 8 * 1024 * 1024;
+        let blocks = bounded_preview_dto(block, &mut remaining_nodes, &mut remaining_bytes)
+            .into_iter()
             .collect();
-        f(&pages)
+        Some(BlockPreview {
+            group: RefGroup {
+                page: page.name.clone(),
+                kind: page.kind,
+                blocks,
+                evidence: Vec::new(),
+            },
+            truncated: total.saturating_sub(10_000 - remaining_nodes),
+        })
     }
 
     fn list_pages(&self) -> Vec<&CorpusPage> {
@@ -1205,9 +1198,9 @@ struct Ctx<'a> {
     /// macros do one graph scan per distinct source; print export/tests leave it
     /// `None` and keep the old direct call path.
     query_cache: Option<&'a SharedQueryCache>,
-    /// Public page documents keyed by Logseq page identity. Page embeds use
-    /// this projection; print looks up absent embeds in the full corpus.
-    pages: Option<&'a HashMap<String, &'a doc::Document>>,
+    /// Public page files and documents keyed by Logseq page identity. Page
+    /// embeds use this projection; print looks up absent embeds in the corpus.
+    pages: Option<&'a HashMap<String, (&'a str, &'a doc::Document)>>,
 }
 
 /// lsdoc render options for a Markdown block body (the canonical skeleton the export decorates).
@@ -1331,33 +1324,25 @@ fn render_query_groups(
     ctx: &Ctx,
     depth: u8,
 ) {
-    graph.with_pages(|pages| {
-        // One lookup index for the complete query avoids O(pages * groups)
-        // source-page scans during static/print export.
-        let page_by_key = pages
+    for group in groups {
+        // The export-wide page index; a result without a source in this exact
+        // projection has no publication capability. Never fall back to DTO bytes.
+        let Some(doc) = (graph.lookups).doc(graph.corpus, &group.page, group.kind) else {
+            continue;
+        };
+        let wanted = group
+            .blocks
             .iter()
-            .map(|(entry, doc)| ((entry.name.as_str(), entry.kind), doc.as_ref()))
-            .collect::<std::collections::HashMap<_, _>>();
-        for group in groups {
-            let Some(doc) = page_by_key.get(&(group.page.as_str(), group.kind)) else {
-                // A result without a source in this exact projection has no
-                // publication capability. Never fall back to cached DTO bytes.
-                continue;
-            };
-            let wanted = group
-                .blocks
-                .iter()
-                .map(|block| block.id.as_str())
-                .collect::<std::collections::HashSet<_>>();
-            let mut found = std::collections::HashMap::with_capacity(wanted.len());
-            collect_wanted_doc_blocks(&doc.roots, &wanted, &mut found);
-            for block in &group.blocks {
-                if let Some(source) = found.get(block.id.as_str()) {
-                    render_embedded_block(source, out, ctx, depth, 0);
-                }
+            .map(|block| block.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let mut found = std::collections::HashMap::with_capacity(wanted.len());
+        collect_wanted_doc_blocks(&doc.roots, &wanted, &mut found);
+        for block in &group.blocks {
+            if let Some(source) = found.get(block.id.as_str()) {
+                render_embedded_block(source, out, ctx, depth, 0);
             }
         }
-    });
+    }
 }
 
 /// Render an embedded page's block (a `DocBlock`) as an `<li>`, mirroring `render_result_block`.
@@ -1460,17 +1445,10 @@ fn render_query_with_title(
     }
     // Keep query rows inside this export's physical owner-page set.
     let pre_filter_total: usize = bounded.total;
-    let selected_paths: HashSet<_> = graph
-        .corpus
-        .pages
-        .iter()
-        .filter(|page| publish_page_allowed(ctx, &page.name))
-        .map(|page| page.id.as_str())
-        .collect();
     let pages: Vec<_> = bounded
         .pages
         .into_iter()
-        .filter(|page| ctx.pages.is_none() || selected_paths.contains(page.path.as_str()))
+        .filter(|page| publish_file_allowed(ctx, &page.name, &page.path))
         .collect();
     let groups: Vec<RefGroup> = bounded
         .groups
@@ -1542,10 +1520,11 @@ fn render_embed(graph: &RenderGraph<'_>, arg: &str, ctx: &Ctx, depth: u8) -> Str
     }
     if let Some(page) = arg.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
         let page = page.trim();
-        if let Some(doc) = ctx
-            .pages
-            .and_then(|pages| pages.get(&tine_core::refs::page_key(page)).copied())
-        {
+        if let Some(doc) = ctx.pages.and_then(|pages| {
+            pages
+                .get(&tine_core::refs::page_key(page))
+                .map(|(_, doc)| *doc)
+        }) {
             return render_page_embed_doc(page, doc, ctx, depth);
         }
         if ctx.pages.is_some() {
@@ -1553,7 +1532,7 @@ fn render_embed(graph: &RenderGraph<'_>, arg: &str, ctx: &Ctx, depth: u8) -> Str
                 .into();
         }
         return match load_page_doc(graph, page) {
-            Some(doc) => render_page_embed_doc(page, &doc, ctx, depth),
+            Some(doc) => render_page_embed_doc(page, doc, ctx, depth),
             None => "<div class=\"embed embed-missing\">Embedded page not found.</div>".into(),
         };
     }
@@ -1609,17 +1588,11 @@ fn youtube_id(url: &str) -> Option<String> {
     None
 }
 
-/// List the pages directly under a `{{namespace X}}` prefix as links.
+/// List every page under a `{{namespace X}}` prefix (`X/…`, any depth) as links.
 fn render_namespace(graph: &RenderGraph<'_>, ns: &str, ctx: &Ctx) -> String {
     let prefix = format!("{}/", ns.trim());
-    let mut children: Vec<String> = graph
-        .list_pages()
-        .into_iter()
-        .map(|e| e.name.clone())
-        .filter(|n| n.starts_with(&prefix) && publish_page_allowed(ctx, n))
-        .collect();
-    children.sort();
-    children.dedup();
+    let mut children = graph.lookups.names_under(graph.corpus, &prefix);
+    children.retain(|name| publish_page_allowed(ctx, name));
     if children.is_empty() {
         return format!(
             "<div class=\"namespace-macro\">No pages under {}.</div>",
@@ -1646,6 +1619,14 @@ fn publish_page_allowed(ctx: &Ctx, page: &str) -> bool {
         .is_none_or(|pages| pages.contains_key(&tine_core::refs::page_key(page)))
 }
 
+/// `publish_page_allowed` for one physical file: the published page of that
+/// name must be this file (a same-name file outside the export is not).
+fn publish_file_allowed(ctx: &Ctx, page: &str, path: &str) -> bool {
+    ctx.pages.is_none_or(|pages| {
+        (pages.get(&tine_core::refs::page_key(page))).is_some_and(|(file, _)| *file == path)
+    })
+}
+
 fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) -> String {
     let mut out = format!(
         "<div class=\"embed page-embed\"><a class=\"embed-title ref\" href=\"{}.html\">{}</a><ul>",
@@ -1660,13 +1641,8 @@ fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) 
 }
 
 /// Find a parsed page by name in the supplied corpus, case-insensitively.
-fn load_page_doc(graph: &RenderGraph<'_>, name: &str) -> Option<doc::Document> {
-    graph.with_pages(|pages| {
-        pages
-            .iter()
-            .find(|(entry, _)| entry.name.eq_ignore_ascii_case(name))
-            .map(|(_, document)| document.as_ref().clone())
-    })
+fn load_page_doc<'a>(graph: &RenderGraph<'a>, name: &str) -> Option<&'a doc::Document> {
+    graph.lookups.doc_named(graph.corpus, name)
 }
 
 /// A block's stable anchor: its `id::` value, else a generated per-page `b{n}`
@@ -2349,7 +2325,7 @@ pub(crate) fn publish_graph(
     // Project authorized pages from the caller's corpus. `entries` is sorted by
     // name, so slug assignment is deterministic. Query hydration stays within
     // this public projection.
-    let mut public: Vec<(&str, PageKind, Arc<doc::Document>)> = Vec::new();
+    let mut public: Vec<(&str, PageKind, Arc<doc::Document>, &str)> = Vec::new();
     for e in entries {
         if !selection.includes(e) {
             continue;
@@ -2368,20 +2344,20 @@ pub(crate) fn publish_graph(
             );
             continue;
         }
-        public.push((e.name.as_str(), e.kind, Arc::clone(&parsed)));
+        public.push((e.name.as_str(), e.kind, Arc::clone(&parsed), e.id.as_str()));
     }
 
     // Assign unique filenames to physical exported pages, then project aliases
     // through WholeGraph's resolution answer. A published alias reaches the
     // same physical file as navigation; unresolved names retain the legacy
     // raw-slug fallback in page_slug.
-    let names: Vec<&str> = public.iter().map(|(n, _, _)| *n).collect();
+    let names: Vec<&str> = public.iter().map(|(n, _, _, _)| *n).collect();
     let (mut slugs, collisions) = build_slug_map(&names);
     for _ in &collisions {
         tine_core::diag_line::diagnostic_line("tine export: page slug collision resolved");
     }
     let mut exported_ids = HashMap::with_capacity(public.len());
-    for (name, kind, _) in &public {
+    for (name, kind, _, _) in &public {
         if let tine_store::Resolved::Existing { id, .. } =
             graph.whole.resolve(name, *kind == PageKind::Journal)
         {
@@ -2414,16 +2390,16 @@ pub(crate) fn publish_graph(
     // Build the block-ref index from the public pages, keyed to their final slugs
     // (a `((ref))` only resolves to a block that's actually exported).
     let mut refs = RefIndex::new();
-    for (name, _, parsed) in &public {
+    for (name, _, parsed, _) in &public {
         collect_block_refs(&parsed.roots, &slug_of(name), &mut refs);
     }
 
-    let page_docs: HashMap<String, &doc::Document> = public
+    let page_docs: HashMap<String, (&str, &doc::Document)> = public
         .iter()
-        .map(|(name, _, parsed)| (tine_core::refs::page_key(name), parsed.as_ref()))
+        .map(|(name, _, parsed, file)| (tine_core::refs::page_key(name), (*file, parsed.as_ref())))
         .collect();
     let mut reverse_refs = ReverseRefIndex::new();
-    for (name, _, parsed) in &public {
+    for (name, _, parsed, _) in &public {
         let mut counter = 0;
         collect_reverse_refs(
             &parsed.roots,
@@ -2457,7 +2433,7 @@ pub(crate) fn publish_graph(
         query_cache: Some(&query_cache),
         pages: Some(&page_docs),
     };
-    for (name, kind, parsed) in &public {
+    for (name, kind, parsed, _) in &public {
         let slug = slug_of(name);
         let file = format!("{slug}.html");
         let html = page_html(

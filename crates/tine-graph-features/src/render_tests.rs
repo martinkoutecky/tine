@@ -24,12 +24,7 @@ mod tests {
         let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
         let corpus = whole.corpus();
-        let graph = RenderGraph {
-            corpus: &corpus,
-            whole: &whole,
-            store: &store,
-            sheets: None,
-        };
+        let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let mut files = HashMap::<String, String>::new();
         publish_graph(
             &graph,
@@ -75,12 +70,7 @@ mod tests {
         let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
         let corpus = whole.corpus();
-        let graph = RenderGraph {
-            corpus: &corpus,
-            whole: &whole,
-            store: &store,
-            sheets: None,
-        };
+        let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let mut files = HashMap::<String, String>::new();
         publish_graph(
             &graph,
@@ -129,12 +119,7 @@ mod tests {
         let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
         let corpus = whole.corpus();
-        let graph = RenderGraph {
-            corpus: &corpus,
-            whole: &whole,
-            store: &store,
-            sheets: None,
-        };
+        let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let refs = no_refs();
         let cache = RefCell::new(QueryCache::default());
         let ctx = Ctx {
@@ -176,12 +161,7 @@ mod tests {
         let whole = store.whole_graph().unwrap();
         let corpus = whole.corpus();
         fs::remove_file(dir.join("pages/Target.md")).unwrap();
-        let graph = RenderGraph {
-            corpus: &corpus,
-            whole: &whole,
-            store: &store,
-            sheets: None,
-        };
+        let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let mut dashboard = Vec::new();
         publish_graph(
             &graph,
@@ -224,12 +204,7 @@ mod tests {
         let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
         let corpus = whole.corpus();
-        let graph = RenderGraph {
-            corpus: &corpus,
-            whole: &whole,
-            store: &store,
-            sheets: None,
-        };
+        let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let refs = no_refs();
         let cumulative = RefCell::new(PrintAssetBudget {
             per_asset: 5,
@@ -289,12 +264,7 @@ mod tests {
         let store = Store::open(&dir, Default::default()).unwrap().0;
         let whole = store.whole_graph().unwrap();
         let corpus = whole.corpus();
-        let graph = RenderGraph {
-            corpus: &corpus,
-            whole: &whole,
-            store: &store,
-            sheets: None,
-        };
+        let graph = RenderGraph::new(&corpus, &whole, &store, None);
         let _ = whole.corpus();
         let refs = RefIndex::new();
         let cache: SharedQueryCache = RefCell::new(QueryCache::default());
@@ -322,6 +292,59 @@ mod tests {
         let cache = cache.borrow();
         assert_eq!(cache.entries.len(), QUERY_CACHE_MAX_ENTRIES);
         assert!(cache.bytes <= QUERY_CACHE_MAX_BYTES);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// I-15: embeds, queries and namespace lists look pages up in indexes built
+    /// once per publish, so lookup work does not grow with the macro count.
+    #[test]
+    fn publish_macro_lookups_are_built_once_per_publish() {
+        let dir = std::env::temp_dir().join(format!("tine-publish-probes-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        const PAGES: usize = 40;
+        const MACROS: usize = 30;
+        let mut host = String::new();
+        for i in 0..PAGES {
+            let id = format!("00000000-0000-4000-8000-{i:012}");
+            fs::write(
+                dir.join(format!("pages/P{i}.md")),
+                format!("- TODO item {i}\n  id:: {id}\n"),
+            )
+            .unwrap();
+            if i < MACROS {
+                host.push_str(&format!(
+                    "- {{{{embed (({id}))}}}}\n- {{{{query (property k{i} v)}}}}\n- {{{{namespace N{i}}}}}\n"
+                ));
+            }
+        }
+        fs::write(dir.join("pages/Host.md"), host).unwrap();
+        let store = Store::open(&dir, Default::default()).unwrap().0;
+        let whole = store.whole_graph().unwrap();
+        let corpus = whole.corpus();
+        let graph = RenderGraph::new(&corpus, &whole, &store, None);
+        render_lookups::PAGE_PROBES.with(|probes| probes.set(0));
+        let mut host_html = String::new();
+        publish_graph(
+            &graph,
+            PageSelection::AllButOptedOut,
+            &[],
+            &mut |name, bytes| {
+                if name == "host.html" {
+                    host_html = String::from_utf8(bytes.to_vec()).unwrap();
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(host_html.matches("embed block-embed").count(), MACROS);
+        assert_eq!(host_html.matches("<div class=\"query\">").count(), MACROS);
+        let probes = render_lookups::PAGE_PROBES.with(|probes| probes.get());
+        assert!(
+            probes <= 3 * (PAGES + 1),
+            "{probes} page probes for {MACROS} embeds + queries + namespaces over {} pages",
+            PAGES + 1
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }
