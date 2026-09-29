@@ -71,7 +71,7 @@ import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "../render/b
 import { effectiveHeadingLevel, facetsOf } from "../render/facets";
 import { AstBody } from "../render/body";
 import { InlineText } from "../render/inline";
-import { editorOffsetFromRenderedRange } from "../render/spans";
+import { clickBeyondRenderedEnd, editorOffsetFromRenderedRange } from "../render/spans";
 import {
   assetMarkdown,
   assetFileName,
@@ -539,9 +539,14 @@ function Rendered(props: {
   const clickOffset = (e: MouseEvent): number | null => {
     if (!contentRef) return null;
     const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
+    const fmt = pageByName(node().page)?.format === "org" ? "org" : "md";
+    // GH #465: a click in the empty run-out past the last glyph means "the end",
+    // whatever the block ends with. Asked before the span map, because a trailing
+    // construct with an invisible closing delimiter (`*italic*`) maps that click
+    // to a legitimate-looking interior offset just before the delimiter.
+    if (clickBeyondRenderedEnd(contentRef, e.clientX, e.clientY)) return splitProps(node().raw, isBuiltinHidden, fmt).visible.length;
     const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
     if (!range) return null;
-    const fmt = pageByName(node().page)?.format === "org" ? "org" : "md";
     return editorOffsetFromRenderedRange(contentRef, range, node().raw, isBuiltinHidden, fmt);
   };
   // For annotation blocks the editor shows only the highlight text (metadata
