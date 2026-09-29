@@ -112,7 +112,13 @@ impl<'a> RenderGraph<'a> {
         let Ok(IrAnswer::Registry(registry)) = self.whole.query_ir(IrRequest::Registry) else {
             return None;
         };
-        let parsed = parse_query_pair(source, dialect, block_properties, &registry);
+        // Only the block's `tine.*` properties reach the engine, as in the live macro.
+        let host: Vec<(String, String)> = block_properties
+            .iter()
+            .filter(|(key, _)| key.starts_with("tine."))
+            .cloned()
+            .collect();
+        let parsed = parse_query_pair(source, dialect, &host, &registry);
         let view = anchored_view(&parsed, parsed.query.anchor);
         let context = ExecutionContext::default();
         let Ok(IrAnswer::Result(answer)) = self.whole.query_ir(IrRequest::Run {

@@ -423,11 +423,7 @@ fn query_rows(
     } else {
         QueryTextDialect::MacroQuery
     };
-    let host: Vec<(String, String)> = owner
-        .properties()
-        .into_iter()
-        .filter(|(key, _)| key.starts_with("tine."))
-        .collect();
+    let host = owner.properties();
     let (parsed, bounded) = graph.query_parsed(argument, dialect, &host)?;
     if bounded.exceeded || !bounded.pages.is_empty() {
         return None;
