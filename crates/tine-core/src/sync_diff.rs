@@ -912,15 +912,78 @@ pub fn merge_blocks3(
     }
     let bases = base.map(|_| (&base_of_mine, &base_of_theirs));
     let artifacts = artifact.map(|_| (&art_of_mine, &art_of_theirs));
-    nodes_to_merged(&align_nodes(mine, theirs, ""), decisions, bases, artifacts)
+    let nodes = align_nodes(mine, theirs, "");
+    let mut owned = std::collections::HashSet::new();
+    owned_ids(&nodes, decisions, &mut owned);
+    let ctx = MergeCtx {
+        decisions,
+        bases,
+        artifacts,
+        owned: &owned,
+    };
+    nodes_to_merged(&nodes, &ctx)
 }
 
-fn nodes_to_merged(
+struct MergeCtx<'a> {
+    decisions: &'a std::collections::HashMap<String, String>,
+    bases: Option<(&'a BasePairs<'a>, &'a BasePairs<'a>)>,
+    artifacts: Option<(&'a BasePairs<'a>, &'a BasePairs<'a>)>,
+    /// Persisted ids the merged page keeps on a block in its own place (every
+    /// output block except a conflict copy pulled in beside the winner).
+    owned: &'a std::collections::HashSet<String>,
+}
+
+/// Collect the persisted ids [`nodes_to_merged`] writes on non-copy blocks, so
+/// a conflict copy drops exactly the ids already held (I-11: a reorder aligns
+/// one id as Added + Removed; keep-both must not write it twice). A copy whose
+/// twin the user dropped keeps its id, so references still resolve.
+fn owned_ids(
     nodes: &[Node],
     decisions: &std::collections::HashMap<String, String>,
-    bases: Option<(&BasePairs, &BasePairs)>,
-    artifacts: Option<(&BasePairs, &BasePairs)>,
-) -> Result<Vec<DocBlock>, MergeRefused> {
+    owned: &mut std::collections::HashSet<String>,
+) {
+    fn subtree(b: &DocBlock, owned: &mut std::collections::HashSet<String>) {
+        owned.extend(persisted_id(b));
+        for child in &b.children {
+            subtree(child, owned);
+        }
+    }
+    for n in nodes {
+        match n {
+            Node::Both {
+                id,
+                mine,
+                theirs,
+                modified,
+                children,
+            } => match (*modified, decision_for(decisions, id)) {
+                (false, _) | (true, Decision::Both) => subtree(mine, owned),
+                (true, Decision::Theirs) => {
+                    owned.extend(persisted_id(theirs));
+                    owned_ids(children, decisions, owned);
+                }
+                (true, _) => {
+                    owned.extend(persisted_id(mine));
+                    owned_ids(children, decisions, owned);
+                }
+            },
+            Node::Mine { id, block } => {
+                if decision_for(decisions, id) != Decision::Theirs {
+                    subtree(block, owned);
+                }
+            }
+            Node::Theirs { .. } => {}
+        }
+    }
+}
+
+fn nodes_to_merged(nodes: &[Node], ctx: &MergeCtx) -> Result<Vec<DocBlock>, MergeRefused> {
+    let MergeCtx {
+        decisions,
+        bases,
+        artifacts,
+        owned,
+    } = *ctx;
     let mut out = Vec::new();
     for n in nodes {
         match n {
@@ -939,18 +1002,12 @@ fn nodes_to_merged(
                     continue;
                 }
                 match decision_for(decisions, id) {
-                    Decision::Mine => out.push(rebuild(
-                        mine,
-                        nodes_to_merged(children, decisions, bases, artifacts)?,
-                    )),
-                    Decision::Theirs => out.push(rebuild(
-                        theirs,
-                        nodes_to_merged(children, decisions, bases, artifacts)?,
-                    )),
+                    Decision::Mine => out.push(rebuild(mine, nodes_to_merged(children, ctx)?)),
+                    Decision::Theirs => out.push(rebuild(theirs, nodes_to_merged(children, ctx)?)),
                     Decision::Both => {
                         out.push((*mine).clone());
                         // Fresh block — must not duplicate the winner's id:: on disk.
-                        out.push(strip_ids(theirs));
+                        out.push(strip_held_ids(theirs, owned));
                     }
                     Decision::Merged => {
                         let Some((base_of_mine, base_of_theirs)) = bases else {
@@ -972,7 +1029,7 @@ fn nodes_to_merged(
                         out.push(rebuild_with_raw(
                             mine,
                             text,
-                            nodes_to_merged(children, decisions, bases, artifacts)?,
+                            nodes_to_merged(children, ctx)?,
                         ));
                     }
                 }
@@ -986,12 +1043,12 @@ fn nodes_to_merged(
                 }
             }
             Node::Theirs { id, block } => {
-                // Removed (conflict-only): pulled in on keep-theirs / keep-both. Its
-                // id is unique to the conflict (a shared id would have anchored it as
-                // a Both), so it's kept as-is.
+                // Removed (conflict-only): pulled in on keep-theirs / keep-both.
+                // A reorder can align the same id as Added elsewhere, so an id the
+                // merged page already holds is dropped from the copy (I-11).
                 match decision_for(decisions, id) {
                     Decision::Merged => return Err(refused(id, NOT_A_MODIFIED_ROW)),
-                    Decision::Theirs | Decision::Both => out.push((*block).clone()),
+                    Decision::Theirs | Decision::Both => out.push(strip_held_ids(block, owned)),
                     _ => {}
                 }
             }
@@ -1021,22 +1078,69 @@ fn rebuild_with_raw(side: &DocBlock, raw: String, children: Vec<DocBlock>) -> Do
     b
 }
 
-/// Deep-copy a block with every `id::` property line stripped — so keeping the
-/// conflict's version alongside the winner's (keep-both) can't duplicate the
-/// winner's `id::` on disk. The copy becomes a fresh, un-referenced block.
-fn strip_ids(b: &DocBlock) -> DocBlock {
-    let raw: String = b
-        .raw
-        .lines()
-        .filter(|l| {
-            crate::doc::parse_property_line(l).map_or(true, |(k, _)| !k.eq_ignore_ascii_case("id"))
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+/// Deep-copy a conflict-side block, dropping each persisted id the merged page
+/// already holds (`owned`), so keeping the copy beside the winner can't write an
+/// id twice. The id is removed where the block stores it: a Markdown `id::`
+/// line, or the `:id:` entry of an Org `:PROPERTIES:` drawer (an emptied drawer
+/// goes too). Other bytes, line endings included, are kept.
+fn strip_held_ids(b: &DocBlock, owned: &std::collections::HashSet<String>) -> DocBlock {
+    let raw = match persisted_id(b).filter(|id| owned.contains(id)) {
+        Some(id) => without_id_line(&b.raw, b.is_org, &id),
+        None => b.raw.clone(),
+    };
     let mut nb = DocBlock::new(raw);
     nb.is_org = b.is_org;
-    nb.children = b.children.iter().map(strip_ids).collect();
+    nb.children = b
+        .children
+        .iter()
+        .map(|c| strip_held_ids(c, owned))
+        .collect();
     nb
+}
+
+fn without_id_line(raw: &str, is_org: bool, id: &str) -> String {
+    let lines: Vec<&str> = raw.split_inclusive('\n').collect();
+    fn body(l: &str) -> &str {
+        l.trim_end_matches(['\r', '\n'])
+    }
+    let is_id = |l: &str| {
+        if is_org {
+            let t = body(l).trim();
+            t.len() > 4 && t[..4].eq_ignore_ascii_case(":id:") && t[4..].trim() == id
+        } else {
+            crate::doc::parse_property_line(body(l))
+                .is_some_and(|(k, v)| k.eq_ignore_ascii_case("id") && v.trim() == id)
+        }
+    };
+    let Some(at) = lines.iter().position(|l| is_id(l)) else {
+        return raw.to_owned();
+    };
+    let mut drop = vec![at];
+    let marker = |i: usize, m: &str| {
+        lines
+            .get(i)
+            .is_some_and(|l| body(l).trim().eq_ignore_ascii_case(m))
+    };
+    if is_org && at > 0 && marker(at - 1, ":PROPERTIES:") && marker(at + 1, ":END:") {
+        drop = vec![at - 1, at, at + 1];
+    }
+    let last_dropped = *drop.last().unwrap() == lines.len() - 1;
+    let mut out: String = lines
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !drop.contains(i))
+        .map(|(_, l)| *l)
+        .collect();
+    // Dropping a final line without a newline must not leave one behind.
+    if last_dropped && !raw.ends_with('\n') {
+        let ending = if out.ends_with("\r\n") {
+            2
+        } else {
+            usize::from(out.ends_with('\n'))
+        };
+        out.truncate(out.len() - ending);
+    }
+    out
 }
 
 fn row_id(prefix: &str, n: usize) -> String {
