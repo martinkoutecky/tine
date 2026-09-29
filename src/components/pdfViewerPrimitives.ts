@@ -9,8 +9,10 @@ export const PDF_THEME_KEY = "ls-pdf-viewer-theme";
 /** Destroying a viewer document only releases transient pdf.js resources.
  * A rejection cannot affect graph content; browser teardown reclaims them. */
 function ignorePdfDestroyFailure(_error: unknown): void {}
+/** Release a retired pdf.js document; rejection has no graph side effects. */
 export function discardPdfDocument(doc: pdfjs.PDFDocumentProxy): void { void doc.destroy().then(undefined, ignorePdfDestroyFailure); }
 
+/** Read the local reader theme, falling back to light if storage is unavailable. */
 export function storedPdfTheme(): PdfTheme {
   try {
     const stored = window.localStorage.getItem(PDF_THEME_KEY);
@@ -20,6 +22,7 @@ export function storedPdfTheme(): PdfTheme {
   }
 }
 
+/** Accept only nonnegative integer pdf.js object references. */
 export function isPdfPageRef(value: unknown): value is { num: number; gen: number } {
   if (!value || typeof value !== "object") return false;
   const ref = value as { num?: unknown; gen?: unknown };
@@ -41,6 +44,7 @@ export const MAX_CANVAS_PIXELS = isMobilePlatform ? 8_388_608 : 16_777_216;
 export const PDF_CANVAS_CACHE_PIXEL_BUDGET = isMobilePlatform ? 16_777_216 : 50_331_648;
 export const PDF_CANVAS_CACHE_PAGE_CAP = isMobilePlatform ? 6 : 12;
 
+/** Select the platform's area-highlight drag modifier. */
 export function isPdfAreaModifier(
   event: Pick<MouseEvent, "metaKey" | "shiftKey">,
   mac: boolean
@@ -63,11 +67,13 @@ export interface PdfTarget {
   highlightId?: string;
 }
 
+/** Attach a failed action's detail to a stable user-facing action name. */
 export function errorMessage(action: string, err?: unknown): string {
   const detail = err instanceof Error ? err.message : err ? String(err) : "";
   return detail ? `${action}: ${detail}` : action;
 }
 
+/** Return a readable refusal for invalid or oversized page geometry. */
 export function pageDimensionsError(page: number, width: number, height: number): string | null {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     return `PDF page ${page} reports invalid dimensions (${width} x ${height}).`;
@@ -78,6 +84,7 @@ export function pageDimensionsError(page: number, width: number, height: number)
   return null;
 }
 
+/** Bound a full-page backing canvas by dimension and aggregate pixel budget. */
 export function safeCanvasSize(width: number, height: number, maxPixels = MAX_CANVAS_PIXELS) {
   const pixelLimit = Math.max(1, Math.min(MAX_CANVAS_PIXELS, maxPixels));
   const requestedRatio = Math.min(window.devicePixelRatio || 1, 2);
@@ -95,23 +102,21 @@ export function safeCanvasSize(width: number, height: number, maxPixels = MAX_CA
   };
 }
 
-
 /** Crop a rendered region using its actual backing ratio; output is one PNG. */
 export async function cropPdfCanvas(canvas: HTMLCanvasElement, rect: Rect, scale: number, pixelRatio: number): Promise<Uint8Array | null> {
-    // Map unscaled coordinates to backing pixels.
-    const dpr = pixelRatio;
-    const f = scale * dpr;
-    const sx = Math.max(0, Math.round(rect.left * f));
-    const sy = Math.max(0, Math.round(rect.top * f));
-    const sw = Math.min(canvas.width - sx, Math.round(rect.width * f));
-    const sh = Math.min(canvas.height - sy, Math.round(rect.height * f));
-    if (sw <= 0 || sh <= 0) return null;
-    const crop = document.createElement("canvas");
-    crop.width = sw;
-    crop.height = sh;
-    crop.getContext("2d")!.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
-    const blob: Blob | null = await new Promise((res) => crop.toBlob(res, "image/png"));
-    return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
+  // Map unscaled coordinates to backing pixels.
+  const f = scale * pixelRatio;
+  const sx = Math.max(0, Math.round(rect.left * f));
+  const sy = Math.max(0, Math.round(rect.top * f));
+  const sw = Math.min(canvas.width - sx, Math.round(rect.width * f));
+  const sh = Math.min(canvas.height - sy, Math.round(rect.height * f));
+  if (sw <= 0 || sh <= 0) return null;
+  const crop = document.createElement("canvas");
+  crop.width = sw;
+  crop.height = sh;
+  crop.getContext("2d")!.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  const blob: Blob | null = await new Promise((res) => crop.toBlob(res, "image/png"));
+  return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
 }
 
 /** Restore a page if needed before capturing an area annotation. */
