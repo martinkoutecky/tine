@@ -5,7 +5,7 @@ icon:: ⌨️
 - ## Find anything — Ctrl+K
 	- **Ctrl+K** opens the quick switcher: jump to a page, search the text of any block, or run a command — all from one box. **Ctrl+Shift+P** opens the command palette (commands only).
 	- Use **Ctrl+Shift+K** to search only the focused page, including children hidden under folded bullets. In the ordinary Ctrl+K switcher, press **Shift+Enter** on a page or block to send it to the right sidebar without leaving your current page.
-	- Use **Search syntax** for phrases, alternatives, exclusions, and regular expressions. Choose **Open all results** to keep the complete search in a graph-specific tab instead of choosing only one hit.
+	- Use **Search syntax** for phrases, alternatives, exclusions, and regular expressions. Choose **Open search tab** to keep the complete search in a graph-specific tab instead of choosing only one hit.
 	- The result tab separates **Pages** and **Blocks**. Pages match names and aliases by default; choose **Pages match → Block content** to find pages containing a matching block, or **Names or content** for both. Blocks still show the matching text. The choice stays with the tab and a saved search uses `tine.page-match-scope:: content` or `both` on its query block.
 	- Each section has its own **Display** control: show Pages as a table with columns from authored page properties while Blocks stay a list, for example. Name the search and choose **Save page** to keep both choices on an ordinary query page. The compact filter button handles friendly fields and date ranges; **Query builder** opens the deeper visual editor when needed.
 	- Page-title matching keeps exact, prefix, substring, and fuzzy results in that order. Repeated choices may break ties inside one class using device-local history; disable or reset this under Search settings if you prefer fixed ordering.
@@ -34,6 +34,7 @@ icon:: ⌨️
 	- The carry buttons under today's journal pull unfinished tasks from earlier days. After midnight, yesterday's button changes to **Carry unfinished tasks → today**.
 - ## Tabs
 	- **Middle-click** any bullet, page, or search result to open it in a background tab. **Double-click** a tab to pin it, **drag** to reorder, **Ctrl+W** to close. Your tabs come back next launch.
+	- **Page links, block references, backlink headers, the sidebar and query results all take the same modified clicks**: **Shift-click** opens the right sidebar, **Ctrl/Cmd-click** or **middle-click** opens a background tab, and **Alt-click** opens the other pane (splitting one off if you have only one).
 	- When a pane has more tabs than fit, use its tab-overview button to see every full title, activate or pin a tab, close it, or reorder it with the drag handle / **Alt+Up/Down** without guessing from truncated labels.
 	- Use the command palette to **Toggle maximize active pane** and use the pane-size commands to grow or shrink the active pane with the keyboard. Run **Reset interface zoom** to return to normal scale.
 - ## The sidebars
@@ -61,6 +62,10 @@ icon:: ⌨️
 	- **Carry unfinished tasks** forward into today (from the command palette) — the last 7 / 30 / 365 days, optionally with their context.
 	- **Export to PDF…** saves pending page edits before preparing the printout. If a page cannot be saved, Tine stops the export and shows an error so the PDF does not silently omit your changes.
 	- Select several task bullets and press **Ctrl/Cmd+Enter** to advance each one through your workflow in a single Undo step. The selection toolbar can also wrap selected text as a page link or inline code.
+	- **Undo is Ctrl/Cmd+Z and redo is Ctrl/Cmd+Shift+Z.** On Windows and Linux **Ctrl+Y** also redoes, because that is the key most editors there use; the shortcuts list shows it beside the binding. It is a second default rather than a second command, so remapping Redo replaces both.
+	- **Code blocks**: type ``` (or choose **Code block** from the **/** menu) and Tine offers a language list; picking one fills in the opening fence and the closing fence for you. While editing, only the code itself is in the text box, so Enter adds a line of code instead of splitting the bullet.
+	- **Drag a bullet onto another bullet and move a little to the right** (about 50 px into it) to make it that bullet's last child; nearer its left edge, the upper half places it before and the lower half after. A marker shows where it will land.
+	- Typing `::` at the start of a line inside a bullet starts a property: the name goes to the left of the `::`, **Create** is offered first, and after a comma the value list leaves out values already on the line.
 	- **Namespaces**: name a page `Project/Roadmap` and it nests under `Project` in the sidebar. This page lives under `Features`.
 	- **Page names and files**: put `title:: Project/Roadmap` above the first bullet to give an existing page that name, even when its filename differs. Tine keeps the file at its existing path; links and page search use the title. Markdown and Org pages in other graph folders, such as `archive/`, are pages too. New pages get portable filenames, including names with punctuation.
 	- **Hidden graph paths**: add `:hidden ["archive/private"]` to `logseq/config.edn` to exclude matching graph-relative path prefixes from pages and search. The files stay on disk. This also applies to pages outside the usual `pages/` and `journals/` folders.

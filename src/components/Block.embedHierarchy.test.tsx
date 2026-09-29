@@ -111,10 +111,13 @@ describe("block embed hierarchy", () => {
   // host's own would be, so dragging it moves the OCCURRENCE (the host). Nested
   // rows inside the embed are the source's own outline and drag themselves.
   function dragFrom(element: Element): string | null {
+    // jsdom has no elementFromPoint; the drag hit-test only needs "nothing there".
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => null });
     element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
     document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 10, clientY: 40 }));
     const dragging = dragId();
     document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0, clientX: 10, clientY: 40 }));
+    Reflect.deleteProperty(document, "elementFromPoint");
     return dragging;
   }
 
