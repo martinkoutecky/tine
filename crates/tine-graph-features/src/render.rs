@@ -1,6 +1,7 @@
 //! HTML byte rendering for print and static publication.
 
 use crate::print::PrintOpts;
+use crate::render_query_cache::{BoundedGroups, QueryCache, QueryCacheKey, SharedQueryCache};
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -9,9 +10,11 @@ use std::sync::Arc;
 use tine_core::doc::{self, DocBlock};
 use tine_core::lsdoc::ast::{Block, Inline, Url};
 use tine_core::model::{BlockDto, BlockPreview, PageKind, RefGroup};
+use tine_core::query::ir::{ExecutionContext, QueryRows};
+use tine_core::query::wire_parse::{anchored_view, parse_query_pair, QueryTextDialect};
 use tine_core::refs::block_id;
 use tine_core::{Corpus, CorpusPage};
-use tine_store::{Area, QueryDialect, QueryError, QueryResult, Store, WholeGraph};
+use tine_store::{Area, IrAnswer, IrRequest, Store, WholeGraph};
 
 #[cfg(test)]
 #[path = "render_tests.rs"]
@@ -81,33 +84,35 @@ impl RenderGraph<'_> {
         self.store.read(&id, Some(limit)).map(|(bytes, _)| bytes)
     }
 
-    fn query_bounded(&self, source: &str, advanced: bool) -> BoundedGroups {
-        let dialect = if advanced {
-            QueryDialect::Advanced
-        } else {
-            QueryDialect::Simple
+    fn query_bounded(&self, source: &str, dialect: QueryTextDialect) -> BoundedGroups {
+        let empty = || BoundedGroups {
+            groups: Vec::new(),
+            pages: Vec::new(),
+            total: 0,
+            exceeded: false,
         };
-        match self.whole.query(source, dialect) {
-            Ok(QueryResult::Simple(groups)) => BoundedGroups {
-                total: groups.iter().map(|group| group.blocks.len()).sum(),
-                groups: groups.as_ref().clone(),
-                exceeded: false,
-            },
-            Ok(QueryResult::Advanced(result)) => BoundedGroups {
-                total: result.groups.iter().map(|group| group.blocks.len()).sum(),
-                groups: result.groups,
-                exceeded: false,
-            },
-            Err(QueryError::ResultTooLarge { count, .. }) => BoundedGroups {
-                groups: Vec::new(),
-                total: count,
-                exceeded: true,
-            },
-            Err(_) => BoundedGroups {
-                groups: Vec::new(),
-                total: 0,
-                exceeded: false,
-            },
+        let Ok(IrAnswer::Registry(registry)) = self.whole.query_ir(IrRequest::Registry) else {
+            return empty();
+        };
+        let parsed = parse_query_pair(source, dialect, &[], &registry);
+        let view = anchored_view(&parsed, parsed.query.anchor);
+        let context = ExecutionContext::default();
+        let Ok(IrAnswer::Result(answer)) = self.whole.query_ir(IrRequest::Run {
+            query: &parsed.query,
+            view: &view,
+            context: &context,
+        }) else {
+            return empty();
+        };
+        let (groups, pages) = match answer.rows {
+            QueryRows::Block { groups } => (groups, Vec::new()),
+            QueryRows::Page { pages } => (Vec::new(), pages),
+        };
+        BoundedGroups {
+            groups,
+            pages,
+            total: answer.total,
+            exceeded: answer.exceeded,
         }
     }
 }
@@ -158,13 +163,6 @@ fn bounded_preview_dto(
     Some(dto)
 }
 
-#[derive(Clone)]
-struct BoundedGroups {
-    groups: Vec<RefGroup>,
-    total: usize,
-    exceeded: bool,
-}
-
 /// URL/file-safe slug for a page name (links and filenames must match).
 pub(crate) fn slug(name: &str) -> String {
     let mut out = String::new();
@@ -181,57 +179,9 @@ pub(crate) fn slug(name: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-/// Per-export map from physical names and owned aliases to output slugs.
-/// Alias entries are added from WholeGraph's answer after physical filenames
-/// are assigned, so a published alias link reaches its owner's file.
+/// Output slugs for physical names and owned aliases, assigned after filenames.
+/// A published alias link reaches its owner's file.
 type SlugMap = std::collections::HashMap<String, String>;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum QueryCacheKey {
-    Simple(String),
-    Advanced(String),
-}
-
-impl QueryCacheKey {
-    fn source_len(&self) -> usize {
-        match self {
-            Self::Simple(source) | Self::Advanced(source) => source.len(),
-        }
-    }
-}
-
-const QUERY_CACHE_MAX_ENTRIES: usize = 64;
-const QUERY_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
-
-#[derive(Default)]
-struct QueryCache {
-    entries: HashMap<QueryCacheKey, BoundedGroups>,
-    bytes: usize,
-}
-
-impl QueryCache {
-    fn get(&self, key: &QueryCacheKey) -> Option<BoundedGroups> {
-        self.entries.get(key).cloned()
-    }
-
-    fn insert(&mut self, key: QueryCacheKey, groups: BoundedGroups) {
-        if self.entries.contains_key(&key) || self.entries.len() >= QUERY_CACHE_MAX_ENTRIES {
-            return;
-        }
-        let bytes = key
-            .source_len()
-            .saturating_add(tine_core::model::ref_groups_estimated_bytes(&groups.groups))
-            .saturating_add(256);
-        if bytes > QUERY_CACHE_MAX_BYTES || self.bytes.saturating_add(bytes) > QUERY_CACHE_MAX_BYTES
-        {
-            return;
-        }
-        self.bytes += bytes;
-        self.entries.insert(key, groups);
-    }
-}
-
-type SharedQueryCache = RefCell<QueryCache>;
 
 /// FNV-1a 64-bit hash → 8 lowercase hex chars. Deterministic across runs (unlike
 /// std's `DefaultHasher`/`RandomState`, which are randomly seeded), so re-exports
@@ -291,9 +241,8 @@ fn build_slug_map(names: &[&str]) -> (SlugMap, Vec<(String, String, String)>) {
     (map, collisions)
 }
 
-/// Resolve an exported page name or alias to its output slug. A name that does
-/// not identify an exported page retains the legacy raw-slug fallback, as does
-/// or the single-page print export (`ctx.slugs == None`, no cross-page files).
+/// Resolve a page or alias slug. Unknown names and single-page print use the
+/// raw slug fallback; publication callers check membership before linking.
 fn page_slug(ctx: &Ctx, name: &str) -> String {
     ctx.slugs
         .and_then(|m| m.get(&name.to_lowercase()))
@@ -648,22 +597,34 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
             continue;
         }
 
-        if name == "a" && has_class(inner, "page-ref") {
+        if name == "a" && has_class(inner, "page-ref") && !has_class(inner, "tag") {
             if let Some(page) = tag_attr(inner, "data-page") {
-                out.push_str(&format!(
-                    "<a class=\"ref\" href=\"{}.html\">",
-                    page_slug(ctx, &unescape(page))
-                ));
+                let page = unescape(page);
+                if publish_page_allowed(ctx, &page) {
+                    out.push_str(&format!(
+                        "<a class=\"ref\" href=\"{}.html\">",
+                        page_slug(ctx, &page)
+                    ));
+                } else {
+                    out.push_str("<span class=\"ref ref-outside\">");
+                    inert_link_closures += 1;
+                }
                 strip_brackets = true;
                 continue;
             }
         }
         if name == "a" && has_class(inner, "tag") {
             if let Some(page) = tag_attr(inner, "data-page") {
-                out.push_str(&format!(
-                    "<a class=\"tag\" href=\"{}.html\">",
-                    page_slug(ctx, &unescape(page))
-                ));
+                let page = unescape(page);
+                if publish_page_allowed(ctx, &page) {
+                    out.push_str(&format!(
+                        "<a class=\"tag\" href=\"{}.html\">",
+                        page_slug(ctx, &page)
+                    ));
+                } else {
+                    out.push_str("<span class=\"tag tag-outside\">");
+                    inert_link_closures += 1;
+                }
                 continue;
             }
         }
@@ -682,7 +643,14 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
                             text
                         ));
                     }
-                    None => out.push_str(&format!("<span class=\"block-ref\">{body}</span>")),
+                    None => out.push_str(&format!(
+                        "<span class=\"block-ref\">{}</span>",
+                        if body == auto {
+                            esc(&format!("(({id}))"))
+                        } else {
+                            body
+                        }
+                    )),
                 }
                 continue;
             }
@@ -1475,7 +1443,8 @@ fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
     }
     let arg0 = args.first().map(|s| s.as_str()).unwrap_or("").trim();
     match name {
-        "query" => render_query(graph, arg0, ctx, depth + 1),
+        "query" => render_query(graph, arg0, false, ctx, depth + 1),
+        "tine-query" => render_query(graph, arg0, true, ctx, depth + 1),
         "embed" => render_embed(graph, arg0, ctx, depth + 1),
         "video" => render_video(arg0),
         "namespace" => render_namespace(graph, arg0, ctx),
@@ -1489,14 +1458,15 @@ fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
 }
 
 /// Run a `{{query …}}` against the graph and render its results as a bordered block.
-fn render_query(graph: &RenderGraph<'_>, src: &str, ctx: &Ctx, depth: u8) -> String {
-    render_query_with_title(graph, src, None, ctx, depth)
+fn render_query(graph: &RenderGraph<'_>, src: &str, tql: bool, ctx: &Ctx, depth: u8) -> String {
+    render_query_with_title(graph, src, None, tql, ctx, depth)
 }
 
 fn render_query_with_title(
     graph: &RenderGraph<'_>,
     src: &str,
     title: Option<&str>,
+    tql: bool,
     ctx: &Ctx,
     depth: u8,
 ) -> String {
@@ -1510,8 +1480,15 @@ fn render_query_with_title(
         return "<div class=\"query query-too-large\">Query nesting is too deep to publish safely.</div>".to_string();
     }
     let is_advanced = tine_core::query::is_advanced(src);
+    let dialect = if tql {
+        QueryTextDialect::MacroTql
+    } else {
+        QueryTextDialect::MacroQuery
+    };
     let bounded = if let Some(cache) = ctx.query_cache {
-        let key = if is_advanced {
+        let key = if tql {
+            QueryCacheKey::Tql(src.to_string())
+        } else if is_advanced {
             QueryCacheKey::Advanced(src.to_string())
         } else {
             QueryCacheKey::Simple(src.to_string())
@@ -1520,12 +1497,12 @@ fn render_query_with_title(
         if let Some(groups) = cached {
             groups
         } else {
-            let groups = graph.query_bounded(src, is_advanced);
+            let groups = graph.query_bounded(src, dialect);
             cache.borrow_mut().insert(key, groups.clone());
             groups
         }
     } else {
-        graph.query_bounded(src, is_advanced)
+        graph.query_bounded(src, dialect)
     };
     if bounded.exceeded {
         return format!(
@@ -1533,18 +1510,33 @@ fn render_query_with_title(
             bounded.total
         );
     }
-    // A site export is a projection of the public page set, not an alternate
-    // frontend over the live graph. Query execution still reuses the ordinary
-    // engine, but results from pages outside the pass-1 public capability must
-    // never cross into generated HTML. Print export has no page capability and
-    // deliberately retains its existing whole-graph behavior.
-    let pre_filter_total: usize = bounded.groups.iter().map(|group| group.blocks.len()).sum();
+    // Keep query rows inside this export's physical owner-page set.
+    let pre_filter_total: usize = bounded.total;
+    let selected_paths: HashSet<_> = graph
+        .corpus
+        .pages
+        .iter()
+        .map(|page| page.id.as_str())
+        .collect();
+    let selected_names: HashSet<_> = graph
+        .corpus
+        .pages
+        .iter()
+        .map(|page| (page.kind, page.name.to_lowercase()))
+        .collect();
+    let pages: Vec<_> = bounded
+        .pages
+        .into_iter()
+        .filter(|page| ctx.pages.is_none() || selected_paths.contains(page.path.as_str()))
+        .collect();
     let groups: Vec<RefGroup> = bounded
         .groups
         .into_iter()
-        .filter(|group| publish_page_allowed(ctx, &group.page))
+        .filter(|group| {
+            ctx.pages.is_none() || selected_names.contains(&(group.kind, group.page.to_lowercase()))
+        })
         .collect();
-    let total: usize = groups.iter().map(|g| g.blocks.len()).sum();
+    let total: usize = groups.iter().map(|g| g.blocks.len()).sum::<usize>() + pages.len();
     let omitted = pre_filter_total.saturating_sub(total);
     let mut out = format!(
         "<div class=\"query\"><div class=\"query-head\">{} <span class=\"query-count\">{}</span></div>",
@@ -1556,6 +1548,13 @@ fn render_query_with_title(
     } else {
         out.push_str("<ul class=\"query-results\">");
         render_query_groups(graph, &groups, &mut out, ctx, depth);
+        for page in &pages {
+            out.push_str(&format!(
+                "<li><a class=\"ref\" href=\"{}.html\">{}</a></li>",
+                esc(&page_slug(ctx, &page.name)),
+                esc(&page.name)
+            ));
+        }
         out.push_str("</ul>");
     }
     if omitted > 0 {
@@ -1801,6 +1800,7 @@ fn render_block(
                     graph,
                     &begin.query,
                     begin.title.as_deref(),
+                    false,
                     ctx,
                     0,
                 ));
@@ -1931,7 +1931,7 @@ fn shell(title: &str, main: &str, home_href: &str) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https: http:; media-src 'self' blob: https: http:; frame-src https://www.youtube.com https://player.vimeo.com\">\
+<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' data: https://cdn.jsdelivr.net; img-src 'self' data: https: http:; media-src 'self' blob: https: http:; frame-src https://www.youtube.com https://player.vimeo.com\">\
 <title>{title}</title>\
 <link rel=\"stylesheet\" href=\"style.css\">{katex}{hljs}</head><body>\
 <aside class=\"sidebar\">\
@@ -2426,7 +2426,7 @@ const APP_JS: &str = r#"(function () {
 "#;
 
 /// True if a page's property pre-block marks it `public:: true`.
-fn page_is_public(pre_block: Option<&str>) -> bool {
+pub(crate) fn page_is_public(pre_block: Option<&str>) -> bool {
     let Some(pre) = pre_block else { return false };
     pre.lines().any(|l| {
         let t = l.trim();
