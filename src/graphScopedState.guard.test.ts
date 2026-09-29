@@ -49,7 +49,6 @@ const CLASSIFIED: Record<string, string> = {
   "src/document/save/engine.ts#conflictReasons": "resetSaveState() clears it in resetStore",
   "src/mediaEditorSettings.ts#commands": "device preference",
   "src/ui.ts#shortcutOverrides": "device preference",
-  "src/ui.ts#pdfTarget": "PDF ownership: loadGraphPath retires and closes the PDF on a switch",
   // Found once named types were expanded (og 15a follow-up):
   "src/document/model.ts#doc": "the document store itself; resetStore replaces it on every switch",
   "src/editorCommandBridge.ts#focusedEditorBridge": "the focused editor's command bridge; unregistered when that editor unmounts, and resetStore ends the edit",

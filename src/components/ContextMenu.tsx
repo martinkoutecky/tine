@@ -1,5 +1,6 @@
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openBlockProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
+import { isMobilePlatform } from "../nativeChrome";
 import { pushToast } from "../toasts";
 import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { isConflicted } from "../document";
@@ -861,7 +862,7 @@ function PageMenu(props: {
           .catch(() => { if (owner()) pushToast("Couldn't copy page as Markdown.", "error"); });
       },
     },
-    { id: "export-pdf", label: "Export to PDF…", run: () => openPdfExport(props.name) },
+    ...(!isMobilePlatform ? [{ id: "export-pdf", label: "Export to PDF…", run: () => openPdfExport(props.name) }] : []),
     ...(props.fileActions && !pageByName(props.name)?.guide
       ? [
           { id: "show-in-folder", label: "Show in folder", run: () => void runFileAction(true) },

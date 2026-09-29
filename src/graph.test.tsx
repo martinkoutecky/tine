@@ -68,7 +68,7 @@ async function loadHarness(
   });
   const retirePdfOwnership = vi.fn(() => { events.push("retire-pdf"); });
   const activatePdfOwnership = vi.fn((root: string) => { events.push(`activate-pdf:${root}`); });
-  const closePdf = vi.fn(() => { events.push("close-pdf"); });
+  const resetTabsToJournals = vi.fn(() => { events.push("reset-tabs"); });
 
   vi.doMock("./backend", () => ({ backend: () => api }));
   vi.doMock("./ui", () => ({
@@ -88,7 +88,6 @@ async function loadHarness(
     resetLeftSidebarSections: vi.fn(),
     graphTransitioning: () => false,
     setGraphTransitioning: vi.fn(),
-    closePdf,
     closePageProps: vi.fn(),
     setAudioPlayer: vi.fn(),
   }));
@@ -121,7 +120,7 @@ async function loadHarness(
   }));
   vi.doMock("./assetCache", () => ({ clearAssetBlobCache: vi.fn() }));
   vi.doMock("./router", () => ({
-    resetTabsToJournals: vi.fn(),
+    resetTabsToJournals,
     openPage,
     openJournals: vi.fn(),
     route: () => ({ kind: "journals" }),
@@ -150,7 +149,7 @@ async function loadHarness(
   const { loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay } = await import("./graph");
   return {
     loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, api, events, resetPageIndex, resetAt, waitForWarmCache,
-    drainPdfWork, retirePdfOwnership, activatePdfOwnership, closePdf,
+    drainPdfWork, retirePdfOwnership, activatePdfOwnership, resetTabsToJournals,
     applyTemplateVars, prepareTemplateVars, openPage,
   };
 }
@@ -415,11 +414,11 @@ describe("PDF graph ownership", () => {
     await harness.loadGraphPath(nextMeta.root);
 
     expect(harness.events).toEqual(expect.arrayContaining([
-      "drain-pdf", "retire-pdf", "close-pdf", "load-next",
+      "drain-pdf", "retire-pdf", "load-next", "reset-tabs",
     ]));
     expect(harness.events.indexOf("drain-pdf")).toBeLessThan(harness.events.indexOf("retire-pdf"));
-    expect(harness.events.indexOf("retire-pdf")).toBeLessThan(harness.events.indexOf("close-pdf"));
-    expect(harness.events.indexOf("close-pdf")).toBeLessThan(harness.events.indexOf("load-next"));
+    expect(harness.events.indexOf("retire-pdf")).toBeLessThan(harness.events.indexOf("load-next"));
+    expect(harness.events.indexOf("load-next")).toBeLessThan(harness.events.indexOf("reset-tabs"));
     expect(harness.activatePdfOwnership).toHaveBeenLastCalledWith(nextMeta.root);
   });
 
@@ -434,7 +433,7 @@ describe("PDF graph ownership", () => {
     expect(harness.drainPdfWork).toHaveBeenCalledOnce();
     expect(harness.events).toEqual([]);
     expect(harness.retirePdfOwnership).not.toHaveBeenCalled();
-    expect(harness.closePdf).not.toHaveBeenCalled();
+    expect(harness.resetTabsToJournals).not.toHaveBeenCalled();
     expect(harness.api.loadGraph).toHaveBeenCalledOnce();
   });
 
@@ -449,13 +448,13 @@ describe("PDF graph ownership", () => {
 
     await harness.loadGraphPath(META.root, { forceRefresh: true });
 
-    expect(harness.events.slice(0, 5)).toEqual([
+    expect(harness.events.slice(0, 4)).toEqual([
       "drain-pdf",
       "retire-pdf",
-      "close-pdf",
       "load-refresh",
       `activate-pdf:${META.root}`,
     ]);
+    expect(harness.resetTabsToJournals).not.toHaveBeenCalled();
     expect(harness.activatePdfOwnership).toHaveBeenCalledTimes(2);
   });
 });
