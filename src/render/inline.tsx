@@ -495,8 +495,8 @@ function renderLink(
           e.stopPropagation();
           if (unsafeHref) return;
           const rel = assetLinkRel(dest);
-          if (rel !== null) void backend().openAsset(rel, backend().graphBindingGeneration()).catch((error) => reportLinkOpenFailure(dest, error));
-          else void backend().openExternal(dest).catch((error) => reportLinkOpenFailure(dest, error));
+          if (rel !== null) void readOwned(graphOwner(), backend().openAsset(rel, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(dest, error));
+          else void readOwned(graphOwner(), backend().openExternal(dest)).catch((error) => reportLinkOpenFailure(dest, error));
         }}
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
@@ -643,7 +643,7 @@ function renderEmail(text: EmailValue, spanAttrs?: SpanDomAttrs): JSX.Element {
   }
   const href = `mailto:${addr}`;
   return (
-    <a class="external-link" href={href} {...(spanAttrs ?? {})} onClick={(e) => { e.preventDefault(); e.stopPropagation(); void backend().openExternal(href).catch((error) => reportLinkOpenFailure(href, error)); }}>
+    <a class="external-link" href={href} {...(spanAttrs ?? {})} onClick={(e) => { e.preventDefault(); e.stopPropagation(); void readOwned(graphOwner(), backend().openExternal(href)).catch((error) => reportLinkOpenFailure(href, error)); }}>
       {addr}
     </a>
   );
@@ -1045,8 +1045,8 @@ function MediaEmbed(props: {
   const open = (e: MouseEvent) => {
     e.stopPropagation();
     const r = rel();
-    if (r && !external) void backend().openAsset(r, backend().graphBindingGeneration()).catch((error) => reportLinkOpenFailure(props.url, error));
-    else void backend().openExternal(props.url).catch((error) => reportLinkOpenFailure(props.url, error));
+    if (r && !external) void readOwned(graphOwner(), backend().openAsset(r, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(props.url, error));
+    else void readOwned(graphOwner(), backend().openExternal(props.url)).catch((error) => reportLinkOpenFailure(props.url, error));
   };
   let tryingBlobFallback = false;
   let blobLease: MediaBlobLease | null = null;
