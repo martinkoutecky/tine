@@ -453,6 +453,13 @@ fn a_quantifier_over_a_page_ref_round_trips_in_the_pane_and_in_the_macro() {
     )
     .expect_err("a `, [[` inside a string literal is not a macro argument");
     assert_eq!(refusal.kind, DiagnosticKind::Syntax);
+    // A located, readable message: the pane renders it (`.query-print-refused`,
+    // QueryMacro.ir.test.tsx "renders the printer's own message"), nothing is written.
+    assert!(
+        refusal.message.contains("does not read this back"),
+        "{}",
+        refusal.message
+    );
 }
 
 /// Cache keys use this normalization, so two trees that differ in truth must not

@@ -13,8 +13,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **A query shown as a table or board exports as that table or board** (og E, 22c open item).
   A block whose whole body is one `{{query …}}` with `tine.view:: table` or `board` (a query `as table`/`as board` may override it)
   now publishes with the query's own columns and rows, on the page each row came from, computed by the
-  app's own sheet code; if a result sits on a page the export does not publish, or the results changed while the
-  export was prepared, it stays the usual result list. The command-line export still writes the outline.
+  app's own sheet code; a result on a page the export does not publish is left out (and never counted), and if the results changed while the
+  export was prepared it stays the usual result list. The command-line export still writes the outline.
 - **A TQL query with a page reference after a comma saves as a macro** (og E).
   A form such as `any(children, [[a]])` used to be refused when Tine wrote it into a
   `{{tine-query …}}` block, because the document parser read the comma-separated `[[a]])` as a
@@ -100,7 +100,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   control changes that setting. A `tine.fields` list of column names on a query block is no longer
   mistaken for a typed schema: its columns are not marked stray, and declaring a schema moves the
   list to `tine.columns` in the same undo step. A saved query tab or window state with one malformed
-  display setting keeps the tab and drops only that setting.
+  display setting keeps the tab and drops only that setting. "No grouping" on a query board now shows one column of every result
+  instead of falling back to the task-state columns.
 
 - **Red error messages stay until you close them, and offer Copy.** Every error
   is also noted in the privacy-safe diagnostic report (not its text) and, with
