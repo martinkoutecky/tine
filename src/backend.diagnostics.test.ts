@@ -53,3 +53,20 @@ it("does not time the diagnostics channel itself, and stops reporting once the r
   await expect(backend.startupGraphPath()).rejects.toThrow("boom");
   expect(phases()).toHaveLength(1);
 });
+
+it("puts a failed command's text in the opt-in debug log only when debug logging is on (GH #594)", async () => {
+  invoke.mockImplementation((cmd: string) => {
+    if (cmd === "debug_info") return Promise.resolve({ enabled: true, path: "/tmp/tine-debug.log" });
+    if (cmd === "startup_graph_path") return Promise.reject(new Error("missing-graph-binding"));
+    return Promise.resolve();
+  });
+  vi.stubGlobal("window", { __TAURI_INTERNALS__: {}, addEventListener: () => {}, setInterval: () => 0 });
+  vi.stubGlobal("navigator", { userAgent: "test" });
+  const { backend } = await import("./backend");
+  await expect(backend().startupGraphPath()).rejects.toThrow("missing-graph-binding");
+  expect(invoke.mock.calls.some(([cmd]) => cmd === "debug_log")).toBe(false);
+  const { initDebug } = await import("./debug");
+  await initDebug();
+  await expect(backend().startupGraphPath()).rejects.toThrow("missing-graph-binding");
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("debug_log", { line: "command startup_graph_path failed: Error: missing-graph-binding" }));
+});

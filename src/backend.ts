@@ -42,6 +42,7 @@ import type {
   QueryPublicationPlan,
   PublicationReceipt,
 } from "./types";
+import { dbg } from "./debug";
 import { assetFileName } from "./media";
 import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
@@ -785,6 +786,7 @@ class TauriBackend implements Backend {
       return result;
     } catch (error) {
       this.reportIpcPhase(cmd, "failed", started);
+      dbg(`command ${cmd} failed: ${String(error)}`); // opt-in --debug log only (GH #594)
       throw error;
     } finally {
       clearTimeout(slowTimer);

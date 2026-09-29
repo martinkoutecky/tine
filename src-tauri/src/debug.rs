@@ -31,6 +31,9 @@ fn debug_log_path() -> PathBuf {
 /// debug mode is off. Safe to call repeatedly.
 pub(crate) fn debug_init() {
     DEBUG_START.get_or_init(std::time::Instant::now);
+    // Crate lines already went to stderr; this adds them to the file, which is
+    // what a Windows reporter can actually send (GH #594).
+    tine_core::diag_line::set_diagnostic_line_sink(write_debug);
     DEBUG_LOG.get_or_init(|| {
         if !debug_enabled() {
             return None;
