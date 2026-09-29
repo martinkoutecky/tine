@@ -42,6 +42,7 @@ icon:: ⌨️
 	- **t b** (dim inactive blocks) fades everything except the bullet you're editing — a typewriter-style spotlight. Use it on its own, or let focus mode turn it on for you.
 - ## A few more worth knowing
 	- Use the **…** beside an ordinary page title for its complete actions menu: open the source file, copy/export, inspect properties, rename, carry tasks, or delete. It is the same menu as right-click and works from the keyboard and touch.
+	- In **Copy / Export**, choose **Plain text** for the text as displayed, without markup markers, or **Markdown** (**Org** on an Org page) to keep the original syntax: bold, highlighting, links, and properties.
 	- Renaming a page to the name of another existing page offers to **merge** them, as Logseq does: the blocks move to the end of the page that remains, the aliases join, links to the old name point to it, and the merged file goes to the graph trash (recoverable).
 	- Tine saves pending edits before a rename. A page whose edits cannot be saved stops the rename only if the rename would change that page, or its unsaved text mentions the old name; the message names it. Other pages keep their unsaved edits through the rename. A page named by `title::`, or in Org by `#+TITLE:`, gets the new name in that line.
 	- **Carry unfinished tasks** forward into today (from the command palette) — the last 7 / 30 / 365 days, optionally with their context.

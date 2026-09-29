@@ -160,6 +160,10 @@ fn guide_explains_following_the_link_at_the_caret() {
         .contains("press it again to select the block with its children"));
     // GH #480: the menu route above a bullet that owns its Enter key.
     assert!(tips.markdown.contains("choose **Insert block above**"));
+    // GH #352: the export content choice names its output.
+    assert!(tips
+        .markdown
+        .contains("choose **Plain text** for the text as displayed"));
 }
 
 #[test]
