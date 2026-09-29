@@ -192,9 +192,14 @@ mod pdf_workspace_guide_tests {
             "long-press a highlight",
             "use **Back**",
         ] {
-            assert!(pdf.contains(detail), "missing PDF workspace Guide detail: {detail}");
+            assert!(
+                pdf.contains(detail),
+                "missing PDF workspace Guide detail: {detail}"
+            );
         }
-        assert!(super::GUIDE_TEMPLATES.iter().any(|page| page.title == "Features/PDF annotation"));
+        assert!(super::GUIDE_TEMPLATES
+            .iter()
+            .any(|page| page.title == "Features/PDF annotation"));
         assert!(include_str!("templates/guide.md").contains("[[Features/PDF annotation]]"));
     }
 }
