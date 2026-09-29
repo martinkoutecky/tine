@@ -1,9 +1,9 @@
 # 0062. Launch snapshots cover graph text across the whole graph
 
-- **Status:** Proposed. Martin approved the outcome on 2026-09-29 (og
-  QUESTIONS Q8). The snapshot manifest schema changes and a persisted format
-  is added (OG-RULES Rule 8), so the ADR waits for Martin before it is
-  Accepted.
+- **Status:** Accepted — Martin, 2026-09-29 (og QUESTIONS Q8 for the
+  outcome; this ADR, including the schema change and the added persisted
+  format, accepted the same day). He also confirmed that og never prunes
+  master's snapshots: rare in practice, and the safer rule.
 - **Date:** 2026-09-29
 - **Unit cost:** 0 bytes and 0 files per edit on a 1-block or a 60-block page
   (snapshots are taken at launch and before user-requested rewrites, never per
