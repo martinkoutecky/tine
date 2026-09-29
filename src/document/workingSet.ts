@@ -180,16 +180,18 @@ export function ensurePageLoaded(dto: PageDto & { id?: string }): PageLoadRefusa
 }
 
 /** Load the file `name` resolves to as the page holding `name`, for a write
- * that must land in that file (capture, carry). One page read. An empty slot
- * takes the file, or `absent` when the page has no file yet; a slot held by a
- * page with no file takes the file when safe. A slot held by ANOTHER file
- * refuses `"second-file"` even when clean: the write would land where the
- * journals feed and search do not show that name. "stale" when `owner` retired;
- * a failed read rejects. */
-export async function admitPageFile(name: string, kind: PageKind, owner: Owner, absent: PageDto): Promise<PageLoadRefusal | "stale" | null> {
+ * that must land in that file (capture, carry). One page read. The slot takes
+ * that file (or `absent` when the page has no file yet) through
+ * `ensurePageLoaded`, so another file holding the name is replaced when it has
+ * no uncommitted input and refused (`"unsaved-work"`) when it has.
+ * `cleanSecondFile: "refuse"` (carry, og I1e) instead refuses `"second-file"`
+ * whenever another file holds the name. "stale" when `owner` retired; a failed
+ * read rejects. */
+export async function admitPageFile(name: string, kind: PageKind, owner: Owner, absent: PageDto, cleanSecondFile: "replace" | "refuse" = "replace"): Promise<PageLoadRefusal | "stale" | null> {
   const result = await readOwned(owner, backend().getPage(name, kind));
   if (result.kind === "stale") return "stale";
   const file: (PageDto & { id?: string }) | null = result.value;
+  if (cleanSecondFile === "replace") return ensurePageLoaded(file ?? absent);
   const loaded = pageByName(name);
   if (!loaded || (file && !loaded.id)) return ensurePageLoaded(file ?? absent);
   if (file?.id && loaded.id !== file.id) return { page: name, holder: loaded.id ?? null, requested: file.id, reason: "second-file" };

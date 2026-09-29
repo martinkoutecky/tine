@@ -100,9 +100,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   was open with unsaved input, the journals feed showed it as the requested day, so what was typed there
   saved to the wrong file; quick capture and "add to today" could append into it and report success; a
   sidebar item pinned to the other file stayed blank; and a PDF-notes refresh declined during an edit was
-  dropped, leaving the notes stale. The feed now keeps its previous days and says why, loading the day once
-  that input is finished; capture refuses and names both files; the sidebar says why and retries; the
-  notes refresh applies once the edit ends.
+  dropped, leaving the notes stale. The feed now keeps its previous days (or, on first open, says why in place) and fills in once
+  that input is finished; capture goes into today's real file, or, when the other file has unsaved input,
+  refuses, names both files and keeps the text in the capture window; the sidebar says why and retries;
+  the notes refresh applies once the edit ends.
 - **A `file:` link opens the file** (GH #444, master c817fb150, og I3). A link written
   `[Test](file://D:\test.txt)` (Logseq) or `[Test](<file:///D:\test.txt>)` (Obsidian) rendered
   as a link and did nothing; it now opens that file or folder in the application your system uses

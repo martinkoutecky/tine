@@ -92,7 +92,8 @@ describe.each(holds)("feed publication follows installation (slot held by %s)", 
 describe("capture never lands in a second file holding the destination's name", () => {
   it("stops when a stray took the slot while today's file was being read", async () => {
     const today = journalTitle(appNow());
-    expect(loadFeed([file("Aug 31st, 2026", "journals/2026_08_31.md", ["older"])])).toBe("published");
+    loadFeed([file("Aug 31st, 2026", "journals/2026_08_31.md", ["older"])]);
+    expect(doc.feed).toEqual(["Aug 31st, 2026"]);
     let finish!: (page: PageDto) => void;
     vi.spyOn(backend(), "getPage").mockImplementation(() => new Promise((resolve) => { finish = resolve as never; }));
     const save = vi.spyOn(backend(), "savePages");
@@ -106,15 +107,35 @@ describe("capture never lands in a second file holding the destination's name", 
     expect(refusalToast()?.message).toContain("journals/today.md");
   });
 
-  it("refuses when a second file already holds today's name, naming both files", async () => {
+  it("captures into today's real file when a second file holding the name has no unsaved input", async () => {
     const today = journalTitle(appNow());
-    expect(loadFeed([file("Aug 31st, 2026", "journals/2026_08_31.md", ["older"])])).toBe("published");
+    loadFeed([file("Aug 31st, 2026", "journals/2026_08_31.md", ["older"])]);
+    expect(doc.feed).toEqual(["Aug 31st, 2026"]);
     install(file(today, "pages/stray.md", ["stray text"]));
+    vi.spyOn(backend(), "getPage").mockResolvedValue(file(today, "journals/today.md", ["morning"]) as never);
+    const save = vi.spyOn(backend(), "savePages");
+    expect(await appendToTodayJournal("- captured thought")).toBe(true);
+    expect(pageByName(today)!.id).toBe("journals/today.md");
+    expect(raws(today)).toEqual(["morning", "captured thought"]);
+    const written = save.mock.calls.flatMap(([entries]) => entries);
+    expect(written.some((entry) => JSON.stringify(entry).includes("captured thought") && JSON.stringify(entry).includes("journals/today.md"))).toBe(true);
+    expect(JSON.stringify(written)).not.toContain("pages/stray.md");
+  });
+
+  it.each(holds)("refuses when a second file holding today's name has %s, capturing nothing", async (_label, hold) => {
+    const today = journalTitle(appNow());
+    loadFeed([file("Aug 31st, 2026", "journals/2026_08_31.md", ["older"])]);
+    expect(doc.feed).toEqual(["Aug 31st, 2026"]);
+    strayHolding(today, hold);
     vi.spyOn(backend(), "getPage").mockResolvedValue(file(today, "journals/today.md", []) as never);
     const save = vi.spyOn(backend(), "savePages");
     expect(await appendToTodayJournal("- captured thought")).toBe(false);
     expect(JSON.stringify(save.mock.calls)).not.toContain("captured thought");
-    expect(refusalToast()?.message).toContain("journals/today.md");
+    expect(pageByName(today)!.id).toBe("pages/stray.md");
+    expect(JSON.stringify(doc.byId)).not.toContain("captured thought");
+    const toast = refusalToast()?.message;
+    expect(toast).toContain("journals/today.md");
+    expect(toast).toContain("Nothing was captured into it.");
   });
 });
 

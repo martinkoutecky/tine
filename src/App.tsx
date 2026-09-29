@@ -843,7 +843,7 @@ export function App(): JSX.Element {
               ? title
                 ? `Captured to “${title}”`
                 : "Captured to today's journal"
-              : "Capture couldn't be saved",
+              : "Capture couldn't be saved — its text is kept in the capture window",
             ok ? "info" : "error"
           );
           return ok;

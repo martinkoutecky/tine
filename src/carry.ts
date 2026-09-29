@@ -29,7 +29,7 @@ async function ensureLoaded(name: string, kind: "journal" | "page", owner: Owner
  *  GH #254 family, master 7bd793bd0; `admitPageFile`). One page read. */
 async function ensureToday(owner: Owner): Promise<string | null> {
   const t = journalTitle(appNow());
-  const admitted = await admitPageFile(t, "journal", owner, carryTodayPage(t));
+  const admitted = await admitPageFile(t, "journal", owner, carryTodayPage(t), "refuse");
   if (admitted === "stale") return null;
   if (admitted) {
     reportPageLoadRefusal(admitted, "carrying tasks");

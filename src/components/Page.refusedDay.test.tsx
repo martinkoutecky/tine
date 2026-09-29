@@ -31,7 +31,7 @@ const file = (name: string, id: string, raw: string): PageDto & { id: string; re
   blocks: [{ id: `${id}-b`, raw, collapsed: false, children: [] }],
 });
 
-it("keeps a second file holding today's name out of the feed, reports it, and loads today once it is free", async () => {
+it("keeps a second file holding today's name out of the feed, reports it, and loads today in place once it is free", async () => {
   vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
   const today = journalTitle(appNow());
   ensurePageLoaded(file(today, "pages/stray.md", "stray text"));
@@ -47,8 +47,12 @@ it("keeps a second file holding today's name out of the feed, reports it, and lo
     expect(doc.feed).not.toContain(today);
     expect(root.textContent).not.toContain("stray text");
     expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("journals/today.md"))).toBe(true);
+    expect(root.textContent).not.toContain("Couldn't open this page");
     unpin();
-    await vi.waitFor(() => expect(doc.feed).toContain(today));
+    // In place, as master: the open Journals view fills once the name is free.
+    await vi.waitFor(() => expect(root.textContent).toContain("canonical text"));
+    expect(doc.feed).toContain(today);
     expect(pageByName(today)!.id).toBe("journals/today.md");
+    expect(root.textContent).not.toContain("pages/stray.md");
   } finally { unpin(); dispose(); }
 });

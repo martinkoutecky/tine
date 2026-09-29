@@ -3,7 +3,8 @@ import { OUTLINE_MAX_DEPTH, outlineDepth, parseOutline, type OutlineNode } from 
 import { type PageKind } from "../../types";
 import { graphOwner } from "../../owned";
 import { pageByName, freshId, setDoc } from "../model";
-import { admitPageFile, reportPageLoadRefusal } from "../workingSet";
+import { admitPageFile, pageLoadRefusalMessage } from "../workingSet";
+import { pushToastUnique } from "../../toasts";
 import { captureEmptyPage } from "../convert";
 import { pageWritable } from "./properties";
 import { insertOutlineAfter, deleteBlock } from "./blocks";
@@ -18,8 +19,8 @@ import { markDirty, flushPage } from "../save/engine";
  *  than a separate-process file append) means a capture can't race a main-view
  *  edit of today's journal into a conflict. Loads — or, if the day has no file
  *  yet, synthesizes — the journal first; never clobbers in-progress edits and
- *  refuses (false, with a message) when another file holds today's name
- *  (`admitPageFile`). Returns whether the write reached disk. */
+ *  refuses (false, with a message) when another file holding today's name has
+ *  unsaved input (`admitPageFile`). Returns whether the write reached disk. */
 export async function appendToTodayJournal(markdown: string): Promise<boolean> {
   return captureOutlineInto(journalTitle(appNow()), "journal", parseOutline(markdown));
 }
@@ -43,15 +44,15 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
   // Captured blocks land at root level, so the outline's own depth is the result's (I-22).
   if (!nodes.length || outlineDepth(nodes) > OUTLINE_MAX_DEPTH) return false;
   const owner = graphOwner();
-  // Stop on a refusal rather than appending into whichever page holds the name:
-  // on a refusal that is ANOTHER file (a duplicate day, a same-named page opened
-  // by path), so the capture would land where the feed does not show it and be
-  // reported as saved. Returning false keeps the text in the capture window
-  // (GH #254 family, master 7bd793bd0).
+  // Admit the file the name resolves to. Another file holding the name is
+  // replaced when it has no unsaved input; when it has, stop rather than append
+  // into it: the capture would land where the feed does not show it and be
+  // reported as saved (GH #254 family, master 7bd793bd0). Returning false keeps
+  // the text in the capture window, which says so.
   const admitted = await admitPageFile(name, kind, owner, captureEmptyPage(name, kind));
   if (admitted === "stale") return false;
   if (admitted) {
-    reportPageLoadRefusal(admitted, "capturing into it");
+    pushToastUnique(`${pageLoadRefusalMessage(admitted)} Nothing was captured into it.`, "error");
     return false;
   }
   const page = pageByName(name);

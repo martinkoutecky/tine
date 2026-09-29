@@ -59,6 +59,13 @@ let publishedFeedNames: readonly string[] | null = null;
 let feedDone = false;
 let pendingFeedRestart = false;
 const feedOwners = {};
+/** Why the journals feed is withheld (a day's name held by another file with
+ * unsaved input), shown in place of the feed until a refresh publishes. */
+const [feedRefusalIn, setFeedRefusal] = createSignal<{ epoch: number; message: string } | null>(null);
+const feedRefusal = () => { const held = feedRefusalIn(); return held && held.epoch === graphEpoch() ? held.message : null; };
+/** A feed withheld by a refusal: the route stays in place and the feed fills
+ * once the holder is replaceable (master defers the feed atomically). */
+class FeedWithheld extends Error {}
 
 /** A feed response belongs to one graph and one or more concrete Journals
  * surfaces.  App's watcher supplies a captured owner too, so a response begun
@@ -163,6 +170,7 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
  * replaceable. Returns the message. */
 function feedDayRefused(refusal: PageLoadRefusal, owner: JournalsFeedOwner): string {
   pendingFeedRestart = true;
+  setFeedRefusal({ epoch: owner.graphEpoch, message: pageLoadRefusalMessage(refusal) });
   whenPageReplaceable(refusal.page, "journal-feed", () => {
     if (ownerIsLive(owner)) void refreshJournalFeedForCurrentDay(owner);
   });
@@ -209,7 +217,8 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
     if (loaded === "stale") return null;
     // The whole window is withheld, as master defers its feed atomically: a
     // published feed never shows another file as a requested day.
-    if (loaded !== "published") return new Error(feedDayRefused(loaded, owner));
+    if (loaded !== "published") return new FeedWithheld(feedDayRefused(loaded, owner));
+    setFeedRefusal(null);
     publishedFeedEpoch = owner.graphEpoch;
     publishedFeedNames = feedNames();
     journalAsOfDay = response.as_of_day;
@@ -346,7 +355,9 @@ export function PageView(): JSX.Element {
             feedError = await refreshJournalFeedForCurrentDay(journalOwner(r, epoch, tabId, revision));
           }
           if (!owned()) return;
-          if (!hasPublishedFeed(epoch)) throw feedError ?? new Error("Journal feed read failed.");
+          // A withheld feed is not a failed read: stay on the route, say why,
+          // and let the pending refresh fill it in place.
+          if (!hasPublishedFeed(epoch) && !(feedError instanceof FeedWithheld)) throw feedError ?? new Error("Journal feed read failed.");
         } else {
           if (isGuidePageName(r.name)) {
             await ensureGuidePagesLoaded(true);
@@ -571,7 +582,7 @@ export function PageView(): JSX.Element {
   };
   const contentReady = () => {
     const r = loadedRoute();
-    return !!r && ready() && sameRoute(r, currentRoute()) && (r.kind !== "journals" || isLoaded());
+    return !!r && ready() && sameRoute(r, currentRoute()) && (r.kind !== "journals" || isLoaded() || !!feedRefusal());
   };
 
   return (
@@ -620,7 +631,10 @@ export function PageView(): JSX.Element {
               </PageSection>
             )}
           </For>
-          <Show when={currentRoute().kind === "journals" && mainPages().length === 0}>
+          <Show when={currentRoute().kind === "journals" && feedRefusal()}>
+            {(why) => <div class="page-load-error" role="status">{why()}</div>}
+          </Show>
+          <Show when={currentRoute().kind === "journals" && mainPages().length === 0 && !feedRefusal()}>
             <div class="page-load-error">
               No journal entries found in this graph.
               <div class="page-load-error-hint">
