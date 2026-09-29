@@ -217,17 +217,24 @@ pub(crate) fn debug_log(line: String) {
 }
 
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct DebugInfo {
     enabled: bool,
     path: String,
+    recorder_active: bool,
+    previous_exit_unclean: bool,
 }
 
 /// Lets the frontend learn whether debug mode is on (so it can wire up its error
-/// forwarding) and where the log lives (to surface the path to the user).
+/// forwarding), where the log lives (to surface the path to the user), and
+/// whether the persisted flight recorder saw the previous run end uncleanly.
 #[tauri::command]
 pub(crate) fn debug_info() -> DebugInfo {
+    let (recorder_active, previous_exit_unclean) = crate::flight::persisted_state();
     DebugInfo {
         enabled: debug_enabled(),
         path: debug_log_path().display().to_string(),
+        recorder_active,
+        previous_exit_unclean,
     }
 }

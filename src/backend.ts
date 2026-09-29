@@ -642,8 +642,14 @@ export interface Backend {
    *  events only. Build commit/time that are not a hex commit and an ISO
    *  timestamp are dropped by the backend. Never contains graph content. */
   diagnosticReport(buildCommit: string, buildTime: string): Promise<DiagnosticReport>;
-  /** Drop every recorded diagnostic event of this run. */
+  /** Build the report and save it where the user picks (desktop save
+   *  dialog); `false` when cancelled. Mobile rejects: use Copy report. */
+  saveDiagnosticReport(buildCommit: string, buildTime: string): Promise<boolean>;
+  /** Drop every recorded diagnostic event of this run and the previous one. */
   clearDiagnostics(): Promise<void>;
+  /** Mobile only (GH #426): whether the recorded session counts as live, so an
+   *  OS reap of a hidden app is not reported as an unclean exit. */
+  diagnosticSessionActive(active: boolean): Promise<void>;
   /** Record one fixed-kind frontend event. The backend drops the event when a
    *  token is outside its closed vocabulary; fields carry no free text. */
   diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields?: DiagnosticFrontendFields): Promise<void>;
@@ -654,6 +660,10 @@ export interface Backend {
 export interface DebugInfo {
   enabled: boolean;
   path: string;
+  /** The flight recorder is persisted in app data for this run. */
+  recorderActive: boolean;
+  /** The previous run ended without an orderly shutdown. */
+  previousExitUnclean: boolean;
 }
 
 export interface DiagnosticReport {
@@ -744,6 +754,7 @@ export function queryPrintRefusal(error: unknown): QueryPrintRefusedError | null
 /** Commands whose timing would only describe the diagnostics channel. */
 const DIAGNOSTIC_COMMANDS = new Set([
   "debug_info", "debug_log", "diagnostic_ipc_event", "diagnostic_frontend_event", "diagnostic_report", "clear_diagnostics",
+  "save_diagnostic_report", "diagnostic_session_active",
 ]);
 /** A command still running after this long is recorded as `slow`. */
 const SLOW_IPC_MS = 500;
@@ -1335,8 +1346,14 @@ class TauriBackend implements Backend {
   diagnosticReport(buildCommit: string, buildTime: string) {
     return this.call<DiagnosticReport>("diagnostic_report", { buildCommit, buildTime });
   }
+  saveDiagnosticReport(buildCommit: string, buildTime: string) {
+    return this.call<boolean>("save_diagnostic_report", { buildCommit, buildTime });
+  }
   clearDiagnostics() {
     return this.call<void>("clear_diagnostics");
+  }
+  diagnosticSessionActive(active: boolean) {
+    return this.call<void>("diagnostic_session_active", { active });
   }
   diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields: DiagnosticFrontendFields = {}) {
     return this.call<void>("diagnostic_frontend_event", { kind, ...fields });

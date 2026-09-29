@@ -16,10 +16,12 @@
 //! is never copied into a report.
 //!
 //! **Retention.** The recorder lives in process memory, bounded to
-//! [`FLIGHT_MAX_BYTES`] of encoded events; the oldest events are evicted first.
-//! It is lost when the process exits: og does not yet persist a previous run
-//! (a persisted recorder is a new persisted format, OG-RULES Rule 8), so a
-//! report never says whether the previous exit was clean.
+//! [`FLIGHT_MAX_BYTES`] of encoded events (the oldest are evicted first). Once
+//! [`persist_init`] has run it is also persisted in app data by
+//! [`crate::flight_store`]: this run's events are republished at most every
+//! [`FLUSH_INTERVAL`] while new events arrive, at a panic, at an orderly exit
+//! and when a mobile app is hidden; the previous run's events and whether it
+//! ended cleanly are read once at launch (og ADR 0058).
 //!
 //! **Cost.** Recording is O(event size) plus O(evicted events); a report is
 //! O(retained bytes) ≤ 1 MiB; clearing is O(1). A poisoned recorder lock loses
@@ -28,14 +30,19 @@
 
 use serde_json::{json, Map, Value};
 use std::collections::VecDeque;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::state::AppState;
 
-const FLIGHT_SCHEMA_VERSION: u8 = 1;
-/// Upper bound on retained encoded event bytes (one master segment).
+pub(crate) const FLIGHT_SCHEMA_VERSION: u8 = 1;
+/// Upper bound on retained encoded event bytes, newline included — so also
+/// the size bound of the persisted history file (one master segment).
 pub(crate) const FLIGHT_MAX_BYTES: usize = 1024 * 1024;
+/// A dirty recorder is republished at most this often (og ADR 0058).
+pub(crate) const FLUSH_INTERVAL: Duration = Duration::from_secs(30);
 /// A save that finished faster than this and succeeded is not recorded, so
 /// ordinary typing does not evict the rare events a report exists for.
 const SAVE_EVENT_THRESHOLD_MS: u64 = 150;
@@ -54,15 +61,37 @@ impl FlightRing {
     }
 
     fn push(&mut self, line: String, max_bytes: usize) {
-        self.bytes = self.bytes.saturating_add(line.len());
+        self.bytes = self.bytes.saturating_add(line.len() + 1);
         self.lines.push_back(line);
-        while self.bytes > max_bytes && self.lines.len() > 1 {
-            if let Some(old) = self.lines.pop_front() {
-                self.bytes = self.bytes.saturating_sub(old.len());
-            }
+        while self.bytes > max_bytes {
+            let Some(old) = self.lines.pop_front() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(old.len() + 1);
         }
     }
+
+    /// The history file's bytes: every line newline-terminated, `bytes` long.
+    fn encoded(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.bytes);
+        for line in &self.lines {
+            out.extend_from_slice(line.as_bytes());
+            out.push(b'\n');
+        }
+        out
+    }
 }
+
+/// The persisted recorder of this process, once [`persist_init`] owns the
+/// app-data directory. Lock order: `FLIGHT` is never held while taking this.
+struct Persisted {
+    store: crate::flight_store::FlightStore,
+    previous: Vec<String>,
+    previous_unclean: bool,
+}
+
+static PERSISTED: OnceLock<Mutex<Persisted>> = OnceLock::new();
+static DIRTY: AtomicBool = AtomicBool::new(false);
 
 static FLIGHT: Mutex<FlightRing> = Mutex::new(FlightRing::new());
 static START: OnceLock<std::time::Instant> = OnceLock::new();
@@ -96,6 +125,7 @@ fn record_fixed_event(event: &'static str, fields: Map<String, Value>) {
     if let Ok(mut ring) = FLIGHT.lock() {
         ring.push(line, FLIGHT_MAX_BYTES);
     }
+    DIRTY.store(true, Ordering::Release);
 }
 
 /// Start the recorder's clock and record which build this run is: fixed tokens
@@ -141,8 +171,118 @@ pub(crate) fn record_panic(info: &std::panic::PanicHookInfo<'_>) {
     let Some(line) = encode("runtime.panic", fields) else {
         return;
     };
-    if let Ok(mut ring) = FLIGHT.try_lock() {
-        ring.push(line, FLIGHT_MAX_BYTES);
+    let Ok(mut ring) = FLIGHT.try_lock() else {
+        return;
+    };
+    ring.push(line, FLIGHT_MAX_BYTES);
+    let encoded = ring.encoded();
+    drop(ring);
+    // The process may be about to die: publish now, but never wait on a lock
+    // the panicking thread might hold.
+    if let Some(Ok(persisted)) = PERSISTED.get().map(Mutex::try_lock) {
+        let _ = persisted.store.write_history(&encoded);
+    }
+}
+
+/// Own `<app data>/diagnostics`: read the previous run, arm this run's
+/// unclean-exit marker, publish the events recorded so far and start the
+/// flusher. Call once from `setup()` (after the single-instance plugin has
+/// forwarded a second launch). A directory another live process owns, or any
+/// I/O failure, leaves this run in memory only; startup never fails here.
+pub(crate) fn persist_init(dir: PathBuf) {
+    let opened = match crate::flight_store::FlightStore::open(&dir) {
+        Ok(opened) => opened,
+        Err(error) => {
+            crate::debug::diag_private("flight-history-unavailable", error.to_string());
+            return;
+        }
+    };
+    let previous_unclean = opened.previous_unclean;
+    let persisted = Persisted {
+        store: opened.store,
+        previous: opened.previous,
+        previous_unclean,
+    };
+    if PERSISTED.set(Mutex::new(persisted)).is_err() {
+        return;
+    }
+    if previous_unclean {
+        record_fixed_event("runtime.previous_exit_unclean", Map::new());
+    }
+    flush_now();
+    let _ = std::thread::Builder::new()
+        .name("flight-flush".into())
+        .spawn(|| loop {
+            std::thread::sleep(FLUSH_INTERVAL);
+            if DIRTY.load(Ordering::Acquire) {
+                flush_now();
+            }
+        });
+}
+
+/// Republish this run's events if the recorder is persisted. O(retained
+/// bytes) ≤ [`FLIGHT_MAX_BYTES`]; a failed write keeps the events dirty for
+/// the next attempt and is noted only in the opt-in debug log.
+fn flush_now() {
+    let Some(persisted) = PERSISTED.get() else {
+        return;
+    };
+    DIRTY.store(false, Ordering::Release);
+    let encoded = match FLIGHT.lock() {
+        Ok(ring) => ring.encoded(),
+        Err(_) => return,
+    };
+    let Ok(persisted) = persisted.lock() else {
+        return;
+    };
+    if let Err(error) = persisted.store.write_history(&encoded) {
+        DIRTY.store(true, Ordering::Release);
+        crate::debug::diag_private("flight-history-write-failed", error.to_string());
+    }
+}
+
+fn set_session_active(active: bool) {
+    let Some(persisted) = PERSISTED.get() else {
+        return;
+    };
+    if let Ok(persisted) = persisted.lock() {
+        if let Err(error) = persisted.store.set_session_active(active) {
+            crate::debug::diag_private("flight-marker-write-failed", error.to_string());
+        }
+    }
+}
+
+/// The orderly end of a run (`RunEvent::Exit`): record it, publish the
+/// history, then clear the unclean-exit marker.
+pub(crate) fn mark_clean_shutdown() {
+    record_fixed_event("runtime.clean_shutdown", Map::new());
+    flush_now();
+    set_session_active(false);
+}
+
+/// GH #426. A mobile OS reaps a hidden app without notice, so on Android and
+/// iOS the recorded session follows visibility: it ends when the app is hidden
+/// and restarts when the user returns. Desktop ignores this — a minimised
+/// window is still a live session whose crash the recorder must report, and
+/// `RunEvent::Exit` is its orderly end.
+#[tauri::command]
+pub(crate) fn diagnostic_session_active(active: bool) {
+    if !cfg!(mobile) {
+        return;
+    }
+    let mut fields = Map::new();
+    fields.insert("active".into(), json!(active));
+    record_fixed_event("runtime.session_active", fields);
+    flush_now();
+    set_session_active(active);
+}
+
+/// Whether the recorder is persisted, and whether the previous run ended
+/// without an orderly shutdown. O(1).
+pub(crate) fn persisted_state() -> (bool, bool) {
+    match PERSISTED.get().map(Mutex::lock) {
+        Some(Ok(persisted)) => (true, persisted.previous_unclean),
+        _ => (false, false),
     }
 }
 
@@ -201,10 +341,12 @@ pub(crate) fn record_watcher_batch(pages: usize, conflicts_changed: bool) {
 }
 
 /// Commands whose own timing would only describe the recorder.
-const SELF_COMMANDS: [&str; 6] = [
+const SELF_COMMANDS: [&str; 8] = [
     "diagnostic_ipc_event",
     "diagnostic_frontend_event",
     "diagnostic_report",
+    "diagnostic_session_active",
+    "save_diagnostic_report",
     "clear_diagnostics",
     "debug_info",
     "debug_log",
@@ -358,15 +500,20 @@ fn build_diagnostic_report(
     build_commit: String,
     build_time: String,
 ) -> DiagnosticReport {
-    let events: Vec<Value> = FLIGHT
+    let parse = |lines: &mut dyn Iterator<Item = &String>| -> Vec<Value> {
+        lines
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    };
+    let events = FLIGHT
         .lock()
-        .map(|ring| {
-            ring.lines
-                .iter()
-                .filter_map(|line| serde_json::from_str(line).ok())
-                .collect()
-        })
+        .map(|ring| parse(&mut ring.lines.iter()))
         .unwrap_or_default();
+    let (retained, previous_unclean) = persisted_state();
+    let previous = match PERSISTED.get().map(Mutex::lock) {
+        Some(Ok(persisted)) => parse(&mut persisted.previous.iter()),
+        _ => Vec::new(),
+    };
     let generated_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
@@ -392,12 +539,13 @@ fn build_diagnostic_report(
         },
         "runtime": {
             "recorderActive": true,
-            "retainedAcrossRuns": false,
+            "retainedAcrossRuns": retained,
+            "previousExitUnclean": previous_unclean,
             "verboseDebugEnabled": crate::debug::debug_enabled(),
             "graphStateUnavailable": graph_bindings.is_none(),
             "graphBindings": graph_bindings.unwrap_or(0),
         },
-        "sessions": { "current": events },
+        "sessions": { "previous": previous, "current": events },
     });
     DiagnosticReport {
         text: serde_json::to_string_pretty(&report).unwrap_or_else(|_| {
@@ -421,13 +569,63 @@ pub(crate) fn diagnostic_report(
     build_diagnostic_report(graph_bindings, build_commit, build_time)
 }
 
-/// Drop every retained event, then record `diagnostics.cleared`. O(1).
+/// Save a freshly built report where the user chooses (desktop save dialog).
+/// `false` when the user cancelled. Mobile has no save dialog: Copy report.
+#[tauri::command]
+pub(crate) async fn save_diagnostic_report(
+    app: tauri::AppHandle,
+    build_commit: String,
+    build_time: String,
+) -> Result<bool, String> {
+    let graph_bindings = {
+        let state = tauri::Manager::state::<AppState>(&app);
+        state.graphs.read().ok().map(|graphs| graphs.len())
+    };
+    let report = build_diagnostic_report(graph_bindings, build_commit, build_time);
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_dialog::DialogExt as _;
+        let suggested = report.suggested_file_name.clone();
+        let chosen = tauri::async_runtime::spawn_blocking(move || {
+            app.dialog()
+                .file()
+                .set_file_name(suggested)
+                .add_filter("JSON", &["json"])
+                .blocking_save_file()
+        })
+        .await
+        .map_err(|_| "The save dialog failed.".to_owned())?;
+        let Some(chosen) = chosen else {
+            return Ok(false);
+        };
+        let path = chosen
+            .into_path()
+            .map_err(|_| "The chosen destination is not a local file.".to_owned())?;
+        crate::flight_store::FlightStore::save_report(&path, &report.text).map_err(|error| {
+            crate::debug::diag_private("diagnostic-report-save-failed", error.to_string());
+            "The diagnostic report could not be saved.".to_owned()
+        })?;
+        Ok(true)
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, report);
+        Err("Save report is available on desktop; use Copy report on this device.".into())
+    }
+}
+
+/// Drop every retained event of this run and the previous one, record
+/// `diagnostics.cleared` and republish the history. O(1) plus one flush.
 #[tauri::command]
 pub(crate) fn clear_diagnostics() {
     if let Ok(mut ring) = FLIGHT.lock() {
         *ring = FlightRing::new();
     }
+    if let Some(Ok(mut persisted)) = PERSISTED.get().map(Mutex::lock) {
+        persisted.previous.clear();
+    }
     record_fixed_event("diagnostics.cleared", Map::new());
+    flush_now();
 }
 
 #[cfg(test)]
@@ -696,5 +894,198 @@ mod tests {
             .lines
             .iter()
             .any(|line| line.contains("PRIVATE_PAYLOAD_42")));
+    }
+
+    /// One launch of the persisted recorder, run as a child process so each
+    /// launch gets fresh process globals. Inert unless a probe parent sets
+    /// `TINE_FLIGHT_PROBE_DIR`.
+    #[test]
+    fn persisted_run_child_probe() {
+        let Some(dir) = std::env::var_os("TINE_FLIGHT_PROBE_DIR") else {
+            return;
+        };
+        flight_init();
+        record_watcher_batch(3, false); // recorded before the store exists
+        persist_init(PathBuf::from(dir));
+        match std::env::var("TINE_FLIGHT_PROBE_MODE").unwrap().as_str() {
+            "report" => {
+                let report = build_diagnostic_report(None, String::new(), String::new());
+                let compact: Value = serde_json::from_str(&report.text).unwrap();
+                println!("PROBE-REPORT {compact}");
+                mark_clean_shutdown();
+            }
+            "killed" => std::process::abort(),
+            "edits" => {
+                // Ordinary saves of a 1-block and a 60-block page: fast, ok.
+                for _ in 0..500 {
+                    record_save(None, 1, std::time::Duration::from_millis(4));
+                    record_save(None, 60, std::time::Duration::from_millis(40));
+                }
+                println!("PROBE-DIRTY {}", DIRTY.load(Ordering::Acquire));
+                mark_clean_shutdown();
+            }
+            "panic" => {
+                crate::debug::install_panic_logger();
+                std::panic::panic_any(String::from("PRIVATE_PROBE_PAYLOAD"));
+            }
+            "flood" => {
+                for pages in 0..40_000 {
+                    record_watcher_batch(pages, pages % 2 == 0);
+                }
+                flush_now();
+                std::process::abort();
+            }
+            other => panic!("unknown probe mode {other}"),
+        }
+    }
+
+    fn launch(dir: &std::path::Path, mode: &str) -> Option<Value> {
+        launch_output(dir, mode)
+            .lines()
+            .find_map(|line| line.split_once("PROBE-REPORT ").map(|(_, json)| json))
+            .map(|json| serde_json::from_str(json).unwrap())
+    }
+
+    fn launch_output(dir: &std::path::Path, mode: &str) -> String {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "flight::tests::persisted_run_child_probe",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("TINE_FLIGHT_PROBE_DIR", dir)
+            .env("TINE_FLIGHT_PROBE_MODE", mode)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    /// I-25 unit cost: an edit writes nothing to diagnostics. Fast successful
+    /// saves record no event, so the recorder never becomes dirty and the
+    /// flusher never rewrites the history because of typing.
+    #[test]
+    fn ordinary_saves_cost_no_diagnostic_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("diagnostics");
+        let output = launch_output(&dir, "edits");
+        assert!(output.contains("PROBE-DIRTY false"), "{output}");
+        let history = std::fs::read_to_string(dir.join(crate::flight_store::HISTORY_FILE)).unwrap();
+        assert!(!history.contains("direct.save"), "{history}");
+        let files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        let mut files = files;
+        files.sort();
+        // A clean exit leaves the lock and the history; no temp, no marker.
+        assert_eq!(files, ["history.jsonl", "process.lock"]);
+        println!(
+            "UNIT-COST history after one clean launch: {} bytes",
+            history.len()
+        );
+    }
+
+    fn events<'a>(report: &'a Value, session: &str) -> Vec<&'a str> {
+        report["sessions"][session]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| event["event"].as_str().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn an_unclean_exit_is_reported_on_the_next_launch_and_a_clean_one_is_not() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("diagnostics");
+        let first = launch(&dir, "report").expect("first launch report");
+        assert_eq!(first["runtime"]["previousExitUnclean"], false);
+        assert_eq!(first["runtime"]["retainedAcrossRuns"], true);
+
+        launch(&dir, "killed");
+        let after_kill = launch(&dir, "report").expect("report after a kill");
+        assert_eq!(after_kill["runtime"]["previousExitUnclean"], true);
+        assert_eq!(
+            events(&after_kill, "previous"),
+            ["runtime.started", "watcher.batch"]
+        );
+        assert!(events(&after_kill, "current").contains(&"runtime.previous_exit_unclean"));
+
+        // That launch ended through mark_clean_shutdown, the RunEvent::Exit path.
+        let after_clean = launch(&dir, "report").expect("report after a clean exit");
+        assert_eq!(after_clean["runtime"]["previousExitUnclean"], false);
+        assert_eq!(
+            events(&after_clean, "previous").last(),
+            Some(&"runtime.clean_shutdown")
+        );
+    }
+
+    #[test]
+    fn a_panic_reaches_the_next_launch_without_its_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("diagnostics");
+        launch(&dir, "panic");
+        let report = launch(&dir, "report").expect("report after a panic");
+        assert_eq!(report["runtime"]["previousExitUnclean"], true);
+        assert!(events(&report, "previous").contains(&"runtime.panic"));
+        let history = std::fs::read_to_string(dir.join(crate::flight_store::HISTORY_FILE));
+        assert!(!report.to_string().contains("PRIVATE_PROBE_PAYLOAD"));
+        assert!(!history.unwrap().contains("PRIVATE_PROBE_PAYLOAD"));
+    }
+
+    #[test]
+    fn the_persisted_history_stays_within_its_bound() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("diagnostics");
+        launch(&dir, "flood");
+        let history = dir.join(crate::flight_store::HISTORY_FILE);
+        let size = std::fs::metadata(&history).unwrap().len();
+        assert!(size <= FLIGHT_MAX_BYTES as u64, "{size}");
+        assert!(
+            size > FLIGHT_MAX_BYTES as u64 - 200,
+            "the flood fills it: {size}"
+        );
+        let report = launch(&dir, "report").expect("report after a flood");
+        let previous = events(&report, "previous");
+        assert!(previous.len() > 10_000 && !previous.contains(&"runtime.started"));
+    }
+
+    #[test]
+    fn a_truncated_history_is_discarded_and_rebuilt_at_launch() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("diagnostics");
+        std::fs::create_dir_all(&dir).unwrap();
+        let history = dir.join(crate::flight_store::HISTORY_FILE);
+        std::fs::write(&history, "{\"schemaVersion\":1,\"elapsedMs\":0,\"ev").unwrap();
+        let report = launch(&dir, "report").expect("launch over a torn history");
+        assert!(events(&report, "previous").is_empty());
+        let rebuilt = std::fs::read_to_string(&history).unwrap();
+        assert!(rebuilt.ends_with('\n') && !rebuilt.contains("\"ev\n"));
+        for line in rebuilt.lines() {
+            let event: Value = serde_json::from_str(line).unwrap();
+            assert!(event["event"].is_string());
+        }
+    }
+
+    /// og ADR 0058 states the persisted bounds; the code must agree.
+    #[test]
+    fn the_adr_states_the_persisted_bounds_the_code_enforces() {
+        let adr = include_str!("../../docs/adr/0058-privacy-safe-diagnostic-flight-recorder.md");
+        assert_eq!(FLIGHT_MAX_BYTES, 1024 * 1024);
+        assert_eq!(
+            crate::flight_store::HISTORY_READ_CAP,
+            FLIGHT_MAX_BYTES as u64
+        );
+        for fact in [
+            "at most 1 MiB (1,048,576 bytes)".to_owned(),
+            format!("every {} s", FLUSH_INTERVAL.as_secs()),
+            format!("`{}`", crate::flight_store::HISTORY_FILE),
+            format!("`{}`", crate::flight_store::MARKER_FILE),
+            format!("`{}`", crate::flight_store::LOCK_FILE),
+            "`<app data>/diagnostics/`".to_owned(),
+        ] {
+            assert!(adr.contains(&fact), "og ADR 0058 must state {fact}");
+        }
     }
 }

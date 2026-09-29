@@ -1605,10 +1605,12 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
     async applySpellcheck(): Promise<void> { /* no native webview in the mock */ },
     // A representative set so the picker renders in the browser mock / harness.
     async listSpellcheckDictionaries(): Promise<string[]> { return ["cs_CZ", "de_DE", "en_GB", "en_US", "fr_FR", "sk_SK"]; },
-    async debugInfo(): Promise<DebugInfo> { return { enabled: false, path: "" }; },
+    async debugInfo(): Promise<DebugInfo> { return { enabled: false, path: "", recorderActive: false, previousExitUnclean: false }; },
     async debugLog(_line: string): Promise<void> { /* no-op in the browser mock */ },
     async diagnosticReport(): Promise<DiagnosticReport> { return { text: JSON.stringify({ schemaVersion: 1, sessions: { current: mockDiagnostics.map((kind) => ({ event: "frontend", kind })) } }, null, 2), suggestedFileName: "tine-diagnostics.json" }; },
+    async saveDiagnosticReport(): Promise<boolean> { return false; },
     async clearDiagnostics(): Promise<void> { mockDiagnostics.length = 0; },
+    async diagnosticSessionActive(): Promise<void> { /* no session marker in the mock */ },
     async diagnosticFrontendEvent(kind: DiagnosticFrontendKind): Promise<void> { mockDiagnostics.push(kind); },
     async appArchitecture(): Promise<string> { return "x86_64"; },
     async readHighlights(pdf: string): Promise<Highlight[]> {

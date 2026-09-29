@@ -120,7 +120,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "openPdf", "writeHighlights", "writePdfViewState", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setCaptureEnterFiles", "setLinkFirstMatch", "setWatchMode", "restoreBackup",
   "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
-  "debugLog", "diagnosticFrontendEvent", "clearDiagnostics",
+  "debugLog", "diagnosticFrontendEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
 ]);
 // All remaining Backend methods are reads, resource subscriptions, dialogs,
 // transient OS controls, or graph-binding controls. Adding a method requires

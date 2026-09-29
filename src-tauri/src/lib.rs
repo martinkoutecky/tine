@@ -16,6 +16,7 @@ mod device_io;
 #[cfg(test)]
 mod edit_kind_guard_tests;
 mod flight;
+mod flight_store;
 mod graph;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
@@ -658,6 +659,12 @@ pub fn run() {
             next_window: AtomicU64::new(1),
         })
         .setup(|app| {
+            // After the single-instance plugin: a forwarded second launch has
+            // already exited and cannot rotate the primary's diagnostics.
+            // Tauri's app-data path is the sandbox-private home on mobile too.
+            if let Ok(dir) = app.path().app_data_dir() {
+                flight::persist_init(dir.join("diagnostics"));
+            }
             diag("setup() begin");
             #[cfg(target_os = "linux")]
             {
@@ -925,6 +932,8 @@ pub fn run() {
             flight::diagnostic_frontend_event,
             flight::diagnostic_ipc_event,
             flight::diagnostic_report,
+            flight::diagnostic_session_active,
+            flight::save_diagnostic_report,
             tine_quit,
             close_graph_window,
             tine_open_devtools
@@ -933,6 +942,9 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                // `App::run` never returns, so the orderly end of a run is
+                // here: clear the unclean-exit marker (master d9763603).
+                flight::mark_clean_shutdown();
                 // tao delivers this callback for WM_ENDSESSION (Windows sign-out,
                 // restart, shutdown), but on that path its message loop neither
                 // receives WM_QUIT nor switches to an exiting ControlFlow.
@@ -1074,6 +1086,21 @@ mod platform_lifecycle_guard_tests {
             "GH #455: the RunEvent::Exit arm must call std::process::exit(0) on Windows, \
              because WM_ENDSESSION does not break tao's message loop"
         );
+    }
+
+    /// Master d9763603: `App::run` never returns, so a clean-shutdown call
+    /// placed after it never runs and every relaunch reports an unclean exit.
+    /// The orderly end is the `RunEvent::Exit` arm, before Windows' exit(0).
+    #[test]
+    fn the_exit_arm_clears_the_unclean_exit_marker_before_terminating() {
+        let source = lib_source();
+        let run = &source[source.find(".run(|_app, event|").expect("the event loop")..];
+        let run = &run[..run.find("});").expect("the end of the event loop")];
+        let clean = run
+            .find("flight::mark_clean_shutdown();")
+            .expect("RunEvent::Exit must call flight::mark_clean_shutdown()");
+        assert!(clean < run.find("std::process::exit(0)").unwrap());
+        assert!(source.contains("flight::persist_init(dir.join(\"diagnostics\"))"));
     }
 
     /// GH #446: the frontend's platform identity comes from the build

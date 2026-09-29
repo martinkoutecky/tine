@@ -45,6 +45,16 @@ export function recordDiagnostic(kind: DiagnosticFrontendKind, fields?: Diagnost
   );
 }
 
+/** Tell the recorder whether this mobile session is live (GH #426; see
+ * sessionActivity.ts). Best effort like `recordDiagnostic`: never rejects; a
+ * refusal is noted in the opt-in debug log. O(1) plus one IPC call. */
+export function recordSessionActive(active: boolean): Promise<void> {
+  return writeOwned(ownedWhen(), backend().diagnosticSessionActive(active)).then(
+    () => undefined,
+    () => dbg("diagnostic session edge unrecorded"),
+  );
+}
+
 /** Probe debug mode; always install the recorder's error listeners and
  *  heartbeat; if debug mode is on, also forward error text, log that the
  *  frontend booted, and tell the user where the log lives. Idempotent;
@@ -70,11 +80,20 @@ export async function initDebug(): Promise<void> {
     if (delay >= HEARTBEAT_REPORT_MS) void recordDiagnostic("heartbeat_delay", { delayMs: Math.round(delay) });
   }, HEARTBEAT_MS);
 
-  let info: { enabled: boolean; path: string };
+  let info: { enabled: boolean; path: string; previousExitUnclean?: boolean };
   try {
     info = await backend().debugInfo();
   } catch {
     return; // browser mock / command missing — nothing to do
+  }
+  // The persisted recorder found the previous run's session marker: it ended
+  // without an orderly exit (og ADR 0058). Its events are in the report.
+  if (info.previousExitUnclean) {
+    pushToast("Tine did not close cleanly last time. A privacy-safe diagnostic report is available.", "warn", {
+      sticky: true,
+      // ui.ts imports this module's dependents; load it only when clicked.
+      action: { label: "Diagnostics", run: () => void import("./ui").then((ui) => ui.openSettings("diagnostics")) },
+    });
   }
   if (!info.enabled) return;
   enabled = true;

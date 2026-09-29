@@ -67,7 +67,7 @@ import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
-import { initDebug, dbg, recordDiagnostic } from "./debug";
+import { initDebug, dbg, recordDiagnostic, recordSessionActive } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls } from "./nativeChrome";
 import {
@@ -93,6 +93,7 @@ import { currentPdfOwnership, drainPdfWork } from "./pdfOwnership";
 import { hlsPageName } from "./pdf";
 import type { InvalidRoute } from "./routeTypes";
 import { installBackgroundFlush } from "./backgroundFlush";
+import { installSessionActivity } from "./sessionActivity";
 import { initSettingsLayout } from "./settingsLayout";
 
 const Settings = lazy(() => import("./components/Settings").then((module) => ({ default: module.Settings })));
@@ -512,6 +513,11 @@ export function App(): JSX.Element {
     endEdit: () => endEdit("graph-switch"),
     flushAll,
     closeInFlight: safeClose.inFlight,
+  })));
+  // GH #426: on mobile an OS reap of a hidden app is not an unclean exit.
+  onMount(() => onCleanup(installSessionActivity({
+    isMobile: isMobilePlatform,
+    setActive: (active) => void recordSessionActive(active),
   })));
   let openCalendarJump = () => {};
   const topbarActions = {
