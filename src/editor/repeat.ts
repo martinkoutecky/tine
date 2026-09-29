@@ -4,7 +4,7 @@
 // occurrence and resets the marker to the workflow's open state. Pure + tested.
 
 import { leadingMarker, nextMarker, cycleMarker, setMarker, type Workflow } from "./marker";
-import { taskCheckboxState } from "../markers";
+import { matchLeadingMarker, taskCheckboxState } from "../markers";
 import { applyMarkerTransition } from "../logbook";
 import type { Format } from "../types";
 
@@ -79,11 +79,10 @@ export function rollRepeat(raw: string, workflow: Workflow): string | null {
       if (adv) lines[i] = `${m[1]}${m[2]}: ${adv}${m[4]}`;
     }
   }
-  const cur = leadingMarker(raw);
-  let first = lines[0];
-  if (cur) first = first.slice(cur.length).replace(/^ /, "");
-  lines[0] = first ? `${open} ${first}` : open;
-  return lines.join("\n");
+  // The marker is spliced at its recognized offsets (it may follow leading
+  // whitespace or a blank line); planning lines come after it, so their
+  // advance above leaves those offsets valid (C3 L14).
+  return setMarker(lines.join("\n"), open);
 }
 
 /** Toggle a task's checkbox the way OG's `check`/`uncheck` do: an OPEN task →
@@ -118,21 +117,23 @@ export function toggleTaskDone(raw: string, workflow: Workflow, time?: MarkerTim
   const state = taskCheckboxState(cur);
   if (state === null) return null;
 
-  const lines = raw.split("\n");
-  const rest = cur ? lines[0].slice(cur.length).replace(/^ /, "") : lines[0];
   if (state === true) {
     // DONE → open marker (uncheck).
-    const open = workflow === "now" ? "LATER" : "TODO";
-    lines[0] = rest ? `${open} ${rest}` : open;
-    const next = lines.join("\n");
+    const next = setMarker(raw, workflow === "now" ? "LATER" : "TODO");
     return time ? applyMarkerTransition(raw, next, time.format, time.enabled, time.withSeconds) : next;
   }
   // OPEN → DONE (check). A repeater rolls forward instead of closing.
   const rolled = rollRepeat(raw, workflow);
   if (rolled) return time ? applyMarkerTransition(raw, rolled, time.format, time.enabled, time.withSeconds) : rolled;
-  lines[0] = rest ? `DONE ${rest}` : "DONE";
-  const next = lines.join("\n");
+  const next = setMarker(raw, "DONE");
   return time ? applyMarkerTransition(raw, next, time.format, time.enabled, time.withSeconds) : next;
+}
+
+/** Offset just past the leading marker and its one separating space (0 with no
+ *  marker): the same prefix `cycleMarker` measures its caret delta over. */
+function markerPrefixEnd(raw: string): number {
+  const m = matchLeadingMarker(raw);
+  return m ? m.end + (raw[m.end] === " " ? 1 : 0) : 0;
 }
 
 /** Cycle the marker, but if the step would mark a *repeating* task DONE, roll it
@@ -142,11 +143,9 @@ export function cycleMarkerSmart(raw: string, workflow: Workflow, time?: MarkerT
   if (nextMarker(cur, workflow) === "DONE") {
     const rolled = rollRepeat(raw, workflow);
     if (rolled) {
-      const open = workflow === "now" ? "LATER" : "TODO";
-      const oldLen = cur ? cur.length + 1 : 0;
       return {
         raw: time ? applyMarkerTransition(raw, rolled, time.format, time.enabled, time.withSeconds) : rolled,
-        delta: open.length + 1 - oldLen,
+        delta: markerPrefixEnd(rolled) - markerPrefixEnd(raw),
       };
     }
   }

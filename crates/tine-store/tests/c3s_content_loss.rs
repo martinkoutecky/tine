@@ -229,6 +229,22 @@ fn f2_undo_crash_worker() {
     panic!("undo did not reach the withdraw abort point");
 }
 
+/// F3 (L14) reachability: a file line with two spaces after the bullet keeps the
+/// extra space in the block raw, so the editor's marker edits see `" TODO …"`
+/// (pinned by `src/editor/leadingMarkerSplice.test.ts`).
+#[test]
+fn f3_extra_space_after_bullet_stays_in_the_block_raw() {
+    let root = scratch("f3");
+    fs::write(root.join("pages/T.md"), "-  TODO buy milk\n").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    assert_eq!(
+        raws(&store, &PageId::from("pages/T.md")),
+        [" TODO buy milk"]
+    );
+    store.close();
+    let _ = fs::remove_dir_all(&root);
+}
+
 fn exists_anywhere(root: &Path, needle: &[u8]) -> bool {
     fn walk(dir: &Path, needle: &[u8]) -> bool {
         let Ok(entries) = fs::read_dir(dir) else {
