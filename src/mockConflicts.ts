@@ -57,6 +57,26 @@ function conflictInventory(): ConflictInventory {
   return { sync_conflicts, vcs_markers: [], queue };
 }
 
+// The page the sync-copy conflict above belongs to; its body matches the diff's
+// "mine" side and is long enough to scroll, so the in-page resolver and its
+// pinned dock are demonstrable in the browser mock (scripts/shot-conflict-dock.mjs).
+export function conflictDemoPages(): PageDto[] {
+  if (!conflictsDemo()) return [];
+  const blk = (raw: string, id: string) => ({ id, raw, collapsed: false, children: [] });
+  return [{
+    name: "Project Plan",
+    kind: "page",
+    title: "Project Plan",
+    pre_block: "title:: Project Plan",
+    blocks: [
+      blk("Milestones for the launch", "plan-0"),
+      blk("TODO ship the beta by Friday", "plan-1"),
+      blk("write the release notes", "plan-2"),
+      ...Array.from({ length: 60 }, (_, i) => blk(`launch checklist item ${i + 1} - status notes and follow-ups`, `plan-f${i}`)),
+    ],
+  }];
+}
+
 export const mockConflictApi = {
   async listSyncConflicts() {
     return listSyncConflicts();

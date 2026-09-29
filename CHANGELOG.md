@@ -86,6 +86,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **The conflict badge is always reachable, and closes the phone drawer** (og-F).
+  The sidebar's footer (the conflict badge and New page) sat one header-height below
+  the bottom of a short window, so a pending conflict could be invisible until you
+  scrolled the sidebar. It now fits, and on a phone tapping the badge closes the
+  navigation drawer so the Conflicts page opens in view instead of behind it.
+- **A failing tag table or conflict comparison no longer blanks the page** (og-F).
+  If reading them fails, the page shows a retryable error in that panel instead of
+  throwing while it renders.
+
 - **Red error messages stay until you close them, and offer Copy.** Every error
   is also noted in the privacy-safe diagnostic report (not its text) and, with
   `TINE_DEBUG=1`, written in full to the debug log (og OG-TOAST).

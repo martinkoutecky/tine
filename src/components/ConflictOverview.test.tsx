@@ -122,4 +122,14 @@ describe("the sidebar conflict badge", () => {
     expect(host.querySelector(".conflict-queue-badge")!.textContent).toBe("1 conflict");
     dispose();
   });
+
+  it("closes the mobile navigation drawer when it opens the overview", async () => {
+    const done = vi.fn();
+    const { host, dispose } = mount(() => <ConflictQueueBadge onActiveNavigationComplete={done} />);
+    setConflictInventory(inventory);
+    await tick();
+    (host.querySelector(".conflict-queue-badge") as HTMLElement).click();
+    expect(done).toHaveBeenCalledTimes(1);
+    dispose();
+  });
 });
