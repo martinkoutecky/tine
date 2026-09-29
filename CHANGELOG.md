@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **An image replaced outside Tine refreshes where it is shown** (master d017d1afc, 2f54a8d5e, og-J2).
+  A picture changed by an editor, Syncthing, Dropbox or another Tine window updates in place without reloading the page,
+  and one deleted outside shows its missing-image placeholder. This includes an `assets` link to an approved folder outside the
+  graph, even when it is reached through symlinked folders. An open PDF, audio or video is not swapped while you use it;
+  it shows the new file the next time you open it. Tine's own asset writes never echo back as outside changes, and the extra
+  watch is released when the graph closes.
 - **A query shown as a table or board exports as that table or board** (og E, 22c open item).
   A block whose whole body is one `{{query …}}` with `tine.view:: table` or `board` (a query `as table`/`as board` may override it)
   now publishes with the query's own columns and rows, on the page each row came from, computed by the
