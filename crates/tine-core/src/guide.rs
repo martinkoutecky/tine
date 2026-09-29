@@ -313,6 +313,17 @@ mod search_guide_tests {
 #[cfg(test)]
 mod rename_guide_tests {
     #[test]
+    fn editor_gestures_are_documented_in_the_bundled_guide() {
+        // Family 19: the code-block editor, nested drop and property autocomplete.
+        let tips = include_str!("templates/tips.md");
+        assert!(tips.contains("**Code blocks**: type ``` "));
+        assert!(tips.contains("only the code itself is in the text box"));
+        assert!(tips.contains("**Drag a bullet onto another bullet and move a little to the right**"));
+        assert!(tips.contains("that bullet's last child"));
+        assert!(tips.contains("Typing `::` at the start of a line inside a bullet starts a property"));
+    }
+
+    #[test]
     fn ctrl_y_redo_alias_is_documented_in_the_bundled_guide() {
         // GH #491: both redo chords, the platforms that get the second one, and
         // that remapping Redo replaces both.
