@@ -109,6 +109,10 @@ fn a_form_feed_indent_nests_as_lsdoc_measures_it() {
     let doc = parse(source);
     assert_eq!(raws(&doc.roots), ["a"]);
     assert_eq!(raws(&doc.roots[0].children), ["b"]);
+    // A form feed in a continuation's layout column is layout, not text.
+    let continued = parse("- a\n\u{c} c");
+    assert_eq!(raws(&continued.roots), ["a\nc"]);
+    assert_structural_round_trip("- a\n\u{c} c");
 }
 
 #[test]
