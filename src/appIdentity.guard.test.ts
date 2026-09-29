@@ -93,6 +93,21 @@ describe("app identity switch", () => {
     expect(seed).toBe(SHIP !== "release");
   });
 
+  it("docs/app-identity.md states the switch and the seed allowlist the code uses", () => {
+    const doc = fs.readFileSync(path.join(ROOT, "docs/app-identity.md"), "utf8");
+    for (const identity of Object.values(IDENTITIES as Record<string, Record<string, string>>)) {
+      for (const value of Object.values(identity)) expect(doc, value).toContain(`"${value}"`);
+    }
+    const seedPath = path.join(ROOT, "src-tauri/src/experiment_config_seed.rs");
+    if (!fs.existsSync(seedPath)) return;
+    const block = /const CONFIG_ENTRIES: &\[&str\] = &\[([\s\S]*?)\];/.exec(fs.readFileSync(seedPath, "utf8"));
+    const entries = [...(block?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    expect(entries.length).toBeGreaterThan(0);
+    const documented = /allowlist \(([^)]*)\)/.exec(doc.replace(/\s+/g, " "))?.[1] ?? "";
+    expect([...documented.matchAll(/`([^`]+)`/g)].map((match) => match[1].replace(/\/$/, ""))
+      .filter((entry) => !entry.startsWith("."))).toEqual(entries);
+  });
+
   it("no source outside the switch and its derived files spells an identity", () => {
     const pattern = identityLiterals();
     const scanned = [
