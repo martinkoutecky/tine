@@ -149,6 +149,10 @@ pub const GUIDE_TEMPLATES: &[GuideTemplate] = &[
         markdown: include_str!("templates/extend-tine.md"),
     },
     GuideTemplate {
+        title: "Reference/Command line",
+        markdown: include_str!("templates/command-line.md"),
+    },
+    GuideTemplate {
         title: "Reference/Platforms and mobile",
         markdown: include_str!("templates/platforms-and-mobile.md"),
     },
@@ -687,12 +691,7 @@ mod og_20d_guide_tests {
         }
         // og has no search index: no page may describe rebuilding or waiting on one.
         for page in GUIDE_TEMPLATES {
-            for forbidden in [
-                "Rebuild the index",
-                "Indexing…",
-                "Managed Storage",
-                "Reference/Command line",
-            ] {
+            for forbidden in ["Rebuild the index", "Indexing…", "Managed Storage"] {
                 assert!(
                     !page.markdown.contains(forbidden),
                     "{} documents a feature og does not have: {forbidden}",
@@ -700,6 +699,35 @@ mod og_20d_guide_tests {
                 );
             }
         }
+    }
+
+    /// og-D D4 (master e7af4db9c): the command-line reference names every shipped
+    /// command and og's create-only export contract, and the guide index links it.
+    #[test]
+    fn command_line_reference_covers_the_shipped_surface_and_safety_defaults() {
+        let cli = page("Reference/Command line");
+        for promised in [
+            "tine --help",
+            "tine --version",
+            "tine open GRAPH",
+            "tine capture",
+            "tine export static GRAPH",
+            "tine export live GRAPH",
+            "tine doctor GRAPH",
+            "--output PARENT",
+            "absolute path",
+            "refuses to replace",
+            "man tine",
+        ] {
+            assert!(cli.contains(promised), "Guide omitted {promised}");
+        }
+        for stale in ["--replace", "graph-relative", "--home"] {
+            assert!(
+                !cli.contains(stale),
+                "og export has no {stale}; master-only wording leaked in"
+            );
+        }
+        assert!(page("Tine Guide").contains("[[Reference/Command line]]"));
     }
 
     /// og 21a: a live-draft conflict is merged at the page and survives a

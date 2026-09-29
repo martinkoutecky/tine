@@ -59,6 +59,32 @@
     "android": {
       "versionCode": 6005
     },
+    "linux": {
+      "deb": {
+        "files": {
+          "usr/share/man/man1/tine.1": "../docs/tine.1",
+          "usr/share/man/man1/tine-open.1": "../docs/tine-open.1",
+          "usr/share/man/man1/tine-capture.1": "../docs/tine-capture.1",
+          "usr/share/man/man1/tine-export.1": "../docs/tine-export.1",
+          "usr/share/man/man1/tine-export-static.1": "../docs/tine-export-static.1",
+          "usr/share/man/man1/tine-export-live.1": "../docs/tine-export-live.1",
+          "usr/share/man/man1/tine-doctor.1": "../docs/tine-doctor.1",
+          "usr/share/man/man1/tine-version.1": "../docs/tine-version.1"
+        }
+      },
+      "rpm": {
+        "files": {
+          "/usr/share/man/man1/tine.1": "../docs/tine.1",
+          "/usr/share/man/man1/tine-open.1": "../docs/tine-open.1",
+          "/usr/share/man/man1/tine-capture.1": "../docs/tine-capture.1",
+          "/usr/share/man/man1/tine-export.1": "../docs/tine-export.1",
+          "/usr/share/man/man1/tine-export-static.1": "../docs/tine-export-static.1",
+          "/usr/share/man/man1/tine-export-live.1": "../docs/tine-export-live.1",
+          "/usr/share/man/man1/tine-doctor.1": "../docs/tine-doctor.1",
+          "/usr/share/man/man1/tine-version.1": "../docs/tine-version.1"
+        }
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

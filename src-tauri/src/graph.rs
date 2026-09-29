@@ -26,7 +26,8 @@ pub(crate) fn begin_warm_cache(slot: &GraphSlot) -> u64 {
     slot.warm_generation.fetch_add(1, Ordering::AcqRel) + 1
 }
 
-/// Resolve the graph root: explicit path, else env var, else first CLI arg.
+/// Resolve the graph root: explicit path, else env var, else the graph named by
+/// the launch command line (`cli::launch_request`; desktop only).
 pub(crate) fn resolve_root(path: &str) -> Option<String> {
     if !path.is_empty() {
         return Some(path.to_string());
@@ -38,12 +39,11 @@ pub(crate) fn resolve_root(path: &str) -> Option<String> {
             }
         }
     }
-    let args: Vec<_> = std::env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
-        Some("open") => args.get(1).cloned(),
-        Some("capture") => None,
-        _ => args.into_iter().find(|arg| !arg.starts_with('-')),
+    #[cfg(desktop)]
+    if let crate::cli::LaunchRequest::Open(path) = crate::cli::launch_request_env() {
+        return Some(path.display().to_string());
     }
+    None
 }
 
 /// A remembered path is optional startup state: a moved or deleted graph

@@ -27,6 +27,7 @@ icon:: 🧭
   - [[tine-guide/Reference/Troubleshooting and recovery]] — follow numbered recovery steps for the changed-on-disk banner, deleted pages, snapshots, conflict copies, duplicate days, a graph that will not open, and a region that fails to display.
   - [[tine-guide/Reference/Journals, tasks, and scheduling]] — map journal setup, task markers and priorities, scheduling dates, the agenda, time tracking, and repeating tasks.
   - [[tine-guide/Reference/Pages, links, references, and search]] — the exact rules for pages, links, tags, aliases, block references, reference panels, and every search surface.
+  - [[tine-guide/Reference/Command line]] — open a graph, start Quick Capture, check a graph, or publish a static or live export from a terminal.
   - [[tine-guide/Reference/Platforms and mobile]] — learn what changes on a narrow window versus on the Android app, and what ships on each platform today.
 - ## Feature showcase
   - [[tine-guide/Feature showcase]] — inspect one live example of each supported Logseq rendering feature.

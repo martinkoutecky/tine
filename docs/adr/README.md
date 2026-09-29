@@ -80,3 +80,4 @@ see the project `CLAUDE.md`.
 | [0059](0059-bounded-theme-presentation-presets.md) | Theme API 0.2 adds bounded host-owned typography, journal-header, and Today-summary presets | Accepted |
 | [0061](0061-crash-surviving-unsaved-drafts.md) | Unsaved drafts survive a crash in one app-data draft store (only while a page cannot be saved; bounded; 8e capsule is a record in it) | Accepted |
 | [0062](0062-whole-graph-text-snapshots.md) | Launch snapshots cover graph text across the whole graph (schema 3, master's wire format; og-B port of ffb4cb3d7) | Proposed |
+| [0068](0068-bounded-desktop-cli.md) | The desktop binary exposes a bounded, scriptable CLI: one clap schema owns parse, help, man pages and forwarded launches (og-D port of master 0068) | Proposed |

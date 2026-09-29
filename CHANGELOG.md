@@ -16,6 +16,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   exists on only one side or differs. It reads files only, reports paths and
   checksums (never contents), can be cancelled, and never confirms a match from
   a scan that was disturbed while it ran.
+- **A command line you can rely on** (master e7af4db9c, og-D). `tine --help`,
+  `tine --version`, `tine open GRAPH`, `tine capture`, `tine doctor GRAPH` and
+  `tine export static|live GRAPH --output PARENT` share one documented schema,
+  and Linux `.deb` and `.rpm` packages install a generated `man tine`. On Windows
+  the terminal commands now print into the console that launched them. See the
+  new Guide page Reference/Command line.
 - **A conflict can no longer scroll out of sight** (master 61ea6600c, og A).
   Once the in-page review scrolls above the window, a slim bar pins to the top
   of the pane; tapping it unrolls the same review in place, with your choices
@@ -75,6 +81,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- `tine open GRAPH` while Tine is already running now opens that graph in a new
+  window; the second launch used to be read as a page called "open" and opened the
+  wrong folder (master e7af4db9c, og-D).
 - **An edit made while a graph switch was already under way is no longer
   dropped** (og A). Tine saves once more right before it opens the other graph,
   and stays on the current graph if that edit cannot be saved.

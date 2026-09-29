@@ -44,11 +44,15 @@ libc = "0.2"
 # the identifier-rename migration can run BEFORE the webview creates its store.
 # `dirs::data_dir()` is the exact base Tauri v2's `app_data_dir()` joins the id onto.
 dirs = "6"
+# One schema owns parsing, --help, man pages and the forwarded-launch request
+# (ADR 0068 on master; the hand-rolled parser split those across three places).
+clap = { version = "4.5", features = ["derive"] }
 tine-core = { path = "../crates/tine-core" }
 tine-store = { path = "../crates/tine-store" }
 tine-graph-features = { path = "../crates/tine-graph-features" }
 
 [dev-dependencies]
+clap_mangen = "0.2"
 tempfile = "3"
 tine-store = { path = "../crates/tine-store", features = ["test-faults"] }
 
@@ -60,7 +64,7 @@ tine-store = { path = "../crates/tine-store", features = ["test-faults"] }
 tauri-plugin-opener = "2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console"] }
 # Windows uses Schannel through native-tls: the default rustls transport does
 # not inherit every Windows network/certificate policy and failed before
 # fetching latest.json on an otherwise-online Windows 11 system (GH #241).

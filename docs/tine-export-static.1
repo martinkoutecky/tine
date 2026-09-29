@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-export-static 1  "static " 
+.SH NAME
+tine\-export\-static \- Write the static HTML site
+.SH SYNOPSIS
+\fBtine export static\fR <\fB\-\-output\fR> [\fB\-\-debug\fR] [\fB\-\-name\fR] [\fB\-\-all\-pages\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIGRAPH\fR> 
+.SH DESCRIPTION
+Write the static HTML site
+.SH OPTIONS
+.TP
+\fB\-\-output\fR \fI<PARENT>\fR
+Existing absolute folder outside the graph; a new child is created in it
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-\-name\fR \fI<NAME>\fR
+Name of the created child and of the published site. Defaults to the graph folder name
+.TP
+\fB\-\-all\-pages\fR
+Publish every page, ignoring `public:: true` selection for this run
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIGRAPH\fR>
+
