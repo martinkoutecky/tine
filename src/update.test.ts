@@ -70,10 +70,11 @@ async function loadUpdate(opts: {
   };
 }
 
-function mockLatest(tag: string, ok = true) {
+/** The og-preview channel release: fixed tag, the build's version in its NAME. */
+function mockLatest(version: string, ok = true) {
   const fetchMock = vi.fn(async () => ({
     ok,
-    json: async () => ({ tag_name: tag }),
+    json: async () => ({ tag_name: "og-preview", name: `OG preview ${version}` }),
   }));
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -83,6 +84,59 @@ describe("update checks", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("reads only the og-preview channel, never the shipped Tine's releases/latest", async () => {
+    const fetchMock = mockLatest("v0.6.0");
+    const { update } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
+
+    await update.checkForUpdate();
+    await update.checkForUpdateNow();
+
+    expect(fetchMock.mock.calls.length).toBe(2);
+    for (const call of fetchMock.mock.calls as unknown as [string][]) {
+      expect(call[0]).toBe("https://api.github.com/repos/martinkoutecky/tine/releases/tags/og-preview");
+    }
+  });
+
+  it("offers nothing and raises no toast when the og-preview release does not exist", async () => {
+    const fetchMock = mockLatest("v9.9.9", false); // GitHub answers 404
+    const { update, pushToastMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
+
+    await update.checkForUpdate();
+    await expect(update.checkForUpdateNow()).resolves.toEqual({ kind: "unavailable" });
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(pushToastMock).not.toHaveBeenCalled();
+  });
+
+  it("does not misread a release whose name carries no version (or only a tag)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ tag_name: "v0.6.987" }) })));
+    const { update, pushToastMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
+
+    await update.checkForUpdate();
+    await expect(update.checkForUpdateNow()).resolves.toEqual({ kind: "unavailable" });
+
+    expect(pushToastMock).not.toHaveBeenCalled();
+  });
+
+  it("reports current and stays quiet when the preview is not newer", async () => {
+    mockLatest("v0.5.3");
+    const { update, pushToastMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
+
+    await update.checkForUpdate();
+    await expect(update.checkForUpdateNow()).resolves.toEqual({ kind: "current", version: "0.5.3" });
+
+    expect(pushToastMock).not.toHaveBeenCalled();
+  });
+
+  it("points the manual releases fallback at the og-preview release page", async () => {
+    mockLatest("v0.6.0");
+    const { update, openExternalMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
+
+    update.openReleasesPage();
+
+    expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/tag/og-preview");
   });
 
   it.each(["android", "ios"] as const)("never checks or offers self-update on %s", async (platform) => {

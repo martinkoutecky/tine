@@ -1,7 +1,8 @@
 // "A newer Tine is available" check — best-effort, once per launch.
 //
-// Notifier: ask GitHub for the latest *published* release and, if it's newer than
-// the running build, show a sticky toast. This is the cross-platform half and is
+// Notifier: ask GitHub for the og-preview channel release (NEVER `releases/latest`,
+// which is the shipped Tine — see PREVIEW_TAG) and, if it's newer than the running
+// build, show a sticky toast. This is the cross-platform half and is
 // always the way a user LEARNS an update exists.
 //
 // Installer (the toast's action): on **Windows/Linux** in the packaged app, run the
@@ -28,8 +29,16 @@ import { openSettings } from "./ui";
 import { reportUiFailure } from "./uiFailure";
 
 const REPO = "martinkoutecky/tine";
-const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
-const LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
+/** THE update channel (og-only). This build (`page.tine.TineOG`) must never read
+ * the repo's `releases/latest`: that is the shipped Tine, whose newer version
+ * number would be offered here and installing it would REPLACE og with master.
+ * The channel is the one fixed-tag GitHub release below; the Tauri updater's
+ * endpoint in `tauri.conf.json` points at the same tag (guard:
+ * `src/updateChannel.guard.test.ts`). The release's *name* must contain the
+ * preview build's `X.Y.Z` (the tag itself, `og-preview`, carries no version). */
+const PREVIEW_TAG = "og-preview";
+const RELEASES_PAGE = `https://github.com/${REPO}/releases/tag/${PREVIEW_TAG}`;
+const LATEST_API = `https://api.github.com/repos/${REPO}/releases/tags/${PREVIEW_TAG}`;
 
 /** Parse the first `X.Y.Z` out of a version/tag string (`v0.3.0`, `0.3.0`, …). */
 function parseVer(s: string): [number, number, number] | null {
@@ -299,23 +308,26 @@ export async function offerUpdate(version: string, current: string): Promise<voi
   );
 }
 
-/** Check GitHub for a newer published release; toast if there is one. Resolves
- *  silently (never throws) in every failure case. */
+/** The version the og-preview channel currently offers, or null when the release
+ *  does not exist / is unreachable / names no version. Throws only on network
+ *  failure (callers absorb it). Reads the release NAME, never the tag. */
+async function previewVersion(): Promise<[number, number, number] | null> {
+  const res = await fetch(LATEST_API, { headers: { Accept: "application/vnd.github+json" } });
+  if (!res.ok) return null; // 404 = no preview release yet: not an error
+  const data: unknown = await res.json();
+  const name = (data as { name?: unknown })?.name;
+  return typeof name === "string" ? parseVer(name) : null;
+}
+
+/** Check the og-preview channel for a newer build; toast if there is one.
+ *  Resolves silently (never throws) in every failure case. */
 export async function checkForUpdate(): Promise<void> {
   if ((await updateMode()) === "unavailable") return;
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
     const cur = parseVer(await getVersion());
     if (!cur) return;
-
-    // `/releases/latest` is the newest NON-prerelease, NON-draft release.
-    const res = await fetch(LATEST_API, {
-      headers: { Accept: "application/vnd.github+json" },
-    });
-    if (!res.ok) return;
-    const data: unknown = await res.json();
-    const tag = (data as { tag_name?: unknown })?.tag_name;
-    const latest = typeof tag === "string" ? parseVer(tag) : null;
+    const latest = await previewVersion();
     if (!latest || !isNewer(latest, cur)) return;
     await offerUpdate(latest.join("."), cur.join("."));
   } catch {
@@ -326,27 +338,20 @@ export async function checkForUpdate(): Promise<void> {
 export type UpdateStatus =
   | { kind: "current"; version: string }
   | { kind: "available"; version: string; current: string }
-  | { kind: "unavailable" }; // offline, rate-limited, or not the packaged app
+  | { kind: "unavailable" }; // offline, rate-limited, no preview release, or not the packaged app
 
 /** The About tab's explicit "Check for updates" button. Unlike `checkForUpdate`
  *  (silent on the common no-update path), this reports every outcome so the
  *  button can show feedback. Checking never installs by itself: an available
- *  release gets an explicit Install update action in a sticky toast. Never throws. */
+ *  build gets an explicit Install update action in a sticky toast. Never throws. */
 export async function checkForUpdateNow(): Promise<UpdateStatus> {
   if ((await updateMode()) === "unavailable") return { kind: "unavailable" };
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
-    const curStr = await getVersion();
-    const cur = parseVer(curStr);
+    const cur = parseVer(await getVersion());
     if (!cur) return { kind: "unavailable" };
-
-    const res = await fetch(LATEST_API, { headers: { Accept: "application/vnd.github+json" } });
-    if (!res.ok) return { kind: "unavailable" };
-    const data: unknown = await res.json();
-    const tag = (data as { tag_name?: unknown })?.tag_name;
-    const latest = typeof tag === "string" ? parseVer(tag) : null;
+    const latest = await previewVersion();
     if (!latest) return { kind: "unavailable" };
-
     if (isNewer(latest, cur)) {
       const version = latest.join(".");
       const current = cur.join(".");
@@ -359,7 +364,7 @@ export async function checkForUpdateNow(): Promise<UpdateStatus> {
   }
 }
 
-/** Open the GitHub releases page (exported for the About tab's manual link). */
+/** Open the og-preview releases page (exported for the About tab's manual link). */
 export function openReleasesPage(): void {
   openReleases();
 }
