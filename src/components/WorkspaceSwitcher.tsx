@@ -22,7 +22,16 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
   let editInput: HTMLInputElement | undefined;
   const [hoverOpen, setHoverOpen] = createSignal(false);
   const [menuOpen, setMenuOpen] = createSignal(false);
+  // The edit's identity and its typed text are separate signals on purpose. The
+  // form renders under a keyed <Show>; keying it on a state object rebuilt on
+  // every keystroke replaced the <input> each time and destroyed any IME
+  // composition in progress (master GH #498).
   const [edit, setEdit] = createSignal<EditState | null>(null);
+  const [editValue, setEditValue] = createSignal("");
+  const openEdit = (state: EditState) => {
+    setEditValue(state.value);
+    setEdit(state);
+  };
   const active = createMemo(() => workspaces().find((workspace) => workspace.id === activeWorkspaceId()));
 
   const closeMenu = () => {
@@ -59,7 +68,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
   const submitEdit = () => {
     const state = edit();
     if (!state) return;
-    const name = state.value.trim();
+    const name = editValue().trim();
     if (!name) return;
     setEdit(null);
     if (state.kind === "new") report(createWorkspace(name), "Couldn't create workspace");
@@ -141,7 +150,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
                   class="workspace-menu-action"
                   aria-label={`Rename ${workspaceDisplayName(workspace)}`}
                   title="Rename"
-                  onClick={() => setEdit({ kind: "rename", id: workspace.id, value: workspaceDisplayName(workspace) })}
+                  onClick={() => openEdit({ kind: "rename", id: workspace.id, value: workspaceDisplayName(workspace) })}
                 >
                   Rename
                 </button>
@@ -162,7 +171,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
             type="button"
             role="menuitem"
             class="workspace-new-btn"
-            onClick={() => setEdit({ kind: "new", value: "" })}
+            onClick={() => openEdit({ kind: "new", value: "" })}
           >
             + New workspace
           </button>
@@ -181,10 +190,13 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
                   aria-label={state.kind === "new" ? "New workspace name" : "Workspace name"}
                   value={state.value}
                   maxlength={80}
-                  onInput={(event) => setEdit({ ...state, value: event.currentTarget.value })}
-                  onKeyDown={(event) => { if (event.key === "Escape") setEdit(null); }}
+                  onInput={(event) => setEditValue(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.isComposing || event.keyCode === 229) return;
+                    if (event.key === "Escape") setEdit(null);
+                  }}
                 />
-                <button type="submit" disabled={!state.value.trim()}>{state.kind === "new" ? "Create" : "Save"}</button>
+                <button type="submit" disabled={!editValue().trim()}>{state.kind === "new" ? "Create" : "Save"}</button>
               </form>
             )}
           </Show>

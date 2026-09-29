@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Show, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
+import { PUBLISHED_META_NAME } from "../publishedBackend";
 import { invalidateBinding } from "../binding";
 import { initParser } from "../render/parse";
 import { installExternalChangeUiHandler, pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, undo, moveBlockFeed } from "../document";
@@ -748,6 +749,30 @@ describe("tag-page table", () => {
     await vi.waitFor(() => expect(editingId()).toBe(newId));
 
     dispose();
+  });
+
+  // Master GH #549 sibling: a published export has no query engine behind
+  // `queryRun` and cannot save the property the toggle writes. It must neither
+  // ask (a refusal counted as a reason to show the button) nor offer the toggle.
+  it("asks no query and offers no tag-table toggle in a published export", async () => {
+    setDoc({ byId: {}, pages: [page("Tag", "page", [])], feed: ["Tag"] });
+    const meta = document.createElement("meta");
+    meta.name = PUBLISHED_META_NAME;
+    meta.content = "snapshot.json";
+    document.head.append(meta);
+    try {
+      const parse = vi.spyOn(backend(), "parseQuery");
+      const run = vi.spyOn(backend(), "queryRun");
+      const { root, dispose } = mount(() => <TagTableToggle page={page("Tag", "page", [])} />);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      await tick();
+      expect(root.querySelector(".tag-table-toggle")).toBeNull();
+      expect(parse).not.toHaveBeenCalled();
+      expect(run).not.toHaveBeenCalled();
+      dispose();
+    } finally {
+      meta.remove();
+    }
   });
 });
 

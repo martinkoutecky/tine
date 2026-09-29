@@ -5,6 +5,7 @@ import { render } from "solid-js/web";
 import { makePdfRoute, type PdfRoute } from "../router";
 import { publishPdfNavigationIntent } from "../pdfNavigation";
 import { backend } from "../backend";
+import { PUBLISHED_META_NAME } from "../publishedBackend";
 import { setToasts, toasts } from "../toasts";
 import type { Highlight } from "../types";
 import { loadFeed, resetStore } from "../document";
@@ -322,6 +323,39 @@ describe("PdfViewer resource safety", () => {
       expect(document.activeElement).not.toBe(input);
       expect(input.value).toBe("2");
     } finally { dispose(); }
+  });
+
+  // Master GH #549 sibling: a published export opens PDFs but has no sidecar to
+  // write. The debounced save after a zoom, and the flush on close, were refused
+  // and each toasted "Couldn't save PDF view position".
+  it("does not try to save the view position in a published export", async () => {
+    const meta = document.createElement("meta");
+    meta.name = PUBLISHED_META_NAME;
+    meta.content = "snapshot.json";
+    document.head.append(meta);
+    setToasts([]);
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 2, scale: 2 });
+    const writeState = vi.spyOn(backend(), "writePdfViewState").mockRejectedValue(new Error("read-only export"));
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792), page(612, 792)])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    try {
+      await flush();
+      vi.useFakeTimers();
+      (host.querySelector('button[title="Zoom in"]') as HTMLButtonElement).click();
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(host.querySelector(".pdf-zoom-level")?.textContent).toBe("220%");
+    } finally {
+      dispose();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+      meta.remove();
+    }
+    expect(writeState).not.toHaveBeenCalled();
+    expect(toasts()).toEqual([]);
+    setToasts([]);
   });
 
   it("does not publish a false page one while zoom is settling", async () => {

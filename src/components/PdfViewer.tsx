@@ -4,6 +4,7 @@ import { sanitizeOutlineItems, type PdfOutlineItem } from "./pdfOutline";
 import { PdfViewerView } from "./pdfViewerView";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
+import { isPublishedExport } from "../publishedBackend";
 import { captureBinding } from "../binding";
 import { graphOwner, latestOwner, readOwned, serializeDurable, writeOwned } from "../owned";
 import { errorFamily } from "../errorFamily";
@@ -331,6 +332,9 @@ export function PdfViewer(props: {
     if (!viewStateReady || !Number.isFinite(nextScale) || nextScale <= 0) return;
     if (viewStateBaseline?.page === page && viewStateBaseline?.scale === nextScale) return;
     props.onViewState?.({ page, scale: nextScale });
+    // A published export opens PDFs read-only: there is no sidecar to write, and
+    // the refused save toasted after every zoom or scroll (master GH #549).
+    if (isPublishedExport()) return;
     pendingViewState = { page, scale: nextScale };
     if (viewStateTimer !== undefined) clearTimeout(viewStateTimer);
     viewStateTimer = window.setTimeout(() => {

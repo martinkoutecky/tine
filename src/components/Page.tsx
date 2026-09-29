@@ -10,6 +10,7 @@ import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
 import { blockRef, isConflicted } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
+import { isPublishedExport } from "../publishedBackend";
 import { pushToast } from "../toasts";
 import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
@@ -621,7 +622,7 @@ export function PageView(): JSX.Element {
               <NamespaceHierarchy name={pagesToRender()[0].name} />
             </Show>
             <Show
-              when={pagesToRender()[0].kind === "page" && !pagesToRender()[0].guide && tagTableEnabled(pagesToRender()[0].name)}
+              when={pagesToRender()[0].kind === "page" && !pagesToRender()[0].guide && tagTableEnabled(pagesToRender()[0].name) && !isPublishedExport()}
               fallback={
                 <Show when={!pagesToRender()[0].guide}>
                   <FailureBoundary region="Linked References">
@@ -1145,12 +1146,16 @@ async function tagTableGroups(pageName: string, owners: object): Promise<{ group
 
 export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
   const owners = {};
+  // A published export has no query engine behind `queryRun` and cannot save the
+  // page property this button toggles, so it offers no toggle and asks nothing
+  // (master GH #549).
+  const live = !isPublishedExport();
   const [groups] = createResource(
-    () => (props.page.kind === "page" ? `${props.page.name}\0${dataRev()}` : null),
+    () => (live && props.page.kind === "page" ? `${props.page.name}\0${dataRev()}` : null),
     () => tagTableGroups(props.page.name, owners)
   );
   const enabled = () => tagTableEnabled(props.page.name);
-  const visible = () => props.page.kind === "page" && (enabled() || taggedCount(readOr(groups, undefined, "tag table toggle")?.groups) > 0);
+  const visible = () => live && props.page.kind === "page" && (enabled() || taggedCount(readOr(groups, undefined, "tag table toggle")?.groups) > 0);
   return (
     <Show when={visible()}>
       <button

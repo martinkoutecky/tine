@@ -120,4 +120,28 @@ describe("WorkspaceSwitcher", () => {
     expect(confirm).toHaveBeenCalledWith("Delete workspace “Alpha”?", "Delete workspace");
     expect(activeWorkspaceId()).not.toBe("default");
   });
+  // Master GH #498: the name field was rendered under a keyed <Show> whose key
+  // was the whole edit state, and every input event replaced that state, so each
+  // keystroke rebuilt the <input>. Latin typing survives that; an IME
+  // composition does not, because its element is destroyed mid-composition.
+  it("keeps the same name field while the user types, so an IME composition survives", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    dispose = render(() => <WorkspaceSwitcher />, host);
+    host.querySelector<HTMLButtonElement>(".workspace-switcher-btn")!.click();
+    host.querySelector<HTMLButtonElement>(".workspace-new-btn")!.click();
+
+    const field = host.querySelector<HTMLInputElement>(".workspace-edit-input")!;
+    expect(field).not.toBeNull();
+    field.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    for (const typed of ["工", "工作", "工作区"]) {
+      field.value = typed;
+      field.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true }));
+      expect(host.querySelector(".workspace-edit-input")).toBe(field);
+    }
+    field.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "工作区" }));
+    expect(field.value).toBe("工作区");
+    const submit = host.querySelector<HTMLButtonElement>(".workspace-edit-form button[type=submit]")!;
+    expect(submit.disabled).toBe(false);
+  });
 });
