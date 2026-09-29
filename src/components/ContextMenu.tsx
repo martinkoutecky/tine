@@ -1035,6 +1035,7 @@ function blockActions(id: string, x: number, y: number): { label: string; run: (
     return [
       { label: "Open in sidebar", run: () => { void openDurableBlock(id, "sidebar"); } },
       { label: "Zoom into block", run: () => zoomInto(id) },
+      { label: "Open in new tab", run: () => { void openDurableBlock(id, "tab"); } },
       { label: "Copy block", run: () => copyBlock(id) },
       {
         label: "Copy / export as…",
@@ -1048,6 +1049,7 @@ function blockActions(id: string, x: number, y: number): { label: string; run: (
   return [
     { label: "Open in sidebar", run: () => { void openDurableBlock(id, "sidebar"); } },
     { label: "Zoom into block", run: () => zoomInto(id) },
+    { label: "Open in new tab", run: () => { void openDurableBlock(id, "tab"); } },
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: "Properties…", run: () => openBlockProps(id, x, y) },
     // The keyboard route to "a block above this one" is Enter at offset 0, which

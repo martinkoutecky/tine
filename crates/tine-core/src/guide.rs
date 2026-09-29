@@ -180,6 +180,23 @@ mod journal_guide_tests {
 }
 
 #[cfg(test)]
+mod parity_guide_tests {
+    #[test]
+    fn tips_cover_home_and_settings_parity() {
+        let tips = include_str!("templates/tips.md");
+        for phrase in [
+            "Settings → Graph",
+            "Settings → Shortcuts",
+            "Settings → Appearance",
+            "Toggle maximize active pane",
+            "Open in new tab",
+        ] {
+            assert!(tips.contains(phrase), "Tips missing {phrase}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod search_guide_tests {
     #[test]
     fn friendly_search_sections_scope_and_save_are_documented() {

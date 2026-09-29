@@ -20,24 +20,9 @@ import { navigationName } from "./pageIndex";
 import { forgetDeletedFavorite, renameFavorite } from "./favorites";
 import { changeGraphSetting, writeGraphSignal } from "./graphPreferences";
 
-const THEME_KEY = "logseq-claude.theme";
-function loadTheme(): "light" | "dark" {
-  try {
-    const t = localStorage.getItem(THEME_KEY);
-    if (t === "dark" || t === "light") return t;
-  } catch {
-    if (typeof localStorage !== "undefined") pushToast("Could not load theme preference.", "error");
-  }
-  return "light";
-}
-export const [theme, setTheme] = createSignal<"light" | "dark">(loadTheme());
-
-/** Apply stored theme at startup; native system-bar update runs async and toasts on failure. */
-export function applyTheme() {
-  document.documentElement.setAttribute("data-theme", theme());
-  void backend().setSystemBarAppearance(theme() === "dark")
-    .catch(() => pushToast("Could not update system bar appearance.", "error"));
-}
+export { appearancePreference, theme, resolveTheme, applyTheme, setAppearancePreference } from "./themePreference";
+export type { ThemePreference } from "./themePreference";
+import { theme, setAppearancePreference } from "./themePreference";
 
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
 export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
@@ -109,6 +94,12 @@ function saveStr(key: string, val: string | null): boolean {
     pushToast("Could not save display preference.", "error");
     return false;
   }
+}
+
+/** Persist the device theme through the shared display-preference writer.
+ * Returns whether storage accepted it; errors show the existing toast. */
+export function persistThemePreference(key: string, value: string): boolean {
+  return saveStr(key, value);
 }
 
 const ACCENT_KEY = "logseq-claude.accent";
@@ -525,18 +516,10 @@ export async function exitFocusMode() {
   }
 }
 
+/** Toggle the resolved palette between Light and Dark. A System choice becomes
+ * the opposite manual palette; persistence and native appearance follow. */
 export function toggleTheme() {
-  const next = theme() === "light" ? "dark" : "light";
-  try {
-    localStorage.setItem(THEME_KEY, next);
-  } catch {
-    pushToast("Could not save theme preference.", "error");
-    return;
-  }
-  setTheme(next);
-  document.documentElement.setAttribute("data-theme", next);
-  void backend().setSystemBarAppearance(next === "dark")
-    .catch(() => pushToast("Could not update system bar appearance.", "error"));
+  setAppearancePreference(theme() === "light" ? "dark" : "light");
 }
 
 // Left sidebar open/collapsed — persisted (default open; store only when collapsed).

@@ -63,6 +63,18 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
   }
   const menuLabels = () => [...document.querySelectorAll(".ctx-item")].map((e) => e.textContent?.trim() ?? "");
 
+  it("offers a durable new-tab destination for writable and read-only blocks", () => {
+    for (const readOnly of [false, true]) {
+      load(readOnly);
+      const dispose = mount(() => <ContextMenu />);
+      openContextMenu(10, 10, "leaf");
+      expect(menuLabels()).toContain("Open in new tab");
+      dispose();
+      closeContextMenu();
+      resetStore();
+    }
+  });
+
   it("offers block Properties… only on a writable block, opening the block scope (GH #164)", () => {
     load(true);
     const dispose = mount(() => <ContextMenu />);

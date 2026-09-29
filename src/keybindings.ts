@@ -10,9 +10,9 @@
 import { openSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, pdfTarget, dismissMobileDrawer } from "./ui";
 import { pushToast } from "./toasts";
 import { restoreDrawerFocus } from "./mobileDrawers";
+import { zoomReset } from "./zoom";
 import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
-import { zoomReset } from "./zoom";
 import {
   openJournals,
   openPage,
@@ -25,17 +25,16 @@ import {
   route,
 } from "./router";
 import { journalTitle, parseJournalTitle } from "./journal";
-import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, expandBlockSelection, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
+import { undo, redo, hasSelection, moveSelection, cycleSelectionTasks, moveSelectionItems, indentSelection, outdentSelection, deleteSelection, selectionMarkdown, clearSelection, selectedIds, blockIsGridView, pageVisibleOrder, selectBlock, visibleOrder, toggleUndoRedoMode, buildClipboardPayload, node as docNode, loadedPage } from "./document";
 import { editingId, startEditing } from "./editorController";
 import { copyBlockOutline } from "./clipboard";
 import { cutBlocks } from "./cut";
-import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
-import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { openInPageFind } from "./inpageFind";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
 import {
   closePane,
+  adjustPaneSize,
   focusPane,
   focusedPaneId,
   layoutHasMultiplePanes,
@@ -46,6 +45,7 @@ import {
   splitPane,
   splitPaneAtSeam,
   splitRootAtEdge,
+  togglePaneMaximize,
 } from "./panes";
 import {
   enterPaneSelect,
@@ -95,9 +95,6 @@ function pluginFocusedBlock(): OwnedPluginBlockSnapshot | undefined {
 
 interface Chord {
   mod: boolean;
-  // Physical Control is distinct from portable `mod` on macOS. Elsewhere the
-  // same key remains `mod`, preserving existing cross-platform bindings (GH #378).
-  ctrl: boolean;
   shift: boolean;
   alt: boolean;
   // The Super/Win key on Linux/Windows (distinct from `mod`); on macOS Cmd is
@@ -247,12 +244,6 @@ const COMMANDS: CommandDef[] = [
   { id: "go/search-current-page", binding: "mod+shift+k", label: "Search blocks in current page", scope: "global", run: () => openSwitcher({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   { id: "guide/open", binding: "", label: "Open Guide", scope: "global", run: () => void openGuide(), global: true },
   { id: "go/find-in-page", binding: "mod+f", label: "Find in page", scope: "global", run: openInPageFind, global: true },
-  // GH #274 / OG parity: `:editor/follow-link` (mod+o) and
-  // `:editor/open-link-in-sidebar` (mod+shift+o) in OG's shortcut config.
-  // Global rather than editor-scoped because the handler reads the focused
-  // textarea itself and is a no-op when nothing is being edited.
-  { id: "editor/follow-link", binding: "mod+o", label: "Open the link at the caret", scope: "global", run: () => { followLinkUnderCaret(); }, global: true },
-  { id: "editor/open-link-in-sidebar", binding: "mod+shift+o", label: "Open the link at the caret in the sidebar", scope: "global", run: () => { openLinkUnderCaretInSidebar(); }, global: true },
   { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: () => openCommandPalette(pluginFocusedBlock() ?? null), global: true },
   // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). The usual
   // Ctrl+Shift+I / F12 / Ctrl+Shift+C are all swallowed by WebKitGTK itself (its
@@ -260,7 +251,6 @@ const COMMANDS: CommandDef[] = [
   // intercept), so they never reach this dispatcher. Ctrl+Shift+J — Chrome's other
   // devtools shortcut (console) — is NOT grabbed by WebKit, so it works here. A
   // mod-chord, so it fires even while editing; remap it in Settings if you like.
-  { id: "ui/reset-zoom", binding: "", label: "Reset interface zoom", scope: "global", run: zoomReset, global: true },
   { id: "ui/toggle-devtools", binding: "mod+shift+j", label: "Toggle developer tools", scope: "global", run: openDevtools, global: true },
   { id: "go/journals", binding: "g j", label: "Go to journals", scope: "global", run: openJournals },
   { id: "go/home", binding: "g h", label: "Go to home page", scope: "global", run: goHome },
@@ -285,6 +275,11 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/split-right", binding: "mod+alt+\\", label: "Split right", scope: "global", run: () => void splitPane(focusedPaneId(), "row"), global: true },
   { id: "pane/split-down", binding: "mod+alt+shift+\\", label: "Split down", scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
   { id: "pane/close", binding: "", label: "Close pane", scope: "global", run: () => void closePane(focusedPaneId()), global: true },
+  { id: "pane/toggle-maximize", binding: "mod+alt+m", label: "Toggle maximize active pane", scope: "global", run: () => { togglePaneMaximize(); }, global: true },
+  { id: "pane/grow-width", binding: "", label: "Grow active pane width", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", true); }, global: true },
+  { id: "pane/shrink-width", binding: "", label: "Shrink active pane width", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", false); }, global: true },
+  { id: "pane/grow-height", binding: "", label: "Grow active pane height", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", true); }, global: true },
+  { id: "pane/shrink-height", binding: "", label: "Shrink active pane height", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", false); }, global: true },
   // Palette-discoverable entry into pane-select (it's otherwise only reachable
   // via Esc-with-nothing-open, which users won't guess — Martin didn't).
   { id: "pane/select-mode", binding: "", label: "Pane select mode (arrows move, Enter opens/splits)", scope: "global", run: enterPaneSelectFromFocus, global: true },
@@ -305,6 +300,7 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/move-tab-up", binding: "mod+alt+shift+up", label: "Move tab to pane up", scope: "global", run: () => moveActiveTabInDirection("up"), global: true },
   { id: "pane/move-tab-down", binding: "mod+alt+shift+down", label: "Move tab to pane down", scope: "global", run: () => moveActiveTabInDirection("down"), global: true },
   { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
+  { id: "ui/reset-zoom", binding: "", label: "Reset interface zoom", scope: "global", run: zoomReset, global: true },
   { id: "ui/toggle-brackets", binding: "mod+c mod+b", label: "Toggle reference brackets", scope: "global", run: () => changeShowBrackets(!showBrackets()), global: true },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: "Toggle left sidebar", scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: "Toggle right sidebar", scope: "global", run: toggleRightSidebar },
@@ -359,9 +355,6 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/expand", binding: "mod+down", label: "Expand block", scope: "editor" },
   { id: "editor/select-block-up", binding: "shift+up", label: "Select block up", scope: "editor" },
   { id: "editor/select-block-down", binding: "shift+down", label: "Select block down", scope: "editor" },
-  // Ctrl/Cmd+A ladder (GH #262): first press selects the block's text natively,
-  // then the block's subtree, then each ancestor's subtree, then the outline.
-  { id: "editor/select-all", binding: "mod+a", label: "Select block / expand selection", scope: "editor" },
   { id: "editor/cycle-todo", binding: "mod+enter", label: "Cycle TODO / DOING / DONE", scope: "editor" },
   // Quick-capture mini-window only: file the capture to today's journal. Acts
   // only when CaptureCtx is present (Block.tsx); a no-op in the main app. Default
@@ -582,13 +575,9 @@ function isModifierKey(e: KeyboardEvent): boolean {
 
 function parseChord(s: string): Chord {
   const parts = s.toLowerCase().split("+");
-  const chord: Chord = { mod: false, ctrl: false, shift: false, alt: false, meta: false, key: "" };
+  const chord: Chord = { mod: false, shift: false, alt: false, meta: false, key: "" };
   for (const p of parts) {
-    if (p === "mod" || p === "cmd") chord.mod = true;
-    else if (p === "ctrl") {
-      if (isMac) chord.ctrl = true;
-      else chord.mod = true;
-    }
+    if (p === "mod" || p === "ctrl" || p === "cmd") chord.mod = true;
     else if (p === "meta" || p === "super" || p === "win") chord.meta = true;
     else if (p === "shift") chord.shift = true;
     else if (p === "alt" || p === "option") chord.alt = true;
@@ -621,7 +610,6 @@ function eventToChord(e: KeyboardEvent): Chord {
   key = normKey(key);
   return {
     mod: isMac ? e.metaKey : e.ctrlKey,
-    ctrl: isMac && e.ctrlKey,
     shift: e.shiftKey,
     alt: e.altKey,
     // Super/Win on non-Mac (on Mac, metaKey is already `mod`). Fall back to the
@@ -645,7 +633,7 @@ export function isPermittedTabGesture(e: KeyboardEvent, chord = eventToChord(e))
 }
 
 function chordEq(a: Chord, b: Chord): boolean {
-  return a.mod === b.mod && a.ctrl === b.ctrl && a.shift === b.shift && a.alt === b.alt && a.meta === b.meta && a.key === b.key;
+  return a.mod === b.mod && a.shift === b.shift && a.alt === b.alt && a.meta === b.meta && a.key === b.key;
 }
 
 // Merged binding table (defaults + config overrides), populated by
@@ -691,9 +679,7 @@ export function paletteCommands(
     .map((c) => ({
       id: c.id,
       label: c.label,
-      binding: (overridesApplied[c.id] ?? c.binding) === "false"
-        ? ""
-        : overridesApplied[c.id] ?? c.binding,
+      binding: (overridesApplied[c.id] ?? c.binding) === "false" ? "" : overridesApplied[c.id] ?? c.binding,
       run: c.run!,
     }));
   const plugins = pluginManager.commands().map(({ pluginId, contribution }) => ({
@@ -742,7 +728,6 @@ export function eventToBindingString(e: KeyboardEvent): string | null {
   const c = eventToChord(e);
   if (!c.key) return null;
   const parts: string[] = [];
-  if (c.ctrl) parts.push("ctrl");
   if (c.mod) parts.push("mod");
   if (c.meta) parts.push("super"); // the Super/Windows key (clearer than "meta")
   if (c.alt) parts.push("alt");
@@ -817,9 +802,6 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
       () => deleteSelection())
       .catch(() => pushToast("Couldn't cut selection: clipboard write failed.", "error"));
     return true;
-  }
-  if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a") {
-    return expandBlockSelection(), true;
   }
   if (e.key === "Enter") {
     const ids = selectedIds();
@@ -971,23 +953,8 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
       }
     }
 
-    // OG contenteditable parity: Delete/Backspace over a RENDERED (not-editing)
-    // text selection deletes that text from the block's source; without this the
-    // keypress reaches no editor and dies silently.
-    if (!editing && (e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
-        && deleteRenderedTextSelection()) {
-      e.preventDefault();
-      resetSeq();
-      return;
-    }
-
     // While typing, only modifier chords are eligible (so "g j" doesn't fire).
-    // Alt counts as a modifier here (GH #461): Chrome and VS Code fire Alt
-    // shortcuts with a text field focused. Only `scope: "global"` commands with
-    // a `run` are matched below, so the editor's own bare-Alt bindings are
-    // untouched, and an Alt chord nothing is bound to still reaches the textarea
-    // unprevented (dead keys and Option-composed characters keep working).
-    if (editing && !chord.mod && !chord.ctrl && !chord.alt) {
+    if (editing && !chord.mod) {
       // Cancel GTK/browser focus traversal on Tab/Shift+Tab in the capture
       // phase (WebKitGTK grabs it before an outline editor can), but still let
       // that editor receive its owned gesture. Native form controls retain
