@@ -550,14 +550,18 @@ fn walk_blocks(
                             .push(key_range.start..offset + value.len());
                         continue;
                     }
-                    let parsed = lsdoc::parse_format(&value, if is_org { "org" } else { "md" });
-                    walk_blocks(
-                        &parsed.blocks,
-                        SpanMapper::direct(offset),
-                        raw,
-                        is_org,
-                        projection,
-                    );
+                    // Bounded like the block parse: a pathologically deep
+                    // value contributes no references rather than aborting
+                    // the index build (og C3 L03, I-22).
+                    if let Some(parsed) = crate::render::parse_text_bounded(&value, is_org) {
+                        walk_blocks(
+                            &parsed.blocks,
+                            SpanMapper::direct(offset),
+                            raw,
+                            is_org,
+                            projection,
+                        );
+                    }
                     project_implicit_linkable_property(projection, &key, offset, &value, raw.len());
                 }
             }

@@ -446,7 +446,11 @@ pub fn recognizable_macro(name: &str, argument: &str) -> Result<(), Diagnostic> 
     let expected_end = wrapped.len() - usize::from(!options.is_empty());
 
     for format in ["md", "org"] {
-        let nodes = lsdoc::inline(&wrapped, format);
+        let Some(nodes) = crate::render::parse_inline_bounded(&wrapped, format) else {
+            return refuse(format!(
+                "the `{{{{{name}}}}}` macro is nested too deeply to read"
+            ));
+        };
         let recognized = matches!(
             nodes.first(),
             Some(lsdoc::ast::Inline::Macro {

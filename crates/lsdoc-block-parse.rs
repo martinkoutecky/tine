@@ -10,6 +10,62 @@
 use lsdoc::ast::{Block, Inline, ListItem, Projection, Span};
 
 const MAX_PARSED_TREE_DEPTH: usize = 1024;
+/// Source-side ceiling on a line's quote staircase for free-text doors; the
+/// same 128-level ceiling the page admission applies (`PARSE_INPUT_MAX_DEPTH`).
+#[allow(dead_code)] // each crate that includes this file uses a subset
+pub(crate) const SOURCE_QUOTE_DEPTH_MAX: usize = 128;
+
+/// `>` markers that open a quote staircase on one line: after leading spaces
+/// and any list markers, each `>` optionally followed by spaces. lsdoc parses
+/// every level by recursing *during the parse* (`markdown_blockquote_sequence`
+/// re-parses the stripped body), so a tree check after the parse is too late:
+/// ~1,300 levels overflow a 2 MiB debug stack before any tree exists (I-22).
+/// Counts markers, an upper bound on levels (lsdoc may strip two per level).
+pub(crate) fn line_quote_depth(line: &str) -> usize {
+    let spaces = |bytes: &[u8], mut at: usize| {
+        while matches!(bytes.get(at), Some(b' ' | b'\t' | b'\x0c' | b'\x1a')) {
+            at += 1;
+        }
+        at
+    };
+    let bytes = line.as_bytes();
+    let mut at = spaces(bytes, 0);
+    loop {
+        let digits = bytes[at..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count();
+        let marker_end = match bytes.get(at + digits) {
+            Some(b'.' | b')') if digits > 0 => at + digits + 1,
+            Some(b'-' | b'+' | b'*') if digits == 0 => at + 1,
+            _ => break,
+        };
+        if !matches!(bytes.get(marker_end), Some(b' ' | b'\t')) {
+            break;
+        }
+        at = spaces(bytes, marker_end);
+    }
+    let mut depth = 0;
+    while bytes.get(at) == Some(&b'>') {
+        depth += 1;
+        at = spaces(bytes, at + 1);
+    }
+    depth
+}
+
+fn quote_depth_within(text: &str, limit: usize) -> bool {
+    text.split(['\n', '\r'])
+        .all(|line| line_quote_depth(line) <= limit)
+}
+
+/// Refuse before lsdoc recurses: the block doors keep their panic contract
+/// (the page parse isolates it), sized to the tree bound so no input that
+/// parsed before is refused by this check alone.
+fn admit_block_source(raw: &str) {
+    if !quote_depth_within(raw, MAX_PARSED_TREE_DEPTH) {
+        panic!("lsdoc quote nesting exceeds 1024 levels");
+    }
+}
 
 // lsdoc's parser uses heap frames, but its returned AST has recursive drop.
 // Check the *actual* AST before any of Tine's recursive consumers see it.
@@ -406,6 +462,7 @@ fn restore_blocks(blocks: &mut [Block], protected: &[ProtectedCode], restored: &
 }
 
 pub(crate) fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
+    admit_block_source(raw);
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
             return bounded_blocks(lsdoc::parse(&input, if is_org { "org" } else { "md" }))
@@ -426,6 +483,7 @@ pub(crate) fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
 
 #[allow(dead_code)] // the wasm crate needs block parsing only; tine-core uses the full projection
 pub(crate) fn parse_projection(raw: &str, is_org: bool) -> Projection {
+    admit_block_source(raw);
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
             return bounded_projection(lsdoc::parse_format(
@@ -445,6 +503,46 @@ pub(crate) fn parse_projection(raw: &str, is_org: bool) -> Projection {
             &format!("- {}", raw.trim_start()),
             "md",
         ))
+    }
+}
+
+/// Parse free text that is NOT a block body (a property value, a whole file):
+/// no re-bulleting. A quote staircase deeper than [`SOURCE_QUOTE_DEPTH_MAX`]
+/// is refused before lsdoc recurses, and a tree deeper than the block bound is
+/// drained iteratively; either way `None`, and the caller degrades (no refs
+/// from that value, an empty document) instead of aborting (I-22). Every
+/// production `lsdoc::parse*` call is in this file
+/// (`tine-core/tests/lsdoc_parse_boundary.rs`).
+#[allow(dead_code)] // each crate that includes this file uses a subset
+pub(crate) fn parse_text_bounded(text: &str, format: &str) -> Option<Projection> {
+    if !quote_depth_within(text, SOURCE_QUOTE_DEPTH_MAX) {
+        return None;
+    }
+    let mut projection = lsdoc::parse_format(text, format);
+    let blocks = std::mem::take(&mut projection.blocks);
+    if parsed_tree_within_limit(&blocks, MAX_PARSED_TREE_DEPTH) {
+        projection.blocks = blocks;
+        Some(projection)
+    } else {
+        drop_parsed_tree(blocks);
+        None
+    }
+}
+
+/// [`lsdoc::inline`] under the same bound, for inline-only readers.
+#[allow(dead_code)] // each crate that includes this file uses a subset
+pub(crate) fn parse_inline_bounded(text: &str, format: &str) -> Option<Vec<Inline>> {
+    let wrapped = vec![Block::Paragraph {
+        inline: lsdoc::inline(text, format),
+        span: None,
+    }];
+    if !parsed_tree_within_limit(&wrapped, MAX_PARSED_TREE_DEPTH) {
+        drop_parsed_tree(wrapped);
+        return None;
+    }
+    match wrapped.into_iter().next() {
+        Some(Block::Paragraph { inline, .. }) => Some(inline),
+        _ => None,
     }
 }
 
@@ -470,6 +568,26 @@ mod preparation_tests {
         assert_eq!(bounded_blocks(make_tree(510)).len(), 1);
         assert_eq!(bounded_blocks(make_tree(1_020)).len(), 1);
         assert!(std::panic::catch_unwind(|| bounded_blocks(make_tree(20_000))).is_err());
+    }
+
+    #[test]
+    fn quote_staircase_is_counted_as_lsdoc_nests_it() {
+        for (line, depth) in [
+            ("> > > x", 3),
+            (">>>x", 3),
+            ("  - > > x", 2),
+            ("1. >\t> x", 2),
+            ("text > not a quote", 0),
+            ("-> arrow", 0),
+            ("a:: >>> value", 0),
+        ] {
+            assert_eq!(line_quote_depth(line), depth, "{line}");
+        }
+        let at_cap = format!("{}x", "> ".repeat(SOURCE_QUOTE_DEPTH_MAX));
+        assert!(parse_text_bounded(&at_cap, "md").is_some());
+        let deep = format!("{}x", "> ".repeat(20_000));
+        assert!(parse_text_bounded(&deep, "md").is_none());
+        assert!(std::panic::catch_unwind(|| parse_projection(&deep, false)).is_err());
     }
 
     #[test]
