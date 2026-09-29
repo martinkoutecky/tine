@@ -319,7 +319,7 @@ fn simple_query_rejects_source_and_nesting_limits() {
         graph.query(&oversized, QueryDialect::Simple),
         Err(QueryError::Parse(_))
     ));
-    let nested = format!("{}x{}", "(".repeat(65), ")".repeat(65));
+    let nested = format!("{}x{}", "(".repeat(129), ")".repeat(129));
     assert!(matches!(
         graph.query(&nested, QueryDialect::Simple),
         Err(QueryError::Parse(_))
@@ -335,7 +335,7 @@ fn advanced_query_rejects_source_and_nesting_limits() {
         graph.query(&oversized, QueryDialect::Advanced),
         Err(QueryError::Parse(_))
     ));
-    let nested = format!("{}x{}", "(".repeat(65), ")".repeat(65));
+    let nested = format!("{}x{}", "(".repeat(129), ")".repeat(129));
     assert!(matches!(
         graph.query(&nested, QueryDialect::Advanced),
         Err(QueryError::Parse(_))

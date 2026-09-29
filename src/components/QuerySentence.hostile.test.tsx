@@ -18,7 +18,7 @@ import type { Filter } from "../editor/queryIr";
 // **I-22 for the two states of the builder.**
 //
 // The query in a `{{query}}` block is OUTSIDE CONTENT: whoever wrote the graph
-// picked its shape, not us. The language accepts 64 levels of nesting
+// picked its shape, not us. The language accepts 128 levels of nesting
 // (`QUERY_NESTING_MAX`) and must keep accepting them — a deep query still
 // parses, still round-trips and still runs. What must NOT scale with the
 // attacker's number is the DRAWING: the resting sentence stays a short line and

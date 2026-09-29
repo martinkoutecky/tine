@@ -210,6 +210,11 @@ fn page_ref_end(text: &str, at: usize) -> usize {
 /// the map's own extent is unaffected (it starts at `{` and ends at `}`), and
 /// re-emitting `form + " " + options` is then idempotent.
 pub fn split_trailing_map(argument: &str, family: FormFamily) -> (String, String) {
+    // Public callers may use the lexical splitter directly. Bound its scan
+    // with the same answerer the parse entry uses for the complete argument.
+    if !super::query_source_within_limit(argument) {
+        return (argument.to_string(), String::new());
+    }
     let trimmed = argument.trim_end();
     if !trimmed.ends_with('}') {
         return (argument.trim().to_string(), String::new());

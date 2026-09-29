@@ -2931,7 +2931,7 @@ impl WholeGraph {
 
     /// Execute one simple or advanced query macro over this stable view.
     /// `:current-page` inputs are not supported, as in v0.6.5. A simple
-    /// source above 64 KiB or 64 parenthesis levels returns
+    /// source above 64 KiB or 128 parenthesis levels returns
     /// `QueryError::Parse`; advanced unsupported clauses appear in its
     /// diagnostics. Exceeding 20,000 rows or 32 MiB returns
     /// `QueryError::ResultTooLarge` without a partial answer. Query cost
@@ -2945,7 +2945,7 @@ impl WholeGraph {
                     tine_core::query::QUERY_SOURCE_MAX_BYTES
                 ),
                 tine_core::query::SourceRefusal::TooDeep => {
-                    "query nesting exceeds 64 levels".into()
+                    "query nesting exceeds 128 levels".into()
                 }
             }));
         }

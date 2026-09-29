@@ -27,7 +27,7 @@ export const PRIORITIES = ["A", "B", "C"];
 /** **How many levels of the tree the builder RENDERS (SPEC §7.4).**
 *
 *  This is a presentation cap, not a language limit: the parser's
-*  `QUERY_NESTING_MAX` is still 64 and a deeper query still parses, still
+*  `QUERY_NESTING_MAX` is 128 and a deeper query still parses, still
 *  round-trips and still runs. What changes at this depth is only how it is
 *  DRAWN — one `⟨advanced⟩` chip whose text is the subtree's phrase, edited in
 *  the query text pane below.
