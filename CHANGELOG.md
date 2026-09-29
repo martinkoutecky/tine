@@ -69,6 +69,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **An edit made while a graph switch was already under way is no longer
+  dropped** (og A). Tine saves once more right before it opens the other graph,
+  and stays on the current graph if that edit cannot be saved.
 - **A page marked `public:: false` stays out of every export.** With
   `:publishing/all-pages-public? true` in `config.edn`, or **Include every page**
   ticked, Tine published such pages anyway; like Logseq it now leaves them out,

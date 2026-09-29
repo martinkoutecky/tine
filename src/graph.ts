@@ -174,6 +174,18 @@ export async function loadGraphPath(
   if (rebindsPdfOwner) {
     retirePdfOwnership();
   }
+  // An edit can land during the awaits since the first flush (session save,
+  // access prompt, PDF drain); resetStore would discard it with the old
+  // working set. Flush once more as the last await before the binding moves.
+  if (hadGraph && !(await flushAll())) {
+    if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
+    pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
+    return { kind: "aborted" };
+  }
+  if (!stillBound(startingBinding)) {
+    if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
+    return { kind: "aborted" };
+  }
 
   let result;
   try {
