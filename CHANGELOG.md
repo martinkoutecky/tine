@@ -99,6 +99,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   On Linux, a root-owned or read-only `~/.local/share` made every launch crash before a window appeared.
   Tine now keeps settings and the web view's data in `~/.tine-data` (or another private writable
   folder) for that session and says so; if nothing is writable it prints one sentence explaining why.
+- **A conflict banner goes away by itself once the file is back to what you loaded** (og I1c, master c68c0b6e7).
+  Some editors and sync clients briefly remove a file while replacing it; Tine treated the gap as a
+  conflict that only a click could clear, and held the edit unsaved behind it. If the file comes back
+  matching what your editor started from, the banner clears and your edit saves normally; a file that
+  comes back changed still raises the conflict.
 - **Closing no longer offers to throw away a save that is still running** (og I1b, master fea3c314b).
   If writing your changes took more than four seconds — a slow or network drive is enough — the close
   asked whether to lose them. It now says it is still saving and waits up to another 26 seconds; it
