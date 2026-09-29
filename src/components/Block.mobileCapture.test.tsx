@@ -35,6 +35,7 @@ import { setToasts, toasts } from "../toasts";
 import { resetSaveState } from "../document/save/engine";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
+import { isRecordingAudio, setRecordingAudio } from "../mediaCapture";
 
 const STALE_ASSET_TOAST =
   "The asset was saved, but it was not inserted because the graph or block changed.";
@@ -200,6 +201,42 @@ describe("mobile photo capture editor-token staleness (GH #493)", () => {
       expect(toasts().some((toast) => toast.message === STALE_ASSET_TOAST)).toBe(false);
     } finally {
       dispose();
+    }
+  });
+});
+
+// Master b3d64add (og-G #29): the recorder is one app-wide state, but the token
+// of the editor that started it lived in that Editor's closure. Stopping from
+// another editor found no token and returned before importing, so the native
+// recording never reached assets/ and nothing was said. It must be stored and
+// reported as not inserted.
+describe("mobile voice memo stopped from another editor", () => {
+  it("imports the recording into assets/ and reports that it was not inserted", async () => {
+    loadSingle(page("Memo", [blk("memo-a", "first"), blk("memo-b", "second")]));
+    const [a, b] = pageByName("Memo")!.roots;
+    vi.spyOn(backend(), "startRecording").mockResolvedValue({ status: "recording" } as never);
+    vi.spyOn(backend(), "stopRecording").mockResolvedValue({ status: "ok", path: "/cache/tine_memo_1.m4a", ext: "m4a" } as never);
+    const imported = vi.spyOn(backend(), "importNativeCapture").mockResolvedValue("20260929_memo.m4a");
+    startEditing(a, 0);
+    const mounted = mount(() => <For each={pageByName("Memo")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
+    try {
+      (mounted.root.querySelector("textarea") as HTMLTextAreaElement).focus();
+      expect(dispatchFocusedEditorCommand("editor/voice-memo")).toBe(true);
+      await settle();
+      expect(isRecordingAudio()).toBe(true);
+      startEditing(b, 0);
+      await settle();
+      (mounted.root.querySelector("textarea") as HTMLTextAreaElement).focus();
+      expect(dispatchFocusedEditorCommand("editor/voice-memo")).toBe(true);
+      await settle();
+      expect(isRecordingAudio()).toBe(false);
+      expect(imported).toHaveBeenCalledWith("/cache/tine_memo_1.m4a", expect.stringMatching(/\.m4a$/), expect.any(Number));
+      expect(toasts().some((toast) => toast.message === STALE_ASSET_TOAST)).toBe(true);
+      expect(doc.byId[a].raw).toBe("first");
+      expect(doc.byId[b].raw).toBe("second");
+    } finally {
+      setRecordingAudio(false);
+      mounted.dispose();
     }
   });
 });

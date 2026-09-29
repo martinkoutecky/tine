@@ -513,6 +513,8 @@ interface AcItem {
 }
 
 // and DTO→outline conversion for insertion.
+// One recorder app-wide: the starting editor's token outlives that editor, so Stop anywhere still stores it.
+let mobileRecordingEditorToken: AssetEditorToken | null = null;
 let templateCache: import("../types").TemplateDto[] | null = null;
 let templateCacheRev = -1;
 let templateCacheEpoch = -1;
@@ -1295,34 +1297,32 @@ export function Editor(props: { id: string }): JSX.Element {
         const stored = await trackAssetWrite(backend().importNativeCapture(res.path, candidate, editorToken.binding.backendGeneration));
         insertStoredAssets(editorToken, [{ stored }]);
       } catch (err) {
-        if (stillBound(editorToken.binding)) pushToast(`Couldn’t import the photo (${String(err)})`, "error");
+        pushToast(`Couldn’t import the photo (${String(err)})`, "error");
       }
     }
   };
 
   // Mobile: toggle voice-memo recording. First tap starts (prompts for mic
   // permission); second tap stops and inserts the recorded audio at the caret.
-  let mobileRecordingEditorToken: AssetEditorToken | null = null;
   const voiceMemoToggle = async () => {
     if (isRecordingAudio()) {
-      const editorToken = mobileRecordingEditorToken;
+      const editorToken = mobileRecordingEditorToken ?? captureAssetEditorToken();
       mobileRecordingEditorToken = null;
       setRecordingAudio(false);
       let res;
       try {
         res = await backend().stopRecording();
       } catch (err) {
-        if (editorToken && stillBound(editorToken.binding)) pushToast(`Couldn’t save the recording (${String(err)})`, "error");
+        pushToast(`Couldn’t save the recording (${String(err)})`, "error");
         return;
       }
       if (res.status === "ok" && res.path) {
         const candidate = captureAssetFileName(res.ext || "m4a");
         try {
-          if (!editorToken) return;
           const stored = await trackAssetWrite(backend().importNativeCapture(res.path, candidate, editorToken.binding.backendGeneration));
           insertStoredAssets(editorToken, [{ stored }]);
         } catch (err) {
-          if (editorToken && stillBound(editorToken.binding)) pushToast(`Couldn’t import the recording (${String(err)})`, "error");
+          pushToast(`Couldn’t import the recording (${String(err)})`, "error");
         }
       }
       return;

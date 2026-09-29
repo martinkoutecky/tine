@@ -95,6 +95,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **A voice memo stopped from another block is kept** (master b3d64add, og H). On
+  mobile, starting a recording in one block and tapping Stop while editing another
+  used to discard the recording silently; it is now saved to `assets/` and Tine says
+  it was not inserted. A failed stop or import is always reported.
 - **The conflict badge is always reachable, and closes the phone drawer** (og-F).
   The sidebar's footer (the conflict badge and New page) sat one header-height below
   the bottom of a short window, so a pending conflict could be invisible until you

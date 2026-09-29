@@ -12,8 +12,8 @@ function productionSources(dir: string): string[] {
 
 // Named rule exemptions are pinned to exact backend method counts below.
 const EXEMPT: Record<string, string> = {
-  "src/components/Block.tsx#Editor.capturePhotoCmd": "asset editor token checks binding before insertion and every error toast",
-  "src/components/Block.tsx#Editor.voiceMemoToggle": "native recorder must be cancelled from a stale start result; editor token guards insertion and toasts",
+  "src/components/Block.tsx#Editor.capturePhotoCmd": "asset editor token checks binding before insertion; an import failure is always reported",
+  "src/components/Block.tsx#Editor.voiceMemoToggle": "native recorder must be cancelled from a stale start result; the app-wide start token guards insertion; a stop or import failure is always reported",
   "src/debug.ts#initDebug": "one-time device debug probe has no graph or route landing",
   "src/graph.ts#loadGraphPath": "the graph transition changes its own binding; its transition lock owns publication",
   "src/plugins/manager.ts#uninstall": "device-local plugin removal completes in the process-wide manager across graph navigation",
