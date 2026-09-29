@@ -4,7 +4,7 @@ use std::io;
 use tine_core::doc;
 use tine_store::Store;
 
-use crate::render::{self, RenderGraph};
+use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
 
 /// Options for the single-page print/PDF export.
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
@@ -25,8 +25,22 @@ impl Default for PrintOpts {
     }
 }
 
-/// Render a named page using the read-only corpus and bounded asset reads.
+/// Render a named page with no frontend: every sheet block stays a plain outline
+/// (the named divergence of exports without the app's sheet evaluator).
 pub fn page_print_html(store: &Store, name: &str, opts: PrintOpts) -> io::Result<Option<String>> {
+    page_print_html_with_sheets(store, name, opts, Vec::new())
+}
+
+/// Render a named page using the read-only corpus and bounded asset reads.
+/// `sheets` are the app's computed sheets for this page; a sheet block without
+/// one keeps its plain outline.
+pub fn page_print_html_with_sheets(
+    store: &Store,
+    name: &str,
+    opts: PrintOpts,
+    sheets: Vec<SheetExport>,
+) -> io::Result<Option<String>> {
+    let sheets = SheetIndex::new(sheets);
     store
         .scan_refresh()
         .map_err(|error| io::Error::other(format!("graph refresh failed: {error:?}")))?;
@@ -52,6 +66,7 @@ pub fn page_print_html(store: &Store, name: &str, opts: PrintOpts) -> io::Result
             corpus: &corpus,
             whole: &whole,
             store,
+            sheets: Some(&sheets),
         },
         name,
         opts,

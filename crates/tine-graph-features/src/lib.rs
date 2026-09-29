@@ -18,6 +18,7 @@ pub mod publish;
 pub mod publish_query;
 mod render;
 mod render_query_cache;
+pub use render::{SheetExport, SheetInput};
 pub mod search;
 pub mod sources;
 

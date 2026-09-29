@@ -8,6 +8,7 @@
 // drop most of a long page. The core-rendered document is complete and unstyled by
 // the app chrome, so the PDF is the page, nothing else.
 import { backend } from "./backend";
+import { exportSheets } from "./sheet/exportSheets";
 import { graphOwner, readOwned } from "./owned";
 import { pushToast } from "./toasts";
 import { flushAll } from "./document";
@@ -123,7 +124,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
       printInProgress = false;
       return;
     }
-    const result = await readOwned(owner, backend().pagePrintHtml(name, opts));
+    const result = await readOwned(owner, backend().pagePrintHtml(name, opts, await exportSheets([name])));
     if (result.kind === "stale") { printInProgress = false; return; }
     html = await preparePrintHtml(result.value);
     if (!owner()) { printInProgress = false; return; }

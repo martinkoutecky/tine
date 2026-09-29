@@ -20,11 +20,25 @@ const frontend = spawnSync("npx", ["--no-install", "vite", "build"],
 if (frontend.status !== 0) process.exit(frontend.status ?? 1);
 if (!check) fs.rmSync(output, { recursive: true, force: true });
 
-const built = spawnSync(
+// Sheets are computed by the app's own TS evaluator, never by the Rust publisher
+// (I-12): dump the Guide's sheet blocks, compute them with src/sheet/staticExport.ts
+// under vite-node, then publish with the exports.
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "tine-guide-sheets-"));
+const inputsFile = path.join(scratch, "inputs.json");
+const exportsFile = path.join(scratch, "exports.json");
+const cargoEnv = { ...guideBuildEnv, CARGO_INCREMENTAL: "0" };
+const example = (args) => spawnSync(
   "cargo",
-  ["run", "--quiet", "-p", "tine-store", "--example", "build-demo-site", "--", output],
-  { cwd: root, stdio: "inherit", env: { ...guideBuildEnv, CARGO_INCREMENTAL: "0" } },
+  ["run", "--quiet", "-p", "tine-store", "--example", "build-demo-site", "--", ...args],
+  { cwd: root, stdio: "inherit", env: cargoEnv },
 );
+const dumped = example(["--dump-sheet-inputs", inputsFile]);
+if (dumped.status !== 0) process.exit(dumped.status ?? 1);
+const computed = spawnSync("npx", ["--no-install", "vite-node", "scripts/sheet-export-cli.ts", inputsFile, exportsFile],
+  { cwd: root, stdio: "inherit", env: guideBuildEnv });
+if (computed.status !== 0) process.exit(computed.status ?? 1);
+const built = example([output, "--sheets", exportsFile]);
+fs.rmSync(scratch, { recursive: true, force: true });
 if (built.status !== 0) process.exit(built.status ?? 1);
 
 function filesUnder(dir, prefix = "") {

@@ -28,6 +28,7 @@ mod tests {
             corpus: &corpus,
             whole: &whole,
             store: &store,
+            sheets: None,
         };
         let mut files = HashMap::<String, String>::new();
         publish_graph(&graph, true, &[], &mut |name, bytes| {
@@ -73,6 +74,7 @@ mod tests {
             corpus: &corpus,
             whole: &whole,
             store: &store,
+            sheets: None,
         };
         let mut files = HashMap::<String, String>::new();
         publish_graph(&graph, true, &[], &mut |name, bytes| {
@@ -121,6 +123,7 @@ mod tests {
             corpus: &corpus,
             whole: &whole,
             store: &store,
+            sheets: None,
         };
         let refs = no_refs();
         let cache = RefCell::new(QueryCache::default());
@@ -167,6 +170,7 @@ mod tests {
             corpus: &corpus,
             whole: &whole,
             store: &store,
+            sheets: None,
         };
         let mut dashboard = Vec::new();
         publish_graph(&graph, true, &[], &mut |name, bytes| {
@@ -209,6 +213,7 @@ mod tests {
             corpus: &corpus,
             whole: &whole,
             store: &store,
+            sheets: None,
         };
         let refs = no_refs();
         let cumulative = RefCell::new(PrintAssetBudget {
@@ -273,6 +278,7 @@ mod tests {
             corpus: &corpus,
             whole: &whole,
             store: &store,
+            sheets: None,
         };
         let _ = whole.corpus();
         let refs = RefIndex::new();

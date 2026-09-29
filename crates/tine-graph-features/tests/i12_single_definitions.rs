@@ -141,3 +141,69 @@ fn planted_duplicate_classifier_fails() {
         "I-12: planted duplicate must fail; exemplar tine_store::file_kind"
     );
 }
+
+/// Sheet semantics (row filter, grouping, formulas, aggregates) have ONE definition, the
+/// app's `src/sheet/*`. The Rust static export only lays out data the app computed
+/// (`render_sheets.rs`, family 7), so it must not name a sheet-semantics property or define
+/// a computation over cells. Master carried a ~1.3k-line Rust twin of this logic; this is
+/// the guard that keeps it from coming back. Exemplar: render_sheets.rs itself.
+fn sheet_semantics(source: &str) -> Vec<String> {
+    let code: String = source
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut found: Vec<String> = [
+        "tine.group-by",
+        "tine.col-aggregates",
+        "tine.formula",
+        "tine.filter",
+        "tine.fields",
+        "tine.header",
+        "fn aggregate",
+        "fn evaluate",
+        "fn eval_",
+        "fn group",
+        "fn sort",
+        ".sort(",
+        ".sort_by",
+        "parse_sheet",
+        "sheet_config",
+    ]
+    .iter()
+    .filter(|token| code.contains(**token))
+    .map(|token| (*token).to_owned())
+    .collect();
+    // The single property Rust reads is the candidate marker; validity is the app's call.
+    if code.matches("\"tine.").count() != 1 || !code.contains("\"tine.view\"") {
+        found.push("reads a sheet property other than the tine.view candidate marker".to_owned());
+    }
+    found
+}
+
+#[test]
+fn static_export_sheets_compute_nothing() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source =
+        fs::read_to_string(root.join("crates/tine-graph-features/src/render_sheets.rs")).unwrap();
+    let found = sheet_semantics(&source);
+    assert!(
+        found.is_empty(),
+        "I-12: render_sheets.rs lays out data the app computed; {found:?} is sheet semantics, which lives only in src/sheet/*. exemplar render_sheets.rs::render_table"
+    );
+}
+
+#[test]
+fn planted_sheet_semantics_in_the_static_export_fail() {
+    for planted in [
+        "fn aggregate(values: &[f64]) -> f64 { values.iter().sum() }",
+        "let g = props.get(\"tine.group-by\");",
+        "rows.sort_by(|a, b| a.cmp(b));",
+    ] {
+        let source = format!("const K: &str = \"tine.view\";\n{planted}");
+        assert!(
+            !sheet_semantics(&source).is_empty(),
+            "I-12: planted sheet semantics must fail the guard: {planted}"
+        );
+    }
+}

@@ -10,7 +10,7 @@
 //! failures are parser/selection refusal, output budget, stale plan and I/O;
 //! callers show them and let the user pick a fresh destination.
 
-use crate::render::{self, RenderGraph};
+use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -299,12 +299,14 @@ fn collect_static(
     store: &Store,
     graph: &WholeGraph,
     corpus: &tine_core::Corpus,
+    sheets: &SheetIndex,
 ) -> io::Result<Vec<(String, Vec<u8>)>> {
     let config = store.config();
     let render_graph = RenderGraph {
         corpus,
         whole: graph,
         store,
+        sheets: Some(sheets),
     };
     let mut files = Vec::new();
     let mut used = 0usize;
@@ -642,6 +644,19 @@ pub fn publish_query(
     parent: &Path,
     bundle: &[(String, Vec<u8>)],
 ) -> io::Result<ExportReceipt> {
+    publish_query_with_sheets(store, request, fingerprint, parent, bundle, Vec::new())
+}
+
+/// `publish_query` with the app's computed sheets; a sheet block without one
+/// keeps its plain outline.
+pub fn publish_query_with_sheets(
+    store: &Store,
+    request: &QueryExportRequest,
+    fingerprint: &str,
+    parent: &Path,
+    bundle: &[(String, Vec<u8>)],
+    sheets: Vec<SheetExport>,
+) -> io::Result<ExportReceipt> {
     let graph = store
         .whole_graph()
         .map_err(|e| io::Error::other(format!("graph load failed: {e:?}")))?;
@@ -652,7 +667,7 @@ pub fn publish_query(
     if planned.selected.pages.is_empty() {
         return Err(refusal("query has no pages to export"));
     }
-    let mut files = collect_static(store, &graph, &planned.selected)?;
+    let mut files = collect_static(store, &graph, &planned.selected, &SheetIndex::new(sheets))?;
     let mut taken: HashSet<_> = planned
         .selected
         .pages
@@ -694,6 +709,19 @@ pub fn publish_live(
     all_pages: bool,
     bundle: &[(String, Vec<u8>)],
 ) -> io::Result<ExportReceipt> {
+    publish_live_with_sheets(store, parent, name, all_pages, bundle, Vec::new())
+}
+
+/// `publish_live` with the app's computed sheets; a sheet block without one
+/// keeps its plain outline (the CLI has no frontend and calls `publish_live`).
+pub fn publish_live_with_sheets(
+    store: &Store,
+    parent: &Path,
+    name: &str,
+    all_pages: bool,
+    bundle: &[(String, Vec<u8>)],
+    sheets: Vec<SheetExport>,
+) -> io::Result<ExportReceipt> {
     if name.trim().is_empty() || name.len() > 256 {
         return Err(refusal("live export name is invalid"));
     }
@@ -717,7 +745,7 @@ pub fn publish_live(
         .or_else(|| corpus.pages.first())
         .map(|p| p.name.clone())
         .unwrap_or_default();
-    let mut files = collect_static(store, &graph, &corpus)?;
+    let mut files = collect_static(store, &graph, &corpus, &SheetIndex::new(sheets))?;
     let snap = snapshot(store, &graph, &corpus, name, &home, None)?;
     app_files(&mut files, bundle, snap, name)?;
     commit(store, parent, &slug(name), files, corpus.pages.len())
@@ -748,6 +776,7 @@ pub fn publish_static(
         return Err(refusal("static export selects too many pages"));
     }
     corpus.pages.sort_by(|a, b| a.name.cmp(&b.name));
-    let files = collect_static(store, &graph, &corpus)?;
+    // No frontend computes sheets for a CLI export: every sheet block stays a plain outline.
+    let files = collect_static(store, &graph, &corpus, &SheetIndex::default())?;
     commit(store, parent, &slug(name), files, corpus.pages.len())
 }

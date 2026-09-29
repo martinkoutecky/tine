@@ -984,7 +984,7 @@ export function mockBackend(extraPages: PageDto[] = [], removeAccents = true): M
     async publishHtml(): Promise<[string, number]> {
       return ["/mock/graph/publish", all.length];
     },
-    async pagePrintHtml(name: string, _opts): Promise<string> {
+    async pagePrintHtml(name: string, _opts, _sheets): Promise<string> {
       // Dev-preview stub: a small self-contained doc so the print harness/flow can
       // render something without the real publish pipeline.
       return (
