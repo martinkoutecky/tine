@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ensurePagePropertyOnKeyPage, pageByName, readPageProperty, resetStore } from "..";
+import { ensurePagePropertyOnKeyPage, flushPage, pageByName, readPageProperty, resetStore } from "..";
 import { setDoc } from "../model";
+import { loadSingle } from "../workingSet";
 import { backend } from "../../backend";
 
 afterEach(() => { vi.restoreAllMocks(); resetStore(); });
@@ -17,6 +18,20 @@ describe("property declaration write door", () => {
     setDoc({ byId: {}, pages: [], feed: [], loaded: true });
     vi.spyOn(backend(), "getPage").mockResolvedValue(null);
     await ensurePagePropertyOnKeyPage("cost", "tine.type", "number");
+    expect(readPageProperty("cost", "tine.type")).toBe("number");
+  });
+
+  it("reopens the declared type from the one saved page payload", async () => {
+    setDoc({ byId: {}, pages: [], feed: [], loaded: true });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-1"] });
+    await ensurePagePropertyOnKeyPage("cost", "tine.type", "number");
+    expect(await flushPage("cost")).toBe(true);
+    expect(save).toHaveBeenCalledTimes(1);
+    const payload = save.mock.calls[0][0][0].page;
+    expect(payload.pre_block).toContain("tine.type:: number");
+    resetStore();
+    loadSingle(payload);
     expect(readPageProperty("cost", "tine.type")).toBe("number");
   });
 
