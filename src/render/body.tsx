@@ -5,11 +5,10 @@ import { For, Show, createContext, createMemo, createResource, createSignal, onC
 import { Dynamic } from "solid-js/web";
 import { InlineText, renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
 import { EmojiText } from "./emoji";
-import type { Block as AstBlock, ListItem as AstListItem, Format } from "./ast";
+import type { Block as AstBlock, Inline as AstInline, ListItem as AstListItem, Format } from "./ast";
 import { hiccupToHtml } from "./hiccup";
-import { coarseSpanAttrs, type SpanDomAttrs } from "./spans";
+import { coarseSpanAttrs, rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
 import { evalCalc } from "../editor/calc";
-import { transitionFence, type FenceState } from "../editor/fences";
 import { toggleListItemAtIndex, formatForBlock, node as docNode } from "../document";
 import { graphMeta } from "../graphSession";
 import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "./block";
@@ -196,7 +195,7 @@ function renderBlock(b: AstBlock, blockId?: string, macroExpansion = false, form
     case "custom":
       return renderCustom(b, blockId, macroExpansion, format, tableOptions);
     case "list":
-      return <AstList items={b.items} blockId={blockId} cbItems={flattenCheckboxItems(b.items)} spanAttrs={coarseSpanAttrs(b.span)} macroExpansion={macroExpansion} format={format} tableOptions={tableOptions} />;
+      return <AstList items={b.items} blockId={blockId} spanAttrs={coarseSpanAttrs(b.span)} macroExpansion={macroExpansion} format={format} tableOptions={tableOptions} />;
     case "table":
       return renderTable(b, blockId, macroExpansion, format, tableOptions);
     case "properties":
@@ -354,48 +353,16 @@ function renderProps(b: Extract<AstBlock, { kind: "properties" }>, blockId?: str
   );
 }
 
-// The AST carries no source line (contract R12), so to toggle a checkbox we map the
-// clicked item to its `[ ]`/`[x]` line in `raw` BY DOCUMENT POSITION, not by text:
-// `flattenCheckboxItems` lists every checkbox item depth-first (the same order the
-// `[ ]` lines appear in `raw`), and the click flips the Nth such raw line. Positional
-// targeting is what makes two items with the same label toggle independently.
-function flattenCheckboxItems(items: AstListItem[]): AstListItem[] {
-  const out: AstListItem[] = [];
-  const walk = (xs: AstListItem[]) => {
-    for (const it of xs) {
-      if (it.checkbox !== undefined) out.push(it);
-      if (it.items.length) walk(it.items);
-    }
-  };
-  walk(items);
-  return out;
-}
+// The raw text this body was parsed from. A checkbox click maps its item to a raw
+// line through the item's own lsdoc source span, which is a position in THIS text;
+// `toggleAstCheckbox` refuses when it is not the block's current raw (a macro
+// expansion, or a render older than the text), so a click never edits a line the
+// renderer did not draw. Direct `renderBlocks` callers provide none: inert.
+const CheckboxSourceContext = createContext<string>();
 
-const CheckboxItemsContext = createContext<AstListItem[]>();
-
-function allCheckboxItems(blocks: AstBlock[]): AstListItem[] {
-  const out: AstListItem[] = [];
-  const walkBlocks = (bs: AstBlock[]) => {
-    for (const block of bs) {
-      if (block.kind === "list") walkItems(block.items);
-      else if (block.kind === "quote" || block.kind === "custom") walkBlocks(block.children);
-    }
-  };
-  const walkItems = (items: AstListItem[]) => {
-    for (const item of items) {
-      if (item.checkbox !== undefined) out.push(item);
-      walkBlocks(item.content);
-      walkItems(item.items);
-    }
-  };
-  walkBlocks(blocks);
-  return out;
-}
-
-// An in-block list from the AST (`ListItem[]`). The rendering context holds
-// checkbox order across separate list nodes; `cbItems` covers direct callers.
-function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstListItem[]; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format; tableOptions?: TableV2Options }): JSX.Element {
-  const blockCheckboxes = useContext(CheckboxItemsContext) ?? props.cbItems;
+// An in-block list from the AST (`ListItem[]`).
+function AstList(props: { items: AstListItem[]; blockId?: string; spanAttrs?: SpanDomAttrs; macroExpansion?: boolean; format?: Format; tableOptions?: TableV2Options }): JSX.Element {
+  const sourceRaw = useContext(CheckboxSourceContext);
   const ordered = props.items[0]?.ordered ?? false;
   return (
     <Dynamic component={ordered ? "ol" : "ul"} class="md-list" {...(props.spanAttrs ?? {})}>
@@ -416,7 +383,7 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
                 aria-checked={item.checkbox === true}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (props.blockId) toggleAstCheckbox(props.blockId, blockCheckboxes.indexOf(item));
+                  if (props.blockId && sourceRaw !== undefined) toggleAstCheckbox(props.blockId, sourceRaw, item);
                 }}
               />{" "}
             </Show>
@@ -427,7 +394,7 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
             </Show>
             {renderBlocks(item.content, props.blockId, undefined, props.macroExpansion ?? false, props.format, props.tableOptions)}
             <Show when={item.items.length > 0}>
-              <AstList items={item.items} blockId={props.blockId} cbItems={props.cbItems} macroExpansion={props.macroExpansion} format={props.format} tableOptions={props.tableOptions} />
+              <AstList items={item.items} blockId={props.blockId} macroExpansion={props.macroExpansion} format={props.format} tableOptions={props.tableOptions} />
             </Show>
           </li>
         )}
@@ -463,9 +430,9 @@ function renderBody(raw: string, format: Format, blockId?: string, headingLevel?
   const beginQuery = inspectBeginQuery(raw, format, blocks);
   return beginQuery
     ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} />
-    : <CheckboxItemsContext.Provider value={allCheckboxItems(blocks)}>
+    : <CheckboxSourceContext.Provider value={raw}>
         {renderBlocks(blocks, blockId, headingLevel, macroExpansion, format, tableV2Options(properties))}
-      </CheckboxItemsContext.Provider>;
+      </CheckboxSourceContext.Provider>;
 }
 
 /** Render a block's body. Parses the WHOLE block's `raw` (re-bulleted like OG, via
@@ -544,39 +511,36 @@ export function estimateBodyReserve(lines: string[], headingLevel: number | null
   return undefined;
 }
 
-// Flip the `cbIndex`-th checkbox of the block: find the cbIndex-th `[ ]`/`[x]`
-// list line in `raw` (document order) and toggle exactly that line. No text match,
-// so duplicate labels and `**markup**` in the item never mis-target.
-function toggleAstCheckbox(blockId: string, cbIndex: number) {
-  if (cbIndex < 0) return;
-  const node = docNode(blockId);
-  if (!node) return;
-  const lines = node.raw.split("\n");
-  const re = /^\s*(?:[-+*]|\d+[.)])\s+\[[ xX]\]\s+/;
-  let seen = -1;
-  let fence: FenceState | null = null;
-  let orgLiteral: string | null = null;
-  const org = formatForBlock(blockId) === "org";
-  for (let i = 0; i < lines.length; i++) {
-    if (orgLiteral) {
-      if (new RegExp(`^\\s*#\\+END_${orgLiteral}\\b`, "i").test(lines[i])) orgLiteral = null;
-      continue;
+/** The first source-positioned inline of a list item's label (depth-first). */
+function firstInlineSpanStart(item: AstListItem): number | undefined {
+  const inInlines = (xs: AstInline[] | undefined): number | undefined => {
+    for (const x of xs ?? []) {
+      if (x.span) return x.span[0];
+      const nested = "children" in x && Array.isArray(x.children) ? inInlines(x.children as AstInline[]) : undefined;
+      if (nested !== undefined) return nested;
     }
-    if (org) {
-      const begin = /^\s*#\+BEGIN_(SRC|EXAMPLE)\b/i.exec(lines[i]);
-      if (begin) {
-        orgLiteral = begin[1];
-        continue;
-      }
-    }
-    const transition = transitionFence(fence, lines[i]);
-    fence = transition.next;
-    if (fence || transition.closes) continue;
-    if (re.test(lines[i])) {
-      if (++seen === cbIndex) {
-        toggleListItemAtIndex(blockId, i);
-        return;
-      }
-    }
+    return undefined;
+  };
+  for (const block of item.content) {
+    const at = "inline" in block && Array.isArray(block.inline) ? inInlines(block.inline as AstInline[]) : undefined;
+    if (at !== undefined) return at;
   }
+  return inInlines(item.name);
+}
+
+// Flip the clicked item's own `[ ]`/`[x]`: its label's lsdoc source span (a UTF-8
+// offset into the re-bulleted `sourceRaw`) names its raw line, so literal content
+// (code/src/example, `$$` math, drawers) and quoted items never mis-target, and two
+// items with the same label stay independent. No second recognizer of "which line
+// is checkbox N" (I-12). Refuses unless the line's text before the label ends in
+// the checkbox, and unless `sourceRaw` is still the block's raw.
+function toggleAstCheckbox(blockId: string, sourceRaw: string, item: AstListItem) {
+  const node = docNode(blockId);
+  if (!node || node.raw !== sourceRaw) return;
+  const start = firstInlineSpanStart(item);
+  if (start === undefined) return;
+  const at = utf8ByteToUtf16Offset(sourceRaw, rebulletedSourceByteToRawByte(sourceRaw, start));
+  const lineStart = sourceRaw.lastIndexOf("\n", at - 1) + 1;
+  if (!/\[[ xX]\]\s*$/.test(sourceRaw.slice(lineStart, at))) return;
+  toggleListItemAtIndex(blockId, sourceRaw.slice(0, lineStart).split("\n").length - 1);
 }
