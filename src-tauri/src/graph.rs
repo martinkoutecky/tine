@@ -285,6 +285,7 @@ pub(crate) fn load_graph_for_label(
             return Ok(LoadGraphResult::AlreadyCurrent {
                 meta: graph_meta(&slot),
                 binding_generation: slot.binding_generation,
+                config_problem: config_problem(&slot.store),
             });
         }
         if let Some(existing) = app.get_webview_window(&owner) {
@@ -341,10 +342,12 @@ pub(crate) fn load_graph_for_label(
         let _ = window.set_title(&format!("Tine — {name}"));
     }
     let binding_generation = slot.binding_generation;
+    let config_problem = config_problem(&slot.store);
     warm_cache_async(app.clone(), window_label.to_string(), slot, warm_generation);
     Ok(LoadGraphResult::Loaded {
         meta,
         binding_generation,
+        config_problem,
     })
 }
 
@@ -414,15 +417,29 @@ pub(crate) async fn open_graph_window(
 }
 
 #[derive(serde::Serialize)]
+pub(crate) struct ConfigProblem {
+    kind: &'static str,
+    message: String,
+}
+fn config_problem(store: &Store) -> Option<ConfigProblem> {
+    store.config().problem.map(|error| ConfigProblem {
+        kind: "config-read",
+        message: error.to_string(),
+    })
+}
+
+#[derive(serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum LoadGraphResult {
     Loaded {
         meta: GraphMeta,
         binding_generation: u64,
+        config_problem: Option<ConfigProblem>,
     },
     AlreadyCurrent {
         meta: GraphMeta,
         binding_generation: u64,
+        config_problem: Option<ConfigProblem>,
     },
     FocusedExisting {
         window_label: String,
@@ -716,7 +733,7 @@ mod tests {
         );
         assert!(!dir.join("journals").join("2026_06_25.org").exists());
         assert_eq!(
-            tine_graph_features::journals::journal_filename_migrations(&loaded.store),
+            tine_graph_features::journals::journal_filename_migrations(&loaded.store).unwrap(),
             vec![tine_graph_features::journals::JournalFilenameMigration {
                 from: "Thursday, 25-06-2026.org".into(),
                 to: "2026_06_25.org".into(),

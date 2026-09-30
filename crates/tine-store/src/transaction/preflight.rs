@@ -293,6 +293,7 @@ impl<'a> Transaction<'a> {
                 })
             }
             Step::Trash { file, expected } => {
+                self.check_orphan_asset(file)?;
                 if file.as_str().starts_with("logseq/.tine-trash/") {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }

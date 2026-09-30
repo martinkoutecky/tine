@@ -87,6 +87,8 @@ function rustFabricated(source: string): number {
 const RUST_BASELINE: Record<string, number> = {
   "crates/tine-graph-features/src/lib.rs": 0,
   "crates/tine-graph-features/src/assets.rs": 0,
+  "crates/tine-graph-features/src/graph_verification.rs": 0,
+  "crates/tine-store/src/transaction/read_checks.rs": 0,
   "crates/tine-store/src/model.rs": 7,
   "crates/tine-store/src/model/page_identity.rs": 5,
   "src-tauri/src/commands.rs": 0,
@@ -105,4 +107,15 @@ it("ratchets IO reads converted to defaults in touched Rust modules", () => {
 it("rollback restore failures keep recovery evidence instead of discarding move-back errors", () => {
   const source = readFileSync("crates/tine-store/src/model.rs", "utf8");
   expect(source, RULE).not.toMatch(/let _ = move_file_noreplace\(&staged,\s*path\)/);
+});
+
+it("I-2: trash asset checks use the latest publication under the writer; exemplar transaction/read_checks.rs", () => {
+  const transaction = readFileSync("crates/tine-store/src/transaction.rs", "utf8");
+  const preflight = readFileSync("crates/tine-store/src/transaction/preflight.rs", "utf8");
+  const checks = readFileSync("crates/tine-store/src/transaction/read_checks.rs", "utf8");
+  expect(transaction.indexOf("let _writer = self.store.writer.lock()")).toBeLessThan(transaction.indexOf("self.preflight("));
+  expect(preflight).toContain("self.check_orphan_asset(file)?");
+  expect(checks).toContain("self.store.whole_graph()");
+  expect(checks).toContain("view.unreadable_files()");
+  expect(checks).toContain("view.referenced_assets().contains(name)");
 });

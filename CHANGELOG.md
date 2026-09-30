@@ -101,6 +101,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   (GH #382).
 
 ### Fixed
+
+- **Graph read failures preserve user data** (REG-OG-B-FAIL2-CONFIG-WRITE, REG-OG-B-FAIL2-ASSET-TRASH, REG-OG-B-FAIL2-VERIFICATION-REPLACE): an unreadable config blocks writes into guessed directories, asset trash rechecks published references under the writer, and graph verification detects a source replaced while its old descriptor is being hashed.
 - Published query snapshots retain reviewed source documents across external edits; draft loading and CSV/TSV imports bound their reads before decoding (REG-OG-B-W3-PUBLICATION-SNAPSHOT, REG-OG-B-W3-BOUNDED-DRAFT-READ, REG-OG-B-W3-BOUNDED-CSV-READ).
 - Sheet row virtualization clears its visited-row state on graph reset (UI-OG-B-W3-SHEET-BINDING-RESET).
 

@@ -263,7 +263,10 @@ pub fn orphan_assets(store: &Store) -> io::Result<Vec<AssetInfo>> {
 }
 
 /// Move one top-level asset into recoverable trash. Reads its current revision
-/// and retries a concurrent external write at most four times. Cost O(file bytes)
+/// and retries a concurrent external write at most four times. The transaction
+/// rechecks the latest published asset references under its writer lock. Unreadable
+/// graph entries refuse trash; an external arrival not yet published can still
+/// race. Cost O(B + file bytes)
 /// per attempt; a missing asset reports the v0.6.5 `no such asset` error.
 pub fn trash_asset(store: &Store, name: &str) -> io::Result<()> {
     validate_name(name)?;

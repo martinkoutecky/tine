@@ -732,10 +732,9 @@ impl std::fmt::Display for OpenError {
     }
 }
 
-/// Effective config. File operations remain available when `problem` is set;
-/// callers should resolve the read failure before creating files under
-/// possibly defaulted directories or journal formats. `scan_refresh()` retries
-/// the config read and updates `problem` after the underlying error is fixed.
+/// Effective config. While `problem` is set, page reads are read-only and
+/// transactions refuse mutations: unknown directories must never choose a
+/// write destination. `scan_refresh()` retries the config read after repair.
 #[derive(Clone)]
 pub struct ConfigState {
     /// Effective graph config, defaulted when loading config failed. A changed
@@ -1069,11 +1068,8 @@ impl Store {
     /// destination guard cannot detect every unseen same-name claimant.
     /// A caller that applies the configured journal template must wait for
     /// `WholeGraph::templates()`; saving a new journal does not add it.
-    /// Parsing runs in the background and
-    /// [`Self::whole_graph`] waits for it. A write during parsing is included
-    /// in the first published view. One unreadable page can be skipped and
-    /// later reported by `unreadable_files`; a failed entire parse makes
-    /// graph-wide queries unavailable until [`Self::scan_refresh`] retries it.
+    /// [`Self::whole_graph`] waits for background parsing. Partial scans report
+    /// unreadable entries; failed parsing is retried by [`Self::scan_refresh`].
     /// Direct page reads and guarded writes remain available after a parse
     /// failure. Neither publishes a graph generation until a successful
     /// `scan_refresh()`. The returned
@@ -1887,7 +1883,7 @@ impl Store {
             .graph
             .find_entry(&entry.name, entry.kind)
             .is_some_and(|found| found.path == path);
-        let doc = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut doc = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             #[cfg(test)]
             if fs::read_to_string(&path)
                 .is_ok_and(|text| text.contains("__TINE_TEST_PAGE_PARSE_PANIC__"))
@@ -1922,9 +1918,13 @@ impl Store {
         })?
         .ok_or(StoreError::NotFound)?;
         let rev = FileRev(doc.rev.clone().ok_or(StoreError::NotFound)?);
-        let read_only = doc
-            .read_only
-            .then(|| "Org file does not round-trip".to_owned());
+        let read_only = if self.config().problem.is_some() {
+            doc.read_only = true;
+            Some("config.edn could not be read; graph is read-only".to_owned())
+        } else {
+            doc.read_only
+                .then(|| "Org file does not round-trip".to_owned())
+        };
         if self.graph.cache_generation() != before_generation
             && !matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_))
         {
@@ -2157,7 +2157,7 @@ pub enum StoreError {
 }
 
 impl StoreError {
-    fn from_io(error: std::io::Error) -> Self {
+    pub(crate) fn from_io(error: std::io::Error) -> Self {
         if let Some(too_large) = error
             .get_ref()
             .and_then(|inner| inner.downcast_ref::<crate::model::ParseInputTooLarge>())

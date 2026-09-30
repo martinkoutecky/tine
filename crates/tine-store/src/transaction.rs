@@ -28,6 +28,7 @@ mod io_helpers;
 #[path = "../tests/support/og_k1_pause.rs"]
 mod og_k1_pause;
 mod preflight;
+mod read_checks;
 mod validation;
 use io_helpers::{
     collision, content_refusal, directory_read_error, disk_rev, failed, failed_trash_dir,
@@ -1564,12 +1565,27 @@ impl<'a> Transaction<'a> {
                 assert!(!touches_page, "OG-RULES Rule 8: a page-file write needs an edit kind; exemplar crates/tine-graph-features/src/pages.rs");
             }
         }
+        // Waiting for initial publication must precede acquiring its writer.
+        if self.steps.iter().any(
+            |step| matches!(step, Step::Trash { file, .. } if file.as_str().starts_with("assets/")),
+        ) {
+            let _ = self.store.whole_graph();
+        }
         let _writer = self.store.writer.lock().unwrap();
         let rev = || self.store.changes.rev();
         if self.store.is_closed() {
             return TxOutcome::NotCommitted {
                 step: 0,
                 why: Why::Refused(Refusal::Closed),
+                rollback: Rollback::default(),
+                publication_errors: Vec::new(),
+                graph_rev: rev(),
+            };
+        }
+        if let Some(problem) = self.store.config().problem {
+            return TxOutcome::NotCommitted {
+                step: 0,
+                why: Why::Failed(problem),
                 rollback: Rollback::default(),
                 publication_errors: Vec::new(),
                 graph_rev: rev(),

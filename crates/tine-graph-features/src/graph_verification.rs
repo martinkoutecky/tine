@@ -153,7 +153,10 @@ fn digest_file(
         let (mut file, length) = store
             .open_read(&id)
             .map_err(|e| crate::store_error(e).to_string())?;
-        let before = file.metadata().and_then(|m| m.modified()).ok();
+        let before = file
+            .metadata()
+            .and_then(|m| m.modified())
+            .map_err(|e| e.to_string())?;
         let mut hasher = Sha256::new();
         let mut buffer = [0_u8; 64 * 1024];
         let mut read_total = 0_u64;
@@ -169,7 +172,13 @@ fn digest_file(
             read_total += n as u64;
         }
         let after = file.metadata().map_err(|e| e.to_string())?;
-        if read_total != length || after.len() != length || after.modified().ok() != before {
+        if read_total != length
+            || after.len() != length
+            || after.modified().map_err(|e| e.to_string())? != before
+            || !store
+                .read_is_current(&id, &file)
+                .map_err(|e| crate::store_error(e).to_string())?
+        {
             return Err("changed while it was being verified".into());
         }
         Ok(Some(SourceDigest {

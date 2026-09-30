@@ -147,3 +147,36 @@ fn a_file_removed_after_listing_is_reported_by_path() {
         .any(|e| e.path.as_deref() == Some("archive/deep/Elsewhere.org")));
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn atomic_replacement_of_open_descriptor_is_incomplete() {
+    let (root, store) = graph("replace-descriptor");
+    let target = root.join("archive/deep/Elsewhere.org");
+    let polls = Cell::new(0);
+    let manifest = verify_graph_bytes(
+        &store,
+        &|| {
+            polls.set(polls.get() + 1);
+            // First poll precedes opening; the second runs with its descriptor held.
+            if polls.get() == 2 {
+                let replacement = root.join("replacement.tmp");
+                fs::write(&replacement, b"* different\n").unwrap();
+                fs::rename(replacement, &target).unwrap();
+            }
+            false
+        },
+        &mut |_, _| {},
+    )
+    .unwrap();
+    assert!(
+        !manifest.complete,
+        "displaced descriptor must never certify live bytes"
+    );
+    assert!(manifest.aggregate_digest.is_none());
+    assert!(manifest
+        .errors
+        .iter()
+        .any(|e| e.path.as_deref() == Some("archive/deep/Elsewhere.org")));
+    store.close();
+    let _ = fs::remove_dir_all(root);
+}
