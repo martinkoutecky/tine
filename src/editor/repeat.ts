@@ -6,7 +6,8 @@
 import { leadingMarker, nextMarker, cycleMarker, setMarker, type Workflow } from "./marker";
 import { matchLeadingMarker, taskCheckboxState } from "../markers";
 import { applyMarkerTransition } from "../logbook";
-import { literalBlockOfLine } from "./literalLines";
+import { blockRegions } from "../render/parse";
+import { utf8ByteToUtf16Offset } from "../render/spans";
 import type { Format } from "../types";
 
 import { appNow } from "../journal";
@@ -24,12 +25,8 @@ interface MarkerTimeOptions {
  *  code/src block is content, never the task's planning (C3 L14; the one answer
  *  is editor/literalLines.ts — its Markdown parse also recognizes `#+BEGIN_SRC`). */
 export function hasRepeater(raw: string): boolean {
-  const literal = literalBlockOfLine(raw);
-  return raw.split("\n").some((l, i) => {
-    if (literal[i] !== -1) return false;
-    const t = l.trim();
-    return (t.startsWith("SCHEDULED:") || t.startsWith("DEADLINE:")) && REPEATER.test(t);
-  });
+  return blockRegions(raw).planning.some(p => p.kind !== "Closed" && REPEATER.test(
+    raw.slice(utf8ByteToUtf16Offset(raw,p.timestamp[0]),utf8ByteToUtf16Offset(raw,p.timestamp[1]))));
 }
 
 /** Advance one `<…>` timestamp by its repeater; null if it has none. */
@@ -76,19 +73,20 @@ function advanceTimestamp(ts: string): string | null {
 export function rollRepeat(raw: string, workflow: Workflow): string | null {
   if (!hasRepeater(raw)) return null;
   const open = workflow === "now" ? "LATER" : "TODO";
-  const lines = raw.split("\n");
-  const literal = literalBlockOfLine(raw);
-  for (let i = 0; i < lines.length; i++) {
-    const m = literal[i] === -1 ? /^(\s*)(SCHEDULED|DEADLINE):\s*(<[^>]+>)(.*)$/.exec(lines[i]) : null;
-    if (m) {
-      const adv = advanceTimestamp(m[3]);
-      if (adv) lines[i] = `${m[1]}${m[2]}: ${adv}${m[4]}`;
-    }
+  let next = raw;
+  const entries = blockRegions(raw).planning.filter(p => p.kind !== "Closed").sort((a,b) => b.timestamp[0]-a.timestamp[0]);
+  for (const p of entries) {
+    const start = utf8ByteToUtf16Offset(raw,p.timestamp[0]);
+    const end = utf8ByteToUtf16Offset(raw,p.timestamp[1]);
+    const accepted = raw.slice(start,end);
+    const lt = accepted.indexOf("<");
+    const adv = advanceTimestamp(accepted.slice(lt));
+    if (adv) next = next.slice(0,start+lt) + adv + next.slice(end);
   }
   // The marker is spliced at its recognized offsets (it may follow leading
   // whitespace or a blank line); planning lines come after it, so their
   // advance above leaves those offsets valid (C3 L14).
-  return setMarker(lines.join("\n"), open);
+  return setMarker(next, open);
 }
 
 /** Toggle a task's checkbox the way OG's `check`/`uncheck` do: an OPEN task →

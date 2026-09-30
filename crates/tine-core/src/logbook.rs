@@ -1,8 +1,7 @@
 //! OG Logseq-compatible `:LOGBOOK:` clock drawer handling.
 //!
-//! This module owns the CLOCK line scan/write format used by both tine-core and
-//! the frontend wasm wrapper. It deliberately scans only the `:LOGBOOK:` drawer
-//! lines in one pass; lsdoc's drawer body is opaque today.
+//! The block-region door owns drawer/planning boundaries. This module interprets
+//! clock values only inside parser-accepted LOGBOOK rows, shared with wasm.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogbookFormat {
@@ -91,16 +90,38 @@ pub fn clock_out(raw: &str, _format: LogbookFormat, with_seconds: bool) -> Strin
 }
 
 pub fn clock_out_at(raw: &str, with_seconds: bool, now: TimestampParts) -> String {
+    let regions = crate::block_regions::parse(raw, false);
+    clock_out_with_regions(raw, with_seconds, now, &regions)
+}
+fn clock_out_with_regions(
+    raw: &str,
+    with_seconds: bool,
+    now: TimestampParts,
+    regions: &crate::block_regions::BlockRegions,
+) -> String {
     let mut lines: Vec<String> = raw.split('\n').map(str::to_string).collect();
-    let Some((start, end)) = logbook_bounds(&lines) else {
+    let Some(drawer) = regions
+        .drawers
+        .iter()
+        .find(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+    else {
         return raw.to_string();
     };
+    let start = raw[..drawer.range.0]
+        .bytes()
+        .filter(|b| *b == b'\n')
+        .count();
+    let end = raw[..drawer.close].bytes().filter(|b| *b == b'\n').count();
     if end <= start + 1 {
         return raw.to_string();
     }
     let idx = end - 1;
     let clock_in_log = lines[idx].trim();
-    if !clock_in_log.starts_with("CLOCK:") || clock_in_log.contains("--") {
+    let row_start = lines[..idx]
+        .iter()
+        .map(|line| line.len() + 1)
+        .sum::<usize>();
+    if !drawer.clocks.last().is_some_and(|r| r.0 == row_start) || clock_in_log.contains("--") {
         return raw.to_string();
     }
     let Some(clock_start) = open_clock_start(clock_in_log) else {
@@ -117,7 +138,11 @@ pub fn clock_out_at(raw: &str, with_seconds: bool, now: TimestampParts) -> Strin
         return raw.to_string();
     }
     let span = format_span(end_sec - start_sec, with_seconds);
-    lines[idx] = format!("CLOCK: [{}]--[{}] =>  {}", clock_start, clock_end, span);
+    let eol = if lines[idx].ends_with('\r') { "\r" } else { "" };
+    lines[idx] = format!(
+        "CLOCK: [{}]--[{}] =>  {}{}",
+        clock_start, clock_end, span, eol
+    );
     lines.join("\n")
 }
 
@@ -137,16 +162,38 @@ pub fn apply_marker_transition_at(
         return raw.to_string();
     };
     let old_marker = marker_name(old_marker);
+    let regions = crate::block_regions::parse(raw, format == LogbookFormat::Org);
     let should_clock_in = match old_marker {
         None => new_marker == "doing" || new_marker == "now",
         Some("todo") => new_marker == "doing",
         Some("later") => new_marker == "now",
-        Some("now") => new_marker == "now" && !has_logbook_drawer(raw),
-        Some("doing") => new_marker == "doing" && !has_logbook_drawer(raw),
+        Some("now") => {
+            new_marker == "now"
+                && !regions
+                    .drawers
+                    .iter()
+                    .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+        }
+        Some("doing") => {
+            new_marker == "doing"
+                && !regions
+                    .drawers
+                    .iter()
+                    .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+        }
         _ => false,
     };
     if should_clock_in {
-        return clock_in_at(raw, format, with_seconds, now);
+        return regions
+            .apply(
+                raw,
+                format == LogbookFormat::Org,
+                crate::block_regions::Edit::DrawerRow {
+                    name: "LOGBOOK".into(),
+                    value: format!("CLOCK: [{}]", now.format(with_seconds)),
+                },
+            )
+            .expect("parsed clock transition");
     }
 
     let should_clock_out = matches!(
@@ -155,7 +202,7 @@ pub fn apply_marker_transition_at(
     ) || (matches!(old_marker, Some("now") | Some("doing"))
         && new_marker == "done");
     if should_clock_out {
-        return clock_out_at(raw, with_seconds, now);
+        return clock_out_with_regions(raw, with_seconds, now, &regions);
     }
     raw.to_string()
 }
@@ -206,6 +253,17 @@ pub fn clock_rows(raw: &str) -> Vec<ClockRow> {
         .collect()
 }
 
+/// Clock rows and total duration from one parser-owned LOGBOOK projection.
+/// O(bytes in one block); one parse, no graph work.
+pub fn clock_info(raw: &str) -> (Vec<ClockRow>, u64) {
+    let rows = clock_rows(raw);
+    let seconds = rows
+        .iter()
+        .filter_map(|r| r.span.as_deref().and_then(parse_span_seconds))
+        .sum();
+    (rows, seconds)
+}
+
 pub fn format_compact_duration(seconds: u64) -> String {
     if seconds == 0 {
         return "0s".to_string();
@@ -233,142 +291,52 @@ pub fn format_compact_duration(seconds: u64) -> String {
 }
 
 fn insert_logbook_line(raw: &str, format: LogbookFormat, value: &str) -> String {
-    let lines: Vec<&str> = raw.split('\n').collect();
-    let title = lines.first().copied().unwrap_or("");
-    let body = if lines.len() > 1 {
-        &lines[1..]
-    } else {
-        &[][..]
-    };
-    let scheduled: Vec<&str> = lines
-        .iter()
-        .copied()
-        .filter(|line| line.starts_with("SCHEDULED"))
-        .collect();
-    let deadline: Vec<&str> = lines
-        .iter()
-        .copied()
-        .filter(|line| line.starts_with("DEADLINE"))
-        .collect();
-    let body_without_timestamps: Vec<&str> = body
-        .iter()
-        .copied()
-        .filter(|line| !(line.starts_with("SCHEDULED") || line.starts_with("DEADLINE")))
-        .collect();
-
-    let mut out: Vec<String> = Vec::new();
-    out.push(title.to_string());
-    out.extend(scheduled.into_iter().map(str::to_string));
-    out.extend(deadline.into_iter().map(str::to_string));
-
-    if let Some((start, end)) = logbook_bounds(&body_without_timestamps) {
-        out.extend(
-            body_without_timestamps[..start]
-                .iter()
-                .map(|s| (*s).to_string()),
-        );
-        out.push(body_without_timestamps[start].to_string());
-        out.extend(
-            body_without_timestamps[start + 1..end]
-                .iter()
-                .map(|s| (*s).to_string()),
-        );
-        out.push(value.to_string());
-        out.push(body_without_timestamps[end].to_string());
-        out.extend(
-            body_without_timestamps[end + 1..]
-                .iter()
-                .map(|s| (*s).to_string()),
-        );
-        return out.join("\n").trim_end().to_string();
-    }
-
-    let prop_end = leading_properties_end(&body_without_timestamps, format);
-    out.extend(
-        body_without_timestamps[..prop_end]
-            .iter()
-            .map(|s| (*s).to_string()),
-    );
-    out.push(":LOGBOOK:".to_string());
-    out.push(value.to_string());
-    out.push(":END:".to_string());
-    out.extend(
-        body_without_timestamps[prop_end..]
-            .iter()
-            .map(|s| (*s).to_string()),
-    );
-    out.join("\n").trim_end().to_string()
+    crate::block_regions::edit(
+        raw,
+        format == LogbookFormat::Org,
+        crate::block_regions::Edit::DrawerRow {
+            name: "LOGBOOK".into(),
+            value: value.into(),
+        },
+    )
+    .expect("LOGBOOK edit on parsed block")
 }
 
-fn leading_properties_end(lines: &[&str], format: LogbookFormat) -> usize {
-    match format {
-        LogbookFormat::Org => {
-            if !lines
-                .first()
-                .is_some_and(|line| is_drawer_start(line, "PROPERTIES"))
-            {
-                return 0;
-            }
-            for (i, line) in lines.iter().enumerate().skip(1) {
-                if is_drawer_end(line) {
-                    return i + 1;
-                }
-            }
-            0
-        }
-        LogbookFormat::Markdown => {
-            let mut i = 0;
-            while i < lines.len() && is_md_property_line(lines[i]) {
-                i += 1;
-            }
-            i
-        }
-    }
-}
-
+#[cfg(test)]
 fn is_md_property_line(line: &str) -> bool {
     crate::property_line::parse_property_line(line).is_some()
 }
 
 fn logbook_bounds<T: AsRef<str>>(lines: &[T]) -> Option<(usize, usize)> {
-    let mut i = 0;
-    while i < lines.len() {
-        if is_drawer_start(lines[i].as_ref(), "LOGBOOK") {
-            let mut j = i + 1;
-            while j < lines.len() {
-                if is_drawer_end(lines[j].as_ref()) {
-                    return Some((i, j));
-                }
-                j += 1;
-            }
-            return None;
-        }
-        i += 1;
-    }
-    None
-}
-
-fn is_drawer_start(line: &str, name: &str) -> bool {
-    let t = line.trim();
-    t.len() == name.len() + 2
-        && t.starts_with(':')
-        && t.ends_with(':')
-        && t[1..t.len() - 1].eq_ignore_ascii_case(name)
-}
-
-fn is_drawer_end(line: &str) -> bool {
-    line.trim().eq_ignore_ascii_case(":END:")
+    let raw = lines
+        .iter()
+        .map(AsRef::as_ref)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let regions = crate::block_regions::parse(&raw, false);
+    let drawer = regions
+        .drawers
+        .iter()
+        .find(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))?;
+    let start = raw[..drawer.range.0]
+        .bytes()
+        .filter(|b| *b == b'\n')
+        .count();
+    let end = raw[..drawer.close].bytes().filter(|b| *b == b'\n').count();
+    Some((start, end))
 }
 
 fn clock_lines(raw: &str) -> Vec<&str> {
-    let lines: Vec<&str> = raw.split('\n').collect();
-    let Some((start, end)) = logbook_bounds(&lines) else {
-        return Vec::new();
-    };
-    lines[start + 1..end]
+    let regions = crate::block_regions::parse(raw, false);
+    regions
+        .drawers
         .iter()
-        .copied()
-        .filter(|line| line.trim().starts_with("CLOCK:"))
+        .filter(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+        .flat_map(|d| {
+            d.clocks
+                .iter()
+                .map(|r| r.slice(raw).trim_end_matches(['\r', '\n']))
+        })
         .collect()
 }
 

@@ -629,7 +629,12 @@ pub fn merge_hls_page_for_format(
             Some(id) if !placed.contains(id) && by_id.contains_key(id) => {
                 let (&key, h) = by_id.get_key_value(id).expect("checked");
                 placed.insert(key);
-                roots.push(refresh_annotation(b.clone(), h, format));
+                roots.push(refresh_annotation(
+                    b.clone(),
+                    h,
+                    format,
+                    &b.projection().regions,
+                ));
             }
             Some(id) if removed.contains(id) => continue,
             _ => roots.push(b.clone()),
@@ -661,21 +666,6 @@ fn page_property_key(line: &str, format: Format) -> Option<String> {
     }
 }
 
-fn block_property_key(line: &str, format: Format) -> Option<String> {
-    match format {
-        Format::Md => crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase()),
-        Format::Org => {
-            let line = line.trim();
-            if line.eq_ignore_ascii_case(":PROPERTIES:") || line.eq_ignore_ascii_case(":END:") {
-                return None;
-            }
-            line.strip_prefix(':')
-                .and_then(|line| line.split_once(':'))
-                .map(|(key, _)| key.to_ascii_lowercase())
-        }
-    }
-}
-
 fn property_line(key: &str, value: impl std::fmt::Display, format: Format) -> String {
     match format {
         Format::Md => format!("{key}:: {value}"),
@@ -687,63 +677,26 @@ fn property_line(key: &str, value: impl std::fmt::Display, format: Format) -> St
 /// (possibly recolored / re-paged) highlight, preserving everything else — the
 /// user's highlight-text line, any extra properties, and the note children. The
 /// old block was previously kept verbatim, so a recolor never reached the page.
-fn refresh_annotation(mut block: DocBlock, h: &Highlight, format: Format) -> DocBlock {
-    let mut saw_color = false;
-    let mut saw_page = false;
-    let mut lines: Vec<String> = block
-        .raw
-        .lines()
-        .map(|line| match block_property_key(line, format) {
-            Some(k) if k == "hl-color" => {
-                saw_color = true;
-                property_line("hl-color", &h.color, format)
-            }
-            Some(k) if k == "hl-page" => {
-                saw_page = true;
-                property_line("hl-page", h.page, format)
-            }
-            _ => line.to_string(),
-        })
-        .collect();
-    // If the metadata lines were missing (hand-edited file), add them before id::.
-    if !saw_color || !saw_page {
-        let id_pos = lines
-            .iter()
-            .position(|line| block_property_key(line, format).as_deref() == Some("id"));
-        let mut add: Vec<String> = Vec::new();
-        if !saw_page {
-            add.push(property_line("hl-page", h.page, format));
-        }
-        if !saw_color {
-            add.push(property_line("hl-color", &h.color, format));
-        }
-        match id_pos {
-            Some(i) => {
-                for (j, l) in add.into_iter().enumerate() {
-                    lines.insert(i + j, l);
-                }
-            }
-            None if format == Format::Org => {
-                let end = lines
-                    .iter()
-                    .position(|line| line.trim().eq_ignore_ascii_case(":END:"));
-                match end {
-                    Some(index) => {
-                        for (offset, line) in add.into_iter().enumerate() {
-                            lines.insert(index + offset, line);
-                        }
-                    }
-                    None => {
-                        lines.push(":PROPERTIES:".to_string());
-                        lines.extend(add);
-                        lines.push(":END:".to_string());
-                    }
-                }
-            }
-            None => lines.extend(add),
-        }
-    }
-    block.set_raw(lines.join("\n"));
+fn refresh_annotation(
+    mut block: DocBlock,
+    h: &Highlight,
+    format: Format,
+    regions: &crate::block_regions::BlockRegions,
+) -> DocBlock {
+    use crate::block_regions::Edit;
+    let raw = regions
+        .apply(
+            block.raw(),
+            format == Format::Org,
+            Edit::Properties {
+                values: vec![
+                    ("hl-color".into(), h.color.clone()),
+                    ("hl-page".into(), h.page.to_string()),
+                ],
+            },
+        )
+        .expect("parsed annotation");
+    block.set_raw(raw);
     block
 }
 

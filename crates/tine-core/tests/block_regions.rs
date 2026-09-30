@@ -43,6 +43,7 @@ fn parity_fixture_is_identical_to_native_regions() {
         serde_json::from_str(include_str!("fixtures/block-regions.json")).unwrap();
     let expected: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("fixtures/block-regions-native.json")).unwrap();
+    assert_eq!(fixtures.len(), expected.len());
     for (f, e) in fixtures.iter().zip(expected) {
         assert_eq!(
             serde_json::to_value(parse(
@@ -53,4 +54,54 @@ fn parity_fixture_is_identical_to_native_regions() {
             e
         );
     }
+}
+
+#[test]
+fn folded_directive_metadata_survives_id_removal() {
+    let raw = "Task\n:PROPERTIES:\n:id: original\n:END:\n#+OWNER: retained";
+    let r = parse(raw, true);
+    assert!(r
+        .properties
+        .iter()
+        .any(|p| p.key.eq_ignore_ascii_case("owner")));
+    let out = r
+        .apply(
+            raw,
+            true,
+            Edit::Property {
+                key: "id".into(),
+                value: None,
+            },
+        )
+        .unwrap();
+    assert!(out.contains("#+OWNER: retained"));
+}
+
+#[test]
+fn removing_adjacent_duplicate_metadata_preserves_the_body() {
+    for raw in [
+        "Body\nid:: first\nid:: second",
+        "Body\r\nid:: first\r\nid:: second",
+    ] {
+        let out = parse(raw, false)
+            .apply(raw, false, Edit::StripCopy { template: false })
+            .unwrap();
+        assert_eq!(out, "Body");
+    }
+}
+
+#[test]
+fn legacy_trailing_property_moves_to_the_head_without_touching_body() {
+    let raw = "Title\nbody\nold:: legacy";
+    let out = parse(raw, false)
+        .apply(
+            raw,
+            false,
+            Edit::Property {
+                key: "old".into(),
+                value: Some("new".into()),
+            },
+        )
+        .unwrap();
+    assert_eq!(out, "Title\nold:: new\nbody");
 }

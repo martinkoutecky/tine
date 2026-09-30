@@ -1758,5 +1758,1445 @@
   {
     "raw": "Task\nSCHEDULED: <2026-09-29 Tue 09:05 +1w>",
     "org": true
+  },
+  {
+    "raw": "題\n$$\nid:: literal\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nid:: literal\nlast\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nfirst\nid:: literal\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\n:id: literal\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\n:id: literal\nlast\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nfirst\n:id: literal\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\ntemplate:: literal\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\ntemplate:: literal\nlast\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nfirst\ntemplate:: literal\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nklíč:: 値\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nklíč:: 値\nlast\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nfirst\nklíč:: 値\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nSCHEDULED: <2026-09-29 Tue>\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nSCHEDULED: <2026-09-29 Tue>\nlast\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nfirst\nSCHEDULED: <2026-09-29 Tue>\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nDEADLINE: <2026-09-29 Tue>\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nDEADLINE: <2026-09-29 Tue>\nlast\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nfirst\nDEADLINE: <2026-09-29 Tue>\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nCLOSED: [2026-09-29 Tue]\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nCLOSED: [2026-09-29 Tue]\nlast\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nfirst\nCLOSED: [2026-09-29 Tue]\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nCLOCK: [2026-09-29 Tue 09:00]\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nCLOCK: [2026-09-29 Tue 09:00]\nlast\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nfirst\nCLOCK: [2026-09-29 Tue 09:00]\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\nlast\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nfirst\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\n:PROPERTIES:\n:id: literal\n:END:\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\n:PROPERTIES:\n:id: literal\n:END:\nlast\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nfirst\n:PROPERTIES:\n:id: literal\n:END:\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\n<<<<<<< ours\n=======\n>>>>>>> theirs\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\n<<<<<<< ours\n=======\n>>>>>>> theirs\nlast\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nfirst\n<<<<<<< ours\n=======\n>>>>>>> theirs\n$$",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nid:: literal\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nid:: literal\nlast\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\nid:: literal\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\n:id: literal\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\n:id: literal\nlast\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\n:id: literal\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\ntemplate:: literal\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\ntemplate:: literal\nlast\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\ntemplate:: literal\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nklíč:: 値\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nklíč:: 値\nlast\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\nklíč:: 値\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nSCHEDULED: <2026-09-29 Tue>\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nSCHEDULED: <2026-09-29 Tue>\nlast\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\nSCHEDULED: <2026-09-29 Tue>\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nDEADLINE: <2026-09-29 Tue>\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nDEADLINE: <2026-09-29 Tue>\nlast\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\nDEADLINE: <2026-09-29 Tue>\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nCLOSED: [2026-09-29 Tue]\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nCLOSED: [2026-09-29 Tue]\nlast\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\nCLOSED: [2026-09-29 Tue]\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nCLOCK: [2026-09-29 Tue 09:00]\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nCLOCK: [2026-09-29 Tue 09:00]\nlast\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\nCLOCK: [2026-09-29 Tue 09:00]\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\nlast\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\n:PROPERTIES:\n:id: literal\n:END:\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\n:PROPERTIES:\n:id: literal\n:END:\nlast\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\n:PROPERTIES:\n:id: literal\n:END:\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\n<<<<<<< ours\n=======\n>>>>>>> theirs\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\n<<<<<<< ours\n=======\n>>>>>>> theirs\nlast\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\n<<<<<<< ours\n=======\n>>>>>>> theirs\n\\end{equation}",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nid:: literal\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nid:: literal\nlast\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nfirst\nid:: literal\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\n:id: literal\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\n:id: literal\nlast\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nfirst\n:id: literal\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\ntemplate:: literal\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\ntemplate:: literal\nlast\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nfirst\ntemplate:: literal\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nklíč:: 値\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nklíč:: 値\nlast\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nfirst\nklíč:: 値\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nSCHEDULED: <2026-09-29 Tue>\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nSCHEDULED: <2026-09-29 Tue>\nlast\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nfirst\nSCHEDULED: <2026-09-29 Tue>\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nDEADLINE: <2026-09-29 Tue>\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nDEADLINE: <2026-09-29 Tue>\nlast\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nfirst\nDEADLINE: <2026-09-29 Tue>\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nCLOSED: [2026-09-29 Tue]\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nCLOSED: [2026-09-29 Tue]\nlast\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nfirst\nCLOSED: [2026-09-29 Tue]\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nCLOCK: [2026-09-29 Tue 09:00]\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nCLOCK: [2026-09-29 Tue 09:00]\nlast\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nfirst\nCLOCK: [2026-09-29 Tue 09:00]\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\nlast\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nfirst\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\n:PROPERTIES:\n:id: literal\n:END:\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\n:PROPERTIES:\n:id: literal\n:END:\nlast\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nfirst\n:PROPERTIES:\n:id: literal\n:END:\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\n<<<<<<< ours\n=======\n>>>>>>> theirs\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\n<<<<<<< ours\n=======\n>>>>>>> theirs\nlast\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n<div>\nfirst\n<<<<<<< ours\n=======\n>>>>>>> theirs\n</div>",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nid:: literal\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nid:: literal\nlast\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\nid:: literal\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n:id: literal\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n:id: literal\nlast\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\n:id: literal\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\ntemplate:: literal\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\ntemplate:: literal\nlast\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\ntemplate:: literal\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nklíč:: 値\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nklíč:: 値\nlast\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\nklíč:: 値\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nSCHEDULED: <2026-09-29 Tue>\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nSCHEDULED: <2026-09-29 Tue>\nlast\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\nSCHEDULED: <2026-09-29 Tue>\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nDEADLINE: <2026-09-29 Tue>\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nDEADLINE: <2026-09-29 Tue>\nlast\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\nDEADLINE: <2026-09-29 Tue>\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nCLOSED: [2026-09-29 Tue]\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nCLOSED: [2026-09-29 Tue]\nlast\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\nCLOSED: [2026-09-29 Tue]\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nCLOCK: [2026-09-29 Tue 09:00]\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nCLOCK: [2026-09-29 Tue 09:00]\nlast\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\nCLOCK: [2026-09-29 Tue 09:00]\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\nlast\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n:PROPERTIES:\n:id: literal\n:END:\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n:PROPERTIES:\n:id: literal\n:END:\nlast\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\n:PROPERTIES:\n:id: literal\n:END:\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n<<<<<<< ours\n=======\n>>>>>>> theirs\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n<<<<<<< ours\n=======\n>>>>>>> theirs\nlast\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\n<<<<<<< ours\n=======\n>>>>>>> theirs\n#+END_TIP",
+    "org": false
+  },
+  {
+    "raw": "```text\n```",
+    "org": false
+  },
+  {
+    "raw": "```text\r\nid:: literal\r\n```",
+    "org": false
+  },
+  {
+    "raw": "```text\r\n:id: literal\r\n```",
+    "org": false
+  },
+  {
+    "raw": "```text\r\ntemplate:: literal\r\n```",
+    "org": false
+  },
+  {
+    "raw": "```text\r\nklíč:: 値\r\n```",
+    "org": false
+  },
+  {
+    "raw": "```text\r\nSCHEDULED: <2026-09-29 Tue>\r\n```",
+    "org": false
+  },
+  {
+    "raw": "```text\r\nDEADLINE: <2026-09-29 Tue>\r\n```",
+    "org": false
+  },
+  {
+    "raw": "```text\r\nCLOSED: [2026-09-29 Tue]\r\n```",
+    "org": false
+  },
+  {
+    "raw": "```text\r\nCLOCK: [2026-09-29 Tue 09:00]\r\n```",
+    "org": false
+  },
+  {
+    "raw": "```text\r\n:LOGBOOK:\r\nCLOCK: [2026-09-29 Tue 09:00]\r\n:END:\r\n```",
+    "org": false
+  },
+  {
+    "raw": "```text\r\n:PROPERTIES:\r\n:id: literal\r\n:END:\r\n```",
+    "org": false
+  },
+  {
+    "raw": "```text\r\n<<<<<<< ours\r\n=======\r\n>>>>>>> theirs\r\n```",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_SRC text\n#+END_SRC",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\nid:: literal\r\n#+END_SRC",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\n:id: literal\r\n#+END_SRC",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\ntemplate:: literal\r\n#+END_SRC",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\nklíč:: 値\r\n#+END_SRC",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\nSCHEDULED: <2026-09-29 Tue>\r\n#+END_SRC",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\nDEADLINE: <2026-09-29 Tue>\r\n#+END_SRC",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\nCLOSED: [2026-09-29 Tue]\r\n#+END_SRC",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\nCLOCK: [2026-09-29 Tue 09:00]\r\n#+END_SRC",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\n:LOGBOOK:\r\nCLOCK: [2026-09-29 Tue 09:00]\r\n:END:\r\n#+END_SRC",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\n:PROPERTIES:\r\n:id: literal\r\n:END:\r\n#+END_SRC",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\n<<<<<<< ours\r\n=======\r\n>>>>>>> theirs\r\n#+END_SRC",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\n#+END_EXAMPLE",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\nid:: literal\r\n#+END_EXAMPLE",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\n:id: literal\r\n#+END_EXAMPLE",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\ntemplate:: literal\r\n#+END_EXAMPLE",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\nklíč:: 値\r\n#+END_EXAMPLE",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\nSCHEDULED: <2026-09-29 Tue>\r\n#+END_EXAMPLE",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\nDEADLINE: <2026-09-29 Tue>\r\n#+END_EXAMPLE",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\nCLOSED: [2026-09-29 Tue]\r\n#+END_EXAMPLE",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\nCLOCK: [2026-09-29 Tue 09:00]\r\n#+END_EXAMPLE",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\n:LOGBOOK:\r\nCLOCK: [2026-09-29 Tue 09:00]\r\n:END:\r\n#+END_EXAMPLE",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\n:PROPERTIES:\r\n:id: literal\r\n:END:\r\n#+END_EXAMPLE",
+    "org": false
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\n<<<<<<< ours\r\n=======\r\n>>>>>>> theirs\r\n#+END_EXAMPLE",
+    "org": false
+  },
+  {
+    "raw": "```text\nid:: literal",
+    "org": false
+  },
+  {
+    "raw": "```text\n:id: literal",
+    "org": false
+  },
+  {
+    "raw": "```text\ntemplate:: literal",
+    "org": false
+  },
+  {
+    "raw": "```text\nklíč:: 値",
+    "org": false
+  },
+  {
+    "raw": "```text\nSCHEDULED: <2026-09-29 Tue>",
+    "org": false
+  },
+  {
+    "raw": "```text\nDEADLINE: <2026-09-29 Tue>",
+    "org": false
+  },
+  {
+    "raw": "```text\nCLOSED: [2026-09-29 Tue]",
+    "org": false
+  },
+  {
+    "raw": "```text\nCLOCK: [2026-09-29 Tue 09:00]",
+    "org": false
+  },
+  {
+    "raw": "```text\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:",
+    "org": false
+  },
+  {
+    "raw": "```text\n:PROPERTIES:\n:id: literal\n:END:",
+    "org": false
+  },
+  {
+    "raw": "```text\n<<<<<<< ours\n=======\n>>>>>>> theirs",
+    "org": false
+  },
+  {
+    "raw": "題\n$$\nid:: literal\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nid:: literal\nlast\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nfirst\nid:: literal\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\n:id: literal\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\n:id: literal\nlast\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nfirst\n:id: literal\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\ntemplate:: literal\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\ntemplate:: literal\nlast\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nfirst\ntemplate:: literal\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nklíč:: 値\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nklíč:: 値\nlast\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nfirst\nklíč:: 値\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nSCHEDULED: <2026-09-29 Tue>\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nSCHEDULED: <2026-09-29 Tue>\nlast\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nfirst\nSCHEDULED: <2026-09-29 Tue>\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nDEADLINE: <2026-09-29 Tue>\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nDEADLINE: <2026-09-29 Tue>\nlast\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nfirst\nDEADLINE: <2026-09-29 Tue>\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nCLOSED: [2026-09-29 Tue]\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nCLOSED: [2026-09-29 Tue]\nlast\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nfirst\nCLOSED: [2026-09-29 Tue]\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nCLOCK: [2026-09-29 Tue 09:00]\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nCLOCK: [2026-09-29 Tue 09:00]\nlast\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nfirst\nCLOCK: [2026-09-29 Tue 09:00]\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\nlast\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nfirst\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\n:PROPERTIES:\n:id: literal\n:END:\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\n:PROPERTIES:\n:id: literal\n:END:\nlast\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nfirst\n:PROPERTIES:\n:id: literal\n:END:\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\n<<<<<<< ours\n=======\n>>>>>>> theirs\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\n<<<<<<< ours\n=======\n>>>>>>> theirs\nlast\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n$$\nfirst\n<<<<<<< ours\n=======\n>>>>>>> theirs\n$$",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nid:: literal\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nid:: literal\nlast\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\nid:: literal\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\n:id: literal\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\n:id: literal\nlast\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\n:id: literal\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\ntemplate:: literal\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\ntemplate:: literal\nlast\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\ntemplate:: literal\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nklíč:: 値\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nklíč:: 値\nlast\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\nklíč:: 値\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nSCHEDULED: <2026-09-29 Tue>\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nSCHEDULED: <2026-09-29 Tue>\nlast\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\nSCHEDULED: <2026-09-29 Tue>\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nDEADLINE: <2026-09-29 Tue>\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nDEADLINE: <2026-09-29 Tue>\nlast\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\nDEADLINE: <2026-09-29 Tue>\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nCLOSED: [2026-09-29 Tue]\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nCLOSED: [2026-09-29 Tue]\nlast\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\nCLOSED: [2026-09-29 Tue]\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nCLOCK: [2026-09-29 Tue 09:00]\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nCLOCK: [2026-09-29 Tue 09:00]\nlast\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\nCLOCK: [2026-09-29 Tue 09:00]\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\nlast\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\n:PROPERTIES:\n:id: literal\n:END:\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\n:PROPERTIES:\n:id: literal\n:END:\nlast\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\n:PROPERTIES:\n:id: literal\n:END:\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\n<<<<<<< ours\n=======\n>>>>>>> theirs\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\n<<<<<<< ours\n=======\n>>>>>>> theirs\nlast\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n\\begin{equation}\nfirst\n<<<<<<< ours\n=======\n>>>>>>> theirs\n\\end{equation}",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nid:: literal\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nid:: literal\nlast\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nfirst\nid:: literal\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\n:id: literal\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\n:id: literal\nlast\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nfirst\n:id: literal\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\ntemplate:: literal\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\ntemplate:: literal\nlast\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nfirst\ntemplate:: literal\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nklíč:: 値\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nklíč:: 値\nlast\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nfirst\nklíč:: 値\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nSCHEDULED: <2026-09-29 Tue>\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nSCHEDULED: <2026-09-29 Tue>\nlast\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nfirst\nSCHEDULED: <2026-09-29 Tue>\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nDEADLINE: <2026-09-29 Tue>\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nDEADLINE: <2026-09-29 Tue>\nlast\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nfirst\nDEADLINE: <2026-09-29 Tue>\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nCLOSED: [2026-09-29 Tue]\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nCLOSED: [2026-09-29 Tue]\nlast\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nfirst\nCLOSED: [2026-09-29 Tue]\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nCLOCK: [2026-09-29 Tue 09:00]\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nCLOCK: [2026-09-29 Tue 09:00]\nlast\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nfirst\nCLOCK: [2026-09-29 Tue 09:00]\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\nlast\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nfirst\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\n:PROPERTIES:\n:id: literal\n:END:\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\n:PROPERTIES:\n:id: literal\n:END:\nlast\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nfirst\n:PROPERTIES:\n:id: literal\n:END:\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\n<<<<<<< ours\n=======\n>>>>>>> theirs\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\n<<<<<<< ours\n=======\n>>>>>>> theirs\nlast\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n<div>\nfirst\n<<<<<<< ours\n=======\n>>>>>>> theirs\n</div>",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nid:: literal\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nid:: literal\nlast\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\nid:: literal\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n:id: literal\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n:id: literal\nlast\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\n:id: literal\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\ntemplate:: literal\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\ntemplate:: literal\nlast\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\ntemplate:: literal\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nklíč:: 値\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nklíč:: 値\nlast\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\nklíč:: 値\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nSCHEDULED: <2026-09-29 Tue>\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nSCHEDULED: <2026-09-29 Tue>\nlast\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\nSCHEDULED: <2026-09-29 Tue>\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nDEADLINE: <2026-09-29 Tue>\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nDEADLINE: <2026-09-29 Tue>\nlast\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\nDEADLINE: <2026-09-29 Tue>\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nCLOSED: [2026-09-29 Tue]\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nCLOSED: [2026-09-29 Tue]\nlast\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\nCLOSED: [2026-09-29 Tue]\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nCLOCK: [2026-09-29 Tue 09:00]\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nCLOCK: [2026-09-29 Tue 09:00]\nlast\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\nCLOCK: [2026-09-29 Tue 09:00]\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\nlast\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n:PROPERTIES:\n:id: literal\n:END:\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n:PROPERTIES:\n:id: literal\n:END:\nlast\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\n:PROPERTIES:\n:id: literal\n:END:\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n<<<<<<< ours\n=======\n>>>>>>> theirs\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\n<<<<<<< ours\n=======\n>>>>>>> theirs\nlast\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "題\n#+BEGIN_TIP\nfirst\n<<<<<<< ours\n=======\n>>>>>>> theirs\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "```text\n```",
+    "org": true
+  },
+  {
+    "raw": "```text\r\nid:: literal\r\n```",
+    "org": true
+  },
+  {
+    "raw": "```text\r\n:id: literal\r\n```",
+    "org": true
+  },
+  {
+    "raw": "```text\r\ntemplate:: literal\r\n```",
+    "org": true
+  },
+  {
+    "raw": "```text\r\nklíč:: 値\r\n```",
+    "org": true
+  },
+  {
+    "raw": "```text\r\nSCHEDULED: <2026-09-29 Tue>\r\n```",
+    "org": true
+  },
+  {
+    "raw": "```text\r\nDEADLINE: <2026-09-29 Tue>\r\n```",
+    "org": true
+  },
+  {
+    "raw": "```text\r\nCLOSED: [2026-09-29 Tue]\r\n```",
+    "org": true
+  },
+  {
+    "raw": "```text\r\nCLOCK: [2026-09-29 Tue 09:00]\r\n```",
+    "org": true
+  },
+  {
+    "raw": "```text\r\n:LOGBOOK:\r\nCLOCK: [2026-09-29 Tue 09:00]\r\n:END:\r\n```",
+    "org": true
+  },
+  {
+    "raw": "```text\r\n:PROPERTIES:\r\n:id: literal\r\n:END:\r\n```",
+    "org": true
+  },
+  {
+    "raw": "```text\r\n<<<<<<< ours\r\n=======\r\n>>>>>>> theirs\r\n```",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_SRC text\n#+END_SRC",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\nid:: literal\r\n#+END_SRC",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\n:id: literal\r\n#+END_SRC",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\ntemplate:: literal\r\n#+END_SRC",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\nklíč:: 値\r\n#+END_SRC",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\nSCHEDULED: <2026-09-29 Tue>\r\n#+END_SRC",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\nDEADLINE: <2026-09-29 Tue>\r\n#+END_SRC",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\nCLOSED: [2026-09-29 Tue]\r\n#+END_SRC",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\nCLOCK: [2026-09-29 Tue 09:00]\r\n#+END_SRC",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\n:LOGBOOK:\r\nCLOCK: [2026-09-29 Tue 09:00]\r\n:END:\r\n#+END_SRC",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\n:PROPERTIES:\r\n:id: literal\r\n:END:\r\n#+END_SRC",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_SRC text\r\n<<<<<<< ours\r\n=======\r\n>>>>>>> theirs\r\n#+END_SRC",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\n#+END_EXAMPLE",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\nid:: literal\r\n#+END_EXAMPLE",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\n:id: literal\r\n#+END_EXAMPLE",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\ntemplate:: literal\r\n#+END_EXAMPLE",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\nklíč:: 値\r\n#+END_EXAMPLE",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\nSCHEDULED: <2026-09-29 Tue>\r\n#+END_EXAMPLE",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\nDEADLINE: <2026-09-29 Tue>\r\n#+END_EXAMPLE",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\nCLOSED: [2026-09-29 Tue]\r\n#+END_EXAMPLE",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\nCLOCK: [2026-09-29 Tue 09:00]\r\n#+END_EXAMPLE",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\n:LOGBOOK:\r\nCLOCK: [2026-09-29 Tue 09:00]\r\n:END:\r\n#+END_EXAMPLE",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\n:PROPERTIES:\r\n:id: literal\r\n:END:\r\n#+END_EXAMPLE",
+    "org": true
+  },
+  {
+    "raw": "#+BEGIN_EXAMPLE\r\n<<<<<<< ours\r\n=======\r\n>>>>>>> theirs\r\n#+END_EXAMPLE",
+    "org": true
+  },
+  {
+    "raw": "```text\nid:: literal",
+    "org": true
+  },
+  {
+    "raw": "```text\n:id: literal",
+    "org": true
+  },
+  {
+    "raw": "```text\ntemplate:: literal",
+    "org": true
+  },
+  {
+    "raw": "```text\nklíč:: 値",
+    "org": true
+  },
+  {
+    "raw": "```text\nSCHEDULED: <2026-09-29 Tue>",
+    "org": true
+  },
+  {
+    "raw": "```text\nDEADLINE: <2026-09-29 Tue>",
+    "org": true
+  },
+  {
+    "raw": "```text\nCLOSED: [2026-09-29 Tue]",
+    "org": true
+  },
+  {
+    "raw": "```text\nCLOCK: [2026-09-29 Tue 09:00]",
+    "org": true
+  },
+  {
+    "raw": "```text\n:LOGBOOK:\nCLOCK: [2026-09-29 Tue 09:00]\n:END:",
+    "org": true
+  },
+  {
+    "raw": "```text\n:PROPERTIES:\n:id: literal\n:END:",
+    "org": true
+  },
+  {
+    "raw": "```text\n<<<<<<< ours\n=======\n>>>>>>> theirs",
+    "org": true
+  },
+  {
+    "raw": "Task\n#+BEGIN_TIP\n#+BEGIN_SRC text\nid:: literal\n#+END_SRC\n#+END_TIP",
+    "org": true
+  },
+  {
+    "raw": "\n\t題 `コード`\r\nklíč:: 値\r\nid:: réel",
+    "org": false
   }
 ]

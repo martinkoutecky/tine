@@ -1,6 +1,8 @@
 /* tslint:disable */
 /* eslint-disable */
 
+export function edit_block_regions_json(raw: string, is_org: boolean, regions: any, request: any): string;
+
 export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_marker: string, new_marker: string, enabled: boolean, with_seconds: boolean): string;
 
 export function logbook_clock_in(raw: string, is_org: boolean, with_seconds: boolean): string;
@@ -17,6 +19,8 @@ export function logbook_info_json(raw: string): string;
  * See docs/wasm-parse-plan.md §7D.
  */
 export function lsdoc_tag(): string;
+
+export function parse_block_bundle_json(raw: string, is_org: boolean): string;
 
 /**
  * Parse one de-bulleted block body into lsdoc's render AST, serialized to JSON.
@@ -56,17 +60,22 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_clock_out: (a: number, b: number, c: number) => [number, number];
     readonly logbook_info_json: (a: number, b: number) => [number, number];
     readonly lsdoc_tag: () => [number, number];
+    readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
     readonly render_block_html: (a: number, b: number, c: number) => [number, number];
-    readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_exn_store: (a: number) => void;
+    readonly __externref_table_alloc: () => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;
 }

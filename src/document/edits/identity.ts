@@ -6,8 +6,7 @@ import { blockWritable } from "./properties";
 import { markDirty, flushPage, isConflicted, persistTogether } from "../save/engine";
 import { backend } from "../../backend";
 import { ensurePageLoaded } from "../workingSet";
-import { orgBlockDrawerRange, orgLinesWithNewDrawer } from "../../editor/properties";
-import { literalBlockOfLine } from "../../editor/literalLines";
+import { blockRegions, editBlock } from "../../render/parse";
 
 /** The block's existing durable `id` — a markdown `id:: <uuid>` trailer or an
  *  org `:PROPERTIES:` drawer `:id: <uuid>` line — case-insensitively, or null.
@@ -15,24 +14,7 @@ import { literalBlockOfLine } from "../../editor/literalLines";
  *  reads the drawer, not a `key::` line); so an org block's real id lives in its
  *  `:PROPERTIES:` drawer and must be matched there (GH #25). */
 export function existingBlockId(raw: string, format: Format): string | null {
-  if (format !== "org") {
-    // An `id::` line inside a code/src block is code, not the block's id (C3 L13).
-    const literal = literalBlockOfLine(raw, "md");
-    const lines = raw.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const id = literal[i] === -1 ? /^id:: *(\S+)/i.exec(lines[i])?.[1] : undefined;
-      if (id) return id;
-    }
-    return null;
-  }
-  const lines = raw.split("\n");
-  const drawer = orgBlockDrawerRange(lines);
-  if (!drawer) return null;
-  for (const line of lines.slice(drawer[0] + 1, drawer[1])) {
-    const id = /^\s*:id:\s*(\S+)/i.exec(line)?.[1];
-    if (id) return id;
-  }
-  return null;
+  return blockRegions(raw, format).id?.value.trim() || null;
 }
 
 /** The identity other blocks and persisted UI state must use for a loaded node.
@@ -101,18 +83,7 @@ export function resolveBlockRef(ref: LoadedBlockRef): string | null {
  *  block's id (GH #25) — org MUST use the drawer. The caller guarantees the
  *  block has no id yet (see {@link existingBlockId}). */
 export function rawWithBlockId(raw: string, uuid: string, format: Format): string {
-  if (format !== "org") return `${raw}\nid:: ${uuid}`;
-  const lines = raw.split("\n");
-  const drawer = orgBlockDrawerRange(lines);
-  if (drawer) {
-    const [, end] = drawer;
-    // Extend the existing drawer: insert the id line just before :END:.
-    lines.splice(end, 0, `:id: ${uuid}`);
-    return lines.join("\n");
-  }
-  // No drawer: title, SCHEDULED*, DEADLINE*, :PROPERTIES: drawer, rest-of-body —
-  // OG groups planning lines above the drawer (util/property.cljs insert-property).
-  return orgLinesWithNewDrawer(lines, [`:id: ${uuid}`]).join("\n");
+  return editBlock(raw, format, { kind: "property", key: "id", value: uuid });
 }
 
 /** `raw` with an org drawer property set/updated/removed. Operates ONLY on the
@@ -120,37 +91,7 @@ export function rawWithBlockId(raw: string, uuid: string, format: Format): strin
  *  drawer, body — the same placement rawWithBlockId uses); body text and code
  *  blocks are never scanned. Removing the last property removes the drawer. */
 export function orgRawWithProperty(raw: string, key: string, value: string | null): string {
-  const lines = raw.split("\n");
-  const drawer = orgBlockDrawerRange(lines);
-  const keyRe = new RegExp(`^:${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:\\s*`, "i");
-  if (drawer) {
-    const [start, end] = drawer;
-    // Update in place so an existing drawer key keeps its position (GH #216);
-    // only a new key appends. Every other case-insensitive duplicate goes, so
-    // blockProperty (first match) cannot keep answering after a Remove.
-    const all = lines.slice(start + 1, end);
-    const at = all.findIndex((l) => keyRe.test(l.trim()));
-    const inner = all.flatMap((l, k) => (!keyRe.test(l.trim()) ? [l] : k === at && value !== null ? [`:${key}: ${value}`] : []));
-    if (at < 0 && value !== null) inner.push(`:${key}: ${value}`);
-    if (inner.length === 0) {
-      // Drawer emptied: drop it entirely.
-      return [...lines.slice(0, start), ...lines.slice(end + 1)].join("\n");
-    }
-    return [...lines.slice(0, start + 1), ...inner, ...lines.slice(end)].join("\n");
-  }
-  if (value === null) return raw; // nothing to remove
-  // No drawer yet: title, SCHEDULED*, DEADLINE*, drawer, rest (rawWithBlockId's rule).
-  const [title, ...rest] = lines;
-  let planEnd = 0;
-  while (planEnd < rest.length && /^\s*(?:SCHEDULED|DEADLINE):\s*</i.test(rest[planEnd])) planEnd++;
-  return [
-    title,
-    ...rest.slice(0, planEnd),
-    ":PROPERTIES:",
-    `:${key}: ${value}`,
-    ":END:",
-    ...rest.slice(planEnd),
-  ].join("\n");
+  return editBlock(raw, "org", { kind: "property", key, value });
 }
 
 /** Ensure a block has a persistent id (assigned lazily, like OG) AND that it's

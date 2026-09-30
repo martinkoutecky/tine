@@ -72,6 +72,7 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "lsdoc",
+ "serde",
  "serde_json",
  "wasm-bindgen",
 ]

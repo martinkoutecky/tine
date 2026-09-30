@@ -16,7 +16,7 @@
 use lsdoc::ast::{Block, Inline, ListItem, Span};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct Range(pub usize, pub usize);
 impl Range {
     pub fn slice<'a>(&self, raw: &'a str) -> &'a str {
@@ -26,13 +26,13 @@ impl Range {
         self.0 <= at && at < self.1
     }
 }
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Header {
     pub marker: Option<String>,
     pub priority: Option<String>,
     pub heading: Option<u32>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Property {
     pub key: String,
     pub value: String,
@@ -40,22 +40,23 @@ pub struct Property {
     pub key_range: Range,
     pub value_range: Range,
     pub region: usize,
+    pub primary: bool,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Planning {
     pub kind: String,
     pub line: Range,
     pub timestamp: Range,
     pub date: serde_json::Value,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Drawer {
     pub name: String,
     pub range: Range,
     pub close: usize,
     pub clocks: Vec<Range>,
 }
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct BlockRegions {
     pub header: Header,
     pub literals: Vec<Range>,
@@ -108,6 +109,18 @@ fn trimmed_range(raw: &str, range: Range) -> Range {
 
 /// Parse one raw block with the same boundary used by render. No page work.
 pub fn parse(raw: &str, is_org: bool) -> BlockRegions {
+    #[cfg(not(target_arch = "wasm32"))]
+    let blocks = match std::panic::catch_unwind(|| crate::render::parse_block(raw, is_org)) {
+        Ok(blocks) => blocks,
+        Err(_) => {
+            return BlockRegions {
+                literals: vec![Range(0, raw.len())],
+                quarantined: true,
+                ..BlockRegions::default()
+            }
+        }
+    };
+    #[cfg(target_arch = "wasm32")]
     let blocks = crate::render::parse_block(raw, is_org);
     from_blocks(raw, is_org, &blocks)
 }
@@ -158,10 +171,14 @@ pub fn from_blocks(raw: &str, is_org: bool, blocks: &[Block]) -> BlockRegions {
     result
         .drawers
         .retain(|p| !result.literals.iter().any(|r| r.contains(p.range.0)));
+    let own = result.own_org_region(raw);
+    for p in &mut result.properties {
+        p.primary = p.primary && (!is_org || Some(p.region) == own);
+    }
     result.id = result
         .properties
         .iter()
-        .find(|p| p.key.eq_ignore_ascii_case("id"))
+        .find(|p| p.primary && p.key.eq_ignore_ascii_case("id"))
         .cloned();
     result
 }
@@ -206,14 +223,23 @@ fn visit_blocks(raw: &str, org: bool, blocks: &[Block], out: &mut BlockRegions) 
                     for line in line_ranges(raw, r) {
                         let t = trimmed_range(raw, line);
                         let s = t.slice(raw);
-                        let parts = if org {
-                            s.strip_prefix(':')
-                                .and_then(|s| s.split_once(':'))
-                                .map(|(k, v)| (k, v, 1, 1))
-                        } else {
-                            s.split_once("::").map(|(k, v)| (k, v, 0, 2))
-                        };
-                        let Some((key, value, prefix, delim)) = parts else {
+                        // A Properties node can fold Markdown lines, a drawer
+                        // and directives together. Split only this accepted node;
+                        // preserve each entry's source spelling and syntax.
+                        let parts = s
+                            .split_once("::")
+                            .map(|(k, v)| (k, v, 0, 2, !org))
+                            .or_else(|| {
+                                s.strip_prefix("#+")
+                                    .and_then(|s| s.split_once(':'))
+                                    .map(|(k, v)| (k, v, 2, 1, false))
+                            })
+                            .or_else(|| {
+                                s.strip_prefix(':')
+                                    .and_then(|s| s.split_once(':'))
+                                    .map(|(k, v)| (k, v, 1, 1, org))
+                            });
+                        let Some((key, value, prefix, delim, appropriate)) = parts else {
                             continue;
                         };
                         let Some(prop) = props.iter().find(|p| p.0.eq_ignore_ascii_case(key))
@@ -225,13 +251,13 @@ fn visit_blocks(raw: &str, org: bool, blocks: &[Block], out: &mut BlockRegions) 
                         let value_range = trimmed_range(raw, Range(vs, t.1));
                         out.properties.push(Property {
                             key: prop.0.clone(),
-                            value: prop.1.clone(),
+                            value: value.trim().to_string(),
                             line,
                             key_range: Range(ks, ks + key.len()),
                             value_range,
                             region: index,
+                            primary: appropriate,
                         });
-                        let _ = value;
                     }
                 }
             }
@@ -311,6 +337,9 @@ pub enum Edit {
         key: String,
         value: Option<String>,
     },
+    Properties {
+        values: Vec<(String, String)>,
+    },
     Planning {
         which: String,
         value: Option<String>,
@@ -328,6 +357,28 @@ pub enum Edit {
 
 fn splice(raw: &str, mut edits: Vec<(Range, String)>) -> String {
     edits.sort_by_key(|(r, _)| r.0);
+    let mut merged: Vec<(Range, String)> = Vec::new();
+    for (r, text) in edits {
+        if let Some((previous, replacement)) = merged.last_mut() {
+            if replacement.is_empty() && text.is_empty() && previous.1 == r.0 {
+                previous.1 = r.1;
+                continue;
+            }
+        }
+        merged.push((r, text));
+    }
+    let mut edits = merged;
+    let preceding_end = edits.iter().rev().nth(1).map_or(0, |(r, _)| r.1);
+    if let Some((r, _)) = edits
+        .last_mut()
+        .filter(|(r, text)| text.is_empty() && r.1 == raw.len() && r.0 > 0 && !raw.ends_with('\n'))
+    {
+        if raw[..r.0].ends_with("\r\n") && r.0 >= preceding_end + 2 {
+            r.0 -= 2;
+        } else if raw[..r.0].ends_with('\n') && r.0 > preceding_end {
+            r.0 -= 1;
+        }
+    }
     let mut out = String::with_capacity(raw.len());
     let mut at = 0;
     for (r, text) in edits {
@@ -380,9 +431,13 @@ impl BlockRegions {
     }
     fn own_org_region(&self, raw: &str) -> Option<usize> {
         let at = self.head_end(raw);
-        self.property_regions
-            .iter()
-            .position(|r| r.0 == at || r.0 == 0)
+        self.property_regions.iter().position(|r| {
+            (r.0 == at || r.0 == 0)
+                && r.slice(raw)
+                    .lines()
+                    .next()
+                    .is_some_and(|line| line.trim().eq_ignore_ascii_case(":PROPERTIES:"))
+        })
     }
     fn inserted(&self, raw: &str, at: usize, text: &str) -> String {
         let nl = newline(raw);
@@ -419,19 +474,94 @@ impl BlockRegions {
                 }
             }
         }
-        // Removing a final metadata line removes its preceding transport newline,
-        // as existing copy semantics require; no other trailing bytes are trimmed.
-        if let Some((r, _)) = edits
-            .last_mut()
-            .filter(|(r, _)| r.1 == raw.len() && r.0 > 0 && !raw.ends_with('\n'))
-        {
-            if raw[..r.0].ends_with("\r\n") {
-                r.0 -= 2;
-            } else if raw[..r.0].ends_with('\n') {
-                r.0 -= 1;
+        splice(raw, edits)
+    }
+    fn set_values(
+        &self,
+        raw: &str,
+        org: bool,
+        values: Vec<(String, String)>,
+    ) -> Result<String, String> {
+        let own = self.own_org_region(raw);
+        let mut edits = Vec::new();
+        let mut add = Vec::new();
+        for (key, value) in values {
+            if key.is_empty() || key.contains(['\n', '\r', ':']) || value.contains(['\n', '\r']) {
+                return Err("Invalid property edit".into());
+            }
+            let matching: Vec<_> = self
+                .properties
+                .iter()
+                .filter(|p| p.key.eq_ignore_ascii_case(&key) && (!org || Some(p.region) == own))
+                .collect();
+            if let Some(first) = matching.first() {
+                let trailer = matches!(key.as_str(), "id" | "collapsed" | "logseq.order-list-type");
+                let region = self.property_regions[first.region];
+                if !org && !trailer && region.0 != 0 && region.0 != self.head_end(raw) {
+                    // Move legacy trailing user properties to the existing head,
+                    // using accepted property spans rather than a second scanner.
+                    edits.extend(matching.iter().map(|p| (p.line, String::new())));
+                    add.push((key, value));
+                } else {
+                    edits.push((first.value_range, value));
+                    edits.extend(matching.iter().skip(1).map(|p| (p.line, String::new())));
+                }
+            } else {
+                add.push((key, value));
             }
         }
-        splice(raw, edits)
+        if !add.is_empty() {
+            let lines = add
+                .iter()
+                .map(|(key, value)| {
+                    if org {
+                        format!(":{key}: {value}")
+                    } else {
+                        format!("{key}:: {value}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(newline(raw));
+            let (at, text) = if org {
+                if let Some(index) = own {
+                    let body_lines = line_ranges(raw, self.property_regions[index]);
+                    let close = body_lines
+                        .iter()
+                        .find(|r| r.slice(raw).trim().eq_ignore_ascii_case(":END:"))
+                        .ok_or("Properties drawer has no parser-owned closer")?;
+                    (close.0, lines)
+                } else {
+                    (
+                        self.head_end(raw),
+                        format!(":PROPERTIES:{}{lines}{}:END:", newline(raw), newline(raw)),
+                    )
+                }
+            } else {
+                let at = if add.iter().any(|(key, _)| {
+                    matches!(key.as_str(), "id" | "collapsed" | "logseq.order-list-type")
+                }) || self.literal_at(0)
+                {
+                    raw.len()
+                } else if let Some(r) = self
+                    .property_regions
+                    .iter()
+                    .find(|r| r.0 == self.head_end(raw) || r.0 == 0)
+                {
+                    r.1
+                } else {
+                    self.head_end(raw)
+                };
+                (at, lines)
+            };
+            let prefix = if at > 0 && !raw[..at].ends_with('\n') {
+                newline(raw)
+            } else {
+                ""
+            };
+            let suffix = if at < raw.len() { newline(raw) } else { "" };
+            edits.push((Range(at, at), format!("{prefix}{text}{suffix}")));
+        }
+        Ok(splice(raw, edits))
     }
     /// Apply an operation using these regions from EXACTLY this raw source.
     /// O(block bytes); zero parses in release, one preservation reparse in debug.
@@ -439,6 +569,34 @@ impl BlockRegions {
         if self.quarantined {
             return Err("Structural edit refused: block parsing is quarantined".into());
         }
+        #[cfg(debug_assertions)]
+        let (property_keys, all_properties, planning_kind, drawer_name) = match &edit {
+            Edit::Property { key, .. } => (vec![key.to_ascii_lowercase()], false, None, None),
+            Edit::Properties { values } => (
+                values.iter().map(|(k, _)| k.to_ascii_lowercase()).collect(),
+                false,
+                None,
+                None,
+            ),
+            Edit::StripCopy { template } => (
+                if *template {
+                    vec![
+                        "id".into(),
+                        "template".into(),
+                        "template-including-parent".into(),
+                    ]
+                } else {
+                    vec!["id".into()]
+                },
+                false,
+                None,
+                None,
+            ),
+            Edit::Visible => (vec![], true, None, None),
+            Edit::Planning { which, .. } => (vec![], false, Some(which.clone()), None),
+            Edit::DrawerRow { name, .. } => (vec![], false, None, Some(name.clone())),
+            Edit::NormalizePlanning => (vec![], false, None, None),
+        };
         let out = match edit {
             Edit::Property { key, value } => {
                 if key.is_empty()
@@ -456,29 +614,11 @@ impl BlockRegions {
                 if value.is_none() {
                     self.remove_properties(raw, org, |p| matching.contains(&p))
                 } else {
-                    let value = value.unwrap();
-                    if let Some(first) = matching.first() {
-                        let mut edits = vec![(first.value_range, value)];
-                        edits.extend(matching.iter().skip(1).map(|p| (p.line, String::new())));
-                        splice(raw, edits)
-                    } else if org {
-                        let line = format!(":{key}: {value}");
-                        if let Some(index) = own {
-                            let lines = line_ranges(raw, self.property_regions[index]);
-                            let at = lines.last().unwrap().0;
-                            self.inserted(raw, at, &line)
-                        } else {
-                            self.inserted(
-                                raw,
-                                self.head_end(raw),
-                                &format!(":PROPERTIES:{}{line}{}:END:", newline(raw), newline(raw)),
-                            )
-                        }
-                    } else {
-                        self.inserted(raw, raw.len(), &format!("{key}:: {value}"))
-                    }
+                    self.set_values(raw, org, vec![(key, value.unwrap())])?
                 }
             }
+            Edit::Properties { values } => self.set_values(raw, org, values)?,
+
             Edit::Planning { which, value } => {
                 if !matches!(which.as_str(), "Scheduled" | "Deadline" | "Closed") {
                     return Err("Invalid planning kind".into());
@@ -513,13 +653,17 @@ impl BlockRegions {
                         ))
             }),
             Edit::Visible => {
-                let edits = self
+                let edits: Vec<_> = self
                     .property_regions
                     .iter()
                     .filter(|r| !self.literal_at(r.0))
                     .map(|r| (*r, String::new()))
                     .collect();
-                splice(raw, edits).trim_end_matches('\n').to_string()
+                if edits.is_empty() {
+                    raw.to_string()
+                } else {
+                    splice(raw, edits).trim_end_matches('\n').to_string()
+                }
             }
             Edit::NormalizePlanning => {
                 if self.planning.is_empty() || self.literal_at(0) {
@@ -577,6 +721,63 @@ impl BlockRegions {
         #[cfg(debug_assertions)]
         if out != raw {
             let after = parse(&out, org);
+            debug_assert!(
+                !after.quarantined,
+                "I-2: edited region shape must remain parseable"
+            );
+            let properties = |r: &BlockRegions| {
+                r.properties
+                    .iter()
+                    .filter(|p| {
+                        !all_properties && !property_keys.contains(&p.key.to_ascii_lowercase())
+                    })
+                    .map(|p| (p.key.clone(), p.value.clone()))
+                    .collect::<Vec<_>>()
+            };
+            debug_assert_eq!(
+                properties(self),
+                properties(&after),
+                "I-4: unrelated property shape changed"
+            );
+            let planning = |r: &BlockRegions, source: &str| {
+                let mut entries = r
+                    .planning
+                    .iter()
+                    .filter(|p| Some(&p.kind) != planning_kind.as_ref())
+                    .map(|p| (p.kind.clone(), p.timestamp.slice(source).to_string()))
+                    .collect::<Vec<_>>();
+                entries.sort();
+                entries
+            };
+            debug_assert_eq!(
+                planning(self, raw),
+                planning(&after, &out),
+                "I-4: unrelated planning shape changed"
+            );
+            let drawers = |r: &BlockRegions, source: &str| {
+                r.drawers
+                    .iter()
+                    .filter(|d| {
+                        !drawer_name
+                            .as_ref()
+                            .is_some_and(|n| d.name.eq_ignore_ascii_case(n))
+                    })
+                    .map(|d| {
+                        (
+                            d.name.clone(),
+                            d.range
+                                .slice(source)
+                                .trim_end_matches(['\r', '\n'])
+                                .to_string(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
+            debug_assert_eq!(
+                drawers(self, raw),
+                drawers(&after, &out),
+                "I-4: unrelated drawer shape changed"
+            );
             // Literal payload bytes remain identical. Edits may move their offsets,
             // so compare source slices rather than stale absolute coordinates.
             let before_literals: Vec<_> = self
