@@ -106,6 +106,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Sheet formulas memoize shared references, reject inherited member names, and refuse excessive field-rename depth without crashing (UI-OG-B-W3-FORMULA-DAG, UI-OG-B-W3-FORMULA-OWN-MEMBERS, UI-OG-B-W3-FORMULA-RENAME-DEPTH).
 
+
+- **Published permalinks share page and block identity** (UI-OG-PERMALINK-IDENTITY-001, UI-OG-PERMALINK-BLOCK-ID-001): equivalent Unicode page/alias names resolve, and Markdown/Org block links ignore code examples of IDs.
+- **Expanded audio shares inline asset decoding** (UI-OG-AUDIO-ASSET-PATH-001), including normalized asset-directory case and separators. Native streams, cached images and media fallbacks use one Rust MIME answer through the existing wasm module.
+- **Export retains literal metadata and Org body drawers** (UI-OG-EXPORT-LITERAL-METADATA-001): HTML, OPML and source Text strip canonical properties through the parser-owned region door.
 - Fixed namespace and published-backend identity drift, published search highlights and block-ID lookup, and deeply nested namespace/snapshot handling (OG-B-FRONT).
 - Fixed recursive embed exports, oversized scientific-zero output, rejected registry response cleanup, broad table rendering, and media labels containing a literal percent. Search excerpts and query-macro scans avoid repeated input work (OG-B-FRONT).
 

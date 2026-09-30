@@ -27,29 +27,6 @@ fn decode_path(path: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-fn mime(name: &str) -> &'static str {
-    match name
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "mp4" | "m4v" => "video/mp4",
-        "webm" => "video/webm",
-        "ogv" => "video/ogg",
-        "mov" => "video/quicktime",
-        "mkv" => "video/x-matroska",
-        "mp3" | "mpeg" => "audio/mpeg",
-        "m4a" | "aac" => "audio/mp4",
-        "wav" => "audio/wav",
-        "ogg" | "oga" => "audio/ogg",
-        "opus" => "audio/opus",
-        "flac" => "audio/flac",
-        _ => "application/octet-stream",
-    }
-}
-
 fn byte_range(value: Option<&header::HeaderValue>, len: u64) -> Option<(u64, u64)> {
     if len == 0 {
         return None;
@@ -107,7 +84,7 @@ pub(crate) fn respond<R: Runtime>(
     if len == 0 {
         return Response::builder()
             .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, mime(name))
+            .header(header::CONTENT_TYPE, tine_core::media_mime::from_path(name))
             .header(header::ACCEPT_RANGES, "bytes")
             .header(header::CONTENT_LENGTH, 0)
             .body(Vec::new())
@@ -116,7 +93,7 @@ pub(crate) fn respond<R: Runtime>(
     if request.method() == tauri::http::Method::HEAD {
         return Response::builder()
             .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, mime(name))
+            .header(header::CONTENT_TYPE, tine_core::media_mime::from_path(name))
             .header(header::ACCEPT_RANGES, "bytes")
             .header(header::CONTENT_LENGTH, len)
             .body(Vec::new())
@@ -157,7 +134,7 @@ pub(crate) fn respond<R: Runtime>(
         } else {
             StatusCode::OK
         })
-        .header(header::CONTENT_TYPE, mime(name))
+        .header(header::CONTENT_TYPE, tine_core::media_mime::from_path(name))
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CONTENT_LENGTH, count);
     if partial {

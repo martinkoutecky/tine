@@ -16,6 +16,20 @@ afterEach(() => {
 });
 
 describe("AudioOverlay resource lifecycle", () => {
+  it("uses inline asset path decoding for both streaming and fallback", async () => {
+    const stream = vi.spyOn(backend(), "streamAsset").mockResolvedValue("asset://track.mp3");
+    const read = vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    vi.stubGlobal("URL", { createObjectURL: () => "blob:test", revokeObjectURL: vi.fn() });
+    const host = document.createElement("div"); document.body.append(host);
+    const dispose = render(() => <AudioOverlay />, host);
+    try {
+      setAudioPlayer({ url: "..\\ASSETS\\nested\\track.mp3", name: "Track" });
+      await vi.waitFor(() => expect(stream).toHaveBeenCalledWith("nested/track.mp3"));
+      host.querySelector("audio")!.dispatchEvent(new Event("error"));
+      await vi.waitFor(() => expect(read).toHaveBeenCalledWith("nested/track.mp3", 64 * 1024 * 1024));
+    } finally { dispose(); host.remove(); }
+  });
   it("reports a rejected play request without exposing its detail", async () => {
     vi.spyOn(backend(), "streamAsset").mockResolvedValue("asset://track.mp3");
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});

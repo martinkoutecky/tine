@@ -17,6 +17,7 @@ import { pushToast } from "../toasts";
 import { reportLinkOpenFailure } from "../components/ExternalLink";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
+import { mime_from_path } from "./wasm/lsdoc_wasm";
 import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format, Span } from "./ast";
 import type { PageKind } from "../types";
 import { timestampText } from "./renderedText";
@@ -687,8 +688,10 @@ export function MathView(props: { tex: string; display: boolean; spanAttrs?: Spa
   );
 }
 
-// Resolve the path of a graph asset relative to the `assets/` dir.
-function assetRelPath(url: string): string | null {
+/** Resolve a graph asset relative to `assets/`, normalizing separators and case
+ * of the directory name in O(URL bytes). Null when no asset directory occurs;
+ * the backend validates the returned path before reading. */
+export function assetRelPath(url: string): string | null {
   const normalized = url.replace(/\\/g, "/");
   const i = normalized.toLowerCase().indexOf("assets/");
   return i === -1 ? null : normalized.slice(i + "assets/".length);
@@ -1109,15 +1112,7 @@ function MediaEmbed(props: {
       tryingBlobFallback = true;
       const abort = new AbortController();
       fallbackAbort = abort;
-      const ext = r.split(".").pop()?.toLowerCase();
-      const mime = props.kind === "video" ? "video/x-matroska" :
-        ext === "mp3" || ext === "mpeg" ? "audio/mpeg" :
-        ext === "m4a" || ext === "aac" ? "audio/mp4" :
-        ext === "wav" ? "audio/wav" :
-        ext === "ogg" || ext === "oga" ? "audio/ogg" :
-        ext === "opus" ? "audio/opus" :
-        ext === "flac" ? "audio/flac" : "application/octet-stream";
-      void acquireMediaBlobFallback(r, props.kind, mime, abort.signal).then((lease) => {
+      void acquireMediaBlobFallback(r, props.kind, mime_from_path(r), abort.signal).then((lease) => {
         if (disposed) {
           lease.release();
           return;

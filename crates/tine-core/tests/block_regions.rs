@@ -1,5 +1,36 @@
 use tine_core::block_regions::{parse, Edit};
 #[test]
+fn visible_body_only_removes_canonical_org_properties() {
+    for nl in ["\n", "\r\n"] {
+        let raw = [
+            "Heading",
+            "SCHEDULED: <2026-09-30 Wed>",
+            ":PROPERTIES:",
+            ":id: real",
+            ":END:",
+            "Body",
+            ":PROPERTIES:",
+            ":note: prose",
+            ":END:",
+        ]
+        .join(nl);
+        let regions = parse(&raw, true);
+        assert_eq!(regions.id.as_ref().unwrap().value, "real");
+        assert!(!regions.property("note").unwrap().primary);
+        let expected = [
+            "Heading",
+            "SCHEDULED: <2026-09-30 Wed>",
+            "Body",
+            ":PROPERTIES:",
+            ":note: prose",
+            ":END:",
+        ]
+        .join(nl);
+        assert_eq!(regions.apply(&raw, true, Edit::Visible).unwrap(), expected);
+    }
+}
+
+#[test]
 fn structural_edits_preserve_literals_and_reparse() {
     for org in [false, true] {
         let code = if org {
