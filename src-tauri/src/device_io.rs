@@ -92,6 +92,55 @@ pub(crate) fn import_asset_from_path(
 mod tests {
     use super::*;
 
+    #[test]
+    fn atomic_update_retries_on_external_change_without_losing_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        let path = dir.join("config.edn");
+        fs::write(&path, "{:base 1}\n").unwrap();
+        let lock = std::sync::Mutex::new(());
+        let injected = std::sync::atomic::AtomicBool::new(false);
+        atomic_update_with_hooks(
+            &path,
+            &lock,
+            |content| Ok(content.replace('}', " :mine 3}")),
+            |_| {
+                if !injected.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    fs::write(&path, "{:base 1 :external 2}\n").unwrap();
+                }
+            },
+            |_| {},
+        )
+        .unwrap();
+        let final_content = fs::read_to_string(&path).unwrap();
+        assert!(final_content.contains(":external 2"));
+        assert!(final_content.contains(":mine 3"));
+    }
+
+    #[test]
+    fn atomic_update_absent_publish_preserves_a_concurrent_creator() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        let path = dir.join("config.edn");
+        let lock = std::sync::Mutex::new(());
+        let injected = std::sync::atomic::AtomicBool::new(false);
+        atomic_update_with_hooks(
+            &path,
+            &lock,
+            |content| Ok(content.replace('}', " :mine 3}")),
+            |_| {},
+            |_| {
+                if !injected.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    fs::write(&path, "{:external 2}\n").unwrap();
+                }
+            },
+        )
+        .unwrap();
+        let final_content = fs::read_to_string(&path).unwrap();
+        assert!(final_content.contains(":external 2"));
+        assert!(final_content.contains(":mine 3"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn bounded_image_read_refuses_fifo_without_waiting_for_writer() {
@@ -222,8 +271,8 @@ fn atomic_update_with_hooks(
             Err(e) => return Err(e),
         };
         let next = edit(baseline.as_deref().unwrap_or("{}\n"))?;
-        // CONFIG_LOCK serializes Tine writers, but Logseq/Syncthing do not take
-        // it. Re-read immediately before publish and retry the key-local edit on
+        // The supplied file lock serializes Tine writers; external editors and
+        // sync services do not take it. Re-read immediately before publish and retry the key-local edit on
         // their new bytes instead of overwriting an external update with our stale
         // full-file copy.
         before_recheck(attempt);
