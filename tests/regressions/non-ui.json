@@ -1131,7 +1131,7 @@
         "scenario": null,
         "failBefore": "proven"
       },
-      "notes": "Checkpoint 4 L01:43; shared root selector for ordinary and nested settings; guarded favorites write and reload preserve the nested shadow byte for byte."
+      "notes": "Checkpoint 4 L01:43; shared root selector for ordinary and nested settings; guarded favorites write and reload preserve the nested shadow byte for byte. Complete directory settings before a torn later form retain their authored value."
     },
     {
       "id": "REG-OG-CONFIG-EDN-ESCAPES-001",
@@ -1175,7 +1175,7 @@
         "scenario": null,
         "failBefore": "proven"
       },
-      "notes": "Checkpoint 4 L01:46; integral floats, negative zero and exponent values reparse as the same float values through both real sidecar rewrite entry points."
+      "notes": "Checkpoint 4 L01:46; integral floats, negative zero and exponent values reparse as the same float values through both real sidecar rewrite entry points. Integration question: two existing graph-feature byte fixtures require the old integer spellings; their assertions and baselines remain unchanged."
     },
     {
       "id": "REG-OG-ORG-DIRECTIVE-OPEN-001",

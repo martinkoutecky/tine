@@ -99,3 +99,14 @@ fn config_readers_have_one_root_selector_and_one_string_decoder() {
         "I-12: config::read_string_at is the EDN decoder's client"
     );
 }
+
+#[test]
+fn a_torn_later_form_does_not_relocate_an_already_read_directory() {
+    let config = Config::parse(r#"{:pages-directory "archive" :favorites ["Real"] :unfinished ["#);
+    assert_eq!(config.pages_dir, "archive");
+    assert_eq!(config.favorites, ["Real"]);
+    let nested = Config::parse(
+        r#"{:extension {:pages-directory "shadow"} :pages-directory "archive" :unfinished ["#,
+    );
+    assert_eq!(nested.pages_dir, "archive");
+}

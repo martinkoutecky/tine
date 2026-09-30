@@ -287,7 +287,7 @@ impl Config {
         cfg.macros = parse_macros(edn);
         cfg.enable_timetracking = bool_value(edn, ":feature/enable-timetracking?").unwrap_or(true);
         cfg.enable_search_remove_accents =
-            find_top_level_keyword(edn, ":feature/enable-search-remove-accents?")
+            read_keyword(edn, ":feature/enable-search-remove-accents?")
                 .map(|at| {
                     let from = skip_blank(edn, at + ":feature/enable-search-remove-accents?".len());
                     !edn[from..].strip_prefix("false").is_some_and(|rest| {
@@ -487,7 +487,8 @@ pub fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usi
 }
 
 // ---------------------------------------------------------------------------
-// Readers — each finds its key with `find_top_level_keyword`, then reads it with
+// Readers — root ownership is shared with `find_top_level_keyword`; complete
+// values before a torn suffix are still readable. Strings use the EDN decoder;
 // the shared scanners.
 // ---------------------------------------------------------------------------
 
@@ -522,7 +523,7 @@ fn read_string_at(s: &str, open: usize) -> Option<String> {
 
 /// String value following `key`, e.g. `:journals-directory "journals"`.
 fn string_value(edn: &str, key: &str) -> Option<String> {
-    let start = find_top_level_keyword(edn, key)?;
+    let start = read_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
     (edn.as_bytes().get(from) == Some(&b'"'))
         .then(|| read_string_at(edn, from))
@@ -531,7 +532,7 @@ fn string_value(edn: &str, key: &str) -> Option<String> {
 
 /// Keyword value (`:foo` → `foo`) following `key`.
 fn keyword_value(edn: &str, key: &str) -> Option<String> {
-    let start = find_top_level_keyword(edn, key)?;
+    let start = read_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
     let b = edn.as_bytes();
     if b.get(from) != Some(&b':') {
@@ -552,7 +553,7 @@ fn keyword_value(edn: &str, key: &str) -> Option<String> {
 
 /// Boolean value (`true`/`false`) following `key`.
 fn bool_value(edn: &str, key: &str) -> Option<bool> {
-    let start = find_top_level_keyword(edn, key)?;
+    let start = read_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
     if edn[from..].starts_with("true") {
         Some(true)
@@ -565,7 +566,7 @@ fn bool_value(edn: &str, key: &str) -> Option<bool> {
 
 /// Non-negative integer following `key`.
 fn int_value(edn: &str, key: &str) -> Option<u32> {
-    let start = find_top_level_keyword(edn, key)?;
+    let start = read_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
     let digits: String = edn[from..]
         .chars()
@@ -579,7 +580,7 @@ fn int_value(edn: &str, key: &str) -> Option<u32> {
 fn parse_hidden_paths(edn: &str) -> Result<Vec<String>, ()> {
     // A torn root must still expose an authored :hidden vector to its bounded
     // validator; a missing closing brace must not turn exclusions into none.
-    let Some(start) = root_keyword(edn, ":hidden", false) else {
+    let Some(start) = read_keyword(edn, ":hidden") else {
         return Ok(Vec::new());
     };
     let from = skip_blank(edn, start + ":hidden".len());
@@ -671,7 +672,7 @@ fn skip_hidden_form(edn: &str, start: usize, close: usize, depth: usize) -> Resu
 /// Quoted strings in the vector following `key` (`:favorites ["a" "b"]`),
 /// string-aware so a value containing `]` doesn't end the vector early.
 fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
-    let Some(start) = find_top_level_keyword(edn, key) else {
+    let Some(start) = read_keyword(edn, key) else {
         return Vec::new();
     };
     let from = skip_blank(edn, start + key.len());
@@ -704,7 +705,7 @@ fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
 /// A direct string entry in a direct root settings map. Nested extension
 /// maps cannot shadow either the outer setting or its inner entry.
 fn nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
-    let key = find_top_level_keyword(edn, outer)?;
+    let key = read_keyword(edn, outer)?;
     let (open, close) = balanced_map_at(edn, skip_blank(edn, key + outer.len()))?;
     let irel = find_keyword_at_map_level(&edn[open + 1..close], inner)?;
     let vfrom = skip_blank(edn, open + 1 + irel + inner.len());
@@ -738,6 +739,12 @@ pub fn find_top_level_keyword(s: &str, key: &str) -> Option<usize> {
     root_keyword(s, key, true)
 }
 
+// Readers keep complete values before a torn later form. Writers additionally
+// require a balanced root before applying any edit; both share root ownership.
+fn read_keyword(s: &str, key: &str) -> Option<usize> {
+    root_keyword(s, key, false)
+}
+
 fn root_keyword(s: &str, key: &str, require_balanced: bool) -> Option<usize> {
     let open = skip_blank(s, 0);
     if s.as_bytes().get(open) != Some(&b'{') {
@@ -753,7 +760,7 @@ fn root_keyword(s: &str, key: &str, require_balanced: bool) -> Option<usize> {
 /// Boolean value for `inner` inside the map following `outer`, e.g.
 /// `:logbook/settings {:with-second-support? false}`.
 fn nested_bool(edn: &str, outer: &str, inner: &str) -> Option<bool> {
-    let start = find_top_level_keyword(edn, outer)?;
+    let start = read_keyword(edn, outer)?;
     let from = skip_blank(edn, start + outer.len());
     if edn.as_bytes().get(from) != Some(&b'{') {
         return None;
@@ -772,7 +779,7 @@ fn nested_bool(edn: &str, outer: &str, inner: &str) -> Option<bool> {
 
 /// Keywords in the set following `key` (`:block-hidden-properties #{:a :b}`).
 fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
-    let Some(start) = find_top_level_keyword(edn, key) else {
+    let Some(start) = read_keyword(edn, key) else {
         return Vec::new();
     };
     let from = skip_blank(edn, start + key.len());
@@ -797,7 +804,7 @@ fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
 /// `false` (disable) | `["b1" "b2"]` (first wins). String/brace-aware.
 fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    let Some(start) = find_top_level_keyword(edn, ":shortcuts") else {
+    let Some(start) = read_keyword(edn, ":shortcuts") else {
         return map;
     };
     let from = skip_blank(edn, start + ":shortcuts".len());
@@ -870,7 +877,7 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
 /// first non-string key/value rather than desyncing on unexpected EDN.
 fn parse_macros(edn: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    let Some(start) = find_top_level_keyword(edn, ":macros") else {
+    let Some(start) = read_keyword(edn, ":macros") else {
         return map;
     };
     let from = skip_blank(edn, start + ":macros".len());
