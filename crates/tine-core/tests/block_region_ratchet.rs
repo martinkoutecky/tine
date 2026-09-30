@@ -50,7 +50,12 @@ fn scan(root: &Path, dir: &Path, out: &mut BTreeMap<String, usize>) {
                 scan(root, &path, out);
             }
         } else {
-            let file = path.strip_prefix(root).unwrap().to_str().unwrap();
+            let file = path
+                .strip_prefix(root)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace('\\', "/");
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if !["rs", "ts", "tsx", "js"].contains(&ext)
                 || file.contains(".test.")
