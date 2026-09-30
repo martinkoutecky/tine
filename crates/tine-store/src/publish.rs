@@ -508,7 +508,7 @@ pub fn query_publication_destination(
 ) -> io::Result<(String, bool, Option<String>)> {
     validate_leaf(folder)?;
     let parent = store.graph.root.join("published-queries");
-    store.graph.ensure_write_target(&parent)?;
+    store.graph.ensure_write_target(&parent.join(folder))?;
     let exists = |name: &str| match fs::symlink_metadata(parent.join(name)) {
         Ok(_) => Ok(true),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
@@ -518,7 +518,9 @@ pub fn query_publication_destination(
     let mut suggested = None;
     if occupied {
         for n in 2u32.. {
-            let candidate = format!("{folder}-{n}");
+            let suffix = format!("-{n}");
+            let stem = folder[..folder.len().min(80 - suffix.len())].trim_end_matches('-');
+            let candidate = format!("{stem}{suffix}");
             if !exists(&candidate)? {
                 suggested = Some(candidate);
                 break;
@@ -867,7 +869,6 @@ fn publication_pause(point: &str) {
     #[cfg(feature = "test-faults")]
     if std::env::var("TINE_PUBLICATION_PAUSE").as_deref() == Ok(point) {
         if let Ok(marker) = std::env::var("TINE_PUBLICATION_MARKER") {
-            println!("PUBLICATION_PAUSED:{point}");
             while !Path::new(&format!("{marker}.continue")).exists() {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }

@@ -206,3 +206,38 @@ fn graph_site_and_query_leaf_have_one_commit_answerer() {
         );
     }
 }
+
+#[test]
+fn review_suggestions_remain_portable_at_the_folder_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("pages")).unwrap();
+    let folder = "a".repeat(80);
+    fs::create_dir_all(dir.path().join("published-queries").join(&folder)).unwrap();
+    let store = open(dir.path());
+    let (_, exists, suggestion) =
+        tine_store::publish::query_publication_destination(&store, &folder).unwrap();
+    assert!(exists);
+    let suggestion = suggestion.unwrap();
+    assert!(suggestion.len() <= 80);
+    publish_query_site(&store, &suggestion, false, &mut |w| {
+        w.write("index.html", b"new")
+    })
+    .unwrap();
+    store.close();
+}
+
+#[cfg(unix)]
+#[test]
+fn review_refuses_an_unsafe_existing_leaf() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("pages")).unwrap();
+    fs::create_dir_all(dir.path().join("published-queries")).unwrap();
+    std::os::unix::fs::symlink(
+        dir.path().join("pages"),
+        dir.path().join("published-queries/tasks"),
+    )
+    .unwrap();
+    let store = open(dir.path());
+    assert!(tine_store::publish::query_publication_destination(&store, "tasks").is_err());
+    store.close();
+}

@@ -11,8 +11,8 @@
 //! and exports public pages, or all pages on explicit request. Query exports
 //! suppress nested-query counts of outside results. Observable
 //! failures are parser/selection refusal, output budget, stale plan and I/O;
-//! callers show them; an asset-budget refusal offers Settings. Missing assets
-//! are visible warnings, and replacement always reports retained output.
+//! callers show them. For query exports, an asset-budget refusal offers Settings,
+//! missing assets are visible warnings, and replacement reports retained output.
 
 use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
 use crate::render_query_cache::substitute_current_page;
