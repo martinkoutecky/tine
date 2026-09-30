@@ -19,14 +19,18 @@ const countsMap = createRoot(() => {
     const epoch = graphEpoch();
     dataRev();
     if (epoch !== heldEpoch) { heldEpoch = epoch; setCounts({}); }
-    const owner = latestOwner(scope, "counts", graphOwner(() => epoch === graphEpoch()));
     void (async () => {
       try {
-        if (!(await waitForWarmCache(epoch)) || !owner()) return;
-        const result = await readOwned(owner, backend().getBlockRefCounts());
-        if (result.kind === "current") setCounts(result.value);
+        const owner = latestOwner(scope, "counts", graphOwner(() => epoch === graphEpoch()));
+        try {
+          if (!(await waitForWarmCache(epoch)) || !owner()) return;
+          const result = await readOwned(owner, backend().getBlockRefCounts());
+          if (result.kind === "current") setCounts(result.value);
+        } catch (error) {
+          if (owner()) reportUiFailure("block-counts", error);
+        }
       } catch (error) {
-        if (owner()) reportUiFailure("block-counts", error);
+        if (epoch === graphEpoch()) reportUiFailure("block-counts", error);
       }
     })();
   });

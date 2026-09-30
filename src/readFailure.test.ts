@@ -34,3 +34,13 @@ it("failed block resolution stays unknown, reports failure and retries in the sa
   expect(await resolveBlockBatched("target")).toBeNull();
   expect(api.resolveBlocks).toHaveBeenCalledTimes(2);
 });
+
+it("reference-count owner construction failures report without escaping module loading", async () => {
+  const owned = await import("./owned");
+  vi.spyOn(owned, "latestOwner").mockImplementation(() => { throw new Error("owner lookup failed"); });
+  const { toasts, setToasts } = await import("./toasts");
+  setToasts([]);
+  await import("./blockRefCounts");
+  await vi.waitFor(() => expect(toasts().some((toast) => toast.kind === "error")).toBe(true));
+  expect(api.getBlockRefCounts).not.toHaveBeenCalled();
+});

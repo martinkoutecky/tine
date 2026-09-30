@@ -536,22 +536,16 @@ function AppearanceTab(props: { search: string }): JSX.Element {
   );
 }
 
-// New-journal template picker: a dropdown of all `template::` templates + "(none)
-// = blank days" (the factory default — clearing the pointer), and an "Edit →" jump
-// to the chosen template's block. Uses existing concepts only: templates + the
-// config pointer. No catalogue, no built-in default.
 function JournalTemplateField(): JSX.Element {
+  let alive = true; onCleanup(() => { alive = false; });
   const [templatesResource, { refetch }] = createResource(async () => {
-    try { return await backend().listTemplates(); }
-    catch (error) { reportUiFailure("template-read", error); throw error; }
+    const owner = graphOwner(() => alive);
+    try { const result = await readOwned(owner, backend().listTemplates()); return result.kind === "current" ? result.value : undefined; }
+    catch (error) { if (owner()) reportUiFailure("template-read", error); throw error; }
   });
-  // Failed discovery cannot establish that a configured template is missing.
-  const templates = () => readOr(templatesResource, undefined, "journal templates");
   const current = () => graphMeta()?.default_journal_template ?? "";
-  const list = () => templates() ?? [];
+  const list = () => readOr(templatesResource, undefined, "journal templates") ?? [];
   const selected = () => list().find((t) => t.name === current());
-  // A configured name that no longer matches a template (stale pointer) — surface
-  // it so the dropdown reflects config rather than silently showing "(none)".
   const missing = () => templatesResource.error === undefined && !templatesResource.loading && current() !== "" && !list().some((t) => t.name === current());
   return (
     <Field
@@ -1387,8 +1381,7 @@ function AssetsTab(): JSX.Element {
   const scanned = () => orphanScan() !== null;
   const [trashInfo, setTrashInfo] = createSignal<TrashStats>({ count: 0, bytes: 0, pages: 0, journals: 0, conflicts: 0, other: 0 });
 
-  const fmtSize = (n: number) =>
-    n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
+  const fmtSize = (n: number) => n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
   const fmtDate = (secs: number | null) => secs == null ? "" : new Date(secs * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   const total = () => list().reduce((s, a) => s + a.size, 0);
   const protectedTrashCount = () =>
@@ -1408,7 +1401,7 @@ function AssetsTab(): JSX.Element {
     try {
       const info = await readOwned(owner, backend().assetTrashStats());
       if (info.kind === "current") setTrashInfo(info.value);
-    } catch { /* trash stats are best-effort */ }
+    } catch (error) { if (owner()) reportUiFailure("trash-inventory", error); }
   };
 
   const refresh = async () => {
@@ -1427,7 +1420,7 @@ function AssetsTab(): JSX.Element {
       setOrphanScan(assets.value);
       await refreshTrash();
     } catch (e) {
-      if (owner()) pushToast(`Scan failed: ${String(e)}`, "error");
+      if (owner()) reportUiFailure("asset-inventory", e);
     } finally {
       if (owner()) setBusy(false);
     }
@@ -1446,8 +1439,7 @@ function AssetsTab(): JSX.Element {
     if (orphanScan() === null) return refuseStaleWrite("Moving that asset to the trash");
     const binding = captureBinding();
     const owner = graphOwner();
-    // No confirm: the file only moves to the recoverable logseq/.tine-trash, so
-    // trashing a batch stays fast. (Empty-trash, which is permanent, still asks.)
+    // Recoverable trash moves directly; emptying trash still asks.
     try {
       const result = await writeOwned(owner, backend().trashAsset(a.name, binding.backendGeneration));
       if (result.kind === "stale") return;

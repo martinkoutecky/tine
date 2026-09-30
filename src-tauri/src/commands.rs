@@ -12,7 +12,7 @@ use tine_core::model::{
     AssetInfo, BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
 };
 use tine_graph_features::journals::{self, JournalFilenameMigration};
-use tine_graph_features::{config, IncompleteTransaction};
+use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 #[cfg(test)]
 use tine_store::{SaveBase, SaveOutcome, SavePagesOutcome};
@@ -113,10 +113,7 @@ fn asset_error(error: StoreError) -> String {
 }
 
 pub(crate) fn sync_conflict_error(error: std::io::Error) -> String {
-    if error
-        .get_ref()
-        .is_some_and(|e| e.is::<IncompleteTransaction>())
-    {
+    if error.get_ref().is_some_and(|e| e.is::<IncompleteTx>()) {
         return error.to_string();
     }
     if error.kind() == std::io::ErrorKind::AlreadyExists {

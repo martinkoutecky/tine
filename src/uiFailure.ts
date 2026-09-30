@@ -20,9 +20,16 @@ export type UiFailureFamily =
   | "journal-feed"
   | "block-counts"
   | "block-resolution"
-  | "backup-read";
+  | "backup-read"
+  | "backup-feedback"
+  | "asset-inventory"
+  | "trash-inventory";
 
 const MESSAGES: Record<UiFailureFamily, string> = {
+  "asset-inventory": "Couldn't inspect orphan assets. The last successful scan is kept.",
+  "trash-inventory": "Couldn't inspect recoverable trash. The last successful count is kept.",
+  "backup-read": "Couldn't complete the launch backup. Your graph is still open.",
+  "backup-feedback": "Couldn't receive backup status updates.",
   "page-inventory": "Couldn't refresh the page list. The last loaded list is kept.",
   "session-read": "Couldn't load the saved session. The current workspace is kept.",
   "template-read": "Couldn't load the template list. Try again before creating a template.",

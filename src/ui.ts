@@ -1,14 +1,17 @@
+import { isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { reportUiFailure } from "./uiFailure";
 import { graphMeta, setGraphMeta, bumpGraphEpoch } from "./graphSession";
 import { pushToast } from "./toasts";
 import { isMobilePlatform } from "./nativeChrome";
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
-import { createSignal, useContext } from "solid-js";
+import { createEffect, createRoot, createSignal, useContext } from "solid-js";
 import type { JournalConflict, PageKind } from "./types";
 import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
 import { backend } from "./backend";
 import { setFocusFullscreen } from "./focusFullscreen";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "./binding";
-import { graphOwner, latestOwner, readOwned, writeOwned } from "./owned";
+import { graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "./owned";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave, openPageTarget } from "./routerBridge";
 import { beginConflictRefresh, conflictQueue, conflictRefreshCurrent, forgetArrivalNotice, setConflictInventory, trackArrivalNotice } from "./conflictQueue";
@@ -302,8 +305,38 @@ export function registerPaneFocusSetter(setter: (paneId: string) => void) {
 /** Track the focused pane from clicks / focus moves. Capture-phase so it sees
  *  every interaction regardless of stopPropagation downstream. The notes pane is
  *  the default — anything outside the PDF pane (editor, sidebar, chrome) counts as
- *  "notes" for zoom purposes. Returns an uninstaller. */
+ *  "notes" for zoom purposes. Also owns one native launch-backup subscription,
+ *  reports only this graph binding's failures, and disposes late registration.
+ *  Cost O(1) per event, O(failures during graph open) on binding publication.
+ *  Returns an uninstaller for both subscriptions. */
 export function installPaneTracker(): () => void {
+  let alive = true;
+  let stopBackup: (() => void) | undefined;
+  type BackupFailure = { bindingGeneration: number; failure: string };
+  const [pendingBackup, setPendingBackup] = createSignal<BackupFailure[]>([]);
+  const stopPending = createRoot((dispose) => {
+    createEffect(() => {
+      const pending = pendingBackup();
+      if (graphTransitioning() || pending.length === 0) return;
+      const generation = backend().graphBindingGeneration();
+      setPendingBackup([]);
+      for (const payload of pending) {
+        if (payload.bindingGeneration === generation) reportUiFailure("backup-read", payload.failure);
+      }
+    });
+    return dispose;
+  });
+  if (isTauri()) void readOwnedResource(ownedWhen(() => alive),
+    listen<BackupFailure>("backup-failed", ({ payload }) => {
+      if (!alive) return;
+      if (payload.bindingGeneration === backend().graphBindingGeneration()) reportUiFailure("backup-read", payload.failure);
+      // Native backup can fail before load_graph's reply publishes its binding.
+      else if (graphTransitioning()) setPendingBackup((pending) => [...pending, payload]);
+    }), (stop) => stop(),
+  ).then((result) => {
+    if (result.kind === "current") { if (alive) stopBackup = result.value; else result.value(); }
+  })
+    .catch((error) => { if (alive) reportUiFailure("backup-feedback", error); });
   const update = (e: Event) => {
     const t = e.target as Element | null;
     const container = t?.closest?.("[data-pane-id]") ?? null;
@@ -341,6 +374,9 @@ export function installPaneTracker(): () => void {
   window.addEventListener("pointerdown", pointerdown, true);
   window.addEventListener("focusin", update, true);
   return () => {
+    alive = false;
+    stopBackup?.();
+    stopPending();
     window.removeEventListener("pointerdown", pointerdown, true);
     window.removeEventListener("focusin", update, true);
   };
