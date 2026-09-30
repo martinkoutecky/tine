@@ -5,7 +5,7 @@
 // pragmatic regexes (not a full inline parse) — enough for the common cases the
 // modal offers, matching OG's option set within reason.
 
-import { isPropertyLine } from "../render/block";
+import { editBlock } from "../render/parse";
 import { renderedBlockText, type RenderedTextOptions } from "../render/renderedText";
 import type { Format } from "../render/ast";
 
@@ -97,8 +97,8 @@ function blockExportLines(n: ExportNode, opts: ExportOptions): string[] {
       resolveMacro: opts.resolveMacro,
     }).split("\n");
   }
-  let lines = n.raw.split("\n");
-  if (opts.removeProperties) lines = lines.filter((l) => !isPropertyLine(l));
+  const raw = opts.removeProperties ? editBlock(n.raw, n.format ?? "md", { kind: "visible" }) : n.raw;
+  const lines = raw.split("\n");
   return lines.map((l) => stripInline(l, opts));
 }
 

@@ -14,6 +14,7 @@ pub mod edn;
 pub mod guide;
 pub mod html_sanitize;
 pub mod logbook;
+pub mod media_mime;
 pub mod model;
 pub mod org;
 mod outline;

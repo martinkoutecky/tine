@@ -13,12 +13,8 @@ import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallb
 import { registerTransientLayer } from "../transientLayers";
 import { reportUiFailure } from "../uiFailure";
 import { readOr } from "../resourceRead";
-
-/** Bare `assets/`-relative path of a media URL (mirrors inline.tsx's helper). */
-function relOf(url: string): string | null {
-  const i = url.indexOf("assets/");
-  return i === -1 ? null : url.slice(i + "assets/".length);
-}
+import { assetRelPath } from "../render/inline";
+import { mime_from_path } from "../render/wasm/lsdoc_wasm";
 const isExternal = (u: string) => /^(https?:|data:|blob:)/.test(u);
 
 function fmtTime(t: number): string {
@@ -74,7 +70,7 @@ export function AudioOverlay(): JSX.Element {
     () => audioPlayer()?.url ?? null,
     async (u) => {
       if (isExternal(u)) return u;
-      const r = relOf(u);
+      const r = assetRelPath(u);
       if (!r) return "";
       const result = await readOwned(graphOwner(() => alive && audioPlayer()?.url === u), backend().streamAsset(r));
       return result.kind === "current" ? result.value : "";
@@ -101,20 +97,13 @@ export function AudioOverlay(): JSX.Element {
   const retryAsBoundedBlob = () => {
     const u = audioPlayer()?.url;
     if (!u || isExternal(u) || tryingBlobFallback || blobFallback()) return;
-    const rel = relOf(u);
+    const rel = assetRelPath(u);
     if (!rel) return;
     tryingBlobFallback = true;
     const owner = latestOwner(fallbackScope, "blob", graphOwner(() => alive && audioPlayer()?.url === u));
     const abort = new AbortController();
     fallbackAbort = abort;
-    const ext = rel.split(".").pop()?.toLowerCase();
-    const mime = ext === "mp3" || ext === "mpeg" ? "audio/mpeg" :
-      ext === "m4a" || ext === "aac" ? "audio/mp4" :
-      ext === "wav" ? "audio/wav" :
-      ext === "ogg" || ext === "oga" ? "audio/ogg" :
-      ext === "opus" ? "audio/opus" :
-      ext === "flac" ? "audio/flac" : "application/octet-stream";
-    void acquireMediaBlobFallback(rel, "audio", mime, abort.signal).then((lease) => {
+    void acquireMediaBlobFallback(rel, "audio", mime_from_path(rel), abort.signal).then((lease) => {
       if (!owner()) {
         lease.release();
         return;

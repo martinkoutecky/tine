@@ -12,6 +12,8 @@
 //! An invalid request returns an error; a quarantined parse refuses edits. Callers
 //! must surface that refusal. Debug builds reparse and verify literal preservation.
 //! Sub-token scans below are confined to regions lsdoc has ALREADY accepted.
+//! Org properties are primary only in the canonical head drawer; `Visible`
+//! removes that same region, retaining property-shaped drawers in the body.
 
 use lsdoc::ast::{Block, Inline, ListItem, Span};
 use serde::{Deserialize, Serialize};
@@ -722,11 +724,13 @@ impl BlockRegions {
                         ))
             }),
             Edit::Visible => {
+                let own = org.then(|| self.own_org_region(raw)).flatten();
                 let edits: Vec<_> = self
                     .property_regions
                     .iter()
-                    .filter(|r| !self.literal_at(r.0))
-                    .map(|r| (*r, String::new()))
+                    .enumerate()
+                    .filter(|(index, r)| !self.literal_at(r.0) && (!org || Some(*index) == own))
+                    .map(|(_, r)| (*r, String::new()))
                     .collect();
                 if edits.is_empty() {
                     raw.to_string()

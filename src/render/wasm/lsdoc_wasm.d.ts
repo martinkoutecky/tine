@@ -20,6 +20,12 @@ export function logbook_info_json(raw: string, is_org: boolean): string;
  */
 export function lsdoc_tag(): string;
 
+/**
+ * MIME from the final case-insensitive path extension; O(path bytes), no I/O.
+ * Unknown extensions return application/octet-stream. Shared with native media.
+ */
+export function mime_from_path(path: string): string;
+
 export function parse_block_bundle_json(raw: string, is_org: boolean): string;
 
 /**
@@ -66,6 +72,7 @@ export interface InitOutput {
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_info_json: (a: number, b: number, c: number) => [number, number];
     readonly lsdoc_tag: () => [number, number];
+    readonly mime_from_path: (a: number, b: number) => [number, number];
     readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];

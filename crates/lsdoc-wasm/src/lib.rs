@@ -15,10 +15,19 @@ mod render {
 
 #[path = "../../tine-core/src/logbook.rs"]
 mod logbook;
+#[path = "../../tine-core/src/media_mime.rs"]
+mod media_mime;
 #[path = "../../lsdoc-block-parse.rs"]
 mod lsdoc_block_parse;
 #[path = "../../tine-core/src/property_line.rs"]
 mod property_line;
+
+/// MIME from the final case-insensitive path extension; O(path bytes), no I/O.
+/// Unknown extensions return application/octet-stream. Shared with native media.
+#[wasm_bindgen]
+pub fn mime_from_path(path: &str) -> String {
+    media_mime::from_path(path).to_string()
+}
 
 /// Parse one de-bulleted block body into lsdoc's render AST, serialized to JSON.
 ///

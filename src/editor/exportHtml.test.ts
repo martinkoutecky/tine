@@ -50,3 +50,9 @@ describe("exportHtml", () => {
     expect(result).not.toContain("Child");
   });
 });
+
+it("keeps fenced property-shaped literals during HTML export (OG-B-FRONT pending)", () => {
+  expect(exportHtml([{raw: "```\nid:: literal\n```", children: []}], {
+    stripLinks: false, removeEmphasis: false, removeTags: false,
+  })).toContain("id:: literal");
+});

@@ -1,7 +1,6 @@
-import { isPropertyLine } from "../render/block";
+import { editBlock } from "../render/parse";
 import type { Format } from "../render/ast";
 import type { ExportNode, MaxDepth } from "./exportText";
-import { orgBlockDrawerRange } from "./properties";
 
 export interface MarkupExportOptions {
   stripLinks: boolean;
@@ -43,17 +42,13 @@ export function cleanInline(text: string, format: Format, options: MarkupExportO
   return result;
 }
 
-/** Property AST nodes are absent from OG's OPML/HTML output. Mirror that for
- * Markdown property lines and Org property drawers before serializing a node. */
+/** Parser-owned visible body for OPML/HTML: canonical metadata is omitted,
+ * literals and Org body drawers remain. O(block bytes), no file I/O; parser
+ * refusal propagates so export cannot silently discard content. */
 export function nodeText(node: ExportNode, options: MarkupExportOptions): string {
-  const kept: string[] = [];
-  const lines = node.raw.split("\n");
-  const drawer = node.format === "org" ? orgBlockDrawerRange(lines) : null;
-  for (let i = 0; i < lines.length; i++) {
-    if (drawer && i >= drawer[0] && i <= drawer[1]) continue;
-    const line = lines[i];
-    if (!isPropertyLine(line)) kept.push(cleanInline(line, node.format ?? "md", options));
-  }
+  const format = node.format ?? "md";
+  const kept = editBlock(node.raw, format, { kind: "visible" }).split("\n")
+    .map(line => cleanInline(line, format, options));
   while (kept.length > 1 && kept[kept.length - 1].trim() === "") kept.pop();
   return kept.join("\n");
 }
