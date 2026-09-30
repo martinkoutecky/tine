@@ -1,8 +1,10 @@
 # Query table footer
 
 A live query table displays the query engine's complete statistics, including
-matches outside the displayed sample. `Macro.tsx` supplies statistics and the
-executed view to `SheetTable`; the current view and `apply` callback own edits.
+the complete ordered semantic sample before display or table filtering. The
+Sample setting limits the query before statistics are computed. `Macro.tsx`
+supplies statistics and the executed view to `SheetTable`; the current view and `apply` callback own edits.
+`queryTableFooter` adapts one property column and owns its ordered edit.
 `querySummary` is the only formatter of these backend statistics. Missing
 statistics or a missing aggregate entry displays no total; backend markers
 retain their unavailable explanation.
@@ -23,7 +25,7 @@ They can differ from live totals. The published-pages boundary excludes
 unpublished rows before exporting; unrestricted query statistics never cross
 that boundary. Export retains the existing sheet vocabulary and formula totals.
 
-I-12 exemplar: `src/components/SheetTable.tsx` formats supplied statistics and
-routes choices through `queryDisplay.apply`. Render outcomes are covered by
+I-12 exemplar: `src/sheet/queryTableFooter.ts` formats supplied statistics and
+routes choices through `queryDisplay.apply`; `SheetTable.tsx` supplies the control. Render outcomes are covered by
 `SheetTable.queryFooter.test.tsx` and `staticExport.test.tsx`; the wiring and
 export boundary are guarded by `src/sheet/ogBSheetGuards.test.ts`.

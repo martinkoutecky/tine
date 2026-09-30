@@ -28,11 +28,13 @@ it("I-12/I-22: native grid layout uses the same row cap as export inputs and cha
 });
 
 
-it("I-12: query footers format backend statistics through querySummary and use the display writer; follow SheetTable.tsx", () => {
+it("I-12: query footers format backend statistics through querySummary and use the display writer; follow queryTableFooter.ts", () => {
   const table = readFileSync(new URL("../components/SheetTable.tsx", import.meta.url), "utf8");
-  expect(table).toContain("querySummary({ statistics })");
+  expect(table).toContain("queryTableFooter(props.queryDisplay, field)");
+  const footer = readFileSync(new URL("./queryTableFooter.ts", import.meta.url), "utf8");
+  expect(footer).toContain("querySummary({ statistics })");
   expect(table).toContain("values={props.queryDisplay ? [] : sortedRows()");
-  expect(table).toContain("control.apply({ ...control.view, aggregates: entries })");
+  expect(footer).toContain("control.apply({ ...control.view, aggregates: entries })");
   const macro = readFileSync(new URL("../components/Macro.tsx", import.meta.url), "utf8");
   expect(macro).toContain("statistics: displayed()?.statistics, statisticsView: runnable()?.view");
   const exporter = readFileSync(new URL("./staticExport.ts", import.meta.url), "utf8");

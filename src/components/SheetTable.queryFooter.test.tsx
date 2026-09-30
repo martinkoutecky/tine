@@ -44,7 +44,7 @@ describe("query table footer", () => {
   it("receives complete statistics through the live query macro", async () => {
     setDoc({ byId: { query: { id: "query", raw: "{{query (task TODO)}}\ntine.view:: table\ntine.col-aggregates:: cost=sum", children: [], parent: null, page: "Sheet", collapsed: false } },
       pages: [{ name: "Sheet", title: "Sheet", kind: "page", roots: ["query"], preBlock: null, format: "md", readOnly: false, guide: false }], feed: ["Sheet"], loaded: true });
-    backendReadsQueries({ "(task TODO)": { form: "(task TODO)", view: { view: "table", columns: ["cost"], aggregates: [["cost", "sum"]], sample: 1 } } });
+    backendReadsQueries({ "(task TODO)": { form: "(task TODO)", view: { view: "table", columns: ["cost"], aggregates: [["cost", "sum"]] } } });
     const groups: RefGroup[] = [{ page: "Results", kind: "page", blocks: [{ id: "r1", raw: "TODO Visible row\ncost:: 2", properties: [["cost", "2"]], children: [], collapsed: false }] }];
     vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
     vi.spyOn(backend(), "printQuery").mockResolvedValue("(task TODO)");
