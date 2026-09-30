@@ -112,7 +112,8 @@ import {
   caretOffsetOnLastRow,
   textareaCaretLeft,
 } from "../editor/caretRows";
-import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
+import { splitProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
+import { propertyEditorSession } from "../editor/propertySession";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
 import { caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
@@ -210,11 +211,9 @@ export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(n
 /** Render and edit one document block through the document door. Work scales
  * with its visible descendants; a failed structured paste shows fixed text. */
 export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean; dragHostId?: string }): JSX.Element {
-  // ONE store read per block for the node itself: every derivation below reads
-  // `node()` several times over, and each raw `doc.byId[id]` costs two Solid store
-  // proxy traps plus a wrap (master 0350c00b6: the largest app-attributable cost
-  // in the bigLoad profile).
+  // Share one node read across this block's derivations.
   const node = createMemo(() => docNode(props.id));
+  const propertySession = propertyEditorSession();
   // Unique per rendered instance, so when one block uuid appears in several
   // surfaces only the instance that was clicked mounts the editor (the rest stay
   // rendered and reflect edits live). null owner = unscoped (keyboard nav).
@@ -246,7 +245,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
   const blockFacets = createMemo<Facets>(() => {
     const n = node();
-    return n ? facetsOf(n.raw, fmt()) : EMPTY_FACETS;
+    return n ? propertySession.facets(n.raw, fmt()) : EMPTY_FACETS;
   });
   // The children-source sheet this block owns (a query block's table/board is the macro's).
   const sheet = createMemo(() => childrenSheetConfig(blockFacets().properties, node().raw));
@@ -286,7 +285,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   });
   // Ordered-list label for THIS block's own bullet (OG numbers the block itself,
   // not its children); null for a normal bullet.
-  const orderMarker = () => orderedListMarker(props.id);
+  const orderMarker = () => orderedListMarker(props.id, blockFacets().properties);
   // An org page Tine can't round-trip is shown but NOT editable (Tine must never
   // rewrite it). Clicking a block doesn't enter the editor on such a page.
   const readOnly = () => blockPageReadOnly(props.id);
@@ -309,7 +308,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         ...rowDecorationClasses(threadLineDecoration()),
       }}
       data-block-id={props.id}
-      data-block-ref={parserReady() ? blockExternalId(props.id) ?? props.id : undefined}
+      data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
       <div
         class="block-main"
@@ -436,7 +435,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               />
             }
           >
-            <Editor id={props.id} />
+            <Editor id={props.id} propertySession={propertySession} />
           </Show>
         </div>
       </div>
@@ -540,7 +539,8 @@ function templateToOutline(
 }
 // Block editor for `props.id`. Inside quick capture, CaptureCtx repurposes
 // Enter/Escape when autocomplete is closed to commit or dismiss the capture.
-export function Editor(props: { id: string }): JSX.Element {
+export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
+  const propertySession = props.propertySession ?? propertyEditorSession();
   // Non-null only inside the quick-capture window (see CaptureCtx).
   const cap = useContext(CaptureCtx);
   const sheetCell = useContext(SheetCellContext);
@@ -586,12 +586,10 @@ export function Editor(props: { id: string }): JSX.Element {
       && (node().originatedFromPageHeader || (!page.preBlock && propertyDraft));
   };
 
-  // One cached split serves the editing surface and commit; hidden bytes survive.
+  // Parsed editor facts travel with the committed buffer; hidden bytes survive.
   const isAnnot = () => isAnnotationBlock(node().raw);
-  // Annotation blocks hide ALL properties (edit only the highlight text); every
-  // other block hides just the built-in id::/collapsed::. One fence-aware splitter.
   const hideFn = () => (isAnnot() ? hideAll : sheetCell ? isSheetCellHidden : isBuiltinHidden);
-  const editorParts = createMemo(() => splitProps(node().raw, hideFn(), pageFmt()));
+  const editorParts = createMemo(() => propertySession.split(node().raw, hideFn(), pageFmt()));
   const editorValue = () => editorParts().visible;
   // GH #357: while the buffer IS one whole-block code fence the editor presents
   // as the same mono, no-wrap card the rendered face is (no re-layout jump).
@@ -637,9 +635,7 @@ export function Editor(props: { id: string }): JSX.Element {
     // For a code wrapper `text` is the payload body: re-attach the exact wrapper
     // bytes (GH #412/#413: the body-only projection is reversible).
     const visible = commitAsCalc ? serializeCalcExitCommit(text, editorValue()) : codeWrapCommit(text) ?? text;
-    const next = joinProps(visible, editorParts().hidden, pageFmt());
-    // No-op commit (text that reconstructs the identical raw): don't mark the page
-    // dirty or push undo — avoids churn and can't rewrite the block's bytes.
+    const next = propertySession.join(visible, editorParts().hidden, node().raw, hideFn(), pageFmt());
     if (next === node().raw) return;
     const setRawOpts = opts && "timetracking" in opts ? { timetracking: opts.timetracking } : undefined;
     // GH #515: capture once for the autosize frame, before live mirrors above react.

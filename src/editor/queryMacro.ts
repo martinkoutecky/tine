@@ -1,4 +1,4 @@
-// The ONE frontend answer to "is this a query macro, and where does it sit in the raw source" (SPEC §4.3.1, …
+// Synchronous frontend client of the shared native query macro extent reader (I-12).
 
 import { query_macro_extents_json, is_query_macro_name, query_macro_is_tql } from "../render/wasm/lsdoc_wasm.js";
 import { QUERY_MACRO_NAMES } from "./queryMacroName";
@@ -31,6 +31,7 @@ export function queryMacroExtent(raw: string): MacroExtent | null {
 /** Every query macro in source order. The native reader owns recognition;
  * this boundary converts byte coordinates in one forward pass, O(raw bytes). */
 export function queryMacroExtents(raw: string): MacroExtent[] {
+  if (raw.length === 0) return [];
   const found = JSON.parse(query_macro_extents_json(raw)) as MacroExtent[];
   let byte = 0, unit = 0;
   const toUnits = (target: number) => {

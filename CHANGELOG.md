@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Browser and native query rewrites use the same macro extent reader**, preserving authored arguments and rejecting malformed closing braces consistently (og-R4C; REG-OG-R4C-MACRO-EXTENTS).
+
+- **Org typing keeps hidden IDs in the parser-accepted drawer after CLOSED planning and leaves source blocks intact** (og-R4C; UI-OG-R4C-ORG-REATTACH).
+
 - Query table footers show complete backend totals and save Count, Sum, Average, or None through Display without reordering repeated entries. Static export totals summarize exported rows (UI-OG-R3A3-QUERY-FOOTER).
 
 - **Splitting an Org block keeps its own ID on the original block after CLOSED planning** (og-R4B; UI-OG-R4B-OWN-PROPERTIES). The editor hides properties from the parser's own property region and keeps body drawers visible.

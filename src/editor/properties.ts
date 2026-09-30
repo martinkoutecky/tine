@@ -2,8 +2,7 @@
 // continuation lines or a page's pre-block. No store/DOM, so unit-testable.
 
 import { transitionFence, displayMathOpenAfter, closesDisplayMath, type FenceState } from "./fences";
-import { literalBlockOfLine } from "./literalLines";
-import { blockRegions, parserReady } from "../render/parse";
+import { blockRegions, editBlock, parserReady } from "../render/parse";
 
 /** Ordinary `key:: value` lines share the page-header key class at column zero. */
 export const PROP_LINE = /^([\p{L}\p{M}\p{N}_./-]+):: ?(.*)$/u;
@@ -191,19 +190,6 @@ export type PropFormat = "md" | "org";
 
 type LineClass = "v" | "h" | "d"; // visible | hidden-payload | dropped(org wrapper)
 
-/** Return inclusive [start, end] for a complete :PROPERTIES: drawer at line 0
- * or after the title and contiguous SCHEDULED:/DEADLINE: lines. A blank/other
- * line breaks placement; a missing :END: returns null. Reads at most lines.length
- * lines without mutating them. */
-export function orgBlockDrawerRange(lines: string[]): [number, number] | null {
-  if (lines.length === 0) return null;
-  let start = lines[0].trim().toUpperCase() === ":PROPERTIES:" ? 0 : 1;
-  while (start < lines.length && /^\s*(?:SCHEDULED|DEADLINE):\s*</i.test(lines[start])) start++;
-  if (lines[start]?.trim().toUpperCase() !== ":PROPERTIES:") return null;
-  const end = lines.findIndex((line, i) => i > start && line.trim().toUpperCase() === ":END:");
-  return end > start ? [start, end] : null;
-}
-
 /** Present only primary properties accepted by the block-region door. Lines
  * are transport coordinates here, never evidence that text is metadata. */
 function classifyLines(
@@ -317,39 +303,13 @@ export function rawOffsetToVisibleOffset(
  *  {@link splitProps}. Markdown appends them below the body (that's where its
  *  `id::`/`collapsed::` live). Org folds them back into a `:PROPERTIES:` drawer
  *  at OG's canonical spot (into an existing drawer if the visible text still has
- *  one, else a fresh drawer right after the title + SCHEDULED/DEADLINE planning
- *  lines — matching {@link rawWithBlockId}). A metadata-only block (empty
+ *  one, else native placement after the title and accepted planning — matching
+ *  {@link rawWithBlockId}). A metadata-only block (empty
  *  visible) is just its hidden lines — no spurious leading newline. */
 export function joinProps(visible: string, hidden: string, format: PropFormat = "md"): string {
   if (!hidden) return visible;
   if (format !== "org") return visible ? `${visible}\n${hidden}` : hidden;
-  const hiddenLines = hidden.split("\n").filter((l) => l.trim() !== "");
-  if (hiddenLines.length === 0) return visible;
-  const lines = visible ? visible.split("\n") : [];
-  const drawer = orgBlockDrawerRange(lines);
-  if (drawer) {
-    const [, end] = drawer;
-    lines.splice(end, 0, ...hiddenLines); // extend the existing drawer, before :END:
-    return lines.join("\n");
-  }
-  if (lines.length === 0) return [":PROPERTIES:", ...hiddenLines, ":END:"].join("\n");
-  return orgLinesWithNewDrawer(lines, hiddenLines).join("\n");
-}
-
-/** Org block lines with a fresh `:PROPERTIES:` drawer holding `drawerLines`, at
- *  OG's canonical spot: title, SCHEDULED*, DEADLINE*, drawer, rest of the body
- *  (util/property.cljs insert-property). The one placement shared by joinProps
- *  and rawWithBlockId. A SCHEDULED/DEADLINE line inside a src/example block is
- *  content and stays where it is — a NAMED OG DIVERGENCE (OG hoists every such
- *  line; C3 L13/L14, see editor/literalLines.ts). */
-export function orgLinesWithNewDrawer(lines: string[], drawerLines: string[]): string[] {
-  const [title, ...rest] = lines;
-  const literal = literalBlockOfLine(lines.join("\n"), "org");
-  const hoist = (word: string) => (l: string, k: number) => literal[k + 1] === -1 && l.startsWith(word);
-  const scheduled = rest.filter(hoist("SCHEDULED"));
-  const deadline = rest.filter(hoist("DEADLINE"));
-  const body = rest.filter((l, k) => !hoist("SCHEDULED")(l, k) && !hoist("DEADLINE")(l, k));
-  return [title, ...scheduled, ...deadline, ":PROPERTIES:", ...drawerLines, ":END:", ...body];
+  return editBlock(visible, format, { kind: "reattach_properties", hidden });
 }
 
 /** First value for `key` (case-insensitive) in a property block, or null. */
