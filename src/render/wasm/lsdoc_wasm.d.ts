@@ -15,6 +15,11 @@ export function edit_block_regions_json(raw: string, is_org: boolean, regions: a
  */
 export function encode_page_name(name: string, legacy: boolean): string;
 
+/**
+ * Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
+ */
+export function is_query_macro_name(name: string): boolean;
+
 export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_marker: string, new_marker: string, enabled: boolean, with_seconds: boolean): string;
 
 export function logbook_clock_in(raw: string, is_org: boolean, with_seconds: boolean): string;
@@ -64,6 +69,17 @@ export function parse_document_json(text: string, is_org: boolean): string;
  * Title edits preserve all unrelated bytes. No I/O or graph state.
  */
 export function query_edn_json(source: string, operation: string, value: string): string;
+
+/**
+ * Query raw extents from the native reader. O(raw bytes), no parser or I/O;
+ * JSON offsets are UTF-8 bytes. Unterminated candidates are omitted.
+ */
+export function query_macro_extents_json(raw: string): string;
+
+/**
+ * The raw reader's literal grammar for a macro name; O(name bytes), no I/O.
+ */
+export function query_macro_is_tql(name: string): boolean;
 
 /**
  * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
@@ -120,6 +136,7 @@ export interface InitOutput {
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];
     readonly encode_page_name: (a: number, b: number, c: number) => [number, number];
+    readonly is_query_macro_name: (a: number, b: number) => number;
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];
@@ -130,6 +147,8 @@ export interface InitOutput {
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
     readonly query_edn_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly query_macro_extents_json: (a: number, b: number) => [number, number];
+    readonly query_macro_is_tql: (a: number, b: number) => number;
     readonly render_block_html: (a: number, b: number, c: number) => [number, number];
     readonly search_fold: (a: number, b: number, c: number) => [number, number];
     readonly search_matches: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;

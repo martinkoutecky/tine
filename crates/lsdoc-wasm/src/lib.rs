@@ -277,6 +277,10 @@ pub fn edit_block_regions_json(
             clocks,
         });
     }
+    if text(request, "kind") == "reattach_properties" {
+        return r.reattach_org_properties(raw, &text(request, "hidden"))
+            .map_err(|e| JsValue::from_str(&e));
+    }
     let edit = match text(request, "kind").as_str() {
         "property" => Edit::Property {
             key: text(request, "key"),
@@ -384,4 +388,28 @@ pub fn query_edn_json(source: &str, operation: &str, value: &str) -> String {
         }
         _ => "null".into(),
     }
+}
+
+#[path = "../../tine-core/src/query/macro_names.rs"]
+mod macro_names;
+#[path = "../../tine-core/src/query/macro_extent.rs"]
+mod macro_extent;
+
+/// Query raw extents from the native reader. O(raw bytes), no parser or I/O;
+/// JSON offsets are UTF-8 bytes. Unterminated candidates are omitted.
+#[wasm_bindgen]
+pub fn query_macro_extents_json(raw: &str) -> String {
+    serde_json::to_string(&macro_extent::query_macro_extents(raw)).unwrap()
+}
+
+/// Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
+#[wasm_bindgen]
+pub fn is_query_macro_name(name: &str) -> bool {
+    macro_extent::is_query_macro_name(name)
+}
+
+/// The raw reader's literal grammar for a macro name; O(name bytes), no I/O.
+#[wasm_bindgen]
+pub fn query_macro_is_tql(name: &str) -> bool {
+    macro_extent::FormFamily::for_macro_name(name) == macro_extent::FormFamily::Tql
 }

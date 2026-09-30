@@ -6,14 +6,19 @@ import { blockWritable } from "./properties";
 import { markDirty, flushPage, isConflicted, persistTogether } from "../save/engine";
 import { backend } from "../../backend";
 import { ensurePageLoaded } from "../workingSet";
-import { blockRegions, editBlock } from "../../render/parse";
+import { blockRegions, editBlock, type BlockIdentityFacts } from "../../render/parse";
 
 /** The block's existing durable `id` — a markdown `id:: <uuid>` trailer or an
  *  org `:PROPERTIES:` drawer `:id: <uuid>` line — case-insensitively, or null.
  *  Format-aware because in ORG `id:: x` is plain body text, NOT a property (lsdoc
  *  reads the drawer, not a `key::` line); so an org block's real id lives in its
- *  `:PROPERTIES:` drawer and must be matched there (GH #25). */
-export function existingBlockId(raw: string, format: Format): string | null {
+ *  `:PROPERTIES:` drawer and must be matched there (GH #25). Optional editor
+ *  facts avoid another O(block bytes) parse; mismatched raw/format throws. */
+export function existingBlockId(raw: string, format: Format, facts?: BlockIdentityFacts): string | null {
+  if (facts) {
+    if (facts.raw !== raw || facts.format !== format) throw new Error("Identity facts belong to a different buffer");
+    return facts.value?.trim() || null;
+  }
   return blockRegions(raw, format).id?.value.trim() || null;
 }
 
@@ -21,10 +26,10 @@ export function existingBlockId(raw: string, format: Format): string | null {
  * A freshly-created node keeps its transient `b…` store key for the whole live
  * session even after Copy block ref writes a UUID property into `raw`; external
  * references must follow that property while render/edit paths keep the key. */
-export function blockExternalId(id: string): string | null {
+export function blockExternalId(id: string, facts?: BlockIdentityFacts): string | null {
   const node = doc.byId[id];
   if (!node) return null;
-  return existingBlockId(node.raw, formatForBlock(id)) ?? node.id;
+  return existingBlockId(node.raw, formatForBlock(id), facts) ?? node.id;
 }
 
 export interface LoadedBlockRef {

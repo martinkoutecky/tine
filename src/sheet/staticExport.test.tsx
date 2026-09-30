@@ -1,7 +1,7 @@
-// Contract 1 of the static-export sheets (family 7): the exported sheet equals what
-// the app shows. Each fixture is mounted through the LIVE Block/SheetTable/SheetBoard/
+// Contract 1 of static-export sheets (family 7): exported cells match the app;
+// query totals summarize exported rows, while live totals cover the complete query. Each fixture is mounted through the LIVE Block/SheetTable/SheetBoard/
 // SheetGrid components and also fed to `computeSheetExport` as detached DTOs; the two
-// observations must agree cell for cell, aggregate for aggregate. A sheet feature the
+// observations agree cell for cell; query export totals use exported rows. A sheet feature the
 // export cannot see (or renders differently) fails here, not in a user's published site.
 import fs from "node:fs";
 import path from "node:path";
@@ -210,7 +210,7 @@ function queryInputOf(fx: QueryFixture): SheetInput {
 }
 
 /** Mount the LIVE query face: the same component + props Macro.tsx gives its results. */
-function mountLiveQuery(fx: QueryFixture, face: "table" | "board", groupBy?: string): HTMLElement {
+function mountLiveQuery(fx: QueryFixture, face: "table" | "board", groupBy?: string, statistics?: import("../editor/queryIr").QueryStatistics): HTMLElement {
   setDoc({
     byId: { tbl: { id: "tbl", raw: fx.owner, collapsed: false, parent: null, page: "Sheet", children: [] } },
     pages: [{ name: "Sheet", kind: "page", title: "Sheet", preBlock: null, roots: ["tbl"], format: "md", readOnly: false, guide: false }],
@@ -228,7 +228,7 @@ function mountLiveQuery(fx: QueryFixture, face: "table" | "board", groupBy?: str
   disposers.push(
     render(
       () => face === "table"
-        ? <SheetTable ownerId="tbl" rowSource="query" groups={groups} queryDisplay={{ view: fx.view ?? {}, apply: () => {} }} />
+        ? <SheetTable ownerId="tbl" rowSource="query" groups={groups} queryDisplay={{ view: fx.view ?? {}, statistics, apply: () => {} }} />
         : <SheetBoard ownerId="tbl" rowSource="query" groupBy={groupBy} groups={groups} />,
       root
     )
@@ -242,20 +242,27 @@ const QUERY_ROWS = [
   { page: "Beta", raw: "Third\nprice:: 3\nnote:: plain words" },
 ];
 
-describe("static query-backed sheets equal the live query face (family 7, 22c open item)", () => {
-  it("table: the query's rows, observed fields (with the page column), schema, formulas and aggregates match", () => {
+describe("static query-backed sheets present exported rows (family 7)", () => {
+  it("table: rows and cells match the live query face; totals use only exported rows", () => {
     const fx: QueryFixture = {
       owner: "Q {{query (task TODO DONE)}}\ntine.view:: table\ntine.fields:: price=number;qty=number\ntine.formula.total:: price * qty\ntine.col-aggregates:: prop:price=sum;formula:total=sum",
+      view: { aggregates: [["price", "sum"]] },
       rows: QUERY_ROWS,
     };
     const exported = tableOf(computeSheetExport(queryInputOf(fx), { now: NOW, workflow: "todo" }));
-    const app = live(mountLiveQuery(fx, "table"));
+    const app = live(mountLiveQuery(fx, "table", undefined, {
+      count: 30, aggregates: [["price", "sum"]],
+      overall: [{ kind: "number", value: 90, skipped: 0 }],
+      groups: null, group_by: null, grouping_status: "none",
+    }));
     expect(app.rows).toHaveLength(3);
     expect(exported.columns.map((c) => (c.formula ? "ƒ" : "") + c.label)).toEqual(app.headers);
     expect(app.headers.map((h) => h.toLowerCase())).toContain("page");
     expect(exported.rows.map((r) => [r.title, ...r.cells.map(viewText)])).toEqual(app.rows);
-    expect((exported.footer ?? []).flatMap((a) => (a ? [a.text] : []))).toEqual(app.aggregates);
-    expect(app.aggregates.length).toBeGreaterThan(0);
+    // Master publish/sheet.rs totals the exported rows, even when the live
+    // query has a larger complete sample. Private/unexported rows stay out.
+    expect((exported.footer ?? []).flatMap((a) => (a ? [a.text] : []))).toEqual(["9", "12 (1 skipped)"]);
+    expect(app.aggregates).toEqual(["90"]);
   });
 
   it("table: the query's `columns` choose the fields and their order, as the live table does", () => {

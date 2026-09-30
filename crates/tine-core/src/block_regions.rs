@@ -654,56 +654,92 @@ impl BlockRegions {
                 })
                 .collect::<Vec<_>>()
                 .join(newline(raw));
-            let (at, text) = if org {
-                if let Some(index) = own {
-                    let body_lines = line_ranges(raw, self.property_regions[index]);
-                    let close = body_lines
-                        .iter()
-                        .find(|r| r.slice(raw).trim().eq_ignore_ascii_case(":END:"))
-                        .ok_or("Properties drawer has no parser-owned closer")?;
-                    (close.0, lines)
-                } else {
-                    let at = self.head_end(raw);
-                    let text = format!(":PROPERTIES:{}{lines}{}:END:", newline(raw), newline(raw));
-                    // OG places accepted planning above a new drawer even when
-                    // authored below body content. Literal lookalikes are absent.
-                    if self
-                        .planning
-                        .iter()
-                        .any(|p| p.kind != "Closed" && p.line.0 >= at)
-                    {
-                        return Ok(self.hoist_planning(raw, &text));
-                    }
-                    (at, text)
-                }
-            } else {
-                let at = if add.iter().any(|(key, _)| {
+            return self.add_properties(
+                raw,
+                org,
+                &lines,
+                add.iter().any(|(key, _)| {
                     matches!(key.as_str(), "id" | "collapsed" | "logseq.order-list-type")
-                }) || self.literal_at(0)
-                {
-                    raw.len()
-                } else if let Some(r) = self
-                    .property_regions
-                    .iter()
-                    .find(|r| r.0 == self.head_end(raw) || r.0 == 0)
-                {
-                    r.1
-                } else {
-                    self.head_end(raw)
-                };
-                (at, lines)
-            };
-            let prefix = if at > 0 && !raw[..at].ends_with('\n') {
-                newline(raw)
-            } else {
-                ""
-            };
-            let suffix = if at < raw.len() { newline(raw) } else { "" };
-            if !text.is_empty() {
-                edits.push((Range(at, at), format!("{prefix}{text}{suffix}")));
-            }
+                }),
+                edits,
+            );
         }
         Ok(splice(raw, edits))
+    }
+    // One placement policy for edited values and opaque, already-owned hidden rows.
+    fn add_properties(
+        &self,
+        raw: &str,
+        org: bool,
+        lines: &str,
+        trailer: bool,
+        mut edits: Vec<(Range, String)>,
+    ) -> Result<String, String> {
+        let own = self.own_org_region(raw);
+        let (at, text) = if org {
+            if let Some(index) = own {
+                let body_lines = line_ranges(raw, self.property_regions[index]);
+                let close = body_lines
+                    .iter()
+                    .find(|r| r.slice(raw).trim().eq_ignore_ascii_case(":END:"))
+                    .ok_or("Properties drawer has no parser-owned closer")?;
+                (close.0, lines.to_string())
+            } else {
+                let at = self.head_end(raw);
+                let text = format!(":PROPERTIES:{}{lines}{}:END:", newline(raw), newline(raw));
+                // OG places accepted planning above a new drawer even when
+                // authored below body content. Literal lookalikes are absent.
+                if self
+                    .planning
+                    .iter()
+                    .any(|p| p.kind != "Closed" && p.line.0 >= at)
+                {
+                    return Ok(self.hoist_planning(raw, &text));
+                }
+                (at, text)
+            }
+        } else {
+            let at = if trailer || self.literal_at(0) {
+                raw.len()
+            } else if let Some(r) = self
+                .property_regions
+                .iter()
+                .find(|r| r.0 == self.head_end(raw) || r.0 == 0)
+            {
+                r.1
+            } else {
+                self.head_end(raw)
+            };
+            (at, lines.to_string())
+        };
+        let prefix = if at > 0 && !raw[..at].ends_with('\n') {
+            newline(raw)
+        } else {
+            ""
+        };
+        let suffix = if at < raw.len() { newline(raw) } else { "" };
+        if !text.is_empty() {
+            edits.push((Range(at, at), format!("{prefix}{text}{suffix}")));
+        }
+        Ok(splice(raw, edits))
+    }
+    /// Reattach already-split hidden Org property rows to this exact visible
+    /// buffer. Shares property placement with `Properties`; O(block bytes), no
+    /// additional ownership parse. Quarantined source refuses without writing.
+    pub fn reattach_org_properties(&self, raw: &str, hidden: &str) -> Result<String, String> {
+        if self.quarantined {
+            return Err("Property reattachment refused: block parsing is quarantined".into());
+        }
+        let payload = hidden
+            .split('\n')
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.trim_end_matches('\r'))
+            .collect::<Vec<_>>()
+            .join(newline(raw));
+        if payload.is_empty() {
+            return Ok(raw.to_string());
+        }
+        self.add_properties(raw, true, &payload, false, Vec::new())
     }
     /// Apply an operation using these regions from EXACTLY this raw source.
     /// O(block bytes); zero parses in release, one preservation reparse in debug.

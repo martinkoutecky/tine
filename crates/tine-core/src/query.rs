@@ -33,8 +33,10 @@ mod grouping_resolution_tests;
 pub mod ir;
 #[cfg(test)]
 mod ir_wire_tests;
+mod macro_extent;
 #[cfg(test)]
 mod macro_extents_tests;
+mod macro_names;
 #[allow(missing_docs)]
 pub mod macro_text;
 #[allow(missing_docs)]

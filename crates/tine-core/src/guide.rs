@@ -690,6 +690,10 @@ mod query_guide_tests {
         for control in [
             "press **Display**",
             "Choosing **Page** in the column picker",
+            "**complete sample**",
+            "**Count**, **Sum**, **Average**, or **None**",
+            "Built-in columns such as Page and State have no property total",
+            "leaves the total blank or shows why it is unavailable",
             "`tine.fields::` remains the table's schema",
             "number of blocks or pages",
             "**declare type…**",

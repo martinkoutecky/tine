@@ -1,23 +1,7 @@
-//! **The one fixture set both raw-macro readers must agree on** (SPEC §4.3.1, §7.9).
-//!
-//! P0-ts deleted the frontend's query parser, its options-map splitter and its
-//! advanced-vs-OG discriminator, because each was a second answer to a question
-//! Rust already answers (I-12). The raw EXTENT reader is deliberately not one of
-//! them: §4.3.1 keeps it on both sides — *"Extend the existing
-//! `queryMacroExtent(s)` boundary helper … The Rust publishing boundary uses the
-//! same fixtures and a transcription of this helper"* — because rendering,
-//! in-place macro rewriting and Export collection are synchronous walks over
-//! blocks already in memory, and an async IPC round-trip per macro is not
-//! available to them.
-//!
-//! What makes that pair legitimate rather than a twin is THIS FILE: one fixture
-//! set, read by `src/editor/queryMacro.test.ts` and by the test below, asserting
-//! the same recovered `{text, name, argument}` for every case. If the two readers
-//! ever disagree, one of these two tests goes red.
-//!
-//! Offsets are deliberately NOT compared: Rust reports byte offsets and
-//! JavaScript UTF-16 code units, so the integers cannot agree on non-ASCII input
-//! while the recovered TEXT still does. The text is the contract.
+//! Shared fixtures for the native macro reader and its compiled wasm entry.
+//! `queryMacro.guard.test.ts` pins both hosts to macro_extent.rs (I-12).
+//! Rust exposes bytes; the frontend converts to UTF-16. Both boundaries must
+//! recover the same text, name and verbatim argument, including parser hazards.
 
 use crate::query::macro_text::query_macro_extents;
 

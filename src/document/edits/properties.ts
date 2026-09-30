@@ -259,7 +259,12 @@ export function toggleBlockProperty(id: string, key: string, value: string) {
 
 const ORDER_KEY = "logseq.order-list-type";
 export function isOrdered(id: string | null | undefined): boolean {
-  return !!id && blockProperty(id, ORDER_KEY) === "number";
+  const node = id ? doc.byId[id] : undefined;
+  return !!node && orderedFromProperties(facetsOf(node.raw, formatForBlock(id!)).properties);
+}
+
+function orderedFromProperties(properties: readonly (readonly [string, string])[]): boolean {
+  return properties.find(([key]) => key.toLowerCase() === ORDER_KEY)?.[1].trim() === "number";
 }
 
 export function orderListTypeFromRaw(raw: string, format: Format): string | null {
@@ -351,10 +356,12 @@ function toRoman(n: number): string {
  *  (else null) — the block's OWN bullet, like OG. The index counts this block
  *  plus the run of consecutive ordered siblings immediately before it; the glyph
  *  cycles number → letter → roman by the depth of consecutive ordered ancestors
- *  (mod 3), so nested ordered lists read 1. → a. → i. like OG. */
-export function orderedListMarker(id: string): string | null {
+ *  (mod 3), so nested ordered lists read 1. → a. → i. like OG. The optional
+ *  ownProperties reading avoids reparsing the editor buffer; sibling and ancestor
+ *  work remains O(consecutive ordered siblings + ordered ancestors). */
+export function orderedListMarker(id: string, ownProperties?: readonly (readonly [string, string])[]): string | null {
   const node = doc.byId[id];
-  if (!node || !isOrdered(id)) return null;
+  if (!node || !(ownProperties ? orderedFromProperties(ownProperties) : isOrdered(id))) return null;
   const siblings = node.parent
     ? doc.byId[node.parent]?.children
     : doc.pages.find((p) => p.name === node.page)?.roots;

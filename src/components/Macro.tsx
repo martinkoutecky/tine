@@ -13,7 +13,7 @@ import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
 import { editEdnTitle, readEdnOptions } from "../editor/edn";
-import { queryMacroExtents, type MacroExtent } from "../editor/queryMacro";
+import { queryMacroExtent, queryMacroExtents, type MacroExtent } from "../editor/queryMacro";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import {
   macroPrintDialect,
@@ -219,10 +219,9 @@ export function QueryMacro(props: {
   if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
 
   // The macro name this query was AUTHORED under (§7.9): `query` or `tine-query`.
-  const macroName = (): string =>
-    QUERY_MACRO_NAMES.find((name) => new RegExp(`^${name}(\\s|$)`, "i").test(props.body.trim()))
-    ?? QUERY_MACRO_NAMES[0];
-  const arg = () => props.body.trim().replace(new RegExp(`^${macroName()}\\s*`, "i"), "").trim();
+  const macroBody = createMemo(() => queryMacroExtent(`{{${props.body.trim()}}}`));
+  const macroName = (): string => macroBody()?.name ?? QUERY_MACRO_NAMES[0];
+  const arg = () => macroBody()?.argument.trim() ?? "";
   const hostProperties = createMemo<[string, string][]>(() => {
     const id = props.blockId;
     const node = id ? docNode(id) : undefined;
@@ -968,7 +967,7 @@ export function QueryMacro(props: {
                         <Switch>
                           <Match when={blockFace() === "table"}>
                             <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
-                              queryDisplay={{ view: reading()?.view ?? {}, apply: (next) => void applyDisplay(next) }} />
+                              queryDisplay={{ view: reading()?.view ?? {}, statistics: displayed()?.statistics, statisticsView: runnable()?.view, apply: (next) => void applyDisplay(next) }} />
                           </Match>
                           <Match when={blockFace() === "board"}>
                             <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet()?.groupBy} groups={groups()} />

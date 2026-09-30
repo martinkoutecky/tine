@@ -1,5 +1,6 @@
-// The ONE frontend answer to "is this a query macro, and where does it sit in the raw source" (SPEC §4.3.1, …
+// Synchronous frontend client of the shared native query macro extent reader (I-12).
 
+import { query_macro_extents_json, is_query_macro_name, query_macro_is_tql } from "../render/wasm/lsdoc_wasm.js";
 import { QUERY_MACRO_NAMES } from "./queryMacroName";
 export { QUERY_MACRO_SCAFFOLD } from "./queryMacroName";
 
@@ -10,158 +11,38 @@ export type FormFamily = "edn" | "tql";
 
 /** The family a macro NAME implies: `query` carries OG or advanced text, `tine-query` carries TQL (§7.1). */
 export function formFamilyForMacroName(name: string): FormFamily {
-  return name.toLowerCase() === "tine-query" ? "tql" : "edn";
+  return query_macro_is_tql(name) ? "tql" : "edn";
 }
 
 /** Whether `name` is one of the query macro names, case-insensitively and as a
 *  WHOLE token — `{{query-foo}}` is not a query (§7.9). */
 export function isQueryMacroName(name: string): boolean {
-  const lower = name.toLowerCase();
-  return QUERY_MACRO_NAMES.some((candidate) => candidate === lower);
+  return is_query_macro_name(name);
 }
 
-/** One brace the scan found outside every literal, comment and page ref. */
-interface Brace {
-  at: number;
-  open: boolean;
-  /** Nesting depth AFTER this brace, counting from `formDepth`. */
-  depth: number;
-}
+/** One query macro in the original raw source; offsets are UTF-16 indices. */
+export interface MacroExtent { start: number; end: number; name: string; argument: string }
 
-// Index just past an EDN double-quoted string opening at `at`; end of input if unterminated.
-function ednStringEnd(text: string, at: number): number {
-  let j = at + 1;
-  while (j < text.length) {
-    if (text[j] === "\\") j += 2;
-    else if (text[j] === '"') return j + 1;
-    else j += 1;
-  }
-  return text.length;
-}
-
-// Index just past a TQL single-quoted string opening at `at`; end of input if unterminated.
-function tqlStringEnd(text: string, at: number): number {
-  let j = at + 1;
-  while (j < text.length) {
-    if (text[j] === "'") {
-      if (text[j + 1] === "'") {
-        j += 2;
-        continue;
-      }
-      return j + 1;
-    }
-    j += 1;
-  }
-  return text.length;
-}
-
-// Index just past a `[[page ref]]` opening at `at`; end of input if unterminated.
-function pageRefEnd(text: string, at: number): number {
-  const close = text.indexOf("]]", at + 2);
-  return close === -1 ? text.length : close + 2;
-}
-
-/** **The one scan.** Walk `text` from `from` lazily and report each `{` / `}` that is not
-*  inside a protected region, with the depth it produces.
-*
-*  `formDepth` is the depth at which the form text sits: 0 when scanning a macro
-*  ARGUMENT (the splitter), 2 when scanning from inside `{{` (the extent
-*  reader). While the depth is at `formDepth` the `family` decides which literals
-*  protect a brace; deeper than that we are inside an options map and EDN rules
-*  apply. An unterminated literal consumes to end of input rather than
-*  resynchronising — that is what makes an unbalanced `}` inside a literal
-*  invisible to the split. The extent reader stops at its own close; later macros are never rescanned.
-*  Transcribes `macro_text::scan_braces`. */
-function* scanBraces(text: string, family: FormFamily, formDepth: number, from: number): Generator<Brace> {
-  let depth = formDepth;
-  let i = from;
-  while (i < text.length) {
-    // Inside a map the text is EDN whatever the form was: an EDN symbol's apostrophe (`'foo`, `#'x`) is never a …
-    const edn = depth > formDepth || family === "edn";
-    const c = text[i];
-    if (c === '"' && edn) {
-      i = ednStringEnd(text, i);
-      continue;
-    }
-    if (c === "'" && !edn) {
-      i = tqlStringEnd(text, i);
-      continue;
-    }
-    if (c === ";" && edn) {
-      while (i < text.length && text[i] !== "\n") i += 1;
-      continue;
-    }
-    if (c === "[" && text.startsWith("[[", i)) {
-      i = pageRefEnd(text, i);
-      continue;
-    }
-    if (c === "{") {
-      depth += 1;
-      yield { at: i, open: true, depth };
-    } else if (c === "}") {
-      depth -= 1;
-      yield { at: i, open: false, depth };
-    }
-    i += 1;
-  }
-}
-
-/** One query macro as it sits in the ORIGINAL raw source. */
-export interface MacroExtent {
-  /** Index of the opening `{{`. */
-  start: number;
-  /** Index just past the closing `}}`. */
-  end: number;
-  name: string;
-  argument: string;
-}
-
-/** Read one macro whose `{{` is at `start`, if its name is a query macro name. */
-function macroAt(raw: string, start: number): MacroExtent | null {
-  let name: string | null = null;
-  for (const candidate of QUERY_MACRO_NAMES) {
-    if (raw.length - start - 2 < candidate.length) continue;
-    if (raw.slice(start + 2, start + 2 + candidate.length).toLowerCase() !== candidate) continue;
-    const after = raw[start + 2 + candidate.length];
-    if (after !== undefined && after !== " " && after !== "\t" && after !== "}") continue;
-    if (name === null || candidate.length > name.length) name = candidate;
-  }
-  if (name === null) return null;
-  const argumentStart = start + 2 + name.length;
-  const family = formFamilyForMacroName(name);
-  // Depth 2 is what the two opening braces already contributed, so form text sits at depth 2 and a `{` of the …
-  let close: Brace | undefined;
-  for (const brace of scanBraces(raw, family, 2, argumentStart)) {
-    if (!brace.open && brace.depth === 0) { close = brace; break; }
-  }
-  if (!close) return null; // unterminated
-  const end = close.at + 1;
-  // Everything between the name and the LAST closing brace is the argument; one leading space is the macro's …
-  const argument = raw.slice(argumentStart, end - 2);
-  return {
-    start,
-    end,
-    name,
-    argument: argument.startsWith(" ") ? argument.slice(1) : argument,
-  };
-}
-
-/** The first query macro in `raw`, or null. */
+/** The first query macro in raw, or null. O(raw bytes), via the native reader. */
 export function queryMacroExtent(raw: string): MacroExtent | null {
-  return queryMacroExtentFrom(raw, 0);
+  return queryMacroExtents(raw)[0] ?? null;
 }
 
-/** Every query macro in `raw`, in source order. */
+/** Every query macro in source order. The native reader owns recognition;
+ * this boundary converts byte coordinates in one forward pass, O(raw bytes). */
 export function queryMacroExtents(raw: string): MacroExtent[] {
-  const out: MacroExtent[] = [];
-  let from = 0;
-  while (from < raw.length) {
-    const found = queryMacroExtentFrom(raw, from);
-    if (!found) break;
-    from = found.end;
-    out.push(found);
-  }
-  return out;
+  if (raw.length === 0) return [];
+  const found = JSON.parse(query_macro_extents_json(raw)) as MacroExtent[];
+  let byte = 0, unit = 0;
+  const toUnits = (target: number) => {
+    while (byte < target && unit < raw.length) {
+      const cp = raw.codePointAt(unit)!;
+      byte += cp <= 0x7f ? 1 : cp <= 0x7ff ? 2 : cp <= 0xffff ? 3 : 4;
+      unit += cp > 0xffff ? 2 : 1;
+    }
+    return unit;
+  };
+  return found.map((extent) => ({ ...extent, start: toUnits(extent.start), end: toUnits(extent.end) }));
 }
 
 /** Recover the sole authored macro from an entire-block render. A property
@@ -170,17 +51,6 @@ export function singleQueryMacroExtent(raw: string, displayed: MacroExtent): Mac
   const extents = queryMacroExtents(raw);
   const extent = extents.length === 1 ? extents[0] : undefined;
   return extent?.name === displayed.name && extent.argument === displayed.argument ? extent : undefined;
-}
-
-function queryMacroExtentFrom(raw: string, from: number): MacroExtent | null {
-  let search = from;
-  for (;;) {
-    const at = raw.indexOf("{{", search);
-    if (at === -1) return null;
-    const found = macroAt(raw, at);
-    if (found) return found;
-    search = at + 2;
-  }
 }
 
 const UTF8_ENCODER = new TextEncoder();

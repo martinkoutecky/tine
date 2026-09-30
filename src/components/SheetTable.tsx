@@ -64,7 +64,7 @@ import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
 import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
 import { compareSortKeys, measuredGridTracks, nextQuerySort, queryColumnFieldId, queryColumnName, querySortFieldName, reorderedQueryColumns,
   SCHEMA_PROP_TYPES, type SchemaMenuType, type SortKey, type SortState } from "../sheet/tablePresentation";
-import type { ViewSettings } from "../editor/queryIr";
+import { queryTableFooter, type QueryDisplayControl } from "../sheet/queryTableFooter";
 import { FieldValueView } from "./SheetFieldValue";
 import { displayFieldValue, isEnumFieldType } from "../sheet/cellPresentation";
 import { fieldIdsForRecords, recordFacets, rowRaw, tableFieldOrder, tableRowTitle } from "../sheet/tableFields";
@@ -81,7 +81,7 @@ type FieldHeaderDrop = { field: FieldId; before: boolean };
 const BUILTIN_FIELDS = new Set<FieldId>(["state", "priority", "scheduled", "deadline", "tags", "page"]);
 const FIELD_HEADER_DRAG_THRESHOLD_PX = 4;
 /** Render children or query rows as a table. A query display controller owns
- * saved columns and sorts; without it headers keep their local arrangement.
+ * saved columns, sorts and aggregates; without it headers keep their local arrangement.
  * Resizing reads one owner's widths and writes one property through document
  * on commit; row and field work scales with the supplied table, never a graph. */
 export function SheetTable(props: {
@@ -91,7 +91,7 @@ export function SheetTable(props: {
   addRow?: () => void | Promise<void>;
   addRowLabel?: string;
   schemaPage?: string;
-  queryDisplay?: { view: ViewSettings; apply: (next: ViewSettings) => void };
+  queryDisplay?: QueryDisplayControl;
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
   let tableRef: HTMLDivElement | undefined;
@@ -235,7 +235,12 @@ export function SheetTable(props: {
     });
     return tracks.join(" ");
   });
-  const hasAggregates = createMemo(() => config().colAggregates.size > 0);
+  const queryFooter = (field: FieldId) => queryTableFooter(props.queryDisplay, field);
+  const hasAggregates = createMemo(() =>
+    props.queryDisplay
+      ? fields().some((field) => queryFooter(field)?.fn != null)
+      : config().colAggregates.size > 0,
+  );
   const footerPinned = createMemo(() => aggregateFooterPinned(props.ownerId));
   const showFooter = createMemo(() => hasAggregates() || footerPinned());
   const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned()));
@@ -1076,9 +1081,10 @@ export function SheetTable(props: {
               <SheetAggregateFooterCell
                 ownerId={props.ownerId}
                 columnKey={field}
-                fn={config().colAggregates.get(field) ?? null}
-                values={sortedRows().map((row) => rowFieldValue(row, field))}
-                showEmpty={footerPinned()}
+                fn={props.queryDisplay ? null : config().colAggregates.get(field) ?? null}
+                query={queryFooter(field)}
+                values={props.queryDisplay ? [] : sortedRows().map((row) => rowFieldValue(row, field))}
+                showEmpty={footerPinned() && (!props.queryDisplay || queryFooter(field) !== undefined)}
               />
             )}
           </For>

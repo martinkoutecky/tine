@@ -102,6 +102,9 @@ export interface BlockRegions {
   id: RegionProperty | null;
   quarantined: boolean;
 }
+/** An accepted identity value carried with the exact editor buffer that owns
+ * it. Coordinates are deliberately absent: inserting hidden rows moves spans. */
+export interface BlockIdentityFacts { raw: string; format: "md" | "org"; value: string | null }
 const regionCache = new WeakMap<Block[], BlockRegions>();
 
 
