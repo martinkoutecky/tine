@@ -36,6 +36,8 @@ pub(crate) struct RenderGraph<'a> {
     /// The app's computed sheets (`render_sheets`); `None` when the export has no
     /// frontend, which keeps every sheet block a plain outline.
     pub sheets: Option<&'a SheetIndex>,
+    /// Selected-query exports suppress counts of rows outside the selection.
+    pub query_export: bool,
     lookups: render_lookups::Lookups,
 }
 
@@ -51,6 +53,7 @@ impl<'a> RenderGraph<'a> {
             whole,
             store,
             sheets,
+            query_export: false,
             lookups: Default::default(),
         }
     }
@@ -1158,9 +1161,7 @@ struct Ctx<'a> {
     /// exactly when `inline_assets` is true; all images therefore consume one
     /// cumulative byte ceiling before base64/IPC/DOM amplification.
     print_asset_budget: Option<&'a RefCell<PrintAssetBudget>>,
-    /// Export-local `{{query}}` memo. Whole-graph publish sets this so repeated
-    /// macros do one graph scan per distinct source; print export/tests leave it
-    /// `None` and keep the old direct call path.
+    /// Export-local query memo; absent for print and decorator tests.
     query_cache: Option<&'a SharedQueryCache>,
     /// Public page files and documents keyed by Logseq page identity. Page
     /// embeds use this projection; print looks up absent embeds in the corpus.
@@ -1439,7 +1440,7 @@ fn render_query_with_title(
         }
         out.push_str("</ul>");
     }
-    if omitted > 0 {
+    if omitted > 0 && !graph.query_export {
         out.push_str(&format!(
             "<div class=\"query-omitted\">{} result{} on non-public pages omitted.</div>",
             omitted,
@@ -2409,9 +2410,7 @@ pub(crate) fn publish_graph(
     let mut sidebar_pages: Vec<serde_json::Value> = Vec::new();
     let mut welcome_html: Option<String> = None;
     let mut count = 0;
-    // The render context: the block-ref index + the graph (so `{{query}}`/`{{embed}}`/
-    // `{{namespace}}` macros can resolve against real data at publish time) + the
-    // slug map (so cross-page links resolve to the actual written files).
+    // Every rendered surface uses this export's selected documents and slugs.
     let ctx = Ctx {
         current_page: None,
         refs: &refs,

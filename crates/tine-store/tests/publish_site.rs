@@ -31,6 +31,11 @@ fn staged_writer_publishes_files_and_retires_previous_site() {
         .publish_site(&mut |writer| writer.write("index.html", b"new"))
         .unwrap();
     assert_eq!(second.files, 1);
+    let recovery = second
+        .previous_kept
+        .as_ref()
+        .expect("I-4: successful replacement reports its preserved previous site");
+    assert_eq!(fs::read(recovery.join("index.html")).unwrap(), b"old");
     assert_eq!(fs::read(root.join("publish/index.html")).unwrap(), b"new");
     assert!(!root.join("publish/assets/app.js").exists());
 
@@ -63,7 +68,8 @@ fn prose_after_assets_prefix_does_not_fail_publication_assets() {
     .unwrap();
     let (store, _, _) = Store::open(root, OpenOptions::default()).unwrap();
     let corpus = store.whole_graph().unwrap().corpus();
-    let assets = tine_store::publication_assets(&store, &corpus).unwrap();
+    let assets =
+        tine_store::publication_assets(&store, &corpus, 32 * 1024 * 1024, &mut Vec::new()).unwrap();
     let names: Vec<_> = assets.iter().map(|(name, _)| name.as_str()).collect();
     assert_eq!(names, ["assets/pic.png"]);
     store.close();

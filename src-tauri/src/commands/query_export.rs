@@ -5,7 +5,7 @@ use crate::state::{slot_for_context, GraphContext};
 use std::path::PathBuf;
 use tauri::Manager;
 use tine_graph_features::publish_query::{
-    self, ExportReceipt, QueryExportPlan, QueryExportRequest,
+    self, AssetBudgetExceeded, ExportReceipt, QueryExportPlan, QueryExportRequest,
 };
 use tine_graph_features::{SheetExport, SheetInput};
 
@@ -43,31 +43,53 @@ pub(crate) async fn publish_query_plan(
     .map_err(|e| e.to_string())?
 }
 
-/// Publish a reviewed query into a fresh leaf of a user-selected external
-/// folder. The source fingerprint is checked again before any output write.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PublicationError {
+    kind: &'static str,
+    message: String,
+}
+impl PublicationError {
+    fn other(message: String) -> Self {
+        Self {
+            kind: "publication",
+            message,
+        }
+    }
+    fn from_io(error: std::io::Error) -> Self {
+        let budget = error
+            .get_ref()
+            .is_some_and(|e| e.is::<AssetBudgetExceeded>());
+        Self {
+            kind: if budget { "assetBudget" } else { "publication" },
+            message: error.to_string(),
+        }
+    }
+}
+
+/// Publish a reviewed query into the graph's query-output leaf. Typed asset
+/// refusals let the dialog offer Settings; all heavy work runs off the UI thread.
 #[tauri::command]
 pub(crate) async fn publish_query(
     request: QueryExportRequest,
     fingerprint: String,
-    destination: String,
     sheets: Vec<SheetExport>,
     state: GraphContext<'_>,
-) -> Result<ExportReceipt, String> {
-    let slot = slot_for_context(&state)?;
+) -> Result<ExportReceipt, PublicationError> {
+    let slot = slot_for_context(&state).map_err(PublicationError::other)?;
     let bundle = embedded_bundle(state.window.app_handle());
     tauri::async_runtime::spawn_blocking(move || {
         publish_query::publish_query_with_sheets(
             &slot.store,
             &request,
             &fingerprint,
-            &PathBuf::from(destination),
             &bundle,
             sheets,
         )
-        .map_err(|e| e.to_string())
+        .map_err(PublicationError::from_io)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| PublicationError::other(e.to_string()))?
 }
 
 /// Publish the public graph, or explicitly all pages, as a read-only browser

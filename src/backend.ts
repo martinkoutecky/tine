@@ -231,9 +231,10 @@ export interface Backend {
   /** Resolve a query's complete owner pages without writing. O(graph query +
    * selected source bytes); the fingerprint binds the reviewed selection. */
   publishQueryPlan(request: QueryPublicationRequest): Promise<QueryPublicationPlan>;
-  /** Recheck the plan and publish a create-only site under a user-picked folder
-   * outside the graph. Rejects a stale plan, collision or I/O failure. */
-  publishQuery(request: QueryPublicationRequest, fingerprint: string, destination: string, sheets: SheetExport[]): Promise<PublicationReceipt>;
+  /** Recheck sources and commit a graph query leaf. Replace preserves/reports
+   * prior output; create refuses collisions. Asset-budget refusal is typed as
+   * {kind: "assetBudget", message}; missing assets are receipt warnings. */
+  publishQuery(request: QueryPublicationRequest, fingerprint: string, sheets: SheetExport[]): Promise<PublicationReceipt>;
   /** Publish a whole-graph read-only app plus static fallback under a picked
    * folder. `allPages` explicitly includes private pages; default public only. */
   publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]): Promise<PublicationReceipt>;
@@ -937,8 +938,8 @@ class TauriBackend implements Backend {
   publishQueryPlan(request: QueryPublicationRequest) {
     return this.call<QueryPublicationPlan>("publish_query_plan", { request });
   }
-  publishQuery(request: QueryPublicationRequest, fingerprint: string, destination: string, sheets: SheetExport[]) {
-    return this.call<PublicationReceipt>("publish_query", { request, fingerprint, destination, sheets });
+  publishQuery(request: QueryPublicationRequest, fingerprint: string, sheets: SheetExport[]) {
+    return this.call<PublicationReceipt>("publish_query", { request, fingerprint, sheets });
   }
   publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]) {
     return this.call<PublicationReceipt>("publish_live", { destination, name, allPages, sheets });

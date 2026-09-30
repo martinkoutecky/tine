@@ -509,6 +509,30 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn query_export_guide_explains_closed_nested_result_reporting() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for outcome in [
+            "published-queries/<folder>/",
+            "**Replace**",
+            "**Create a separate export**",
+            "its path is reported",
+            "default **1 GiB**",
+            "**Adjust limit in Settings…**",
+            "Missing assets are reported",
+            "move or share the whole export folder",
+        ] {
+            assert!(
+                files.contains(outcome),
+                "query-export onboarding must explain {outcome}"
+            );
+        }
+        assert!(
+            files.contains("Queries inside a query export show only results on the exported pages")
+        );
+        assert!(files.contains("they do not report how many results were left out on other pages"));
+    }
+
+    #[test]
     fn parser_comparison_guide_says_intentional_differences_are_not_bugs() {
         // Master c0c2ff11b: a known intentional lsdoc difference is suppressed,
         // not offered as a reportable parser bug.
