@@ -2,6 +2,74 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "id": "REG-OG-QUERY-ATOMS-001",
+      "title": "Queries over large flat property values finish while preserving first-occurrence atom membership and order",
+      "family": "query-correctness",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/query/atom.rs",
+          "crates/tine-store/tests/b_query.rs",
+          "crates/tine-store/tests/b_query_guard.rs"
+        ],
+        "scenario": "queries.atom-deduplication-bounded",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-OG-QUERY-MACROS-001",
+      "title": "Many query macro candidates are scanned once and valid query arguments are recovered unchanged",
+      "family": "query-correctness",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/query/macro_text.rs",
+          "crates/tine-core/src/query/macro_extents_tests.rs"
+        ],
+        "scenario": "queries.macro-extent-linear",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-OG-QUERY-LIKE-001",
+      "title": "TQL prefix comparisons and general LIKE patterns agree on escaped ordinary characters",
+      "family": "query-correctness",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/query/tql_tests.rs",
+          "crates/tine-store/tests/b_query.rs",
+          "crates/tine-store/tests/b_query_guard.rs"
+        ],
+        "scenario": "queries.like-prefix-escape",
+        "failBefore": "proven"
+      }
+    },
+    {
       "id": "REG-OG-DIRECTORY-DURABILITY-001",
       "title": "A failed parent-directory sync after a graph write or move is reported instead of acknowledging durable storage",
       "family": "data-safety",

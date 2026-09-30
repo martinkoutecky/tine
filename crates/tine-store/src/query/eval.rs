@@ -25,7 +25,7 @@ use tine_core::date::JournalDate;
 use tine_core::doc::{property_key_norm, DocBlock};
 use tine_core::model::PageKind;
 use tine_core::query::atom::{
-    atom_key, format_number, property_atoms, Atom, AtomFormat, ParseConfig,
+    atom_key, format_number, property_atoms, Atom, AtomDeduper, AtomFormat, ParseConfig,
 };
 use tine_core::query::ir::{Attr, CmpOp, Filter, Leaf, ObservedType, Quant, Rel, Value};
 use tine_core::query::path_refs::{closure_contains, closure_names, dfs_path_refs, PathRefCounts};
@@ -544,13 +544,14 @@ fn key_norm_eq(name: &str, key_norm: &str) -> bool {
 /// concatenate, de-duplicate by atom key with first occurrence winning.
 fn flatten_atoms(source_key: &str, rows: &[&str], ctx: &EvalCtx) -> Vec<Atom> {
     let mut out: Vec<Atom> = Vec::new();
+    let mut seen = AtomDeduper::default();
     for value in rows {
         for atom in ctx
             .cache
             .get(source_key, value, ctx.format, ctx.config)
             .iter()
         {
-            if out.iter().any(|existing| existing.key == atom.key) {
+            if !seen.admit(&atom.key) {
                 continue;
             }
             let ordinal = out.len() as u32;

@@ -40,6 +40,25 @@ fn property(key: &str, quant: Quant, op: CmpOp, value: Value) -> Filter {
     )
 }
 
+#[test]
+fn b_query_like_prefix_uses_the_matchers_escape_semantics() {
+    for (pattern, prefix) in [
+        (r"\a%", "a"),
+        (r"\é%", "é"),
+        (r"a\_%", "a_"),
+        (r"a\\%", "a\\"),
+    ] {
+        assert_eq!(
+            ok(&format!("content like '{pattern}'")),
+            Filter::attr(Attr::Content, CmpOp::StartsWith, Value::text(prefix))
+        );
+        assert!(crate::query::text::like_matches(
+            &format!("{prefix}tail"),
+            pattern
+        ));
+    }
+}
+
 // -- §4.2.2 probe set ---------------------------------------------------
 
 #[test]
@@ -860,11 +879,26 @@ fn a_malformed_disabled_span_is_a_disabled_diagnostic_and_does_not_invalidate() 
 
 #[test]
 fn starts_with_recognises_only_a_single_trailing_wildcard() {
-    assert_eq!(starts_with_prefix("proj/%"), Some("proj/".to_string()));
-    assert_eq!(starts_with_prefix("%proj%"), None);
-    assert_eq!(starts_with_prefix("pro_j%"), None);
-    assert_eq!(starts_with_prefix("proj"), None);
-    assert_eq!(starts_with_prefix("50\\%%"), Some("50%".to_string()));
+    assert_eq!(
+        crate::query::text::LikePattern::compile("proj/%").starts_with_prefix(),
+        Some("proj/".to_string())
+    );
+    assert_eq!(
+        crate::query::text::LikePattern::compile("%proj%").starts_with_prefix(),
+        None
+    );
+    assert_eq!(
+        crate::query::text::LikePattern::compile("pro_j%").starts_with_prefix(),
+        None
+    );
+    assert_eq!(
+        crate::query::text::LikePattern::compile("proj").starts_with_prefix(),
+        None
+    );
+    assert_eq!(
+        crate::query::text::LikePattern::compile("50\\%%").starts_with_prefix(),
+        Some("50%".to_string())
+    );
 }
 
 /// Reader B (og 14 Q2): an out-of-range relative date is a diagnostic, not a

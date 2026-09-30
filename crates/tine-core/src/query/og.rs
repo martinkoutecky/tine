@@ -866,23 +866,14 @@ pub(crate) fn content_like(text: &str) -> Filter {
     Filter::attr(
         Attr::Content,
         CmpOp::Like,
-        Value::text(format!("%{}%", escape_like(text))),
+        Value::text(format!(
+            "%{}%",
+            crate::query::text::escape_like_literal(text)
+        )),
     )
 }
 
-/// Escape the LIKE metacharacters so a literal `%`/`_`/`\` in user text is data.
-pub(crate) fn escape_like(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        if matches!(ch, '%' | '_' | '\\') {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
-}
-
-/// The inverse of [`escape_like`] for a pattern that is exactly `%<literal>%`.
+/// The inverse of [`crate::query::text::escape_like_literal`] for a pattern that is exactly `%<literal>%`.
 pub(crate) fn plain_like_substring(pattern: &str) -> Option<String> {
     let inner = pattern.strip_prefix('%')?.strip_suffix('%')?;
     let mut out = String::with_capacity(inner.len());

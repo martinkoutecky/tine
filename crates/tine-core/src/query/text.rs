@@ -16,6 +16,19 @@ pub fn like_matches(haystack: &str, pattern: &str) -> bool {
     LikePattern::compile(pattern).matches(haystack)
 }
 
+/// Encode literal data in a LIKE pattern; `%`, `_` and `\` are escaped.
+/// Linear in input scalars, with no I/O or failure path.
+pub fn escape_like_literal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// A compiled SQL `LIKE` pattern (semantics of [`like_matches`]).
 ///
 /// The pattern is split on `%` into segments; greedy leftmost placement of
@@ -169,6 +182,16 @@ impl Segment {
 }
 
 impl LikePattern {
+    /// Literal prefix when the compiled pattern is exactly `literal%`.
+    /// Uses the same decoded tokens as matching; no independent escape grammar.
+    pub fn starts_with_prefix(&self) -> Option<String> {
+        let shape = self.shape.as_ref()?;
+        if !shape.any || shape.leading_any || !shape.trailing_any || shape.segments.len() != 1 {
+            return None;
+        }
+        shape.segments[0].literal.clone()
+    }
+
     pub fn compile(pattern: &str) -> LikePattern {
         let mut segments = Vec::new();
         let mut current: Vec<Option<char>> = Vec::new();

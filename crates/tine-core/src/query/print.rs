@@ -563,7 +563,10 @@ fn tql_comparison(subject: &str, op: CmpOp, value: &Value) -> String {
         CmpOp::StartsWith => match value {
             Value::Text { text } => format!(
                 "{subject} like {}",
-                sql_string(&format!("{}%", escape_like_literal(text)))
+                sql_string(&format!(
+                    "{}%",
+                    crate::query::text::escape_like_literal(text)
+                ))
             ),
             other => format!("{subject} like {}", tql_value(other)),
         },
@@ -584,13 +587,7 @@ fn tql_comparison(subject: &str, op: CmpOp, value: &Value) -> String {
 fn tql_value(value: &Value) -> String {
     match value {
         Value::Text { text } => sql_string(text),
-        Value::Number { number } => {
-            if number.fract() == 0.0 && number.abs() < 1e15 {
-                format!("{}", *number as i64)
-            } else {
-                format!("{number}")
-            }
-        }
+        Value::Number { number } => crate::query::atom::format_number(*number),
         // `today` is a vocabulary identifier; every other relative or absolute
         // date is a quoted literal (§4.2.1).
         Value::Date { literal } if literal.eq_ignore_ascii_case("today") => "today".to_string(),
@@ -606,19 +603,6 @@ fn tql_value(value: &Value) -> String {
 
 fn sql_string(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
-}
-
-/// `%`/`_`/`\` inside a `StartsWith` prefix are data, so they are escaped before
-/// the single trailing wildcard is appended.
-fn escape_like_literal(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        if matches!(ch, '%' | '_' | '\\') {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------

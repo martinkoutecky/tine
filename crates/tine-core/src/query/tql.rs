@@ -556,7 +556,7 @@ impl Lower<'_> {
                 "a `like` pattern is a quoted string",
             );
         };
-        match starts_with_prefix(&text) {
+        match crate::query::text::LikePattern::compile(&text).starts_with_prefix() {
             Some(prefix) => self.build(target, CmpOp::StartsWith, Value::text(prefix), ty),
             None => self.build(target, CmpOp::Like, Value::text(text), ty),
         }
@@ -1253,31 +1253,6 @@ fn is_date_literal(text: &str) -> bool {
         Some(DateToken::Stem(_)) => text.len() == 10 && text.as_bytes()[4] == b'-',
         _ => false,
     }
-}
-
-/// `like 'p%'` with no other wildcard is `StartsWith` (range-lowerable, §4.2.3);
-/// `\%` / `\_` are literal characters and do not disqualify the pattern.
-fn starts_with_prefix(pattern: &str) -> Option<String> {
-    let mut prefix = String::new();
-    let mut chars = pattern.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\\' => match chars.next() {
-                Some(escaped @ ('%' | '_' | '\\')) => prefix.push(escaped),
-                Some(other) => {
-                    prefix.push('\\');
-                    prefix.push(other);
-                }
-                None => prefix.push('\\'),
-            },
-            '_' => return None,
-            '%' => {
-                return chars.peek().is_none().then(|| prefix.clone());
-            }
-            other => prefix.push(other),
-        }
-    }
-    None
 }
 
 fn function_name(function: &sqlparser::ast::Function) -> String {

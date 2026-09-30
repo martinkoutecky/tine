@@ -99,6 +99,7 @@ struct Brace {
 /// that is what makes an unbalanced `}` inside a literal invisible to the split,
 /// which is the fixture §4.3.1 names.
 fn scan_braces(text: &str, family: FormFamily, form_depth: i32) -> Vec<Brace> {
+    scan_work(text.len());
     let bytes = text.as_bytes();
     let mut out = Vec::new();
     let mut depth = form_depth;
@@ -108,25 +109,11 @@ fn scan_braces(text: &str, family: FormFamily, form_depth: i32) -> Vec<Brace> {
         // apostrophe (`'foo`, `#'x`) is never a SQL string, and a semicolon in
         // TQL form text is never a comment.
         let edn = depth > form_depth || family == FormFamily::Edn;
+        if let Some(end) = protected_end(text, i, edn) {
+            i = end;
+            continue;
+        }
         match bytes[i] {
-            b'"' if edn => {
-                i = edn_string_end(text, i);
-                continue;
-            }
-            b'\'' if !edn => {
-                i = tql_string_end(text, i);
-                continue;
-            }
-            b';' if edn => {
-                while i < bytes.len() && bytes[i] != b'\n' {
-                    i += 1;
-                }
-                continue;
-            }
-            b'[' if text[i..].starts_with("[[") => {
-                i = page_ref_end(text, i);
-                continue;
-            }
             b'{' => {
                 depth += 1;
                 out.push(Brace {
@@ -148,6 +135,28 @@ fn scan_braces(text: &str, family: FormFamily, form_depth: i32) -> Vec<Brace> {
         i += 1;
     }
     out
+}
+
+#[cfg(test)]
+thread_local! {
+    static SCAN_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[inline(always)]
+fn scan_work(_bytes: usize) {
+    #[cfg(test)]
+    SCAN_WORK.with(|w| w.set(w.get() + _bytes));
+}
+
+// Literal/comment/reference protection shared by splitting and extent reading.
+fn protected_end(text: &str, at: usize, edn: bool) -> Option<usize> {
+    match text.as_bytes()[at] {
+        b'"' if edn => Some(edn_string_end(text, at)),
+        b'\'' if !edn => Some(tql_string_end(text, at)),
+        b';' if edn => Some(text[at..].find('\n').map_or(text.len(), |end| at + end)),
+        b'[' if text.as_bytes().get(at + 1) == Some(&b'[') => Some(page_ref_end(text, at)),
+        _ => None,
+    }
 }
 
 /// Index just past an EDN double-quoted string opening at `at`; end of input if
@@ -274,90 +283,130 @@ pub struct MacroExtent {
 /// inside a string, a nested `{…}` options map, or a `[[page]]` ref does not end
 /// it early — which is exactly what a lazy `/\{\{query.*?\}\}/` gets wrong.
 ///
-/// Cost: each `{{query`/`{{tine-query` candidate scans (and records every
-/// brace in) the whole rest of `raw`, terminated or not, so k candidates cost
-/// O(k·n) on raw block text, which is not bounded by `QUERY_SOURCE_MAX_BYTES`.
+/// Cost: O(raw bytes), including unterminated candidates. Candidate ranges are
+/// tracked during one forward lexical scan, and copied only when selected.
 pub fn query_macro_extent(raw: &str) -> Option<MacroExtent> {
-    query_macro_extent_from(raw, 0)
+    macro_extents(raw, 1).into_iter().next()
 }
 
-/// Every query macro in `raw`, in source order. A block may hold several
-/// (X2), and a rewrite must target the right one by extent.
-///
-/// Cost: each `{{query`/`{{tine-query` candidate scans (and records every
-/// brace in) the whole rest of `raw`, terminated or not, so k candidates cost
-/// O(k·n) on raw block text, which is not bounded by `QUERY_SOURCE_MAX_BYTES`.
+/// Every query macro in source order, with no overlapping extents.
+/// O(raw bytes) time and space; literals and options use the shared lexical rules.
 pub fn query_macro_extents(raw: &str) -> Vec<MacroExtent> {
-    let mut out = Vec::new();
-    let mut from = 0usize;
-    while from < raw.len() {
-        let Some(found) = query_macro_extent_from(raw, from) else {
-            break;
-        };
-        from = found.end;
-        out.push(found);
-    }
-    out
+    macro_extents(raw, usize::MAX)
 }
 
-fn query_macro_extent_from(raw: &str, from: usize) -> Option<MacroExtent> {
-    let mut search = from;
-    while let Some(offset) = raw[search..].find("{{") {
-        let start = search + offset;
-        match macro_at(raw, start) {
-            Some(extent) => return Some(extent),
-            None => search = start + 2,
-        }
-    }
-    None
-}
-
-/// Read one macro whose `{{` is at `start`, if its name is a query macro name.
-///
-/// **Widened from the TypeScript, recorded:** the pre-P0-ts `edn.ts` matched
-/// `/\{\{query\b/i`, which knew only one name and would also accept
-/// `{{query-foo}}` (`-` is a word boundary in JavaScript). Here the name is read
-/// as a token and compared against [`QUERY_MACRO_NAMES`] whole, so
-/// `{{tine-query …}}` is recognised and `{{query-foo …}}` is not.
-///
-/// The LONGEST matching candidate wins, not the first, so the shared constant's
-/// array order carries no meaning (§7.9): P0-ts reordered it to the spec's
-/// `["query", "tine-query"]` and this scan is unchanged by that.
-fn macro_at(raw: &str, start: usize) -> Option<MacroExtent> {
-    let after_braces = start + 2;
-    let rest = raw.get(after_braces..)?;
-    let name = QUERY_MACRO_NAMES
+fn macro_name_at(raw: &str, start: usize) -> Option<&'static str> {
+    let rest = raw.get(start + 2..)?;
+    QUERY_MACRO_NAMES
         .iter()
+        .copied()
         .filter(|candidate| {
-            // `get`, not `[..n]`: `{{中文}}` puts a multibyte character at
-            // the probed offset, which is text, not a panic (I-22).
             rest.get(..candidate.len())
                 .is_some_and(|head| head.eq_ignore_ascii_case(candidate))
                 && matches!(
                     rest.as_bytes().get(candidate.len()),
-                    None | Some(b' ') | Some(b'\t') | Some(b'}')
+                    None | Some(b' ' | b'\t' | b'}')
                 )
         })
-        .max_by_key(|candidate| candidate.len())?;
-    let argument_start = after_braces + name.len();
-    let family = FormFamily::for_macro_name(name);
-    // Depth 2 is what the two opening braces already contributed, so form text
-    // sits at depth 2 and a `{` of the options map takes it to 3.
-    let braces = scan_braces(raw.get(argument_start..)?, family, 2);
-    let close = braces
-        .iter()
-        .find(|brace| !brace.open && brace.depth == 0)?;
-    let end = argument_start + close.at + 1;
-    // Everything between the name and the LAST closing brace is the argument;
-    // one leading space is the macro's separator, not part of it.
-    // Two non-adjacent closing braces (`{{query a}é}`) are not a `}}` close.
-    let argument = raw.get(argument_start..end - 2)?;
-    Some(MacroExtent {
-        start,
-        end,
-        name: name.to_string(),
-        argument: argument.strip_prefix(' ').unwrap_or(argument).to_string(),
-    })
+        .max_by_key(|candidate| candidate.len())
+}
+
+fn macro_extents(raw: &str, limit: usize) -> Vec<MacroExtent> {
+    struct Candidate {
+        start: usize,
+        argument: usize,
+        name: &'static str,
+        base: usize,
+        end: Option<usize>,
+    }
+    scan_work(raw.len());
+    let bytes = raw.as_bytes();
+    let mut candidates: Vec<Candidate> = Vec::new();
+    let mut active: Vec<usize> = Vec::new();
+    let (mut i, mut depth) = (0usize, 0usize);
+    while i < raw.len() {
+        if active.is_empty() {
+            let Some(offset) = raw[i..].find("{{") else {
+                break;
+            };
+            i += offset;
+            let Some(name) = macro_name_at(raw, i) else {
+                i += 2;
+                continue;
+            };
+            candidates.push(Candidate {
+                start: i,
+                argument: i + 2 + name.len(),
+                name,
+                base: 0,
+                end: None,
+            });
+            active.push(candidates.len() - 1);
+            depth = 2;
+            i += 2 + name.len();
+            continue;
+        }
+        let candidate = &candidates[*active.last().unwrap()];
+        let edn = depth > candidate.base + 2
+            || FormFamily::for_macro_name(candidate.name) == FormFamily::Edn;
+        if let Some(end) = protected_end(raw, i, edn) {
+            i = end;
+            continue;
+        }
+        match bytes[i] {
+            b'{' => {
+                if bytes.get(i + 1) == Some(&b'{') {
+                    if let Some(name) = macro_name_at(raw, i) {
+                        candidates.push(Candidate {
+                            start: i,
+                            argument: i + 2 + name.len(),
+                            name,
+                            base: depth,
+                            end: None,
+                        });
+                        active.push(candidates.len() - 1);
+                        depth += 2;
+                        i += 2 + name.len();
+                        continue;
+                    }
+                }
+                depth += 1;
+            }
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                let index = *active.last().unwrap();
+                if depth == candidates[index].base {
+                    // An extent ends only with adjacent closing braces.
+                    if i > 0 && bytes[i - 1] == b'}' {
+                        candidates[index].end = Some(i + 1);
+                    }
+                    active.pop();
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let mut out = Vec::new();
+    let mut covered = 0usize;
+    for candidate in candidates {
+        let Some(end) = candidate.end else { continue };
+        if candidate.start < covered {
+            continue;
+        }
+        let argument = &raw[candidate.argument..end - 2];
+        out.push(MacroExtent {
+            start: candidate.start,
+            end,
+            name: candidate.name.to_string(),
+            argument: argument.strip_prefix(' ').unwrap_or(argument).to_string(),
+        });
+        covered = end;
+        if out.len() == limit {
+            break;
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -570,6 +619,23 @@ pub fn recognizable_macro(name: &str, argument: &str) -> Result<(), Diagnostic> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn b_query_extent_work_is_one_pass_for_hostile_and_benign_extremes() {
+        for (raw, expected) in [
+            ("{{query x ".repeat(500), 0),
+            ("{{query (task TODO)}} ".repeat(2_000), 2_000),
+        ] {
+            SCAN_WORK.with(|w| w.set(0));
+            assert_eq!(query_macro_extents(&raw).len(), expected);
+            let work = SCAN_WORK.with(std::cell::Cell::get);
+            assert!(
+                work <= 2 * raw.len(),
+                "I-22: query macro extent scanning must visit bytes once; {work} work for {} bytes",
+                raw.len()
+            );
+        }
+    }
 
     // --- C5b: page-reference operands after a comma ------------------------
 
