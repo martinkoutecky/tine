@@ -9,9 +9,10 @@ function call<T>(source: string, operation: string, value = ""): T {
 export interface EdnOptions { title: string | null; collapsed: boolean; table: boolean }
 export interface EdnForm { span: { start: number; end: number }; kind: string; children: EdnForm[] }
 export function readEdn(source: string): EdnForm | null { return call(source, "read"); }
-/** Slice a Rust byte span without interpreting its authored contents. */
-export function ednSlice(source: string, form: EdnForm): string {
-  return new TextDecoder().decode(new TextEncoder().encode(source).slice(form.span.start, form.span.end));
+/** Slice a Rust byte span; pass pre-encoded bytes when reading several forms. */
+export function ednSlice(source: string | Uint8Array, form: EdnForm): string {
+  const bytes = typeof source === "string" ? new TextEncoder().encode(source) : source;
+  return new TextDecoder().decode(bytes.subarray(form.span.start, form.span.end));
 }
 export function readEdnOptions(source: string): EdnOptions | null { return call(source, "options"); }
 export function editEdnTitle(source: string, title: string): string {

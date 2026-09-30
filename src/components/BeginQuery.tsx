@@ -14,13 +14,14 @@ function queryMap(payload: string): BeginQueryMatch {
   const source = payload.trim();
   const form = readEdn(source);
   if (!form || form.kind !== "map") return { kind: "unsupported", reason: "malformed EDN query map" };
+  const bytes = new TextEncoder().encode(source);
   let title: string | undefined;
   let query: string | undefined;
   let inputs: string | undefined;
   for (let i = 0; i < form.children.length; i += 2) {
-    const key = ednSlice(source, form.children[i]);
+    const key = ednSlice(bytes, form.children[i]);
     const entry = form.children[i + 1];
-    const value = ednSlice(source, entry);
+    const value = ednSlice(bytes, entry);
     if (key === ":query") {
       if (query !== undefined) return { kind: "unsupported", reason: "duplicate :query entry" };
       query = value;
