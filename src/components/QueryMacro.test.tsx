@@ -154,6 +154,55 @@ function loadQueryDoc(queryRaw: string) {
 
 
 describe("QueryMacro sheet integration", () => {
+  it("mounts broad List results in bounded frames while retaining keyed groups and cancelling retired work", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    renderedBlocks.add("query");
+    let results: RefGroup[] = Array.from({ length: 100 }, (_, index) => ({
+      page: `Result ${index}`, kind: "page", blocks: [{ id: `result-${index}`, raw: "TODO found", children: [], collapsed: false }],
+    }));
+    mockRun(() => results);
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    vi.stubGlobal("IntersectionObserver", class {
+      observe() {} unobserve() {} disconnect() {}
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let retiredFrame: FrameRequestCallback | undefined;
+    try {
+      await settleQuery();
+      expect(root.querySelectorAll(".query-group").length,
+        "I-25: a broad List must mount at most 32 new group shells per frame").toBe(32);
+      const first = root.querySelector(".query-group");
+      expect(root.querySelector(".query-pending-groups")).not.toBeNull();
+      const advanceFrame = () => {
+        const before = root.querySelectorAll(".query-group").length;
+        const [id, frame] = [...frames][0];
+        frames.delete(id);
+        frame(0);
+        expect(root.querySelectorAll(".query-group").length - before).toBeLessThanOrEqual(32);
+      };
+      for (let turn = 0; root.querySelectorAll(".query-group").length < 64 && turn < 20; turn += 1) advanceFrame();
+      expect(root.querySelectorAll(".query-group").length).toBe(64);
+      expect(root.querySelector(".query-group")).toBe(first);
+      for (let turn = 0; frames.size && turn < 20; turn += 1) advanceFrame();
+      expect(root.querySelectorAll(".query-group").length).toBe(100);
+      expect(root.querySelector(".query-pending-groups")).toBeNull();
+      results = results.map((group) => ({ ...group, page: `New ${group.page}` }));
+      bumpDataRev();
+      await settleQuery();
+      expect(root.querySelectorAll(".query-group").length).toBe(32);
+      expect(frames.size).toBeGreaterThan(0);
+      retiredFrame = [...frames.values()].at(-1);
+    } finally { dispose(); }
+    expect(frames.size).toBe(0);
+    retiredFrame?.(0);
+    expect(root.children.length).toBe(0);
+  });
   it("defers offscreen List group headers and mounts them on viewport approach", async () => {
     loadQueryDoc("{{query (task TODO)}}");
     renderedBlocks.add("query");

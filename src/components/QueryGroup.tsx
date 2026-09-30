@@ -1,4 +1,4 @@
-import { Show, createSignal, onMount, onCleanup, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onMount, onCleanup, untrack, type JSX } from "solid-js";
 import type { RefGroup, PageKind } from "../types";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
@@ -9,6 +9,55 @@ import { observeNear, unobserveNear } from "../lazyObserve";
 import { LiveRefGroup } from "./LiveRefGroup";
 
 interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean }
+
+/** Present the complete keyed List without one graph-sized DOM commit. Existing
+ * groups survive membership refreshes; at most 32 new shells mount per frame.
+ * Pending groups reserve the same approximate height as their eventual shells.
+ * Without browser layout all groups mount immediately, like observeNear. */
+export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?: boolean }): JSX.Element {
+  const [keys, setKeys] = createSignal<string[]>([]);
+  let frame: number | undefined;
+  let generation = 0;
+  const cancel = () => {
+    generation += 1;
+    if (frame !== undefined) cancelAnimationFrame(frame);
+    frame = undefined;
+  };
+  onCleanup(cancel);
+  createEffect(() => {
+    const all = [...props.groups().keys()];
+    cancel();
+    if (typeof IntersectionObserver === "undefined" || typeof requestAnimationFrame === "undefined") {
+      setKeys(all);
+      return;
+    }
+    const current = generation;
+    const retained = new Set(untrack(keys));
+    const pending = all.filter((key) => !retained.has(key));
+    let cursor = 0;
+    const advance = () => {
+      if (generation !== current) return;
+      frame = undefined;
+      const end = Math.min(cursor + 32, pending.length);
+      while (cursor < end) retained.add(pending[cursor++]);
+      setKeys(all.filter((key) => retained.has(key)));
+      if (cursor < pending.length) frame = requestAnimationFrame(advance);
+    };
+    advance();
+  });
+  const pendingHeight = createMemo(() => {
+    const mounted = new Set(keys());
+    let rows = 0;
+    for (const [key, group] of props.groups()) if (!mounted.has(key)) rows += 1 + group.blocks.length;
+    return rows * 1.9;
+  });
+  return <>
+    <For each={keys()}>{(key) => <QueryGroup group={() => props.groups().get(key)} flat={props.flat} />}</For>
+    <Show when={pendingHeight() > 0}>
+      <div class="query-pending-groups" aria-hidden="true" style={{ "min-height": `${pendingHeight()}em` }} />
+    </Show>
+  </>;
+}
 
 // Keep the keyed group shell and approximate scroll height. The header and
 // live result subtree start together on first viewport approach, then persist.
@@ -75,4 +124,3 @@ function MountedQueryGroup(props: QueryGroupProps): JSX.Element {
     </Show>
   );
 }
-

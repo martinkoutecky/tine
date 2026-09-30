@@ -9,7 +9,7 @@ import { blockProperty, blockWritable, formatForPage, formatForBlock, graphRewri
 import { resolveBlockBatched } from "../resolveBatch";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { LiveRefGroup } from "./LiveRefGroup";
-import { QueryGroup } from "./QueryGroup";
+import { QueryGroups } from "./QueryGroup";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
@@ -1057,15 +1057,11 @@ export function QueryMacro(props: {
                         <Show
                           when={globalSort()}
                           fallback={
-                            <For each={[...groupedQueryByKey().keys()]}>
-                              {(key) => <QueryGroup group={() => groupedQueryByKey().get(key)} />}
-                            </For>
+                            <QueryGroups groups={groupedQueryByKey} />
                           }
                         >
                           {/* Sorted: the engine's flat global order, one group per run of rows. */}
-                          <For each={[...flatQueryByKey().keys()]}>
-                            {(key) => <QueryGroup group={() => flatQueryByKey().get(key)} flat />}
-                          </For>
+                          <QueryGroups groups={flatQueryByKey} flat />
                         </Show>
                       }
                     >
