@@ -921,3 +921,31 @@ fn an_out_of_range_relative_date_is_a_diagnostic() {
         "{diagnostics:?}"
     );
 }
+#[test]
+fn door2_flat_boolean_chains_are_shallow_even_on_a_small_stack() {
+    std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(|| {
+            for joint in [" and ", " or "] {
+                let chain = vec!["true"; 7_000].join(joint);
+                let query = parse(&chain);
+                assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn door2_nested_sql_is_bounded_while_wide_lists_and_long_literals_remain_valid() {
+    let deep = format!("{}true{}", "off(".repeat(200), ")".repeat(200));
+    assert!(parse(&deep).is_invalid());
+    let arithmetic = vec!["content"; 2_000].join(" + ");
+    assert!(rejected(&arithmetic)
+        .iter()
+        .any(|d| d.message.contains("nested too deeply")));
+    let list = vec!["'TODO'"; 4_000].join(",");
+    assert!(!parse(&format!("task in ({list})")).is_invalid());
+    assert!(!parse(&format!("content = '{}'", "x".repeat(50_000))).is_invalid());
+}

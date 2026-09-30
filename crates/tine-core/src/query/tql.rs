@@ -20,10 +20,10 @@ use sqlparser::ast::{
     BinaryOperator, Expr, FunctionArg, FunctionArgExpr, FunctionArguments, Spanned as _,
     UnaryOperator, Value as SqlValue, Visit, Visitor,
 };
-use sqlparser::dialect::SQLiteDialect;
 use sqlparser::parser::Parser;
-use sqlparser::tokenizer::Token;
+use sqlparser::tokenizer::{Token, Tokenizer};
 
+mod boolean;
 mod prepass;
 use prepass::*;
 
@@ -109,12 +109,16 @@ pub(crate) fn parse_tql_with_options(
 // ---------------------------------------------------------------------------
 
 fn parse_expr_guarded(sql: &str) -> Result<Expr, String> {
-    let dialect = SQLiteDialect {};
+    let dialect = boolean::BooleanDialect;
+    let tokens = Tokenizer::new(&dialect, sql)
+        .tokenize_with_location()
+        .map_err(|error| error.to_string())?;
+    boolean::admit_tokens(&tokens)?;
     let mut parser = Parser::new(&dialect)
         .with_recursion_limit(RECURSION_LIMIT)
-        .try_with_sql(sql)
-        .map_err(|error| error.to_string())?;
+        .with_tokens_with_locations(tokens);
     let expr = parser.parse_expr().map_err(|error| error.to_string())?;
+    boolean::admit_ast(&expr)?;
     if parser.peek_token().token != Token::EOF {
         return Err(format!(
             "the query ends after a complete condition; `{}` is left over",
@@ -232,68 +236,23 @@ impl Lower<'_> {
     }
 
     fn filter(&mut self, expr: &Expr, scope: Scope) -> Filter {
+        if let Some((and, items)) = boolean::items(expr) {
+            let items = items.iter().map(|item| self.filter(item, scope)).collect();
+            return if and {
+                Filter::and(items)
+            } else {
+                Filter::or(items)
+            };
+        }
         match expr {
             Expr::Nested(inner) => self.filter(inner, scope),
             Expr::UnaryOp {
                 op: UnaryOperator::Not,
                 expr,
             } => Filter::not(self.filter(expr, scope)),
-            Expr::BinaryOp {
-                left,
-                op: BinaryOperator::And,
-                right,
-            } => {
-                let mut items = Vec::new();
-                self.and_items(left, scope, &mut items);
-                self.and_items(right, scope, &mut items);
-                Filter::and(items)
-            }
-            Expr::BinaryOp {
-                left,
-                op: BinaryOperator::Or,
-                right,
-            } => {
-                let mut items = Vec::new();
-                self.or_items(left, scope, &mut items);
-                self.or_items(right, scope, &mut items);
-                Filter::or(items)
-            }
             // Everything else is ONE condition of the author's, which is the
             // unit §7.4 retains when it does not apply to the anchor.
             leaf => self.leaf(leaf, scope),
-        }
-    }
-
-    /// sqlparser represents an unparenthesized boolean chain as a binary tree.
-    /// That associativity is parser bookkeeping, not an authored query-sheet
-    /// group: collect one n-ary group while a same-kind child is directly part
-    /// of the chain. `Expr::Nested` deliberately stops this walk, so explicit
-    /// parentheses survive as a nested same-kind group.
-    fn and_items(&mut self, expr: &Expr, scope: Scope, items: &mut Vec<Filter>) {
-        match expr {
-            Expr::BinaryOp {
-                left,
-                op: BinaryOperator::And,
-                right,
-            } => {
-                self.and_items(left, scope, items);
-                self.and_items(right, scope, items);
-            }
-            other => items.push(self.filter(other, scope)),
-        }
-    }
-
-    fn or_items(&mut self, expr: &Expr, scope: Scope, items: &mut Vec<Filter>) {
-        match expr {
-            Expr::BinaryOp {
-                left,
-                op: BinaryOperator::Or,
-                right,
-            } => {
-                self.or_items(left, scope, items);
-                self.or_items(right, scope, items);
-            }
-            other => items.push(self.filter(other, scope)),
         }
     }
 
