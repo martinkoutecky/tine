@@ -688,6 +688,7 @@ pub fn run() {
                 _ => {}
             }
         })
+        .manage(graph::StartupGraph::default())
         .manage(AppState {
             graphs: RwLock::new(state::GraphRegistry::default()),
             graph_load: Mutex::new(()),
@@ -704,6 +705,7 @@ pub fn run() {
                 flight::persist_init(dir.join("diagnostics"));
             }
             diag("setup() begin");
+            graph::prepare_startup_graph(app.handle());
             #[cfg(target_os = "linux")]
             {
                 if let Some(window) = app.get_webview_window("main") {
@@ -719,13 +721,9 @@ pub fn run() {
             }
             #[cfg(desktop)]
             schedule_main_window_reveal_fallback(app.handle());
-            // The visible webview owns startup graph loading through the ordinary
-            // `load_graph` command (master abf7af831). A remembered graph that
-            // resolves but fails to open (a synced dangling `assets` link, a
-            // synced `config.edn` with an unsafe `:pages-directory`, a disk
-            // error) then lands on the Welcome open-failure card. Returning that
-            // error from `.setup` makes Tauri panic, which crashed every launch
-            // (I-22); `src/startupReveal.test.ts` keeps graph opening out of here.
+            // The webview owns activation and Welcome error presentation.
+            // The launch-owned background open never returns errors from setup
+            // (I-22); its result is consumed by the ordinary load command.
             diag("setup() defers graph open to the visible webview");
             // Watch for external changes (reads whichever graph is current).
             diag("setup() done — watcher started, handing off to webview");
