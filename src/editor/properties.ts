@@ -3,6 +3,7 @@
 
 import { transitionFence, displayMathOpenAfter, closesDisplayMath, type FenceState } from "./fences";
 import { literalBlockOfLine } from "./literalLines";
+import { blockRegions, parserReady } from "../render/parse";
 
 /** Ordinary `key:: value` lines share the page-header key class at column zero. */
 export const PROP_LINE = /^([\p{L}\p{M}\p{N}_./-]+):: ?(.*)$/u;
@@ -127,11 +128,6 @@ export const isSheetCellHidden = (key: string): boolean =>
 /** Hide every property (annotation blocks edit only their text). */
 export const hideAll = (_key: string): boolean => true;
 
-function propLineKey(line: string): string | null {
-  const m = /^\s*([\p{L}\p{M}\p{N}_./-]+)::/u.exec(line);
-  return m ? m[1].toLowerCase() : null;
-}
-
 /** For a multi-line editor that normally keeps Enter inside it, return the text
  * with its trailing sentinel blank line removed when the caret is on the
  * double-Enter exit line. Blank lines in the middle remain ordinary content. */
@@ -193,15 +189,6 @@ export function caretInFence(raw: string, offset: number): boolean {
  *  `key:: value` lines; org keeps them inside a `:PROPERTIES:`/`:END:` drawer. */
 export type PropFormat = "md" | "org";
 
-/** Key of an org drawer property line (`:id: <uuid>` → `"id"`), lowercased, or
- *  null if the line isn't a `:key: value` drawer entry. The `:PROPERTIES:` and
- *  `:END:` wrapper lines return null (they aren't `key value` pairs). */
-function orgDrawerKey(line: string): string | null {
-  const m = /^\s*:([\p{L}\p{M}\p{N}_@./-]+):(?:\s|$)/u.exec(line);
-  const k = m ? m[1].toLowerCase() : null;
-  return k === "properties" || k === "end" ? null : k;
-}
-
 type LineClass = "v" | "h" | "d"; // visible | hidden-payload | dropped(org wrapper)
 
 /** Return inclusive [start, end] for a complete :PROPERTIES: drawer at line 0
@@ -217,62 +204,39 @@ export function orgBlockDrawerRange(lines: string[]): [number, number] | null {
   return end > start ? [start, end] : null;
 }
 
-/** Classify every line as visible / hidden-property / dropped-org-wrapper.
- *  Fence-aware. For org, a block-properties `:PROPERTIES:`/`:END:` drawer whose
- *  inner lines are ALL built-in-hidden is dropped whole (wrapper marked `d`,
- *  inner marked `h`) — mirroring OG's `remove-built-in-properties`, which also
- *  strips the emptied drawer. A drawer that still holds a user property keeps its
- *  wrapper + user lines visible and hides only the built-in lines within. */
+/** Present only primary properties accepted by the block-region door. Lines
+ * are transport coordinates here, never evidence that text is metadata. */
 function classifyLines(
   lines: string[],
   isHidden: (key: string) => boolean,
   format: PropFormat
 ): LineClass[] {
   const cls: LineClass[] = new Array(lines.length).fill("v");
-  const drawer = format === "org" ? orgBlockDrawerRange(lines) : null;
-  // Code/src/example lines (delimiters included) are content, never metadata:
-  // the one lsdoc-backed answer (editor/literalLines.ts; C3 L13/L14).
-  const literal = literalBlockOfLine(lines.join("\n"), format);
-  let i = 0;
-  while (i < lines.length) {
-    const l = lines[i];
-    if (literal[i] !== -1) {
-      i++;
-      continue;
+  if (!parserReady()) return cls;
+  const raw = lines.join("\n");
+  const regions = blockRegions(raw, format);
+  if (regions.quarantined) return cls;
+  const starts = [0];
+  const encoder = new TextEncoder();
+  for (let i = 0; i < lines.length - 1; i++) starts.push(starts[i] + encoder.encode(lines[i]).length + 1);
+  const lineAt = (byte: number) => {
+    let lo = 0, hi = starts.length;
+    while (lo + 1 < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (starts[mid] <= byte) lo = mid;
+      else hi = mid;
     }
-    if (drawer && i === drawer[0]) {
-      let j = i + 1;
-      while (j < lines.length && lines[j].trim().toUpperCase() !== ":END:") j++;
-      if (j < lines.length) {
-        // Complete drawer spans i..j. Classify inner lines i+1..j-1.
-        let anyKept = false;
-        const inner: LineClass[] = [];
-        for (let k = i + 1; k < j; k++) {
-          const key = orgDrawerKey(lines[k]);
-          const hid = key != null && isHidden(key);
-          inner.push(hid ? "h" : "v");
-          if (!hid) anyKept = true; // a user prop (or a non-prop line) survives
-        }
-        if (anyKept) {
-          for (let k = i + 1; k < j; k++) cls[k] = inner[k - (i + 1)]; // wrapper stays "v"
-        } else {
-          cls[i] = "d"; // drop the emptied :PROPERTIES:
-          cls[j] = "d"; // drop the :END:
-          for (let k = i + 1; k < j; k++) cls[k] = "h";
-        }
-        i = j + 1;
-        continue;
-      }
-      // No matching :END: — treat the line as ordinary content.
+    return lo;
+  };
+  const own = regions.properties.filter((p) => p.primary);
+  for (const p of own) if (isHidden(p.key.toLowerCase())) cls[lineAt(p.line[0])] = "h";
+  if (format === "org") {
+    for (const [index, range] of regions.property_regions.entries()) {
+      const entries = own.filter((p) => p.region === index);
+      if (!entries.length || !entries.every((p) => isHidden(p.key.toLowerCase()))) continue;
+      cls[lineAt(range[0])] = "d";
+      cls[lineAt(Math.max(range[0], range[1] - 1))] = "d";
     }
-    // Markdown `key:: value` property lines. Only in md files: org uses the
-    // drawer for properties, so a `key::` line in an org block is body content,
-    // never metadata (and must never be folded into a drawer on reattach).
-    if (format !== "org") {
-      const key = propLineKey(l);
-      if (key && isHidden(key)) cls[i] = "h";
-    }
-    i++;
   }
   return cls;
 }

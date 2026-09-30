@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Query table footers show complete backend totals and save Count, Sum, Average, or None through Display without reordering repeated entries. Static export totals summarize exported rows (UI-OG-R3A3-QUERY-FOOTER).
 
 ### Fixed
+- **Splitting an Org block keeps its own ID on the original block after CLOSED planning** (og-R4B; UI-OG-R4B-OWN-PROPERTIES). The editor hides properties from the parser's own property region and keeps body drawers visible.
 
 - **Nested queries in a query export no longer report how many matches were left out on other pages** (og-R3C; REG-OG-R3C-NESTED-COUNTS). This applies to the static fallback as well as the read-only app.
 
