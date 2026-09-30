@@ -1,0 +1,21 @@
+import { execFileSync, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { expect, it } from "vitest";
+
+it("preflights the OG v0.6.5 performance baseline, including a preview tag context", () => {
+  for (const ref of [undefined, "refs/tags/og-preview"]) {
+    const result = spawnSync(process.execPath, ["scripts/check-release-preflight.mjs"], {
+      encoding: "utf8", env: { ...process.env, GITHUB_REF: ref },
+    });
+    expect(result.status, result.stderr).toBe(0);
+  }
+  expect(JSON.parse(execFileSync("git", ["show", "6e0e69e34:src-tauri/tauri.conf.json"], { encoding: "utf8" })).version).toBe("0.6.5");
+});
+
+it("keeps every inherited performance budget and the immutable anchor", () => {
+  const before = JSON.parse(execFileSync("git", ["show", "224aa18e4:scripts/bench-policy.json"], { encoding: "utf8" }));
+  const after = JSON.parse(readFileSync("scripts/bench-policy.json", "utf8"));
+  delete before.previousRelease;
+  delete after.previousRelease;
+  expect(after).toEqual(before);
+});

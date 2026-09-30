@@ -5,8 +5,8 @@
     "purpose": "Last pre-Sheets and pre-split-view patch release; never advances automatically."
   },
   "previousRelease": {
-    "ref": "v0.6.4",
-    "purpose": "Most recently published release. Advance immediately after publication; a tagged candidate automatically compares with the preceding tag."
+    "ref": "v0.6.5",
+    "purpose": "OG v0.6.5 release performance baseline. Keep fixed during the parity campaign; budgets are unchanged."
   },
   "reliability": {
     "rounds": 3,

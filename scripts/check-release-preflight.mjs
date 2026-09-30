@@ -43,7 +43,7 @@ const versions = new Map([
 const expected = tauri.version;
 const problems = [];
 
-const benchPolicy = spawnSync(process.execPath, [path.join(root, "scripts", "check-bench-policy.mjs")], {
+const benchPolicy = spawnSync(process.execPath, [path.join(root, "scripts", "check-bench-policy.mjs"), "--expected-previous", "v0.6.5"], {
   encoding: "utf8",
   env: process.env,
 });
