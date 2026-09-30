@@ -2218,16 +2218,15 @@ pub(crate) fn save_asset(
         .map_err(|error| feature_asset_error(error, &slot))
 }
 
+mod read_highlights_worker;
 #[tauri::command]
-/// Read highlights from the bound graph. Missing sidecar returns an empty
-/// vector. I/O or malformed top-level EDN returns a string error; malformed
-/// entries within a valid map are skipped. Cost O(asset entries + sidecar bytes).
-pub(crate) fn read_highlights(
+/// Bound-graph read; missing sidecar is empty, malformed EDN/I/O/join errors refuse.
+pub(crate) async fn read_highlights(
     pdf: String,
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::pdf::Highlight>, String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::pdf::read_highlights_checked(&slot.store, &pdf).map_err(feature_pdf_error)
+    read_highlights_worker::read(slot, pdf).await
 }
 
 #[tauri::command]

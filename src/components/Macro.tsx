@@ -12,7 +12,7 @@ import { LiveRefGroup } from "./LiveRefGroup";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
-import { quoteEdnString, unquoteEdnString } from "../editor/edn";
+import { editEdnTitle, readEdnOptions } from "../editor/edn";
 import { queryMacroExtents, type MacroExtent } from "../editor/queryMacro";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import {
@@ -242,10 +242,8 @@ export function QueryMacro(props: {
   const opts = () => { const s = source(); return s ? sourceOptions(s) : ""; };
   // `:title` / `:collapsed?` / `:table-view?` are read out of the OPAQUE options
   // map, which the engine carries verbatim and does not interpret (§4.3, Y2).
-  const titleOption = (): string | undefined => {
-    const m = /:title\s+"((?:[^"\\]|\\.)*)"/.exec(opts());
-    return m ? unquoteEdnString(m[1]) : undefined;
-  };
+  const optionValues = createMemo(() => readEdnOptions(opts()));
+  const titleOption = (): string | undefined => optionValues()?.title ?? undefined;
   const isAdvanced = () => source()?.kind === "advanced";
 
   // GH #301: `<% current page %>` binds the FOCUSED pane's route page and re-runs
@@ -296,7 +294,7 @@ export function QueryMacro(props: {
   };
   const blockFace = (): QueryView => runnable()?.block_presentation ?? currentView();
   const sheetFace = () => blockFace() === "table" || blockFace() === "board";
-  const legacyTable = () => currentView() === "list" && /:table-view\?\s+true/.test(opts());
+  const legacyTable = () => currentView() === "list" && (optionValues()?.table ?? false);
   const setQueryView = (next: QueryView) => {
     const blockId = props.blockId;
     const node = blockId ? docNode(blockId) : undefined;
@@ -319,7 +317,7 @@ export function QueryMacro(props: {
   const currentPage = () => props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
   const collapseKey = () => JSON.stringify([graphMeta()?.root ?? "", props.blockId ?? currentPage() ?? "global", arg()]);
   const [collapseOverride, setCollapseOverride] = createSignal(loadCollapsed(collapseKey()));
-  const collapsed = () => collapseOverride() ?? /:collapsed\?\s+true/.test(opts());
+  const collapsed = () => collapseOverride() ?? (optionValues()?.collapsed ?? false);
   const toggleCollapsed = () => {
     const v = !collapsed();
     setCollapseOverride(v);
@@ -602,15 +600,12 @@ export function QueryMacro(props: {
     const blockId = props.blockId;
     const current = reading();
     if (!blockId || !current) return;
-    const inner = opts().replace(/^\{|\}$/g, "").trim();
-    const rest = inner.replace(/:title\s+"(?:[^"\\]|\\.)*"\s*/, "").trim();
-    const title = t.trim().replace(/[\r\n{}]/g, "");
-    const parts = [title ? `:title "${quoteEdnString(title)}"` : "", rest].filter(Boolean);
-    const nextOptions = parts.length ? `{${parts.join(" ")}}` : "";
-    if (nextOptions === opts()) return;
-    const nextQuery: Query = { ...current.query, source: { ...current.query.source, og_options: nextOptions } as Source };
     const rawAtStart = docNode(blockId)?.raw;
     try {
+      const title = t.trim().replace(/[\r\n{}]/g, "");
+      const nextOptions = editEdnTitle(opts(), title);
+      if (nextOptions === opts()) return;
+      const nextQuery: Query = { ...current.query, source: { ...current.query.source, og_options: nextOptions } as Source };
       const printed = await readOwned(
         graphOwner(() => docNode(blockId)?.raw === rawAtStart),
         backend().printQuery(nextQuery, current.view, sourcePrintDialect(current.query.source), true),

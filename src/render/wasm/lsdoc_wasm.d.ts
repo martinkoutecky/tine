@@ -59,6 +59,13 @@ export function parse_block_json(raw: string, is_org: boolean): string;
 export function parse_document_json(text: string, is_org: boolean): string;
 
 /**
+ * Query EDN reads/splices from the same byte-span reader as native macro_text.
+ * O(source bytes), at most 1 MiB / 128 levels; null refuses unreadable EDN.
+ * Title edits preserve all unrelated bytes. No I/O or graph state.
+ */
+export function query_edn_json(source: string, operation: string, value: string): string;
+
+/**
  * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
  * contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
  * ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the
@@ -122,6 +129,7 @@ export interface InitOutput {
     readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
+    readonly query_edn_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly render_block_html: (a: number, b: number, c: number) => [number, number];
     readonly search_fold: (a: number, b: number, c: number) => [number, number];
     readonly search_matches: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;

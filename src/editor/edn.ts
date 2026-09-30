@@ -1,73 +1,35 @@
-// Tiny, dependency-free helpers for the bits of EDN we read/write inside a
-// `{{query … {:opts}}}` macro. String- and brace-aware so values containing `"`,
-// `\`, `{`, or `}` don't confuse the (otherwise regex-based) query handling.
+// I-4/I-12: authored EDN structure belongs to query_edn.rs, shared with native.
+// These clients never discover delimiters or edit spans in JavaScript.
+import { query_edn_json } from "../render/wasm/lsdoc_wasm.js";
+import { QueryPrintRefusedError } from "../backend";
 
-/** Escape a string for an EDN double-quoted literal. */
-export function quoteEdnString(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+function call<T>(source: string, operation: string, value = ""): T {
+  return JSON.parse(query_edn_json(source, operation, value)) as T;
 }
-/** Inverse of quoteEdnString for the captured inner text of an EDN string. */
+export interface EdnOptions { title: string | null; collapsed: boolean; table: boolean }
+export interface EdnForm { span: { start: number; end: number }; kind: string; children: EdnForm[] }
+export function readEdn(source: string): EdnForm | null { return call(source, "read"); }
+/** Slice a Rust byte span; pass pre-encoded bytes when reading several forms. */
+export function ednSlice(source: string | Uint8Array, form: EdnForm): string {
+  const bytes = typeof source === "string" ? new TextEncoder().encode(source) : source;
+  return new TextDecoder().decode(bytes.subarray(form.span.start, form.span.end));
+}
+export function readEdnOptions(source: string): EdnOptions | null { return call(source, "options"); }
+export function editEdnTitle(source: string, title: string): string {
+  const edited = call<string | null>(source, "title", title);
+  if (edited === null) throw new QueryPrintRefusedError("syntax", {
+    kind: "syntax", message: "Unreadable EDN options; the query was not changed.",
+  });
+  return edited;
+}
+/** Escaped inner text, preserving the existing helper's public convention. */
+export function quoteEdnString(source: string): string { return call<string>(source, "quote").slice(1, -1); }
 export function unquoteEdnString(inner: string): string {
-  return inner.replace(/\\(.)/g, "$1");
+  const text = call<string | null>(`"${inner}"`, "unquote");
+  if (text === null) throw new QueryPrintRefusedError("syntax", { kind: "syntax", message: "Unreadable EDN string." });
+  return text;
 }
-
-// Index of the closing quote of an EDN string whose opening quote is at `i`
-// (skips `\"`/`\\`); end-of-string index if unterminated.
-function strClose(s: string, i: number): number {
-  let j = i + 1;
-  while (j < s.length) {
-    const c = s[j];
-    if (c === "\\") j += 2;
-    else if (c === '"') return j;
-    else j++;
-  }
-  return s.length - 1;
-}
-
-// If a Logseq page ref `[[…]]` opens at `i`, return the index just PAST its
-// closing `]]` (or end-of-string if unterminated); else -1. Page refs don't
-// nest, so the first `]]` closes it. Used to treat a ref's text — which may
-// contain stray `{`/`}` (e.g. `[[a}}b]]`) — as opaque while scanning braces.
-function pageRefEnd(s: string, i: number): number {
-  if (s[i] !== "[" || s[i + 1] !== "[") return -1;
-  const close = s.indexOf("]]", i + 2);
-  return close === -1 ? s.length : close + 2;
-}
-
-/** Split a query argument into its form and a trailing balanced `{…}` options
- *  map. Brace-aware: braces inside strings (e.g. a `:title "a {b}"`) don't break
- *  it. `opts` includes the braces; both parts are trimmed. No trailing map → "". */
-export function splitTrailingMap(arg: string): { form: string; opts: string } {
-  const s = arg.replace(/\s+$/, "");
-  if (!s.endsWith("}")) return { form: arg.trim(), opts: "" };
-  let depth = 0;
-  let start = -1;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (c === '"') {
-      i = strClose(s, i);
-      continue;
-    }
-    if (c === "[") {
-      const pe = pageRefEnd(s, i);
-      if (pe !== -1) {
-        i = pe - 1; // -1: the loop's i++ advances onto the char past the ref
-        continue;
-      }
-    }
-    if (c === ";") {
-      while (i < s.length && s[i] !== "\n") i++;
-      continue;
-    }
-    if (c === "{") {
-      if (depth === 0) start = i;
-      depth++;
-    } else if (c === "}") {
-      depth--;
-      if (depth === 0 && i === s.length - 1 && start >= 0) {
-        return { form: s.slice(0, start).trim(), opts: s.slice(start).trim() };
-      }
-    }
-  }
-  return { form: arg.trim(), opts: "" };
+export function splitTrailingMap(source: string): { form: string; opts: string } {
+  const [form, opts] = call<[string, string]>(source, "split");
+  return { form, opts };
 }

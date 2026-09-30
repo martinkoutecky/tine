@@ -198,3 +198,53 @@ describe("editing a query's title preserves its authored form (§4.3.1)", () => 
     }
   });
 });
+
+
+describe("OG-R4A title edits own only top-level option spans", () => {
+  for (const options of ['{:x [:title "keep"]}', '{:x [:title "keep"] :title "actual"}', '{:x #_ :title [:title "keep"] :title #_ "ignored" "actual"}']) {
+    it(`preserves nested title bytes in ${options}`, async () => {
+      const argument = `(task TODO) ${options}`;
+      load(`{{query ${argument}}}`);
+      backendReadsQueries({ [argument]: { form: "(task TODO)", opts: options } });
+      const printed = vi.spyOn(backend(), "printQuery").mockImplementation(async (query) =>
+        `(task TODO) ${"og_options" in query.source ? query.source.og_options : ""}`);
+      const { root, dispose } = mount(() => <Block id="query" />);
+      try {
+        await settle();
+        expect(root.querySelector(".query-title")?.textContent).toBe(options.includes('"actual"') ? "actual" : "Query");
+        (root.querySelector(".query-title") as HTMLElement).click();
+        await settle();
+        const input = root.querySelector(".query-title-input") as HTMLInputElement;
+        input.value = "renamed";
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        await vi.waitFor(() => expect(printed).toHaveBeenCalled());
+        const source = printed.mock.calls[0][0].source;
+        const expected = options.includes('"actual"')
+          ? options.replace('"actual"', '"renamed"') : '{:title "renamed" :x [:title "keep"]}';
+        expect("og_options" in source && source.og_options).toBe(expected);
+        await vi.waitFor(() => expect(doc.byId.query.raw).toBe(`{{query (task TODO) ${expected}}}`));
+      } finally { dispose(); }
+    });
+  }
+});
+
+it("unreadable EDN title edits refuse visibly and never reach the printer", async () => {
+  const options = '{:x [:title "keep"] :title "\\q"}';
+  const argument = `(task TODO) ${options}`;
+  load(`{{query ${argument}}}`);
+  backendReadsQueries({ [argument]: { form: "(task TODO)", opts: options } });
+  const printed = vi.spyOn(backend(), "printQuery");
+  const before = doc.byId.query.raw;
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    await settle();
+    (root.querySelector(".query-title") as HTMLElement).click();
+    await settle();
+    const input = root.querySelector(".query-title-input") as HTMLInputElement;
+    input.value = "renamed";
+    input.dispatchEvent(new FocusEvent("blur"));
+    await vi.waitFor(() => expect(root.querySelector(".query-print-refused")?.textContent).toContain("Unreadable EDN options"));
+    expect(printed).not.toHaveBeenCalled();
+    expect(doc.byId.query.raw).toBe(before);
+  } finally { dispose(); }
+});
