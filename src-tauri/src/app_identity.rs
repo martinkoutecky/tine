@@ -29,6 +29,17 @@ pub(crate) fn current_app_data_dir() -> Option<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn tauri_config_accepts_the_preview_semver_without_changing_identity() {
+        let mut conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        conf["version"] = serde_json::json!("0.7.0-og.1");
+        conf["bundle"]["android"]["versionCode"] = serde_json::json!(7001);
+        let parsed: tauri::Config = serde_json::from_value(conf).unwrap();
+        assert_eq!(parsed.version.as_deref(), Some("0.7.0-og.1"));
+        assert_eq!(parsed.identifier, super::APP_IDENTIFIER);
+    }
+
+    #[test]
     fn identity_matches_the_switch_and_tauri_conf() {
         let switch: serde_json::Value =
             serde_json::from_str(include_str!("../app-identity.json")).unwrap();

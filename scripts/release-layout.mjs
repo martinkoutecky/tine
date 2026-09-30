@@ -1,3 +1,4 @@
+import { releaseVersion } from "./release-policy.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -11,9 +12,7 @@ export const RELEASE_LANES = [
 ];
 
 export function assertReleaseVersion(version) {
-  if (!/^\d+\.\d+\.\d+$/.test(version ?? "")) {
-    throw new Error(`invalid release version: ${version}`);
-  }
+  releaseVersion(version);
 }
 
 export function releaseLayout(version) {
@@ -134,7 +133,7 @@ export function releaseNotes(root, version) {
   return lines.slice(start + 1, end).join("\n").trim();
 }
 
-export function candidateProblems(directory, version) {
+export function candidateProblems(directory, version, channel = "stable") {
   const layout = releaseLayout(version);
   const names = new Set(
     fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => entry.name)
@@ -163,6 +162,18 @@ export function candidateProblems(directory, version) {
   for (const platform of expectedPlatforms) {
     const entry = updater.platforms?.[platform];
     const [asset] = layout.updaterPlatforms[platform];
+    if (entry && channel === "og-preview") {
+      let inPreview = false;
+      try {
+        const url = new URL(entry.url);
+        const parts = url.pathname.split("/");
+        inPreview = url.protocol === "https:" && url.hostname === "github.com"
+          && parts.at(-3) === "download" && parts.at(-2) === "og-preview" && parts.at(-1) === asset;
+      } catch {
+        inPreview = false;
+      }
+      if (!inPreview) problems.push(`latest.json ${platform} escapes og-preview`);
+    }
     if (entry && !entry.url?.endsWith(`/${asset}`)) problems.push(`latest.json ${platform} points at the wrong asset`);
     if (entry && (typeof entry.signature !== "string" || entry.signature.length === 0)) {
       problems.push(`latest.json ${platform} has no signature`);
