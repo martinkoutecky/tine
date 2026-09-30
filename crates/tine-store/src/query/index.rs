@@ -17,6 +17,7 @@
 //! changed), never O(pages in the graph); a text-only edit reads no property
 //! rows at all. A registry never built is built whole, once, on first use.
 
+use crate::model::persistent::{Map as SharedMap, Pages};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
@@ -325,17 +326,17 @@ pub(crate) struct QueryIndex {
     parse_config: ParseConfig,
     generation: u64,
     /// This snapshot's path -> slot in its page vector.
-    positions: Arc<HashMap<String, usize>>,
+    positions: Arc<SharedMap<String, usize>>,
     registry: OnceLock<Arc<Registry>>,
     pending: Option<Pending>,
 }
 
 impl QueryIndex {
     pub(crate) fn build(
-        pages: &[(PageEntry, Arc<Document>)],
+        pages: &Pages,
         config: &Config,
         generation: u64,
-        positions: Arc<HashMap<String, usize>>,
+        positions: Arc<SharedMap<String, usize>>,
     ) -> QueryIndex {
         let parse_config = ParseConfig::from_config(config);
         let mut facts = HashMap::with_capacity(pages.len());
@@ -386,7 +387,7 @@ impl QueryIndex {
         page: impl Fn(&str) -> Option<&'p (PageEntry, Arc<Document>)>,
         changed: &[String],
         generation: u64,
-        positions: Arc<HashMap<String, usize>>,
+        positions: Arc<SharedMap<String, usize>>,
     ) -> QueryIndex {
         let mut delta = self.facts.delta.clone();
         #[cfg(feature = "test-faults")]
@@ -470,7 +471,7 @@ impl QueryIndex {
 
     /// The property registry of this generation, built (or patched from the
     /// inherited one) on first use.
-    pub(crate) fn registry(&self, pages: &[(PageEntry, Arc<Document>)]) -> Arc<Registry> {
+    pub(crate) fn registry(&self, pages: &Pages) -> Arc<Registry> {
         Arc::clone(self.registry.get_or_init(|| {
             #[cfg(test)]
             REGISTRY_BUILDS.with(|count| count.set(count.get() + 1));
@@ -482,11 +483,7 @@ impl QueryIndex {
     }
 
     /// The page at `path` in this snapshot's vector.
-    fn page_at<'a>(
-        &self,
-        pages: &'a [(PageEntry, Arc<Document>)],
-        path: &str,
-    ) -> Option<&'a (PageEntry, Arc<Document>)> {
+    fn page_at<'a>(&self, pages: &'a Pages, path: &str) -> Option<&'a (PageEntry, Arc<Document>)> {
         self.positions
             .get(path)
             .and_then(|&at| pages.get(at))
@@ -494,7 +491,7 @@ impl QueryIndex {
     }
 
     /// The whole registry: the one producer over every page's rows.
-    fn build_registry(&self, pages: &[(PageEntry, Arc<Document>)]) -> Registry {
+    fn build_registry(&self, pages: &Pages) -> Registry {
         let metas: HashMap<&str, PageMeta> = pages
             .iter()
             .map(|(entry, _)| (entry.rel_path_str(), page_meta(entry)))
@@ -517,11 +514,7 @@ impl QueryIndex {
     /// producer over that key's complete row set (plus the `tine.type::` row of
     /// the page that declares it), read from the pages the inverted tables
     /// name: O(rows of the moved keys), not O(graph).
-    fn patched_registry(
-        &self,
-        pending: &Pending,
-        pages: &[(PageEntry, Arc<Document>)],
-    ) -> Registry {
+    fn patched_registry(&self, pending: &Pending, pages: &Pages) -> Registry {
         let mut keys = pending.keys.clone();
         if !pending.declared.is_empty() {
             // A declaration binds a key to the page NAMED like it, under
@@ -681,8 +674,8 @@ impl QueryIndexSlot {
     /// without scanning or re-keying the graph.
     pub(crate) fn get(
         &self,
-        pages: &[(PageEntry, Arc<Document>)],
-        positions: &Arc<HashMap<String, usize>>,
+        pages: &Pages,
+        positions: &Arc<SharedMap<String, usize>>,
         config: &Config,
         generation: u64,
     ) -> Arc<QueryIndex> {
@@ -792,7 +785,7 @@ mod tests {
         (entry, Arc::new(doc))
     }
 
-    fn positions(pages: &[(PageEntry, Arc<Document>)]) -> Arc<HashMap<String, usize>> {
+    fn positions(pages: &[(PageEntry, Arc<Document>)]) -> Arc<SharedMap<String, usize>> {
         Arc::new(
             pages
                 .iter()
@@ -820,8 +813,13 @@ mod tests {
             {
                 pages.push(page(&name, &mut rng));
             }
-            let mut index = Arc::new(QueryIndex::build(&pages, &config, 1, positions(&pages)));
-            index.registry(&pages);
+            let mut index = Arc::new(QueryIndex::build(
+                &Pages::from(pages.clone()),
+                &config,
+                1,
+                positions(&pages),
+            ));
+            index.registry(&Pages::from(pages.clone()));
             for step in 0..25u64 {
                 let mut changed = Vec::new();
                 for _ in 0..1 + rng.next(3) {
@@ -860,9 +858,16 @@ mod tests {
                 // Read the registry only after some edits: pending keys must
                 // accumulate across unread generations.
                 if rng.next(3) != 0 {
-                    let fresh =
-                        QueryIndex::build(&pages, &config, 2 + step, Arc::clone(&positions));
-                    let (got, want) = (index.registry(&pages), fresh.registry(&pages));
+                    let fresh = QueryIndex::build(
+                        &Pages::from(pages.clone()),
+                        &config,
+                        2 + step,
+                        Arc::clone(&positions),
+                    );
+                    let (got, want) = (
+                        index.registry(&Pages::from(pages.clone())),
+                        fresh.registry(&Pages::from(pages.clone())),
+                    );
                     assert_eq!(
                         got.rows(),
                         want.rows(),

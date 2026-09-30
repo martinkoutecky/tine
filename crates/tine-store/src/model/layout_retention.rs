@@ -12,7 +12,8 @@
 //! (it must be deeper than its parent and no deeper than its previous sibling);
 //! then its lines are re-based as a unit onto a valid prefix.
 //!
-//! Cost: two parses of the page (three, plus a full serialization, when the
+//! Cost: borrows the caller's single old-source parse; one output parse (two,
+//! plus a full serialization, when the
 //! DTO itself does not round-trip) and an LCS over the changed middle of the
 //! pre-order block sequence (common prefix and suffix are trimmed first),
 //! capped at 4,000,000 table cells (about 16 MB); a larger middle skips the
@@ -38,24 +39,29 @@ use super::line_endings;
 /// (e.g. blocks after an unterminated code fence re-parse as fence text), `Some`
 /// means the output re-parses equal to what the whole-page serialization
 /// re-parses to, so it has the meaning the fallback would have written, which
-/// is also not `doc`. Pure. Cost: two parses of the page (three plus a full
+/// is also not `doc`. Returns the parsed output with the bytes for equivalence
+/// checks. Pure. Cost: borrows the old document; one output parse (two plus a full
 /// serialization when the first check fails) and an LCS over the changed middle
 /// of the pre-order block sequence, O(a·b) with a `u32` table, skipped above
 /// 4,000,000 cells (about 16 MB).
-pub(super) fn serialize(doc: &Document, source: &str, opts: &SerializeOpts) -> Option<String> {
+pub(super) fn serialize(
+    doc: &Document,
+    source: &str,
+    old: &Document,
+    opts: &SerializeOpts,
+) -> Option<(String, Document)> {
     if doc.roots.is_empty() && doc.pre_block.is_none() {
         return None;
     }
-    let old = doc::parse(source);
     let (lines, ends) = line_endings::split(source);
-    let olds = map_old_blocks(&old, &lines)?;
+    let olds = map_old_blocks(old, &lines)?;
     let mut news = Vec::new();
     flatten(&doc.roots, &mut news);
     let (keep, hint) = match_blocks(&olds, &news);
 
     let region = olds.first().map_or(lines.len(), |o| o.start);
     let mut out: Vec<(String, Option<usize>)> = Vec::new();
-    emit_preamble(&old, doc, &lines, region, opts, &mut out);
+    emit_preamble(old, doc, &lines, region, opts, &mut out);
     let mut emitter = Emitter {
         lines: &lines,
         olds: &olds,
@@ -88,13 +94,18 @@ pub(super) fn serialize(doc: &Document, source: &str, opts: &SerializeOpts) -> O
     }
     // Safety net: the reused lines must re-parse to exactly the DTO, or a
     // neighbour's layout changed its meaning.
-    let reparsed = doc::parse(&result);
+    let reparsed = super::parse_doc(std::path::Path::new("new.md"), &result);
     if reparsed.pre_block == doc.pre_block && reparsed.roots == doc.roots {
-        return Some(result);
+        return Some((result, reparsed));
     }
     // A DTO that cannot round-trip at all (e.g. blocks after an unterminated
     // fence) keeps this layout only when it means what a full rebuild means.
-    (reparsed == doc::parse(&doc::serialize_with(doc, opts))).then_some(result)
+    (reparsed
+        == super::parse_doc(
+            std::path::Path::new("new.md"),
+            &doc::serialize_with(doc, opts),
+        ))
+    .then_some((result, reparsed))
 }
 
 /// An old block's pre-order position and its physical lines.

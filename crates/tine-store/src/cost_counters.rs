@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static READDIR: AtomicU64 = AtomicU64::new(0);
 static FULL_READS: AtomicU64 = AtomicU64::new(0);
+static OLD_SOURCE_PARSES: AtomicU64 = AtomicU64::new(0);
 static PARSES: AtomicU64 = AtomicU64::new(0);
 static CORPUS: AtomicU64 = AtomicU64::new(0);
 static FSYNCS: AtomicU64 = AtomicU64::new(0);
@@ -11,6 +12,7 @@ static FILES_WRITTEN: AtomicU64 = AtomicU64::new(0);
 static SNAPSHOT_REBUILDS: AtomicU64 = AtomicU64::new(0);
 static SNAPSHOT_NANOS: AtomicU64 = AtomicU64::new(0);
 static MEMO_PAGE_PROBES: AtomicU64 = AtomicU64::new(0);
+static SHARED_TREE_NODE_COPIES: AtomicU64 = AtomicU64::new(0);
 static CACHE_PAGE_COPIES: AtomicU64 = AtomicU64::new(0);
 static ICON_PAGE_PROBES: AtomicU64 = AtomicU64::new(0);
 static SIGNATURE_BLOCK_PROBES: AtomicU64 = AtomicU64::new(0);
@@ -28,6 +30,8 @@ pub struct Counts {
     pub full_reads: u64,
     /// Page parses.
     pub parses: u64,
+    /// Old-source document parses during save preparation.
+    pub old_source_parses: u64,
     /// Owned corpus constructions.
     pub corpus: u64,
     /// File and parent directory sync calls.
@@ -42,7 +46,9 @@ pub struct Counts {
     pub snapshot_nanos: u64,
     /// Page slots inspected while carrying query memos across a save.
     pub memo_page_probes: u64,
-    /// Page slots copied by cache mutation while a snapshot holds the vector.
+    /// Shared collection nodes copied along edited tree paths.
+    pub shared_tree_node_copies: u64,
+    /// Changed page values copied by cache mutation.
     pub cache_page_copies: u64,
     /// Page slots inspected while answering icon requests.
     pub icon_page_probes: u64,
@@ -66,6 +72,7 @@ pub fn reset() {
         &READDIR,
         &FULL_READS,
         &PARSES,
+        &OLD_SOURCE_PARSES,
         &CORPUS,
         &FSYNCS,
         &BYTES_WRITTEN,
@@ -74,6 +81,7 @@ pub fn reset() {
         &SNAPSHOT_NANOS,
         &MEMO_PAGE_PROBES,
         &CACHE_PAGE_COPIES,
+        &SHARED_TREE_NODE_COPIES,
         &ICON_PAGE_PROBES,
         &SIGNATURE_BLOCK_PROBES,
         &QUERY_FACTS_COPIES,
@@ -92,6 +100,7 @@ pub fn snapshot() -> Counts {
         readdir: READDIR.load(Ordering::Relaxed),
         full_reads: FULL_READS.load(Ordering::Relaxed),
         parses: PARSES.load(Ordering::Relaxed),
+        old_source_parses: OLD_SOURCE_PARSES.load(Ordering::Relaxed),
         corpus: CORPUS.load(Ordering::Relaxed),
         fsyncs: FSYNCS.load(Ordering::Relaxed),
         bytes_written: BYTES_WRITTEN.load(Ordering::Relaxed),
@@ -100,6 +109,7 @@ pub fn snapshot() -> Counts {
         snapshot_nanos: SNAPSHOT_NANOS.load(Ordering::Relaxed),
         memo_page_probes: MEMO_PAGE_PROBES.load(Ordering::Relaxed),
         cache_page_copies: CACHE_PAGE_COPIES.load(Ordering::Relaxed),
+        shared_tree_node_copies: SHARED_TREE_NODE_COPIES.load(Ordering::Relaxed),
         icon_page_probes: ICON_PAGE_PROBES.load(Ordering::Relaxed),
         signature_block_probes: SIGNATURE_BLOCK_PROBES.load(Ordering::Relaxed),
         query_facts_copies: QUERY_FACTS_COPIES.load(Ordering::Relaxed),
@@ -117,6 +127,9 @@ pub(crate) fn full_read() {
 }
 pub(crate) fn parse() {
     PARSES.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn old_source_parse() {
+    OLD_SOURCE_PARSES.fetch_add(1, Ordering::Relaxed);
 }
 pub(crate) fn corpus() {
     CORPUS.fetch_add(1, Ordering::Relaxed);
@@ -137,6 +150,9 @@ pub(crate) fn snapshot_elapsed(duration: std::time::Duration) {
 /// Add count to the process-global relaxed-atomic probe total.
 pub(crate) fn memo_page_probes(count: u64) {
     MEMO_PAGE_PROBES.fetch_add(count, Ordering::Relaxed);
+}
+pub(crate) fn shared_tree_node_copy() {
+    SHARED_TREE_NODE_COPIES.fetch_add(1, Ordering::Relaxed);
 }
 pub(crate) fn cache_page_copies(count: u64) {
     CACHE_PAGE_COPIES.fetch_add(count, Ordering::Relaxed);

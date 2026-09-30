@@ -17,7 +17,9 @@
 //! cannot exclude another process replacing a file between check and rename.
 //! Changed writes publish before returning. A changed page write or read can
 //! also scan metadata for all P page and journal files; the first publication
-//! can wait for the graph-wide parse. Keep the caller's unsaved edits on a
+//! can wait for the graph-wide parse. A loaded view shares untouched page and
+//! metadata trees; publishing one edited page patches its blocks and affected
+//! names with O(log P) tree updates. Keep the caller's unsaved edits on a
 //! refusal. Multi-file commit is not crash atomic.
 //!
 //! `Store::scan_refresh` compares file modification time and length, so a
@@ -291,168 +293,21 @@ struct FeedState {
     closed: bool,
 }
 
+use crate::model::persistent::{EntryList, Map as SharedMap};
+
 struct Snapshot {
     graph: Arc<ReadSnapshot>,
     rev: GraphRev,
     cache_generation: u64,
     config: ConfigState,
     journal_format: JournalFormat,
-    list: Arc<Vec<PageEntry>>,
-    claimants: Arc<HashMap<(PageKind, String), Vec<PageEntry>>>,
-    name_by_path: Arc<HashMap<PathBuf, (PageKind, String)>>,
+    list: Arc<EntryList>,
+    claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
+    name_by_path: Arc<SharedMap<PathBuf, (PageKind, String)>>,
     unreadable: Arc<Vec<(FileId, String)>>,
 }
 
-impl Snapshot {
-    fn capture(
-        graph: &Graph,
-        config: &RwLock<ConfigState>,
-        old: Option<&Snapshot>,
-        files: &[(FileId, ChangeKind, Option<FileRev>)],
-        config_changed: bool,
-        rev: GraphRev,
-    ) -> Self {
-        // The publication caller holds the store writer lock. A load worker
-        // publishes only after its initial parse has finished.
-        graph.with_pages(|_| ());
-        let config = config.read().unwrap().clone();
-        let journal_format = graph.current_journal_format();
-        let cache_generation = graph.cache_generation();
-        let changed_names: Vec<_> = files
-            .iter()
-            .filter_map(|(id, kind, _)| {
-                let path = graph.root.join(id.as_str());
-                if !crate::model::graph_text_eligible(&graph.root, &path, &graph.current_config())
-                    || !matches!(
-                        kind,
-                        ChangeKind::Created | ChangeKind::Modified | ChangeKind::Removed
-                    )
-                {
-                    return None;
-                }
-                let entry = graph.entry_for_path(&path)?;
-                if *kind == ChangeKind::Modified && entry.kind == PageKind::Journal {
-                    return None;
-                }
-                let old_name = old.and_then(|snapshot| snapshot.name_by_path.get(&path));
-                if *kind == ChangeKind::Modified
-                    && old_name.is_some_and(|(old_kind, old_name)| {
-                        *old_kind == entry.kind && *old_name == entry.name
-                    })
-                {
-                    return None;
-                }
-                Some((*kind, entry))
-            })
-            .collect();
-        let name_set_changed = config_changed || old.is_none() || !changed_names.is_empty();
-        let (list, claimants) = if config_changed || old.is_none() {
-            let (list, claimants) = graph.snapshot_name_index();
-            (list, Arc::new(claimants))
-        } else if !changed_names.is_empty() {
-            let previous = old.expect("name index from old generation");
-            let mut list = Arc::clone(&previous.list);
-            let mut claimants = Arc::clone(&previous.claimants);
-            for (kind, entry) in changed_names {
-                let path = entry.path.clone();
-                let buckets = Arc::make_mut(&mut claimants);
-                if let Some((old_kind, old_name)) = previous.name_by_path.get(&path) {
-                    let old_key = (*old_kind, tine_core::refs::page_key(old_name));
-                    if let Some(bucket) = buckets.get_mut(&old_key) {
-                        bucket.retain(|candidate| candidate.path != path);
-                        if bucket.is_empty() {
-                            buckets.remove(&old_key);
-                        }
-                    }
-                }
-                if kind != ChangeKind::Removed {
-                    let key = (entry.kind, tine_core::refs::page_key(&entry.name));
-                    let bucket = buckets.entry(key).or_default();
-                    bucket.push(entry.clone());
-                    bucket.sort_by(|a, b| {
-                        crate::model::compare_page_claimants(
-                            a,
-                            b,
-                            &journal_format,
-                            config.config.file_name_format,
-                        )
-                    });
-                }
-                let list = Arc::make_mut(&mut list);
-                list.retain(|candidate| candidate.path != path);
-                if entry.kind == PageKind::Journal && entry.date_key.is_some() {
-                    list.retain(|candidate| {
-                        candidate.kind != PageKind::Journal || candidate.date_key != entry.date_key
-                    });
-                    if let Some(winner) = buckets
-                        .get(&(entry.kind, tine_core::refs::page_key(&entry.name)))
-                        .and_then(|bucket| bucket.first())
-                    {
-                        list.push(winner.clone());
-                    }
-                } else if kind != ChangeKind::Removed {
-                    list.push(entry);
-                }
-            }
-            (list, claimants)
-        } else {
-            let old = old.expect("name index from old generation");
-            (Arc::clone(&old.list), Arc::clone(&old.claimants))
-        };
-        let name_by_path = if name_set_changed {
-            Arc::new(
-                list.iter()
-                    .map(|entry| (entry.path.clone(), (entry.kind, entry.name.clone())))
-                    .collect(),
-            )
-        } else {
-            Arc::clone(&old.expect("path names from old generation").name_by_path)
-        };
-        let changed_paths: Vec<String> = files
-            .iter()
-            .filter(|(id, _, _)| {
-                let root = &graph.root;
-                crate::model::graph_text_eligible(
-                    root,
-                    &root.join(id.as_str()),
-                    &graph.current_config(),
-                )
-            })
-            .map(|(id, _, _)| id.as_str().to_owned())
-            .collect();
-        let evaluator = if let Some(old) =
-            old.filter(|old| old.cache_generation == cache_generation && !config_changed)
-        {
-            Arc::clone(&old.graph)
-        } else {
-            let evaluator = ReadSnapshot::capture(
-                graph,
-                (*config.config).clone(),
-                Arc::clone(&list),
-                old.filter(|_| !config_changed)
-                    .map(|old| old.graph.as_ref()),
-                &changed_paths,
-            );
-            if !name_set_changed {
-                if let Some(old) = old {
-                    evaluator.carry_memos_from(&old.graph, &changed_paths);
-                }
-            }
-            Arc::new(evaluator)
-        };
-        Self {
-            graph: evaluator,
-            rev,
-            cache_generation,
-            config,
-            journal_format,
-            list,
-            claimants,
-            name_by_path,
-            unreadable: graph.unreadable_pages(),
-        }
-    }
-}
+mod snapshot;
 
 impl ChangeFeed {
     /// Record the watcher's live-notification state. A new refusal message is
@@ -1937,7 +1792,10 @@ impl Store {
                 .is_some_and(|snapshot| {
                     snapshot
                         .claimants
-                        .get(&(entry.kind, tine_core::refs::page_key(&entry.name)))
+                        .get(&(
+                            entry.kind == PageKind::Journal,
+                            tine_core::refs::page_key(&entry.name),
+                        ))
                         .is_some_and(|claimants| {
                             claimants.iter().any(|claimant| claimant.path == path)
                         })
@@ -2714,8 +2572,8 @@ pub struct WholeGraph {
     unreadable: Arc<Vec<(FileId, String)>>,
     pub(crate) config: ConfigState,
     journal_format: JournalFormat,
-    pub(crate) list: Arc<Vec<PageEntry>>,
-    claimants: Arc<HashMap<(PageKind, String), Vec<PageEntry>>>,
+    pub(crate) list: Arc<EntryList>,
+    claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
 }
 
 fn bounded(result: BoundedRefGroups, what: Budget) -> Result<Arc<Vec<RefGroup>>, QueryError> {
@@ -2820,14 +2678,17 @@ impl WholeGraph {
         let mut page_claimed_names = HashSet::new();
         for page in self.list.iter() {
             let key = tine_core::refs::page_key(&page.name);
-            if !visited.insert((page.kind, key.clone())) {
+            if !visited.insert((page.kind == PageKind::Journal, key.clone())) {
                 continue;
             }
             // One entry per spelling, each with the same target `resolve`
             // gives: the bucket's first claimant, then every other claimant.
             let mut names: Vec<String> = Vec::new();
             let mut ids: Vec<PageId> = Vec::new();
-            if let Some(claimants) = self.claimants.get(&(page.kind, key.clone())) {
+            if let Some(claimants) = self
+                .claimants
+                .get(&(page.kind == PageKind::Journal, key.clone()))
+            {
                 for claimant in claimants {
                     if let Some(id) = &claimant.rel_path {
                         if !names.contains(&claimant.name) {
@@ -2980,7 +2841,10 @@ impl WholeGraph {
         };
         let entries = self
             .claimants
-            .get(&(kind, tine_core::refs::page_key(&lookup)))
+            .get(&(
+                kind == PageKind::Journal,
+                tine_core::refs::page_key(&lookup),
+            ))
             .cloned()
             .unwrap_or_default();
         if !entries.is_empty() {
@@ -3303,9 +3167,10 @@ impl WholeGraph {
         )
     }
 
-    /// Counts keyed by persisted `id::` values; up to O(B) over this view.
+    /// Counts keyed by persisted `id::` values. The first read materializes
+    /// O(distinct referenced ids) entries; later reads clone that cached map.
     pub fn block_ref_counts(&self) -> Arc<HashMap<String, usize>> {
-        self.graph.block_ref_counts()
+        self.graph.public_block_ref_counts()
     }
 
     /// `[[` completion over pages, journals, aliases and referenced names.
@@ -3444,9 +3309,9 @@ impl WholeGraph {
         crate::query::templates(&self.graph)
     }
 
-    /// Icons for requested names, O(names) from the captured view. Initial
-    /// publication and edits to icon or alias properties rebuild the O(P)
-    /// icon index; ordinary page edits carry it forward.
+    /// Icons for requested names from captured per-name trees, O(names log P
+    /// + reachable alias rows). Initial publication builds O(P) rows; later
+    /// publications patch only the changed page's icon and alias rows.
     pub fn page_icons(&self, names: &[String]) -> HashMap<String, String> {
         self.graph.page_icons(names)
     }

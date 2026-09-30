@@ -425,30 +425,8 @@ fn sorted_alias_owners(
         .collect()
 }
 
-pub(crate) type RealPageNames = std::collections::HashMap<String, (std::path::PathBuf, String)>;
-
-pub(crate) fn real_page_names(graph: &impl GraphRead) -> std::sync::Arc<RealPageNames> {
-    if let Some(indexed) = graph.reference_real_page_names() {
-        return indexed;
-    }
-    std::sync::Arc::new(graph.with_pages(|pages| {
-        let mut real = RealPageNames::new();
-        for (entry, _) in pages {
-            let key = refs::page_key(&entry.name);
-            match real.get_mut(&key) {
-                Some((winner_path, winner_name)) if entry.path < *winner_path => {
-                    *winner_path = entry.path.clone();
-                    *winner_name = entry.name.clone();
-                }
-                Some(_) => {}
-                None => {
-                    real.insert(key, (entry.path.clone(), entry.name.clone()));
-                }
-            }
-        }
-        real
-    }))
-}
+mod page_names;
+pub(crate) use page_names::{real_page_names, RealPageNames};
 
 /// Resolve a requested page/alias to its canonical display name, the complete
 /// alias-connected component, and the real page to exclude as self. The
@@ -2774,7 +2752,9 @@ mod tests {
             let snapshot = crate::model::ReadSnapshot::capture(
                 &graph,
                 tine_core::config::Config::parse(edn),
-                graph.list_pages_shared(),
+                std::sync::Arc::new(crate::model::persistent::EntryList::from(
+                    graph.list_pages_shared().as_slice(),
+                )),
                 None,
                 &[],
             );

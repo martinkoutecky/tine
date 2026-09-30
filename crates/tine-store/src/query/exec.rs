@@ -268,7 +268,7 @@ fn cost(filter: &Filter) -> u8 {
 /// other page by the mtime captured with the page table; oldest when unknown.
 fn recency(
     entry: &PageEntry,
-    mtimes: &std::collections::HashMap<String, std::time::SystemTime>,
+    mtimes: &crate::model::persistent::Map<String, std::time::SystemTime>,
 ) -> i64 {
     if let Some(day) = entry.date_key {
         return JournalDate::from_ordinal(day).to_days() * 86_400;
