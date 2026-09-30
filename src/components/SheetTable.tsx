@@ -64,7 +64,8 @@ import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
 import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
 import { compareSortKeys, measuredGridTracks, nextQuerySort, queryColumnFieldId, queryColumnName, querySortFieldName, reorderedQueryColumns,
   SCHEMA_PROP_TYPES, type SchemaMenuType, type SortKey, type SortState } from "../sheet/tablePresentation";
-import type { ViewSettings } from "../editor/queryIr";
+import { querySummary, type QueryAggFn } from "../editor/queryAggregate";
+import type { QueryStatistics, ViewSettings } from "../editor/queryIr";
 import { FieldValueView } from "./SheetFieldValue";
 import { displayFieldValue, isEnumFieldType } from "../sheet/cellPresentation";
 import { fieldIdsForRecords, recordFacets, rowRaw, tableFieldOrder, tableRowTitle } from "../sheet/tableFields";
@@ -81,7 +82,9 @@ type FieldHeaderDrop = { field: FieldId; before: boolean };
 const BUILTIN_FIELDS = new Set<FieldId>(["state", "priority", "scheduled", "deadline", "tags", "page"]);
 const FIELD_HEADER_DRAG_THRESHOLD_PX = 4;
 /** Render children or query rows as a table. A query display controller owns
- * saved columns and sorts; without it headers keep their local arrangement.
+ * saved columns, sorts and aggregates; without it headers keep their local arrangement.
+ * Query totals format supplied backend statistics through querySummary, never
+ * rendered rows. Missing statistics display no total; they are not zero.
  * Resizing reads one owner's widths and writes one property through document
  * on commit; row and field work scales with the supplied table, never a graph. */
 export function SheetTable(props: {
@@ -91,7 +94,7 @@ export function SheetTable(props: {
   addRow?: () => void | Promise<void>;
   addRowLabel?: string;
   schemaPage?: string;
-  queryDisplay?: { view: ViewSettings; apply: (next: ViewSettings) => void };
+  queryDisplay?: { view: ViewSettings; statistics?: QueryStatistics; statisticsView?: ViewSettings; apply: (next: ViewSettings) => void };
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
   let tableRef: HTMLDivElement | undefined;
@@ -235,7 +238,40 @@ export function SheetTable(props: {
     });
     return tracks.join(" ");
   });
-  const hasAggregates = createMemo(() => config().colAggregates.size > 0);
+  const queryAggregateFn = (field: FieldId): QueryAggFn | null => {
+    const key = queryColumnName(field);
+    if (key === null) return null;
+    return (props.queryDisplay?.statisticsView?.aggregates ?? props.queryDisplay?.view.aggregates ?? []).find(([k]) => k === key)?.[1] ?? null;
+  };
+  const setQueryAggregate = (field: FieldId, fn: QueryAggFn | null) => {
+    const control = props.queryDisplay;
+    const key = queryColumnName(field);
+    if (!control || key === null) return;
+    // Edited IN PLACE. The list is ordered and repeats are meaningful, so a
+    // change to one column's function must not reshuffle the others.
+    const entries = [...(control.view.aggregates ?? [])];
+    const at = entries.findIndex(([k]) => k === key);
+    if (fn === null) {
+      if (at < 0) return;
+      entries.splice(at, 1);
+    } else if (at >= 0) entries[at] = [key, fn];
+    else entries.push([key, fn]);
+    control.apply({ ...control.view, aggregates: entries });
+  };
+  /** The value, through the ONE query summary — never the sheet's `aggregate`,
+   *  whose vocabulary has no `avg` and whose numbers are its own. */
+  const queryAggregateText = (field: FieldId, fn: QueryAggFn): string => {
+    const key = queryColumnName(field);
+    if (key === null) return "";
+    const statistics = props.queryDisplay?.statistics;
+    const at = statistics?.aggregates.findIndex(([field, op]) => field === key && op === fn) ?? -1;
+    return querySummary({ statistics })?.overall[at]?.text ?? "";
+  };
+  const hasAggregates = createMemo(() =>
+    props.queryDisplay
+      ? fields().some((field) => queryAggregateFn(field) !== null)
+      : config().colAggregates.size > 0,
+  );
   const footerPinned = createMemo(() => aggregateFooterPinned(props.ownerId));
   const showFooter = createMemo(() => hasAggregates() || footerPinned());
   const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned()));
@@ -386,6 +422,13 @@ export function SheetTable(props: {
   const sortArrow = (col: number) => {
     const s = sort() ?? persistedSort();
     return s?.col === col ? (s.dir > 0 ? " ▲" : " ▼") : "";
+  };
+
+  const tableOnlySortLabel = () => {
+    const current = sort();
+    if (props.rowSource !== "query" || !current) return null;
+    const field = columns()[current.col];
+    return `Table-only sort: ${field === "title" ? "Title" : fieldLabel(field)}`;
   };
 
   const createSchemaHome = (): SchemaHome | null => {
@@ -856,6 +899,10 @@ export function SheetTable(props: {
       >
         <div class="sheet-cell sheet-header-cell sheet-title-header sheet-sticky-left" onClick={() => sortHeader(0)}>
           Block{sortArrow(0)}
+          <Show when={tableOnlySortLabel()}>
+            {(label) => <button type="button" class="sheet-table-only-sort" title="Clear table-only sort"
+              onClick={(event) => { event.stopPropagation(); setSort(null); }}>{label()} ×</button>}
+          </Show>
           <Show when={filterError()}>
             {(err) => (
               <span class="sheet-filter-error" title={err()}>
@@ -1065,9 +1112,14 @@ export function SheetTable(props: {
               <SheetAggregateFooterCell
                 ownerId={props.ownerId}
                 columnKey={field}
-                fn={config().colAggregates.get(field) ?? null}
-                values={sortedRows().map((row) => rowFieldValue(row, field))}
-                showEmpty={footerPinned()}
+                fn={props.queryDisplay ? null : config().colAggregates.get(field) ?? null}
+                query={props.queryDisplay && queryColumnName(field) !== null ? {
+                  fn: queryAggregateFn(field),
+                  get text() { const fn = queryAggregateFn(field); return fn ? queryAggregateText(field, fn) : ""; },
+                  set: (fn) => setQueryAggregate(field, fn),
+                } : undefined}
+                values={props.queryDisplay ? [] : sortedRows().map((row) => rowFieldValue(row, field))}
+                showEmpty={footerPinned() && (!props.queryDisplay || queryColumnName(field) !== null)}
               />
             )}
           </For>
