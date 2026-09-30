@@ -17,7 +17,7 @@ export interface QueryDisplayControl {
  * Formats supplied backend statistics through querySummary, never table rows.
  * Missing/unmatched statistics yield blank text; backend markers stay visible.
  * Edits go through Display and preserve ordered repeated entries. Work is
- * O(supplied aggregates), with no graph read, query run or persistence door.
+ * O(supplied statistics cells), with no graph read, query run or persistence door.
  * Exemplar for I-12: docs/contracts/query-table-footer.md. */
 export function queryTableFooter(control: QueryDisplayControl | undefined, field: FieldId): QueryFooterCell | undefined {
   if (!control || !field.startsWith("prop:")) return undefined;
