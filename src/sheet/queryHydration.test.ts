@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const backendMock = vi.hoisted(() => ({ getPage: vi.fn() }));
+const backendMock = vi.hoisted(() => ({ getPage: vi.fn(), getPageByPath: vi.fn() }));
 vi.mock("../backend", () => ({ backend: () => backendMock }));
 
 import { pageByName, resetStore } from "../document";
@@ -30,6 +30,7 @@ beforeEach(() => {
   setToasts([]);
   resetStore();
   backendMock.getPage.mockReset();
+  backendMock.getPageByPath.mockReset();
   backendMock.getPage.mockImplementation(async (name: string, kind: PageKind) => ({
     name,
     kind,
@@ -41,6 +42,45 @@ beforeEach(() => {
 });
 
 describe("query sheet hydration identity", () => {
+  it("never replaces a loaded physical twin, even when both are ordinary pages", async () => {
+    loadSingle({ ...page("Twin", "page"), id: "pages/Twin.md" });
+    backendMock.getPageByPath.mockResolvedValue({ ...page("Twin", "page"), id: "pages/other.md" });
+    const source = { ...group("Twin", "page", "other-row"), path: "pages/other.md" };
+    await hydrateVisibleQueryPages([{ id: "other-row", page: "Twin" }], [source]);
+    expect(pageByName("Twin")?.id).toBe("pages/Twin.md");
+    expect(backendMock.getPageByPath).not.toHaveBeenCalled();
+  });
+
+  it("preserves a physical twin installed while a path read is pending", async () => {
+    let finish!: (dto: PageDto) => void;
+    backendMock.getPageByPath.mockImplementation(() => new Promise<PageDto>((resolve) => { finish = resolve; }));
+    const source = { ...group("Twin", "page", "other-row"), path: "pages/other.md" };
+    const pending = hydrateVisibleQueryPages([{ id: "other-row", page: "Twin" }], [source]);
+    loadSingle({ ...page("Twin", "page"), id: "pages/Twin.md" });
+    const dto = { ...page("Twin", "page"), id: "pages/other.md" };
+    finish(dto);
+    await pending;
+    expect(pageByName("Twin")?.id).toBe("pages/Twin.md");
+  });
+
+  it("leaves same-kind path twins DTO-only when both are visible", async () => {
+    const groups = [
+      { ...group("Twin", "page", "a"), path: "pages/a.md" },
+      { ...group("Twin", "page", "b"), path: "pages/b.md" },
+    ];
+    await hydrateVisibleQueryPages([{ id: "a", page: "Twin" }, { id: "b", page: "Twin" }], groups);
+    expect(backendMock.getPageByPath).not.toHaveBeenCalled();
+    expect(pageByName("Twin")).toBeUndefined();
+  });
+
+  it("loads the exact path into an empty name slot", async () => {
+    backendMock.getPageByPath.mockResolvedValue({ ...page("Twin", "page"), id: "pages/exact.md" });
+    const source = { ...group("Twin", "page", "exact"), path: "pages/exact.md" };
+    await hydrateVisibleQueryPages([{ id: "exact", page: "Twin" }], [source]);
+    expect(backendMock.getPageByPath).toHaveBeenCalledWith("pages/exact.md");
+    expect(pageByName("Twin")?.id).toBe("pages/exact.md");
+  });
+
   it("reports a failed visible-page hydration with fixed text", async () => {
     backendMock.getPage.mockRejectedValueOnce(new Error("private graph path"));
     await hydrateVisibleQueryPages([{ id: "missing", page: "Missing" }], [group("Missing", "page", "missing")]);
