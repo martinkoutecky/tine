@@ -101,6 +101,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Failed reads stay visible** (OG-B-FAIL): page and reference refreshes keep their last successful data,
+  journal-feed and session reads report failures, template creation refuses a failed name check or a read-only block,
+  and the journal-template picker offers Retry. Quick Capture now shows block-action feedback with copyable errors.
+
 - **Faster graph startup and first search** (og-P1). Journal-first reads avoid ordinary-page title discovery,
   completed claimant discovery is reused by direct reads, and a search without page results skips page-property hydration.
   Startup graph loading begins in the background while the frontend starts; open failures still reach the Welcome error card.

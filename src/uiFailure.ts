@@ -12,9 +12,25 @@ export type UiFailureFamily =
   | "audio-play"
   | "clipboard-association"
   | "window-state"
-  | "query-hydration";
+  | "query-hydration"
+  | "page-inventory"
+  | "session-read"
+  | "template-read"
+  | "template-write"
+  | "journal-feed"
+  | "block-counts"
+  | "block-resolution"
+  | "backup-read";
 
 const MESSAGES: Record<UiFailureFamily, string> = {
+  "page-inventory": "Couldn't refresh the page list. The last loaded list is kept.",
+  "session-read": "Couldn't load the saved session. The current workspace is kept.",
+  "template-read": "Couldn't load the template list. Try again before creating a template.",
+  "template-write": "Couldn't create the template. This block is no longer writable.",
+  "journal-feed": "Couldn't load more journals. Try again.",
+  "block-counts": "Couldn't refresh block reference counts. The last loaded counts are kept.",
+  "block-resolution": "Couldn't resolve block references. Try again.",
+
   "external-link": "Couldn't open the link.",
   "capture-preference": "Couldn't load the capture setting.",
   "audio-load": "Couldn't load this audio file.",

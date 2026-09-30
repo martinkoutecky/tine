@@ -1,3 +1,4 @@
+import { reportUiFailure } from "./uiFailure";
 import { createEffect, createMemo, createRoot, createSignal, on } from "solid-js";
 import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
@@ -65,7 +66,8 @@ export async function refreshPageIndex(): Promise<void> {
     const result = await readOwned(owner, backend().pageInventory());
     if (result.kind === "stale") return;
     inventory = result.value;
-  } catch {
+  } catch (error) {
+    if (owner()) reportUiFailure("page-inventory", error);
     return;
   }
   const rev = BigInt(inventory.rev);

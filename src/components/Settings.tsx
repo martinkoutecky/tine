@@ -1,3 +1,5 @@
+import { ResourceFailure } from "./ResourceFailure";
+import { reportUiFailure } from "../uiFailure";
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { DiagnosticsTab } from "./DiagnosticsTab";
 import { PluginsTab } from "./PluginsTab";
@@ -539,16 +541,18 @@ function AppearanceTab(props: { search: string }): JSX.Element {
 // to the chosen template's block. Uses existing concepts only: templates + the
 // config pointer. No catalogue, no built-in default.
 function JournalTemplateField(): JSX.Element {
-  const [templatesResource] = createResource(() => backend().listTemplates());
-  // An unreadable template list offers no templates; the field still shows and
-  // still accepts the configured pointer.
+  const [templatesResource, { refetch }] = createResource(async () => {
+    try { return await backend().listTemplates(); }
+    catch (error) { reportUiFailure("template-read", error); throw error; }
+  });
+  // Failed discovery cannot establish that a configured template is missing.
   const templates = () => readOr(templatesResource, undefined, "journal templates");
   const current = () => graphMeta()?.default_journal_template ?? "";
   const list = () => templates() ?? [];
   const selected = () => list().find((t) => t.name === current());
   // A configured name that no longer matches a template (stale pointer) — surface
   // it so the dropdown reflects config rather than silently showing "(none)".
-  const missing = () => current() !== "" && !list().some((t) => t.name === current());
+  const missing = () => templatesResource.error === undefined && !templatesResource.loading && current() !== "" && !list().some((t) => t.name === current());
   return (
     <Field
       label="New-journal template"
@@ -561,14 +565,16 @@ function JournalTemplateField(): JSX.Element {
       }
     >
       <div class="settings-jtmpl">
+        <ResourceFailure of={templatesResource} what="journal templates" onRetry={() => void refetch()} />
         <select
           class="settings-select"
           value={current()}
+          disabled={templatesResource.error !== undefined || templatesResource.loading}
           onChange={(e) => setJournalTemplate(e.currentTarget.value || null)}
         >
           <option value="">(none) — blank days</option>
-          <Show when={missing()}>
-            <option value={current()}>{current()} (not found)</option>
+          <Show when={missing() || templatesResource.error !== undefined}>
+            <option value={current()}>{current()}{templatesResource.error === undefined ? " (not found)" : " (unavailable)"}</option>
           </Show>
           <For each={list()}>{(t) => <option value={t.name}>{t.name}</option>}</For>
         </select>

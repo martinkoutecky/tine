@@ -1,4 +1,6 @@
-import { createResource, createRoot } from "solid-js";
+import { graphOwner, latestOwner, readOwned } from "./owned";
+import { reportUiFailure } from "./uiFailure";
+import { createEffect, createRoot, createSignal } from "solid-js";
 import { backend } from "./backend";
 import { dataRev, graphEpoch } from "./graphSession";
 import { waitForWarmCache } from "./warmCache";
@@ -10,14 +12,24 @@ import { blockExternalId } from "./document";
 // update together when the graph changes (a new ref is saved → graphEpoch bumps →
 // refetch). Created in its own root: it lives for the app's lifetime by design.
 const countsMap = createRoot(() => {
-  const [counts] = createResource(
-    () => ({ epoch: graphEpoch(), revision: dataRev() }),
-    async ({ epoch }) => {
-      if (!(await waitForWarmCache(epoch))) return {};
-      if (epoch !== graphEpoch()) return {};
-      return backend().getBlockRefCounts().catch(() => ({}) as Record<string, number>);
-    }
-  );
+  const [counts, setCounts] = createSignal<Record<string, number>>({});
+  const scope = {};
+  let heldEpoch = graphEpoch();
+  createEffect(() => {
+    const epoch = graphEpoch();
+    dataRev();
+    if (epoch !== heldEpoch) { heldEpoch = epoch; setCounts({}); }
+    const owner = latestOwner(scope, "counts", graphOwner(() => epoch === graphEpoch()));
+    void (async () => {
+      try {
+        if (!(await waitForWarmCache(epoch)) || !owner()) return;
+        const result = await readOwned(owner, backend().getBlockRefCounts());
+        if (result.kind === "current") setCounts(result.value);
+      } catch (error) {
+        if (owner()) reportUiFailure("block-counts", error);
+      }
+    })();
+  });
   return counts;
 });
 
