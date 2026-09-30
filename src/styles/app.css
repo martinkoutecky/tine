@@ -4294,31 +4294,30 @@ html[data-system-insets="native-viewport"] {
 
 /* ---------------------------------------------------------------- inline */
 
-.page-ref {
-  color: var(--link-color);
+.page-ref, .tag {
   cursor: pointer;
   text-decoration: none;
   position: relative; /* anchor for the hover-peek card (GH #40) */
 }
-
-.page-ref:hover {
-  text-decoration: underline;
-}
+.page-ref { color: var(--link-color); }
+.tag { color: var(--tag-color); }
+.page-ref:hover, .tag:hover { text-decoration: underline; }
 
 .page-ref .bracket {
   color: var(--text-muted);
   opacity: 0.55;
 }
 
-.tag {
-  color: var(--tag-color);
-  cursor: pointer;
-  text-decoration: none;
-  position: relative; /* anchor for the hover-peek card (GH #40) */
+/* Deliberate Martin-approved OG divergence: missing page refs/tags are muted
+   and dotted, but still navigate/create. OG dims only untitled pages. */
+.page-ref-missing {
+  color: var(--text-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
 }
-
-.tag:hover {
-  text-decoration: underline;
+.page-ref-missing:hover {
+  color: var(--link-color);
+  text-decoration: underline dotted;
 }
 
 .external-link {
