@@ -392,9 +392,10 @@ fn query_export_uses_the_graph_leaf_and_reports_missing_assets() {
     };
     let plan = plan_query(&store, &request).unwrap();
     let receipt = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
+    // The receipt reports the Store's resolved root, as master does (verbatim `\\?\` form on Windows).
     assert_eq!(
-        PathBuf::from(&receipt.path),
-        graph.join("published-queries/portable"),
+        fs::canonicalize(&receipt.path).unwrap(),
+        fs::canonicalize(graph.join("published-queries/portable")).unwrap(),
         "I-12: the query action commits through Store into its graph output leaf"
     );
     let wire = serde_json::to_value(&receipt).unwrap();
