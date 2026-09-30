@@ -275,6 +275,34 @@ export function parse_document_json(text, is_org) {
 }
 
 /**
+ * Query EDN reads/splices from the same byte-span reader as native macro_text.
+ * O(source bytes), at most 1 MiB / 128 levels; null refuses unreadable EDN.
+ * Title edits preserve all unrelated bytes. No I/O or graph state.
+ * @param {string} source
+ * @param {string} operation
+ * @param {string} value
+ * @returns {string}
+ */
+export function query_edn_json(source, operation, value) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(operation, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.query_edn_json(ptr0, len0, ptr1, len1, ptr2, len2);
+        deferred4_0 = ret[0];
+        deferred4_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
  * contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
  * ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the

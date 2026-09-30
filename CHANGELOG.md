@@ -106,6 +106,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Query title edits preserve unrelated authored EDN** (og-R4A; UI-OG-R4A-QUERY-TITLE-SPANS). Nested titles and discarded forms stay intact; unreadable options refuse the edit visibly. Option reads and edits share one Rust span reader across native and wasm.
+
 - Sheet field rename preserves ordered query aggregates, including repeated keys, average, whole-result count and unrelated configuration (UI-OG-R3A2-AGGREGATE-RENAME).
 - Starting another PDF export supersedes pending preparation; graph changes and window teardown discard stale output (UI-OG-R3A2-PRINT-SUPERSESSION).
 - Guide explains table-only sort clearing, search Retry and block-picker states, aggregate rename preservation, and Print query-limit refusal.

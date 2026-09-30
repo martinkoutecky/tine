@@ -361,3 +361,27 @@ pub fn search_spans_json(query: &str, remove_accents: bool, text: &str, limit: u
         serde_json::to_string(&spans).unwrap()
     })
 }
+
+#[path = "../../tine-core/src/edn.rs"]
+mod edn;
+#[path = "../../tine-core/src/query_edn.rs"]
+mod query_edn;
+
+/// Query EDN reads/splices from the same byte-span reader as native macro_text.
+/// O(source bytes), at most 1 MiB / 128 levels; null refuses unreadable EDN.
+/// Title edits preserve all unrelated bytes. No I/O or graph state.
+#[wasm_bindgen]
+pub fn query_edn_json(source: &str, operation: &str, value: &str) -> String {
+    match operation {
+        "options" => serde_json::to_string(&query_edn::options(source)).unwrap(),
+        "title" => serde_json::to_string(&query_edn::edit_title(source, value)).unwrap(),
+        "read" => serde_json::to_string(&query_edn::read(source)).unwrap(),
+        "split" => serde_json::to_string(&query_edn::split_trailing_map(source)).unwrap(),
+        "quote" => serde_json::to_string(&edn::to_string(&edn::Edn::Str(source.into()))).unwrap(),
+        "unquote" => {
+            let text = match edn::parse_strict(source) { Some(edn::Edn::Str(text)) => Some(text), _ => None };
+            serde_json::to_string(&text).unwrap()
+        }
+        _ => "null".into(),
+    }
+}

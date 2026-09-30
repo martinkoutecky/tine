@@ -22,6 +22,7 @@ pub mod pdf;
 pub mod projection;
 mod property_line;
 pub mod query;
+pub mod query_edn;
 pub mod query_plan;
 pub mod reference_evidence;
 pub mod refs;

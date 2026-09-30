@@ -5,7 +5,7 @@
 //! follow from that, and this module is the ONE place each is answered (I-12):
 //!
 //! 1. **Where does the trailing options map begin?** [`split_trailing_map`] —
-//!    the W3 transcription of `src/editor/edn.ts:89`, widened to take the input
+//!    the shared span reader for EDN, with a lexical TQL boundary taking the input
 //!    language family so a TQL `'{'` literal and an EDN `"{"` string are both
 //!    protected by the rules of their own grammar. After this wave nothing
 //!    outside `query_parse` splits a query argument.
@@ -162,16 +162,7 @@ fn protected_end(text: &str, at: usize, edn: bool) -> Option<usize> {
 /// Index just past an EDN double-quoted string opening at `at`; end of input if
 /// unterminated. Only `\` escapes the next byte (`edn.ts::strClose`).
 fn edn_string_end(text: &str, at: usize) -> usize {
-    let bytes = text.as_bytes();
-    let mut j = at + 1;
-    while j < bytes.len() {
-        match bytes[j] {
-            b'\\' => j += 2,
-            b'"' => return j + 1,
-            _ => j += 1,
-        }
-    }
-    text.len()
+    crate::query_edn::string_end(text, at).unwrap_or(text.len())
 }
 
 /// Index just past a TQL single-quoted string opening at `at`; end of input if
@@ -226,6 +217,9 @@ pub fn split_trailing_map(argument: &str, family: FormFamily) -> (String, String
     // with the same answerer the parse entry uses for the complete argument.
     if !super::query_source_within_limit(argument) {
         return (argument.to_string(), String::new());
+    }
+    if family == FormFamily::Edn {
+        return crate::query_edn::split_trailing_map(argument);
     }
     let trimmed = argument.trim_end();
     if !trimmed.ends_with('}') {
@@ -443,6 +437,12 @@ pub fn macro_safe(argument: &str, family: FormFamily) -> Result<(), Diagnostic> 
         return refuse(at, "`#{` cannot appear inside a query macro");
     }
     let (_, options) = split_trailing_map(argument, family);
+    if !options.is_empty() && crate::query_edn::options(&options).is_none() {
+        return refuse(
+            argument.len() - options.len(),
+            "unreadable EDN options; the query was not changed",
+        );
+    }
     // With options, the ONE legal `}` is the argument's last byte. Without
     // them, no `}` is legal at all.
     let allowed = (!options.is_empty())
