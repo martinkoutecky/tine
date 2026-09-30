@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildNamespaceTree, namespaceHierarchyRows } from "./Namespace";
+import { buildNamespaceTree, namespaceHierarchyRows, namespaceRows } from "./Namespace";
 
 describe("buildNamespaceTree", () => {
   it("nests pages by '/' segments, ignoring non-namespaced names", () => {
@@ -58,5 +58,25 @@ describe("namespaceHierarchyRows", () => {
 
   it("a plain (non-namespaced) page with no descendants → nothing", () => {
     expect(namespaceHierarchyRows(all, "Other")).toEqual([]);
+  });
+});
+
+
+describe("namespace identity and depth (OG-B-FRONT)", () => {
+  it("merges canonically equivalent ancestors and finds their descendants", () => {
+    const tree = buildNamespaceTree(["Café/one", "Cafe\u0301/two"]);
+    expect(tree).toHaveLength(1);
+    expect(tree[0].children.map(n => n.seg)).toEqual(["one", "two"]);
+    expect(namespaceHierarchyRows(["Cafe\u0301/two"], "Café")).toEqual([["Cafe\u0301", "two"]]);
+  });
+  it("sorts a deep imported namespace without recursion and keeps every level", () => {
+    const tree = buildNamespaceTree([Array(6000).fill("a").join("/")]);
+    let level = tree, count = 0;
+    while (level.length) { count++; level = level[0].children; }
+    expect(count).toBe(6000);
+    const rows = namespaceRows(tree);
+    expect(rows).toHaveLength(6000);
+    expect(rows.at(-1)?.depth).toBe(5999);
+    expect(buildNamespaceTree(Array.from({length: 2000}, (_, i) => `root/${i}`))[0].children).toHaveLength(2000);
   });
 });

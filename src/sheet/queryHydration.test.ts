@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const backendMock = vi.hoisted(() => ({ getPage: vi.fn(), getPageByPath: vi.fn() }));
+const backendMock = vi.hoisted(() => ({ getPage: vi.fn(), getPageByPath: vi.fn(), graphBindingGeneration: () => 1 }));
 vi.mock("../backend", () => ({ backend: () => backendMock }));
 
 import { pageByName, resetStore } from "../document";

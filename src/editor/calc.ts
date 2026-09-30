@@ -64,8 +64,12 @@ const DIVISION_PLACES = 20;
 const MAX_CALC_DIGITS = 10_000;
 const MAX_CALC_LINE_CHARS = 16_000;
 
-function pow10(places: number): bigint {
+function checkPlaces(places: number): void {
   if (!Number.isSafeInteger(places) || places < 0 || places > MAX_CALC_DIGITS) throw new Error("calc result too large");
+}
+
+function pow10(places: number): bigint {
+  checkPlaces(places);
   return TEN ** BigInt(places);
 }
 
@@ -280,6 +284,7 @@ class Decimal {
 
   toExponential(places?: number): string {
     if (!this.isFinite()) return this.toString();
+    if (places !== undefined) checkPlaces(places);
     if (this.sign === 0) {
       const decimals = places === undefined ? "" : places === 0 ? "" : `.${"0".repeat(places)}`;
       return `0${decimals}e+0`;

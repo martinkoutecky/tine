@@ -106,6 +106,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Sheet formulas memoize shared references, reject inherited member names, and refuse excessive field-rename depth without crashing (UI-OG-B-W3-FORMULA-DAG, UI-OG-B-W3-FORMULA-OWN-MEMBERS, UI-OG-B-W3-FORMULA-RENAME-DEPTH).
 
+- Fixed namespace and published-backend identity drift, published search highlights and block-ID lookup, and deeply nested namespace/snapshot handling (OG-B-FRONT).
+- Fixed recursive embed exports, oversized scientific-zero output, rejected registry response cleanup, broad table rendering, and media labels containing a literal percent. Search excerpts and query-macro scans avoid repeated input work (OG-B-FRONT).
 
 - **Exported grids show the same bounded rows their footer totals**, and count their full area against export limits (og B-SHEET).
 
