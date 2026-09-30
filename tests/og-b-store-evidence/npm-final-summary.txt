@@ -1,9 +1,0 @@
-Command: timeout 1500 npm test -- --maxWorkers=4
-Exit: 0 (identical retry after initial six scanner timeouts)
-No Errors line.
- Test Files  292 passed | 2 skipped (294)
-      Tests  2297 passed | 2 skipped (2299)
-   Duration  31.39s (transform 15.82s, setup 5.08s, collect 116.76s, tests 102.28s, environment 9.33s, prepare 28.61s)
- Test Files  256 passed (256)
-      Tests  1966 passed | 3 skipped (1969)
-   Duration  123.14s (transform 17.92s, setup 11.27s, collect 123.98s, tests 116.49s, environment 174.04s, prepare 18.39s)

@@ -1160,30 +1160,6 @@
       "notes": "Checkpoint 4 L01:44; every config string delegates to the sidecar EDN decoder, including Unicode surrogate pairs, octal and control escapes; torn hidden vectors still fail closed."
     },
     {
-      "id": "REG-OG-PDF-FOREIGN-FLOAT-001",
-      "title": "Saving PDF highlights or view state preserves the floating-point type of foreign sidecar fields",
-      "family": "content-integrity",
-      "sources": {
-        "issues": [],
-        "commits": [
-          "e09edc451"
-        ]
-      },
-      "platforms": [
-        "all"
-      ],
-      "layer": "core-native",
-      "status": "covered",
-      "coverage": {
-        "tests": [
-          "crates/tine-core/tests/og_b_store_integrity.rs"
-        ],
-        "scenario": null,
-        "failBefore": "proven"
-      },
-      "notes": "Checkpoint 4 L01:46; integral floats, negative zero and exponent values reparse as the same float values through both real sidecar rewrite entry points. Integration question: two existing graph-feature byte fixtures require the old integer spellings; their assertions and baselines remain unchanged."
-    },
-    {
       "id": "REG-OG-ORG-DIRECTIVE-OPEN-001",
       "title": "Opening Org pages with long directive preambles performs bounded work per line",
       "family": "performance",

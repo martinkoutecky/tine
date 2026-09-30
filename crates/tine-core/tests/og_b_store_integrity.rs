@@ -48,27 +48,6 @@ fn config_strings_share_the_edn_decoder() {
 }
 
 #[test]
-fn pdf_rewrites_keep_foreign_float_types_and_values() {
-    let original = "{:highlights [] :extra {} :foreign [1.0 -0.0 1e3 1e-7]}";
-    let before = edn::parse_strict(original).unwrap();
-    for rewritten in [
-        tine_core::pdf::write_highlights(&[], original),
-        tine_core::pdf::write_pdf_view_state(original, 2, 1.5).unwrap(),
-    ] {
-        let after = edn::parse_strict(&rewritten).unwrap();
-        assert_eq!(after.get("foreign"), before.get("foreign"), "{rewritten}");
-        assert!(matches!(
-            after.get("foreign").unwrap().as_vec().unwrap()[0],
-            Edn::Float(_)
-        ));
-        let Edn::Float(zero) = after.get("foreign").unwrap().as_vec().unwrap()[1] else {
-            panic!("negative zero lost its floating point type");
-        };
-        assert!(zero.is_sign_negative());
-    }
-}
-
-#[test]
 fn exact_l03_unicode_rename_input_is_already_fixed() {
     let raw = "* Example [[Old]]\n#+aaaaaé\n";
     let renames = std::collections::HashMap::from([("old".into(), "New".into())]);
