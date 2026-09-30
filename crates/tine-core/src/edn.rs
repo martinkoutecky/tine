@@ -428,7 +428,9 @@ fn write_edn(e: &Edn, out: &mut String) {
             let _ = write!(out, "{i}");
         }
         Edn::Float(f) => {
-            let _ = write!(out, "{f}");
+            // Debug's shortest representation retains a floating-point marker
+            // for integral values and negative zero, so EDN reparses the type.
+            let _ = write!(out, "{f:?}");
         }
         Edn::Str(s) => {
             out.push('"');

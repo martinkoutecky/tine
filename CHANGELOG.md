@@ -102,6 +102,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Graph settings read their top-level EDN entries and decode authored string escapes consistently (REG-OG-CONFIG-ROOT-READ-001, REG-OG-CONFIG-EDN-ESCAPES-001). PDF highlight and view-state saves preserve foreign floating-point values and types (REG-OG-PDF-FOREIGN-FLOAT-001).
+
 - **Faster graph startup and first search** (og-P1). Journal-first reads avoid ordinary-page title discovery,
   completed claimant discovery is reused by direct reads, and a search without page results skips page-property hydration.
   Startup graph loading begins in the background while the frontend starts; open failures still reach the Welcome error card.
