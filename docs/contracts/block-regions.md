@@ -48,6 +48,8 @@ newline, including the seven manager-approved corpus exceptions.
 Unit cost: no new persisted record, index or transport. Edits are bounded to one
 block; cached optimized edits need zero ownership parses, raw entry points need
 one, and changed debug edits add a preservation reparse. No page/graph parse.
+Publication's format-bearing raw identity lookups currently parse once per call;
+they do not reuse the already-parsed document block's regions.
 
 Guards: `block_region_ratchet.rs` and `blockRegions.guard.test.ts` ratchet existing
 structural recognizers outside the door. Native/wasm parity shares an 800-fixture
