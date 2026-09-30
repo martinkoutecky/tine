@@ -11,7 +11,7 @@ vi.mock("../router", async (original) => ({ ...await original<typeof import("../
 beforeAll(() => initParser());
 afterEach(() => { resetPageIndex(); vi.restoreAllMocks(); document.body.replaceChildren(); });
 
-it("missing refs and tags restyle on alias/create/delete inventory changes without per-link IPC (I-12/I-25)", async () => {
+it("missing refs (never tags) restyle on alias/create/delete inventory changes without per-link IPC (I-12/I-25)", async () => {
   vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);
   const absent: ResolvedPage = { kind: "absent", id: "pages/New.md" };
   const existing: ResolvedPage = { kind: "existing", id: "pages/filename.md", others: [] };
@@ -30,7 +30,7 @@ it("missing refs and tags restyle on alias/create/delete inventory changes witho
   try {
     const links = host.querySelectorAll("a");
     await vi.waitFor(() => expect(links[0].hasAttribute("data-missing-page")).toBe(true));
-    expect(links[1].hasAttribute("data-missing-page")).toBe(true);
+    expect(links[1].hasAttribute("data-missing-page")).toBe(false);
     expect(links[2].hasAttribute("data-missing-page")).toBe(false);
     expect(links[3].hasAttribute("data-missing-page")).toBe(false);
     expect(read).toHaveBeenCalledTimes(calls);
@@ -45,7 +45,7 @@ it("missing refs and tags restyle on alias/create/delete inventory changes witho
       read.mockResolvedValue(inventory(rev, target as ResolvedPage));
       bumpPageInventoryRev();
       await vi.waitFor(() => expect(links[0].hasAttribute("data-missing-page")).toBe(missing));
-      expect(links[1].hasAttribute("data-missing-page")).toBe(missing);
+      expect(links[1].hasAttribute("data-missing-page")).toBe(false);
       await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(calls + rev - 1));
     }
     expect(host.querySelectorAll("a")).toHaveLength(4);

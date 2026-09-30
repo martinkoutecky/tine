@@ -4308,8 +4308,8 @@ html[data-system-insets="native-viewport"] {
   opacity: 0.55;
 }
 
-/* Deliberate Martin-approved OG divergence: missing page refs/tags are muted
-   and dotted, but still navigate/create. OG dims only untitled pages. */
+/* Deliberate Martin-approved OG divergence: missing page refs are muted
+   and dotted, but still navigate/create; tags are exempt. OG dims only untitled pages. */
 [data-missing-page] {
   color: var(--text-muted);
   text-decoration: underline dotted;
