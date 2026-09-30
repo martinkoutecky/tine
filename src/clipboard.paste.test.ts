@@ -471,15 +471,15 @@ describe("clipboard payload insertion and identity validation", () => {
 
   it.each(["md", "org"] as const)("preserves parser-accepted keys and duplicate order when copying from %s", async (sourceFormat) => {
     const raw = sourceFormat === "md"
-      ? "body\nklíč:: hodnota\n@custom:: first\nklíč:: second"
-      : "body\n:PROPERTIES:\n:klíč: hodnota\n:@custom: first\n:klíč: second\n:END:";
+      ? "body\nklíč:: hodnota\n@custom:: first  \nklíč:: second"
+      : "body\n:PROPERTIES:\n:klíč: hodnota\n:@custom: first  \n:klíč: second\n:END:";
     const targetFormat = sourceFormat === "md" ? "org" : "md";
     seed([page("Source", [block(ID1, raw)], { format: sourceFormat }), page("Target", [block(HOST, "")], { format: targetFormat })]);
     await record("copy", "body", buildClipboardPayload([ID1])!);
     const inserted = await paste();
     expect(doc.byId[inserted!].raw).toBe(targetFormat === "org"
-      ? "body\n:PROPERTIES:\n:klíč: hodnota\n:@custom: first\n:klíč: second\n:END:"
-      : "body\nklíč:: hodnota\n@custom:: first\nklíč:: second");
+      ? "body\n:PROPERTIES:\n:klíč: hodnota\n:@custom: first  \n:klíč: second\n:END:"
+      : "body\nklíč:: hodnota\n@custom:: first  \nklíč:: second");
   });
 
   it("aborts entirely when graph authority changes during validation", async () => {

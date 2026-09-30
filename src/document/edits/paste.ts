@@ -36,8 +36,13 @@ type ClipboardProperty = { key: string; value: string };
 function clipboardProperties(raw: string, format: Format): ClipboardProperty[] {
   const regions = blockRegions(raw, format);
   if (regions.quarantined) throw new Error("Clipboard paste refused: block parsing is quarantined");
+  const bytes = new TextEncoder().encode(raw);
+  const decoder = new TextDecoder();
   return regions.properties.filter((property) => property.primary)
-    .map(({ key, value }) => ({ key, value }));
+    .map((property) => ({ key: property.key,
+      value: decoder.decode(bytes.subarray(property.value_range[0], property.line[1]))
+        .replace(/\r?\n$/, "").trimStart(),
+    }));
 }
 
 function clipboardIdsForBlock(block: ClipboardBlock): string[] {

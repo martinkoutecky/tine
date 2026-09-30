@@ -5,10 +5,7 @@ use std::path::PathBuf;
 fn violations(file: &str, source: &str) -> Vec<String> {
     let mut failures = Vec::new();
     let production = if file.ends_with("model.rs") {
-        source
-            .split("#[cfg(test)]\nfn atomic_update_with_hooks")
-            .next()
-            .unwrap()
+        source.split("#[cfg(test)]\nmod tests").next().unwrap()
     } else {
         source
     };

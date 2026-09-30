@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - REG-OG-R6-PREVIEW: Preview candidates and AppImage update metadata stay on `og-preview`; manual candidate builds do not publish, and preview publication cannot become the stable latest release.
 
 ### Fixed
+- REG-OG-P11-ASSET-LIVENESS: Unused-media discovery and trash protect linked filenames containing parentheses and percent escapes, using parser-owned targets.
 - REG-OG-P11-PROPERTIES: Cross-format paste preserves parser-accepted Unicode and custom property keys, duplicate entries, and their order.
 - Title rename avoids reading temporary navigation destinations while refreshing the graph (UI-OG-P10C-RENAME-READS).
 - REG-OG-P10B-IDENTITY-COST: Loaded blocks reuse parser-owned identity absence through the shared answerer for editor and reference badges, avoiding offscreen identity parses on large pages.

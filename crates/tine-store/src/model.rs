@@ -4542,15 +4542,62 @@ fn hex_nibble(c: u8) -> Option<u8> {
 
 /// A unique-ish label (epoch millis + process-local sequence) for trashed files,
 /// so deleting two pages with the same name doesn't collide in the trash.
-/// Collect every `assets/<name>` reference in `text` into `into`. Captures both
-/// markdown (`![](../assets/x.png)`, `[f](../assets/x.pdf)`) and org
-/// (`[[file:../assets/x.png]]`) forms — the name runs from after `assets/` to the
-/// next markup closer (`)`/`]`/quote/etc.) or line break. Crucially it does NOT
-/// stop at a space, so a referenced filename containing spaces is matched in full
-/// (mis-truncating it would make `orphan_assets` flag a file that IS in use). The
-/// first path segment is added too, so a PDF area-image ref (`assets/<key>/p.png`)
-/// marks `<key>` as in use.
+/// Asset liveness combines parser-accepted targets with conservative plaintext
+/// mentions. The latter may retain extra files (including literal code), but
+/// cannot shorten or replace an accepted target. Parsing is skipped entirely
+/// when there is no asset mention; whole-graph results are memoized by the store.
 pub(crate) fn collect_asset_refs(text: &str, into: &mut std::collections::HashSet<String>) {
+    use tine_core::lsdoc::ast::{Inline, Url};
+    fn links(nodes: &[Inline], into: &mut std::collections::HashSet<String>) {
+        for node in nodes {
+            match node {
+                Inline::Link { url, label, .. } => {
+                    let target = match url {
+                        Url::Search { v } | Url::File { v } => Some(v.as_str()),
+                        Url::Complex { link, .. } => link.as_deref(),
+                        _ => None,
+                    };
+                    if let Some((_, name)) = target.and_then(|t| t.split_once("assets/")) {
+                        insert_asset_path(into, name);
+                    }
+                    links(label, into);
+                }
+                Inline::Emphasis { children, .. }
+                | Inline::Subscript { children, .. }
+                | Inline::Superscript { children, .. }
+                | Inline::Tag { children, .. } => links(children, into),
+                Inline::Fnref { definition, .. } => links(definition, into),
+                _ => (),
+            }
+        }
+    }
+    if !text.contains("assets/") {
+        return;
+    }
+    // Preambles carry no format argument. Both parsers may conservatively add
+    // accepted targets; neither removes a target recognized by the other.
+    for format in ["md", "org"] {
+        if let Some(nodes) = tine_core::render::parse_inline_bounded(text, format) {
+            links(&nodes, into);
+        }
+    }
+    conservative_asset_mentions(text, into);
+}
+
+fn insert_asset_path(into: &mut std::collections::HashSet<String>, name: &str) {
+    if name.is_empty() {
+        return;
+    }
+    insert_asset_ref(into, name);
+    if let Some((segment, _)) = name.split_once('/') {
+        insert_asset_ref(into, segment);
+    }
+}
+
+/// Legacy plaintext safety policy, NOT link recognition: any assets/ mention
+/// can keep a file alive even outside accepted links. Delimiters bound an extra
+/// conservative candidate only; link targets above always come from lsdoc.
+fn conservative_asset_mentions(text: &str, into: &mut std::collections::HashSet<String>) {
     let mut rest = text;
     while let Some(i) = rest.find("assets/") {
         let after = &rest[i + "assets/".len()..];
@@ -4563,14 +4610,7 @@ pub(crate) fn collect_asset_refs(text: &str, into: &mut std::collections::HashSe
             })
             .unwrap_or(after.len());
         let name = &after[..end];
-        if !name.is_empty() {
-            insert_asset_ref(into, name);
-            if let Some(seg) = name.split('/').next() {
-                if seg != name {
-                    insert_asset_ref(into, seg);
-                }
-            }
-        }
+        insert_asset_path(into, name);
         rest = &after[end..];
     }
 }
@@ -7334,6 +7374,42 @@ mod tests {
         // A name with a separator is refused (can't escape assets/).
         assert!(tine_graph_features::assets::trash_asset(&store, "../pages/P.md").is_err());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn orphan_workflow_preserves_parser_link_targets() {
+        let dir = scratch("orphan-parser-targets");
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        for name in ["foo(bar).pdf", "my (clip).mp4", "paper", "stray.png"] {
+            fs::write(dir.join("assets").join(name), b"asset").unwrap();
+        }
+        fs::write(dir.join("pages/P.md"),
+            "- [f](../assets/foo(bar).pdf)\n- [clip](../assets/my%20(clip).mp4)\n- ![](../assets/paper/area.png)\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let orphans = tine_graph_features::assets::orphan_assets(&store).unwrap();
+        assert_eq!(
+            orphans.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            vec!["stray.png"]
+        );
+        assert!(tine_graph_features::assets::trash_asset(&store, "foo(bar).pdf").is_err());
+        assert!(dir.join("assets/foo(bar).pdf").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    #[ignore = "manual cold orphan-scan benchmark; OG_P11_CORPUS names a fixture"]
+    fn p11_cold_orphan_scan_benchmark() {
+        let root = std::env::var("OG_P11_CORPUS").expect("fixture path");
+        let store = tine_store::Store::open(Path::new(&root), Default::default())
+            .unwrap()
+            .0;
+        let start = std::time::Instant::now();
+        let orphans = tine_graph_features::assets::orphan_assets(&store).unwrap();
+        eprintln!(
+            "P11 cold orphan scan: {:?}; {} orphans",
+            start.elapsed(),
+            orphans.len()
+        );
     }
 
     #[test]
