@@ -10,6 +10,7 @@
 import { backend } from "./backend";
 import { exportSheets } from "./sheet/exportSheets";
 import { graphOwner, readOwned } from "./owned";
+import { clearOnBindingInvalidated } from "./binding";
 import { pushToast } from "./toasts";
 import { flushAll } from "./document";
 import type { PrintOpts } from "./types";
@@ -22,7 +23,8 @@ export const DEFAULT_PRINT_OPTS: PrintOpts = {
 };
 
 export const PRINT_IFRAME_SANDBOX = "allow-same-origin allow-modals";
-let printInProgress = false;
+let activePrint: AbortController | null = null;
+clearOnBindingInvalidated(() => activePrint?.abort());
 
 let printRenderers: Promise<{
   katex: typeof import("katex").default;
@@ -124,36 +126,64 @@ export async function preparePrintHtml(html: string): Promise<string> {
  * and backend errors also toast; this function does not reject. It resolves
  * when the frame is attached, before its load/fonts/print dialog complete.
  * Renderer-declared query limits show their reason and attach no frame. HTML
- * preparation scales with the rendered page; concurrent calls are ignored.
+ * preparation scales with the rendered page; a newer call supersedes pending preparation or an attached frame.
  * A frame releases on afterprint, load/print failure, graph retirement or a
  * 60-second watchdog; native print exceptions toast and remove it. */
 export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRINT_OPTS): Promise<void> {
-  if (printInProgress) return;
-  printInProgress = true;
-  const owner = graphOwner();
+  activePrint?.abort();
+  const controller = new AbortController();
+  activePrint = controller;
+  const owner = graphOwner(() => activePrint === controller && !controller.signal.aborted);
+  const abort = () => controller.abort();
+  window.addEventListener("pagehide", abort);
+  window.addEventListener("beforeunload", abort);
+  let iframe: HTMLIFrameElement | undefined;
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  let done = false;
+  let cancel!: () => void;
+  const cancelled = new Promise<undefined>((resolve) => { cancel = () => resolve(undefined); });
+  const cleanup = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(watchdog);
+    iframe?.remove();
+    controller.signal.removeEventListener("abort", cleanup);
+    window.removeEventListener("pagehide", abort);
+    window.removeEventListener("beforeunload", abort);
+    if (activePrint === controller) activePrint = null;
+    cancel();
+  };
+  controller.signal.addEventListener("abort", cleanup, { once: true });
+  const owned = <T,>(work: Promise<T>) => Promise.race([readOwned(owner, work), cancelled]);
   let html: string;
   try {
-    const saved = await flushAll();
-    if (!owner()) { printInProgress = false; return; }
+    const savedResult = await owned(flushAll());
+    const saved = savedResult?.kind === "current" && savedResult.value;
+    if (!owner()) { cleanup(); return; }
     if (!saved) {
       pushToast("PDF export stopped because some page edits could not be saved. Resolve the save conflict and try again.", "error");
-      printInProgress = false;
+      cleanup();
       return;
     }
-    const result = await readOwned(owner, backend().pagePrintHtml(name, opts, await exportSheets([name])));
-    if (result.kind === "stale") { printInProgress = false; return; }
-    html = await preparePrintHtml(result.value);
-    if (!owner()) { printInProgress = false; return; }
+    const sheets = await owned(exportSheets([name]));
+    if (!sheets || sheets.kind === "stale" || !owner()) { cleanup(); return; }
+    const result = await owned(backend().pagePrintHtml(name, opts, sheets.value));
+    if (!result || result.kind === "stale") { cleanup(); return; }
+    const prepared = await owned(preparePrintHtml(result.value));
+    if (!prepared || prepared.kind === "stale") { cleanup(); return; }
+    html = prepared.value;
+    if (!owner()) { cleanup(); return; }
   } catch (e) {
-    printInProgress = false;
-    if (!owner()) return;
+    const current = owner();
+    cleanup();
+    if (!current) return;
     // `no-page` (deleted mid-action) or any core error — never leave a dangling frame.
     pushToast(e instanceof PrintQueryLimitError ? e.message : `Couldn't prepare “${name}” for PDF`, "error");
     console.error("pagePrintHtml failed");
     return;
   }
 
-  const iframe = document.createElement("iframe");
+  iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
   // Keep same-origin DOM access so the parent can wait for fonts and invoke the
   // native print dialog, but categorically disable child scripts. The core also
@@ -166,19 +196,9 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
   iframe.srcdoc = html;
 
-  let done = false;
-  let watchdog: ReturnType<typeof setTimeout> | undefined;
-  const cleanup = () => {
-    if (done) return;
-    done = true;
-    clearTimeout(watchdog);
-    iframe.remove();
-    printInProgress = false;
-  };
-
   iframe.onload = async () => {
     if (done) return;
-    const win = iframe.contentWindow;
+    const win = iframe!.contentWindow;
     if (!win) {
       cleanup();
       return;
@@ -186,7 +206,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     try {
       // Let the locally bundled styles/fonts settle so pagination measures the
       // final, already-typeset static layout.
-      const fonts = iframe.contentDocument?.fonts;
+      const fonts = iframe!.contentDocument?.fonts;
       if (fonts?.ready) await fonts.ready;
       await new Promise((r) => setTimeout(r, 400));
       if (done) return;
@@ -195,7 +215,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
       win.focus();
       win.print();
     } catch (e) {
-      pushToast("Print failed", "error");
+      if (owner()) pushToast("Print failed", "error");
       console.error("iframe print failed");
       cleanup();
     }
