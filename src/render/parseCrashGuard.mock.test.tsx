@@ -4,7 +4,11 @@ const wasmMock = vi.hoisted(() => {
   const init = vi.fn().mockResolvedValue({});
   const parseBlockJson = vi.fn((raw: string) => {
     if (raw === "TRAP") throw new Error("mock wasm trap");
-    return JSON.stringify([{ kind: "paragraph", inline: [{ k: "plain", text: raw }] }]);
+    return JSON.stringify({
+      blocks: [{ kind: "paragraph", inline: [{ k: "plain", text: raw }] }],
+      regions: { header: { marker: null, priority: null, heading: null }, literals: [],
+        property_regions: [], properties: [], planning: [], drawers: [], id: null, quarantined: false },
+    });
   });
   const reinstantiate = vi.fn();
   const tag = vi.fn(() => "v0.4.1");
@@ -13,7 +17,7 @@ const wasmMock = vi.hoisted(() => {
 
 vi.mock("./wasm/lsdoc_wasm.js", () => ({
   default: wasmMock.init,
-  parse_block_json: wasmMock.parseBlockJson,
+  parse_block_bundle_json: wasmMock.parseBlockJson,
   __tineReinstantiate: wasmMock.reinstantiate,
   lsdoc_tag: wasmMock.tag,
 }));

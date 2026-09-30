@@ -509,13 +509,10 @@ mod tests {
             out,
             "see [[New]] here\n#+BEGIN_SRC clojure\n(def s \"[[Old]]\") ; #Old\n#+END_SRC\nand [[New]] again\n"
         );
-        // Same input as markdown (is_org=false) WOULD rewrite inside (no org fence
-        // awareness) — proving the gate matters.
+        // mldoc 1.5.9 emits Src for this input in Markdown too. The same
+        // parser-owned literal protection applies in both formats.
         let md = rename_refs(raw, "Old", "New", false);
-        assert!(
-            md.contains("(def s \"[[New]]\")"),
-            "md path rewrites inside (expected): {md:?}"
-        );
+        assert_eq!(md, out);
     }
 
     #[test]

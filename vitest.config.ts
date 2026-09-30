@@ -14,6 +14,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    setupFiles: ["./src/testSetup.parser.ts"],
     server: { deps: { inline: ["solid-js"] } },
   },
   resolve: {
