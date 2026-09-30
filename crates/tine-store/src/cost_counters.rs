@@ -28,7 +28,9 @@ pub struct Counts {
     pub readdir: u64,
     /// Complete page file reads.
     pub full_reads: u64,
-    /// Page parses.
+    /// Document and outline parser calls made by the store save/read family,
+    /// including formatting detection and layout heading checks. Core lazy
+    /// block projections are outside this counter's boundary.
     pub parses: u64,
     /// Old-source document parses during save preparation.
     pub old_source_parses: u64,

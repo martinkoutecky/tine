@@ -108,6 +108,12 @@ pub(super) fn serialize(
     .then_some((result, reparsed))
 }
 
+fn is_unbulleted_heading_line(line: &str) -> bool {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::parse();
+    tine_core::doc::is_unbulleted_heading_line(line)
+}
+
 /// An old block's pre-order position and its physical lines.
 struct OldBlock<'a> {
     raw: &'a str,
@@ -382,7 +388,7 @@ impl Emitter<'_> {
             && first
                 .strip_prefix(prefix)
                 .is_some_and(|rest| !rest.starts_with([' ', '\t']))
-            && tine_core::doc::is_unbulleted_heading_line(first)
+            && is_unbulleted_heading_line(first)
         {
             let emitted: Vec<_> = raw
                 .split('\n')

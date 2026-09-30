@@ -101,6 +101,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   (GH #382).
 
 ### Fixed
+
+- **Saving with retained graph views avoids graph-wide copies** (REG-OG-B-COST-SNAPSHOT, REG-OG-B-COST-NAMES): page slots, timestamps, reference counts and name/signature/icon indexes share untouched tree branches. Save preservation checks also reuse the old parsed document (REG-OG-B-COST-PARSE).
 - Published query snapshots retain reviewed source documents across external edits; draft loading and CSV/TSV imports bound their reads before decoding (REG-OG-B-W3-PUBLICATION-SNAPSHOT, REG-OG-B-W3-BOUNDED-DRAFT-READ, REG-OG-B-W3-BOUNDED-CSV-READ).
 - Sheet row virtualization clears its visited-row state on graph reset (UI-OG-B-W3-SHEET-BINDING-RESET).
 
