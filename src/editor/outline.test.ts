@@ -112,3 +112,9 @@ describe("parseOutline", () => {
     expect(got.sort()).toEqual(want.sort());
   });
 });
+
+it("keeps list segmentation outside inline parser literals", () => {
+  expect(parseOutline("- `inline`\n2) second")).toEqual([
+    { raw: "`inline`", children: [] }, { raw: "second", children: [] },
+  ]);
+});

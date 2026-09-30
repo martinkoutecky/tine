@@ -1,3 +1,6 @@
+import { blockRegions } from "../render/parse";
+import { utf8ByteToUtf16Offset } from "../render/spans";
+
 // Parse pasted text into an outline tree (paste-as-blocks). Handles both a
 // Logseq outline (every line a `- ` bullet, indentation = nesting, continuation
 // lines indented to the bullet's content column) AND arbitrary markdown / plain
@@ -58,11 +61,6 @@ function tableRow(line: string): boolean {
   return line.includes("|") && line.trim().length > 1;
 }
 
-function fenceMarker(line: string): string | null {
-  const match = /^\s*(`{3,}|~{3,})/.exec(line);
-  return match?.[1] ?? null;
-}
-
 function stripWs(line: string, n: number): string {
   let i = 0;
   while (i < n && i < line.length && (line[i] === " " || line[i] === "\t")) i++;
@@ -80,7 +78,18 @@ interface Frame {
  *  empty outline as nothing to insert). */
 export function parseOutline(text: string): OutlineNode[] {
   if (text.length > OUTLINE_MAX_SOURCE_CHARS) return [];
-  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = normalized.split("\n");
+  const literals = blockRegions(normalized).literals.map(([start, end]) =>
+    [utf8ByteToUtf16Offset(normalized, start), utf8ByteToUtf16Offset(normalized, end)]);
+  const starts = [0];
+  for (const line of lines) starts.push(starts.at(-1)! + line.length + 1);
+  let literalIndex = 0;
+  const literalAt = (at: number) => {
+    while (literalIndex < literals.length && literals[literalIndex][1] <= at) literalIndex++;
+    const range = literals[literalIndex];
+    return range && range[0] <= at && at < range[1] ? range : null;
+  };
   const roots: OutlineNode[] = [];
   const stack: Frame[] = [];
   let sawBlank = false;
@@ -95,23 +104,22 @@ export function parseOutline(text: string): OutlineNode[] {
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const line = lines[lineIndex];
-    const fence = fenceMarker(line);
-    if (fence) {
-      const indent = leadingWs(line);
-      const fenced = [line.trim()];
+    // Test the first content byte, so an inline literal after a list marker
+    // does not hide that marker. Extents, including blank lines, are parser-owned.
+    const literal = literalAt(starts[lineIndex] + leadingWs(line));
+    if (literal) {
       let next = lineIndex + 1;
-      const close = new RegExp(`^\\s*${fence[0]}{${fence.length},}\\s*$`);
-      while (next < lines.length) {
-        fenced.push(stripWs(lines[next], indent));
-        if (close.test(lines[next])) {
-          next += 1;
-          break;
-        }
-        next += 1;
+      while (next < lines.length && starts[next] < literal[1]) next++;
+      const raw = lines.slice(lineIndex, next).join("\n");
+      const indent = leadingWs(line);
+      const top = stack.at(-1);
+      if (top?.kind === "bullet" && !sawBlank && indent >= top.contentStart) {
+        top.node.raw += "\n" + raw;
+      } else {
+        const node: OutlineNode = { raw, children: [] };
+        place(indent, node);
+        stack.push({ col: indent, contentStart: indent, kind: "block", node });
       }
-      const node: OutlineNode = { raw: fenced.join("\n"), children: [] };
-      place(indent, node);
-      stack.push({ col: indent, contentStart: indent, kind: "block", node });
       lineIndex = next - 1;
       sawBlank = false;
       continue;
@@ -123,7 +131,7 @@ export function parseOutline(text: string): OutlineNode[] {
       const indent = leadingWs(line);
       const table = [line.trim()];
       let next = lineIndex + 1;
-      while (next < lines.length && tableRow(lines[next])) {
+      while (next < lines.length && !literalAt(starts[next] + leadingWs(lines[next])) && tableRow(lines[next])) {
         table.push(lines[next].trim());
         next += 1;
       }
