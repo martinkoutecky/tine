@@ -8,10 +8,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
-### Fixed
-
-- Long flat TQL boolean queries no longer exhaust the stack; genuine nesting is bounded (REG-OG-B-DOOR2-TQL-FLAT-DEPTH).
-
 ### Added
 
 - **Parser-owned structural edits** (og-D1): metadata edits and template/conflict copies share native/wasm block regions, preserving parser-recognized literal contents. Empty code cards retain their body/wrapper separator after typing, code-body typing preserves literal typography, and calendar edits retain glued body text. Published block identities, logbook and repeaters use the block's format.
@@ -105,6 +101,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   (GH #382).
 
 ### Fixed
+
+- Long flat TQL boolean queries no longer exhaust the stack; genuine nesting is bounded (REG-OG-B-DOOR2-TQL-FLAT-DEPTH).
+- Org drawer and directive properties retain backlinks; page icons ignore prose and literal examples (REG-OG-B-DOOR2-ORG-PAGE-PROPERTIES, REG-OG-B-DOOR2-PAGE-ICON-OWNERSHIP).
+- Org blocks documenting VCS conflict markers remain editable, and plain references keep decomposed Unicode accents with their letters (REG-OG-B-DOOR2-ORG-MARKER-LITERALS, REG-OG-B-DOOR2-NFD-REFERENCE-BOUNDARY).
+- Fullwidth commas separate tag references consistently with Logseq (REG-OG-B-DOOR2-FRONT-TAG-SEPARATOR).
 - Published query snapshots retain reviewed source documents across external edits; draft loading and CSV/TSV imports bound their reads before decoding (REG-OG-B-W3-PUBLICATION-SNAPSHOT, REG-OG-B-W3-BOUNDED-DRAFT-READ, REG-OG-B-W3-BOUNDED-CSV-READ).
 - Sheet row virtualization clears its visited-row state on graph reset (UI-OG-B-W3-SHEET-BINDING-RESET).
 

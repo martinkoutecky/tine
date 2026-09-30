@@ -6,7 +6,7 @@
 // code are literal, as in the backend. Names are returned as written; compare them
 // with `pageIdentityKey`.
 import { parseBody, inlineText } from "./facets";
-import { isQuotedPagePropertyValue, normalizeImplicitPageName, propertyKeyNorm } from "./block";
+import { isQuotedPagePropertyValue, normalizeImplicitPageName, propertyKeyNorm, splitLinkableProperty } from "./block";
 import type { Block, Format, Inline, ListItem } from "./ast";
 
 /** Every page name `raw` references, in source order (may repeat). One lsdoc parse
@@ -50,7 +50,7 @@ function collectBlock(block: Block, format: Format, out: string[], properties: b
         // into properties again, so this is bounded).
         collectRaw(value, format, out, false);
         if (propertyKeyNorm(key) !== "tags" || isQuotedPagePropertyValue(value)) continue;
-        for (const part of value.split(",")) {
+        for (const part of splitLinkableProperty(value)) {
           const bare = part.trim();
           if (bare && !bare.startsWith("[[") && !bare.startsWith("#")) out.push(normalizeImplicitPageName(bare));
         }
