@@ -20,6 +20,8 @@
 // INSTALL the user asked for is different: it records a fixed stage/cause in the
 // privacy-safe diagnostic report and says which stage failed (GH #343).
 
+import { APP_PRODUCT_NAME } from "./appIdentity";
+import { releaseVersion } from "../scripts/release-policy.mjs";
 import { isTauri, backend } from "./backend";
 import { dbg, recordDiagnostic } from "./debug";
 import { ownedWhen, readOwned } from "./owned";
@@ -40,10 +42,23 @@ import { reportUiFailure } from "./uiFailure";
  * `src/updateChannel.guard.test.ts`). */
 const RELEASES_PAGE = "https://github.com/martinkoutecky/tine/releases/tag/beta";
 
-/** Parse the first `X.Y.Z` out of a version/tag string (`v0.3.0`, `0.3.0`, …). */
-function parseVer(s: string): [number, number, number] | null {
-  const m = /(\d+)\.(\d+)\.(\d+)/.exec(s);
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+/** Acquire only Beta updates. A stable payload on the Beta endpoint is a
+ * publication mistake: close its handle before any offer, download or install.
+ * Both notification and installation use this door (I-4/I-12). */
+async function checkedBetaUpdate() {
+  const { check } = await import("@tauri-apps/plugin-updater");
+  const update = await check();
+  if (!update) return null;
+  try {
+    if (releaseVersion(update.version).sequence) return update;
+  } catch {
+    // This is local syntax validation, not a failed read: reject the payload
+    // and close its resource below, without retaining untrusted version text.
+    dbg("updater rejected an invalid Beta version");
+  }
+  try { await update.close(); }
+  catch (error) { dbg(`updater handle close failed: ${String(error)}`); }
+  return null;
 }
 
 type UpdateMode = "self" | "manual" | "unavailable";
@@ -179,7 +194,7 @@ async function isManualOnlyBuild(): Promise<boolean> {
 function offerManualOnly(version: string): number {
   void recordDiagnostic("updater_manual_only");
   return pushToast(
-    `Tine ${version} is available, but automatic updates are not supported by this experimental 32-bit Windows build. Download the x86 package manually.`,
+    `${APP_PRODUCT_NAME} ${version} is available, but automatic updates are not supported by this experimental 32-bit Windows build. Download the x86 package manually.`,
     "warn",
     { sticky: true, action: { label: "Download manually", run: openReleases } },
   );
@@ -215,8 +230,7 @@ async function applyUpdateOrOpen(): Promise<void> {
   }
   let update: Awaited<ReturnType<(typeof import("@tauri-apps/plugin-updater"))["check"]>>;
   try {
-    const { check } = await import("@tauri-apps/plugin-updater");
-    update = await check();
+    update = await checkedBetaUpdate();
   } catch (error) {
     reportUpdaterFailure("check", error);
     openReleases();
@@ -228,7 +242,7 @@ async function applyUpdateOrOpen(): Promise<void> {
     return;
   }
   try {
-    const progressId = pushToast(`Downloading Tine ${update.version}…`, "info", { sticky: true });
+    const progressId = pushToast(`Downloading ${APP_PRODUCT_NAME} ${update.version}…`, "info", { sticky: true });
     try {
       // Download first: the user keeps editing meanwhile, so the flush below sees
       // the latest state and runs immediately before the process can exit.
@@ -296,7 +310,7 @@ export async function offerUpdate(version: string, current: string): Promise<voi
     return;
   }
   offeredUpdateToastId = pushToast(
-    `Tine ${version} is available — you're on ${current}.`,
+    `${APP_PRODUCT_NAME} ${version} is available — you're on ${current}.`,
     "info",
     {
       sticky: true,
@@ -309,11 +323,10 @@ export async function offerUpdate(version: string, current: string): Promise<voi
  *  else null. The updater plugin decides "newer" (and reads the manifest); it
  *  throws on a missing, unreachable or invalid manifest, which callers absorb.
  *  Releases the plugin's resource handle (the installer takes its own). */
-async function offeredVersion(): Promise<[number, number, number] | null> {
-  const { check } = await import("@tauri-apps/plugin-updater");
-  const offer = await check();
+async function offeredVersion(): Promise<string | null> {
+  const offer = await checkedBetaUpdate();
   if (!offer) return null;
-  const version = parseVer(offer.version);
+  const version = offer.version;
   try { await offer.close(); } catch (error) { dbg(`updater handle close failed: ${String(error)}`); }
   return version;
 }
@@ -324,11 +337,11 @@ export async function checkForUpdate(): Promise<void> {
   if ((await updateMode()) === "unavailable") return;
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
-    const cur = parseVer(await getVersion());
-    if (!cur) return;
+    const cur = await getVersion();
+    releaseVersion(cur);
     const latest = await offeredVersion();
     if (!latest) return;
-    await offerUpdate(latest.join("."), cur.join("."));
+    await offerUpdate(latest, cur);
   } catch {
     // offline / rate-limited / network blocked — never bother the user.
   }
@@ -337,7 +350,7 @@ export async function checkForUpdate(): Promise<void> {
 export type UpdateStatus =
   | { kind: "current"; version: string }
   | { kind: "available"; version: string; current: string }
-  | { kind: "unavailable" }; // offline, rate-limited, no preview release, or not the packaged app
+  | { kind: "unavailable" }; // offline, rate-limited, no Beta release, or not the packaged app
 
 /** The About tab's explicit "Check for updates" button. Unlike `checkForUpdate`
  *  (silent on the common no-update path), this reports every outcome so the
@@ -347,12 +360,12 @@ export async function checkForUpdateNow(): Promise<UpdateStatus> {
   if ((await updateMode()) === "unavailable") return { kind: "unavailable" };
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
-    const cur = parseVer(await getVersion());
-    if (!cur) return { kind: "unavailable" };
+    const cur = await getVersion();
+    releaseVersion(cur);
     const offered = await offeredVersion();
-    if (!offered) return { kind: "current", version: cur.join(".") };
-    const version = offered.join(".");
-    const current = cur.join(".");
+    if (!offered) return { kind: "current", version: cur };
+    const version = offered;
+    const current = cur;
     await offerUpdate(version, current);
     return { kind: "available", version, current };
   } catch {

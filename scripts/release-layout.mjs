@@ -1,4 +1,4 @@
-import { releaseVersion } from "./release-policy.mjs";
+import { BETA_TAG, releaseVersion } from "./release-policy.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -162,17 +162,17 @@ export function candidateProblems(directory, version, channel = "stable") {
   for (const platform of expectedPlatforms) {
     const entry = updater.platforms?.[platform];
     const [asset] = layout.updaterPlatforms[platform];
-    if (entry && channel === "beta") {
-      let inPreview = false;
+    if (entry && channel === BETA_TAG) {
+      let inBeta = false;
       try {
         const url = new URL(entry.url);
         const parts = url.pathname.split("/");
-        inPreview = url.protocol === "https:" && url.hostname === "github.com"
-          && parts.at(-3) === "download" && parts.at(-2) === "beta" && parts.at(-1) === asset;
+        inBeta = url.protocol === "https:" && url.hostname === "github.com"
+          && parts.at(-3) === "download" && parts.at(-2) === BETA_TAG && parts.at(-1) === asset;
       } catch {
-        inPreview = false;
+        inBeta = false;
       }
-      if (!inPreview) problems.push(`latest.json ${platform} escapes beta`);
+      if (!inBeta) problems.push(`latest.json ${platform} escapes beta`);
     }
     if (entry && !entry.url?.endsWith(`/${asset}`)) problems.push(`latest.json ${platform} points at the wrong asset`);
     if (entry && (typeof entry.signature !== "string" || entry.signature.length === 0)) {

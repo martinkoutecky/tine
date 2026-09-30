@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { candidateProblems, releaseLayout, releaseNotes, RELEASE_LANES } from "./release-layout.mjs";
 
-import { releaseChannel, updaterAssetUrl } from "./release-policy.mjs";
+import { BETA_TAG, releaseChannel, updaterAssetUrl } from "./release-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -27,7 +27,7 @@ export function assembleCandidate({ input, output, version, commit, repository, 
     const value = fragment.value;
     if (!RELEASE_LANES.includes(value.lane)) throw new Error(`unknown fragment lane ${value.lane}`);
     if (byLane.has(value.lane)) throw new Error(`duplicate fragment lane ${value.lane}`);
-    if (channel === "beta" && value.channel !== channel) throw new Error(`${value.lane}: fragment is not an beta candidate`);
+    if (channel === BETA_TAG && value.channel !== channel) throw new Error(`${value.lane}: fragment is not a Beta candidate`);
     if (value.version !== version) throw new Error(`${value.lane}: version ${value.version}, expected ${version}`);
     if (value.commit !== commit) throw new Error(`${value.lane}: commit ${value.commit}, expected ${commit}`);
     byLane.set(value.lane, fragment);

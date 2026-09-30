@@ -1,4 +1,4 @@
-// RULE (og preview identity): og is a separate app (`page.tine.TineBeta`, version
+// RULE (Beta identity): Beta is a separate app (`page.tine.TineBeta`, version
 // 0.6.x) that must NEVER learn about, offer, or install the shipped Tine. The
 // shipped Tine's releases/latest carries a higher version number, so an og that
 // read it would offer master, and installing it would replace og with master.
@@ -45,6 +45,13 @@ describe("og update channel", () => {
     const endpoints: string[] = conf.plugins.updater.endpoints;
     expect(endpoints, RULE).toEqual(["https://github.com/martinkoutecky/tine/releases/download/beta/latest.json"]);
     for (const endpoint of endpoints) expect(endpoint, RULE).not.toMatch(/releases\/latest/);
+  });
+
+  it("I-4/I-12: notification and installation acquire updates through checkedBetaUpdate (src/update.ts)", () => {
+    const code = stripComments(read("./update.ts"));
+    expect(code.match(/await check\(\)/g), RULE).toHaveLength(1);
+    expect(code.match(/await checkedBetaUpdate\(\)/g), RULE).toHaveLength(2);
+    expect(code, RULE).toContain("releaseVersion(update.version).sequence");
   });
 
   it("the updater's check() is permitted on every desktop platform", () => {

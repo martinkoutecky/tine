@@ -36,10 +36,11 @@ assert.match(workflow, /if: inputs.publish/);
 assert.match(workflow, /publish-release-candidate.mjs beta/);
 assert.match(workflow, /build-release-bundles.mjs/);
 assert.match(workflow, /group: release-beta/);
+assert.doesNotMatch(workflow, /gh-releases-zsync\|[^"\n]+\|latest\|/);
 
 // Drive the actual assembler and publisher, with synthetic signed artifacts and
 // a local gh executable. No network call or release mutation is possible here.
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), "tine-preview-policy-"));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "tine-beta-policy-"));
 try {
   const version = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")).version;
   const commit = "a".repeat(40);
@@ -134,4 +135,4 @@ syncBuiltinESMExports();
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }
-console.log("OG-R6 preview policy OK");
+console.log("Beta release policy OK");

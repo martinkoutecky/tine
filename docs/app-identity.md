@@ -7,7 +7,8 @@ geometry), the WebKitGTK localStorage inside the app-data dir, the Linux desktop
 entry and Wayland `app_id`, the single-instance lock, and on Android the
 application id. Master ships stable **Tine**; og ships **Tine Beta**, a separate
 app with its own settings and a `beta` updater channel. Stable never sees Beta
-updates, and Beta never installs stable releases; Beta publication is a
+updates, and Beta never installs stable releases (both notifier and installer
+validate through `checkedBetaUpdate` in `src/update.ts`); Beta publication is a
 prerelease and never becomes GitHub's `latest` release.
 
 The internal switch key remains `experiment`. Its Beta identity is new: the
@@ -131,6 +132,10 @@ staging dir, fsyncs it, and renames it into place.
 the `mod` line and the one call in `lib::run()`, and its
 `APPROVED_WRITER_SITES` entry in `scripts/lib/og-enforcement.mjs`.
 `src/appIdentity.guard.test.ts` fails until you do.
+
+About, update notifications and copied version information derive their app name
+from the same switch through `src/appIdentity.ts`. **Copy version** preserves
+the complete runtime version, including the Beta sequence.
 
 ## Proof
 

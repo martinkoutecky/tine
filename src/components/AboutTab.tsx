@@ -3,6 +3,8 @@
 // that's already where Tine keeps its other informational panes (shortcuts,
 // backups, help-improve) and it needs no separate window plumbing.
 import { createSignal, onMount, Show, type JSX } from "solid-js";
+import { APP_PRODUCT_NAME } from "../appIdentity";
+import { writeClipboardTextStrict } from "../clipboard";
 import { backend, isTauri } from "../backend";
 import { platformKind } from "../platform";
 import { checkForUpdateNow, openReleasesPage } from "../update";
@@ -33,6 +35,12 @@ function buildStamp(): string {
 export function AboutTab(): JSX.Element {
   const [version, setVersion] = createSignal("");
   const [status, setStatus] = createSignal("");
+  const [copyStatus, setCopyStatus] = createSignal("Copy version");
+  const versionLabel = () => `${APP_PRODUCT_NAME} ${version() || "development build"}`;
+  const copyVersion = async () => {
+    try { await writeClipboardTextStrict(versionLabel()); setCopyStatus("Copied!"); }
+    catch { setCopyStatus("Copy failed"); }
+  };
   const [checking, setChecking] = createSignal(false);
   const [updatePlatform, setUpdatePlatform] = createSignal<"loading" | "desktop" | "mobile" | "unavailable">(
     isTauri() ? "loading" : "unavailable"
@@ -60,7 +68,7 @@ export function AboutTab(): JSX.Element {
     const r = await checkForUpdateNow();
     setChecking(false);
     if (r.kind === "current") setStatus(`You're on the latest version (${r.version}).`);
-    else if (r.kind === "available") setStatus(`Tine ${r.version} is available — choose Install update in the notification.`);
+    else if (r.kind === "available") setStatus(`${APP_PRODUCT_NAME} ${r.version} is available — choose Install update in the notification.`);
     else setStatus("Couldn't check right now — see the releases page.");
   };
 
@@ -74,15 +82,16 @@ export function AboutTab(): JSX.Element {
           </g>
         </svg>
         <div class="about-title">
-          <div class="about-name">Tine</div>
+          <div class="about-name">{APP_PRODUCT_NAME}</div>
           <div class="about-tagline">A fast, local-first, Logseq-compatible outliner.</div>
         </div>
       </div>
 
       <div class="about-version">
         <Show when={version()} fallback={<span class="settings-hint">Development build</span>}>
-          <span class="about-ver-num">Version {version()}</span>
+          <span class="about-ver-num">{versionLabel()}</span>
         </Show>
+        <button class="btn-secondary" onClick={() => void copyVersion()}>{copyStatus()}</button>
         <Show when={__GIT_COMMIT__}>
           <span class="about-commit mono">· {__GIT_COMMIT__}</span>
         </Show>

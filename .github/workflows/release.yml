@@ -96,7 +96,7 @@ jobs:
             lane: linux-x64
             args: "--features custom-protocol"
             rust-targets: ""
-            appimage-update-info: "gh-releases-zsync|martinkoutecky|tine|latest|Tine_*_amd64.AppImage.zsync"
+            appimage-update-info: "gh-releases-zsync|martinkoutecky|tine|beta|Tine_*_amd64.AppImage.zsync"
           # Linux ARM64: built NATIVELY on GitHub's aarch64 runner (free on public
           # repos). No cross-compile — GTK/WebKitGTK are system libs that are
           # painful to cross-compile, so we install the arm64 -dev packages on the
@@ -107,7 +107,7 @@ jobs:
             lane: linux-arm64
             args: "--features custom-protocol"
             rust-targets: ""
-            appimage-update-info: "gh-releases-zsync|martinkoutecky|tine|latest|Tine_*_aarch64.AppImage.zsync"
+            appimage-update-info: "gh-releases-zsync|martinkoutecky|tine|beta|Tine_*_aarch64.AppImage.zsync"
           - platform: macos-latest
             lane: macos-universal
             # one universal binary that runs on both Apple Silicon and Intel

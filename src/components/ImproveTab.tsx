@@ -3,6 +3,7 @@
 // divergences you can paste into a bug report. The heavy lifting is in
 // ../devtools/lsdoc-diff/* (a faithful port of lsdoc's graph-check.mjs). mldoc is
 // lazy-loaded only when you press Run, so it costs nothing at startup.
+import { APP_PRODUCT_NAME } from "../appIdentity";
 import { createSignal, Show, For, onCleanup, type JSX } from "solid-js";
 import { graphOwner, latestOwner } from "../owned";
 import {
@@ -82,7 +83,7 @@ export function ImproveTab(): JSX.Element {
     return [
       "## lsdoc divergences from my Tine graph",
       "",
-      `Tine version: ${report()?.tineVersion ?? "unknown"}`,
+      `${APP_PRODUCT_NAME} version: ${report()?.tineVersion ?? "unknown"}`,
       `lsdoc version: ${report()?.lsdocVersion ?? "unknown"}`,
       "",
       "These snippets are anonymized (page content scrubbed) and each still reproduces the divergence between lsdoc and Logseq's mldoc.",
@@ -167,7 +168,7 @@ export function ImproveTab(): JSX.Element {
         {(r) => (
           <div class="improve-report">
             <div class="settings-hint">
-              Tine {r().tineVersion} · lsdoc {r().lsdocVersion} · Scanned {r().stats.files} file(s), {fmtBytes(r().stats.totalBytes)}.
+              {APP_PRODUCT_NAME} {r().tineVersion} · lsdoc {r().lsdocVersion} · Scanned {r().stats.files} file(s), {fmtBytes(r().stats.totalBytes)}.
             </div>
 
             <Show when={!r().lsdocAvailable}>

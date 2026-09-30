@@ -3,7 +3,9 @@ import { render } from "solid-js/web";
 import { AboutTab } from "./AboutTab";
 import { setToasts, toasts } from "../toasts";
 
-const { isTauriMock, platformKindMock, openExternalMock, checkNowMock } = vi.hoisted(() => ({
+const { getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExternalMock, checkNowMock } = vi.hoisted(() => ({
+  getVersionMock: vi.fn(async () => "0.5.3"),
+  copyVersionMock: vi.fn(async (_text: string) => {}),
   checkNowMock: vi.fn(async (): Promise<{ kind: string; version?: string; current?: string }> => ({ kind: "current", version: "0.5.3" })),
   isTauriMock: vi.fn(() => false),
   platformKindMock: vi.fn(async (): Promise<"desktop" | "android" | "ios"> => "desktop"),
@@ -19,7 +21,9 @@ vi.mock("../update", () => ({
   checkForUpdateNow: checkNowMock,
   openReleasesPage: () => {},
 }));
-vi.mock("@tauri-apps/api/app", () => ({ getVersion: async () => "0.5.3" }));
+vi.mock("@tauri-apps/api/app", () => ({ getVersion: getVersionMock }));
+vi.mock("../clipboard", () => ({ writeClipboardTextStrict: copyVersionMock }));
+import { IDENTITY } from "../../scripts/lib/app-identity.mjs";
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -34,6 +38,25 @@ describe("AboutTab", () => {
     platformKindMock.mockResolvedValue("desktop");
     openExternalMock.mockResolvedValue(undefined);
     setToasts([]);
+  });
+
+  it("displays and copies the channel with the full prerelease version", async () => {
+    isTauriMock.mockReturnValue(true);
+    getVersionMock.mockResolvedValueOnce("0.7.0-beta.1");
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <AboutTab />, host);
+    try {
+      await flush();
+      const label = `${IDENTITY.productName} 0.7.0-beta.1`;
+      expect(host.querySelector(".about-name")?.textContent).toBe(IDENTITY.productName);
+      expect(host.querySelector(".about-ver-num")?.textContent).toBe(label);
+      const copy = [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Copy version");
+      expect(copy).toBeDefined();
+      copy!.click();
+      await flush();
+      expect(copyVersionMock).toHaveBeenCalledWith(label);
+    } finally { dispose(); host.remove(); }
   });
 
   it("renders the role-based credits and project links", () => {
@@ -62,7 +85,7 @@ describe("AboutTab", () => {
     const dispose = render(() => <AboutTab />, host);
     try {
       await flush();
-      expect(host.textContent).toContain("Version 0.5.3");
+      expect(host.textContent).toContain(`${IDENTITY.productName} 0.5.3`);
       expect(host.textContent).toContain("Check for updates");
       expect(host.textContent).not.toContain("distribution channel");
     } finally {
@@ -81,7 +104,7 @@ describe("AboutTab", () => {
       const button = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Check for updates"));
       button?.click();
       await flush();
-      expect(host.textContent).toContain("Tine 0.6.0 is available — choose Install update in the notification.");
+      expect(host.textContent).toContain(`${IDENTITY.productName} 0.6.0 is available — choose Install update in the notification.`);
       expect(host.textContent).not.toContain("downloading");
     } finally {
       dispose();

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { IDENTITY } from "../../scripts/lib/app-identity.mjs";
 import { backend } from "../backend";
 import { clearClipboardSlot, copyBlockOutline, peekClipboardSlot } from "../clipboard";
 import { ImproveTab } from "./ImproveTab";
@@ -93,6 +94,7 @@ describe("Help improve Tine privacy boundary", () => {
       copyButtons[0].click();
       await flush();
       expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining("Divergence found but not auto-anonymizable — omitted."));
+      expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining(`${IDENTITY.productName} version: 0.5.9`));
       expect(writeText).toHaveBeenLastCalledWith(expect.not.stringContaining("safe to share"));
     } finally {
       dispose();

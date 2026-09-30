@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Changed
+- UI-OG-BETA-VERSION: About and copied reports identify **Tine Beta**; Copy version includes the full version, and update notifications retain the Beta sequence. The updater refuses a stable payload before offering or installing it.
 - REG-OG-BETA-CHANNEL: The separate preview app is now **Tine Beta**, with the `beta` update/release channel and `-beta.N` prerelease versions. Stable Tine and Beta keep separate app data and update channels; the local deploy filename remains `tine-og`.
 - REG-OG-R6-PREVIEW: Preview candidates and AppImage update metadata stay on `og-preview`; manual candidate builds do not publish, and preview publication cannot become the stable latest release.
 

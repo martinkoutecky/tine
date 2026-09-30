@@ -1,3 +1,4 @@
+import { IDENTITY } from "../scripts/lib/app-identity.mjs";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -87,6 +88,35 @@ function mockLatest(version: string): void {
 }
 
 describe("update checks", () => {
+  it("refuses a stable payload on the install action's fresh check", async () => {
+    const stable = { version: "0.8.0", close: vi.fn(async () => {}), download: vi.fn(async () => {}), install: vi.fn(async () => {}) };
+    const loaded = await loadUpdate({ version: "0.7.0-beta.1" });
+    loaded.updaterCheckMock.mockResolvedValueOnce({ version: "0.7.0-beta.2", close: async () => {} }).mockResolvedValueOnce(stable);
+    const prepare = vi.fn(async () => "accepted" as const);
+    loaded.update.setUpdateExitGuard({ prepare, reset: vi.fn() });
+    await loaded.update.checkForUpdateNow();
+    toastCalls(loaded.pushToastMock).find(([, , options]) => options?.action?.label === "Install update")?.[2]?.action?.run();
+    await vi.waitFor(() => expect(stable.close).toHaveBeenCalledOnce());
+    expect(stable.download).not.toHaveBeenCalled();
+    expect(stable.install).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(loaded.relaunchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves the full Beta sequence in the update offer", async () => {
+    const { update } = await loadUpdate({ version: "0.7.0-beta.1", updaterUpdate: { version: "0.7.0-beta.2", close: async () => {} } });
+    await expect(update.checkForUpdateNow()).resolves.toEqual({ kind: "available", version: "0.7.0-beta.2", current: "0.7.0-beta.1" });
+  });
+
+  it("does not offer a stable payload even if the Beta endpoint returns one", async () => {
+    const close = vi.fn(async () => {});
+    const { update, pushToastMock } = await loadUpdate({ version: "0.7.0-beta.1", updaterUpdate: { version: "0.8.0", close } });
+    await update.checkForUpdate();
+    await expect(update.checkForUpdateNow()).resolves.toEqual({ kind: "current", version: "0.7.0-beta.1" });
+    expect(pushToastMock).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
   afterEach(() => {
     channelVersion = null;
     vi.restoreAllMocks();
@@ -94,13 +124,13 @@ describe("update checks", () => {
   });
 
   it("asks only the updater plugin (never fetch) and reports its offer", async () => {
-    mockLatest("v0.6.0");
+    mockLatest("v0.6.0-beta.1");
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const { update, updaterCheckMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
 
     await update.checkForUpdate();
-    await expect(update.checkForUpdateNow()).resolves.toMatchObject({ kind: "available", version: "0.6.0" });
+    await expect(update.checkForUpdateNow()).resolves.toMatchObject({ kind: "available", version: "0.6.0-beta.1" });
 
     expect(updaterCheckMock).toHaveBeenCalledTimes(2);
     expect(fetchMock, "a webview fetch of a github.com release asset has no CORS: never fetch the channel").not.toHaveBeenCalled();
@@ -109,7 +139,7 @@ describe("update checks", () => {
   it("releases the plugin's handle after learning the version", async () => {
     const close = vi.fn(async () => {});
     const { update } = await loadUpdate({
-      platform: "desktop", version: "0.5.3", updaterUpdate: { version: "0.6.0", close },
+      platform: "desktop", version: "0.5.3", updaterUpdate: { version: "0.6.0-beta.1", close },
     });
     await update.checkForUpdate();
     expect(close).toHaveBeenCalledOnce();
@@ -148,12 +178,12 @@ describe("update checks", () => {
 
   it("keeps macOS on the manual releases page while still learning the version from check()", async () => {
     vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)" });
-    mockLatest("v0.6.0");
+    mockLatest("v0.6.0-beta.1");
     const { update, pushToastMock, updaterCheckMock, openExternalMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
 
     await update.checkForUpdate();
     expect(updaterCheckMock).toHaveBeenCalledOnce();
-    const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0 is available"));
+    const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0-beta.1 is available"));
     offer?.[2]?.action?.run();
     await vi.waitFor(() => expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/tag/beta"));
     expect(updaterCheckMock, "manual mode never runs the in-place installer").toHaveBeenCalledOnce();
@@ -168,7 +198,7 @@ describe("update checks", () => {
   });
 
   it.each(["android", "ios"] as const)("never checks or offers self-update on %s", async (platform) => {
-    mockLatest("v0.6.0");
+    mockLatest("v0.6.0-beta.1");
     const { update, platformKindMock, getVersionMock, updaterCheckMock, openExternalMock, pushToastMock } =
       await loadUpdate({ platform });
 
@@ -183,7 +213,7 @@ describe("update checks", () => {
   });
 
   it("fails closed when native platform detection fails", async () => {
-    mockLatest("v0.6.0");
+    mockLatest("v0.6.0-beta.1");
     const { update, getVersionMock, updaterCheckMock, pushToastMock } = await loadUpdate({
       platformReject: true,
     });
@@ -197,13 +227,13 @@ describe("update checks", () => {
   });
 
   it("keeps the startup update toast on desktop Tauri", async () => {
-    mockLatest("v0.6.0");
+    mockLatest("v0.6.0-beta.1");
     const { update, pushToastMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
 
     await update.checkForUpdate();
 
     expect(pushToastMock).toHaveBeenCalledWith(
-      "Tine 0.6.0 is available — you're on 0.5.3.",
+      `${IDENTITY.productName} 0.6.0-beta.1 is available — you're on 0.5.3.`,
       "info",
       expect.objectContaining({
         sticky: true,
@@ -213,13 +243,13 @@ describe("update checks", () => {
   });
 
   it("keeps one visible offer when the startup and manual checks find the same update", async () => {
-    mockLatest("v0.6.0");
+    mockLatest("v0.6.0-beta.1");
     const { update, pushToastMock, dismissToastMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
 
     await update.checkForUpdate();
     await expect(update.checkForUpdateNow()).resolves.toEqual({
       kind: "available",
-      version: "0.6.0",
+      version: "0.6.0-beta.1",
       current: "0.5.3",
     });
 
@@ -229,21 +259,21 @@ describe("update checks", () => {
   });
 
   it("lets only the newest of two concurrent offers publish the sticky toast", async () => {
-    mockLatest("v0.6.0");
+    mockLatest("v0.6.0-beta.1");
     const { update, pushToastMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
 
-    await Promise.all([update.offerUpdate("0.6.0", "0.5.3"), update.offerUpdate("0.6.0", "0.5.3")]);
+    await Promise.all([update.offerUpdate("0.6.0-beta.1", "0.5.3"), update.offerUpdate("0.6.0-beta.1", "0.5.3")]);
 
     expect(pushToastMock).toHaveBeenCalledTimes(1);
   });
 
   it("checks without installing: only the Install update action runs the updater (GH #241)", async () => {
-    mockLatest("v0.6.0");
+    mockLatest("v0.6.0-beta.1");
     const { update, pushToastMock, updaterCheckMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
 
     await expect(update.checkForUpdateNow()).resolves.toMatchObject({ kind: "available" });
     expect(updaterCheckMock, "learning the version is one check(); nothing is downloaded").toHaveBeenCalledOnce();
-    const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0 is available"));
+    const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0-beta.1 is available"));
     expect(offer?.[2]).toMatchObject({ sticky: true, action: { label: "Install update" } });
 
     offer?.[2]?.action?.run();
@@ -258,7 +288,7 @@ describe("update checks", () => {
   });
 
   it("offers a manual download, not a native install, to the x86 build and records the policy, not a failure (GH #594)", async () => {
-    mockLatest("v0.6.0");
+    mockLatest("v0.6.0-beta.1");
     const { update, pushToastMock, updaterCheckMock, openExternalMock, diagnosticFrontendEventMock } =
       await loadUpdate({ platform: "desktop", architecture: "x86", version: "0.5.3" });
 
@@ -279,7 +309,7 @@ describe("update checks", () => {
   });
 
   it("records a fixed stage/cause for a failed install and points the user at Diagnostics (GH #343)", async () => {
-    mockLatest("v0.6.0");
+    mockLatest("v0.6.0-beta.1");
     const failure = new Error(
       "error sending request for url https://reporter:hunter2@example.test/latest.json?token=secret",
       { cause: new Error("api_key=key123 at C:/Users/Reporter/secret.txt (/home/reporter/private/file)") },
@@ -288,11 +318,11 @@ describe("update checks", () => {
       await loadUpdate({ platform: "desktop", version: "0.5.3" });
     // The version check succeeds; the installer's own check() then fails.
     updaterCheckMock
-      .mockResolvedValueOnce({ version: "0.6.0", close: async () => {} })
+      .mockResolvedValueOnce({ version: "0.6.0-beta.1", close: async () => {} })
       .mockRejectedValueOnce(failure);
 
     await update.checkForUpdateNow();
-    toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0 is available"))?.[2]?.action?.run();
+    toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0-beta.1 is available"))?.[2]?.action?.run();
     await vi.waitFor(() => expect(diagnosticFrontendEventMock).toHaveBeenCalledWith(
       "updater_failure", { updaterStage: "manifest_fetch", updaterCause: "network" },
     ));
@@ -324,7 +354,7 @@ describe("update checks", () => {
   });
 
   it("keeps browser/dev checks inert without probing the native platform", async () => {
-    mockLatest("v0.6.0");
+    mockLatest("v0.6.0-beta.1");
     const { update, platformKindMock, updaterCheckMock } = await loadUpdate({ tauri: false });
 
     await update.checkForUpdate();
@@ -336,10 +366,10 @@ describe("update checks", () => {
 
   describe("installing flushes saves first (the window-close gate)", () => {
     async function installFlow(opts: { prepare: "accepted" | "rejected" | "in_flight"; installFails?: boolean; downloadFails?: boolean }) {
-      mockLatest("v0.6.0");
+      mockLatest("v0.6.0-beta.1");
       const order: string[] = [];
       const updateObject = {
-        version: "0.6.0",
+        version: "0.6.0-beta.1",
         download: vi.fn(async () => { order.push("download"); if (opts.downloadFails) throw new Error("download failed"); }),
         close: vi.fn(async () => {}),
         install: vi.fn(async () => {
@@ -356,7 +386,7 @@ describe("update checks", () => {
       loaded.update.setUpdateExitGuard(guard);
       loaded.relaunchMock.mockImplementation(async () => { order.push("relaunch"); });
       await loaded.update.checkForUpdateNow();
-      toastCalls(loaded.pushToastMock).find(([message]) => message.includes("0.6.0 is available"))?.[2]?.action?.run();
+      toastCalls(loaded.pushToastMock).find(([message]) => message.includes("0.6.0-beta.1 is available"))?.[2]?.action?.run();
       return { ...loaded, order, updateObject, guard };
     }
 

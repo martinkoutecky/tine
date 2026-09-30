@@ -6,7 +6,10 @@ fn switching_instructions_keep_existing_graphs_and_explain_rollback() {
         "choose your existing graph folder",
         "do not delete application data",
         "Save your edits before switching",
-        "Android's separate preview app",
+        "Stable gets only stable updates",
+        "Beta gets only Beta updates",
+        "Copy version",
+        "Android's separate Beta app",
     ] {
         assert!(
             guide.contains(outcome),
