@@ -62,11 +62,6 @@ pub(crate) fn seed_from_release_once() {
         dirs::config_dir().map(|base| (base.join(APP_IDENTIFIER), base.join(RELEASE_IDENTIFIER)));
     match seed(&own, &release, config_dirs) {
         Ok(Seeded::Copied(entries)) => {
-            if let Some((own_store, release_store)) = desktop_webview_dirs() {
-                if let Err(error) = seed_webview_store(&own_store, &release_store) {
-                    crate::debug::diag_private("experiment-webview-seed-failed", error.to_string());
-                }
-            }
             crate::debug::diag_private(
                 "experiment-config-seeded",
                 format!("copied {entries:?} from the released Tine's app-data dir"),
@@ -78,6 +73,24 @@ pub(crate) fn seed_from_release_once() {
             format!("starting without the released Tine's config: {error}"),
         ),
     }
+    // Config and external browser stores publish independently. Retry a missing
+    // browser store on reopen even if config was already published before a crash.
+    if let Err(error) = seed_missing_webview(&own, &release, desktop_webview_dirs()) {
+        crate::debug::diag_private("experiment-webview-seed-failed", error.to_string());
+    }
+}
+
+fn seed_missing_webview(
+    own_data: &Path,
+    release_data: &Path,
+    stores: Option<(PathBuf, PathBuf)>,
+) -> io::Result<()> {
+    if let Some((own, release)) = stores {
+        if has_configured_graph(own_data) && has_configured_graph(release_data) {
+            seed_webview_store(&own, &release)?;
+        }
+    }
+    Ok(())
 }
 
 /// Tauri's Windows default uses LocalData/<identifier>/EBWebView, while
@@ -112,6 +125,10 @@ fn webview_dirs(
 }
 
 fn seed_webview_store(own: &Path, release: &Path) -> io::Result<()> {
+    seed_webview_after_stage(own, release, || {})
+}
+
+fn seed_webview_after_stage(own: &Path, release: &Path, after_stage: impl Fn()) -> io::Result<()> {
     if own.exists() || !release.is_dir() {
         return Ok(());
     }
@@ -120,6 +137,7 @@ fn seed_webview_store(own: &Path, release: &Path) -> io::Result<()> {
         fs::remove_dir_all(&staged)?;
     }
     copy_tree(release, &staged)?;
+    after_stage();
     publish(&staged, own)
 }
 

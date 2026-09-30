@@ -18,7 +18,7 @@
 // Scope: the whole app-data dir — settings, session, backups AND the WebKit
 // localStorage store — moved as one unit so the graph reopens and the session is
 // intact. Window geometry (tauri-plugin-window-state, in the *config* dir) may reset
-// once; that's covered by the one-time toast the frontend shows after a migration.
+// once; the one-shot command exposes this to the frontend for a migration notice.
 //
 // Android is intentionally NOT handled and keeps applicationId `page.tine.app`.
 // An applicationId change is a new app at the OS level and app-private storage
@@ -29,7 +29,6 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// The identifier Tine currently ships under (must match tauri.conf.json).
 use crate::device_io::{copy_tree as copy_dir_all, publish_directory_entry};
 
 /// Identifiers Tine shipped under before, NEWEST FIRST. We migrate from the most
@@ -71,7 +70,7 @@ fn has_real_user_data(dir: &Path) -> bool {
         // A missing backups/ is the ordinary "no graph was ever opened under
         // this identifier" case. Any OTHER error — EACCES, EIO, a stale
         // mount, ENOTDIR — means we cannot PROVE the directory is disposable,
-        // and the caller's next step is to destroy it wholesale. Fail closed:
+        // and the caller's next step is to replace its active location. Fail closed:
         // claim user data and skip the migration (audit 4, D3).
         Err(error) => error.kind() != std::io::ErrorKind::NotFound,
     }
@@ -108,7 +107,7 @@ fn migrate_after_park(new_dir: &Path, after_park: impl Fn()) -> bool {
         // by has_real_user_data() above. Replace it WHOLESALE with the legacy dir so
         // localStorage (the graph path + session), settings and backups all carry
         // over as one consistent unit. The scaffolding is renamed ASIDE, not
-        // deleted, until the replacement is actually in place — destruction
+        // deleted, including after the replacement is in place — destruction
         // before placement turned any later failure into silent loss of
         // whatever the guard mis-assessed (audit 4, D3).
         let mut aside: Option<std::path::PathBuf> = None;
@@ -203,7 +202,7 @@ pub(crate) fn run_early() {}
 
 /// Command: return true ONCE if this launch migrated a legacy app-data dir, then
 /// clear the flag so a later reload doesn't re-toast. The frontend calls this on
-/// boot and shows an explanatory toast when it returns true.
+/// boot can show an explanatory toast when it returns true.
 #[tauri::command]
 pub(crate) fn take_identifier_migration_notice() -> bool {
     MIGRATED.swap(false, Ordering::SeqCst)
