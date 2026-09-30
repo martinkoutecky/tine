@@ -79,7 +79,7 @@ fn keep_both(rows: &[DiffRow], out: &mut HashMap<String, String>) {
 #[test]
 fn a_duplicate_journal_day_is_a_resolvable_queue_object_with_stable_id() {
     let root = duplicate_day("queue");
-    let queue = conflicts::conflict_inventory(&open(&root)).queue;
+    let queue = conflicts::conflict_inventory(&open(&root)).unwrap().queue;
     let object = day(&queue).expect("the duplicate day is a queue object");
     assert_eq!(object.id, format!("journal:{KEEPER}"));
     assert_eq!(object.page_name, "Friday, 26-06-2026");
@@ -92,7 +92,7 @@ fn a_duplicate_journal_day_is_a_resolvable_queue_object_with_stable_id() {
         "merge is implicit: real rows, got {:?}",
         object.block_conflicts
     );
-    let again = conflicts::conflict_inventory(&open(&root)).queue;
+    let again = conflicts::conflict_inventory(&open(&root)).unwrap().queue;
     assert_eq!(day(&again).map(|o| o.id.clone()), Some(object.id.clone()));
     let _ = fs::remove_dir_all(&root);
 }
@@ -102,7 +102,7 @@ fn resolving_keep_both_folds_the_stray_in_trashes_it_and_leaves_the_queue() {
     let root = duplicate_day("resolve");
     let store = open(&root);
     let queue = ConflictQueue::default();
-    assert!(day(&queue.inventory(&store).queue).is_some());
+    assert!(day(&queue.inventory(&store).unwrap().queue).is_some());
     let diff = conflicts::duplicate_journal_diff(&store, KEEPER, STRAY)
         .unwrap()
         .expect("a same-format pair diffs");
@@ -136,15 +136,17 @@ fn resolving_keep_both_folds_the_stray_in_trashes_it_and_leaves_the_queue() {
         "the stray's bytes are recoverable in trash"
     );
     // The settle a command performs re-derives the day without a full walk.
-    queue.refresh_files(
-        &store,
-        &[
-            FileId::from(KEEPER.to_owned()),
-            FileId::from(STRAY.to_owned()),
-        ],
-    );
-    assert!(day(&queue.inventory(&store).queue).is_none());
-    assert!(day(&conflicts::conflict_inventory(&open(&root)).queue).is_none());
+    queue
+        .refresh_files(
+            &store,
+            &[
+                FileId::from(KEEPER.to_owned()),
+                FileId::from(STRAY.to_owned()),
+            ],
+        )
+        .unwrap();
+    assert!(day(&queue.inventory(&store).unwrap().queue).is_none());
+    assert!(day(&conflicts::conflict_inventory(&open(&root)).unwrap().queue).is_none());
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -226,7 +228,7 @@ fn a_cross_format_day_lists_its_files_offers_no_rows_and_refuses_a_fold() {
     fs::write(root.join(KEEPER), "- markdown\n").unwrap();
     fs::write(root.join("journals/Friday, 26-06-2026.org"), "* org\n").unwrap();
     let store = open(&root);
-    let queue = conflicts::conflict_inventory(&store).queue;
+    let queue = conflicts::conflict_inventory(&store).unwrap().queue;
     let object = day(&queue).expect("still a queue object");
     assert_eq!(object.sides.len(), 2, "both files are listed");
     assert!(
@@ -258,11 +260,13 @@ fn an_external_stray_enters_the_open_queue_on_its_change_event() {
     fs::write(root.join(KEEPER), "- mine\n").unwrap();
     let store = open(&root);
     let queue = ConflictQueue::default();
-    assert!(day(&queue.inventory(&store).queue).is_none());
+    assert!(day(&queue.inventory(&store).unwrap().queue).is_none());
     fs::write(root.join(STRAY), "- theirs\n").unwrap();
     store.scan_refresh().unwrap();
-    assert!(queue.refresh_files(&store, &[FileId::from(STRAY.to_owned())]));
-    let object = day(&queue.inventory(&store).queue).map(|o| o.id.clone());
+    assert!(queue
+        .refresh_files(&store, &[FileId::from(STRAY.to_owned())])
+        .unwrap());
+    let object = day(&queue.inventory(&store).unwrap().queue).map(|o| o.id.clone());
     assert_eq!(object, Some(format!("journal:{KEEPER}")));
     let _ = fs::remove_dir_all(&root);
 }
@@ -276,7 +280,7 @@ fn a_journal_title_format_change_that_reveals_a_twin_queues_the_day() {
     let store = open(&root);
     let queue = ConflictQueue::default();
     assert!(
-        day(&queue.inventory(&store).queue).is_none(),
+        day(&queue.inventory(&store).unwrap().queue).is_none(),
         "under the default format the title-named file is an ordinary page"
     );
     // The Settings path, observed through the change feed exactly as the
@@ -285,10 +289,10 @@ fn a_journal_title_format_change_that_reveals_a_twin_queues_the_day() {
     tine_graph_features::config::set_journal_page_title_format(&store, "EEEE, dd-MM-yyyy").unwrap();
     let mut changed = false;
     while let Ok(Some(change)) = changes.try_recv() {
-        changed |= queue.refresh_change(&store, &change);
+        changed |= queue.refresh_change(&store, &change).unwrap();
     }
     assert!(changed, "the config change re-derives the duplicate days");
-    let queued = day(&queue.inventory(&store).queue).map(|o| o.page_name.clone());
+    let queued = day(&queue.inventory(&store).unwrap().queue).map(|o| o.page_name.clone());
     assert_eq!(queued.as_deref(), Some("Friday, 26-06-2026"));
     let _ = fs::remove_dir_all(&root);
 }
@@ -300,7 +304,7 @@ fn opening_the_day_by_title_reads_the_file_the_queue_object_names() {
     let root = duplicate_day("open");
     let store = open(&root);
     store.scan_refresh().unwrap();
-    let queue = conflicts::conflict_inventory(&store).queue;
+    let queue = conflicts::conflict_inventory(&store).unwrap().queue;
     let object = day(&queue).expect("queued");
     let read = tine_graph_features::pages::get_page(&store, &object.page_name, PageKind::Journal)
         .ok()

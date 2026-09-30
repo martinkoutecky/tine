@@ -732,9 +732,8 @@ impl std::fmt::Display for OpenError {
     }
 }
 
-/// Effective config. While `problem` is set, page reads are read-only and
-/// transactions refuse mutations: unknown directories must never choose a
-/// write destination. `scan_refresh()` retries the config read after repair.
+/// Effective config. While `problem` is set, reads are read-only and mutations
+/// refuse unknown destinations. `scan_refresh()` retries the read after repair.
 #[derive(Clone)]
 pub struct ConfigState {
     /// Effective graph config, defaulted when loading config failed. A changed
@@ -1069,10 +1068,9 @@ impl Store {
     /// A caller that applies the configured journal template must wait for
     /// `WholeGraph::templates()`; saving a new journal does not add it.
     /// [`Self::whole_graph`] waits for background parsing. Partial scans report
-    /// unreadable entries; failed parsing is retried by [`Self::scan_refresh`].
-    /// Direct page reads and guarded writes remain available after a parse
-    /// failure. Neither publishes a graph generation until a successful
-    /// `scan_refresh()`. The returned
+    /// unreadable entries; [`Self::scan_refresh`] retries failed parsing.
+    /// Direct reads/writes remain available after a parse failure, without
+    /// publishing until `scan_refresh()` succeeds. The returned
     /// `GraphMeta` is a snapshot of open-time settings. After a config change,
     /// callers can derive fresh display metadata with
     /// `GraphMeta::from_config` and `JournalFormat::new` from `Store::config()`;
@@ -1082,8 +1080,7 @@ impl Store {
     /// until `scan_refresh()` successfully retries. Recovery's completion
     /// publication has no file tuples; reconciliation may publish observed
     /// differences separately. Use the recovered view to refresh graph-wide answers.
-    /// An unsafe layout, unapproved external target, or I/O failure
-    /// returns [`OpenError`].
+    /// Unsafe layouts, unapproved external targets, and I/O return [`OpenError`].
     pub fn open(
         root: &Path,
         opts: OpenOptions,
@@ -1989,6 +1986,9 @@ impl Store {
             name.to_owned()
         };
         let Some(entry) = self.graph.find_entry(&lookup, kind) else {
+            if let Some(error) = self.graph.discovery_problem() {
+                return Err(StoreError::Io(error));
+            }
             return Ok(None);
         };
         let id = PageId::from(self.graph.rel_path(&entry.path));

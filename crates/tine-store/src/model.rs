@@ -10,7 +10,9 @@ mod page_identity;
 mod page_parse;
 mod parse_depth;
 pub(crate) use page_identity::configured_hidden;
-use page_identity::{effective_page_name, list_graph_pages};
+#[cfg(test)]
+use page_identity::effective_page_name;
+use page_identity::list_graph_pages;
 pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
     graph_text_watch_relevant,
@@ -293,6 +295,7 @@ pub(crate) struct Graph {
     /// lsdoc ownership gap can never degrade search completeness invisibly.
     page_index_failures: RwLock<Vec<String>>,
     unreadable_pages: RwLock<Arc<Vec<(crate::store::FileId, String)>>>,
+    pub(super) discovery_errors: RwLock<Vec<(crate::FileId, crate::IoError)>>,
     /// Companion indexes for `cache`: the logical `(kind, page_key(name)) -> Vec
     /// slot` index preserves deterministic first-wins lookup, while the exact-path
     /// index keeps cache ownership physical. The Vec stays the source of truth for
@@ -2352,6 +2355,7 @@ impl Graph {
             observed_mtimes: RwLock::new(Arc::new(std::collections::HashMap::new())),
             page_index_failures: RwLock::new(Vec::new()),
             unreadable_pages: RwLock::new(Arc::new(Vec::new())),
+            discovery_errors: RwLock::new(Vec::new()),
             cache_index: RwLock::new(None),
             cache_gen: std::sync::atomic::AtomicU64::new(0),
             build_lock: std::sync::Mutex::new(()),
@@ -2423,7 +2427,17 @@ impl Graph {
     }
 
     pub(crate) fn unreadable_pages(&self) -> Arc<Vec<(crate::store::FileId, String)>> {
-        Arc::clone(&self.unreadable_pages.read().unwrap())
+        let mut rows = Arc::clone(&self.unreadable_pages.read().unwrap());
+        Arc::make_mut(&mut rows).extend(
+            self.discovery_errors
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(id, error)| (id.clone(), error.to_string())),
+        );
+        Arc::make_mut(&mut rows).sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        Arc::make_mut(&mut rows).dedup();
+        rows
     }
 
     pub(crate) fn replace_unreadable_walk_errors(
@@ -2474,6 +2488,7 @@ impl Graph {
         self.root.join(&self.current_config().journals_dir)
     }
 
+    #[cfg(test)]
     pub(crate) fn pages_path(&self) -> PathBuf {
         self.root.join(&self.current_config().pages_dir)
     }
@@ -2963,14 +2978,8 @@ impl Graph {
         Ok(dto)
     }
 
-    /// Load a page from a SPECIFIC file by its graph-root-relative path, parsing it
-    /// directly and bypassing the `(kind,name)` page cache + `disk_revs`. This is
-    /// how a duplicate-day stray (`journals/Friday, 26-06-2026.org`) — which shares
-    /// a `(kind,name)` with the canonical `2026_06_26.org` and so is unreachable by
-    /// name — gets opened and edited (#21). The direct parse is deliberate: the
-    /// cache slot for that `(kind,name)` holds the CANONICAL file, so a cache lookup
-    /// here would serve the wrong file's content. Returns `Ok(None)` if the path is
-    /// invalid (see [`resolve_rel`]) or the file is gone.
+    /// Directly read the caller-selected file, including a duplicate-day stray;
+    /// missing/invalid paths return None and read failures propagate.
     /// Parse a path whose graph-relative identity was validated by the caller.
     /// Store page reads use this for lexical page symlinks as well as strays.
     pub(crate) fn load_by_validated_path(&self, abs: &Path) -> io::Result<Option<PageDto>> {
@@ -2995,9 +3004,6 @@ impl Graph {
     /// ACTIVELY WAITS ON when they navigate before the background warm finishes
     /// (NOT the paced thermal `warm_cache`, which keeps its own serial loop).
     ///
-    /// The per-file work (read → content_rev → parse → assign uuids) is independent,
-    /// so on a large graph we fan it across cores. Result order is irrelevant: the
-    /// cache is searched by `(kind, name)`, never by position.
     fn load_all_pages(&self) -> PageCacheBuild {
         let entries = self.list_pages();
         let entry_count = entries.len();
@@ -3057,9 +3063,15 @@ impl Graph {
             failures,
             mut unreadable,
         } = built;
-        unreadable.extend(page_walk_errors(&self.root, &self.pages_path()));
-        unreadable.extend(page_walk_errors(&self.root, &self.journals_path()));
+        unreadable.extend(
+            self.discovery_errors
+                .read()
+                .unwrap()
+                .iter()
+                .map(|(id, error)| (id.as_str().to_owned(), error.to_string())),
+        );
         unreadable.sort_by(|a, b| a.0.cmp(&b.0));
+        unreadable.dedup();
         let revs: std::collections::HashMap<PathBuf, String> = built
             .iter()
             .map(|(e, _, r)| (e.path.clone(), r.clone()))
@@ -3241,6 +3253,7 @@ impl Graph {
         *self.observed_mtimes.write().unwrap() = Arc::new(std::collections::HashMap::new());
         self.page_index_failures.write().unwrap().clear();
         *self.unreadable_pages.write().unwrap() = Arc::new(Vec::new());
+        self.discovery_errors.write().unwrap().clear();
         *self.cache_index.write().unwrap() = None;
         self.disk_revs.write().unwrap().clear(); // under the cache lock (cache → disk_revs)
                                                  // Bump the generation AFTER discarding the cache (under the cache lock), so
@@ -3706,11 +3719,6 @@ impl Graph {
             return None;
         }
         let stem = path.file_stem().and_then(|s| s.to_str())?;
-        // Accept a file anywhere UNDER journals/ or pages/, not just a direct child
-        // (#21 recursive subdirs). The page name is the basename (the sub-path is
-        // discarded, matching OG); the file's own `path` remains its load/save
-        // identity. `starts_with` is a lexical prefix over path components, so a
-        // file at `pages/x/foo.md` matches `pages/` but nothing outside it.
         let entry = if path.starts_with(self.journals_path()) {
             let (name, date_key) = match self.current_journal_format().parse(stem) {
                 Some(d) => (
@@ -3728,7 +3736,11 @@ impl Graph {
             }
         } else {
             PageEntry {
-                name: effective_page_name(path, stem, self.current_config().file_name_format),
+                name: self.discover_page_name(
+                    path,
+                    stem,
+                    self.current_config().file_name_format,
+                )?,
                 kind: PageKind::Page,
                 date_key: None,
                 rel_path: Some(self.rel_path(path).into()),
@@ -4597,7 +4609,7 @@ fn list_md(
                 Some(d) => (fmt.title(d), Some(d.ordinal_key())),
                 None => (stem.to_string(), None),
             },
-            PageKind::Page => (effective_page_name(&path, stem, name_fmt), None),
+            PageKind::Page => (effective_page_name(&path, stem, name_fmt).unwrap(), None),
         };
         out.push(PageEntry {
             name,
@@ -4648,38 +4660,6 @@ fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
             }
         }
     }
-}
-
-fn page_walk_errors(root: &Path, dir: &Path) -> Vec<(String, String)> {
-    let mut unreadable = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let rel = |path: &Path| slash_path(path.strip_prefix(root).unwrap_or(path));
-        let entries = match fs::read_dir(&current) {
-            Ok(entries) => entries,
-            Err(error) => {
-                unreadable.push((rel(&current), error.to_string()));
-                continue;
-            }
-        };
-        for entry in entries {
-            match entry {
-                Ok(entry) => {
-                    let path = entry.path();
-                    if entry.file_name().to_string_lossy().starts_with('.') {
-                        continue;
-                    }
-                    match entry.file_type() {
-                        Ok(kind) if kind.is_dir() => stack.push(path),
-                        Ok(_) => {}
-                        Err(error) => unreadable.push((rel(&path), error.to_string())),
-                    }
-                }
-                Err(error) => unreadable.push((rel(&current), error.to_string())),
-            }
-        }
-    }
-    unreadable
 }
 
 /// True if journal text requires skipping template insertion, including hash-prefixed prose.
@@ -6883,9 +6863,11 @@ mod tests {
         // A canonical file for another day must be left untouched.
         fs::write(dir.join("journals").join("2026_06_24.org"), "* prior\n").unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
-        let listed = tine_graph_features::journals::journal_filename_migrations(&store);
+        let listed = tine_graph_features::journals::journal_filename_migrations(&store).unwrap();
         assert_eq!(
-            tine_graph_features::journals::migrate_journal_filenames(&store, &listed).migrated,
+            tine_graph_features::journals::migrate_journal_filenames(&store, &listed)
+                .unwrap()
+                .migrated,
             1,
             "exactly the title-named file renamed"
         );
@@ -7196,6 +7178,7 @@ mod tests {
         let cutoff = tine_store::Day(20300715);
         assert_eq!(
             tine_graph_features::journals::feed_journals_desc_through(&store, cutoff)
+                .unwrap()
                 .iter()
                 .map(|(day, _)| Some(day.0))
                 .collect::<Vec<_>>(),
@@ -7231,6 +7214,7 @@ mod tests {
         );
         assert!(
             tine_graph_features::journals::feed_journals_desc_through(&duplicate, cutoff)
+                .unwrap()
                 .iter()
                 .all(|(day, _)| day.0 != 20300717)
         );

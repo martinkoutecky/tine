@@ -272,7 +272,7 @@ fn a_syncthing_copy_resolves_three_way_with_the_ledger_base() {
     let dir = scratch("e2e");
     std::fs::write(dir.join("graph/pages/Desk.md"), body("seed")).unwrap();
     let (slot, sub) = open_slot(&dir, dir.join("appdata"));
-    slot.conflict_queue.inventory(&slot.store);
+    slot.conflict_queue.inventory(&slot.store).unwrap();
     save(&slot, "pages/Desk.md", "Desktop 5");
     pump(&slot, &sub);
     save(&slot, "pages/Desk.md", "Desktop");
@@ -288,6 +288,7 @@ fn a_syncthing_copy_resolves_three_way_with_the_ledger_base() {
     assert_eq!(
         slot.conflict_queue
             .inventory(&slot.store)
+            .unwrap()
             .sync_conflicts
             .len(),
         1
@@ -327,7 +328,12 @@ fn a_syncthing_copy_resolves_three_way_with_the_ledger_base() {
     assert_eq!(after, body("Desktop kk"));
     assert!(!dir.join("graph").join(COPY).exists());
     assert!(pump(&slot, &sub), "the resolved copy leaves the queue");
-    assert!(slot.conflict_queue.inventory(&slot.store).queue.is_empty());
+    assert!(slot
+        .conflict_queue
+        .inventory(&slot.store)
+        .unwrap()
+        .queue
+        .is_empty());
     assert_eq!(ledger.files().pinned(COPY), None, "resolve dropped the pin");
     // The merged body is now the winner's newest agreed text.
     assert_eq!(

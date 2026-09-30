@@ -62,19 +62,18 @@ fn update(store: &Store, edit: impl Fn(&str) -> io::Result<String>) -> io::Resul
     })
 }
 
-/// Return custom.css or an empty string if absent, unreadable or non-UTF-8.
-/// Cost: O(custom.css bytes); no size cap, as in v0.6.5.
-pub fn custom_css(store: &Store) -> String {
-    store
+/// Return bounded custom.css text, or empty text only for a missing file.
+/// Read/UTF-8/size failures propagate: callers apply no CSS and report once
+/// per graph open. Cost O(custom.css bytes), capped by PARSE_INPUT_MAX_BYTES.
+pub fn custom_css(store: &Store) -> io::Result<String> {
+    let id = store
         .file_id(Area::Meta, "custom.css")
-        .ok()
-        .and_then(|id| {
-            store
-                .read(&id, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-                .ok()
-        })
-        .and_then(|(bytes, _)| String::from_utf8(bytes).ok())
-        .unwrap_or_default()
+        .map_err(store_error)?;
+    match crate::parsed_text::read(store, &id) {
+        Ok((text, _)) => Ok(text),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(error),
+    }
 }
 
 /// Persist the favorites list to `:favorites [...]`, replacing the existing

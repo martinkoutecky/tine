@@ -83,3 +83,67 @@ fn trash_rechecks_references_after_an_external_publication() {
     store.close();
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn cold_title_discovery_failure_is_not_a_missing_name() {
+    let (root, old) = graph("cold-title");
+    old.close();
+    fs::write(root.join(".tine-test-pause-load"), "").unwrap();
+    fs::write(root.join("pages/Bad.md"), b"title:: Claimed \xff\n- bad\n").unwrap();
+    let (store, _, _) = Store::open(&root, Default::default()).unwrap();
+    let result = store.page_named("Claimed", tine_core::model::PageKind::Page);
+    store.close();
+    assert!(
+        result.is_err(),
+        "partial discovery must not establish name absence"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn journal_scan_failure_never_reports_a_completed_empty_feed() {
+    let (root, store) = graph("journal-scan");
+    store.close();
+    let error = tine_graph_features::journals::feed_page(&store, 10, None)
+        .err()
+        .unwrap();
+    assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn journal_preview_failure_is_reported_instead_of_an_empty_preview() {
+    let (root, store) = graph("journal-preview");
+    fs::write(root.join("journals/2026_06_19.md"), "- good\n").unwrap();
+    fs::write(root.join("journals/2026_06_19.org"), b"- bad \xff\n").unwrap();
+    let result = tine_graph_features::journals::journal_conflicts(&store);
+    assert!(
+        result.is_err(),
+        "incomplete duplicate journal previews must be reported"
+    );
+    store.close();
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn oversized_css_and_directory_read_failure_are_not_css_absence() {
+    let (root, store) = graph("css-errors");
+    fs::create_dir_all(root.join("logseq")).unwrap();
+    let path = root.join("logseq/custom.css");
+    let file = fs::File::create(&path).unwrap();
+    file.set_len(tine_store::PARSE_INPUT_MAX_BYTES + 1).unwrap();
+    assert_eq!(
+        tine_graph_features::config::custom_css(&store)
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::InvalidData
+    );
+    drop(file);
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(tine_graph_features::config::custom_css(&store).is_err());
+    fs::remove_dir(&path).unwrap();
+    assert_eq!(tine_graph_features::config::custom_css(&store).unwrap(), "");
+    store.close();
+    let _ = fs::remove_dir_all(root);
+}

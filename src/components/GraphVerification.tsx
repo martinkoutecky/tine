@@ -5,6 +5,7 @@
 import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { writeClipboardText } from "../clipboard";
+import { reportUiFailure } from "../uiFailure";
 import { dbg } from "../debug";
 import {
   compareGraphVerificationManifests,
@@ -17,7 +18,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { graphOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
 
-const isCancellation = (error: unknown) => String(error).toLowerCase().includes("cancelled");
+const isCancellation = (error: unknown) => typeof error === "object" && error !== null && "kind" in error && error.kind === "cancelled";
 
 export function GraphVerification(): JSX.Element {
   const [report, setReport] = createSignal<GraphVerificationReport | null>(null);
@@ -57,10 +58,7 @@ export function GraphVerification(): JSX.Element {
         if (!result.value.complete) pushToast("Graph verification was incomplete", "error");
       }
     } catch (error) {
-      if (!isCancellation(error)) {
-        dbg(`graph verification failed: ${String(error)}`);
-        pushToast("Could not verify graph files.", "error");
-      }
+      if (owner() && !isCancellation(error)) reportUiFailure("graph-verification", error);
     } finally {
       if (!disposed) setOperation(null);
     }

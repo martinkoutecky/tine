@@ -133,7 +133,7 @@ export type PluginRegistryCacheLoad =
   | { kind: "unsafe"; reason: string };
 
 export type LoadGraphResult =
-  | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number }
+  | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number; config_problem?: { kind: "config-read"; message: string } | null }
   | { kind: "focused_existing"; window_label: string };
 
 export interface CaptureGraphBindingResult {

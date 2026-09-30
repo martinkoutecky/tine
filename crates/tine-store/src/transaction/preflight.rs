@@ -292,8 +292,14 @@ impl<'a> Transaction<'a> {
                     opaque_rev,
                 })
             }
-            Step::Trash { file, expected } => {
-                self.check_orphan_asset(file)?;
+            Step::Trash {
+                file,
+                expected,
+                orphan_only,
+            } => {
+                if *orphan_only {
+                    self.check_orphan_asset(file)?;
+                }
                 if file.as_str().starts_with("logseq/.tine-trash/") {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }

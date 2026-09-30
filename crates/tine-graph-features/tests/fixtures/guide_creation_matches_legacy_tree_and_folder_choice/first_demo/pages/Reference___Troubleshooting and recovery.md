@@ -72,3 +72,9 @@ icon:: 🛟
 	- 1. Open Settings → **Help & diagnostics** → **Help improve Tine's parser**, choose what to run (**Both**, **Divergences**, or **Speed**) and press **Run comparison**: Tine runs its own parser and Logseq's parser over your graph, locally, and lists the places they disagree. Known intentional parser differences are not offered as bugs; they are counted under the details.
 	- 2. Copy the report shown there — every snippet is anonymized (page names and words are scrubbed, markup shape kept) and re-verified to still reproduce the divergence before it is shown. Nothing is uploaded.
 	- 3. What you should see: a local report that you can paste into an issue.
+- ## A graph file could not be read
+	- If **config.edn could not be read** appears, the graph opens read-only so a missing setting cannot send new files to the wrong folder. Read your available pages, repair the file or its permissions in `logseq/config.edn`, then reopen the graph. Settings shows the same problem until that reopen.
+	- If **custom.css could not be read** appears, Tine applies no custom CSS for that open. Repair `logseq/custom.css` or its permissions and reopen the graph to try again.
+	- A failed journal scan or page discovery does not mean those files are absent. The graph remains open; repair the unreadable file or folder and retry. A failed conflict refresh keeps the last successful conflict list, which may be out of date.
+	- An asset that gained a reference after an orphan scan is kept when you choose Trash. Refresh the orphan scan before trying again. With external editors or sync, wait for their changes to appear in Tine first: a change it has not observed can still race deletion.
+	- Cancelling graph verification makes no report and raises no error message. If a source file is replaced during verification, its report is incomplete; finish syncing or editing and create another report.

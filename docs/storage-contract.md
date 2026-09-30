@@ -50,7 +50,7 @@ pages conflicted, and tells the user which files need inspection before retry.
 
 A held `WholeGraph` view does not wait for later writers. Acquiring the first
 view with `whole_graph()` can wait for the initial parse. The public operation
-surface is 37 combined operations: 29 `Store` methods and eight `Transaction`
+surface is 38 combined operations: 29 `Store` methods and nine `Transaction`
 methods. The graph-command boundary guard lives at
 `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
 `crates/tine-store/tests/client_root_boundary.rs`.
@@ -161,4 +161,6 @@ Review rule: a new refusal must identify a reachable scenario involving an hones
 local user, sync or external editor. Source scans cannot prove reachability;
 the reviewer traces the path and records the scenario here before accepting it.
 
-| `transaction/read_checks.rs::check_orphan_asset::ReadOnly` | A published external-editor/sync reference arrived after the orphan listing; retain the referenced asset and ask the caller to refresh. A partial reference inventory reports an IO failure rather than granting trash. |
+| `transaction.rs::check_orphan_asset::ReadOnly` | 1 | A published external-editor/sync reference arrived after the orphan listing; retain the referenced asset and ask the caller to refresh. A partial reference inventory reports an IO failure rather than granting trash. |
+
+| `transaction.rs::check_orphan_asset::InvalidTarget` | 1 | An orphan-asset action is given a page/config/trash target; refuse without touching it. Ordinary trash remains available for intentional page or PDF artifact removal. |

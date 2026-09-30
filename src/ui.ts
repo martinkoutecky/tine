@@ -270,7 +270,7 @@ export async function refreshJournalConflicts(): Promise<void> {
 // inventory; like master, only a copy that ARRIVES mid-session is announced. ---
 /** Fetch the backend's derived conflict inventory (never stored). With
  *  `notify === "new"`, toast for sync copies that newly arrived. A failed read
- *  empties it: no badge, never a broken app, and no refusal. */
+ *  keeps the last successful inventory and reports its failure. */
 export async function refreshSyncConflicts(notify: "new" | false = false): Promise<void> {
   const owner = graphOwner();
   const episode = beginConflictRefresh();
@@ -290,8 +290,8 @@ export async function refreshSyncConflicts(notify: "new" | false = false): Promi
       );
       trackArrivalNotice(toastId, arrived.map((conflict) => conflict.id));
     }
-  } catch {
-    if (conflictRefreshCurrent(episode)) setConflictInventory({ sync_conflicts: [], vcs_markers: [], queue: [] });
+  } catch (error) {
+    if (owner() && conflictRefreshCurrent(episode)) reportUiFailure("conflict-inventory", error);
   }
 }
 

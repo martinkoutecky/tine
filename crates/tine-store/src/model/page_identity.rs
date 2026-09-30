@@ -18,7 +18,9 @@ impl Graph {
 
             let mut built = FindEntryIndex::new();
             built.entries = page_claimants(self, &list_graph_pages_kind(self, Some(kind)));
-            built.mark_kind_loaded(kind);
+            if self.discovery_problem().is_none() {
+                built.mark_kind_loaded(kind);
+            }
 
             let found = {
                 let mut guard = self.find_entry_cache.write().unwrap();
@@ -29,7 +31,9 @@ impl Graph {
                                 .entries
                                 .retain(|(loaded_kind, _), _| *loaded_kind != kind);
                             index.entries.extend(built.entries);
-                            index.mark_kind_loaded(kind);
+                            if self.discovery_problem().is_none() {
+                                index.mark_kind_loaded(kind);
+                            }
                         }
                         index.entries.get(&key).cloned().unwrap_or_default()
                     }
@@ -73,7 +77,9 @@ impl Graph {
         let entries = list_graph_pages_kind(self, Some(PageKind::Journal));
         let mut index = FindEntryIndex::new();
         index.entries = page_claimants(self, &entries);
-        index.mark_kind_loaded(PageKind::Journal);
+        if self.discovery_problem().is_none() {
+            index.mark_kind_loaded(PageKind::Journal);
+        }
         *self.find_entry_cache.write().unwrap() = Some((gen, index));
         entries
     }
@@ -364,36 +370,100 @@ pub(crate) fn graph_text_relative_eligible(relative: &str, config: &Config) -> b
 /// during name discovery; the title comes from the same answerer the page
 /// model agrees with. A full parse is still done by the cache builder and
 /// page reader.
-pub(super) fn effective_page_name(path: &Path, stem: &str, name_fmt: FileNameFormat) -> String {
-    let title = (|| {
-        let file = fs::File::open(path).ok()?;
-        #[cfg(test)]
-        super::GRAPH_PREAMBLE_READS.with(|reads| reads.set(reads.get() + 1));
-        if file.metadata().ok()?.len() > PARSE_INPUT_MAX_BYTES {
-            return None;
+pub(super) fn effective_page_name(
+    path: &Path,
+    stem: &str,
+    name_fmt: FileNameFormat,
+) -> io::Result<String> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(decode_page_name(stem, name_fmt))
         }
-        let mut reader = BufReader::new(file);
-        let mut preamble = String::new();
-        let mut line = String::new();
-        let format = Format::from_path(path);
-        loop {
-            line.clear();
-            if reader.read_line(&mut line).ok()? == 0 {
-                break;
-            }
-            preamble.push_str(&line);
-            match tine_core::model::preamble_read(&preamble, format) {
-                PreambleRead::Settled(title) => return title,
-                PreambleRead::More => {}
-                PreambleRead::Whole => {
-                    reader.read_to_string(&mut preamble).ok()?;
-                    break;
+        Err(error) => return Err(error),
+    };
+    #[cfg(test)]
+    super::GRAPH_PREAMBLE_READS.with(|reads| reads.set(reads.get() + 1));
+    let len = file.metadata()?.len();
+    if len > PARSE_INPUT_MAX_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            ParseInputTooLarge { len },
+        ));
+    }
+    let mut reader = BufReader::new(file.take(PARSE_INPUT_MAX_BYTES + 1));
+    let mut preamble = String::new();
+    let mut line = String::new();
+    let format = Format::from_path(path);
+    let title = loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            break tine_core::model::page_title_from_preamble(&preamble, format);
+        }
+        preamble.push_str(&line);
+        if preamble.len() as u64 > PARSE_INPUT_MAX_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                ParseInputTooLarge {
+                    len: preamble.len() as u64,
+                },
+            ));
+        }
+        match tine_core::model::preamble_read(&preamble, format) {
+            PreambleRead::Settled(title) => break title,
+            PreambleRead::More => {}
+            PreambleRead::Whole => {
+                reader.read_to_string(&mut preamble)?;
+                if preamble.len() as u64 > PARSE_INPUT_MAX_BYTES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        ParseInputTooLarge {
+                            len: preamble.len() as u64,
+                        },
+                    ));
                 }
+                break tine_core::model::page_title_from_preamble(&preamble, format);
             }
         }
-        tine_core::model::page_title_from_preamble(&preamble, format)
-    })();
-    title.unwrap_or_else(|| decode_page_name(stem, name_fmt))
+    };
+    Ok(title.unwrap_or_else(|| decode_page_name(stem, name_fmt)))
+}
+
+impl Graph {
+    pub(crate) fn discovery_problem(&self) -> Option<crate::IoError> {
+        self.discovery_errors
+            .read()
+            .unwrap()
+            .first()
+            .map(|(_, error)| error.clone())
+    }
+    pub(super) fn discover_page_name(
+        &self,
+        path: &Path,
+        stem: &str,
+        fmt: FileNameFormat,
+    ) -> Option<String> {
+        match effective_page_name(path, stem, fmt) {
+            Ok(name) => {
+                let id = crate::FileId::from(self.rel_path(path));
+                self.discovery_errors
+                    .write()
+                    .unwrap()
+                    .retain(|(failed, _)| *failed != id);
+                Some(name)
+            }
+            Err(error) => {
+                self.discovery_errors
+                    .write()
+                    .unwrap()
+                    .push((crate::FileId::from(self.rel_path(path)), error.into()));
+                // Physical access remains possible; page reads still return
+                // their typed decode/size error. No complete name inventory
+                // may use this tentative filename while discovery is partial.
+                Some(decode_page_name(stem, fmt))
+            }
+        }
+    }
 }
 
 pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
@@ -419,7 +489,8 @@ pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Ve
     if !graph_text_directory_scannable(root, start, &config) {
         return entries;
     }
-    walk_graph_page_files(root, start, &config, |path| {
+    let mut failures = Vec::new();
+    let walk_errors = walk_graph_page_files(root, start, &config, |path| {
         if kind.is_some_and(|kind| (kind == PageKind::Journal) != path.starts_with(&journals)) {
             return;
         }
@@ -437,7 +508,15 @@ pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Ve
             }
         } else {
             (
-                effective_page_name(&path, stem, name_format),
+                match effective_page_name(&path, stem, name_format) {
+                    Ok(name) => name,
+                    Err(error) => {
+                        failures.push((crate::FileId::from(graph.rel_path(&path)), error.into()));
+                        // Keep the physical claim for conservative rename/trash
+                        // checks; discovery_problem bars complete name answers.
+                        decode_page_name(stem, name_format)
+                    }
+                },
                 PageKind::Page,
                 None,
             )
@@ -450,6 +529,18 @@ pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Ve
             path,
         });
     });
+    failures.extend(
+        walk_errors
+            .into_iter()
+            .map(|(path, error)| (crate::FileId::from(graph.rel_path(&path)), error.into())),
+    );
+    let mut known = graph.discovery_errors.write().unwrap();
+    known.retain(|(id, _)| match kind {
+        None => false,
+        Some(PageKind::Journal) => !root.join(id.as_str()).starts_with(&journals),
+        Some(PageKind::Page) => root.join(id.as_str()).starts_with(&journals),
+    });
+    known.extend(failures);
     entries
 }
 
@@ -458,18 +549,35 @@ fn walk_graph_page_files(
     start: &Path,
     config: &Config,
     mut visit: impl FnMut(PathBuf),
-) {
+) -> Vec<(PathBuf, io::Error)> {
+    let mut errors = Vec::new();
     let mut pending = vec![start.to_path_buf()];
     while let Some(dir) = pending.pop() {
         #[cfg(feature = "test-faults")]
         crate::cost_counters::readdir();
-        let Ok(entries) = fs::read_dir(dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(kind) = entry.file_type() else {
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                errors.push((dir, error));
                 continue;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    errors.push((dir.clone(), error));
+                    continue;
+                }
+            };
+            let path = entry.path();
+            let kind = match entry.file_type() {
+                Ok(kind) => kind,
+                Err(error) => {
+                    errors.push((path, error));
+                    continue;
+                }
             };
             if kind.is_file() && graph_text_eligible(root, &path, config) {
                 visit(path);
@@ -478,4 +586,5 @@ fn walk_graph_page_files(
             }
         }
     }
+    errors
 }

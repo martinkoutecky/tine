@@ -1,12 +1,52 @@
 //! Read-dependent safety checks at the Store writer boundary.
 use super::*;
 impl Transaction<'_> {
+    // Initial parsing can need the writer; wait before commit acquires it.
+    pub(super) fn await_reference_publication(&self) {
+        if self.steps.iter().any(|step| {
+            matches!(
+                step,
+                Step::Trash {
+                    orphan_only: true,
+                    ..
+                }
+            )
+        }) {
+            let _ = self.store.whole_graph();
+        }
+    }
+    pub(super) fn config_write_failure(&self) -> Option<TxOutcome> {
+        self.store
+            .config()
+            .problem
+            .map(|problem| TxOutcome::NotCommitted {
+                step: 0,
+                why: Why::Failed(problem),
+                rollback: Rollback::default(),
+                publication_errors: Vec::new(),
+                graph_rev: self.store.changes.rev(),
+            })
+    }
+    /// Queue recoverable trash of an unreferenced asset. Commit checks the
+    /// latest published graph under the writer, refusing partial inventories
+    /// and referenced assets. Cost O(B + source bytes); unobserved external
+    /// arrivals can still race after this check. Generic trash has no such
+    /// orphan requirement (for example intentional PDF annotation removal).
+    pub fn trash_orphan_asset(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
+        self.steps.push(Step::Trash {
+            file: file.clone(),
+            expected,
+            orphan_only: true,
+        });
+        self
+    }
+
     // Disk/permission failures or a published external reference invalidate an
     // orphan claim. The caller holds the writer, so publication cannot race
     // this check and trash; unobserved external edits remain outside this lock.
     pub(super) fn check_orphan_asset(&self, file: &FileId) -> Result<(), Why> {
         let Some(name) = file.as_str().strip_prefix("assets/") else {
-            return Ok(());
+            return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
         };
         let view = self.store.whole_graph().map_err(|error| {
             Why::Failed(

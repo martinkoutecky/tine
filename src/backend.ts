@@ -651,7 +651,7 @@ export interface Backend {
   saveDiagnosticReport(buildCommit: string, buildTime: string): Promise<boolean>;
   /** Drop every recorded diagnostic event of this run and the previous one. */
   clearDiagnostics(): Promise<void>;
-  /** Exact-byte manifest of the open graph's Markdown/Org files; rejects with "cancelled" after a cancel. */
+  /** Exact-byte manifest of the open graph's Markdown/Org files; rejects with `{ kind: "cancelled" }` after a cancel. */
   createGraphVerification(operationId: string): Promise<GraphVerificationReport>;
   cancelGraphVerification(operationId: string): Promise<void>;
   /** Save a report where the user picks (desktop); `false` when cancelled. */

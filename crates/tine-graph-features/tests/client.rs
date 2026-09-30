@@ -359,15 +359,13 @@ fn custom_css_matches_legacy_present_absent_and_unreadable() {
         if let Some(contents) = contents {
             fs::write(root.join("logseq/custom.css"), contents).unwrap();
         }
-        assert_eq!(
-            format!("{:?}", config::custom_css(&store)),
-            match index {
-                0 => "\"body { color: red }\"",
-                1 => "\"\"",
-                2 => "\"\"",
-                _ => unreachable!(),
-            }
-        );
+        let css = config::custom_css(&store);
+        match index {
+            0 => assert_eq!(css.unwrap(), "body { color: red }"),
+            1 => assert_eq!(css.unwrap(), ""),
+            2 => assert_eq!(css.unwrap_err().kind(), std::io::ErrorKind::InvalidData),
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -408,7 +406,7 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
     fs::write(new_root.join("pages").join(conflict_name), "- theirs\n").unwrap();
     store.scan_refresh().unwrap();
     assert_json_value(
-        serde_json::to_value(conflicts::list_sync_conflicts(&store)).unwrap(),
+        serde_json::to_value(conflicts::list_sync_conflicts(&store).unwrap()).unwrap(),
         "conflict_clients_match_legacy_values_and_disk_bytes",
         "sync_conflicts",
     );
@@ -464,13 +462,13 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
         fs::write(new_root.join("journals").join(name), body).unwrap();
     }
     store.scan_refresh().unwrap();
-    let new_feed = journals::feed_journals_desc_through(&store, Day(20260620));
+    let new_feed = journals::feed_journals_desc_through(&store, Day(20260620)).unwrap();
     assert_eq!(
         new_feed.iter().map(|(day, _)| day.0).collect::<Vec<_>>(),
         &[20260620, 20260619, 20260618]
     );
     assert_json_value(
-        serde_json::to_value(journals::journal_conflicts(&store)).unwrap(),
+        serde_json::to_value(journals::journal_conflicts(&store).unwrap()).unwrap(),
         "journal_clients_match_legacy_feed_conflicts_read_trash_and_migration",
         "journal_conflicts",
     );
@@ -482,12 +480,12 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
     // `2026_06_18.md` (an md/org twin). It is not proposed (stale confirmations
     // are refused: tests/journal_migrations.rs), so it stays, listed by
     // `journal_conflicts`. Every other file matches.
-    let listed = journals::journal_filename_migrations(&store);
+    let listed = journals::journal_filename_migrations(&store).unwrap();
     assert_eq!(
         format!("{listed:?}"),
         r#"[JournalFilenameMigration { from: "Jun 19th, 2026.md", to: "2026_06_19.md" }]"#
     );
-    let migration = journals::migrate_journal_filenames(&store, &listed);
+    let migration = journals::migrate_journal_filenames(&store, &listed).unwrap();
     assert_eq!((migration.migrated, migration.skipped.len()), (1, 0));
     assert!(new_root.join("journals/Jun 20th, 2026.md").exists());
     assert!(new_root.join("journals/Jun 18th, 2026.org").exists());
@@ -573,9 +571,9 @@ fn failed_journal_repair_restores_legacy_filename() {
     let (root, store) = fixture("journal-repair-rollback");
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::write(root.join("journals/Jun 18th, 2026.md"), "- preserve\n").unwrap();
-    let listed = journals::journal_filename_migrations(&store);
+    let listed = journals::journal_filename_migrations(&store).unwrap();
     store.inject_fault(FaultPoint::MidStepIoAt(0));
-    let migration = journals::migrate_journal_filenames(&store, &listed);
+    let migration = journals::migrate_journal_filenames(&store, &listed).unwrap();
     assert_eq!(migration.migrated, 0);
     assert_eq!(
         fs::read(root.join("journals/Jun 18th, 2026.md")).unwrap(),

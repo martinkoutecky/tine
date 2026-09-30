@@ -132,7 +132,13 @@ pub(crate) fn concord_observe(slot: &GraphSlot, change: &Change) -> bool {
     if let Some(ledger) = slot.concord_ledger.get() {
         ledger.observe(change);
     }
-    slot.conflict_queue.refresh_change(&slot.store, change)
+    match slot.conflict_queue.refresh_change(&slot.store, change) {
+        Ok(changed) => changed,
+        Err(error) => {
+            crate::debug::diag_private("conflict-refresh-failed", error.to_string());
+            true // notify clients to fetch the typed failure and keep their last inventory
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -715,6 +721,7 @@ mod tests {
         ));
         assert!(
             tine_graph_features::conflicts::list_sync_conflicts(&slot.store)
+                .unwrap()
                 .iter()
                 .any(|copy| copy.path == "pages/New.sync-conflict-20260705-120000-ABCDEFG.md")
         );
@@ -880,7 +887,12 @@ mod tests {
         .0;
         let slot = GraphSlot::new(store, root.clone());
         slot.store.whole_graph().unwrap();
-        assert!(slot.conflict_queue.inventory(&slot.store).queue.is_empty());
+        assert!(slot
+            .conflict_queue
+            .inventory(&slot.store)
+            .unwrap()
+            .queue
+            .is_empty());
         let subscription = slot.store.subscribe();
         // Deliver external changes as the dispatch thread does until `rel`
         // was among them; answers whether the queue changed.
@@ -906,7 +918,7 @@ mod tests {
         let marked = "- before\n<<<<<<< HEAD\n- mine\n=======\n- theirs\n>>>>>>> other\n";
         atomic_write(&root, "pages/Marked.md", marked);
         assert!(deliver("pages/Marked.md"), "the queue changed");
-        let queued = slot.conflict_queue.inventory(&slot.store);
+        let queued = slot.conflict_queue.inventory(&slot.store).unwrap();
         assert_eq!(
             queued
                 .vcs_markers
@@ -918,9 +930,9 @@ mod tests {
         assert_eq!(queued.queue.len(), 1);
         assert_eq!(
             serde_json::to_string(&queued).unwrap(),
-            serde_json::to_string(&tine_graph_features::conflicts::conflict_inventory(
-                &slot.store
-            ))
+            serde_json::to_string(
+                &tine_graph_features::conflicts::conflict_inventory(&slot.store).unwrap()
+            )
             .unwrap(),
             "the incremental answer equals a full walk"
         );
@@ -930,7 +942,12 @@ mod tests {
         // git resolved the markers outside Tine: the entry leaves.
         atomic_write(&root, "pages/Marked.md", "- before\n- merged\n");
         assert!(deliver("pages/Marked.md"));
-        assert!(slot.conflict_queue.inventory(&slot.store).queue.is_empty());
+        assert!(slot
+            .conflict_queue
+            .inventory(&slot.store)
+            .unwrap()
+            .queue
+            .is_empty());
         drop(subscription);
         drop(slot);
         std::fs::remove_dir_all(root).unwrap();

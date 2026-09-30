@@ -6,6 +6,7 @@ import { captureBinding, stillBound } from "./binding";
 import { graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, bumpDataRev, graphMeta, graphEpoch } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer, pageIdentityKey } from "./ui";
+import { createSignal } from "solid-js";
 import { pushToast } from "./toasts";
 import { keepAtSwitch } from "./draftStore";
 import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded } from "./document";
@@ -27,6 +28,8 @@ import { activatePdfOwnership, drainPdfWork, retirePdfOwnership } from "./pdfOwn
 import { openConfiguredHomePage } from "./homePage";
 import { isPublishedExport } from "./publishedBackend";
 import { clearWorkspaces } from "./workspaces";
+import { reportUiFailure } from "./uiFailure";
+export const [graphConfigProblem, setGraphConfigProblem] = createSignal<unknown>(null);
 
 const GRAPH_KEY = "tine.graphPath";
 
@@ -239,6 +242,9 @@ export async function loadGraphPath(
   // its feed (Page.tsx), preserving #73's populated-first observation without
   // blocking graph open.
   bumpGraphEpoch();
+  const configProblem = "config_problem" in result ? result.config_problem : null;
+  setGraphConfigProblem(configProblem);
+  if (configProblem) reportUiFailure("config-read", configProblem);
   applyConfigDerivedState(meta, null);
   void refreshJournalConflicts(); // duplicate days surface through the conflict queue, not a toast
   void refreshSyncConflicts(); // conflict copies + VCS markers feed the sidebar badge
@@ -445,8 +451,8 @@ async function injectCustomCss(): Promise<void> {
     const result = await readOwned(owner, backend().readCustomCss());
     if (result.kind === "stale") return;
     css = result.value;
-  } catch {
-    css = "";
+  } catch (error) {
+    if (owner()) reportUiFailure("custom-css", error);
   }
   if (!owner()) return;
   ensureLsShimStyle();

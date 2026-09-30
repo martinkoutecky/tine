@@ -24,9 +24,17 @@ export type UiFailureFamily =
   | "backup-read"
   | "backup-feedback"
   | "asset-inventory"
-  | "trash-inventory";
+  | "trash-inventory"
+  | "custom-css"
+  | "config-read"
+  | "conflict-inventory"
+  | "graph-verification";
 
 const MESSAGES: Record<UiFailureFamily, string> = {
+  "custom-css": "Couldn't read custom.css. No custom CSS was applied.",
+  "config-read": "Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.",
+  "conflict-inventory": "Couldn't refresh conflicts. The last successful inventory is kept.",
+  "graph-verification": "Couldn't verify graph files.",
   "asset-inventory": "Couldn't inspect orphan assets. The last successful scan is kept.",
   "trash-inventory": "Couldn't inspect recoverable trash. The last successful count is kept.",
   "backup-read": "Couldn't complete the launch backup. Your graph is still open.",
@@ -52,6 +60,7 @@ const MESSAGES: Record<UiFailureFamily, string> = {
 const GRAPH_READS: ReadonlySet<UiFailureFamily> = new Set<UiFailureFamily>([
   "query-hydration", "page-inventory", "session-read", "template-read", "journal-feed",
   "block-counts", "block-resolution", "backup-read", "asset-inventory", "trash-inventory",
+  "custom-css", "config-read", "conflict-inventory", "graph-verification",
 ]);
 
 /** Show a fixed message for `family` and log `error` only when debug is enabled.
@@ -62,8 +71,13 @@ const GRAPH_READS: ReadonlySet<UiFailureFamily> = new Set<UiFailureFamily>([
  * that lands meanwhile is already dropped by its retired owner. Cost O(visible
  * toasts + detail length). No graph or network work; duplicate visible failures
  * share one toast. Logging failure is reported by `dbg`. */
+function detail(error: unknown): string {
+  if (error instanceof Error || typeof error !== "object" || error === null) return String(error);
+  try { return JSON.stringify(error); } catch { return String(error); }
+}
+
 export function reportUiFailure(family: UiFailureFamily, error: unknown): void {
   const unbound = GRAPH_READS.has(family) && captureBinding().backendGeneration === 0;
-  dbg(`${family}${unbound ? " (window unbound; not reported)" : ""}: ${String(error)}`);
+  dbg(`${family}${unbound ? " (window unbound; not reported)" : ""}: ${detail(error)}`);
   if (!unbound) pushToastUnique(MESSAGES[family], "error");
 }

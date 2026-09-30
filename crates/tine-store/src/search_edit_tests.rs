@@ -377,6 +377,7 @@ fn new_journal_appears_in_journals_desc_via_cache() {
     let store = store_at(&root);
     let feed = |store: &Store| {
         tine_graph_features::journals::feed_journals_desc_through(store, tine_store::Day(99991231))
+            .unwrap()
     };
     assert_eq!(feed(&store).len(), 1);
 
@@ -1214,6 +1215,7 @@ fn new_journal_saved_with_date_stem_not_title() {
     let reopened = store_at(&root);
     assert!(
         journals::feed_journals_desc_through(&reopened, tine_store::Day(99991231))
+            .unwrap()
             .iter()
             .any(|(day, id)| *day == tine_store::Day(20260618)
                 && reopened.page(id).unwrap().doc.name == "Jun 18th, 2026"),
@@ -1233,8 +1235,11 @@ fn migrate_renames_title_named_journal_files() {
     )
     .unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
-    let n =
-        journals::migrate_journal_filenames(&store, &journals::journal_filename_migrations(&store));
+    let n = journals::migrate_journal_filenames(
+        &store,
+        &journals::journal_filename_migrations(&store).unwrap(),
+    )
+    .unwrap();
     assert_eq!(n.migrated, 1);
     assert!(n.skipped.is_empty());
     assert!(
@@ -1248,6 +1253,7 @@ fn migrate_renames_title_named_journal_files() {
     // Content preserved + now visible.
     assert!(
         journals::feed_journals_desc_through(&store, tine_store::Day(99991231))
+            .unwrap()
             .iter()
             .any(|(day, id)| *day == tine_store::Day(20260618)
                 && store.page(id).unwrap().doc.name == "Jun 18th, 2026")
