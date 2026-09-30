@@ -13,7 +13,7 @@ pub(crate) use page_identity::configured_hidden;
 use page_identity::{effective_page_name, list_graph_pages};
 pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
-    graph_text_watch_relevant,
+    graph_text_watch_relevant, list_graph_pages_kind,
 };
 use page_parse::{isolate_page_parse, parse_page_content, parse_page_entry_isolated};
 
@@ -2805,59 +2805,6 @@ impl Graph {
 
     pub(crate) fn find_entry(&self, name: &str, kind: PageKind) -> Option<PageEntry> {
         self.find_claimants(name, kind).into_iter().next()
-    }
-
-    pub(crate) fn find_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
-        let key = (kind, tine_core::refs::page_key(name));
-        loop {
-            let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-            if let Some((g, index)) = self.find_entry_cache.read().unwrap().as_ref() {
-                if *g == gen && index.has_kind(kind) {
-                    return index.entries.get(&key).cloned().unwrap_or_default();
-                }
-            }
-
-            let mut built = FindEntryIndex::new();
-            for entry in list_graph_pages(self)
-                .into_iter()
-                .filter(|entry| entry.kind == kind)
-            {
-                let entry_key = (entry.kind, tine_core::refs::page_key(&entry.name));
-                built.entries.entry(entry_key).or_default().push(entry);
-            }
-            for claimants in built.entries.values_mut() {
-                claimants.sort_by(|a, b| {
-                    compare_page_claimants(
-                        a,
-                        b,
-                        &self.current_journal_format(),
-                        self.current_config().file_name_format,
-                    )
-                });
-            }
-            built.mark_kind_loaded(kind);
-
-            let found = {
-                let mut guard = self.find_entry_cache.write().unwrap();
-                match guard.as_mut() {
-                    Some((g, index)) if *g == gen => {
-                        if !index.has_kind(kind) {
-                            index.entries.extend(built.entries);
-                            index.mark_kind_loaded(kind);
-                        }
-                        index.entries.get(&key).cloned().unwrap_or_default()
-                    }
-                    _ => {
-                        let found = built.entries.get(&key).cloned().unwrap_or_default();
-                        *guard = Some((gen, built));
-                        found
-                    }
-                }
-            };
-            if self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == gen {
-                return found;
-            }
-        }
     }
 
     #[cfg(test)]

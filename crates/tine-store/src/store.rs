@@ -1062,10 +1062,10 @@ impl Store {
     }
 
     /// Open a graph after validating its layout and any external assets target.
-    /// Returns the store, graph metadata, and effective config. Lists pages and
-    /// journals, including their journal-day identities, before returning
-    /// (O(P) file metadata). An unreadable page/journal subtree is omitted
-    /// from the file-list index and later reported as unreadable; an exact
+    /// Returns the store, graph metadata, and effective config. Lists journal
+    /// identities before returning (O(J) file metadata); ordinary page titles
+    /// are discovered by background parsing before graph-wide reads return.
+    /// An unreadable subtree is omitted and later reported as unreadable; an exact
     /// destination guard cannot detect every unseen same-name claimant.
     /// A caller that applies the configured journal template must wait for
     /// `WholeGraph::templates()`; saving a new journal does not add it.
@@ -1107,9 +1107,8 @@ impl Store {
                     CheckedOpenError::Io(error) => OpenError::Io(error.into()),
                 })?;
         graph.install_live_config();
-        // Build the legacy filename inventory before returning; parsing remains
-        // in the cancellable worker below.
-        let journal_ids = journal_ids_from_entries(&graph, graph.list_pages_shared().as_ref());
+        let journals = crate::model::list_graph_pages_kind(&graph, Some(PageKind::Journal));
+        let journal_ids = journal_ids_from_entries(&graph, &journals);
         let config_path = root.join("logseq/config.edn");
         let problem = match crate::model::read_parse_input(&config_path) {
             Ok(_) => None,

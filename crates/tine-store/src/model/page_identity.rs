@@ -6,6 +6,56 @@ use std::io::{BufRead, BufReader, Read};
 use tine_core::model::PreambleRead;
 
 impl Graph {
+    pub(crate) fn find_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
+        let key = (kind, tine_core::refs::page_key(name));
+        loop {
+            let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+            if let Some((g, index)) = self.find_entry_cache.read().unwrap().as_ref() {
+                if *g == gen && index.has_kind(kind) {
+                    return index.entries.get(&key).cloned().unwrap_or_default();
+                }
+            }
+
+            let mut built = FindEntryIndex::new();
+            for entry in list_graph_pages_kind(self, Some(kind)) {
+                let entry_key = (entry.kind, tine_core::refs::page_key(&entry.name));
+                built.entries.entry(entry_key).or_default().push(entry);
+            }
+            for claimants in built.entries.values_mut() {
+                claimants.sort_by(|a, b| {
+                    compare_page_claimants(
+                        a,
+                        b,
+                        &self.current_journal_format(),
+                        self.current_config().file_name_format,
+                    )
+                });
+            }
+            built.mark_kind_loaded(kind);
+
+            let found = {
+                let mut guard = self.find_entry_cache.write().unwrap();
+                match guard.as_mut() {
+                    Some((g, index)) if *g == gen => {
+                        if !index.has_kind(kind) {
+                            index.entries.extend(built.entries);
+                            index.mark_kind_loaded(kind);
+                        }
+                        index.entries.get(&key).cloned().unwrap_or_default()
+                    }
+                    _ => {
+                        let found = built.entries.get(&key).cloned().unwrap_or_default();
+                        *guard = Some((gen, built));
+                        found
+                    }
+                }
+            };
+            if self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == gen {
+                return found;
+            }
+        }
+    }
+
     /// Build the page list and effective-name claimants from one cold walk.
     pub(crate) fn snapshot_name_index(
         &self,
@@ -41,6 +91,56 @@ impl Graph {
 #[cfg(test)]
 mod cold_index_tests {
     use super::*;
+
+    #[test]
+    fn journal_first_read_opens_no_ordinary_preambles_and_late_titles_resolve() {
+        let dir = std::env::temp_dir().join(format!("tine-journal-first-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(dir.join(".tine-test-pause-load"), "").unwrap();
+        fs::write(dir.join("journals/2026_09_29.md"), "- journal\n").unwrap();
+        fs::write(
+            dir.join("pages/Other.md"),
+            "title:: Claimed\n- title owner\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Claimed.md"),
+            "title:: Elsewhere\n- moved identity\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages/Org.org"), "#+title: Claimed\n* duplicate\n").unwrap();
+        GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
+        let (store, _, _) = crate::Store::open(&dir, Default::default()).unwrap();
+        let open_reads = GRAPH_PREAMBLE_READS.with(|reads| reads.replace(0));
+        let journal = store.journal_id(crate::Day(
+            tine_core::date::JournalDate {
+                year: 2026,
+                month: 9,
+                day: 29,
+            }
+            .ordinal_key(),
+        ));
+        assert_eq!(store.page(&journal).unwrap().doc.blocks[0].raw, "journal");
+        let feed_reads = GRAPH_PREAMBLE_READS.with(|reads| reads.get());
+        fs::remove_file(dir.join(".tine-test-pause-load")).unwrap();
+        let graph = store.whole_graph().unwrap();
+        let crate::Resolved::Existing { id, others } = graph.resolve("Claimed", false) else {
+            panic!("late title claimant missing")
+        };
+        assert_eq!(others.len(), 1);
+        assert_eq!(id.as_str(), "pages/Other.md");
+        assert_eq!(store.page(&id).unwrap().doc.name, "Claimed");
+        assert!(
+            matches!(graph.resolve("Elsewhere", false), crate::Resolved::Existing { id, .. } if id.as_str() == "pages/Claimed.md")
+        );
+        drop(graph);
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(open_reads, 0, "I-12/E: Store::open must not open ordinary page preambles before journal paint; exemplar page_identity.rs");
+        assert_eq!(feed_reads, 0, "I-12/E: a journal-kind claimant lookup must not open ordinary page files; exemplar page_identity.rs");
+    }
 
     #[test]
     fn cold_name_snapshot_reads_each_page_preamble_once() {
@@ -222,7 +322,7 @@ pub(super) fn effective_page_name(path: &Path, stem: &str, name_fmt: FileNameFor
             }
             preamble.push_str(&line);
             match tine_core::model::preamble_read(&preamble, format) {
-                PreambleRead::Settled => break,
+                PreambleRead::Settled(title) => return title,
                 PreambleRead::More => {}
                 PreambleRead::Whole => {
                     reader.read_to_string(&mut preamble).ok()?;
@@ -238,14 +338,31 @@ pub(super) fn effective_page_name(path: &Path, stem: &str, name_fmt: FileNameFor
 pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
     #[cfg(test)]
     super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));
+    list_graph_pages_kind(graph, None)
+}
+
+/// Kind selection precedes preamble reads. Journal identity depends on its
+/// date filename, so a cold journal lookup never needs ordinary page titles.
+pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
     let mut entries = Vec::new();
     let root = &graph.root;
     let format = graph.current_journal_format();
     let name_format = graph.current_config().file_name_format;
     let journals = graph.journals_path();
     let config = graph.current_config();
-    walk_graph_page_files(root, &config, |path| {
+    let start = if kind == Some(PageKind::Journal) {
+        &journals
+    } else {
+        root
+    };
+    if !graph_text_directory_scannable(root, start, &config) {
+        return entries;
+    }
+    walk_graph_page_files(root, start, &config, |path| {
         if !graph_text_eligible(root, &path, &config) {
+            return;
+        }
+        if kind.is_some_and(|kind| (kind == PageKind::Journal) != path.starts_with(&journals)) {
             return;
         }
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
@@ -278,8 +395,13 @@ pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
     entries
 }
 
-fn walk_graph_page_files(root: &Path, config: &Config, mut visit: impl FnMut(PathBuf)) {
-    let mut pending = vec![root.to_path_buf()];
+fn walk_graph_page_files(
+    root: &Path,
+    start: &Path,
+    config: &Config,
+    mut visit: impl FnMut(PathBuf),
+) {
+    let mut pending = vec![start.to_path_buf()];
     while let Some(dir) = pending.pop() {
         #[cfg(feature = "test-faults")]
         crate::cost_counters::readdir();
