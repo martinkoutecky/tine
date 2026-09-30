@@ -300,3 +300,64 @@ pub fn edit_block_regions_json(
     r.apply(raw, is_org, edit)
         .map_err(|e| JsValue::from_str(&e))
 }
+
+/// Shared comparison form; O(text bytes), no graph access.
+#[wasm_bindgen]
+pub fn search_fold(text: &str, remove_accents: bool) -> String {
+    if remove_accents { tine_search::canonical_fold(text) } else { tine_search::literal_fold(text) }
+}
+
+/// Bounded original UTF-16 evidence, O(text × needle scalars).
+#[wasm_bindgen]
+pub fn search_substring_spans_json(text: &str, needle: &str, limit: usize, remove_accents: bool) -> String {
+    serde_json::to_string(&tine_search::substring_spans(text, needle, limit, remove_accents)).unwrap()
+}
+
+/// Compile once per hot query (four retained matchers maximum). No raw handles
+/// cross into JS, so a parser re-instantiation also safely resets this cache.
+fn with_search<T>(query: &str, remove_accents: bool, f: impl FnOnce(&tine_search::Matcher) -> T) -> T {
+    use std::cell::RefCell;
+    thread_local! { static CACHE: RefCell<Vec<(String, bool, tine_search::Matcher)>> = const { RefCell::new(Vec::new()) }; }
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let at = cache.iter().position(|(q, p, _)| q == query && *p == remove_accents);
+        let at = if let Some(at) = at { at } else {
+            if cache.len() == 4 { cache.remove(0); }
+            cache.push((query.to_owned(), remove_accents, tine_search::Matcher::parse_with_policy(query, remove_accents)));
+            cache.len() - 1
+        };
+        f(&cache[at].2)
+    })
+}
+
+/// Parse metadata for UI builders. Same grammar, errors and folds as native.
+#[wasm_bindgen]
+pub fn search_query_json(query: &str, remove_accents: bool) -> String {
+    use tine_search::Matcher;
+    with_search(query, remove_accents, |matcher| {
+        let mut value = match matcher {
+            Matcher::Empty => serde_json::json!({"kind":"empty"}),
+            Matcher::InvalidRegex(error) => serde_json::json!({"kind":"invalid","error":error}),
+            Matcher::Regex(re) => serde_json::json!({"kind":"regex","pattern":re.as_str()}),
+            Matcher::Boolean(groups) => serde_json::json!({"kind":"boolean","groups":groups.iter().map(|group| group.iter().map(|term| serde_json::json!({"text":term.text,"negated":term.negated,"quoted":term.quoted})).collect::<Vec<_>>()).collect::<Vec<_>>()}),
+        };
+        value["simple"] = serde_json::json!(matcher.simple_term());
+        value.to_string()
+    })
+}
+
+/// Membership against a policy-matched pre-folded body; O(text × terms).
+#[wasm_bindgen]
+pub fn search_matches(query: &str, remove_accents: bool, lower: &str, original: &str) -> bool {
+    with_search(query, remove_accents, |m| m.matches(lower, original))
+}
+
+/// UTF-16 search evidence, capped by limit. First mode retains zero-width hits
+/// and considers all positive terms; multi-range mode uses the satisfied group.
+#[wasm_bindgen]
+pub fn search_spans_json(query: &str, remove_accents: bool, text: &str, limit: usize, first: bool) -> String {
+    with_search(query, remove_accents, |m| {
+        let spans = if first { m.first_span(text, remove_accents).into_iter().collect() } else { m.spans(text, limit, remove_accents) };
+        serde_json::to_string(&spans).unwrap()
+    })
+}

@@ -6,6 +6,7 @@ import type { BacklinkFilterContext, BlockDto, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import { setGraphMeta } from "../graphSession";
+import * as searchPolicy from "../editor/searchFold";
 
 vi.mock("./LiveRefGroup", () => ({
   LiveRefGroup: (props: { blocks: BlockDto[]; showBreadcrumb?: boolean }) => (
@@ -221,11 +222,13 @@ describe("Linked References filters", () => {
       },
     ];
     const indexedText = "UNIQUE INDEXED SEARCH CORPUS";
-    const originalToLowerCase = String.prototype.toLowerCase;
+    const originalSearchFold = searchPolicy.searchFold;
     let corpusNormalizations = 0;
-    vi.spyOn(String.prototype, "toLowerCase").mockImplementation(function (this: string) {
-      if (String(this) === indexedText) corpusNormalizations += 1;
-      return originalToLowerCase.call(this);
+    // The casing now runs in Rust; count the same normalization operation at
+    // its public door, retaining the once-per-corpus cost assertion.
+    vi.spyOn(searchPolicy, "searchFold").mockImplementation((value, removeAccents) => {
+      if (value === indexedText) corpusNormalizations += 1;
+      return originalSearchFold(value, removeAccents);
     });
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue(groups);
     vi.spyOn(backend(), "getBacklinkFilterContext").mockResolvedValue({

@@ -366,7 +366,7 @@ function friendlySummary(source: string): string {
   const parsed = parseSearchQuery(source);
   if (parsed.kind === "empty") return "Type to search page names and block text.";
   if (parsed.kind === "invalid") return `The regular expression is invalid: ${parsed.error}`;
-  if (parsed.kind === "regex") return `Matches page names or block text using the case-sensitive regular expression /${parsed.re.source}/.`;
+  if (parsed.kind === "regex") return `Matches page names or block text using the case-sensitive regular expression /${parsed.pattern}/.`;
   const describeGroup = (group: typeof parsed.groups[number]) => group.map((term) => {
     const value = term.quoted ? `the exact phrase “${term.text}”` : `“${term.text}”`;
     return term.negated ? `excluding ${value}` : `containing ${value}`;
@@ -396,12 +396,9 @@ function buildFriendlyFilterSource(fields: FriendlyFields): { source: string; er
     if (hasOther) {
       return { source: "", error: "A regular expression cannot be combined with the other friendly fields yet." };
     }
-    try {
-      new RegExp(regex);
-      return { source: `/${regex}/`, error: null };
-    } catch (error) {
-      return { source: "", error: error instanceof Error ? error.message : "Invalid regular expression." };
-    }
+    const source = `/${regex}/`;
+    const parsed = parseSearchQuery(source);
+    return parsed.kind === "invalid" ? { source: "", error: parsed.error } : { source, error: null };
   }
 
   if ([fields.all, fields.any, fields.exact, fields.exclude].some((value) => value.includes('"'))) {
@@ -427,7 +424,7 @@ function friendlyFieldsFromSource(source: string): FriendlyFields | null {
   const parsed = parseSearchQuery(source);
   const empty: FriendlyFields = { all: "", any: "", exact: "", exclude: "", regex: "" };
   if (parsed.kind === "empty") return empty;
-  if (parsed.kind === "regex") return { ...empty, regex: parsed.re.source };
+  if (parsed.kind === "regex") return { ...empty, regex: parsed.pattern };
   if (parsed.kind !== "boolean") return null;
 
   const termKey = (term: typeof parsed.groups[number][number]) =>

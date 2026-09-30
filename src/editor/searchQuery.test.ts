@@ -61,7 +61,8 @@ describe("searchQuery parser (#44)", () => {
     expect(simpleTerm(parseSearchQuery("\ufefffoo\ufeff"))).toBe("foo");
     expect(hit("foo\u2003bar", "bar then foo")).toBe(true);
     expect(hit("/\\p{L}+/", "café")).toBe(true);
-    for (const source of ["/foo(?=bar)/", "/(a)\\1/", "/(?i)abc/"])
+    expect(hit("/(?i)abc/", "ABC")).toBe(true);
+    for (const source of ["/foo(?=bar)/", "/(a)\\1/"])
       expect(parseSearchQuery(source).kind, source).toBe("invalid");
   });
 

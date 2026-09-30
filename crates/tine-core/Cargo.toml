@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+tine-search = { path = "../tine-search" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

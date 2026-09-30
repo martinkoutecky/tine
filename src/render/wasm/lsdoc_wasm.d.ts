@@ -75,6 +75,32 @@ export function render_block_html(raw: string, is_org: boolean): string;
 export function __tineReinstantiate(): void;
 
 /**
+ * Shared comparison form; O(text bytes), no graph access.
+ */
+export function search_fold(text: string, remove_accents: boolean): string;
+
+/**
+ * Membership against a policy-matched pre-folded body; O(text × terms).
+ */
+export function search_matches(query: string, remove_accents: boolean, lower: string, original: string): boolean;
+
+/**
+ * Parse metadata for UI builders. Same grammar, errors and folds as native.
+ */
+export function search_query_json(query: string, remove_accents: boolean): string;
+
+/**
+ * UTF-16 search evidence, capped by limit. First mode retains zero-width hits
+ * and considers all positive terms; multi-range mode uses the satisfied group.
+ */
+export function search_spans_json(query: string, remove_accents: boolean, text: string, limit: number, first: boolean): string;
+
+/**
+ * Bounded original UTF-16 evidence, O(text × needle scalars).
+ */
+export function search_substring_spans_json(text: string, needle: string, limit: number, remove_accents: boolean): string;
+
+/**
  * Split already-parsed linkable property values with the native separator.
  * O(value bytes), without parsing or I/O. Empty members retain their position.
  */
@@ -97,6 +123,11 @@ export interface InitOutput {
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
     readonly render_block_html: (a: number, b: number, c: number) => [number, number];
+    readonly search_fold: (a: number, b: number, c: number) => [number, number];
+    readonly search_matches: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
+    readonly search_query_json: (a: number, b: number, c: number) => [number, number];
+    readonly search_spans_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
+    readonly search_substring_spans_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly split_linkable_property: (a: number, b: number) => [number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

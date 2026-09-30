@@ -98,7 +98,7 @@ export function QuickSwitcher(): JSX.Element {
   onCleanup(() => clearTimeout(qTimer));
   // Fetch OG's complete ranked pools once per query. Presentation paging below
   // changes only the rendered slice and therefore does not trigger another scan.
-  const [graphResultsResource] = createResource(
+  const [graphResultsResource, { refetch: retrySearch }] = createResource(
     () => (commandsOnly() ? null : {
       q: debouncedQuery(),
       pages: currentPageOnly() ? 0 : PAGE_POOL,
@@ -646,7 +646,7 @@ export function QuickSwitcher(): JSX.Element {
                 {graphResults()!.diagnostics.map((diagnostic) => diagnostic.message).join(" · ")}
               </div>
             </Show>
-            <ResourceFailure of={graphResultsResource} what="search results" />
+            <ResourceFailure of={graphResultsResource} what="search results" onRetry={() => void retrySearch()} />
             <Show when={query().trim() && (graphResultsResource.loading || debouncedQuery() !== query())}>
               <div class="switcher-empty" role="status">Searching…</div>
             </Show>

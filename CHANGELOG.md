@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **An old system web engine shows an update card before startup** (GH #572; og-R2). On macOS it explains the macOS 12.3 requirement and why updating Safari alone does not update the embedded engine.
+
+- **Missing page links are muted with a dotted underline** (tags are not) (og-R2; UI-OG-R2-MISSING-LINKS). They still open their destination, and become live when a page or alias is created; deletion dims them again without reloading. This deliberately differs from Logseq, which dims only untitled pages.
+
 - **Parser-owned structural edits** (og-D1): metadata edits and template/conflict copies share native/wasm block regions, preserving parser-recognized literal contents. Empty code cards retain their body/wrapper separator after typing, code-body typing preserves literal typography, and calendar edits retain glued body text. Published block identities, logbook and repeaters use the block's format.
 - **An image replaced outside Tine refreshes where it is shown** (master d017d1afc, 2f54a8d5e, og-J2).
   A picture changed by an editor, Syncthing, Dropbox or another Tine window updates in place without reloading the page,
@@ -106,6 +110,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Launch backups wait until startup is idle** (REG-OG-LAUNCH-BACKUP-IDLE-R3B): warm completion signals the background snapshot after a quiet period, with a safety deadline and immediate graph-switch cancellation.
 
 - **Custom journal titles apply before graph activation and live settings refresh** (REG-OG-CUSTOM-JOURNAL-TITLE-R3B): journal-template lookup reads a sync-delivered journal under its configured title. Missing-baseline saves remain guarded.
+- **Unicode regex search agrees across native queries and browser filters** (REG-OG-R1-REGEX-001): matching and highlights use the same bounded Rust engine. `\d`, `\w`, and `\b` recognize Unicode text; inline flags such as `(?i)` work in friendly search, while backreferences, look-around, and programs above 1 MiB are refused.
+- **Caret selection follows code editors with wrapping disabled** (og-R3A, master 587bdc431).
+  The shared caret mirror copies shaping and wrapping styles instead of inventing wrapped rows.
+- **Search failures can be retried in place** (og-R3A, master 371241774).
+  The quick switcher offers Retry, and the block-reference picker distinguishes Searching, a failed
+  read with Retry, and an empty answer while preserving the editor text.
+- **PDF export stops at the Print query limit** (og-R3A, master e04b0e7f).
+  A renderer-declared source, nesting or match limit now stops preparation with its reason instead
+  of opening the print dialog over a placeholder.
+- **A local query-table sort identifies itself as Table-only sort** (og-R3A, master a9c8b2596).
+  Its label clears that local order without changing the saved query sort.
 
 - **Percent-escaped Org file links resolve to their page names** (REG-OG-PAGE-FILENAME-001, og-B-TAIL). Reference extraction now uses the native filename codec through wasm, including escaped punctuation and namespace separators.
 - **Saves keep reference counts and names live without full refetches** (og-B-SIG2): native save and watcher signals update changed count targets and refresh names only when their sources change; ordinary text edits avoid both graph-wide reads.

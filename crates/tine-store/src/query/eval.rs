@@ -35,13 +35,7 @@ use tine_core::refs;
 use tine_core::search_query::{canonical_fold, literal_fold, Matcher};
 use unicode_normalization::UnicodeNormalization;
 
-/// A `(content-regex …)` pattern compiles into at most this much program. The
-/// `regex` crate matches in time linear in the haystack for every pattern, so
-/// the only hostile-input cost left is compilation, which this bounds: a
-/// pattern whose program would exceed it (`(a{1000}){1000}`) is refused at
-/// compile time and becomes the retained false leaf §4.3.2 already defines for
-/// an invalid pattern (I-22).
-pub(crate) const REGEX_PROGRAM_MAX_BYTES: usize = 1 << 20;
+pub(crate) use tine_core::search_query::REGEX_PROGRAM_MAX_BYTES;
 
 /// Patterns that cost real work to build (`(search …)`'s friendly matcher, a
 /// `(content-regex …)` regex) compiled ONCE per query rather than per block.
@@ -71,8 +65,8 @@ impl CompiledLeaves {
             .iter()
             .fold(regexes, |bytes, (source, matcher)| {
                 let retained = match matcher {
-                    // Matcher uses regex's defaults: 10 MiB program + 2 MiB DFA.
-                    Matcher::Regex(_) => 12 * 1024 * 1024,
+                    // Friendly and TQL regexes share the program/cache cap.
+                    Matcher::Regex(_) => 2 * REGEX_PROGRAM_MAX_BYTES,
                     Matcher::InvalidRegex(error) => error.capacity(),
                     Matcher::Boolean(groups) => groups.iter().fold(
                         groups.capacity()
@@ -128,11 +122,7 @@ impl CompiledLeaves {
 }
 
 pub(crate) fn compile_regex(pattern: &str) -> Option<regex::Regex> {
-    regex::RegexBuilder::new(pattern)
-        .size_limit(REGEX_PROGRAM_MAX_BYTES)
-        .dfa_size_limit(REGEX_PROGRAM_MAX_BYTES)
-        .build()
-        .ok()
+    tine_core::search_query::compile_regex(pattern).ok()
 }
 
 /// A SCHEDULED/DEADLINE projection text's day ordinal (`yyyymmdd`), accepting

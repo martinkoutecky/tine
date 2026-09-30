@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 // One name answerer: the store. The frontend caches `page_inventory` only in
 // src/pageIndex.ts and answers names only through it; imitate that file.
-const RULE = "one name answerer: the store; the frontend caches `page_inventory` only in pageIndex.ts " +
+const RULE = "I-12/I-25: one name answerer: the store; the frontend caches `page_inventory` only in pageIndex.ts " +
   "(imitate src/pageIndex.ts: look a name up there, never build a name/alias map)";
 
 const INVENTORY_OWNER = "src/pageIndex.ts";
@@ -20,7 +20,7 @@ const RESOLVE_FOR_SAVE = new Set([
 ]);
 const DEFINITIONS = new Set(["src/backend.ts", "src/mock.ts"]);
 const FORBIDDEN_NAMES = new Set(["aliasMap", "setAliasMap", "resolveAlias"]);
-const DELETED_METHODS = new Set(["listPages", "pageAliases", "referencedPageNames"]);
+const DELETED_METHODS = new Set(["listPages", "pageAliases", "referencedPageNames", "pageExistsBatch", "pageIsMissing"]);
 const DELETED_COMMANDS = new Set(["list_pages", "page_aliases", "referenced_page_names"]);
 const ITERATORS = new Set(["map", "flatMap", "forEach", "reduce", "filter", "some", "every", "all", "allSettled"]);
 
@@ -107,4 +107,10 @@ describe("page index guard (Rule 3: one answerer, frontend included)", () => {
     expect(nameAnswererViolations("src/document/save/engine.ts", loop)).toHaveLength(2);
     expect(nameAnswererViolations("src/pageIndex.ts", "await backend().pageInventory();")).toEqual([]);
   });
+});
+
+it("I-12/I-25: link existence reuses resolvedTarget (exemplar src/render/inline.tsx), never a second batch/cache", () => {
+  const inline = readFileSync("src/render/inline.tsx", "utf8");
+  expect(inline).toContain('resolvedTarget(targetName(), kind())?.kind === "absent"');
+  expect(nameAnswererViolations("src/render/inline.tsx", "backend().pageExistsBatch(names); backend().pageInventory();")).toHaveLength(2);
 });

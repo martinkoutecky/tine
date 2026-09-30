@@ -58,13 +58,26 @@ function bundledStylesheets(): HTMLLinkElement[] {
     .map((link) => link.cloneNode(true) as HTMLLinkElement);
 }
 
+class PrintQueryLimitError extends Error {
+  constructor(detail: string) {
+    super(`PDF export stopped at the Print query limit. ${detail}`);
+    this.name = "PrintQueryLimitError";
+  }
+}
+
 /**
  * Upgrade the core's inert print markup using only code already bundled with
  * Tine. The returned document contains no scripts or third-party resources; it
  * is safe to load in a same-origin iframe whose sandbox does not allow scripts.
+ * Cost scales with the supplied markup and math/code spans. Optional renderer
+ * failures leave readable raw markup. Renderer-declared query limits reject
+ * before rendering: no partial page may enter the print dialog. The core owns
+ * admission; this adapter reads its markup.
  */
 export async function preparePrintHtml(html: string): Promise<string> {
   const parsed = new DOMParser().parseFromString(html, "text/html");
+  const refusedQuery = parsed.querySelector(".query-too-large");
+  if (refusedQuery) throw new PrintQueryLimitError(refusedQuery.textContent?.trim() ?? "");
   // Defense in depth against a future core regression: never pass executable or
   // remote stylesheet markup into the privileged app origin.
   parsed.querySelectorAll("script, link[rel=\"stylesheet\"]").forEach((element) => element.remove());
@@ -110,7 +123,10 @@ export async function preparePrintHtml(html: string): Promise<string> {
  * unresolved conflict shows an error toast and opens no dialog. Missing pages
  * and backend errors also toast; this function does not reject. It resolves
  * when the frame is attached, before its load/fonts/print dialog complete.
- * Concurrent calls while a frame is being prepared or printed are ignored. */
+ * Renderer-declared query limits show their reason and attach no frame. HTML
+ * preparation scales with the rendered page; concurrent calls are ignored.
+ * A frame releases on afterprint, load/print failure, graph retirement or a
+ * 60-second watchdog; native print exceptions toast and remove it. */
 export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRINT_OPTS): Promise<void> {
   if (printInProgress) return;
   printInProgress = true;
@@ -132,7 +148,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     printInProgress = false;
     if (!owner()) return;
     // `no-page` (deleted mid-action) or any core error — never leave a dangling frame.
-    pushToast(`Couldn't prepare “${name}” for PDF`, "error");
+    pushToast(e instanceof PrintQueryLimitError ? e.message : `Couldn't prepare “${name}” for PDF`, "error");
     console.error("pagePrintHtml failed");
     return;
   }
