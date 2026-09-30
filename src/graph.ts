@@ -36,7 +36,8 @@ const GRAPH_KEY = "tine.graphPath";
 /** Apply the store's fresh config snapshot without reopening the graph. A
  * superseded binding or other root is ignored; matching visible favorites
  * keep their arrangement. A moved journal title format or new-page format
- * bumps the graph epoch first, so in-flight results dated under the old one
+ * installs the title format before publishing meta or epoch, so journal
+ * observers use the new format and in-flight results dated under the old one
  * are dropped (master: same ordering rule as graph bind). Cost: O(favorites),
  * plus one arrangement page read only when membership changes. No write or
  * observable error here. */
@@ -45,6 +46,7 @@ export function applyGraphConfigChange(change: GraphConfigChange): void {
   if (!previous || previous.root !== change.meta.root
       || captureBinding().backendGeneration !== change.binding_generation) return;
   const meta = change.meta;
+  setJournalTitleFormat(meta.journal_page_title_format);
   setGraphMeta(meta);
   if (previous.journal_page_title_format !== meta.journal_page_title_format
       || previous.preferred_format !== meta.preferred_format)
@@ -234,6 +236,8 @@ export async function loadGraphPath(
     clearRecent();
   }
   if (switching || !hadGraph) resetLeftSidebarSections();
+  // Journal observers may run as soon as meta or epoch is published (GH #550).
+  setJournalTitleFormat(meta.journal_page_title_format);
   setGraphMeta(meta ?? null);
   // Revoke every in-flight result from the previous binding NOW. This is also
   // required for same-root force refresh (restore): root equality cannot
