@@ -1,4 +1,5 @@
-import { backend, type GraphChange } from "../backend";
+import { applyGraphAnswers } from "../graphAnswers";
+import { backend, type GraphChange, type GraphAnswersChange } from "../backend";
 import { captureBinding, stillBound } from "../binding";
 import { conflictPolicyAlwaysAsk, holdExternalChange, installHeldExternalChangeApplier } from "../conflictPolicy";
 import { pushToast } from "../toasts";
@@ -46,6 +47,7 @@ export async function applyGraphChange(c: GraphChange, bypassPolicy = false): Pr
   if (c.binding_generation !== undefined && c.binding_generation !== binding.backendGeneration) return;
   // The watcher has already updated the backend graph cache. Invalidate even
   // when this page is outside the bounded frontend working set.
+  applyGraphAnswers(c.answers);
   bumpDataRev();
   if (c.created || c.removed) bumpPageInventoryRev();
   await applyObservedChange(c, captureExternalChangeUi?.(), bypassPolicy);
@@ -56,12 +58,14 @@ export async function applyGraphChange(c: GraphChange, bypassPolicy = false): Pr
  *  or holds are applied (each through the same per-page decision), the journal
  *  feed restarts at most once, and one summary toast replaces per-page work.
  *  Cost O(changes) plus one page read per loaded or shown page. */
-export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; binding_generation?: number }): Promise<void> {
+export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }): Promise<void> {
   const binding = captureBinding();
   if (bulk.binding_generation !== undefined && bulk.binding_generation !== binding.backendGeneration) return;
+  applyGraphAnswers(bulk.answers);
   const changes = bulk.changes;
   if (!changes.length) return;
   bumpDataRev();
+  for (const change of changes) applyGraphAnswers(change.answers);
   if (changes.some((c) => c.created || c.removed)) bumpPageInventoryRev();
   const ui = captureExternalChangeUi?.();
   let restart = false, conflicts = 0;

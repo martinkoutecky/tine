@@ -191,6 +191,12 @@ pub enum ChangeKind {
 
 /// One published graph change; subscriptions deliver generations in order.
 /// `Change` is `Send + Sync` and can cross worker-thread boundaries.
+/// Its Serialize implementation emits a bounded derived-answer wire: `rev`,
+/// `inventoryChanged` (name/alias/reference-name or unreadable inventory inputs),
+/// and `blockRefCounts` (final changed-target counts, zero for removal). Save
+/// results and notifications use this same signal. Serialization costs O(changed
+/// targets); publication computes it from changed parsed pages without inventory
+/// materialization. Initial publication may include all counts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
     /// Generation after this change.
@@ -216,6 +222,7 @@ pub struct Change {
     /// they are excluded from parsed search, backlinks, and page inventory.
     pub files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
     pages: Vec<(FileId, PageKind, String)>,
+    answers: (bool, BTreeMap<String, usize>),
     /// The watcher batch that produced this publication, for latency
     /// receipts (GH #337 diagnosis); `None` for every other publisher.
     pub watch: Option<WatchBatch>,
@@ -247,8 +254,6 @@ impl Change {
     /// A move lists its old file as removed and its destination as created,
     /// without a pairing identifier;
     /// `page()` can describe either only when parsed page evidence is present.
-    /// An own event's file id and revision
-    /// describe disk state but cannot identify the originating window.
     /// Cost O(parsed page entries in this publication) per call; calling it
     /// for every file can be quadratic in a large publication.
     pub fn page(&self, file: &FileId) -> Option<(PageKind, &str)> {
@@ -305,8 +310,10 @@ struct Snapshot {
     claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
     name_by_path: Arc<SharedMap<PathBuf, (PageKind, String)>>,
     unreadable: Arc<Vec<(FileId, String)>>,
+    answers: (bool, BTreeMap<String, usize>),
 }
 
+mod answer_changes;
 mod snapshot;
 
 impl ChangeFeed {
@@ -419,6 +426,7 @@ impl ChangeFeed {
         state.rev += 1;
         let rev = GraphRev(state.rev);
         debug_assert_eq!(snapshot.rev, rev);
+        let answers = snapshot.answers.clone();
         *self.snapshot.write().unwrap() = Some(snapshot);
         before_notify();
         if !state.closed {
@@ -427,6 +435,7 @@ impl ChangeFeed {
                 origin,
                 files,
                 pages,
+                answers,
                 watch,
             });
             self.ready.notify_all();
@@ -1165,44 +1174,6 @@ impl Store {
     pub fn scan_refresh(&self) -> Result<GraphRev, LoadError> {
         self.watch.scan_refresh()?;
         Ok(self.changes.rev())
-    }
-
-    pub(crate) fn publish_own(
-        &self,
-        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
-    ) -> GraphRev {
-        self.publish_transaction_change(Origin::Own, files, Vec::new())
-    }
-
-    pub(crate) fn publish_transaction_change(
-        &self,
-        origin: Origin,
-        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
-        pages: Vec<(FileId, PageKind, String)>,
-    ) -> GraphRev {
-        let observed: Vec<_> = files
-            .iter()
-            .map(|(id, _, rev)| (id.clone(), rev.clone()))
-            .collect();
-        let raced = self.watch.note_own(&observed);
-        let config_changed = observed
-            .iter()
-            .any(|(id, _)| id.as_str() == "logseq/config.edn");
-        let journal_set_changed = config_changed
-            || files.iter().any(|(id, kind, _)| {
-                id.as_str()
-                    .starts_with(&format!("{}/", self.config().journals_dir))
-                    && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
-            });
-        if matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_)) {
-            if journal_set_changed {
-                self.refresh_journal_ids();
-            }
-            return self.changes.rev();
-        }
-        let rev = self.changes.publish(origin, files, config_changed, pages);
-        self.watch.reconcile_raced(&raced);
-        rev
     }
 
     pub(crate) fn is_closed(&self) -> bool {
@@ -2184,7 +2155,12 @@ impl SaveOutcome {
 #[derive(Debug)]
 pub enum SavePagesOutcome {
     /// One result per input entry, in the same order.
-    Ok(Vec<SaveOutcome>),
+    Ok {
+        /// One Saved or Unchanged revision per entry.
+        outcomes: Vec<SaveOutcome>,
+        /// The save's published answer delta, or None for unchanged/unpublished saves.
+        change: Option<Change>,
+    },
     /// The failed entry and any entries whose rollback could not restore disk.
     Failed {
         /// Zero-based failed input entry.

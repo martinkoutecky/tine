@@ -133,7 +133,7 @@ fn save_pages_keeps_order_and_reports_preflight_conflict_without_writes() {
     let (_, new_b_rev) = store.read(&b.file(), None).unwrap();
     let mut entries = entries;
     entries[1].1 = SaveBase::Existing(new_b_rev);
-    let SavePagesOutcome::Ok(outcomes) = store.save_pages(&entries) else {
+    let SavePagesOutcome::Ok { outcomes, .. } = store.save_pages(&entries) else {
         panic!("save must commit")
     };
     assert_eq!(outcomes.len(), 2);

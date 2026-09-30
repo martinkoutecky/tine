@@ -9,19 +9,19 @@ vi.mock("./debug", () => ({ dbg: vi.fn() }));
 beforeEach(() => { vi.resetModules(); api.getBlockRefCounts.mockReset(); api.resolveBlocks.mockReset(); });
 afterEach(() => { vi.restoreAllMocks(); });
 
-it("keeps last-good reference counts and reports a failed refresh", async () => {
-  api.getBlockRefCounts.mockResolvedValue({ target: 3 });
+it("keeps native last-good counts and reports a failed initial snapshot read", async () => {
+  let reject!: (error: Error) => void;
+  api.getBlockRefCounts.mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
   const { blockRefCount } = await import("./blockRefCounts");
+  const { applyGraphAnswers } = await import("./graphAnswers");
   const { toasts, setToasts } = await import("./toasts");
-  const { bumpDataRev } = await import("./graphSession");
   setToasts([]);
-  await vi.waitFor(() => expect(blockRefCount("target")).toBe(3));
-  api.getBlockRefCounts.mockRejectedValue(new Error("io:PermissionDenied"));
-  bumpDataRev();
-  await vi.waitFor(() => expect(api.getBlockRefCounts).toHaveBeenCalledTimes(2));
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await vi.waitFor(() => expect(api.getBlockRefCounts).toHaveBeenCalledTimes(1));
+  applyGraphAnswers({ rev: "2", inventoryChanged: false, blockRefCounts: { target: 3 } });
   expect(blockRefCount("target")).toBe(3);
-  expect(toasts().some((t) => t.kind === "error")).toBe(true);
+  reject(new Error("io:PermissionDenied"));
+  await vi.waitFor(() => expect(toasts().some((t) => t.kind === "error")).toBe(true));
+  expect(blockRefCount("target")).toBe(3);
 });
 
 it("failed block resolution stays unknown, reports failure and retries in the same revision", async () => {

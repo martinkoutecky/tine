@@ -2,6 +2,8 @@
 //! one revision or a refusal; a group save keeps failed rollback and publication
 //! file locations for recovery. Existing-page writes can copy O(P) page pointers
 //! while a graph view is held. Callers retain unsaved edits on every failure.
+//! Group success includes its published Change: serialization carries bounded
+//! reference-count updates and name-inventory invalidation, shared with watchers.
 
 use super::*;
 
@@ -79,7 +81,7 @@ impl Store {
         doc: &PageDto,
     ) -> SaveOutcome {
         match self.save_pages(&[(id.clone(), base, doc.clone(), vec![kind])]) {
-            SavePagesOutcome::Ok(mut outcomes) => outcomes.remove(0),
+            SavePagesOutcome::Ok { mut outcomes, .. } => outcomes.remove(0),
             SavePagesOutcome::Failed {
                 outcome,
                 undo_failed,
@@ -92,7 +94,8 @@ impl Store {
     /// Save page snapshots in input order through one guarded transaction.
     /// Preflight checks all entries before writing; duplicate file IDs, an
     /// empty request, empty edit kinds, and Guide pages refuse. Success returns
-    /// one Saved or Unchanged file revision per entry. A preflight refusal writes
+    /// one Saved or Unchanged file revision per entry plus its bounded published
+    /// Change signal (None for unchanged writes or a failed initial load). A preflight refusal writes
     /// nothing. An apply failure attempts undo; inspect `undo_failed` and
     /// `publication_errors` before retrying. If publication fails after all disk
     /// steps, Failed uses index 0 as a placeholder, not a failed entry, and the
@@ -142,8 +145,9 @@ impl Store {
             tx.save_page(kinds, id, base.clone(), doc);
         }
         match tx.commit() {
-            crate::TxOutcome::Committed { steps, .. } => SavePagesOutcome::Ok(
-                steps
+            crate::TxOutcome::Committed { steps, change, .. } => SavePagesOutcome::Ok {
+                change,
+                outcomes: steps
                     .into_iter()
                     .map(|step| match step {
                         crate::StepResult::Written { rev, .. } => SaveOutcome::Saved(rev),
@@ -151,7 +155,7 @@ impl Store {
                         _ => unreachable!("save_page result"),
                     })
                     .collect(),
-            ),
+            },
             crate::TxOutcome::NotCommitted {
                 step,
                 why,

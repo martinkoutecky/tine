@@ -2,7 +2,7 @@ import { reportUiFailure } from "./uiFailure";
 import { createEffect, createMemo, createRoot, createSignal, on } from "solid-js";
 import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
-import { dataRev, graphEpoch, pageInventoryRev } from "./graphSession";
+import { graphEpoch, pageInventoryRev } from "./graphSession";
 import { pageIdentityKey } from "./ui";
 import type { PageEntry, PageInventory, PageInventoryEntry, PageKind, ResolvedPage } from "./types";
 
@@ -15,10 +15,8 @@ import type { PageEntry, PageInventory, PageInventoryEntry, PageKind, ResolvedPa
 // data. No other frontend module may cache `page_inventory` or build a name map
 // (`pageIndex.guard.test.ts`).
 //
-// Refresh economy: one `page_inventory` IPC per trigger tick (graph bind or
-// switch, a content save's `dataRev`, a create/delete/rename's
-// `pageInventoryRev`). v0.6.5 paid one alias IPC per content save; this is the
-// same count. The command waits for the initial load, so no warm-cache gate.
+// Refresh economy: graph binding or native inventory-change signals cost one
+// IPC per tick. Text-only saves leave this answer alone (I-25).
 
 interface Held {
   generation: number;
@@ -103,7 +101,7 @@ export function installPageIndex(): void {
 function ensureInstalled() {
   if (installed) return installed;
   installed = createRoot(() => {
-    createEffect(on([graphEpoch, dataRev, pageInventoryRev], () => scheduleRefresh()));
+    createEffect(on([graphEpoch, pageInventoryRev], () => scheduleRefresh()));
     const allPages = createMemo(() => {
       const current = held();
       if (!current) return undefined;

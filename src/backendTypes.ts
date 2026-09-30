@@ -52,6 +52,7 @@ export interface BackupInfo {
 }
 
 export interface GraphChange {
+  answers?: import("./backend").GraphAnswersChange | null;
   binding_generation?: number;
   path?: string;
   name: string;

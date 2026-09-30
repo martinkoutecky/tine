@@ -102,3 +102,49 @@ fn a_failure_without_a_platform_step_sends_no_step_fields() {
     store.close();
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn text_save_signal_and_response_size_are_graph_independent() {
+    for pages in [2000, 10000] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("pages")).unwrap();
+        for i in 0..pages {
+            fs::write(dir.path().join(format!("pages/P{i}.md")), "- before\n").unwrap();
+        }
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let id = PageId::from("pages/P0.md");
+        let mut read = store.page(&id).unwrap();
+        read.doc.blocks[0].raw = "after".into();
+        let encoded = serde_json::to_string(&save_pages_wire(
+            &store,
+            &[(
+                id,
+                read.doc,
+                Some(read.rev.into()),
+                false,
+                vec![EditKind::SaveBlock],
+            )],
+        ))
+        .unwrap();
+        eprintln!(
+            "native save IPC: pages={pages}, requests=1, response_bytes={}, encoded={encoded}",
+            encoded.len()
+        );
+        let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(
+            value["changes"]["inventoryChanged"], false,
+            "I-25: text save signals no inventory change; exemplar store/answer_changes.rs"
+        );
+        assert_eq!(value["changes"]["blockRefCounts"], serde_json::json!({}));
+        assert!(
+            encoded.len() < 256,
+            "I-25: text-save response must be bounded independently of graph size: {encoded}"
+        );
+        eprintln!(
+            "native save IPC: pages={pages}, requests=1, response_bytes={}, encoded={encoded}",
+            encoded.len()
+        );
+        store.close();
+    }
+}

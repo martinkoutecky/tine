@@ -1,3 +1,4 @@
+import { applyGraphAnswers } from "../../graphAnswers";
 import { pageByName, setPageId, doc } from "../model";
 import { createSignal } from "solid-js";
 import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
@@ -94,7 +95,7 @@ export async function createPage(
   const wasTombstoned = deletedPages.delete(name); // an explicit create supersedes a completed delete
   try {
     const rev = await saveOnePage(backend(), { id, page: dto, baseRev: options.baseRev ?? null, force: false,
-      kinds: [options.baseRev == null ? "create-page" : "replace-page"] }, binding.backendGeneration);
+      kinds: [options.baseRev == null ? "create-page" : "replace-page"] }, binding.backendGeneration, (change) => { if (stillBound(binding) && token === graphToken) applyGraphAnswers(change); });
     if (!stillBound(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
     if (graphRewriteFrozen()) throw new CreatePageRefusal("graph-rewrite");
     if (pageInstanceGeneration(name) === generation) {
@@ -553,6 +554,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
   for (const name of order) { dirty.delete(name); kindLedger.delete(name); }
   try {
     const outcome = await backend().savePages(entries, binding.backendGeneration);
+    if (stillBound(binding) && token === graphToken && "ok" in outcome) applyGraphAnswers(outcome.changes);
     if (!stillBound(binding) || !validGroupMembers(g, binding, token, generations)) {
       for (let i = 0; i < order.length; i++) restoreKinds(order[i], entries[i].kinds);
       return abortGroup(g);
@@ -927,7 +929,7 @@ async function doSave(
         const appended = aliasOwnerPage(name, generation, owner, dto);
         if (!appended) throw new Error("conflict");
         const ownerRev = await saveOnePage(backend(), { id: owner.id, page: appended, baseRev: owner.rev ?? null, force: false,
-          kinds: ["insert-blocks", "delete-page"] }, binding.backendGeneration);
+          kinds: ["insert-blocks", "delete-page"] }, binding.backendGeneration, (change) => { if (stillBound(binding) && token === graphToken) applyGraphAnswers(change); });
         landedAliasDrafts.set(name, { owner: owner.id, blocks: aliasDraftBlocks(dto), generation });
         if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
         if (dirty.has(name) || reloadDisposition(owner.name) !== "reload" || pageInstanceGeneration(owner.name) !== ownerGeneration) {
@@ -950,7 +952,7 @@ async function doSave(
       id = resolved.id;
     }
     const rev = await saveOnePage(backend(), { id, page: dto, baseRev: baseline, force: false,
-      kinds }, binding.backendGeneration);
+      kinds }, binding.backendGeneration, (change) => { if (stillBound(binding) && token === graphToken) applyGraphAnswers(change); });
     // A reload/rename/delete/rebind while savePages was in flight invalidates the
     // retirement proof even if those bytes landed. Never let that stale success
     // authorize identity reuse or update the replacement instance's baseline.

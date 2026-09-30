@@ -102,6 +102,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Saves keep reference counts and names live without full refetches** (og-B-SIG2): native save and watcher signals update changed count targets and refresh names only when their sources change; ordinary text edits avoid both graph-wide reads.
 - **Published queries use their owning page** (og-B-SIG2): current-page queries, template substitutions, and query sheets share the baked publication context; identical queries on different pages keep separate static cache answers.
 - **Saves reuse parser-owned formatting** (og-B-SIG2): old page content and serialization layout come from one parse, removing two redundant parses from ordinary saves.
 

@@ -159,7 +159,7 @@ impl Snapshot {
             }
             Arc::new(evaluator)
         };
-        Self {
+        let mut snapshot = Self {
             graph: evaluator,
             rev,
             cache_generation,
@@ -169,6 +169,68 @@ impl Snapshot {
             claimants,
             name_by_path,
             unreadable: graph.unreadable_pages(),
+            answers: Default::default(),
+        };
+        snapshot.answers = snapshot.answer_changes(old, &changed_paths, name_set_changed);
+        snapshot
+    }
+}
+
+impl Store {
+    pub(crate) fn publish_own(
+        &self,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+    ) -> (GraphRev, Option<Change>) {
+        self.publish_transaction_change(Origin::Own, files, Vec::new())
+    }
+
+    pub(crate) fn publish_transaction_change(
+        &self,
+        origin: Origin,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        pages: Vec<(FileId, PageKind, String)>,
+    ) -> (GraphRev, Option<Change>) {
+        let observed: Vec<_> = files
+            .iter()
+            .map(|(id, _, rev)| (id.clone(), rev.clone()))
+            .collect();
+        let raced = self.watch.note_own(&observed);
+        let config_changed = observed
+            .iter()
+            .any(|(id, _)| id.as_str() == "logseq/config.edn");
+        let journal_set_changed = config_changed
+            || files.iter().any(|(id, kind, _)| {
+                id.as_str()
+                    .starts_with(&format!("{}/", self.config().journals_dir))
+                    && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
+            });
+        if matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_)) {
+            if journal_set_changed {
+                self.refresh_journal_ids();
+            }
+            return (self.changes.rev(), None);
         }
+        let rev = self
+            .changes
+            .publish(origin, files.clone(), config_changed, pages.clone());
+        let answers = self
+            .changes
+            .snapshot
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .answers
+            .clone();
+        let change = Change {
+            graph_rev: rev,
+            origin,
+            files,
+            pages,
+            answers,
+            watch: None,
+        };
+        self.watch.reconcile_raced(&raced);
+        (rev, Some(change))
     }
 }

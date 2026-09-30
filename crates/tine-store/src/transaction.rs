@@ -229,6 +229,8 @@ pub enum TxOutcome {
     Committed {
         /// Results in input order.
         steps: Vec<StepResult>,
+        /// Bounded derived-answer delta of this publication; absent when unchanged.
+        change: Option<crate::Change>,
         /// Generation publishing the disk state, or current one if unchanged.
         /// During a failed initial load this is the unchanged current revision:
         /// no view covers the write until recovery's first view does.
@@ -1927,8 +1929,9 @@ impl<'a> Transaction<'a> {
             self.store.graph.transaction_bump_generation();
         }
         let mut published_rev = self.store.changes.rev();
+        let mut change = None;
         if !published_own.is_empty() {
-            published_rev = self.store.publish_own(published_own);
+            (published_rev, change) = self.store.publish_own(published_own);
         }
         if !published_external.is_empty() {
             let pages = published_external
@@ -1940,9 +1943,10 @@ impl<'a> Transaction<'a> {
                         .map(|entry| (id.clone(), entry.kind, entry.name.clone()))
                 })
                 .collect();
-            published_rev =
+            let (rev, _) =
                 self.store
                     .publish_transaction_change(Origin::External, published_external, pages);
+            published_rev = rev;
         }
         // A clean rollback needs no second copy of bytes written by this
         // transaction. Keep every staged inode if recovery failed or an
@@ -1997,6 +2001,7 @@ impl<'a> Transaction<'a> {
             },
             None => TxOutcome::Committed {
                 steps: results,
+                change,
                 graph_rev: published_rev,
             },
         }

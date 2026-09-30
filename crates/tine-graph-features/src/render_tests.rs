@@ -131,6 +131,7 @@ mod tests {
             print_asset_budget: None,
             query_cache: Some(&cache),
             pages: None,
+            current_page: None,
         };
         for _ in 0..5 {
             assert!(render_query(&graph, "(task TODO)", false, &ctx, 0)
@@ -219,6 +220,7 @@ mod tests {
             print_asset_budget: Some(&cumulative),
             query_cache: None,
             pages: None,
+            current_page: None,
         };
 
         assert!(inline_asset_uri(&cumulative_ctx, "../assets/one.png").is_some());
@@ -277,6 +279,7 @@ mod tests {
             print_asset_budget: None,
             query_cache: Some(&cache),
             pages: None,
+            current_page: None,
         };
 
         let oversized = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);

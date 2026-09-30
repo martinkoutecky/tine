@@ -35,8 +35,8 @@ beforeEach(() => {
 describe("page index: the one frontend name answerer", () => {
   // Ported from graph.test "loads real page identities once and lets them win
   // colliding aliases": the backend's target is returned verbatim, and each
-  // trigger costs one page_inventory IPC (bind, content save, create/delete).
-  it("answers from the backend target and refetches once per trigger", async () => {
+  // inventory trigger costs one IPC; content-only saves cost none (I-25).
+  it("answers from the backend target and refetches only inventory changes", async () => {
     backendMock.pageInventory.mockResolvedValue(inventory(1,
       file("page1"),
       alias("shortcut", "pages/other.md"),
@@ -51,15 +51,16 @@ describe("page index: the one frontend name answerer", () => {
     expect(navigationName("Unknown")).toBe("Unknown");
 
     bumpDataRev();
-    await vi.waitFor(() => expect(backendMock.pageInventory).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(backendMock.pageInventory).toHaveBeenCalledTimes(1);
     bumpPageInventoryRev();
-    await vi.waitFor(() => expect(backendMock.pageInventory).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(backendMock.pageInventory).toHaveBeenCalledTimes(2));
     // A save that bumps both in one tick costs one IPC, not two.
     bumpDataRev();
     bumpPageInventoryRev();
-    await vi.waitFor(() => expect(backendMock.pageInventory).toHaveBeenCalledTimes(4));
+    await vi.waitFor(() => expect(backendMock.pageInventory).toHaveBeenCalledTimes(3));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(backendMock.pageInventory).toHaveBeenCalledTimes(4);
+    expect(backendMock.pageInventory).toHaveBeenCalledTimes(3);
   });
 
   // Ported from graph.test "refreshes real-page precedence after a same-session

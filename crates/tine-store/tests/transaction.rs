@@ -680,7 +680,9 @@ fn transaction_revision_advances_only_for_disk_change() {
         &doc("A", "same"),
     );
     let unchanged = match tx.commit() {
-        TxOutcome::Committed { steps, graph_rev } => {
+        TxOutcome::Committed {
+            steps, graph_rev, ..
+        } => {
             assert!(matches!(steps[0], StepResult::Unchanged { .. }));
             graph_rev
         }

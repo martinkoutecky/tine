@@ -63,14 +63,25 @@ export interface SavePageEntry {
   kinds: EditKinds;
 }
 
+/** Native publication delta, shared by save acknowledgements and watcher events.
+ * Values are final counts for only the changed targets; zero clears a badge. */
+export interface GraphAnswersChange {
+  rev: string;
+  inventoryChanged: boolean;
+  blockRefCounts: Record<string, number>;
+}
+
 export type SavePagesResult =
-  | { ok: string[] }
+  | { ok: string[]; changes?: GraphAnswersChange | null }
   | { failed: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[]; operation?: string; osError?: number } };
 
-/** Adapt a one-page intent to the shared request while preserving its refusal. */
-export async function saveOnePage(api: Backend, entry: SavePageEntry, bindingGeneration?: number): Promise<string> {
+/** Adapt a one-page intent to the shared request while preserving its refusal.
+ * Calls observed with its native answer delta before returning the revision;
+ * the observer owns graph-binding validation. Cost follows save plus targets. */
+export async function saveOnePage(api: Backend, entry: SavePageEntry, bindingGeneration?: number, observed?: (change: GraphAnswersChange | null | undefined) => void): Promise<string> {
   const result = await api.savePages([entry], bindingGeneration);
   if ("failed" in result) throw Object.assign(new Error(result.failed.family), { diskRev: result.failed.diskRev, platformStep: readSavePlatformStep(result.failed) });
+  observed?.(result.changes);
   return result.ok[0];
 }
 
@@ -564,7 +575,7 @@ export interface Backend {
   /** Watcher freshness (family 10), native only: a checkout-sized batch as one
    *  event, a refused/restored OS watch, and a focus rescan (one full stat
    *  diff) whose returned sequence completes after its page events. */
-  onGraphChangedBulk?(cb: (bulk: { changes: GraphChange[]; binding_generation?: number }) => void): Promise<() => void>;
+  onGraphChangedBulk?(cb: (bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }) => void): Promise<() => void>;
   onGraphWatchStatus?(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void): Promise<() => void>;
   onGraphRescanComplete?(cb: (sequence: number) => void): Promise<() => void>;
   rescanGraphNow?(): Promise<number>;
@@ -1295,7 +1306,7 @@ class TauriBackend implements Backend {
     return (await import("@tauri-apps/api/event")).listen<T>(event, (e) => cb(e.payload));
   }
   onGraphChanged(cb: (c: GraphChange) => void) { return this.on("graph-changed", cb); }
-  onGraphChangedBulk(cb: (bulk: { changes: GraphChange[]; binding_generation?: number }) => void) { return this.on("graph-changed-bulk", cb); }
+  onGraphChangedBulk(cb: (bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }) => void) { return this.on("graph-changed-bulk", cb); }
   async onGraphWatchStatus(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void) {
     const [a, b] = await Promise.all([true, false].map((refused) => this.on<{ message: string }>(`graph-watch-${refused ? "refused" : "restored"}`, (p) => cb({ ...p, refused }))));
     return () => { a(); b(); };

@@ -55,7 +55,7 @@ describe("GH #229 complete page-name inventory", () => {
     });
   });
 
-  it("refreshes reference names after dataRev with one inventory IPC", async () => {
+  it("refreshes reference names after a native inventory change with one IPC", async () => {
     let refs = ["test/first"];
     backendMock.pageInventory.mockImplementation(async () =>
       inventory(refs.length, physical("test"), ...refs.map(referenced)));
@@ -65,6 +65,10 @@ describe("GH #229 complete page-name inventory", () => {
     backendMock.pageInventory.mockClear();
     refs = ["test/second"];
     bumpDataRev();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(backendMock.pageInventory).not.toHaveBeenCalled();
+    const { applyGraphAnswers } = await import("./graphAnswers");
+    applyGraphAnswers({ rev: "2", inventoryChanged: true, blockRefCounts: {} });
 
     await vi.waitFor(() => expect(allPageNames()).toEqual(["test", "test/second"]));
     expect(backendMock.pageInventory).toHaveBeenCalledTimes(1);

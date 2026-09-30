@@ -23,8 +23,13 @@ pub(crate) struct SavePagesFailure {
 #[derive(Serialize, Debug, PartialEq, Eq)]
 #[serde(untagged)]
 pub(crate) enum SavePagesWire {
-    Ok { ok: Vec<String> },
-    Failed { failed: SavePagesFailure },
+    Ok {
+        ok: Vec<String>,
+        changes: Option<tine_store::Change>,
+    },
+    Failed {
+        failed: SavePagesFailure,
+    },
 }
 
 /// The platform step of an I/O failure, when the store named one. O(1).
@@ -39,7 +44,8 @@ fn platform_step(error: Option<&IoError>) -> (Option<&'static str>, Option<i32>)
 /// impossible constructed Store outcome.
 pub(super) fn save_pages_outcome_to_wire(outcome: SavePagesOutcome) -> SavePagesWire {
     match outcome {
-        SavePagesOutcome::Ok(outcomes) => SavePagesWire::Ok {
+        SavePagesOutcome::Ok { outcomes, change } => SavePagesWire::Ok {
+            changes: change,
             ok: outcomes
                 .into_iter()
                 .map(|outcome| save_outcome_to_wire(outcome).expect("committed page rev"))

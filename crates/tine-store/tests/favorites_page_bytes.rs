@@ -31,7 +31,10 @@ fn favorites_arrangement_page_bytes() {
     .unwrap();
     let id = PageId::from("pages/Favorites.md");
     let outcome = store.save_pages(&[(id, SaveBase::CreateNew, dto, vec![EditKind::CreatePage])]);
-    assert!(matches!(outcome, SavePagesOutcome::Ok(_)), "{outcome:?}");
+    assert!(
+        matches!(outcome, SavePagesOutcome::Ok { .. }),
+        "{outcome:?}"
+    );
     assert_eq!(
         fs::read_to_string(root.join("pages/Favorites.md")).unwrap(),
         "tine/favorites:: true\n\n- [[Alpha]]\n\t- [[Beta]]\n- Work\n  collapsed:: true\n\t- [[Gamma]]\n"
@@ -86,7 +89,7 @@ fn favorites_arrangement_page_in_an_org_preferred_graph() {
         vec![EditKind::CreatePage],
     )]);
     assert!(
-        matches!(outcome, tine_store::SavePagesOutcome::Ok(_)),
+        matches!(outcome, tine_store::SavePagesOutcome::Ok { .. }),
         "{outcome:?}"
     );
     let files: Vec<_> = fs::read_dir(root.join("pages"))
