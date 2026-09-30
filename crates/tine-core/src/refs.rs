@@ -64,103 +64,6 @@ fn is_tag_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '-' | '_' | '/' | '.')
 }
 
-/// Byte ranges of `raw` that are inside code — fenced blocks (``` / ~~~) or
-/// inline `…` spans. Like OG, references inside code are literal: they are
-/// neither indexed as backlinks nor rewritten on rename, so a code example that
-/// shows `[[Foo]]`/`#Foo` (or a URL fragment inside code) isn't corrupted when
-/// page Foo is renamed. (A bare URL `…#Foo` in prose is a separate case.)
-/// Strip one leading unordered-list bullet (`- `/`* `/`+ `) so a fenced code block
-/// that opens directly on a bullet line (`- ```lang`) is recognized as a fence.
-fn strip_list_bullet(s: &str) -> &str {
-    let b = s.as_bytes();
-    if b.len() >= 2 && matches!(b[0], b'-' | b'*' | b'+') && b[1] == b' ' {
-        &s[2..]
-    } else {
-        s
-    }
-}
-
-fn code_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
-    // Neither inline code nor a Markdown fence can start without one of these.
-    if !raw.contains(['`', '~']) {
-        return Vec::new();
-    }
-    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
-    let mut fence: Option<(u8, usize)> = None; // (marker byte, run length) while open
-    let mut pos = 0usize;
-    for line in raw.split_inclusive('\n') {
-        let line_start = pos;
-        pos += line.len();
-        let content = line.strip_suffix('\n').unwrap_or(line);
-        let trimmed = content.trim_start();
-        if let Some((fc, fl)) = fence {
-            ranges.push(line_start..pos); // whole line (incl. newline) is code
-                                          // A closing fence is the same marker, >= the opening run, nothing after
-                                          // it. It is a bare line (no bullet) — a Logseq bulleted code block closes
-                                          // with an aligned `  ``` `, so the close check uses the un-stripped text.
-            let cm = trimmed.bytes().next().filter(|&c| c == b'`' || c == b'~');
-            let cr = cm.map_or(0, |m| trimmed.bytes().take_while(|&c| c == m).count());
-            if cm == Some(fc)
-                && cr >= fl
-                && trimmed.as_bytes()[cr..].iter().all(u8::is_ascii_whitespace)
-            {
-                fence = None;
-            }
-            continue;
-        }
-        // An OPENING fence may sit right after a list bullet (`- ```lang`), so strip
-        // one bullet before testing. Without this, the opener is missed but its bare
-        // closing ``` gets mis-read as an opener, swallowing everything after the
-        // block (e.g. a later `[[ref]]`) as "code".
-        let body = strip_list_bullet(trimmed);
-        let marker = body.bytes().next().filter(|&c| c == b'`' || c == b'~');
-        let run = marker.map_or(0, |m| body.bytes().take_while(|&c| c == m).count());
-        if run >= 3 {
-            ranges.push(line_start..pos);
-            fence = Some((marker.unwrap(), run));
-            continue;
-        }
-        inline_code_spans(content, line_start, &mut ranges);
-    }
-    ranges
-}
-
-/// Append byte ranges of inline `code` spans on one (non-fenced) line. A span is
-/// a run of N backticks, closed by the next run of exactly N (CommonMark-ish).
-fn inline_code_spans(line: &str, base: usize, out: &mut Vec<std::ops::Range<usize>>) {
-    let b = line.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'`' {
-            let open = i;
-            let k = b[i..].iter().take_while(|&&c| c == b'`').count();
-            let mut j = i + k;
-            let mut end = None;
-            while j < b.len() {
-                if b[j] == b'`' {
-                    let r = b[j..].iter().take_while(|&&c| c == b'`').count();
-                    if r == k {
-                        end = Some(j + k);
-                        break;
-                    }
-                    j += r;
-                } else {
-                    j += 1;
-                }
-            }
-            match end {
-                Some(e) => {
-                    out.push(base + open..base + e);
-                    i = e;
-                }
-                None => i = open + k, // unterminated: the backticks are literal
-            }
-        } else {
-            i += 1;
-        }
-    }
-}
-
 /// Whether byte `pos` is inside a code range, using a monotone cursor. The callers
 /// (`rename_refs_multi`, `rename_tags_property`) scan left-to-right with a monotonically
 /// increasing `pos`, and `ranges` are ascending + non-overlapping (see
@@ -173,69 +76,13 @@ fn in_code_at(pos: usize, ranges: &[std::ops::Range<usize>], cursor: &mut usize)
     ranges.get(*cursor).is_some_and(|r| r.contains(&pos))
 }
 
-/// Ranges to protect from ref rewriting: markdown fenced/inline code always, plus
-/// — for an org file — `#+BEGIN_…#+END_…` blocks (whose `[[..]]`/`#..` are literal
-/// source, not references). `is_org` is gated so a literal `#+BEGIN_` in a real
-/// markdown file is never mistaken for a block.
+/// Parser-owned literal bytes, including nested blocks and Org inline literals.
 fn code_ranges_for(raw: &str, is_org: bool) -> Vec<std::ops::Range<usize>> {
-    let mut r = code_ranges(raw);
-    if is_org {
-        // `code_ranges` is already ascending+non-overlapping; `org_block_ranges` is
-        // appended out of byte-order, so re-sort + coalesce to restore the invariant
-        // the monotone-cursor `in_code_at` relies on. R = #code regions (tiny), and
-        // this runs once per rename — the per-byte scan stays O(n).
-        r.extend(org_block_ranges(raw));
-        r.sort_unstable_by_key(|x| x.start);
-        let mut merged: Vec<std::ops::Range<usize>> = Vec::with_capacity(r.len());
-        for cur in r {
-            match merged.last_mut() {
-                Some(prev) if cur.start <= prev.end => prev.end = prev.end.max(cur.end),
-                _ => merged.push(cur),
-            }
-        }
-        return merged;
-    }
-    r
-}
-
-/// Byte ranges (whole lines, inclusive) of org `#+BEGIN_x … #+END_x` blocks.
-/// Mirrors `org.rs`'s headline-scanner block tracking; an unclosed block extends
-/// to end-of-text (so a stray ref after it is treated conservatively as literal).
-fn org_block_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
-    let mut ranges = Vec::new();
-    let mut pos = 0usize;
-    let mut depth = 0usize;
-    let mut start = 0usize;
-    for line in raw.split_inclusive('\n') {
-        let line_start = pos;
-        pos += line.len();
-        let kw = line.trim_start_matches([' ', '\t']).strip_prefix("#+");
-        let is_begin = kw.is_some_and(|k| {
-            k.get(..6)
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("begin_"))
-        });
-        let is_end = kw.is_some_and(|k| {
-            k.get(..4)
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("end_"))
-        });
-        if depth == 0 {
-            if is_begin {
-                depth = 1;
-                start = line_start;
-            }
-        } else if is_begin {
-            depth += 1;
-        } else if is_end {
-            depth -= 1;
-            if depth == 0 {
-                ranges.push(start..pos);
-            }
-        }
-    }
-    if depth > 0 {
-        ranges.push(start..pos);
-    }
-    ranges
+    crate::block_regions::parse(raw, is_org)
+        .literals
+        .into_iter()
+        .map(|r| r.0..r.1)
+        .collect()
 }
 
 /// A `#tag` is only a tag at a word boundary: `#` at the start, or preceded by a
@@ -256,14 +103,13 @@ fn tag_boundary(raw: &str, i: usize) -> bool {
 // used to sit here were a dead second copy (only tests called them) — a "fix the
 // wrong file" trap — and were removed. What remains in this file is the LIVE half:
 // `normalize`, `rename_*`, `block_id`, the bracket-link/block-ref helpers (shared
-// with `publish.rs`), and the code/org fence machinery.
+// with `publish.rs`), and parser-owned literal masks.
 
 /// A block's `id::` property value (its uuid), if any.
-pub fn block_id(raw: &str) -> Option<String> {
-    raw.lines().find_map(|l| {
-        crate::doc::parse_property_line(l)
-            .and_then(|(k, v)| k.eq_ignore_ascii_case("id").then(|| v.trim().to_string()))
-    })
+pub fn block_id(raw: &str, is_org: bool) -> Option<String> {
+    crate::block_regions::parse(raw, is_org)
+        .id
+        .map(|p| p.value.trim().to_string())
 }
 
 /// Read a `[label](target)` starting at the leading `[`. The target is read with
@@ -596,11 +442,11 @@ mod tests {
     #[test]
     fn block_id_reads_id_property() {
         assert_eq!(
-            block_id("text\nid:: 1234-abcd"),
+            block_id("text\nid:: 1234-abcd", false),
             Some("1234-abcd".to_string())
         );
-        assert_eq!(block_id("ID:: Xyz"), Some("Xyz".to_string())); // case-insensitive key
-        assert_eq!(block_id("no props here"), None);
+        assert_eq!(block_id("ID:: Xyz", false), Some("Xyz".to_string())); // case-insensitive key
+        assert_eq!(block_id("no props here", false), None);
     }
 
     #[test]
@@ -663,13 +509,10 @@ mod tests {
             out,
             "see [[New]] here\n#+BEGIN_SRC clojure\n(def s \"[[Old]]\") ; #Old\n#+END_SRC\nand [[New]] again\n"
         );
-        // Same input as markdown (is_org=false) WOULD rewrite inside (no org fence
-        // awareness) — proving the gate matters.
+        // mldoc 1.5.9 emits Src for this input in Markdown too. The same
+        // parser-owned literal protection applies in both formats.
         let md = rename_refs(raw, "Old", "New", false);
-        assert!(
-            md.contains("(def s \"[[New]]\")"),
-            "md path rewrites inside (expected): {md:?}"
-        );
+        assert_eq!(md, out);
     }
 
     #[test]

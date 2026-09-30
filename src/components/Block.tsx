@@ -98,6 +98,7 @@ import { assetEditorIsCurrent, captureAssetEditor, importCaptureToOrigin, report
 import { captureBinding, stillBound } from "../binding";
 import { graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { blockRefCount } from "../blockRefCounts";
+import { parserReady } from "../render/parse";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
 import { cycleMarkerSmart } from "../editor/repeat";
@@ -280,7 +281,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const [showRefs, setShowRefs] = createSignal(false);
   createEffect(() => {
     const requested = blockReferencesRequest()?.id;
-    if (requested === props.id || requested === blockExternalId(props.id)) setShowRefs(true);
+    if (requested && parserReady()
+      && (requested === props.id || requested === blockExternalId(props.id))) setShowRefs(true);
   });
   // Ordered-list label for THIS block's own bullet (OG numbers the block itself,
   // not its children); null for a normal bullet.
@@ -307,7 +309,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         ...rowDecorationClasses(threadLineDecoration()),
       }}
       data-block-id={props.id}
-      data-block-ref={blockExternalId(props.id) ?? props.id}
+      data-block-ref={parserReady() ? blockExternalId(props.id) ?? props.id : undefined}
     >
       <div
         class="block-main"
@@ -416,7 +418,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                   // is referenced. Plain click toggles the referrers panel below;
                   // shift-click opens the block in the sidebar (matching OG and the
                   // bullet's shift-click).
-                  <Show when={blockRefCount(props.id) > 0 && !props.hideRefCount}>
+                  <Show when={parserReady() && blockRefCount(props.id) > 0 && !props.hideRefCount}>
                     <a
                       class="block-refs-count"
                       classList={{ open: showRefs() }}
@@ -584,15 +586,13 @@ export function Editor(props: { id: string }): JSX.Element {
       && (node().originatedFromPageHeader || (!page.preBlock && propertyDraft));
   };
 
-  // What the textarea shows. Annotation (PDF highlight) blocks expose only their
-  // highlight text (all metadata hidden); every other block hides just the
-  // built-in id::/collapsed:: lines (like OG). Hidden lines are preserved and
-  // reattached on commit.
+  // One cached split serves the editing surface and commit; hidden bytes survive.
   const isAnnot = () => isAnnotationBlock(node().raw);
   // Annotation blocks hide ALL properties (edit only the highlight text); every
   // other block hides just the built-in id::/collapsed::. One fence-aware splitter.
   const hideFn = () => (isAnnot() ? hideAll : sheetCell ? isSheetCellHidden : isBuiltinHidden);
-  const editorValue = createMemo(() => splitProps(node().raw, hideFn(), pageFmt()).visible);
+  const editorParts = createMemo(() => splitProps(node().raw, hideFn(), pageFmt()));
+  const editorValue = () => editorParts().visible;
   // GH #357: while the buffer IS one whole-block code fence the editor presents
   // as the same mono, no-wrap card the rendered face is (no re-layout jump).
   // Mixed content / ```calc keep their own modes; re-derived per keystroke.
@@ -637,7 +637,7 @@ export function Editor(props: { id: string }): JSX.Element {
     // For a code wrapper `text` is the payload body: re-attach the exact wrapper
     // bytes (GH #412/#413: the body-only projection is reversible).
     const visible = commitAsCalc ? serializeCalcExitCommit(text, editorValue()) : codeWrapCommit(text) ?? text;
-    const next = joinProps(visible, splitProps(node().raw, hideFn(), pageFmt()).hidden, pageFmt());
+    const next = joinProps(visible, editorParts().hidden, pageFmt());
     // No-op commit (text that reconstructs the identical raw): don't mark the page
     // dirty or push undo — avoids churn and can't rewrite the block's bytes.
     if (next === node().raw) return;
@@ -1994,7 +1994,7 @@ export function Editor(props: { id: string }): JSX.Element {
       }
       // "On type" typographic replacement (source gets the glyph). Pair chars and
       // typo triggers don't overlap, but skip if a pair op already consumed the char.
-      if (!handled && typographyMode() === "type") {
+      if (!handled && !codeShown() && !isCalc() && typographyMode() === "type") {
         const r = typoTypeReplace(ref.value, ref.selectionStart, ch);
         if (r) {
           ref.value = r.value;
@@ -2075,7 +2075,7 @@ export function Editor(props: { id: string }): JSX.Element {
   };
   const cycleTodoCmd = () => {
     const start = ref.selectionStart;
-    const { raw: newRaw, delta } = cycleMarkerSmart(ref.value, workflow());
+    const { raw: newRaw, delta } = cycleMarkerSmart(ref.value, workflow(), pageFmt());
     commit(newRaw);
     const pos = Math.max(0, start + delta);
     queueMicrotask(() => {

@@ -10,10 +10,11 @@
 // Loading: the wasm bytes are base64-inlined in ./wasm/lsdoc_wasm_bytes.ts and
 // handed to the wasm-bindgen glue's async init as an explicit buffer — NO fetch,
 // so it works under Tauri's custom protocol and offline. `initParser()` is awaited
-// once at app boot (main.tsx + capture.tsx) before the first render.
+// once at app boot. Main awaits it; Capture paints its seeded empty editor while
+// initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_bundle_json, edit_block_regions_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
 import type { Block } from "./ast";
 
@@ -33,8 +34,9 @@ function base64ToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
-/** Instantiate the wasm parser once (idempotent). Awaited before first paint in
- *  every window. Async (not `initSync`) so the ~189 KB module compiles off the
+/** Instantiate the wasm parser once (idempotent). Main awaits it before paint;
+ *  Capture starts it before paint and defers structural reads until ready.
+ *  Async (not `initSync`) so the vendored module compiles off the
  *  synchronous-compile size limit some engines enforce on the main thread. */
 export function initParser(): Promise<void> {
   if (ready()) return Promise.resolve();
@@ -86,6 +88,22 @@ export function parserFailed(): boolean {
 const cache = new Map<string, Block[]>();
 const CACHE_MAX = 8000;
 const quarantined = new WeakSet<Block[]>();
+export type ByteRange = [number, number];
+export interface RegionProperty {
+  key: string; value: string; line: ByteRange; key_range: ByteRange; value_range: ByteRange; region: number; primary: boolean;
+}
+export interface BlockRegions {
+  header: { marker: string | null; priority: string | null; heading: number | null };
+  literals: ByteRange[];
+  property_regions: ByteRange[];
+  properties: RegionProperty[];
+  planning: { kind: string; line: ByteRange; timestamp: ByteRange; date: unknown }[];
+  drawers: { name: string; range: ByteRange; close: number; clocks: ByteRange[] }[];
+  id: RegionProperty | null;
+  quarantined: boolean;
+}
+const regionCache = new WeakMap<Block[], BlockRegions>();
+
 
 function remember(key: string, blocks: Block[]): Block[] {
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
@@ -96,6 +114,9 @@ function remember(key: string, blocks: Block[]): Block[] {
 function quarantine(key: string, text: string): Block[] {
   const blocks: Block[] = [{ kind: "paragraph", inline: [{ k: "plain", text }] }];
   quarantined.add(blocks);
+  regionCache.set(blocks, { header: { marker: null, priority: null, heading: null },
+    literals: [[0, new TextEncoder().encode(text).length]], property_regions: [], properties: [],
+    planning: [], drawers: [], id: null, quarantined: true });
   return remember(key, blocks);
 }
 
@@ -142,15 +163,31 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
   if (statsEnabled()) bumpParseStats(false);
   let json: string;
   try {
-    json = parse_block_json(text, isOrg);
+    json = parse_block_bundle_json(text, isOrg);
   } catch {
     __tineReinstantiate();
     try {
-      json = parse_block_json(text, isOrg);
+      json = parse_block_bundle_json(text, isOrg);
     } catch {
       __tineReinstantiate();
       return quarantine(key, text);
     }
   }
-  return remember(key, JSON.parse(json) as Block[]);
+  const bundle = JSON.parse(json) as { blocks: Block[]; regions: BlockRegions };
+  regionCache.set(bundle.blocks, bundle.regions);
+  return remember(key, bundle.blocks);
+}
+
+/** Raw UTF-8 regions from the render cache: O(block bytes) on a cold miss,
+ * zero additional parses on a warm AST. Never call from a typing handler. */
+export function blockRegions(raw: string, format: "md" | "org" = "md"): BlockRegions {
+  if (!parserReady()) throw new Error("Structural edit refused: parser is not ready");
+  return regionCache.get(parseBlock(raw, format === "org"))!;
+}
+/** Parser-owned splice for one block. Warm regions avoid parsing; parse traps
+ * refuse visibly by throwing. Callers must retain raw on refusal. */
+export function editBlock(raw: string, format: "md" | "org", request: object): string {
+  const regions = blockRegions(raw, format);
+  if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
+  return edit_block_regions_json(raw, format === "org", regions, request);
 }

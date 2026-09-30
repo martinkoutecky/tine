@@ -44,25 +44,24 @@ fn is_hidden_prop(key: &str) -> bool {
 /// `key:: value` properties. The LOGBOOK drawer itself stays hidden, but the
 /// app shows its clocked total as a badge, so the export carries the badge.
 pub(super) fn emit_trailer_facets(
-    scheduled: Option<&str>,
-    deadline: Option<&str>,
+    block: &DocBlock,
     raw: &str,
     props: &[(String, String)],
     out: &mut String,
 ) {
-    if let Some(s) = scheduled {
+    if let Some(s) = block.scheduled() {
         out.push_str(&format!(
             "<div class=\"planning scheduled\"><span class=\"pk\">SCHEDULED:</span> {}</div>",
             esc(s)
         ));
     }
-    if let Some(d) = deadline {
+    if let Some(d) = block.deadline() {
         out.push_str(&format!(
             "<div class=\"planning deadline\"><span class=\"pk\">DEADLINE:</span> {}</div>",
             esc(d)
         ));
     }
-    let clocked = tine_core::logbook::clock_summary_seconds(raw);
+    let clocked = tine_core::logbook::clock_summary_seconds(raw, block.is_org());
     if clocked > 0 {
         out.push_str(&format!(
             "<div class=\"planning logbook\"><span class=\"pk\">CLOCK:</span> {:02}:{:02}:{:02}</div>",

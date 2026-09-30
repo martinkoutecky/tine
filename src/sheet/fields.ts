@@ -245,7 +245,7 @@ export function writeField(id: string, field: FieldId, value: string): boolean {
     const cur = leadingMarker(n.raw);
     let raw: string;
     if (target && target === nextMarker(cur, workflow())) {
-      raw = cycleMarkerSmart(n.raw, workflow(), {
+      raw = cycleMarkerSmart(n.raw, workflow(), formatForBlock(id), {
         format: formatForBlock(id),
         enabled: timetrackingEnabled(),
         withSeconds: logbookWithSecondSupport(),
@@ -350,7 +350,7 @@ export function cycleField(id: string, field: "state" | "priority"): boolean {
   const n = docNode(id);
   if (!n) return false;
   if (field === "state") {
-    const raw = cycleMarkerSmart(n.raw, workflow(), {
+    const raw = cycleMarkerSmart(n.raw, workflow(), formatForBlock(id), {
       format: formatForBlock(id),
       enabled: timetrackingEnabled(),
       withSeconds: logbookWithSecondSupport(),

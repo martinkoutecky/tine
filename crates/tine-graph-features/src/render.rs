@@ -389,7 +389,7 @@ type ReverseRefIndex = std::collections::HashMap<String, Vec<Referrer>>;
 
 fn collect_block_refs(blocks: &[DocBlock], slug: &str, refs: &mut RefIndex) {
     for b in blocks {
-        if let Some(id) = block_id(b.raw()) {
+        if let Some(id) = block_id(b.raw(), b.is_org()) {
             refs.insert(
                 id,
                 RefTarget {
@@ -1263,7 +1263,7 @@ fn emit_block_inner(raw: &str, out: &mut String, ctx: &Ctx, depth: u8) {
     );
     out.push_str(&body);
     out.push_str("</div>");
-    emit_trailer_facets(blk.scheduled(), blk.deadline(), raw, &blk.properties(), out);
+    emit_trailer_facets(&blk, raw, &blk.properties(), out);
 }
 
 /// Render a query/embed result block (a `BlockDto` from the query engine) as an
@@ -1673,14 +1673,14 @@ impl PageAnchors {
         let mut stack: Vec<&DocBlock> = roots.iter().rev().collect();
         let mut order = Vec::new();
         while let Some(block) = stack.pop() {
-            authored.extend(block_id(block.raw()));
+            authored.extend(block_id(block.raw(), block.is_org()));
             order.push(block);
             stack.extend(block.children.iter().rev());
         }
         let mut counter = 0u32;
         let mut anchors = HashMap::with_capacity(order.len());
         for block in order {
-            let anchor = block_id(block.raw()).unwrap_or_else(|| loop {
+            let anchor = block_id(block.raw(), block.is_org()).unwrap_or_else(|| loop {
                 let generated = format!("b{counter}");
                 counter += 1;
                 if !authored.contains(&generated) {
@@ -1808,8 +1808,8 @@ fn render_block(
     if render_sheets::is_laid_out(ctx, title, at) {
         props.retain(|(key, _)| !tine_core::doc::property_key_norm(key).starts_with("tine."));
     }
-    emit_trailer_facets(b.scheduled(), b.deadline(), b.raw(), &props, out);
-    if let (Some(id), Some(reverse)) = (block_id(b.raw()), ctx.reverse_refs) {
+    emit_trailer_facets(b, b.raw(), &props, out);
+    if let (Some(id), Some(reverse)) = (block_id(b.raw(), b.is_org()), ctx.reverse_refs) {
         if let Some(referrers) = reverse.get(&id).filter(|items| !items.is_empty()) {
             let count = referrers.len();
             out.push_str(&format!(

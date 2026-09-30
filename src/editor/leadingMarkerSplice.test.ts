@@ -47,8 +47,8 @@ describe("leading-whitespace task marker edits keep the title", () => {
   });
 
   it("a newline before the marker keeps the marker line intact", () => {
-    expect(toggleTaskDone("\nTODO x", "todo")).toBe("\nDONE x");
-    expect(rollRepeat(`\nTODO x${REPEAT}`, "todo")).toBe("\nTODO x\nSCHEDULED: <2026-01-02 Fri +1d>");
+    expect(toggleTaskDone("\nTODO x", "todo", "md")).toBe("\nDONE x");
+    expect(rollRepeat(`\nTODO x${REPEAT}`, "todo", "md")).toBe("\nTODO x\nSCHEDULED: <2026-01-02 Fri +1d>");
   });
 
   it("the sheet state field (cycle and set) keeps the title", () => {
@@ -61,7 +61,7 @@ describe("leading-whitespace task marker edits keep the title", () => {
   });
 
   it("Ctrl+Enter's repeating roll reports the marker's own length change", () => {
-    const out = cycleMarkerSmart(` DOING jog${REPEAT}`, "todo");
+    const out = cycleMarkerSmart(` DOING jog${REPEAT}`, "todo", "md");
     expect(out.raw).toBe(" TODO jog\nSCHEDULED: <2026-01-02 Fri +1d>");
     expect(out.delta).toBe(-1);
   });

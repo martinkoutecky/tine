@@ -152,20 +152,22 @@ describe("caretInFence", () => {
     expect(caretInFence(raw, raw.indexOf("const"))).toBe(true);
   });
 
-  it("does not close a four-character fence with a shorter run", () => {
+  it("hides properties accepted after mldoc's shorter backtick close", () => {
     const raw = "````text\nalpha\n```\nid:: literal-code\n````\nid:: real-id";
     expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(true);
     const { visible, hidden } = splitProps(raw, isBuiltinHidden);
-    expect(visible).toContain("id:: literal-code");
-    expect(hidden).toBe("id:: real-id");
+    // mldoc 1.5.9 emits two Property_Drawer nodes after the shorter Src close.
+    expect(visible).toBe("````text\nalpha\n```\n````");
+    expect(hidden).toBe("id:: literal-code\nid:: real-id");
   });
 
-  it("uses the opening run length for tilde fences too", () => {
+  it("hides properties accepted after mldoc's shorter tilde close", () => {
     const raw = "~~~~text\n~~~\ncollapsed:: literal-code\n~~~~\ncollapsed:: true";
     expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(true);
     const { visible, hidden } = splitProps(raw, isBuiltinHidden);
-    expect(visible).toContain("collapsed:: literal-code");
-    expect(hidden).toBe("collapsed:: true");
+    // mldoc 1.5.9 emits both collapsed properties outside Src.
+    expect(visible).toBe("~~~~text\n~~~\n~~~~");
+    expect(hidden).toBe("collapsed:: literal-code\ncollapsed:: true");
   });
 });
 

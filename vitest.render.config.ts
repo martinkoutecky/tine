@@ -17,7 +17,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.tsx"],
-    setupFiles: ["./src/testSetup.render.ts"],
+    setupFiles: ["./src/testSetup.parser.ts", "./src/testSetup.render.ts"],
     server: { deps: { inline: ["solid-js"] } },
   },
   resolve: {

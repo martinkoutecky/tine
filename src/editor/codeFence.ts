@@ -153,7 +153,8 @@ export function codeBodyProjection(text: string, format: "md" | "org"): CodeBody
  *  not leak it into the controlled textarea. Explicit body newlines remain
  *  payload. The wrapper bytes are re-attached exactly, never canonicalized. */
 export function codeBodyJoin(proj: Pick<CodeBodyProjection, "open" | "close">, body: string): string {
-  return proj.open + body + proj.close;
+  const separator = body !== "" && !proj.close.startsWith("\n") && !proj.close.startsWith("\r\n") ? (proj.open.endsWith("\r\n") ? "\r\n" : "\n") : "";
+  return proj.open + body + separator + proj.close;
 }
 
 /** The body-space counterpart of the special-block double-Enter exit: with

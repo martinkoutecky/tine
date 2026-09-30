@@ -1085,7 +1085,23 @@ fn rebuild_with_raw(side: &DocBlock, raw: String, children: Vec<DocBlock>) -> Do
 /// goes too). Other bytes, line endings included, are kept.
 fn strip_held_ids(b: &DocBlock, owned: &std::collections::HashSet<String>) -> DocBlock {
     let raw = match persisted_id(b).filter(|id| owned.contains(id)) {
-        Some(id) => without_id_line(&b.raw, b.is_org, &id),
+        Some(id) => {
+            let regions = &b.projection().regions;
+            if regions.id.as_ref().is_some_and(|p| p.value.trim() == id) {
+                regions
+                    .apply(
+                        b.raw(),
+                        b.is_org(),
+                        crate::block_regions::Edit::Property {
+                            key: "id".into(),
+                            value: None,
+                        },
+                    )
+                    .expect("parsed copy")
+            } else {
+                b.raw.clone()
+            }
+        }
         None => b.raw.clone(),
     };
     let mut nb = DocBlock::new(raw);
@@ -1098,51 +1114,23 @@ fn strip_held_ids(b: &DocBlock, owned: &std::collections::HashSet<String>) -> Do
     nb
 }
 
+#[cfg(test)]
 fn without_id_line(raw: &str, is_org: bool, id: &str) -> String {
-    let lines: Vec<&str> = raw.split_inclusive('\n').collect();
-    fn body(l: &str) -> &str {
-        l.trim_end_matches(['\r', '\n'])
+    let regions = crate::block_regions::parse(raw, is_org);
+    if regions.id.as_ref().is_some_and(|p| p.value.trim() == id) {
+        regions
+            .apply(
+                raw,
+                is_org,
+                crate::block_regions::Edit::Property {
+                    key: "id".into(),
+                    value: None,
+                },
+            )
+            .expect("parsed copy")
+    } else {
+        raw.to_string()
     }
-    let is_id = |l: &str| {
-        if is_org {
-            let t = body(l).trim();
-            t.get(..4)
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(":id:"))
-                && t.get(4..).is_some_and(|value| value.trim() == id)
-        } else {
-            crate::doc::parse_property_line(body(l))
-                .is_some_and(|(k, v)| k.eq_ignore_ascii_case("id") && v.trim() == id)
-        }
-    };
-    let Some(at) = lines.iter().position(|l| is_id(l)) else {
-        return raw.to_owned();
-    };
-    let mut drop = vec![at];
-    let marker = |i: usize, m: &str| {
-        lines
-            .get(i)
-            .is_some_and(|l| body(l).trim().eq_ignore_ascii_case(m))
-    };
-    if is_org && at > 0 && marker(at - 1, ":PROPERTIES:") && marker(at + 1, ":END:") {
-        drop = vec![at - 1, at, at + 1];
-    }
-    let last_dropped = *drop.last().unwrap() == lines.len() - 1;
-    let mut out: String = lines
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !drop.contains(i))
-        .map(|(_, l)| *l)
-        .collect();
-    // Dropping a final line without a newline must not leave one behind.
-    if last_dropped && !raw.ends_with('\n') {
-        let ending = if out.ends_with("\r\n") {
-            2
-        } else {
-            usize::from(out.ends_with('\n'))
-        };
-        out.truncate(out.len() - ending);
-    }
-    out
 }
 
 fn row_id(prefix: &str, n: usize) -> String {
@@ -1311,3 +1299,15 @@ fn lcs_pairs(mine: &[DocBlock], theirs: &[DocBlock]) -> Vec<(usize, usize)> {
 #[cfg(test)]
 #[path = "sync_diff_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod region_copy_regression {
+    #[test]
+    fn copy_keeps_literal_id() {
+        let raw = "Task\n```\nid:: same\n```\nid:: same";
+        assert_eq!(
+            super::without_id_line(raw, false, "same"),
+            "Task\n```\nid:: same\n```"
+        );
+    }
+}

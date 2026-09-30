@@ -1427,26 +1427,16 @@ pub(crate) fn templates(graph: &impl GraphRead) -> Vec<TemplateDto> {
 /// copies get fresh ids) and, at the root, the `template*` properties.
 fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
     let raw = b
-        .raw()
-        .lines()
-        .filter(|l| {
-            let t = l.trim();
-            let drop =
-                t.get(..4)
-                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("id::"))
-                    || t.get(..4)
-                        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(":id:"))
-                    || (strip_template
-                        && (t
-                            .get(.."template::".len())
-                            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("template::"))
-                            || t.get(.."template-including-parent::".len()).is_some_and(
-                                |prefix| prefix.eq_ignore_ascii_case("template-including-parent::"),
-                            )));
-            !drop
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+        .projection()
+        .regions
+        .apply(
+            b.raw(),
+            b.is_org(),
+            tine_core::block_regions::Edit::StripCopy {
+                template: strip_template,
+            },
+        )
+        .expect("parsed template");
     BlockDto {
         id: String::new(),
         raw,
@@ -4433,5 +4423,40 @@ mod tests {
         assert!(facets_exceeded);
         assert!(facets.iter().map(|(_, values)| values.len()).sum::<usize>() <= 2);
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod region_template_regression {
+    #[test]
+    fn store_template_query_preserves_literal_metadata() {
+        let root = std::env::temp_dir().join(format!("og-d1-templates-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/Template.md"),"- Task\n  template:: Example\n  id:: actual\n  ```\n  id:: literal\n  template:: literal\n  ```\n").unwrap();
+        let (store, _, _) = crate::Store::open(&root, crate::OpenOptions::default()).unwrap();
+        let graph = store.whole_graph().unwrap();
+        let templates = graph.templates();
+        let template = templates.iter().find(|t| t.name == "Example").unwrap();
+        assert!(template.blocks[0]
+            .raw
+            .contains("```\nid:: literal\ntemplate:: literal\n```"));
+        assert!(!template.blocks[0].raw.contains("id:: actual"));
+        drop(graph);
+        store.close();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn template_copy_keeps_literal_metadata_and_drops_org_metadata() {
+        let raw = "Task\ntemplate:: Example\nid:: real\n```\nid:: literal\ntemplate:: literal\n```";
+        let b = tine_core::doc::DocBlock::new(raw);
+        assert_eq!(
+            super::template_dto(&b, true).raw,
+            "Task\n```\nid:: literal\ntemplate:: literal\n```"
+        );
+        let mut b = tine_core::doc::DocBlock::new(
+            "Task\n:PROPERTIES:\n:template: Example\n:id: real\n:END:",
+        );
+        b.set_org(true);
+        assert_eq!(super::template_dto(&b, true).raw, "Task");
     }
 }

@@ -38,7 +38,7 @@ describe("normalizePlanning (M1c: move SCHEDULED/DEADLINE to canonical position 
     expect(normalizePlanning(v, "md")).toBe(v);
   });
 
-  it("does not treat a shorter run as closing a longer fence", () => {
+  it("follows mldoc's shorter fence close when moving accepted planning", () => {
     const v = [
       "Task",
       "SCHEDULED: <2026-07-11 Sat>",
@@ -48,7 +48,11 @@ describe("normalizePlanning (M1c: move SCHEDULED/DEADLINE to canonical position 
       "````",
       "body",
     ].join("\n");
-    expect(normalizePlanning(v, "md")).toBe(v);
+    // mldoc 1.5.9: Src ends at the three-backtick run; DEADLINE is Timestamp.
+    expect(normalizePlanning(v, "md")).toBe([
+      "Task", "SCHEDULED: <2026-07-11 Sat>", "DEADLINE: <2026-07-12 Sun>",
+      "````text", "```", "````", "body",
+    ].join("\n"));
   });
 
   it("does NOT move an inline-code DEADLINE (not a standalone Timestamp)", () => {

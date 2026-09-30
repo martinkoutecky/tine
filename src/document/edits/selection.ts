@@ -214,7 +214,7 @@ export function cycleSelectionTasks(): boolean {
         if (!node) continue;
         // Match the existing editor command exactly: marker cycling handles
         // repeaters, while checkbox/marker-chip transitions own time tracking.
-        node.raw = cycleMarkerSmart(node.raw, workflow()).raw;
+        node.raw = cycleMarkerSmart(node.raw, workflow(), formatForBlock(id)).raw;
       }
     })
   );

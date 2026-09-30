@@ -1,12 +1,13 @@
+import { blockRegions, editBlock } from "../../render/parse";
+import { utf8ByteToUtf16Offset } from "../../render/spans";
 import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent } from "../save/engine";
-import { PROP_LINE, isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
+import { isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
-import { insertableBefore, literalBlockOfLine } from "../../editor/literalLines";
 import { graphRewriteFrozen } from "../graphRewriteState";
 import { pushToast } from "../../toasts";
 
@@ -23,34 +24,7 @@ import { pushToast } from "../../toasts";
  * file's spelling, and every other match (head or trailing, any case) is
  * removed. Existing order is kept. */
 function markdownRawWithProperty(raw: string, key: string, value: string | null): string {
-  const lines = raw.split("\n");
-  const literal = literalBlockOfLine(raw, "md");
-  const prop = (k: number) => literal[k] === -1 && PROP_LINE.test(lines[k] ?? "");
-  const titled = !prop(0);
-  const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*</;
-  let i = titled ? 1 : 0;
-  while (titled && i < lines.length && literal[i] === -1 && PLANNING_LINE.test(lines[i])) i++;
-  const planningEnd = i;
-  while (i < lines.length && prop(i)) i++;
-  const propsEnd = i;
-  let j = lines.length;
-  while (j > propsEnd && prop(j - 1)) j--;
-  const keyOf = (l: string) => PROP_LINE.exec(l)?.[1].toLowerCase();
-  const lower = key.toLowerCase();
-  const props = lines.slice(planningEnd, propsEnd);
-  const at = props.findIndex((l) => keyOf(l) === lower);
-  const line = value === null ? null : `${at >= 0 ? PROP_LINE.exec(props[at])![1] : key}:: ${value}`;
-  const head = props.flatMap((l, k) => (keyOf(l) !== lower ? [l] : k === at && line !== null ? [line] : []));
-  if (at < 0 && line !== null && !insertableBefore(literal, propsEnd)) {
-    return [...lines.slice(0, j), ...lines.slice(j).filter((l) => keyOf(l) !== lower), line].join("\n");
-  }
-  if (at < 0 && line !== null) head.push(line);
-  return [
-    ...lines.slice(0, planningEnd),
-    ...head,
-    ...lines.slice(propsEnd, j),
-    ...lines.slice(j).filter((l) => keyOf(l) !== lower),
-  ].join("\n");
+  return editBlock(raw, "md", { kind: "property", key, value });
 }
 
 /** Current value of a block property, read through the ONE lsdoc-backed
@@ -94,21 +68,14 @@ export function blockWritable(id: string): boolean {
 export function setBlockProperty(id: string, key: string, value: string | null) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
+  let raw: string;
+  try {
+    raw = editBlock(node.raw,formatForBlock(id),{kind:"property",key,value});
+  } catch (e) { pushToast(String(e),"error"); return; }
+  if (raw === node.raw) return;
   pushUndo(`prop:${id}:${key}`, [node.page]);
-  if (formatForBlock(id) === "org") {
-    // ORG blocks carry properties in a `:PROPERTIES:` drawer — writing a
-    // markdown `key:: value` line into org renders as visible body text and is
-    // NOT read back as a property (same class as GH #25 for id::). Mirrors
-    // rawWithBlockId's canonical placement: title, planning, drawer, body.
-    setDoc("byId", id, "raw", orgRawWithProperty(node.raw, key, value));
-    markDirty(node.page, "save-block");
-    return;
-  }
-  // Canonical head-region placement plus legacy trailing-property cleanup lives
-  // in the shared pure writer so compound mutations (heading transitions) can
-  // remain one undo-safe raw rewrite.
-  setDoc("byId", id, "raw", markdownRawWithProperty(node.raw, key, value));
-  markDirty(node.page, "save-block");
+  setDoc("byId",id,"raw",raw);
+  markDirty(node.page,"save-block");
 }
 
 /** Where a page's properties are read from and written to, in file order:
@@ -487,18 +454,13 @@ export function readSchedule(
 ): { y: number; m: number; d: number; time: string | null; repeater: string | null } | null {
   const node = doc.byId[id];
   if (!node) return null;
-  const tag = which === "scheduled" ? "SCHEDULED" : "DEADLINE";
-  // Capture the optional time (`HH:mm`) and org repeater cookie (`+1w`, `.+1w`,
-  // `++1w`) — both after the weekday, in OG's fixed order `<date wday time repeater>`
-  // — so re-opening the picker pre-fills the existing time AND recurrence. The
-  // weekday is `[A-Za-z]+` (mldoc consumes any letters; OG writes English 3-letter).
-  const m = new RegExp(
-    `^${tag}:\\s*<(\\d{4})-(\\d{2})-(\\d{2})(?:\\s+[A-Za-z]+)?(?:\\s+(\\d{1,2}:\\d{2}))?(?:\\s+((?:\\.\\+|\\+\\+|\\+)\\d+[dwmy]))?`,
-    "m"
-  ).exec(node.raw);
-  return m
-    ? { y: +m[1], m: +m[2] - 1, d: +m[3], time: m[4] ? normalizeHHmm(m[4]) : null, repeater: m[5] ?? null }
-    : null;
+  const kind = which === "scheduled" ? "Scheduled" : "Deadline";
+  const p = blockRegions(node.raw, formatForBlock(id)).planning.find(p => p.kind === kind);
+  if (!p) return null;
+  // Date token splitting is confined to this parser-accepted timestamp.
+  const ts = node.raw.slice(utf8ByteToUtf16Offset(node.raw,p.timestamp[0]), utf8ByteToUtf16Offset(node.raw,p.timestamp[1]));
+  const m = /<(\d{4})-(\d{2})-(\d{2})(?:\s+[A-Za-z]+)?(?:\s+(\d{1,2}:\d{2}))?(?:\s+((?:\.\+|\+\+|\+)\d+[dwmy]))?/.exec(ts);
+  return m ? {y:+m[1],m:+m[2]-1,d:+m[3],time:m[4] ? normalizeHHmm(m[4]) : null,repeater:m[5] ?? null} : null;
 }
 
 /** Set or clear a block's SCHEDULED/DEADLINE org-timestamp (line 2, like OG).
@@ -515,41 +477,19 @@ export function setSchedule(
 ) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
-  pushUndo(`sched:${id}:${which}`, [node.page]);
-  const tag = which === "scheduled" ? "SCHEDULED" : "DEADLINE";
-  // Remove the old planning line ONLY from the canonical head region (the run of
-  // planning/property lines right after the first line) — a `SCHEDULED:` inside a
-  // code fence or body text is content and must never be touched (review finding:
-  // the old any-line filter deleted fenced planning-lookalikes).
-  const all = node.raw.split("\n");
-  const isHeadLine = (l: string) => /^\s*(SCHEDULED|DEADLINE):/.test(l) || PROP_LINE.test(l);
-  let headEnd = 1;
-  while (headEnd < all.length && isHeadLine(all[headEnd])) headEnd++;
-  const targetLine = new RegExp(`^\\s*${tag}:`);
-  const targetTimestamp = new RegExp(`^\\s*${tag}:\\s*<[^>]+>(.*)$`);
-  const keptHead: string[] = [];
-  const trailingBody: string[] = [];
-  for (const line of all.slice(1, headEnd)) {
-    if (!targetLine.test(line)) {
-      keptHead.push(line);
-      continue;
-    }
-    const match = targetTimestamp.exec(line);
-    if (match?.[1].trim()) trailingBody.push(match[1]);
-  }
-  // A glued suffix is user body content, not part of the replaced timestamp.
-  // Keep the canonical planning/property head contiguous and split that suffix
-  // into body lines immediately after it instead of dropping bytes.
-  const lines = [all[0], ...keptHead, ...trailingBody, ...all.slice(headEnd)];
+  const whichKind = which === "scheduled" ? "Scheduled" : "Deadline";
+  let value: string | null = null;
   if (date) {
-    const wd = WEEKDAYS[new Date(date.y, date.m, date.d).getDay()];
+    const wd = WEEKDAYS[new Date(date.y,date.m,date.d).getDay()];
     const hhmm = time ? normalizeHHmm(time) : null;
-    const timePart = hhmm ? ` ${hhmm}` : "";
-    const rep = repeater ? ` ${repeater}` : "";
-    const stamp = `${tag}: <${date.y}-${pad2(date.m + 1)}-${pad2(date.d)} ${wd}${timePart}${rep}>`;
-    lines.splice(Math.min(1, lines.length), 0, stamp);
+    value = `<${date.y}-${pad2(date.m+1)}-${pad2(date.d)} ${wd}${hhmm ? ` ${hhmm}` : ""}${repeater ? ` ${repeater}` : ""}>`;
   }
-  setDoc("byId", id, "raw", lines.join("\n"));
+  let raw: string;
+  try { raw = editBlock(node.raw, formatForBlock(id), {kind:"planning",which:whichKind,value}); }
+  catch (e) { pushToast(String(e), "error"); return; }
+  if (raw === node.raw) return;
+  pushUndo(`sched:${id}:${which}`, [node.page]);
+  setDoc("byId", id, "raw", raw);
   markDirty(node.page, "save-block");
 }
 
