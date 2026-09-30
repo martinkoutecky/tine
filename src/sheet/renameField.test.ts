@@ -260,3 +260,10 @@ describe("Sheet field rename planner", () => {
     }
   });
 });
+
+it.each([40, 6000])("field rename handles a %i-term imported formula without throwing", (terms) => {
+  const owner = source("table", `Table\ntine.fields:: qty=number\ntine.formula.total:: ${Array(terms).fill("qty").join(" + ")}`);
+  const result = planSheetFieldRename({ rowSource: "children", ownerWritable: true, schemaHome: "block", owner, rows: [source("row", "Row\nqty:: 2")], oldField: "prop:qty", newName: "amount" });
+  if (terms === 40) expect(result.ok).toBe(true);
+  else expect(result).toMatchObject({ ok: false, error: expect.stringContaining("depth") });
+});

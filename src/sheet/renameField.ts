@@ -280,6 +280,18 @@ function rewriteExpression(value: string, oldName: string, newName: string):
   const decoded = decodeFormulaExpr(value.trim());
   const parsed = parseFormula(decoded);
   if (!parsed.ok) return { ok: false, error: `${parsed.error.message} at ${parsed.error.offset}` };
+  // I-22: both the rewriting visitor and deparser recurse. Admission here
+  // bounds their stack before either walks an imported left-deep expression.
+  const pending: { ast: Ast; depth: number }[] = [{ ast: parsed.ast, depth: 0 }];
+  while (pending.length) {
+    const { ast, depth } = pending.pop()!;
+    if (depth >= 128) return { ok: false, error: "Formula depth exceeds 128 for field rename." };
+    const children = ast.kind === "binary" ? [ast.left, ast.right]
+      : ast.kind === "unary" ? [ast.expr]
+      : ast.kind === "call" ? ast.args
+      : ast.kind === "member" ? [ast.object, ...(ast.args ?? [])] : [];
+    for (const child of children) pending.push({ ast: child, depth: depth + 1 });
+  }
   const rewritten = rewriteFieldAst(parsed.ast, oldName, newName);
   const candidate = rewritten.changed ? replaceTrimmedValue(value, encodeFormulaExpr(astToExpr(rewritten.ast))) : value;
   const reparsed = parseFormula(decodeFormulaExpr(candidate.trim()));

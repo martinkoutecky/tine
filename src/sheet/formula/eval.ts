@@ -22,7 +22,9 @@ export interface FormulaEvalContext {
   now: Date;
 }
 
-type MemberHandler = (target: FormulaValue, args: readonly FormulaValue[] | null, ctx: FormulaEvalContext) => FormulaValue;
+interface EvaluationContext extends FormulaEvalContext { memo: Map<string, FormulaValue> }
+
+type MemberHandler = (target: FormulaValue, args: readonly FormulaValue[] | null, ctx: EvaluationContext) => FormulaValue;
 type MemberTable = Partial<Record<FormulaValue["kind"], Record<string, MemberHandler>>>;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -201,7 +203,7 @@ function formatDate(value: FormulaDateValue, fmt: string): string {
   return fmt.replace(/YYYY|MM|DD|HH|mm/g, (token) => tokens[token]);
 }
 
-function relativeDate(value: FormulaDateValue, ctx: FormulaEvalContext): FormulaValue {
+function relativeDate(value: FormulaDateValue, ctx: EvaluationContext): FormulaValue {
   const target = Date.UTC(value.value.y, value.value.m, value.value.d);
   const today = Date.UTC(ctx.now.getUTCFullYear(), ctx.now.getUTCMonth(), ctx.now.getUTCDate());
   const days = Math.round((target - today) / DAY_MS);
@@ -332,7 +334,7 @@ const MEMBER_TABLE: MemberTable = {
   },
 };
 
-function evalArgs(args: readonly Ast[], ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue[] | FormulaErrorValue {
+function evalArgs(args: readonly Ast[], ctx: EvaluationContext, visited: readonly string[]): FormulaValue[] | FormulaErrorValue {
   const out: FormulaValue[] = [];
   for (const arg of args) {
     const value = evalAst(arg, ctx, visited);
@@ -342,7 +344,7 @@ function evalArgs(args: readonly Ast[], ctx: FormulaEvalContext, visited: readon
   return out;
 }
 
-function evalField(name: string, ctx: FormulaEvalContext): FormulaValue {
+function evalField(name: string, ctx: EvaluationContext): FormulaValue {
   try {
     return ctx.field(name);
   } catch (err) {
@@ -350,11 +352,13 @@ function evalField(name: string, ctx: FormulaEvalContext): FormulaValue {
   }
 }
 
-function evalFormulaRef(name: string, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
+function evalFormulaRef(name: string, ctx: EvaluationContext, visited: readonly string[]): FormulaValue {
   if (visited.length >= 128) return errorValue("Formula references are nested too deeply");
   const prior = visited.indexOf(name);
   if (prior >= 0) return errorValue(`Formula cycle: ${[...visited.slice(prior), name].join(" -> ")}`);
 
+  const cached = ctx.memo.get(name);
+  if (cached) return cached;
   let ast: Ast | null;
   try {
     ast = ctx.formulaAst(name);
@@ -362,17 +366,19 @@ function evalFormulaRef(name: string, ctx: FormulaEvalContext, visited: readonly
     return errorValue(`Formula ${name} failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (!ast) return errorValue(`Unknown formula ${name}`);
-  return evalAst(ast, ctx, [...visited, name]);
+  const value = evalAst(ast, ctx, [...visited, name]);
+  if (!isErrorValue(value)) ctx.memo.set(name, value);
+  return value;
 }
 
-function evalUnary(op: "!" | "-", expr: Ast, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
+function evalUnary(op: "!" | "-", expr: Ast, ctx: EvaluationContext, visited: readonly string[]): FormulaValue {
   const value = evalAst(expr, ctx, visited);
   if (isErrorValue(value)) return value;
   if (op === "!") return value.kind === "boolean" ? booleanValue(!value.value) : errorValue("! expects boolean");
   return value.kind === "number" ? numberValue(-value.value) : errorValue("Unary - expects number");
 }
 
-function evalLogical(op: "&&" | "||", left: FormulaValue, rightAst: Ast, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
+function evalLogical(op: "&&" | "||", left: FormulaValue, rightAst: Ast, ctx: EvaluationContext, visited: readonly string[]): FormulaValue {
   if (isErrorValue(left)) return left;
   if (left.kind !== "boolean") return errorValue(`${op} expects boolean operands`);
   if (op === "&&" && !left.value) return booleanValue(false);
@@ -382,7 +388,7 @@ function evalLogical(op: "&&" | "||", left: FormulaValue, rightAst: Ast, ctx: Fo
   return right.kind === "boolean" ? booleanValue(right.value) : errorValue(`${op} expects boolean operands`);
 }
 
-function evalBinary(op: BinaryOp, left: FormulaValue, rightAst: Ast, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
+function evalBinary(op: BinaryOp, left: FormulaValue, rightAst: Ast, ctx: EvaluationContext, visited: readonly string[]): FormulaValue {
   if (op === "&&" || op === "||") return evalLogical(op, left, rightAst, ctx, visited);
   if (isErrorValue(left)) return left;
   const right = evalAst(rightAst, ctx, visited);
@@ -416,7 +422,7 @@ function evalBinary(op: BinaryOp, left: FormulaValue, rightAst: Ast, ctx: Formul
   return errorValue(`${op} expects number operands`);
 }
 
-function evalCall(name: string, args: readonly Ast[], ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
+function evalCall(name: string, args: readonly Ast[], ctx: EvaluationContext, visited: readonly string[]): FormulaValue {
   if (name === "if") {
     if (args.length !== 3) return errorValue("if expects 3 arguments");
     const condition = evalAst(args[0], ctx, visited);
@@ -436,12 +442,13 @@ function evalCall(name: string, args: readonly Ast[], ctx: FormulaEvalContext, v
   return errorValue(`Unknown function ${name}`);
 }
 
-function evalMember(object: Ast, name: string, args: readonly Ast[] | null, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
+function evalMember(object: Ast, name: string, args: readonly Ast[] | null, ctx: EvaluationContext, visited: readonly string[]): FormulaValue {
   const target = evalAst(object, ctx, visited);
   if (isErrorValue(target)) return target;
   const evaluatedArgs = args == null ? null : evalArgs(args, ctx, visited);
   if (evaluatedArgs != null && !Array.isArray(evaluatedArgs)) return evaluatedArgs;
-  const handler = MEMBER_TABLE[target.kind]?.[name];
+  const members = MEMBER_TABLE[target.kind];
+  const handler = members && Object.prototype.hasOwnProperty.call(members, name) ? members[name] : undefined;
   if (!handler) return errorValue(`Unknown ${args == null ? "property" : "method"} ${name} for ${typeName(target)}`);
   return handler(target, evaluatedArgs, ctx);
 }
@@ -455,7 +462,7 @@ function evalMember(object: Ast, name: string, args: readonly Ast[] | null, ctx:
 export const MAX_FORMULA_EVAL_DEPTH = 128;
 let evalDepth = 0;
 
-function evalAst(ast: Ast, ctx: FormulaEvalContext, visited: readonly string[]): FormulaValue {
+function evalAst(ast: Ast, ctx: EvaluationContext, visited: readonly string[]): FormulaValue {
   if (evalDepth >= MAX_FORMULA_EVAL_DEPTH) return errorValue(`Formula depth exceeds ${MAX_FORMULA_EVAL_DEPTH}`);
   evalDepth++;
   try {
@@ -497,9 +504,9 @@ function evalAst(ast: Ast, ctx: FormulaEvalContext, visited: readonly string[]):
   }
 }
 
-/** Evaluate one formula AST. Cost: O(AST nodes plus referenced formulas);
+/** Evaluate one formula AST. Cost: O(AST nodes plus unique referenced formula ASTs);
  * long left-associative chains use an iterative walk, while excessive formula
  * or reference nesting returns a FormulaErrorValue. Callers need no stack budget. */
 export function evaluate(ast: Ast, ctx: FormulaEvalContext): FormulaValue {
-  return evalAst(ast, ctx, []);
+  return evalAst(ast, { ...ctx, memo: new Map() }, []);
 }
