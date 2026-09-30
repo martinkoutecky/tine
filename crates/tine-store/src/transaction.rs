@@ -625,7 +625,12 @@ impl<'a> Transaction<'a> {
         let Some(entry) = self.store.graph.entry_for_path(&path) else {
             return Ok(());
         };
-        if let Some(existing) = self.store.graph.find_entry(&entry.name, entry.kind) {
+        let claimant = if moving_from.is_some() {
+            self.store.move_claimant(&entry.name, entry.kind)
+        } else {
+            self.store.graph.find_entry(&entry.name, entry.kind)
+        };
+        if let Some(existing) = claimant {
             let is_source = match moving_from {
                 Some(source) => existing.path == self.path(source)?,
                 None => false,
@@ -1908,6 +1913,7 @@ impl<'a> Transaction<'a> {
                         plans
                             .iter()
                             .find(|plan| plan.src == id)
+                            .filter(|plan| plan.new.as_deref() == now.as_deref())
                             .and_then(|plan| plan.saved_page.as_ref())
                     } else {
                         None

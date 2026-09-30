@@ -2820,18 +2820,11 @@ impl WholeGraph {
         } else {
             name.to_owned()
         };
-        let entries = self
-            .claimants
-            .get(&(
-                kind == PageKind::Journal,
-                tine_core::refs::page_key(&lookup),
-            ))
-            .cloned()
-            .unwrap_or_default();
+        let entries = self.name_claimants(&lookup, kind);
         if !entries.is_empty() {
             let mut ids = entries
-                .into_iter()
-                .map(|entry| entry.rel_path.expect("file claimant has a path"));
+                .iter()
+                .map(|entry| entry.rel_path.clone().expect("file claimant has a path"));
             return Resolved::Existing {
                 id: ids.next().unwrap(),
                 others: ids.collect(),

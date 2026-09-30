@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static READDIR: AtomicU64 = AtomicU64::new(0);
 static FULL_READS: AtomicU64 = AtomicU64::new(0);
+static PREAMBLE_READS: AtomicU64 = AtomicU64::new(0);
 static OLD_SOURCE_PARSES: AtomicU64 = AtomicU64::new(0);
 static PARSES: AtomicU64 = AtomicU64::new(0);
 static CORPUS: AtomicU64 = AtomicU64::new(0);
@@ -28,6 +29,8 @@ pub struct Counts {
     pub readdir: u64,
     /// Complete page file reads.
     pub full_reads: u64,
+    /// Page files opened to discover their effective name.
+    pub preamble_reads: u64,
     /// Document and outline parser calls made by the store save/read family,
     /// including formatting detection and layout heading checks. Core lazy
     /// block projections are outside this counter's boundary.
@@ -73,6 +76,7 @@ pub fn reset() {
     for counter in [
         &READDIR,
         &FULL_READS,
+        &PREAMBLE_READS,
         &PARSES,
         &OLD_SOURCE_PARSES,
         &CORPUS,
@@ -101,6 +105,7 @@ pub fn snapshot() -> Counts {
     Counts {
         readdir: READDIR.load(Ordering::Relaxed),
         full_reads: FULL_READS.load(Ordering::Relaxed),
+        preamble_reads: PREAMBLE_READS.load(Ordering::Relaxed),
         parses: PARSES.load(Ordering::Relaxed),
         old_source_parses: OLD_SOURCE_PARSES.load(Ordering::Relaxed),
         corpus: CORPUS.load(Ordering::Relaxed),
@@ -126,6 +131,9 @@ pub(crate) fn readdir() {
 }
 pub(crate) fn full_read() {
     FULL_READS.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn preamble_read() {
+    PREAMBLE_READS.fetch_add(1, Ordering::Relaxed);
 }
 pub(crate) fn parse() {
     PARSES.fetch_add(1, Ordering::Relaxed);

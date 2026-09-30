@@ -1,6 +1,37 @@
 //! Immutable publication capture: changed paths and names patch persistent roots.
 use super::*;
 
+fn name_claimants<'a>(
+    index: &'a SharedMap<(bool, String), Vec<PageEntry>>,
+    name: &str,
+    kind: PageKind,
+) -> &'a [PageEntry] {
+    index
+        .get(&(kind == PageKind::Journal, tine_core::refs::page_key(name)))
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+}
+
+impl Store {
+    /// Use the latest published identity index for a move's same-name check.
+    /// Before the first publication, live discovery still supplies the index;
+    /// never wait for the load worker while holding the transaction writer lock.
+    pub(crate) fn move_claimant(&self, name: &str, kind: PageKind) -> Option<PageEntry> {
+        if let Some(snapshot) = self.changes.snapshot.read().unwrap().as_ref() {
+            return name_claimants(&snapshot.claimants, name, kind)
+                .first()
+                .cloned();
+        }
+        self.graph.find_entry(name, kind)
+    }
+}
+
+impl WholeGraph {
+    pub(super) fn name_claimants(&self, name: &str, kind: PageKind) -> &[PageEntry] {
+        name_claimants(&self.claimants, name, kind)
+    }
+}
+
 impl Snapshot {
     pub(super) fn capture(
         graph: &Graph,

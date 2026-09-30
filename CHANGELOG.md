@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Page saves reuse their checked parse when publishing, and renames use the known page-name index** (og-R5; REG-OG-R5-SAVE-PARSE, REG-OG-R5-RENAME-COST). Saves retain their existing byte-preservation checks; a rename no longer rereads unrelated page headers for its same-name check.
+
 - **Nested queries in a query export no longer report how many matches were left out on other pages** (og-R3C; REG-OG-R3C-NESTED-COUNTS). This applies to the static fallback as well as the read-only app.
 
 ### Added

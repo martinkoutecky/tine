@@ -378,6 +378,8 @@ pub(super) fn effective_page_name(
     };
     #[cfg(test)]
     super::GRAPH_PREAMBLE_READS.with(|reads| reads.set(reads.get() + 1));
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::preamble_read();
     let len = file.metadata()?.len();
     if len > PARSE_INPUT_MAX_BYTES {
         return Err(io::Error::new(

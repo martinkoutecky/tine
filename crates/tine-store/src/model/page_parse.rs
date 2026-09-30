@@ -3,6 +3,27 @@
 
 use super::*;
 
+impl Graph {
+    /// Publication eligibility shared by prepared saves and external parses.
+    pub(super) fn cacheable_page_entry(&self, path: &Path) -> Option<PageEntry> {
+        let entry = self.entry_for_path(path)?;
+        if path_is_sync_conflict(path) {
+            return None;
+        }
+        if entry.kind == PageKind::Journal {
+            if let Some(date) = entry
+                .date_key
+                .map(tine_core::date::JournalDate::from_ordinal)
+            {
+                if self.is_shadow_journal(path, date) {
+                    return None;
+                }
+            }
+        }
+        Some(entry)
+    }
+}
+
 /// Isolate lsdoc's deliberate parser panics to one page rather than the cache.
 pub(super) fn parse_page_entry_isolated(e: PageEntry) -> PageParseResult {
     let content = read_parse_input(&e.path).map_err(|error| {
@@ -52,5 +73,39 @@ pub(super) fn isolate_page_parse(
                 format!("page parse/projection panicked: {detail}"),
             ))
         }
+    }
+}
+
+/// A committed DTO save publishes parsed content with the live identities of
+/// blocks that survived serialization. Header promotion has already changed
+/// the saved tree, so corresponding nodes have the same structural position.
+/// When a parser changes the tree shape, leave that subtree's parsed ids alone.
+pub(super) fn carry_saved_runtime_ids(parsed: &mut [DocBlock], saved: &[DocBlock]) {
+    if parsed.len() != saved.len() {
+        return;
+    }
+    for (parsed, saved) in parsed.iter_mut().zip(saved) {
+        if !saved.uuid.is_empty() {
+            parsed.uuid.clone_from(&saved.uuid);
+        }
+        carry_saved_runtime_ids(&mut parsed.children, &saved.children);
+    }
+}
+
+/// Build a page DTO from a cached document. `read_only` is left false here (the
+/// on-disk bytes aren't known at this point); `load_page` sets it from the file
+/// it reads.
+pub(super) fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
+    PageDto {
+        name: entry.name.clone(),
+        kind: entry.kind,
+        title: entry.name.clone(),
+        pre_block: doc.pre_block.clone(),
+        blocks: doc.roots.iter().map(block_to_dto).collect(),
+        rev: None,
+        format: Format::from_path(&entry.path),
+        read_only: false,
+
+        guide: false,
     }
 }

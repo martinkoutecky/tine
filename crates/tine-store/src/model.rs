@@ -19,7 +19,10 @@ pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
     graph_text_watch_relevant,
 };
-use page_parse::{isolate_page_parse, parse_page_content, parse_page_entry_isolated};
+use page_parse::{
+    carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content,
+    parse_page_entry_isolated,
+};
 
 use crate::path_identity::canonical_existing_path;
 use std::collections::HashMap;
@@ -3709,7 +3712,7 @@ impl Graph {
         consume_self_write: bool,
     ) -> io::Result<Option<PageEntry>> {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.sync_file_content_with_saved(path, content, consume_self_write, None)
+            self.reconcile_page_content(path, content, consume_self_write)
         })) {
             Ok(entry) => Ok(entry),
             Err(_) => {
@@ -3726,37 +3729,13 @@ impl Graph {
         }
     }
 
-    fn sync_file_content_with_saved(
+    fn reconcile_page_content(
         &self,
         path: &Path,
         content: &str,
         consume_self_write: bool,
-        saved: Option<&Document>,
     ) -> Option<PageEntry> {
-        let entry = self.entry_for_path(path)?;
-        // A sync-tool conflict copy (`*.sync-conflict-*`) is never a real page: keep
-        // it out of the `(kind,name)` cache (it would show as a garbage page and its
-        // shared `id::` values would churn the id space). It's surfaced separately via
-        // `list_sync_conflicts` and loaded on demand by path for the merge UI.
-        if path_is_sync_conflict(path) {
-            return None;
-        }
-        // A shadow journal file (a title-named leftover coexisting with a canonical
-        // date-stem file for the same day, #21) must never be reconciled into the
-        // `(kind,name)` cache — that slot belongs to the canonical file, and caching
-        // the shadow there would make name-resolution serve the wrong file. A
-        // shadow's own external edits are picked up by a fresh path-addressed load
-        // (`load_by_path`), so there's nothing to reconcile here.
-        if entry.kind == PageKind::Journal {
-            if let Some(date) = entry
-                .date_key
-                .map(tine_core::date::JournalDate::from_ordinal)
-            {
-                if self.is_shadow_journal(path, date) {
-                    return None;
-                }
-            }
-        }
+        let entry = self.cacheable_page_entry(path)?;
         // Our own write: if the bytes on disk are exactly what Tine last wrote
         // here, this is not an external change — suppress it even if the parse
         // cache hasn't folded in the write yet (the rename→cache_upsert gap the
@@ -3862,9 +3841,7 @@ impl Graph {
                 }
             }
         }
-        if let Some(saved) = saved {
-            carry_saved_runtime_ids(&mut newdoc.roots, &saved.roots);
-        }
+        newdoc.roots.shrink_to_fit();
         self.cache_upsert(entry.clone(), newdoc, disk_rev);
         Some(entry)
     }
@@ -3926,7 +3903,17 @@ impl Graph {
                     return;
                 };
                 if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    self.sync_file_content_with_saved(path, content, false, saved)
+                    if let Some(saved) = saved {
+                        #[cfg(test)]
+                        if self.cache.read().unwrap().is_none() {
+                            crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
+                        }
+                        if let Some(entry) = self.cacheable_page_entry(path) {
+                            self.cache_upsert(entry, saved.clone(), content_rev(content));
+                        }
+                    } else {
+                        self.reconcile_page_content(path, content, false);
+                    }
                 }))
                 .is_err()
                 {
@@ -4059,7 +4046,7 @@ impl Graph {
         }
         // Own the caller's resolved+locked path (M2: never re-resolve path_for here).
         let path = path.to_path_buf();
-        let content = match Format::from_path(&path) {
+        let (content, mut parsed) = match Format::from_path(&path) {
             Format::Md => {
                 let retained = existing.zip(old.as_ref()).and_then(|(source, old)| {
                     layout_retention::serialize(&doc, source, old, &opts)
@@ -4074,7 +4061,7 @@ impl Graph {
                         content = e.to_string(); // A5
                     }
                 }
-                line_endings::restore(content, existing)
+                (line_endings::restore(content, existing), reparsed)
             }
             Format::Org => {
                 // Corruption firewall: never write a .org file Tine cannot
@@ -4095,10 +4082,13 @@ impl Graph {
                     }
                 }
                 let content = tine_core::org::serialize_org_detect(&doc, existing);
-                line_endings::restore_org(content, existing)
+                let content = line_endings::restore_org(content, existing);
+                let parsed = parse_doc(&path, &content);
+                (content, parsed)
             }
         };
-        Ok((content, doc))
+        carry_saved_runtime_ids(&mut parsed.roots, &doc.roots);
+        Ok((content, parsed))
     }
 }
 
@@ -4477,40 +4467,6 @@ fn doc_has_content(blocks: &[DocBlock]) -> bool {
                     || tine_core::doc::parse_property_line(l).is_none())
         }) || doc_has_content(&b.children)
     })
-}
-
-/// A committed DTO save publishes parsed content with the live identities of
-/// blocks that survived serialization. Header promotion has already changed
-/// the saved tree, so corresponding nodes have the same structural position.
-/// When a parser changes the tree shape, leave that subtree's parsed ids alone.
-fn carry_saved_runtime_ids(parsed: &mut [DocBlock], saved: &[DocBlock]) {
-    if parsed.len() != saved.len() {
-        return;
-    }
-    for (parsed, saved) in parsed.iter_mut().zip(saved) {
-        if !saved.uuid.is_empty() {
-            parsed.uuid.clone_from(&saved.uuid);
-        }
-        carry_saved_runtime_ids(&mut parsed.children, &saved.children);
-    }
-}
-
-/// Build a page DTO from a cached document. `read_only` is left false here (the
-/// on-disk bytes aren't known at this point); `load_page` sets it from the file
-/// it reads.
-fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
-    PageDto {
-        name: entry.name.clone(),
-        kind: entry.kind,
-        title: entry.name.clone(),
-        pre_block: doc.pre_block.clone(),
-        blocks: doc.roots.iter().map(block_to_dto).collect(),
-        rev: None,
-        format: Format::from_path(&entry.path),
-        read_only: false,
-
-        guide: false,
-    }
 }
 
 /// Whether a page should load read-only: an org file whose on-disk bytes don't
