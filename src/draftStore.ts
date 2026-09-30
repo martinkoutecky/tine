@@ -69,9 +69,11 @@ export async function writeAtRisk(): Promise<void> {
       ...(live ? { base_rev: draft.baseRev, observed_rev: draft.observedRev } : {}),
     };
     try {
-      await serializeDurable(kept, ownedWhen(() => stillBound(kept.binding)), async () => {
+      const owner = ownedWhen(() => stillBound(kept.binding));
+      await serializeDurable(kept, owner, async () => {
         if (!kept.risky || text === kept.written) return;
-        await (backend().storeDraft?.(record) ?? Promise.resolve());
+        const written = await writeOwned(owner, backend().storeDraft?.(record) ?? Promise.resolve());
+        if (written.kind === "stale") return;
         // Record completion before the queued retirement examines it. Already
         // started writes finish even when the page becomes safe meanwhile.
         kept.written = text;
@@ -88,10 +90,12 @@ export async function writeAtRisk(): Promise<void> {
 
 async function retire(name: string, kept: Kept) {
   try {
-    await serializeDurable(kept, ownedWhen(() => stillBound(kept.binding)), async () => {
+    const owner = ownedWhen(() => stillBound(kept.binding));
+    await serializeDurable(kept, owner, async () => {
       if (kept.risky) return;
       if (kept.written !== null) {
-        await (backend().retireDraft?.(idFor(name)) ?? Promise.resolve());
+        const retired = await writeOwned(owner, backend().retireDraft?.(idFor(name)) ?? Promise.resolve());
+        if (retired.kind === "stale") return;
         kept.written = null;
       }
       if (!kept.risky && atRisk.get(name) === kept) atRisk.delete(name);
