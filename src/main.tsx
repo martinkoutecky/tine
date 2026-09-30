@@ -37,6 +37,12 @@ import "./styles/conflicts.css";
 import "./styles/region-failure.css";
 import "./styles/published.css";
 
+// The ES5 check already explains GH #572; preserve its card and reveal the window.
+if ((window as { __tineUnsupportedEngine?: boolean }).__tineUnsupportedEngine) {
+  if (isTauri()) void getCurrentWindow().show().catch(() => console.error("failed to reveal unsupported-engine card"));
+  throw new Error("Tine: unsupported web engine");
+}
+
 installPlatformAttribute();
 if (isTauri()) installBackendClock(() => backend().localClock());
 installSystemInsetOwner();
