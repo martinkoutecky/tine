@@ -96,6 +96,7 @@ fn saving_org_conflict_marker_examples_preserves_the_literal_and_allows_the_edit
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         let id = PageId::from("pages/Examples.org");
         assert!(tine_graph_features::conflicts::conflict_inventory(&store)
+            .unwrap()
             .vcs_markers
             .is_empty());
         assert!(
@@ -163,7 +164,7 @@ fn org_real_conflicts_beside_literal_examples_are_inventory_and_resolution_candi
     )
     .unwrap();
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
-    let inventory = conflicts::conflict_inventory(&store);
+    let inventory = conflicts::conflict_inventory(&store).unwrap();
     assert_eq!(inventory.vcs_markers.len(), 1);
     let reviewed = conflicts::vcs_marker_conflict_diff(&store, "pages/Real.org")
         .unwrap()
@@ -188,5 +189,8 @@ fn org_real_conflicts_beside_literal_examples_are_inventory_and_resolution_candi
         "resolution must retain the example: {after:?}"
     );
     assert!(after.contains("* mine") && after.contains("* theirs"));
-    assert!(conflicts::conflict_inventory(&store).vcs_markers.is_empty());
+    assert!(conflicts::conflict_inventory(&store)
+        .unwrap()
+        .vcs_markers
+        .is_empty());
 }
