@@ -1,5 +1,4 @@
 import { blockRegions } from "../render/parse";
-import { utf8ByteToUtf16Offset } from "../render/spans";
 
 // Parse pasted text into an outline tree (paste-as-blocks). Handles both a
 // Logseq outline (every line a `- ` bullet, indentation = nesting, continuation
@@ -80,10 +79,10 @@ export function parseOutline(text: string): OutlineNode[] {
   if (text.length > OUTLINE_MAX_SOURCE_CHARS) return [];
   const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = normalized.split("\n");
-  const literals = blockRegions(normalized).literals.map(([start, end]) =>
-    [utf8ByteToUtf16Offset(normalized, start), utf8ByteToUtf16Offset(normalized, end)]);
+  const literals = blockRegions(normalized).literals;
   const starts = [0];
-  for (const line of lines) starts.push(starts.at(-1)! + line.length + 1);
+  const utf8 = new TextEncoder();
+  for (const line of lines) starts.push(starts.at(-1)! + utf8.encode(line).length + 1);
   let literalIndex = 0;
   const literalAt = (at: number) => {
     while (literalIndex < literals.length && literals[literalIndex][1] <= at) literalIndex++;
