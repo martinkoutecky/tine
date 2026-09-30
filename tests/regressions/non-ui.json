@@ -2,6 +2,28 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "id": "REG-OG-QUERY-MEMO-001",
+      "title": "Queries return complete statistics while large answers and compiled plans stay outside the bounded memo",
+      "family": "query-resources",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-store/src/query/memo.rs",
+          "crates/tine-store/tests/b_query_guard.rs"
+        ],
+        "scenario": "queries.memo-complete-retention-accounting",
+        "failBefore": "proven"
+      }
+    },
+    {
       "id": "REG-OG-QUERY-ATOMS-001",
       "title": "Queries over large flat property values finish while preserving first-occurrence atom membership and order",
       "family": "query-correctness",

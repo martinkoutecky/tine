@@ -880,6 +880,14 @@ fn a_malformed_disabled_span_is_a_disabled_diagnostic_and_does_not_invalidate() 
 #[test]
 fn starts_with_recognises_only_a_single_trailing_wildcard() {
     assert_eq!(
+        crate::query::text::LikePattern::compile("%").starts_with_prefix(),
+        Some(String::new())
+    );
+    assert_eq!(
+        crate::query::text::LikePattern::compile("proj/%%").starts_with_prefix(),
+        None
+    );
+    assert_eq!(
         crate::query::text::LikePattern::compile("proj/%").starts_with_prefix(),
         Some("proj/".to_string())
     );

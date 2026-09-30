@@ -58,6 +58,16 @@ pub(crate) struct Plan {
 }
 
 impl Plan {
+    pub(super) fn estimated_bytes(&self) -> usize {
+        super::memo::retained::serialized_bytes(&self.filter)
+            .saturating_add(self.compiled.estimated_bytes())
+            .saturating_add(self.registry.as_ref().map_or(0, |registry| {
+                super::memo::retained::serialized_bytes(registry.rows())
+                    .saturating_add(super::memo::retained::parse_config_bytes(registry.config()))
+            }))
+            .saturating_add(std::mem::size_of::<Self>())
+    }
+
     /// `block_rows` evaluates a `@page` query block-anchored (page attributes
     /// read through `block.page`), which is the legacy block-group bridge's
     /// semantics (master `block_anchored_filter`).

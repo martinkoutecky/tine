@@ -27,12 +27,28 @@ fn b_query_cross_row_atom_uniqueness_and_prefix_matching_reach_the_store() {
     .unwrap();
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
     let graph = store.whole_graph().unwrap();
-    let filter = Filter::and([
-        Filter::attr(Attr::AtomCount, CmpOp::Eq, Value::Number { number: 15_000.0 }),
-        Filter::attr(Attr::Value, CmpOp::Eq, Value::text("v14999")),
-    ].into_iter().map(|test| Filter::rel(Rel::Props, Quant::Any, Filter::and(vec![
-        Filter::attr(Attr::Key, CmpOp::Eq, Value::text("tags")), test,
-    ]))).collect());
+    let filter = Filter::and(
+        [
+            Filter::attr(
+                Attr::AtomCount,
+                CmpOp::Eq,
+                Value::Number { number: 15_000.0 },
+            ),
+            Filter::attr(Attr::Value, CmpOp::Eq, Value::text("v14999")),
+        ]
+        .into_iter()
+        .map(|test| {
+            Filter::rel(
+                Rel::Props,
+                Quant::Any,
+                Filter::and(vec![
+                    Filter::attr(Attr::Key, CmpOp::Eq, Value::text("tags")),
+                    test,
+                ]),
+            )
+        })
+        .collect(),
+    );
     let query = Query::new(Anchor::Block, filter, Source::Builder);
     let result = graph
         .query_ir(IrRequest::Run {

@@ -14,14 +14,17 @@
 //! all memos for them (`ReadSnapshot::carry_memos_from`).
 //!
 //! Nothing is persisted (Unit cost: none on disk); memory is bounded at 64
-//! entries / 64 MiB, and an answer over 16 MiB is returned but not retained.
+//! entries / 64 MiB, and an entry over 16 MiB is returned but not retained.
+//! Charging covers the complete answer (including statistics/diagnostics/report),
+//! plan/filter/registry, compiled-program reservations, contributor sets and keys.
+//! Reservations are conservative; exceeding one skips caching, never execution.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, RwLock};
 
 use tine_core::date::JournalDate;
 use tine_core::doc::Document;
-use tine_core::model::{ref_groups_estimated_bytes, BoundedRefGroups, PageEntry, RefGroup};
+use tine_core::model::{BoundedRefGroups, PageEntry, RefGroup};
 use tine_core::query::atom::ParseConfig;
 use tine_core::query::ir::{QueryResult, QueryRows};
 use tine_core::query::statistics::StatisticsResourceLimit;
@@ -29,6 +32,9 @@ use tine_core::query::AdvancedResult;
 
 use super::exec::Plan;
 use super::index::PageFacts;
+
+#[path = "retained.rs"]
+pub(super) mod retained;
 
 const MAX_ENTRIES: usize = 64;
 const MAX_BYTES: usize = 64 * 1024 * 1024;
@@ -79,33 +85,13 @@ impl Answer {
     }
 
     fn estimated_bytes(&self) -> usize {
-        let rows = match self {
+        let payload = match self {
             Answer::Result(Err(_)) => 0,
-            Answer::Result(Ok(result)) => match &result.rows {
-                QueryRows::Page { pages } => pages
-                    .iter()
-                    .map(|row| {
-                        row.properties
-                            .iter()
-                            .fold(96 + row.name.len() + row.path.len(), |bytes, (k, v)| {
-                                bytes + k.len() + v.len()
-                            })
-                    })
-                    .sum(),
-                QueryRows::Block { groups } => ref_groups_estimated_bytes(groups),
-            },
-            Answer::Groups(groups) => ref_groups_estimated_bytes(&groups.groups),
-            Answer::Advanced { result, .. } => ref_groups_estimated_bytes(&result.groups)
-                .saturating_add(
-                    result
-                        .ran
-                        .iter()
-                        .chain(&result.ignored)
-                        .map(String::len)
-                        .sum(),
-                ),
+            Answer::Result(Ok(result)) => retained::serialized_bytes(result.as_ref()),
+            Answer::Groups(groups) => retained::serialized_bytes(groups.groups.as_ref()),
+            Answer::Advanced { result, .. } => retained::serialized_bytes(result.as_ref()),
         };
-        rows.saturating_add(4096)
+        payload.saturating_add(4096)
     }
 }
 
@@ -168,8 +154,14 @@ impl QueryMemo {
             }
         }
         let (answer, plan) = compute();
+        let pages = Arc::new(answer.pages());
         let bytes = answer
             .estimated_bytes()
+            .saturating_add(plan.as_ref().map_or(0, |plan| plan.estimated_bytes()))
+            .saturating_add(pages.iter().fold(pages.capacity() * 64, |bytes, page| {
+                bytes.saturating_add(page.capacity())
+            }))
+            .saturating_add(retained::parse_config_bytes(parse_config))
             .saturating_add(key.len().saturating_mul(2));
         if bytes > MAX_ENTRY_BYTES {
             return answer;
@@ -190,7 +182,7 @@ impl QueryMemo {
         };
         let entry = Entry {
             plan,
-            pages: Arc::new(answer.pages()),
+            pages,
             answer: answer.clone(),
             bytes,
         };
@@ -295,6 +287,143 @@ mod tests {
             Answer::Groups(groups) => groups.total,
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn b_query_memo_charges_statistics_and_compiled_plans_without_refusing_answers() {
+        use tine_core::query::ir::*;
+        let memo = QueryMemo::default();
+        let config = ParseConfig::default();
+        let query = Query {
+            anchor: Anchor::Block,
+            filter: Filter::and(
+                (0..9)
+                    .map(|i| {
+                        Filter::attr(
+                            Attr::Content,
+                            CmpOp::Regex,
+                            Value::text(format!("pattern{i}")),
+                        )
+                    })
+                    .collect(),
+            ),
+            diagnostics: Vec::new(),
+            source: Source::Tql {
+                original: String::new(),
+                og_options: String::new(),
+            },
+        };
+        let plan = Arc::new(Plan::new(
+            &query,
+            JournalDate::today(),
+            false,
+            false,
+            || Arc::new(tine_core::query::registry::Registry::empty(&config)),
+        ));
+        let answer = memo.answer("regex".into(), JournalDate::today(), &config, || {
+            (groups(9), Some(plan))
+        });
+        assert_eq!(
+            total(&answer),
+            9,
+            "a cache budget may skip retention, never refuse the answer"
+        );
+        assert_eq!(
+            memo.len(),
+            0,
+            "I-22: all compiled regex reservations must count toward the memo entry ceiling"
+        );
+    }
+
+    #[test]
+    fn b_query_memo_charges_statistics_even_when_rows_are_omitted() {
+        use tine_core::query::ir::*;
+        let memo = QueryMemo::default();
+        let config = ParseConfig::default();
+        let result = QueryResult {
+            rows: QueryRows::Page { pages: Vec::new() },
+            diagnostics: Vec::new(),
+            report: QueryReport::default(),
+            total: 0,
+            matched_total: None,
+            exceeded: true,
+            statistics: Some(QueryStatistics {
+                count: 10_000,
+                aggregates: Vec::new(),
+                group_by: Some(Field("owner".into())),
+                overall: Vec::new(),
+                groups: Some(
+                    (0..10_000)
+                        .map(|i| QueryStatisticsGroup {
+                            key: Some(format!("{i}{}", "x".repeat(500))),
+                            count: 1,
+                            cells: Vec::new(),
+                        })
+                        .collect(),
+                ),
+                grouping_status: QueryStatisticsGroupingStatus::Exact,
+            }),
+        };
+        let answer = memo.answer("stats".into(), JournalDate::today(), &config, || {
+            (Answer::Result(Ok(Arc::new(result))), None)
+        });
+        assert!(
+            matches!(answer, Answer::Result(Ok(ref result)) if result.statistics.as_ref().unwrap().groups.as_ref().unwrap().len() == 10_000)
+        );
+        assert_eq!(
+            memo.len(),
+            0,
+            "I-22: omitted rows can still retain statistics groups; they must be charged"
+        );
+        memo.answer("benign".into(), JournalDate::today(), &config, || {
+            (groups(20_000), None)
+        });
+        assert_eq!(
+            memo.len(),
+            1,
+            "a large logical count with no retained payload must still be memoized"
+        );
+    }
+
+    #[test]
+    fn b_query_memo_total_budget_evicts_program_reservations_and_reuses_small_plans() {
+        use tine_core::query::ir::*;
+        let memo = QueryMemo::default();
+        let config = ParseConfig::default();
+        let query = Query::new(
+            Anchor::Block,
+            Filter::and(
+                (0..6)
+                    .map(|i| {
+                        Filter::attr(Attr::Content, CmpOp::Regex, Value::text(format!("p{i}")))
+                    })
+                    .collect(),
+            ),
+            Source::Builder,
+        );
+        let plan = Arc::new(Plan::new(
+            &query,
+            JournalDate::today(),
+            false,
+            false,
+            || unreachable!(),
+        ));
+        for i in 0..8 {
+            memo.answer(i.to_string(), JournalDate::today(), &config, || {
+                (groups(i), Some(plan.clone()))
+            });
+        }
+        assert_eq!(
+            memo.len(),
+            5,
+            "I-22: independently charged entries must fit the total 64 MiB memo ceiling"
+        );
+        assert!(memo.cached("0").is_none());
+        assert!(memo.cached("7").is_some());
+        let served = memo.answer("7".into(), JournalDate::today(), &config, || {
+            panic!("a fitting answer should remain memoized")
+        });
+        assert_eq!(total(&served), 7);
     }
 
     /// Reader B (og 14 Q2): an answer evaluated against yesterday — a query

@@ -716,7 +716,7 @@ fn og_attr(attr: Attr, op: CmpOp, value: &Value, on_page: bool) -> Option<String
         (Attr::Content, CmpOp::Like) => {
             // `(content-like)` does not exist: a bare string IS the substring
             // test, and only the `%x%` shape is that test. The unescaping is
-            // `og::escape_like`'s own inverse, never a second copy of it.
+            // The shared LIKE encoder's inverse, never a second copy of it.
             let Value::Text { text } = value else {
                 return None;
             };

@@ -23,3 +23,10 @@ fn query_policies_have_one_answerer() {
         "I-12: LIKE prefix recognition must reuse query/text.rs::LikePattern"
     );
 }
+
+#[test]
+fn memo_charging_covers_the_answer_and_its_plan() {
+    let memo = include_str!("../src/query/memo.rs");
+    let plan = include_str!("../src/query/exec.rs");
+    assert!(memo.contains("serialized_bytes(result.as_ref())") && memo.contains("plan.estimated_bytes()") && plan.contains("self.compiled.estimated_bytes()"), "I-22: memo retention must charge complete answers and compiled plans; imitate query/memo.rs and query/retained.rs");
+}

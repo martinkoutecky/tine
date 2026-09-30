@@ -102,6 +102,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Query memo limits include statistics and compiled patterns** (REG-OG-QUERY-MEMO-001): oversized entries are returned without caching, and program reservations count toward both entry and total memory budgets.
+
 - **Large query property lists and macro blocks stay responsive** (REG-OG-QUERY-ATOMS-001, REG-OG-QUERY-MACROS-001): atom uniqueness uses one ordered set, and raw query macros are scanned once. TQL LIKE prefix shortcuts now share the matcher’s escaping rules, including `\a` (REG-OG-QUERY-LIKE-001); query printers share literal escaping and numeric spelling.
 
 - **Faster graph startup and first search** (og-P1). Journal-first reads avoid ordinary-page title discovery,
