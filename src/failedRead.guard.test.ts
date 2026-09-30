@@ -87,10 +87,13 @@ function rustFabricated(source: string): number {
 const RUST_BASELINE: Record<string, number> = {
   "crates/tine-graph-features/src/lib.rs": 0,
   "crates/tine-graph-features/src/assets.rs": 0,
+  "crates/tine-graph-features/src/journals.rs": 0,
+  "crates/tine-graph-features/src/config.rs": 0,
+  "crates/tine-graph-features/src/conflicts.rs": 0,
   "crates/tine-graph-features/src/graph_verification.rs": 0,
   "crates/tine-store/src/transaction/read_checks.rs": 0,
-  "crates/tine-store/src/model.rs": 7,
-  "crates/tine-store/src/model/page_identity.rs": 5,
+  "crates/tine-store/src/model.rs": 6,
+  "crates/tine-store/src/model/page_identity.rs": 1,
   "src-tauri/src/commands.rs": 0,
   "src-tauri/src/backup.rs": 4,
   "src-tauri/src/plugins.rs": 1,
@@ -118,4 +121,22 @@ it("I-2: trash asset checks use the latest publication under the writer; exempla
   expect(checks).toContain("self.store.whole_graph()");
   expect(checks).toContain("view.unreadable_files()");
   expect(checks).toContain("view.referenced_assets().contains(name)");
+  const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
+  const trash = commands.slice(commands.indexOf("pub(crate) async fn trash_asset"), commands.indexOf("pub(crate) async fn asset_trash_stats"));
+  expect(trash, "I-22: the reference check can wait for initial parsing; keep trash off the UI thread").toContain("spawn_blocking");
+});
+
+
+it("I-9: verification cancellation is typed; exemplar native VerificationFailure and GraphVerification.tsx", () => {
+  const source = readFileSync("src/components/GraphVerification.tsx", "utf8");
+  expect(source, RULE).toContain('=== "cancelled"');
+  expect(source, RULE).not.toMatch(/String\(error\).*cancelled|includes\(["']cancelled/);
+  expect(readFileSync("src-tauri/src/graph_verification.rs", "utf8"), RULE).toContain("VerificationFailure::Cancelled");
+});
+
+it("I-22: launch config errors belong to the original read, never a second read; exemplar Graph::open_inner", () => {
+  const source = readFileSync("crates/tine-store/src/store.rs", "utf8");
+  const open = source.slice(source.indexOf("    pub fn open("), source.indexOf("    pub fn config("));
+  expect(open, RULE).toContain("graph.config_read_problem.clone()");
+  expect(open, RULE).not.toContain("read_parse_input(&config_path)");
 });

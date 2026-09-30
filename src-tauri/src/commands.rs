@@ -2036,10 +2036,14 @@ pub(crate) async fn list_orphan_assets(state: GraphContext<'_>) -> Result<Vec<As
 
 /// Move an orphaned asset to the recoverable trash.
 #[tauri::command]
-pub(crate) fn trash_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
+pub(crate) async fn trash_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::assets::trash_asset(&slot.store, &name)
-        .map_err(|error| feature_asset_error(error, &slot))
+    tauri::async_runtime::spawn_blocking(move || {
+        tine_graph_features::assets::trash_asset(&slot.store, &name)
+            .map_err(|error| feature_asset_error(error, &slot))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Count + total bytes in the recoverable asset trash.
