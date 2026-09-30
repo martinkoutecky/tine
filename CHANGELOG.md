@@ -102,6 +102,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Org pages with long directive preambles open without reparsing every growing prefix (REG-OG-ORG-DIRECTIVE-OPEN-001). Page moves sync each affected directory once, and both journal navigation doors share the absent-path rule (og-B-STORE).
+
 - Graph settings read their top-level EDN entries and decode authored string escapes consistently (REG-OG-CONFIG-ROOT-READ-001, REG-OG-CONFIG-EDN-ESCAPES-001). PDF highlight and view-state saves preserve foreign floating-point values and types (REG-OG-PDF-FOREIGN-FLOAT-001).
 
 - **Faster graph startup and first search** (og-P1). Journal-first reads avoid ordinary-page title discovery,

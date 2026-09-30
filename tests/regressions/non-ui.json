@@ -1176,6 +1176,29 @@
         "failBefore": "proven"
       },
       "notes": "Checkpoint 4 L01:46; integral floats, negative zero and exponent values reparse as the same float values through both real sidecar rewrite entry points."
+    },
+    {
+      "id": "REG-OG-ORG-DIRECTIVE-OPEN-001",
+      "title": "Opening Org pages with long directive preambles performs bounded work per line",
+      "family": "performance",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/tests/og_b_store_preamble.rs",
+          "crates/tine-core/tests/page_title_preamble.rs"
+        ],
+        "scenario": null,
+        "failBefore": "proven"
+      },
+      "notes": "Checkpoint 4 L06:40; existing inert-line filtering runs before the whole-prefix outline parse, preserving title discovery while removing repeated growing-prefix parses. The guard enforces the ordering; it has no wall-clock threshold."
     }
   ]
 }
