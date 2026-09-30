@@ -267,13 +267,20 @@ export class PluginManager {
       (plugin) => plugin.manifest.id === id && plugin.manifest.version === version
     );
     if (!target) throw new Error("plugin version is not installed");
+    const key = versionKey(id, version);
+    this.recordIntent(key, false);
+    const starting = this.starting.get(id);
+    if (starting?.version === version) {
+      starting.runtime.dispose();
+      this.starting.delete(id);
+    }
     const active = this.active.get(id);
     if (active?.manifest.version === version) {
       active.runtime.dispose();
       this.active.delete(id);
       this.patch(id, version, { enabled: false, running: false, error: undefined });
     }
-    await backend().uninstallPlugin(target.storageId, target.storageVersion);
+    await this.enqueuePersistence(key, () => backend().uninstallPlugin(target.storageId, target.storageVersion));
     const remaining = installedPlugins().filter(
       (item) => versionKey(item.storageId, item.storageVersion) !== versionKey(target.storageId, target.storageVersion)
     );

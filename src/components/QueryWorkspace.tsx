@@ -9,11 +9,12 @@ import {
   createSignal,
   createUniqueId,
   onCleanup,
+  on,
   type JSX,
 } from "solid-js";
-import { backend, type SavePageEntry, type SavePagesResult } from "../backend";
-import { captureBinding } from "../binding";
-import { graphOwner, readOwned, writeOwned } from "../owned";
+import { backend, isTauri, type SavePageEntry, type SavePagesResult } from "../backend";
+import { bindingIdentity, captureBinding } from "../binding";
+import { advanceRevision, currentRevision, graphOwner, latestOwner, ownedWhen, readOwned, revisionOwner, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
 import { errorFamily } from "../errorFamily";
 import {
@@ -86,6 +87,8 @@ export type MaterializeQueryResult =
     };
 
 export interface QueryWorkspaceDependencies extends MaterializeQueryDependencies {
+  /** Close this surface's two native cancellation lanes; O(1), no graph write. */
+  closeSearchWorkspace?(workspace: string, bindingGeneration: number): Promise<void>;
   parseQuery(source: string, dialect: "macro_query"): Promise<ParsedQuery>;
   queryRun(query: Query, view: ViewSettings): Promise<QueryResult>;
   queryExplainEmpty(query: Query, view: ViewSettings): Promise<ExplainEmptyResult>;
@@ -241,6 +244,13 @@ export async function materializeQueryWorkspace(
 function defaultDependencies(): QueryWorkspaceDependencies {
   const api = backend();
   return {
+    closeSearchWorkspace: async (workspace: string, bindingGeneration: number) => {
+      if (!isTauri()) return;
+      const owner = graphOwner();
+      const imported = await readOwned(owner, import("@tauri-apps/api/core"));
+      if (imported.kind === "stale" || !owner()) return;
+      await imported.value.invoke<void>("close_search_workspace", { workspace, bindingGeneration });
+    },
     resolvePage: (name, kind) => api.resolvePage(name, kind),
     savePages: async (entries, bindingGeneration) => {
       const entry = entries[0];
@@ -475,21 +485,32 @@ function AdvancedModal(props: {
   const [error, setError] = createSignal<string | null>(null);
   // The builder edits the ENGINE's reading of the draft and writes back the OG
   // text the engine printed (I-12); a workspace materializes an OG `{{query}}`.
-  const [builderSession] = createResource(dsl, async (text): Promise<BuilderSession | undefined> => {
-    const parsed = await readOwned(graphOwner(() => dsl() === text), backend().parseQuery(text, "og"));
-    return parsed.kind === "current" ? { query: parsed.value.query, view: parsed.value.view } : undefined;
+  let mounted = true;
+  onCleanup(() => { mounted = false; });
+  const edits = {};
+  const [printing, setPrinting] = createSignal(false);
+  const [builderSession, { mutate }] = createResource(dsl, async (text): Promise<BuilderSession | undefined> => {
+    const owner = graphOwner(() => mounted && dsl() === text, revisionOwner(edits, currentRevision(edits)));
+    const parsed = await readOwned(owner, backend().parseQuery(text, "og"));
+    return parsed.kind === "current" && owner() ? { query: parsed.value.query, view: parsed.value.view } : readLatestOr(builderSession, undefined, "query text");
   });
   const applyBuilderEdit = async (next: BuilderSession) => {
+    // Publish the accepted tree before printing: the next gesture composes with
+    // it. Only the latest print may replace DSL; older parses cannot erase edits.
+    advanceRevision(edits);
+    mutate(next);
+    setPrinting(true);
+    const owner = latestOwner(edits, "print", graphOwner(() => mounted));
     try {
-      const printed = await readOwned(graphOwner(), backend().printQuery(next.query, next.view, "og"));
-      if (printed.kind === "stale") return;
+      const printed = await readOwned(owner, backend().printQuery(next.query, next.view, "og"));
+      if (printed.kind === "stale" || !owner()) return;
       setDsl(printed.value);
       setError(null);
     } catch (failure) {
       // An edit the OG syntax cannot say has nowhere to go here; the printer's
       // own message says which part (I-9), and the draft is left as it was.
-      setError(failure instanceof Error ? failure.message : String(failure));
-    }
+      if (owner()) setError(failure instanceof Error ? failure.message : String(failure));
+    } finally { if (owner()) setPrinting(false); }
   };
   let dialog!: HTMLDivElement;
   let firstField: HTMLElement | undefined;
@@ -508,6 +529,7 @@ function AdvancedModal(props: {
 
   const apply = () => {
     if (draftKind() === "dsl") {
+      if (printing() || error()) return;
       if (!dsl().trim()) {
         setError("The query DSL cannot be empty.");
         return;
@@ -649,7 +671,7 @@ function AdvancedModal(props: {
         </Show>
         <footer class="query-advanced-actions">
           <button type="button" onClick={props.onClose}>Cancel</button>
-          <button type="button" class="primary" onClick={apply}>Apply</button>
+          <button type="button" class="primary" disabled={printing()} onClick={apply}>Apply</button>
         </footer>
       </div>
     </div>
@@ -689,6 +711,16 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     return previous + 1;
   }, 0);
   onCleanup(() => { alive = false; });
+  createEffect(on(() => props.route.id, (workspace) => {
+    const binding = captureBinding();
+    const identity = bindingIdentity();
+    const owner = ownedWhen(() => bindingIdentity() === identity);
+    const close = deps().closeSearchWorkspace;
+    onCleanup(() => {
+      if (owner() && close) void close(workspace, binding.backendGeneration)
+        .catch(() => { if (owner()) pushToast("Couldn’t stop this workspace’s search.", "warn"); });
+    });
+  }));
   let advancedButton!: HTMLButtonElement;
   const advancedLayerId = `query-advanced-${createUniqueId()}`;
   let sourceInput: HTMLInputElement | undefined;
@@ -725,6 +757,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
 
   const pageView = createMemo(() => queryDisplaySettings(pageDisplay(), {}, pagePresentation() ?? presentation()));
   const blockView = createMemo(() => queryDisplaySettings(blockDisplay(), {}, blockPresentation() ?? presentation()));
+  const executionScope = {};
   const [execution] = createResource(
     () => ({
       id: props.route.id,
@@ -739,8 +772,10 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       if (!request.source) {
         return { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false };
       }
+      const owner = latestOwner(executionScope, "run", graphOwner(() => alive && props.route.id === request.id));
+      const cancelled: QueryExecution = { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: true };
       if (request.sourceKind === "search") {
-        return deps().runGraphSearch(
+        const result = await readOwned(owner, deps().runGraphSearch(
           request.source,
           PAGE_LIMIT,
           BLOCK_LIMIT,
@@ -749,14 +784,18 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           undefined,
           request.pageMatchScope,
           { page: request.pageView, block: request.blockView }
-        );
+        ));
+        return result.kind === "current" && owner() ? result.value : cancelled;
       }
-      const parsed = await deps().parseQuery(request.source, "macro_query");
-      const result = await deps().queryRun(parsed.query, parsed.view);
-      const explanation = request.explain && result.total === 0 && !(result.diagnostics ?? []).some((item) => !item.disabled)
-        ? await deps().queryExplainEmpty(parsed.query, parsed.view)
+      const parsed = await readOwned(owner, deps().parseQuery(request.source, "macro_query"));
+      if (parsed.kind === "stale" || !owner()) return cancelled;
+      const result = await readOwned(owner, deps().queryRun(parsed.value.query, parsed.value.view));
+      if (result.kind === "stale" || !owner()) return cancelled;
+      const explanation = request.explain && result.value.total === 0 && !(result.value.diagnostics ?? []).some((item) => !item.disabled)
+        ? await readOwned(owner, deps().queryExplainEmpty(parsed.value.query, parsed.value.view))
         : undefined;
-      return irToExecution(result, explanation);
+      if (explanation?.kind === "stale" || !owner()) return cancelled;
+      return irToExecution(result.value, explanation?.value);
     }
   );
 

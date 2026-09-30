@@ -335,12 +335,13 @@ describe("update checks", () => {
   });
 
   describe("installing flushes saves first (the window-close gate)", () => {
-    async function installFlow(opts: { prepare: "accepted" | "rejected" | "in_flight"; installFails?: boolean }) {
+    async function installFlow(opts: { prepare: "accepted" | "rejected" | "in_flight"; installFails?: boolean; downloadFails?: boolean }) {
       mockLatest("v0.6.0");
       const order: string[] = [];
       const updateObject = {
         version: "0.6.0",
-        download: vi.fn(async () => { order.push("download"); }),
+        download: vi.fn(async () => { order.push("download"); if (opts.downloadFails) throw new Error("download failed"); }),
+        close: vi.fn(async () => {}),
         install: vi.fn(async () => {
           order.push("install");
           if (opts.installFails) throw new Error("Failed to install package");
@@ -371,6 +372,13 @@ describe("update checks", () => {
       await vi.waitFor(() => expect(toastCalls(pushToastMock).some(([m]) => m.includes("not installed"))).toBe(true));
       expect(updateObject.install).not.toHaveBeenCalled();
       expect(openExternalMock).not.toHaveBeenCalled();
+    });
+
+    it.each(["accepted", "rejected", "in_flight", "download", "install"] as const)("L17:67: closes the update resource on %s exit", async (exit) => {
+      const { updateObject } = await installFlow({ prepare: exit === "download" || exit === "install" ? "accepted" : exit,
+        downloadFails: exit === "download", installFails: exit === "install" });
+      await vi.waitFor(() => expect(updateObject.close).toHaveBeenCalledTimes(2));
+      // The check closes its handle; the install action acquires and closes another.
     });
 
     it("App registers the window-close coordinator as the update's exit gate, and nothing installs without it", () => {

@@ -227,46 +227,51 @@ async function applyUpdateOrOpen(): Promise<void> {
     openReleases();
     return;
   }
-  const progressId = pushToast(`Downloading Tine ${update.version}…`, "info", { sticky: true });
   try {
-    // Download first: the user keeps editing meanwhile, so the flush below sees
-    // the latest state and runs immediately before the process can exit.
-    await update.download();
-  } catch (error) {
-    dismissToast(progressId);
-    reportUpdaterFailure("apply", error);
-    openReleases(); // signature/verify/network failure → never brick, just offer the page
-    return;
-  }
-  // Every in-flight save and at-risk draft is flushed (bounded), and a failed
-  // flush asks the user before anything is discarded: the window-close gate.
-  let gate: "accepted" | "rejected" | "in_flight" = "rejected";
-  try { gate = exitGuard ? await exitGuard.prepare() : "rejected"; }
-  catch (error) { dbg(`update exit guard failed: ${String(error)}`); }
-  if (gate !== "accepted") {
-    dismissToast(progressId);
-    pushToast(
-      "The update was downloaded but not installed, so your unsaved changes stay open. Choose Install update again when you are ready.",
-      "warn",
-    );
-    return;
-  }
-  try {
-    await update.install();
-  } catch (error) {
-    exitGuard?.reset();
-    dismissToast(progressId);
-    reportUpdaterFailure("apply", error);
-    openReleases();
-    return;
-  }
-  try {
-    const { relaunch } = await import("@tauri-apps/plugin-process");
-    await relaunch(); // process restarts into the new version (this toast goes with it)
-  } catch (error) {
-    exitGuard?.reset();
-    dismissToast(progressId);
-    reportUpdaterFailure("relaunch", error);
+    const progressId = pushToast(`Downloading Tine ${update.version}…`, "info", { sticky: true });
+    try {
+      // Download first: the user keeps editing meanwhile, so the flush below sees
+      // the latest state and runs immediately before the process can exit.
+      await update.download();
+    } catch (error) {
+      dismissToast(progressId);
+      reportUpdaterFailure("apply", error);
+      openReleases(); // signature/verify/network failure → never brick, just offer the page
+      return;
+    }
+    // Every in-flight save and at-risk draft is flushed (bounded), and a failed
+    // flush asks the user before anything is discarded: the window-close gate.
+    let gate: "accepted" | "rejected" | "in_flight" = "rejected";
+    try { gate = exitGuard ? await exitGuard.prepare() : "rejected"; }
+    catch (error) { dbg(`update exit guard failed: ${String(error)}`); }
+    if (gate !== "accepted") {
+      dismissToast(progressId);
+      pushToast(
+        "The update was downloaded but not installed, so your unsaved changes stay open. Choose Install update again when you are ready.",
+        "warn",
+      );
+      return;
+    }
+    try {
+      await update.install();
+    } catch (error) {
+      exitGuard?.reset();
+      dismissToast(progressId);
+      reportUpdaterFailure("apply", error);
+      openReleases();
+      return;
+    }
+    try {
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch(); // process restarts into the new version (this toast goes with it)
+    } catch (error) {
+      exitGuard?.reset();
+      dismissToast(progressId);
+      reportUpdaterFailure("relaunch", error);
+    }
+  } finally {
+    try { await update.close(); }
+    catch (error) { dbg(`updater handle close failed: ${String(error)}`); }
   }
 }
 

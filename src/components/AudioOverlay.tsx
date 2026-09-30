@@ -127,9 +127,12 @@ export function AudioOverlay(): JSX.Element {
 
   // The component is app-lifetime mounted; closing the inner Show or switching
   // tracks must explicitly end the old fallback lease and invalidate late reads.
+  let cancelScrub = () => {};
+  onCleanup(() => cancelScrub());
   let activeUrl: string | null = null;
   createEffect(() => {
     const next = audioPlayer()?.url ?? null;
+    cancelScrub();
     if (next === activeUrl) return;
     activeUrl = next;
     releaseBlobFallback();
@@ -204,9 +207,9 @@ export function AudioOverlay(): JSX.Element {
   createEffect(() => {
     if (!audioPlayer()) return;
     const redraw = () => drawWave(canvasEl, dur() ? cur() / dur() : 0);
-    requestAnimationFrame(redraw);
+    const frame = requestAnimationFrame(redraw);
     window.addEventListener("resize", redraw);
-    onCleanup(() => window.removeEventListener("resize", redraw));
+    onCleanup(() => { cancelAnimationFrame(frame); window.removeEventListener("resize", redraw); });
   });
 
   // Smooth playhead while playing (timeupdate alone fires only ~4×/s).
@@ -218,19 +221,31 @@ export function AudioOverlay(): JSX.Element {
   onCleanup(() => cancelAnimationFrame(raf));
 
   const onWavePointer = (e: PointerEvent) => {
-    const c = canvasEl;
-    if (!c) return;
+    const c = canvasEl, track = audioPlayer(), audio = audioEl;
+    if (!c || !track || !audio) return;
+    cancelScrub();
     e.preventDefault();
+    const owner = graphOwner(() => alive && audioPlayer() === track && audioEl === audio);
     const r = c.getBoundingClientRect();
-    const at = (x: number) => seekTo((x - r.left) / r.width);
-    at(e.clientX);
-    const onMove = (me: PointerEvent) => at(me.clientX);
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
+    const at = (x: number) => {
+      if (!owner()) { cancel(); return; }
+      seekTo((x - r.left) / r.width);
     };
+    const onMove = (next: PointerEvent) => { if (next.pointerId === e.pointerId) at(next.clientX); };
+    const end = (next: PointerEvent) => { if (next.pointerId === e.pointerId) cancel(); };
+    const cancel = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      c.removeEventListener("lostpointercapture", end);
+      if (cancelScrub === cancel) cancelScrub = () => {};
+    };
+    cancelScrub = cancel;
+    at(e.clientX);
     window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    c.addEventListener("lostpointercapture", end);
   };
 
   return (

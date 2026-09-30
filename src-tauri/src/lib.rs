@@ -40,6 +40,7 @@ mod plugins;
 mod query_export;
 #[path = "commands/query_ir.rs"]
 mod query_ir;
+mod search_workspace;
 mod settings;
 mod spellcheck;
 mod state;
@@ -796,6 +797,7 @@ pub fn run() {
             page_print_html,
             export_query_subtrees,
             run_graph_search,
+            search_workspace::close_search_workspace,
             query_facets,
             query_parse,
             query_print,

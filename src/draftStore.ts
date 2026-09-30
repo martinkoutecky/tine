@@ -7,10 +7,10 @@
 // only the user dismisses them.
 import { createEffect, createRoot } from "solid-js";
 import { backend } from "./backend";
-import { captureBinding, graphScopedSignal, refuseStaleWrite, stillBound, type Binding } from "./binding";
+import { captureBinding, clearOnBindingInvalidated, graphScopedSignal, refuseStaleWrite, stillBound, type Binding } from "./binding";
 import { installDraftKeeper, unsavedDrafts } from "./document";
 import { graphEpoch, graphMeta } from "./graphSession";
-import { graphOwner, ownedWhen, readOwned, writeOwned } from "./owned";
+import { graphOwner, ownedWhen, readOwned, serializeDurable, writeOwned } from "./owned";
 import { pushToast } from "./toasts";
 import { openUnsavedRecovery } from "./unsavedRecovery";
 import type { DraftRecord } from "./types";
@@ -22,10 +22,19 @@ const newSessionId = () => typeof crypto !== "undefined" && "randomUUID" in cryp
 const session = newSessionId();
 const idFor = (name: string) => `${session}:${name}`;
 
-type Kept = { binding: Binding; written: string | null };
+type Kept = { binding: Binding; written: string | null; risky: boolean };
 const atRisk = new Map<string, Kept>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 let refusedOnce = false;
+
+// I-21: page queues belong to one binding. A switch preserves already-started
+// capsules for recovery but cannot start their retirement in the next graph.
+clearOnBindingInvalidated(() => {
+  if (timer) clearTimeout(timer);
+  timer = null;
+  atRisk.clear();
+  refusedOnce = false;
+});
 
 // An earlier session's drafts belong to the graph they were read for.
 const [earlier, setEarlier] = graphScopedSignal<DraftRecord[]>();
@@ -33,15 +42,18 @@ const [earlier, setEarlier] = graphScopedSignal<DraftRecord[]>();
 export const earlierDrafts = (): DraftRecord[] => earlier() ?? [];
 
 function schedule() {
-  if (timer || atRisk.size === 0) return;
+  if (timer || ![...atRisk.values()].some((kept) => kept.risky)) return;
   timer = setTimeout(() => { timer = null; void writeAtRisk(); }, REFRESH_MS);
 }
 
-/** Write every at-risk page whose draft changed since its last write. */
+/** Write changed at-risk drafts, serialized with retirement for each page.
+ * O(at-risk pages); a graph switch skips queued work, while started writes and
+ * their failures are observed. Saving queues retirement after the first write. */
 export async function writeAtRisk(): Promise<void> {
   const current = new Map(unsavedDrafts().map((d) => [d.name, d]));
   for (const [name, kept] of atRisk) {
     if (!stillBound(kept.binding)) { atRisk.delete(name); continue; }
+    if (!kept.risky) continue;
     const draft = current.get(name);
     if (!draft?.page) continue;
     // A disk-changed conflict is a live-conflict capsule (og 8e): it also keeps
@@ -57,8 +69,15 @@ export async function writeAtRisk(): Promise<void> {
       ...(live ? { base_rev: draft.baseRev, observed_rev: draft.observedRev } : {}),
     };
     try {
-      const written = await writeOwned(graphOwner(), backend().storeDraft?.(record) ?? Promise.resolve());
-      if (written.kind === "current") kept.written = text;
+      const owner = ownedWhen(() => stillBound(kept.binding));
+      await serializeDurable(kept, owner, async () => {
+        if (!kept.risky || text === kept.written) return;
+        const written = await writeOwned(owner, backend().storeDraft?.(record) ?? Promise.resolve());
+        if (written.kind === "stale" || !owner()) return;
+        // Record completion before the queued retirement examines it. Already
+        // started writes finish even when the page becomes safe meanwhile.
+        kept.written = text;
+      });
     } catch (error) {
       // Refused past the store's bound, or a disk error: the draft stays in this
       // window (recovery panel); say once that it will not survive a crash.
@@ -70,9 +89,17 @@ export async function writeAtRisk(): Promise<void> {
 }
 
 async function retire(name: string, kept: Kept) {
-  if (kept.written === null || !stillBound(kept.binding)) return;
   try {
-    await writeOwned(graphOwner(), backend().retireDraft?.(idFor(name)) ?? Promise.resolve());
+    const owner = ownedWhen(() => stillBound(kept.binding));
+    await serializeDurable(kept, owner, async () => {
+      if (kept.risky) return;
+      if (kept.written !== null) {
+        const retired = await writeOwned(owner, backend().retireDraft?.(idFor(name)) ?? Promise.resolve());
+        if (retired.kind === "stale" || !owner()) return;
+        kept.written = null;
+      }
+      if (!kept.risky && atRisk.get(name) === kept) atRisk.delete(name);
+    });
   } catch (error) {
     pushToast(`Couldn't remove the crash-safe copy of “${name}” (${String(error)}). The page is saved; the copy may be offered again later.`, "warn");
   }
@@ -83,13 +110,14 @@ function keep(name: string, risky: boolean) {
     // An entry left from another graph binding (a switch while it was at risk)
     // is not this page: start a fresh one, or this draft would never be kept.
     const kept = atRisk.get(name);
-    if (!kept || !stillBound(kept.binding)) atRisk.set(name, { binding: captureBinding(), written: null });
+    if (!kept || !stillBound(kept.binding)) atRisk.set(name, { binding: captureBinding(), written: null, risky: true });
+    else kept.risky = true;
     schedule();
     return;
   }
   const kept = atRisk.get(name);
   if (!kept) return;
-  atRisk.delete(name);
+  kept.risky = false;
   void retire(name, kept);
 }
 

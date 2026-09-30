@@ -1109,6 +1109,29 @@
         "failBefore": "proven"
       },
       "notes": "og checkpoint 4 L07 S1, K1 bf11f4647. Every transaction step, including an unchanged one, checks its preflight revision before success; subprocess barrier + AbortAfterStep kill cases."
+    },
+    {
+      "id": "REG-OG-B-LIFE-SEARCH-LANES",
+      "title": "Completed searches release cancellation lanes and workspace close cancels only its lanes",
+      "family": "resource-lifecycle",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-graph-features/src/search.rs::tests",
+          "src/components/QueryWorkspace.test.tsx"
+        ],
+        "scenario": "search.workspace-lifetime",
+        "failBefore": "proven"
+      },
+      "notes": "Checkpoint-4 L04:37; native entry-point reproduction and controlled frontend close coverage."
     }
   ]
 }
