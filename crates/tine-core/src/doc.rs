@@ -76,7 +76,8 @@ pub struct DocBlock {
 #[derive(Debug, Clone, Default)]
 pub struct BlockProjection {
     /// Parser-owned raw byte regions from the same cached single-block AST.
-    pub regions: crate::block_regions::BlockRegions,
+    /// Sparse edit data stays out of the inline block; empty regions are shared.
+    pub regions: std::sync::Arc<crate::block_regions::BlockRegions>,
     /// Visible (non-property) text, original case — the body the reader sees,
     /// for breadcrumb labels / display. `raw` minus the byte ranges lsdoc
     /// recognized as `Properties` blocks (see `visible_minus_properties`).
@@ -228,6 +229,7 @@ impl DocBlock {
             let visible = regions
                 .apply(&self.raw, self.is_org, crate::block_regions::Edit::Visible)
                 .expect("parsed regions");
+            let regions = shared_regions(regions);
             let visible_lower = crate::search_query::canonical_fold(&visible);
             let refs_page = proj.refs.page;
             let refs_norm = refs_page
@@ -310,6 +312,18 @@ impl DocBlock {
     /// other facets.
     pub fn tags(&self) -> Vec<String> {
         self.projection().tags.clone()
+    }
+}
+
+fn shared_regions(
+    regions: crate::block_regions::BlockRegions,
+) -> std::sync::Arc<crate::block_regions::BlockRegions> {
+    static EMPTY: std::sync::OnceLock<std::sync::Arc<crate::block_regions::BlockRegions>> =
+        std::sync::OnceLock::new();
+    if regions == crate::block_regions::BlockRegions::default() {
+        std::sync::Arc::clone(EMPTY.get_or_init(|| std::sync::Arc::new(Default::default())))
+    } else {
+        std::sync::Arc::new(regions)
     }
 }
 

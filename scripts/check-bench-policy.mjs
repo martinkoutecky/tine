@@ -44,7 +44,8 @@ const selection = policy.previousRelease?.selection ?? "latest-release";
 if (selection === "og-campaign") {
   // A master's latest release is not the experiment's performance anchor.
   // This selector cannot advance the anchor or apply to a stable build.
-  if (app.identifier !== "page.tine.TineOG") {
+  const identity = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/app-identity.json"), "utf8"));
+  if (identity.ship !== "experiment" || app.identifier !== identity.identities.experiment.identifier) {
     problems.push("og-campaign performance selection requires the OG application identity");
   }
   expectedPrevious = "v0.6.5";

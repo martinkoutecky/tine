@@ -17,6 +17,7 @@ import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { searchFilter } from "../editor/queryBuilder";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { bumpDataRev } from "../graphSession";
+import * as blockRender from "../render/block";
 
 beforeAll(async () => {
   await initParser();
@@ -150,6 +151,21 @@ function loadQueryDoc(queryRaw: string) {
 
 
 describe("QueryMacro sheet integration", () => {
+  it("does not build search excerpts for a collapsed List query, and builds them when Search is chosen", async () => {
+    loadQueryDoc('{{query (task TODO) {:collapsed? true}}}');
+    const visible = vi.spyOn(blockRender, "visibleBody");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-count")?.textContent).toContain("1"));
+      const excerptCalls = () => visible.mock.calls.filter(([raw]) => raw === doc.byId.todo.raw);
+      expect(excerptCalls(), "List counts need no per-result Search projection").toHaveLength(0);
+      clickView(root, "Search");
+      await vi.waitFor(() => expect(excerptCalls().length).toBeGreaterThan(0));
+      (root.querySelector(".query-collapse") as HTMLButtonElement).click();
+      await vi.waitFor(() => expect(root.querySelector(".query-search-hit")?.textContent).toContain("From query"));
+    } finally { dispose(); }
+  });
+
   it("keeps a newer friendly-search result when an older request finishes last", async () => {
     setDoc({
       byId: {

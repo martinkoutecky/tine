@@ -72,6 +72,8 @@ mod graph_tests;
 #[cfg(test)]
 mod issue137_investigation_tests;
 #[cfg(test)]
+mod journal_format_cost_tests;
+#[cfg(test)]
 mod journal_reference_tests;
 #[cfg(test)]
 mod legacy_graph_writer_guard_tests;

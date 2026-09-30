@@ -18,6 +18,8 @@ it("the campaign selector refuses a moved anchor or a stable application", () =>
     writeFileSync(join(root, "scripts/check-bench-policy.mjs"), readFileSync("scripts/check-bench-policy.mjs"));
     const policy = JSON.parse(readFileSync("scripts/bench-policy.json", "utf8"));
     const config = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
+    const identity = JSON.parse(readFileSync("src-tauri/app-identity.json", "utf8"));
+    writeFileSync(join(root, "src-tauri/app-identity.json"), JSON.stringify(identity));
     policy.previousRelease.selection = "og-campaign";
     const run = () => {
       writeFileSync(join(root, "scripts/bench-policy.json"), JSON.stringify(policy));
@@ -27,13 +29,13 @@ it("the campaign selector refuses a moved anchor or a stable application", () =>
     policy.previousRelease.ref = "v0.6.987";
     expect(run().status).toBe(1);
     policy.previousRelease.ref = "v0.6.5";
-    config.identifier = "page.tine.Tine";
+    config.identifier = identity.identities.release.identifier;
     expect(run().status).toBe(1);
-    config.identifier = "page.tine.TineOG";
+    config.identifier = identity.identities.experiment.identifier;
     policy.previousRelease.selection = "unknown";
     expect(run().status).toBe(1);
     delete policy.previousRelease.selection;
-    config.identifier = "page.tine.Tine";
+    config.identifier = identity.identities.release.identifier;
     policy.previousRelease.ref = "v0.6.987";
     expect(run().status).toBe(0);
     policy.previousRelease.ref = "v0.6.5";

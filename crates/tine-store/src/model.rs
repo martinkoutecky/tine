@@ -281,8 +281,8 @@ pub(crate) struct Graph {
     /// Journal date formats (filename + title) resolved from `config.edn`, used to
     /// recognize journal files in the user's format and render new ones. The
     /// store installs a live override after open and refreshes it on config edits.
-    pub(crate) journal_format: JournalFormat,
-    live_journal_format: RwLock<Option<JournalFormat>>,
+    pub(crate) journal_format: Arc<JournalFormat>,
+    live_journal_format: RwLock<Option<Arc<JournalFormat>>>,
     /// In-memory cache of every parsed page, keyed implicitly by position.
     /// Built once on first whole-graph query and kept in sync by edits, so
     /// search / backlinks / `{{query}}` scan memory instead of re-reading and
@@ -1996,7 +1996,7 @@ impl Graph {
             .unwrap_or_else(|| Arc::new(self.config.clone()))
     }
 
-    pub(crate) fn current_journal_format(&self) -> JournalFormat {
+    pub(crate) fn current_journal_format(&self) -> Arc<JournalFormat> {
         self.live_journal_format
             .read()
             .unwrap()
@@ -2011,7 +2011,7 @@ impl Graph {
             config.journal_page_title_format.as_deref(),
         );
         *self.live_config.write().unwrap() = Some(Arc::new(config));
-        *self.live_journal_format.write().unwrap() = Some(format);
+        *self.live_journal_format.write().unwrap() = Some(Arc::new(format));
         self.invalidate_cache();
         Ok(())
     }
@@ -2157,7 +2157,7 @@ impl Graph {
             root,
             config,
             config_read_problem: None,
-            journal_format,
+            journal_format: Arc::new(journal_format),
             live_config: RwLock::new(None),
             live_journal_format: RwLock::new(None),
             cache: RwLock::new(None),

@@ -305,7 +305,7 @@ struct Snapshot {
     rev: GraphRev,
     cache_generation: u64,
     config: ConfigState,
-    journal_format: JournalFormat,
+    journal_format: Arc<JournalFormat>,
     list: Arc<EntryList>,
     claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
     name_by_path: Arc<SharedMap<PathBuf, (PageKind, String)>>,
@@ -2552,7 +2552,7 @@ pub struct WholeGraph {
     rev: GraphRev,
     unreadable: Arc<Vec<(FileId, String)>>,
     pub(crate) config: ConfigState,
-    journal_format: JournalFormat,
+    journal_format: Arc<JournalFormat>,
     pub(crate) list: Arc<EntryList>,
     claimants: Arc<SharedMap<(bool, String), Vec<PageEntry>>>,
 }

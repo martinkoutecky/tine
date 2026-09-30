@@ -411,6 +411,7 @@ export function QueryMacro(props: {
   // Presentation never changes membership: ordinary DSL results adapt into
   // evidence-free search rows for the Search presentation.
   const searchPresentationHits = createMemo<QueryHit[]>(() => {
+    if (currentView() !== "search" && friendlySearch() === null) return [];
     const search = displayed()?.search;
     if (search) return search.hits;
     return groups().flatMap((group) => group.blocks.map((block) => ({
@@ -695,7 +696,7 @@ export function QueryMacro(props: {
   const [sortCol, setSortCol] = createSignal<string>("");
   const [sortDir, setSortDir] = createSignal(1);
   const rows = createMemo<Row[]>(() =>
-    groups().flatMap((g) =>
+    !legacyTable() || collapsed() ? [] : groups().flatMap((g) =>
       g.blocks.map((b) => {
         const props: Record<string, string> = {};
         for (const [k, val] of b.properties ?? []) props[k] = val;
