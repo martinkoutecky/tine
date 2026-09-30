@@ -33,6 +33,14 @@ const COPY_PROPS = [
   "textIndent",
   "wordSpacing",
   "tabSize",
+  "direction",
+  "textAlign",
+  "whiteSpace",
+  "wordBreak",
+  "overflowWrap",
+  "fontKerning",
+  "fontFeatureSettings",
+  "fontVariationSettings",
 ] as const;
 
 function buildMirror(ta: HTMLTextAreaElement): HTMLDivElement {
@@ -43,9 +51,10 @@ function buildMirror(ta: HTMLTextAreaElement): HTMLDivElement {
   div.style.top = "0";
   div.style.left = "-9999px";
   div.style.visibility = "hidden";
-  div.style.whiteSpace = "pre-wrap";
-  div.style.wordWrap = "break-word";
-  div.style.overflowWrap = "break-word";
+  if (ta.wrap === "off") {
+    div.style.whiteSpace = "pre";
+    div.style.overflowWrap = "normal";
+  }
   return div;
 }
 
@@ -193,9 +202,8 @@ export function caretAtLastRow(ta: HTMLTextAreaElement, offset: number): boolean
  *  card's editor). Used to reveal the caret horizontally; returns null where
  *  there is no layout (jsdom), so callers simply leave the scroll alone.
  *
- *  The shared mirror wraps at the textarea's width, which is exactly wrong
- *  here — a `wrap="off"` textarea puts the whole logical line on one visual
- *  row — so this builds its own with `white-space: pre` and no width. */
+ *  Use the shared style mirror without a width constraint to measure the
+ *  whole logical line, including portions outside the textarea viewport. */
 export function textareaCaretLeft(ta: HTMLTextAreaElement, offset: number): number | null {
   if (typeof document === "undefined") return null;
   const div = buildMirror(ta);
