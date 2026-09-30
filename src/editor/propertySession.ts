@@ -3,7 +3,7 @@
 // O(block bytes), one visible-buffer parse when extending an accepted drawer.
 // Other mutations, other surfaces and rendering after edit exit read raw normally.
 import { blockRegions, type BlockIdentityFacts } from "../render/parse";
-import { facetsOf, type Facets } from "../render/facets";
+import { facetsOf, knownIdentityAbsent, type Facets } from "../render/facets";
 import { joinProps, splitProps, type PropFormat } from "./properties";
 
 export function propertyEditorSession() {
@@ -11,7 +11,7 @@ export function propertyEditorSession() {
   return {
     identity(raw: string, format: PropFormat): BlockIdentityFacts {
       return edited?.raw === raw && edited.format === format ? edited.identity
-        : { raw, format, value: blockRegions(raw, format).id?.value ?? null };
+        : { raw, format, value: knownIdentityAbsent(raw, format) ? null : blockRegions(raw, format).id?.value ?? null };
     },
     facets(raw: string, format: PropFormat): Facets {
       return edited?.raw === raw && edited.format === format ? edited.facets : facetsOf(raw, format);

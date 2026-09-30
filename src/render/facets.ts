@@ -17,6 +17,7 @@ import { DONE_MARKERS } from "../markers";
 import type { Block, Format, Inline } from "./ast";
 
 export interface Facets {
+  hasId?: boolean;
   marker: string | null;
   done: boolean;
   priority: "A" | "B" | "C" | null;
@@ -64,6 +65,7 @@ const keyOf = (raw: string, format: Format) => format + "\0" + raw;
 
 /** Build a `Facets` from a backend BlockDto's shipped fields (no parse). */
 export function facetsFromDto(d: {
+  has_id?: boolean;
   marker?: string;
   priority?: string;
   heading_level?: number;
@@ -76,6 +78,7 @@ export function facetsFromDto(d: {
   const p = d.priority;
   const headingProperty = headingPropertyState(d.properties ?? []);
   return {
+    hasId: d.has_id,
     marker,
     done: marker != null && DONE_MARKERS.has(marker),
     priority: p === "A" || p === "B" || p === "C" ? p : null,
@@ -114,6 +117,13 @@ export function effectiveHeadingLevel(facets: Pick<Facets, "headingLevel" | "hea
 /** Seed the never-evicted tier from the backend-computed facets — no parse. */
 export function seedFacets(raw: string, format: Format, f: Facets): void {
   seeded.set(keyOf(raw, format), f);
+}
+
+/** A parser-owned negative identity fact for this exact loaded raw and format.
+ * O(raw bytes) key lookup, no parse. Unknown/possible identities use blockRegions.
+ * Unprojected drafts stay unknown; graph resets clear these facts with facets. */
+export function knownIdentityAbsent(raw: string, format: Format): boolean {
+  return seeded.get(keyOf(raw, format))?.hasId === false;
 }
 
 /** Drop all backend-seeded facets — call on graph switch / full store reset so the

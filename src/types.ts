@@ -4,6 +4,8 @@ export type PageKind = "journal" | "page";
 
 export interface BlockDto {
   id: string;
+  /** Parser-owned identity presence; older/unprojected DTOs leave it unknown. */
+  has_id?: boolean;
   raw: string;
   collapsed: boolean;
   children: BlockDto[];

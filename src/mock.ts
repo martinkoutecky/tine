@@ -426,7 +426,7 @@ function bigPageBlocks(n: number): BlockDto[] {
         break;
     }
   }
-  return out;
+  return out.map((block) => ({ ...block, has_id: false }));
 }
 if (typeof location !== "undefined" && /[?&]big\b/.test(location.search)) {
   NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(2000) });
