@@ -406,6 +406,8 @@ fn guide_says_the_launch_backup_waits_for_a_quiet_start() {
         .find(|p| p.title == "Reference/Files, external edits, and backups")
         .unwrap()
         .markdown;
-    assert!(files.contains("once opening has gone quiet") && files.contains("at most three minutes"));
+    assert!(
+        files.contains("once opening has gone quiet") && files.contains("at most three minutes")
+    );
     assert!(!files.contains("about a second after opening"));
 }
