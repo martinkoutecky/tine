@@ -388,6 +388,13 @@ export function SheetTable(props: {
     return s?.col === col ? (s.dir > 0 ? " ▲" : " ▼") : "";
   };
 
+  const tableOnlySortLabel = () => {
+    const current = sort();
+    if (props.rowSource !== "query" || !current) return null;
+    const field = columns()[current.col];
+    return `Table-only sort: ${field === "title" ? "Title" : fieldLabel(field)}`;
+  };
+
   const createSchemaHome = (): SchemaHome | null => {
     if (docNode(props.ownerId)) return { kind: "block", id: props.ownerId, value: "" };
     return props.schemaPage ? { kind: "page", name: props.schemaPage, value: "" } : null;
@@ -856,6 +863,10 @@ export function SheetTable(props: {
       >
         <div class="sheet-cell sheet-header-cell sheet-title-header sheet-sticky-left" onClick={() => sortHeader(0)}>
           Block{sortArrow(0)}
+          <Show when={tableOnlySortLabel()}>
+            {(label) => <button type="button" class="sheet-table-only-sort" title="Clear table-only sort"
+              onClick={(event) => { event.stopPropagation(); setSort(null); }}>{label()} ×</button>}
+          </Show>
           <Show when={filterError()}>
             {(err) => (
               <span class="sheet-filter-error" title={err()}>

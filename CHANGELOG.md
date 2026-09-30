@@ -112,6 +112,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Sheet field rename preserves ordered query aggregates, including repeated keys, average, whole-result count and unrelated configuration (UI-OG-R3A2-AGGREGATE-RENAME).
+- Starting another PDF export supersedes pending preparation; graph changes and window teardown discard stale output (UI-OG-R3A2-PRINT-SUPERSESSION).
+- Guide explains table-only sort clearing, search Retry and block-picker states, aggregate rename preservation, and Print query-limit refusal.
+- **Cold Quick Capture waits for its graph before showing the editor** (UI-OG-CAPTURE-COLD-R3B): graph-backed suggestions and the first captured entry work on `tine --capture` startup; superseded shows cannot focus or retarget the window.
+- **Launch backups wait until startup is idle** (REG-OG-LAUNCH-BACKUP-IDLE-R3B): warm completion signals the background snapshot after a quiet period, with a safety deadline and immediate graph-switch cancellation.
+
+- **Custom journal titles apply before graph activation and live settings refresh** (REG-OG-CUSTOM-JOURNAL-TITLE-R3B): journal-template lookup reads a sync-delivered journal under its configured title. Missing-baseline saves remain guarded.
+- **Unicode regex search agrees across native queries and browser filters** (REG-OG-R1-REGEX-001): matching and highlights use the same bounded Rust engine. `\d`, `\w`, and `\b` recognize Unicode text; inline flags such as `(?i)` work in friendly search, while backreferences, look-around, and programs above 1 MiB are refused.
+- **Caret selection follows code editors with wrapping disabled** (og-R3A, master 587bdc431).
+  The shared caret mirror copies shaping and wrapping styles instead of inventing wrapped rows.
+- **Search failures can be retried in place** (og-R3A, master 371241774).
+  The quick switcher offers Retry, and the block-reference picker distinguishes Searching, a failed
+  read with Retry, and an empty answer while preserving the editor text.
+- **PDF export stops at the Print query limit** (og-R3A, master e04b0e7f).
+  A renderer-declared source, nesting or match limit now stops preparation with its reason instead
+  of opening the print dialog over a placeholder.
+- **A local query-table sort identifies itself as Table-only sort** (og-R3A, master a9c8b2596).
+  Its label clears that local order without changing the saved query sort.
+
 - **Percent-escaped Org file links resolve to their page names** (REG-OG-PAGE-FILENAME-001, og-B-TAIL). Reference extraction now uses the native filename codec through wasm, including escaped punctuation and namespace separators.
 - **Saves keep reference counts and names live without full refetches** (og-B-SIG2): native save and watcher signals update changed count targets and refresh names only when their sources change; ordinary text edits avoid both graph-wide reads.
 - **Published queries use their owning page** (og-B-SIG2): current-page queries, template substitutions, and query sheets share the baked publication context; identical queries on different pages keep separate static cache answers.

@@ -22,8 +22,7 @@ pub(crate) fn open_error_text(error: OpenError, layout_prefix: bool) -> String {
 /// Reset the warm flag for a new graph load and return the new warm generation
 /// (passed to `warm_cache_async`, which only reports done if still current).
 pub(crate) fn begin_warm_cache(slot: &GraphSlot) -> u64 {
-    slot.warm_done.store(false, Ordering::Release);
-    slot.warm_generation.fetch_add(1, Ordering::AcqRel) + 1
+    slot.begin_startup_warm()
 }
 
 /// Resolve the graph root: explicit path, else env var, else the graph named by
@@ -85,16 +84,19 @@ pub(crate) struct CaptureGraphBindingResult {
     pub(crate) binding_generation: u64,
 }
 
-/// Snapshot the graph selected for a Quick Capture show. Calling this from the
-/// native show path revokes the prior capture lease before a focused, persistent
-/// capture WebView can issue a query against an older graph. The frontend calls
-/// it again to learn the generation it must present with IPC.
-pub(crate) fn refresh_capture_graph_binding(state: &AppState) -> Result<u64, String> {
+/// Complete this native show's read lease. A newer show returns None and
+/// retains its own selection; an unbound cold launch errors and stays pending.
+/// Cost O(open windows); the frontend reads the frozen lease, never reselects.
+pub(crate) fn refresh_capture_graph_binding(
+    state: &AppState,
+    show_generation: u64,
+) -> Result<Option<u64>, String> {
     let target = capture_target_for_state(state)?;
     let slot = slot_for_window(state, &target)?;
     let binding_generation = slot.binding_generation;
-    state.bind_capture_graph(target, binding_generation);
-    Ok(binding_generation)
+    Ok(state
+        .complete_capture_show(show_generation, target, binding_generation)
+        .then_some(binding_generation))
 }
 
 /// Return the binding selected by the native capture-show path. This is
@@ -266,7 +268,18 @@ pub(crate) fn load_graph(
     window: tauri::WebviewWindow,
     state: State<'_, AppState>,
 ) -> Result<LoadGraphResult, String> {
-    load_graph_for_label(path, &app, window.label(), &state)
+    let result = load_graph_for_label(path, &app, window.label(), &state)?;
+    #[cfg(desktop)]
+    if let LoadGraphResult::Loaded {
+        binding_generation, ..
+    }
+    | LoadGraphResult::AlreadyCurrent {
+        binding_generation, ..
+    } = &result
+    {
+        crate::complete_pending_capture_show(&app, window.label().to_string(), *binding_generation);
+    }
+    Ok(result)
 }
 
 pub(crate) fn load_graph_for_label(
@@ -568,9 +581,7 @@ pub(crate) fn warm_cache_async(
                     current.binding_generation == slot.binding_generation
                         && current.root_key == slot.root_key
                 });
-                if still_current && slot.warm_generation.load(Ordering::Acquire) == warm_generation
-                {
-                    current.unwrap().warm_done.store(true, Ordering::Release);
+                if still_current && current.unwrap().finish_startup_warm(warm_generation) {
                     let _ = app.emit_to(&window_label, "warm-cache-done", ());
                 }
             },

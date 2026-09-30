@@ -810,4 +810,32 @@ describe("QueryWorkspace", () => {
 
     dispose();
   });
+
+  it.each([
+    { pattern: "(?i)abc", accepted: true },
+    { pattern: "(a)\\1", accepted: false },
+    { pattern: "a{1000000}", accepted: false },
+  ])("OG-R1 friendly regex field uses Rust validation: $pattern", async ({ pattern, accepted }) => {
+    const route: QueryRoute = { kind: "query", id: "regex-fields", sourceKind: "search", source: "", presentation: "search" };
+    const router = routerMock(route);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={router} deps={workspaceDeps()} />, root);
+    try {
+      (root.querySelector(".query-advanced-toggle") as HTMLButtonElement).click();
+      await Promise.resolve();
+      const field = root.querySelectorAll<HTMLInputElement>(".query-friendly-fields input")[4];
+      field.value = pattern;
+      field.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      const apply = [...root.querySelectorAll<HTMLButtonElement>(".query-advanced-actions button")]
+        .find((button) => button.textContent === "Apply")!;
+      apply.click();
+      if (accepted) {
+        expect(router.updateActiveQuery).toHaveBeenCalledWith({ source: `/${pattern}/`, sourceKind: "search" });
+      } else {
+        expect(root.querySelector(".query-advanced-error")?.textContent).toBeTruthy();
+        expect(router.updateActiveQuery).not.toHaveBeenCalled();
+      }
+    } finally { dispose(); }
+  });
 });

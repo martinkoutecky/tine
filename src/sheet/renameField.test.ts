@@ -1,3 +1,5 @@
+import { sheetConfig } from "./config";
+import { AGGREGATE_FNS, isAggregateFn } from "./aggregate";
 import { initParser } from "../render/parse";
 import { facetsOf } from "../render/facets";
 beforeAll(initParser);
@@ -102,11 +104,52 @@ describe("Sheet field rename planner", () => {
       .toEqual({ ok: true, value: " severity=number ; bad segment ; OCC = number ;x=enum:a,b" });
   });
 
-  it("rewrites exact group aggregate identities and rejects malformed or ambiguous aggregate config", () => {
+  it("rewrites exact group aggregate identities and leaves every other segment where it was", () => {
     expect(rewriteAggregateValue("prop:severity=max; prop:occurrence = sum ;formula:occurrence=count", "occurrence", "OCC"))
       .toEqual({ ok: true, value: "prop:severity=max; prop:OCC = sum ;formula:occurrence=count" });
-    expect(rewriteAggregateValue("prop:occurrence=sum;broken", "occurrence", "OCC")).toMatchObject({ ok: false });
-    expect(rewriteAggregateValue("prop:x=sum;PROP:X=max", "occurrence", "OCC")).toMatchObject({ ok: false });
+    // An unrecognized segment that has nothing to do with this rename is
+    // preserved verbatim rather than failing the whole rename (P5A). Refusing
+    // it made a query configuration un-renameable for no gain.
+    expect(rewriteAggregateValue("prop:occurrence=sum;broken", "occurrence", "OCC"))
+      .toEqual({ ok: true, value: "prop:OCC=sum;broken" });
+    // Two keys that collide with each other but not with the renamed field are
+    // somebody else's problem: this rename touches neither.
+    expect(rewriteAggregateValue("prop:x=sum;PROP:X=max", "occurrence", "OCC"))
+      .toEqual({ ok: true, value: "prop:x=sum;PROP:X=max" });
+  });
+
+  /** **The preservation debt** (P5A). `tine.col-aggregates` is shared ground:
+   *  the query reader spells the whole-result count as a bare `count`, allows
+   *  `avg`, and treats its entries as an ordered list with repeats; the sheet
+   *  footer has its own seventeen-name vocabulary. The rename helper has to
+   *  cross that boundary without either refusing ordinary query values or
+   *  claiming the sheet can execute a function it has no implementation for. */
+  it("carries a query aggregate configuration across a sheet field rename", () => {
+    // A bare `count` is the whole-result count (X3), not a malformed segment;
+    // and `cost` is a BARE query key, outside the sheet's `prop:` rename
+    // ownership, so renaming the sheet field `cost` must not touch it.
+    expect(rewriteAggregateValue("count;cost=sum", "cost", "price"))
+      .toEqual({ ok: true, value: "count;cost=sum" });
+    // Repeated keys are retained, in order, and both are renamed. `avg` is
+    // recognized without becoming a sheet AggregateFn.
+    expect(rewriteAggregateValue("count;prop:cost=sum;prop:cost=avg", "cost", "price"))
+      .toEqual({ ok: true, value: "count;prop:price=sum;prop:price=avg" });
+    // Unknown unrelated segments survive untouched, wherever they sit.
+    expect(rewriteAggregateValue("weird stuff;prop:cost=avg;also weird", "cost", "price"))
+      .toEqual({ ok: true, value: "weird stuff;prop:price=avg;also weird" });
+    // The refusals that remain: an unparseable segment that names the field
+    // being renamed, and a key that differs only by case.
+    expect(rewriteAggregateValue("prop:cost=sum;prop:cost", "cost", "price"))
+      .toMatchObject({ ok: false });
+    expect(rewriteAggregateValue("prop:Cost=sum", "cost", "price")).toMatchObject({ ok: false });
+  });
+
+  it("does not widen the sheet aggregate vocabulary to make avg renameable", () => {
+    // N6(i): `cost=avg` must not become a "valid" sheet aggregate — it has no
+    // arm in `applyAggregate` and no entry in the publisher's function list.
+    expect(isAggregateFn("avg")).toBe(false);
+    expect(AGGREGATE_FNS).not.toContain("avg");
+    expect(sheetConfig([["tine.col-aggregates", "prop:cost=avg"]]).colAggregates.size).toBe(0);
   });
 
   it("builds one complete owner/row migration while preserving literals, formula refs, and malformed schema segments", () => {
@@ -266,4 +309,12 @@ it.each([40, 6000])("field rename handles a %i-term imported formula without thr
   const result = planSheetFieldRename({ rowSource: "children", ownerWritable: true, schemaHome: "block", owner, rows: [source("row", "Row\nqty:: 2")], oldField: "prop:qty", newName: "amount" });
   if (terms === 40) expect(result.ok).toBe(true);
   else expect(result).toMatchObject({ ok: false, error: expect.stringContaining("depth") });
+});
+
+it("I-12: planSheetFieldRename preserves ordered query aggregates through the shared lossless answerer", () => {
+  const result = planSheetFieldRename({ rowSource: "children", ownerWritable: true, schemaHome: "block",
+    owner: source("owner", "Table\ntine.fields:: cost=number\ntine.col-aggregates:: count;prop:cost=sum;prop:cost=avg;unrelated"),
+    rows: [source("row", "Row\ncost:: 2")], oldField: "prop:cost", newName: "price" });
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.plan.ownerRaw).toContain("tine.col-aggregates:: count;prop:price=sum;prop:price=avg;unrelated");
 });

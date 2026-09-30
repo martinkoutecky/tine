@@ -316,38 +316,109 @@ function replaceTrimmedValue(original: string, value: string): string {
   return original.slice(0, start) + value + original.slice(end);
 }
 
+interface AggregateSegmentShape {
+  lead: string;
+  key: string;
+  mid: string;
+  fn: string;
+  trail: string;
+}
+
+/** The query grammar's own extra function word. Never widens `AggregateFn`. */
+const QUERY_ONLY_AGGREGATE_FNS = new Set(["avg"]);
+
+function aggregateSegmentShape(segment: string): AggregateSegmentShape | null {
+  const match = /^(\s*)([^=;\s][^=;]*?)(\s*=\s*)([A-Za-z-]+)(\s*)$/.exec(segment);
+  if (!match) return null;
+  const fn = match[4].toLowerCase();
+  if (!isAggregateFn(fn) && !QUERY_ONLY_AGGREGATE_FNS.has(fn)) return null;
+  return { lead: match[1], key: match[2], mid: match[3], fn: match[4], trail: match[5] };
+}
+
+/** Whether an UNRECOGNIZED segment is nevertheless about the field being
+ *  renamed. Preserving such a segment verbatim would leave a dangling reference
+ *  to a name that no longer exists, and this helper cannot tell where the key
+ *  ends inside it — so the rename refuses instead of guessing. */
+function mentionsRenamedField(segment: string, oldName: string): boolean {
+  return segment.toLowerCase().includes(`prop:${oldName.toLowerCase()}`);
+}
+
+/** **Rename one field inside `tine.col-aggregates`, losing nothing else** (P5A).
+ *
+ *  What changed from the first version, and why:
+ *
+ *   * a segment with no `=` used to fail the whole rename. A bare `count` is
+ *     the query grammar's whole-result count, so a perfectly ordinary query
+ *     configuration made renaming a sheet field impossible;
+ *   * a repeated key used to fail. A query's aggregates are an ordered LIST —
+ *     `prop:cost=sum;prop:cost=avg` asks for two footers on one column — so
+ *     duplicates are retained, in order, and both get renamed;
+ *   * `key=avg` used to fail, because `avg` is not in the sheet vocabulary. It
+ *     is recognized here without being added to that vocabulary;
+ *   * unrecognized segments used to fail. They are preserved verbatim unless
+ *     they mention the field being renamed, which is the one case where
+ *     preserving them would leave a dangling reference.
+ *
+ *  The refusals that REMAIN are the ones that make a rename genuinely
+ *  ambiguous: an unparseable segment that names the old field, and a key that
+ *  differs from `prop:<oldName>` only by case.
+ *
+ *  Only an EXACT `prop:<oldName>` key is renamed — bare query keys and
+ *  `formula:` keys are outside the sheet's rename ownership and are left alone. */
 export function rewriteAggregateValue(
   value: string,
   oldName: string,
   newName: string,
 ): { ok: true; value: string } | { ok: false; error: string } {
-  const segments = value.split(";");
-  const seen = new Set<string>();
-  let changed = false;
-  for (let i = 0; i < segments.length; i += 1) {
-    const segment = segments[i];
+  const before = value.split(";");
+  const after = [...before];
+  const oldKey = `prop:${oldName}`;
+  const newKey = `prop:${newName}`;
+  for (let i = 0; i < before.length; i += 1) {
+    const segment = before[i];
     if (!segment.trim()) continue;
-    const match = /^(\s*)([^=;\s][^=;]*?)(\s*=\s*)([a-z-]+)(\s*)$/.exec(segment);
-    if (!match || !isAggregateFn(match[4].toLowerCase())) {
-      return { ok: false, error: "The column aggregate configuration is malformed or ambiguous." };
+    const shape = aggregateSegmentShape(segment);
+    if (!shape) {
+      if (mentionsRenamedField(segment, oldName)) {
+        return { ok: false, error: "The column aggregate configuration is malformed or ambiguous." };
+      }
+      continue;
     }
-    const key = match[2].trim();
-    const identity = key.toLowerCase();
-    if (seen.has(identity)) return { ok: false, error: "The column aggregate configuration contains duplicate keys." };
-    seen.add(identity);
-    if (key === `prop:${oldName}`) {
-      const keyStart = segment.indexOf(match[2]) + match[2].indexOf(key);
-      segments[i] = segment.slice(0, keyStart) + `prop:${newName}` + segment.slice(keyStart + key.length);
-      changed = true;
-    } else if (identity === `prop:${oldName}`.toLowerCase()) {
+    const key = shape.key.trim();
+    if (key === oldKey) {
+      const keyStart = segment.indexOf(shape.key) + shape.key.indexOf(key);
+      after[i] = segment.slice(0, keyStart) + newKey + segment.slice(keyStart + key.length);
+    } else if (key.toLowerCase() === oldKey.toLowerCase()) {
       return { ok: false, error: "The column aggregate configuration has ambiguous field casing." };
     }
   }
-  const candidate = changed ? segments.join(";") : value;
-  const before = sheetConfig([["tine.col-aggregates", value]]).colAggregates;
-  const after = sheetConfig([["tine.col-aggregates", candidate]]).colAggregates;
-  if (before.size !== after.size) return { ok: false, error: "The column aggregate configuration could not be preserved." };
-  return { ok: true, value: candidate };
+  // **The preservation proof is an ORDERED SEGMENT COMPARISON.** It used to be
+  // `sheetConfig(...).colAggregates.size`, which is a `Map` keyed on the
+  // aggregate key — the very shape that collapses repeated keys and drops bare
+  // and unrecognized segments. Comparing its size therefore proved nothing
+  // about exactly the segments this rename touches. Every segment must survive
+  // in place, byte for byte, with one permitted difference: the key that was
+  // exactly `prop:<oldName>` is now exactly `prop:<newName>`.
+  if (before.length !== after.length) {
+    return { ok: false, error: "The column aggregate configuration could not be preserved." };
+  }
+  for (let i = 0; i < before.length; i += 1) {
+    if (before[i] === after[i]) continue;
+    const b = aggregateSegmentShape(before[i]);
+    const a = aggregateSegmentShape(after[i]);
+    const intended = b !== null
+      && a !== null
+      && b.lead === a.lead
+      && b.mid === a.mid
+      && b.fn === a.fn
+      && b.trail === a.trail
+      && b.key.trim() === oldKey
+      && a.key.trim() === newKey;
+    if (!intended) {
+      return { ok: false, error: "The column aggregate configuration could not be preserved." };
+    }
+  }
+  return { ok: true, value: after.join(";") };
 }
 
 function formulaEntriesFromOccurrences(

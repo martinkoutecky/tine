@@ -7,9 +7,10 @@ const hit = (q: string, text: string) => matcherMatches(parseSearchQuery(q), sea
 describe("og-G2 f02af3ef: shared Unicode regex subset (master test)", () => {
   it("uses the shared Unicode regex subset", () => {
     expect(hit("/\\p{L}+/", "café")).toBe(true);
+    expect(hit("/(?i)abc/", "ABC")).toBe(true);
     expect(hit("/\\p{L}+/", "123")).toBe(false);
     expect(hit("/[(?]+/", "(?")).toBe(true);
-    for (const query of ["/foo(?=bar)/", "/(a)\\1/", "/(?i)abc/"]) expect(parseSearchQuery(query).kind, query).toBe("invalid");
+    for (const query of ["/foo(?=bar)/", "/(a)\\1/"]) expect(parseSearchQuery(query).kind, query).toBe("invalid");
   });
   it("master accepts class escapes \\d \\w \\s \\b as regex", () => {
     for (const query of ["/\\d{3}/", "/\\w+/", "/a\\sb/", "/\\bfoo/"]) expect(parseSearchQuery(query).kind, query).toBe("regex");

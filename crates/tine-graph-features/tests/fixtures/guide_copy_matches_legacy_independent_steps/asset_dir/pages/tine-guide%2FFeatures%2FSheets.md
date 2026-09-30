@@ -59,6 +59,7 @@ icon:: ▦
 - ### Create one yourself — table
 	- 1. On a block, type `/Table` and pick **Table** (or right-click an existing outline and choose **Show children as → Table**).
 	- 2. Use the ghost **+ Add row** and **+ Add column** buttons to build it out. Each row is a child bullet; each column is a property such as `owner::` or `estimate::`, edited right in the cells.
+	- A field rename preserves query aggregate configuration too: bare count, average, repeated aggregate entries, and unrelated segments stay in their original order.
 	- 3. Right-click a children-backed column header or double-click its name to rename the field and its dependent filter, group, aggregate, and formula references together. Ambiguous or colliding names are refused.
 	- Drag the narrow handle at a Table column's right edge to resize it. Double-click the handle to restore its automatic width. Tine stores widths by column identity in `tine.table-widths::`, so reordering columns keeps their sizes.
 	- The **+ Add row** label stays at the visible edge when a wide table scrolls sideways. **Copy / export…** can produce HTML from the same table content.
@@ -92,6 +93,7 @@ icon:: ▦
 	- 1. Type `/Query` and create a query for the blocks you want, such as tasks tagged `#sheets-demo`.
 	- 2. Keep the query in one block, then run `/Table` or `/Board` on that same block to view the results.
 	- 3. For a board, use the **Group by** dropdown (see below) to pick the column axis.
+	- In a query table, a sort that cannot be saved with the query is labeled **Table-only sort**. Click that label to clear that local order; the saved query order stays as it was.
 	- 4. What you should see: query results render as a live sheet view without copying the source blocks.
 - ### Create one yourself — board
 	- 1. On a block, type `/Board` and pick **Board** (`/Kanban` finds it too).

@@ -5087,6 +5087,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sqlparser",
+ "tine-search",
  "unicode-normalization",
  "unicode-segmentation",
  "uuid",
@@ -5113,6 +5114,16 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tine-search"
+version = "0.6.5"
+dependencies = [
+ "regex",
+ "serde_json",
+ "unicode-normalization",
+ "unicode-segmentation",
 ]
 
 [[package]]

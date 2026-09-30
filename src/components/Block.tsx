@@ -1,5 +1,4 @@
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
-import { Portal } from "solid-js/web";
 import { autocompleteFacets, backend } from "../backend";
 import { reportUiFailure } from "../uiFailure";
 import { clearClipboardSlot, normalize, peekClipboardSlot } from "../clipboard";
@@ -97,6 +96,7 @@ import { seedAssetBlob } from "../assetCache";
 import { assetEditorIsCurrent, captureAssetEditor, importCaptureToOrigin, reportStaleAsset, type AssetEditorToken } from "../assetLanding";
 import { captureBinding, stillBound } from "../binding";
 import { graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
+import { EditorAutocomplete } from "./EditorAutocomplete";
 import { blockRefCount } from "../blockRefCounts";
 import { parserReady } from "../render/parse";
 import { BlockReferences } from "./BlockReferences";
@@ -668,6 +668,8 @@ export function Editor(props: { id: string }): JSX.Element {
 
   const [ac, setAc] = createSignal<Trigger | null>(null);
   const [acItems, setAcItems] = createSignal<AcItem[]>([]);
+  const [acBlockState, setAcBlockState] = createSignal<"pending" | "error" | "ready" | null>(null);
+  const acVisible = () => !!ac() && (acItems().length > 0 || acBlockState() !== null);
   const [acIndex, setAcIndex] = createSignal(0);
   // GH #412/#413: inside a COMPLETE whole-block code wrapper the editor shows
   // only the payload between the wrapper lines (fences stay out of the editing
@@ -703,14 +705,6 @@ export function Editor(props: { id: string }): JSX.Element {
   const [propertyValueKey, setPropertyValueKey] = createSignal<string | null>(null);
   let propertyFacets: [string, string[]][] = [];
   let acListRef: HTMLDivElement | undefined;
-  // Keep the highlighted autocomplete item scrolled into view during arrow nav.
-  createEffect(() => {
-    acIndex();
-    queueMicrotask(() =>
-      acListRef?.querySelector(".ac-item.active")?.scrollIntoView({ block: "nearest" })
-    );
-  });
-
   // The autocomplete popup is rendered through a Portal (fixed-positioned), so a
   // clipping ancestor — the right sidebar's `overflow:auto`, a modal — can't cut
   // it off. We anchor it to the textarea's viewport rect and recompute while it's
@@ -723,7 +717,7 @@ export function Editor(props: { id: string }): JSX.Element {
     }
   };
   createEffect(() => {
-    if (ac() && acItems().length > 0) updateAcRect(); // re-anchor on open / each keystroke
+    if (acVisible()) updateAcRect(); // re-anchor on open / each keystroke
   });
   // Flip the popup above the line when there isn't room below (near the viewport
   // bottom), so it stays fully visible — matches OG's caret-aware placement.
@@ -749,6 +743,7 @@ export function Editor(props: { id: string }): JSX.Element {
 
   const closeAc = () => {
     setAc(null);
+    setAcBlockState(null);
     setAcItems([]);
     setAcIndex(0);
     setPropertyValueKey(null);
@@ -783,7 +778,7 @@ export function Editor(props: { id: string }): JSX.Element {
   // Page/block/tag/command/code completion is a real transient above its editor
   // and, on mobile, above the drawer. One Escape peels only this popup.
   createEffect(() => {
-    if (!ac() || !acItems().length) return;
+    if (!acVisible()) return;
     const unregister = registerTransientLayer({
       id: autocompleteLayerId,
       root: () => acListRef ?? null,
@@ -802,8 +797,9 @@ export function Editor(props: { id: string }): JSX.Element {
       return;
     }
     setAc(t);
+    setAcBlockState(null);
     setAcIndex(0);
-    const requestOwner = latestOwner(autocompleteScope, "suggestions", graphOwner(() => sameAcTrigger(ac(), t)));
+    const requestOwner = latestOwner(autocompleteScope, "suggestions", graphOwner(() => editorMounted && sameAcTrigger(ac(), t)));
     if (t.kind === "property-name") {
       let facets: [string, string[]][];
       try {
@@ -905,8 +901,20 @@ export function Editor(props: { id: string }): JSX.Element {
     if (t.kind === "block") {
       // `((` searches blocks by page; bare `((` stays hidden. Selection inserts
       // the target's durable external ID (see selectAc).
-      const result = await readOwned(requestOwner, backend().search(t.query, 20, "block-picker"));
+      setAcItems([]);
+      setAcBlockState("pending");
+      let result: import("../owned").Owned<import("../types").RefGroup[]>;
+      try {
+        result = await readOwned(requestOwner, backend().search(t.query, 20, "block-picker"));
+      } catch (error) {
+        if (requestOwner()) {
+          dbg(`block-picker: ${String(error)}`);
+          setAcBlockState("error");
+        }
+        return;
+      }
       if (result.kind === "stale") return;
+      setAcBlockState("ready");
       const items: AcItem[] = [];
       for (const g of result.value) {
         for (const b of g.blocks) {
@@ -1892,6 +1900,8 @@ export function Editor(props: { id: string }): JSX.Element {
     const previous = ac();
     setAc(next);
     setAcIndex(0);
+    setAcBlockState(next.kind === "block" ? "pending" : null);
+    if (next.kind === "block") setAcItems([]);
     if (
       !previous ||
       previous.kind !== next.kind ||
@@ -2404,6 +2414,9 @@ export function Editor(props: { id: string }): JSX.Element {
     }
     if (pasteRaw) clearPasteRaw();
 
+    if (acVisible() && e.key === "Escape") {
+      e.preventDefault(); closeAc(); return;
+    }
     // Autocomplete popup takes priority for navigation/selection keys.
     if (ac() && acItems().length) {
       const n = acItems().length;
@@ -3144,31 +3157,10 @@ export function Editor(props: { id: string }): JSX.Element {
           </Show>
         </div>
       </Show>
-      <Show when={ac() && acItems().length > 0 && acRect()}>
-        {/* Portaled to <body> + position:fixed so the right sidebar's overflow
-            (or any clipping ancestor) can't cut the dropdown off.
-            data-lenis-prevent: with smooth scrolling on, scroll it natively. */}
-        <Portal>
-          <div class="autocomplete" ref={acListRef} data-lenis-prevent style={acStyle()}>
-            <For each={acItems()}>
-              {(item, i) => (
-                <div
-                  class="ac-item"
-                  classList={{ active: i() === acIndex() }}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    selectAc(item);
-                  }}
-                >
-                  <span class="ac-label">{item.label}</span>
-                  <Show when={item.sub}>
-                    <span class="ac-sub">{item.sub}</span>
-                  </Show>
-                </div>
-              )}
-            </For>
-          </div>
-        </Portal>
+      <Show when={acVisible() && acRect()}>
+        <EditorAutocomplete items={acItems()} index={acIndex()} style={acStyle()}
+          listRef={(element) => { acListRef = element; }} select={selectAc}
+          blockState={acBlockState()} retry={() => void updateAutocomplete()} />
       </Show>
     </div>
   );

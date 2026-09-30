@@ -7,12 +7,14 @@ icon:: 🔍
   - 2. Too many hits? Narrow with the **Search syntax** forms listed in the switcher footer: `-draft` excludes a word, `OR` offers alternatives, quotes pin an exact phrase, `/…/` is a case-sensitive regular expression.
   - 3. **Enter** opens the highlighted result; **Shift+Enter** opens it in the right sidebar beside your current page; **Ctrl/Cmd+Enter** or a middle-click opens it in a background tab without closing the search; **Alt+Enter** opens it in another pane.
   - 4. Sure it's on the open page? **Ctrl+Shift+K** searches only that page's blocks, and **Ctrl+F** is the slim in-page find bar with match counts; it expands folded branches to show a match.
+  - If the switcher cannot read results, choose **Retry** to run the same search again without clearing what you typed.
   - What you should see: Tine jumps to the page or block. Exact title matches lead the list; over time Tine may prefer a result you deliberately picked before, but only among equally strong matches — Settings → **Editor** → Advanced → **Learn Ctrl+K choices** disables that, and **Reset ranking** clears it.
 - ## Follow the trail: links, tags, and references
   - 1. Click any `[[link]]` or `#tag` to open its page. A link to a page that does not exist yet isn't broken — opening it gives you an empty page that is saved once you type in it. Linking `[[foo]]` and `[[Foo]]` always reaches one page. While editing, **Ctrl+O** follows the link at the caret and **Ctrl+Shift+O** opens it in the right sidebar.
   - 2. On the page you reach, scroll to **Linked References**: every block that points here, grouped by source page, with a filter (the funnel button) to narrow to blocks that also mention something else. Open **Unlinked References** to catch plain-text mentions you never linked.
   - 3. Need several references outside Tine? Use the copy/export button on **Linked References** or **Unlinked References**. Every visible entry starts selected; uncheck a subset, then use the ordinary Text / OPML / HTML export choices. Linked References honors the text and chip filters already applied.
   - 4. Found a line worth quoting in your own note? Edit the note, type `((`, and search the line's text to insert a block reference — a live copy that updates whenever the original changes.
+  - The `((` picker says **Searching blocks…** while reading, offers **Retry** if the read fails, and says **No matched blocks** only after a successful empty search. Retry keeps your text; **Escape** closes the picker.
   - What you should see: the reference renders as link-styled text with the source's current words, and the source block gains a small reference-count badge that lists its referrers.
 - ## Keep what matters close: Favorites
   - 1. Favorite a page from its title: the star beside the title (or **Page actions** → **Add to favorites**). It appears under **Favorites** in the left sidebar and remains in Logseq's ordinary flat `config.edn :favorites` list.

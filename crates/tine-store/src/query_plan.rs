@@ -686,12 +686,11 @@ fn match_text(plan: &QueryPlan, pred: &TextPredicate, original: &str) -> Option<
         }
         TextMatchMode::Regex => {
             let re = plan.regexes.get(&pred.clause_id)?;
-            let spans = re
-                .find_iter(original)
-                .take(MAX_EVIDENCE_SPANS)
-                .map(|m| MatchSpan {
-                    start: original[..m.start()].encode_utf16().count(),
-                    end: original[..m.end()].encode_utf16().count(),
+            let spans = tine_core::search_query::regex_spans(re, original, MAX_EVIDENCE_SPANS)
+                .into_iter()
+                .map(|span| MatchSpan {
+                    start: span.start,
+                    end: span.end,
                 })
                 .collect::<Vec<_>>();
             (!spans.is_empty()).then_some(MatchEvidence {

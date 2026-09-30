@@ -87,6 +87,14 @@ fn report_launch_failure(app: &tauri::AppHandle, slot: &GraphSlot, outcome: &Bac
 #[cfg(test)]
 const ASSET_RESTORE_RECOVERY_DIR: &str = ".tine-restore-recovery";
 
+// Master GH #550 policy, driven by the owning warm/cancellation signals.
+const LAUNCH_BACKUP_QUIET: std::time::Duration = std::time::Duration::from_secs(5);
+const LAUNCH_BACKUP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(180);
+
+fn wait_launch_backup(slot: &GraphSlot) -> bool {
+    slot.wait_startup_idle(LAUNCH_BACKUP_QUIET, LAUNCH_BACKUP_DEADLINE)
+}
+
 pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
     let Ok(source) = BackupSource::from_store(&slot.store, &slot.root_key) else {
         report_launch_failure(
@@ -97,12 +105,7 @@ pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
         return;
     };
     std::thread::spawn(move || {
-        // Defer the launch snapshot ~1s so its whole-graph file copy doesn't
-        // contend for disk I/O with first-journal paint and the warm-cache parse
-        // at open (felt on slow/NFS disks or a throttled laptop). Edits may
-        // occur during this delay; this is a later snapshot, not a pre-edit one.
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-        if slot.background_cancelled.load(Ordering::Acquire) {
+        if !wait_launch_backup(&slot) {
             return;
         }
         // Bound whole-graph copying process-wide. Revoked bindings check again
@@ -1343,5 +1346,75 @@ mod fail_read_tests {
         ))
         .unwrap_err();
         assert_eq!(error, "backup-failed:pages:PermissionDenied");
+    }
+}
+
+#[cfg(test)]
+mod launch_schedule_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn launch_backup_does_not_copy_while_startup_is_still_running() {
+        let root = tempfile::tempdir().unwrap();
+        let slot = Arc::new(GraphSlot::new(
+            Store::open(root.path(), Default::default()).unwrap().0,
+            root.path().to_path_buf(),
+        ));
+        let (sent, received) = std::sync::mpsc::channel();
+        let worker_slot = slot.clone();
+        let worker = std::thread::spawn(move || {
+            sent.send(wait_launch_backup(&worker_slot)).unwrap();
+        });
+        let early = received.recv_timeout(Duration::from_millis(1200));
+        // End the worker after observing the result, even on the old schedule.
+        slot.cancel_background();
+        worker.join().unwrap();
+        assert!(early.is_err(), "I-20: launch backup must wait for the owning warm completion signal; exemplar src-tauri/src/backup.rs");
+    }
+}
+
+#[cfg(test)]
+mod idle_signal_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn warm_completion_quiet_deadline_and_revocation_own_the_backup_wait() {
+        let root = tempfile::tempdir().unwrap();
+        let slot = Arc::new(GraphSlot::new(
+            Store::open(root.path(), Default::default()).unwrap().0,
+            root.path().to_path_buf(),
+        ));
+        let old = slot.begin_startup_warm();
+        let current = slot.begin_startup_warm();
+        slot.finish_startup_warm(old);
+        assert!(
+            !slot.warm_done.load(Ordering::Acquire),
+            "an old warm cannot release the current backup"
+        );
+        let (sent, received) = std::sync::mpsc::channel();
+        let waiting = slot.clone();
+        let worker = std::thread::spawn(move || {
+            sent.send(waiting.wait_startup_idle(Duration::from_millis(80), Duration::from_secs(5)))
+                .unwrap();
+        });
+        assert!(received.recv_timeout(Duration::from_millis(20)).is_err());
+        slot.finish_startup_warm(current);
+        assert!(
+            received.recv_timeout(Duration::from_millis(20)).is_err(),
+            "completion must retain a quiet turn"
+        );
+        assert!(received.recv_timeout(Duration::from_secs(2)).unwrap());
+        worker.join().unwrap();
+        // A missed warm signal still preserves the safety net at the deadline.
+        slot.begin_startup_warm();
+        assert!(slot.wait_startup_idle(Duration::from_secs(5), Duration::from_millis(1)));
+        let waiting = slot.clone();
+        let worker = std::thread::spawn(move || {
+            waiting.wait_startup_idle(Duration::from_secs(5), Duration::from_secs(180))
+        });
+        slot.cancel_background();
+        assert!(!worker.join().unwrap());
     }
 }

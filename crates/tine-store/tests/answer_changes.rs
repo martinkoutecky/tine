@@ -26,6 +26,22 @@ fn save(store: &Store, raw: &str) -> Value {
     };
     serde_json::to_value(change.expect("changed save publishes")).unwrap()
 }
+/// External edits reach the store through its file watcher as well as through
+/// `scan_refresh`; under load the watcher may publish part of a bulk edit first.
+/// Each publication carries final counts for the targets it changed, so read
+/// publications until `target` reaches `count` and report whether any of them
+/// changed the inventory.
+fn settled(sub: &tine_store::Subscription, target: &str, count: u64) -> (bool, Value) {
+    let mut inventory = false;
+    for _ in 0..64 {
+        let signal = serde_json::to_value(sub.recv().unwrap()).unwrap();
+        inventory |= signal["inventoryChanged"] == true;
+        if signal["blockRefCounts"][target] == json!(count) {
+            return (inventory, signal);
+        }
+    }
+    panic!("I-12: {target} never reached its final count {count}");
+}
 fn counts(signal: &Value, expected: Value) {
     assert_eq!(signal["blockRefCounts"], expected, "I-12: native publication supplies final changed-target counts; exemplar store/answer_changes.rs");
 }
@@ -113,8 +129,8 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
     )
     .unwrap();
     store.scan_refresh().unwrap();
-    let single = serde_json::to_value(sub.recv().unwrap()).unwrap();
-    assert_eq!(single["inventoryChanged"], true);
+    let (inventory, single) = settled(&sub, ONE, 1);
+    assert!(inventory);
     counts(&single, json!({ONE:1}));
     for i in 0..40 {
         fs::write(
@@ -124,8 +140,8 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
         .unwrap();
     }
     store.scan_refresh().unwrap();
-    let bulk = serde_json::to_value(sub.recv().unwrap()).unwrap();
-    assert_eq!(bulk["inventoryChanged"], true);
+    let (inventory, bulk) = settled(&sub, TWO, 40);
+    assert!(inventory);
     counts(&bulk, json!({TWO:40}));
     for i in 0..40 {
         fs::write(
@@ -135,7 +151,7 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
         .unwrap();
     }
     store.scan_refresh().unwrap();
-    let removed = serde_json::to_value(sub.recv().unwrap()).unwrap();
+    let (_, removed) = settled(&sub, TWO, 0);
     assert_eq!(removed["inventoryChanged"], false);
     counts(&removed, json!({TWO:0}));
     store.close();
