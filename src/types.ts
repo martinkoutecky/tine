@@ -52,14 +52,17 @@ export interface QueryExportBatch {
 }
 
 /** One reviewed query publication over the same text and host properties sent
- * to `parseQuery`. Publication writes a create-only leaf under a user-picked
- * external folder and refuses a changed fingerprint. */
+ * to `parseQuery`. Publication writes a graph query leaf, preserves replaced
+ * output in recovery and refuses a changed source fingerprint. */
 export interface QueryPublicationRequest {
   argument: string;
   dialect: import("./editor/queryIr").QueryTextDialect;
   properties: [string, string][];
   currentPage?: string | null;
   hostBlockId?: string | null;
+  folder?: string | null;
+  replace?: boolean;
+  assetBudgetBytes?: number | null;
   name: string;
 }
 
@@ -68,6 +71,9 @@ export interface QueryPublicationPlan {
   rowCount: number;
   pages: { name: string; path: string; journal: boolean }[];
   folder: string;
+  path: string;
+  exists: boolean;
+  suggestedFolder: string | null;
   fingerprint: string;
 }
 
@@ -75,6 +81,8 @@ export interface PublicationReceipt {
   path: string;
   pages: number;
   files: number;
+  retired: string | null;
+  warnings: string[];
 }
 
 /** On-disk page format: markdown (default) or org. */

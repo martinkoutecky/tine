@@ -1,7 +1,8 @@
 //! Reviewed query and live publication. Selection and query answers come from
-//! one `WholeGraph` view. The caller chooses an external parent; `Store`
-//! stages, fsyncs and installs one create-only leaf. The module never writes
-//! source pages, knows the storage layout, or runs a second query evaluator.
+//! one `WholeGraph` view. Query output goes to Store-owned published-queries
+//! leaves; live/CLI exports remain create-only outside the graph. Store stages,
+//! syncs, preserves replaced output and installs without clobbering a winner.
+//! This module never writes source pages or runs a second query evaluator.
 //!
 //! `plan_query` costs O(P + selected page bytes + query evaluation) and returns
 //! a fingerprint over the reviewed membership and held source documents. `publish_query`
@@ -10,7 +11,8 @@
 //! and exports public pages, or all pages on explicit request. Query exports
 //! suppress nested-query counts of outside results. Observable
 //! failures are parser/selection refusal, output budget, stale plan and I/O;
-//! callers show them and let the user pick a fresh destination.
+//! callers show them; an asset-budget refusal offers Settings. Missing assets
+//! are visible warnings, and replacement always reports retained output.
 
 use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
 use crate::render_query_cache::substitute_current_page;
@@ -49,7 +51,7 @@ fn export_time() -> io::Result<String> {
 }
 
 /// The same raw argument, dialect and host properties passed to `query_parse`.
-/// A name chooses a portable leaf under the user-selected parent; a current
+/// A name chooses a portable query leaf in the graph; a current
 /// page binds advanced inputs and the exported query's home run.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,6 +65,15 @@ pub struct QueryExportRequest {
     pub name: String,
     #[serde(default)]
     pub host_block_id: Option<String>,
+    /// Explicit reviewed output name, otherwise derived from name.
+    #[serde(default)]
+    pub folder: Option<String>,
+    /// Preserve and replace the current leaf rather than refusing a collision.
+    #[serde(default)]
+    pub replace: bool,
+    /// Device-local cumulative asset budget; None uses 1 GiB.
+    #[serde(default)]
+    pub asset_budget_bytes: Option<u64>,
 }
 
 /// One complete owner page in a reviewed query selection.
@@ -83,6 +94,9 @@ pub struct QueryExportPlan {
     pub row_count: usize,
     pub pages: Vec<ExportPage>,
     pub folder: String,
+    pub path: String,
+    pub exists: bool,
+    pub suggested_folder: Option<String>,
     pub fingerprint: String,
 }
 
@@ -93,7 +107,25 @@ pub struct ExportReceipt {
     pub path: String,
     pub pages: usize,
     pub files: u64,
+    pub retired: Option<String>,
+    pub warnings: Vec<String>,
 }
+
+/// Default cumulative budget for a query export's copied assets, in bytes.
+pub const QUERY_EXPORT_DEFAULT_ASSET_BUDGET_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// Typed refusal: assets would exceed the device limit. No output was committed.
+#[derive(Debug)]
+pub struct AssetBudgetExceeded {
+    pub limit: u64,
+    pub len: u64,
+}
+impl std::fmt::Display for AssetBudgetExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Export stopped: copied assets exceed the {} MiB limit (next asset: {} bytes). Raise \"Query export size limit\" in Settings → Graph, or remove the asset from the exported pages.", self.limit as f64 / 1048576.0, self.len)
+    }
+}
+impl std::error::Error for AssetBudgetExceeded {}
 
 fn refusal(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message.into())
@@ -178,7 +210,7 @@ struct Planned {
 }
 
 fn resolve_plan(
-    _store: &Store,
+    store: &Store,
     graph: &WholeGraph,
     request: &QueryExportRequest,
 ) -> io::Result<Planned> {
@@ -270,19 +302,34 @@ fn resolve_plan(
         })
         .collect();
     let mut hasher = Sha256::new();
-    hasher.update(serde_json::to_vec(request).map_err(io::Error::other)?);
+    // Selection/content fingerprint stays stable across an explicit destination
+    // choice or device budget change; none can admit unreviewed source content.
+    let mut reviewed = request.clone();
+    reviewed.folder = None;
+    reviewed.replace = false;
+    reviewed.asset_budget_bytes = None;
+    hasher.update(serde_json::to_vec(&reviewed).map_err(io::Error::other)?);
     hasher.update(serde_json::to_vec(&result.rows).map_err(io::Error::other)?);
     for page in &selected.pages {
         hasher.update(page.id.as_str().as_bytes());
         hasher.update(serde_json::to_vec(page.document.as_ref()).map_err(io::Error::other)?);
     }
     let fingerprint = format!("{:x}", hasher.finalize());
+    let folder = request
+        .folder
+        .clone()
+        .unwrap_or_else(|| slug(&request.name));
+    let (path, exists, suggested_folder) =
+        tine_store::publish::query_publication_destination(store, &folder)?;
     Ok(Planned {
         plan: QueryExportPlan {
             anchor: anchor.into(),
             row_count: result.total,
             pages,
-            folder: slug(&request.name),
+            folder,
+            path,
+            exists,
+            suggested_folder,
             fingerprint,
         },
         parsed,
@@ -306,6 +353,8 @@ fn collect_static(
     corpus: &tine_core::Corpus,
     sheets: &SheetIndex,
     query_export: bool,
+    asset_budget: u64,
+    warnings: &mut Vec<String>,
 ) -> io::Result<Vec<(String, Vec<u8>)>> {
     let config = store.config();
     let mut render_graph = RenderGraph::new(corpus, graph, store, Some(sheets));
@@ -320,7 +369,7 @@ fn collect_static(
             used = used
                 .checked_add(bytes.len())
                 .ok_or_else(|| refusal("export byte budget exceeded"))?;
-            if used > MAX_EXPORT_BYTES {
+            if !query_export && used > MAX_EXPORT_BYTES {
                 return Err(refusal("export byte budget exceeded"));
             }
             let bytes = if name.ends_with(".html") {
@@ -335,7 +384,20 @@ fn collect_static(
             Ok(())
         },
     )?;
-    files.extend(tine_store::publication_assets(store, corpus).map_err(crate::store_error)?);
+    files.extend(
+        tine_store::publication_assets(store, corpus, asset_budget, warnings).map_err(|error| {
+            match error {
+                tine_store::StoreError::TooLarge { len, .. } if query_export => io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    AssetBudgetExceeded {
+                        limit: asset_budget,
+                        len,
+                    },
+                ),
+                other => crate::store_error(other),
+            }
+        })?,
+    );
     Ok(files)
 }
 
@@ -540,7 +602,7 @@ fn snapshot(
         "home": home, "pages": pages, "entries": entries, "backlinks": backlinks,
         "block_ref_counts": block_ref_counts, "aliases": aliases, "icons": icons, "queries": queries });
     let bytes = serde_json::to_vec(&snapshot).map_err(io::Error::other)?;
-    if bytes.len() > MAX_EXPORT_BYTES {
+    if home_query.is_none() && bytes.len() > MAX_EXPORT_BYTES {
         return Err(refusal("snapshot byte budget exceeded"));
     }
     Ok(bytes)
@@ -616,6 +678,8 @@ fn commit(
         path: receipt.site.display().to_string(),
         pages,
         files: receipt.files,
+        retired: receipt.previous_kept.map(|p| p.display().to_string()),
+        warnings: Vec::new(),
     })
 }
 
@@ -637,17 +701,18 @@ pub(crate) fn planned_page_keys(
         .collect())
 }
 
-/// Commit a reviewed query to an external user-picked parent. It re-runs the
+/// Commit a reviewed query to its in-graph leaf. Replace retains the old leaf
+/// and reports recovery; create refuses a concurrent winner. Default asset
+/// budget is 1 GiB; AssetBudgetExceeded is typed inside the io::Error. It re-runs the
 /// plan and refuses changed membership or content before creating output.
 /// The resulting folder contains static HTML and the read-only browser app.
 pub fn publish_query(
     store: &Store,
     request: &QueryExportRequest,
     fingerprint: &str,
-    parent: &Path,
     bundle: &[(String, Vec<u8>)],
 ) -> io::Result<ExportReceipt> {
-    publish_query_with_sheets(store, request, fingerprint, parent, bundle, Vec::new())
+    publish_query_with_sheets(store, request, fingerprint, bundle, Vec::new())
 }
 
 /// `publish_query` with the app's computed sheets; a sheet block without one
@@ -656,7 +721,6 @@ pub fn publish_query_with_sheets(
     store: &Store,
     request: &QueryExportRequest,
     fingerprint: &str,
-    parent: &Path,
     bundle: &[(String, Vec<u8>)],
     sheets: Vec<SheetExport>,
 ) -> io::Result<ExportReceipt> {
@@ -670,12 +734,17 @@ pub fn publish_query_with_sheets(
     if planned.selected.pages.is_empty() {
         return Err(refusal("query has no pages to export"));
     }
+    let mut warnings = Vec::new();
     let mut files = collect_static(
         store,
         &graph,
         &planned.selected,
         &SheetIndex::new(sheets),
         true,
+        request
+            .asset_budget_bytes
+            .unwrap_or(QUERY_EXPORT_DEFAULT_ASSET_BUDGET_BYTES),
+        &mut warnings,
     )?;
     let mut taken: HashSet<_> = planned
         .selected
@@ -699,13 +768,34 @@ pub fn publish_query_with_sheets(
         Some((request, &planned.parsed, &planned.result)),
     )?;
     app_files(&mut files, bundle, snap, &request.name)?;
-    commit(
+    let receipt = tine_store::publish::publish_query_site(
         store,
-        parent,
         &planned.plan.folder,
-        files,
-        planned.selected.pages.len(),
+        request.replace,
+        &mut |writer| {
+            for (path, bytes) in &files {
+                writer.write(path, bytes)?;
+            }
+            Ok(())
+        },
     )
+    .map_err(|failure| {
+        let recovery = failure
+            .previous_kept
+            .map(|p| format!(" Previous export kept at {}.", p.display()))
+            .unwrap_or_default();
+        io::Error::new(
+            failure.cause.kind,
+            format!("{}{recovery}", failure.cause.message),
+        )
+    })?;
+    Ok(ExportReceipt {
+        path: receipt.site.display().to_string(),
+        pages: planned.selected.pages.len(),
+        files: receipt.files,
+        retired: receipt.previous_kept.map(|p| p.display().to_string()),
+        warnings,
+    })
 }
 
 /// Publish a whole-graph read-only browser app, with the static site as a
@@ -794,7 +884,15 @@ fn live(
         }
         .map(|p| p.name.clone())
         .unwrap_or_default();
-    let mut files = collect_static(store, &graph, &corpus, &SheetIndex::new(sheets), false)?;
+    let mut files = collect_static(
+        store,
+        &graph,
+        &corpus,
+        &SheetIndex::new(sheets),
+        false,
+        32 * 1024 * 1024,
+        &mut Vec::new(),
+    )?;
     let snap = snapshot(store, &graph, &corpus, name, &home, None)?;
     app_files(&mut files, bundle, snap, name)?;
     commit(store, parent, &slug(name), files, corpus.pages.len())
@@ -823,7 +921,15 @@ pub fn publish_static(
     }
     corpus.pages.sort_by(|a, b| a.name.cmp(&b.name));
     // No frontend computes sheets for a CLI export: every sheet block stays a plain outline.
-    let files = collect_static(store, &graph, &corpus, &SheetIndex::default(), false)?;
+    let files = collect_static(
+        store,
+        &graph,
+        &corpus,
+        &SheetIndex::default(),
+        false,
+        32 * 1024 * 1024,
+        &mut Vec::new(),
+    )?;
     commit(store, parent, &slug(name), files, corpus.pages.len())
 }
 
@@ -847,6 +953,9 @@ mod snapshot_consistency_tests {
             current_page: None,
             name: "Export".into(),
             host_block_id: None,
+            folder: None,
+            replace: false,
+            asset_budget_bytes: None,
         };
         let graph = store.whole_graph().unwrap();
         let reviewed = resolve_plan(&store, &graph, &request).unwrap();

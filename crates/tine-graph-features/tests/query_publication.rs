@@ -36,7 +36,7 @@ fn bundle() -> Vec<(String, Vec<u8>)> {
 
 #[test]
 fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
-    let (graph, output, store) = fixture();
+    let (graph, _output, store) = fixture();
     let request = QueryExportRequest {
         argument: "(task TODO)".into(),
         dialect: QueryTextDialect::MacroQuery,
@@ -44,6 +44,9 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
         current_page: Some("Public".into()),
         name: "My TODOs".into(),
         host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
     };
     let plan = plan_query(&store, &request).unwrap();
     assert_eq!(plan.anchor, "block");
@@ -58,24 +61,31 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
     )
     .unwrap();
     store.scan_refresh().unwrap();
-    assert!(publish_query(&store, &request, &plan.fingerprint, &output, &bundle()).is_err());
-    assert!(!output.join("my-todos").exists());
+    assert!(publish_query(&store, &request, &plan.fingerprint, &bundle()).is_err());
+    assert!(!graph.join("published-queries/my-todos").exists());
 
     let fresh = plan_query(&store, &request).unwrap();
-    let receipt = publish_query(&store, &request, &fresh.fingerprint, &output, &bundle()).unwrap();
+    let receipt = publish_query(&store, &request, &fresh.fingerprint, &bundle()).unwrap();
     assert_eq!(receipt.pages, 1);
-    assert!(output.join("my-todos/public.html").exists());
-    assert!(fs::read_to_string(output.join("my-todos/app/index.html"))
-        .unwrap()
-        .contains("tine-published"));
-    let snapshot: serde_json::Value =
-        serde_json::from_slice(&fs::read(output.join("my-todos/app/snapshot.json")).unwrap())
-            .unwrap();
+    assert!(graph
+        .join("published-queries/my-todos/public.html")
+        .exists());
+    assert!(
+        fs::read_to_string(graph.join("published-queries/my-todos/app/index.html"))
+            .unwrap()
+            .contains("tine-published")
+    );
+    let snapshot: serde_json::Value = serde_json::from_slice(
+        &fs::read(graph.join("published-queries/my-todos/app/snapshot.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(snapshot["pages"].as_array().unwrap().len(), 2); // synthetic query home + selected owner
     assert_eq!(snapshot["queries"].as_array().unwrap().len(), 1);
-    assert!(!fs::read_to_string(output.join("my-todos/pages.html"))
-        .unwrap()
-        .contains("DOING hidden"));
+    assert!(
+        !fs::read_to_string(graph.join("published-queries/my-todos/pages.html"))
+            .unwrap()
+            .contains("DOING hidden")
+    );
     assert!(!graph.join("publish").exists());
     store.close();
 }
@@ -122,7 +132,7 @@ fn live_snapshot_bakes_queries_on_selected_pages_and_closes_their_rows() {
 /// pages outside a query export. Exercise both page and block query renderers.
 #[test]
 fn query_export_nested_queries_do_not_disclose_outside_match_counts() {
-    let (graph, output, store) = fixture();
+    let (graph, _output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
         "public:: true\n- TODO selected\n- {{query (task DOING)}}\n- {{tine-query @page}}\n",
@@ -136,9 +146,12 @@ fn query_export_nested_queries_do_not_disclose_outside_match_counts() {
         current_page: None,
         name: "Nested queries".into(),
         host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
     };
     let plan = plan_query(&store, &request).unwrap();
-    let receipt = publish_query(&store, &request, &plan.fingerprint, &output, &bundle()).unwrap();
+    let receipt = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
     let html = fs::read_to_string(PathBuf::from(receipt.path).join("public.html")).unwrap();
     assert!(html.contains("No matching blocks."));
     assert!(html.contains("query-count\">1</span>"));
@@ -171,7 +184,7 @@ fn static_fallback_renders_tql_page_rows_from_the_ir_answerer() {
 
 #[test]
 fn selected_static_page_keeps_outside_references_inert() {
-    let (graph, output, store) = fixture();
+    let (graph, _output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
         "public:: true\n- TODO selected [[Secret]] and #secret\n",
@@ -185,10 +198,13 @@ fn selected_static_page_keeps_outside_references_inert() {
         current_page: None,
         name: "Selected".into(),
         host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
     };
     let plan = plan_query(&store, &request).unwrap();
-    publish_query(&store, &request, &plan.fingerprint, &output, &bundle()).unwrap();
-    let html = fs::read_to_string(output.join("selected/public.html")).unwrap();
+    publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
+    let html = fs::read_to_string(graph.join("published-queries/selected/public.html")).unwrap();
     assert!(html.contains("ref-outside"), "{html}");
     assert!(html.contains("tag tag-outside"), "{html}");
     assert!(!html.contains("href=\"secret.html\""), "{html}");
@@ -223,10 +239,12 @@ fn live_export_artifact_cost_is_bounded_per_selected_block() {
             current_page: None,
             name: format!("Query {name}"),
             host_block_id: None,
+            folder: None,
+            replace: false,
+            asset_budget_bytes: None,
         };
         let plan = plan_query(&store, &request).unwrap();
-        let receipt =
-            publish_query(&store, &request, &plan.fingerprint, &output, &bundle()).unwrap();
+        let receipt = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
         let bytes = bytes_under(&PathBuf::from(&receipt.path));
         eprintln!(
             "query unit cost: blocks={count} bytes={bytes} files={}",
@@ -268,6 +286,9 @@ fn build_real_query_site_for_browser_smoke() {
         current_page: graph_path.is_none().then(|| "Public".into()),
         name: "Selected tasks".into(),
         host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
     };
     let plan = plan_query(&store, &request).unwrap();
     let dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../dist");
@@ -284,7 +305,7 @@ fn build_real_query_site_for_browser_smoke() {
             ));
         }
     }
-    let receipt = publish_query(&store, &request, &plan.fingerprint, &parent, &built).unwrap();
+    let receipt = publish_query(&store, &request, &plan.fingerprint, &built).unwrap();
     println!("query browser fixture: {}", receipt.path);
     store.close();
 }
@@ -346,5 +367,164 @@ fn live_publication_of_a_graph_without_public_pages_exports_nothing() {
             }
         }
     }
+    store.close();
+}
+
+#[test]
+fn query_export_uses_the_graph_leaf_and_reports_missing_assets() {
+    let (graph, _output, store) = fixture();
+    fs::write(
+        graph.join("pages/Public.md"),
+        "- TODO ![missing](../assets/missing.png)\n",
+    )
+    .unwrap();
+    store.scan_refresh().unwrap();
+    let request = QueryExportRequest {
+        argument: "(task TODO)".into(),
+        dialect: QueryTextDialect::MacroQuery,
+        properties: vec![],
+        current_page: None,
+        name: "Portable".into(),
+        host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
+    };
+    let plan = plan_query(&store, &request).unwrap();
+    let receipt = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
+    assert_eq!(
+        PathBuf::from(&receipt.path),
+        graph.join("published-queries/portable"),
+        "I-12: the query action commits through Store into its graph output leaf"
+    );
+    let wire = serde_json::to_value(&receipt).unwrap();
+    assert!(
+        wire["warnings"].as_array().is_some_and(|warnings| warnings
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("missing.png"))),
+        "I-4: omitted assets must be reported before a leaf is moved"
+    );
+    store.close();
+}
+
+#[test]
+fn query_export_default_budget_accepts_assets_above_the_old_ceiling() {
+    let (graph, _output, store) = fixture();
+    fs::create_dir_all(graph.join("assets")).unwrap();
+    fs::File::create(graph.join("assets/video.mp4"))
+        .unwrap()
+        .set_len(33 * 1024 * 1024)
+        .unwrap();
+    fs::write(
+        graph.join("pages/Public.md"),
+        "- TODO [video](../assets/video.mp4)\n",
+    )
+    .unwrap();
+    store.scan_refresh().unwrap();
+    let request = QueryExportRequest {
+        argument: "(task TODO)".into(),
+        dialect: QueryTextDialect::MacroQuery,
+        properties: vec![],
+        current_page: None,
+        name: "Video".into(),
+        host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
+    };
+    let plan = plan_query(&store, &request).unwrap();
+    let result = publish_query(&store, &request, &plan.fingerprint, &bundle());
+    assert!(
+        result.is_ok(),
+        "the 1 GiB query budget replaces the fixed 32 MiB ceiling: {result:?}"
+    );
+    store.close();
+}
+
+#[test]
+fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
+    let (graph, output, store) = fixture();
+    for (path, bytes) in [
+        ("left/pic.png", b"left".as_slice()),
+        ("right/pic.png", b"right".as_slice()),
+        ("notes.pdf", b"pdf".as_slice()),
+        ("clip.ogg", b"audio".as_slice()),
+        ("space name.png", b"space".as_slice()),
+    ] {
+        let path = graph.join("assets").join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
+    let text = "- TODO assets\n  ![left](../assets/left/pic.png) ![right](../assets/right/pic.png)\n  [PDF](../assets/notes.pdf) [audio](../assets/clip.ogg) ![space](../assets/space%20name.png)\n";
+    fs::write(graph.join("pages/Public.md"), text).unwrap();
+    store.scan_refresh().unwrap();
+    let mut request = QueryExportRequest {
+        argument: "(task TODO)".into(),
+        dialect: QueryTextDialect::MacroQuery,
+        properties: vec![],
+        current_page: None,
+        name: "Assets".into(),
+        host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
+    };
+    let plan = plan_query(&store, &request).unwrap();
+    let first = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
+    let old_html = fs::read(PathBuf::from(&first.path).join("public.html")).unwrap();
+    assert!(first.warnings.is_empty(), "{:?}", first.warnings);
+    request.replace = true;
+    request.asset_budget_bytes = Some(4);
+    let error = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap_err();
+    assert!(
+        error
+            .get_ref()
+            .unwrap()
+            .is::<tine_graph_features::publish_query::AssetBudgetExceeded>(),
+        "typed refusal is the UI action boundary"
+    );
+    assert_eq!(
+        fs::read(PathBuf::from(&first.path).join("public.html")).unwrap(),
+        old_html
+    );
+    assert!(
+        !graph.join("logseq/.tine-trash/conflicts").exists(),
+        "asset budget fails before retirement"
+    );
+    request.asset_budget_bytes = None;
+    let replacement = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
+    assert_eq!(
+        fs::read(PathBuf::from(replacement.retired.unwrap()).join("public.html")).unwrap(),
+        old_html
+    );
+    let separate = plan_query(&store, &request)
+        .unwrap()
+        .suggested_folder
+        .unwrap();
+    request.folder = Some(separate);
+    request.replace = false;
+    let second = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
+    fs::rename(&second.path, output.join("moved")).unwrap();
+    for (path, expected) in [
+        ("left/pic.png", "left"),
+        ("right/pic.png", "right"),
+        ("notes.pdf", "pdf"),
+        ("clip.ogg", "audio"),
+        ("space name.png", "space"),
+    ] {
+        assert_eq!(
+            fs::read(output.join("moved/assets").join(path)).unwrap(),
+            expected.as_bytes()
+        );
+    }
+    let html = fs::read_to_string(output.join("moved/public.html")).unwrap();
+    assert!(!html.contains("../assets/"));
+    assert!(html.contains("assets/left/pic.png"));
+    assert!(html.contains("assets/notes.pdf"));
+    assert!(html.contains("assets/clip.ogg"));
+    assert_eq!(
+        fs::read(graph.join("pages/Public.md")).unwrap(),
+        text.as_bytes()
+    );
     store.close();
 }

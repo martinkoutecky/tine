@@ -166,3 +166,46 @@ the reviewer traces the path and records the scenario here before accepting it.
 | `transaction.rs::check_orphan_asset::InvalidTarget` | 1 | An orphan-asset action is given a page/config/trash target; refuse without touching it. Ordinary trash remains available for intentional page or PDF artifact removal. |
 
 Launch config metadata and its read failure come from the same bounded read. A second successful read cannot clear the failure while leaving directories taken from the earlier fallback. A repaired config is applied by the existing watched refresh or a reopen.
+
+### Query publication (OG-R3C2)
+
+`Store::publish_site` and `publish::publish_query_site` use one stage/commit door.
+A query leaf is `published-queries/<portable-folder>/`; the shared discovery
+predicate excludes the whole directory from pages, watching and graph backups.
+Review (`query_publication_destination`) creates nothing, reports collisions and
+suggests a free suffix. Commit uses the explicitly chosen name, never reallocates.
+Create uses no-replace installation. Replace retires the current leaf into
+`logseq/.tine-trash/conflicts/<stamp>__previous-publish/previous`, and reports that
+path even on success. It preserves whatever legitimate directory arrived between
+review and commit; a late install winner remains untouched. Files and directory
+entries are synced before install; recovery directory entries are synced before
+installing the new leaf. Windows retains the existing directory-sync limitation.
+An interruption may leave an unpublished hidden stage; it never exposes a partial
+leaf. After retirement the previous leaf remains in recovery, even if installation
+has not happened. Callers inspect output/recovery on any post-rename I/O failure.
+
+`publication_assets` uses the existing asset-reference answerer, validates names
+and bounds reads during copying. Its caller supplies the cumulative budget and a
+warning collection. Query exports use one Rust default of 1 GiB, optionally
+replaced by the device-local Settings limit. `TooLarge` becomes typed
+`AssetBudgetExceeded` / IPC `assetBudget`; no leaf or recovery is touched on that
+refusal. A missing asset is a visible warning. Live/CLI limits remain unchanged.
+
+Refusals defend these in-scope scenarios: imported invalid folder names or output
+aliases (invalid destination); an external editor/provider retargeting a stage or
+parent (identity mismatch); an honest concurrent instance winning a destination
+(create collision); disk failures during emit/sync/rename; and an imported local
+asset unexpectedly exceeding the device's chosen disk-work budget. Successful
+replacement reporting preserves and reveals concurrent content, rather than
+claiming an atomic compare-and-replace that the filesystem cannot provide.
+
+The query fingerprint binds request/query rows and held selected documents.
+Explicit destination/replace and device-budget choices do not affect source
+membership or content and are excluded from that fingerprint. A separate folder
+choice is displayed explicitly and commit never recomputes a suffix. This keeps
+og's reviewed-source fingerprint while permitting the master's collision UX.
+
+Unit cost: no per-edit publication records or writes; export emits one staged
+file per final output file, plus copied asset bytes. Replace renames the old leaf
+once into existing recovery (no copying of old bytes). 1/60-block measured artifact
+bytes and files are recorded in the OG-R3C2 receipt; transport per edit is zero.

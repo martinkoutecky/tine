@@ -1,4 +1,13 @@
-//! Publish a static site and retain the previous site on replacement.
+//! Staged publication: Store::publish_site and publish_query_site share the
+//! stage/sync/retire/no-replace/identity protocol. Query destination review is
+//! read-only O(colliding siblings); commit is O(output bytes + retirement),
+//! holds the writer lock and emits no page Change. It never mutates source pages.
+//! Create refuses a concurrent winner. Replace retires the current directory
+//! into logseq/.tine-trash/conflicts and reports it on success or later failure.
+//! Missing assets warn, copied bytes are caller-budgeted, and TooLarge refuses
+//! before commit. I/O errors may follow a completed rename: inspect named output
+//! and recovery before retrying. Windows directory sync is filesystem-dependent;
+//! Linux/macOS/iOS/Android sync output entries. Callers need no staging knowledge.
 
 use crate::model::Graph;
 use crate::store::Store;
@@ -172,12 +181,7 @@ pub struct PublishReceipt {
     pub site: PathBuf,
     /// Number of files emitted by the caller.
     pub files: u64,
-    /// Always `None` on success. `site` names the published directory; a
-    /// concurrent destination collision returns an error instead. A previous
-    /// site retired on success is kept under `logseq/.tine-trash/conflicts/`
-    /// but its path is not returned
-    /// here. A failed export reports
-    /// its retained path in [`PublishFailed::previous_kept`] when available.
+    /// Recovery location of a previous site retired during successful replacement.
     pub previous_kept: Option<PathBuf>,
 }
 
@@ -199,13 +203,15 @@ impl Store {
     }
 
     /// Read assets referenced by exactly the supplied parsed source pages for
-    /// an external publication. Candidate names use the store's one asset-ref
-    /// scanner and file-id validator. Missing files are omitted; malformed or
-    /// oversized live assets refuse. Cost O(selected text + asset bytes), with
-    /// a cumulative 32 MiB byte ceiling. No graph content is written.
+    /// a publication. Candidate names use the store's one asset-ref
+    /// scanner and file-id validator. Missing files warn; oversized live assets
+    /// return TooLarge before publication. Reads are bounded during copying.
+    /// Cost O(selected text + asset bytes), capped by budget. No graph writes.
     pub(crate) fn publication_assets(
         &self,
         corpus: &tine_core::Corpus,
+        budget: u64,
+        warnings: &mut Vec<String>,
     ) -> Result<Vec<(String, Vec<u8>)>, crate::StoreError> {
         let mut names = std::collections::HashSet::new();
         for page in &corpus.pages {
@@ -228,10 +234,21 @@ impl Store {
                 names.remove(&name);
             }
         }
+        // The shared orphan answerer also marks ancestors (PDF area-image
+        // directories). Publication copies files, so remove those directory
+        // markers while preserving the complete nested reference.
+        let referenced: Vec<_> = names.iter().cloned().collect();
+        for name in referenced {
+            for parent in Path::new(&name).ancestors().skip(1) {
+                if let Some(parent) = parent.to_str() {
+                    names.remove(parent);
+                }
+            }
+        }
         let mut names: Vec<_> = names.into_iter().collect();
         names.sort();
         let mut out = Vec::new();
-        let mut remaining = 32 * 1024 * 1024u64;
+        let mut remaining = budget;
         for name in names {
             // The scanner over-collects on purpose (orphan detection must not
             // miss a reference), so a candidate may be prose after `assets/`
@@ -246,7 +263,12 @@ impl Store {
                     remaining = remaining.saturating_sub(bytes.len() as u64);
                     out.push((format!("assets/{name}"), bytes));
                 }
-                Err(crate::StoreError::NotFound) => {}
+                Err(crate::StoreError::InvalidTarget(_)) => {
+                    warnings.push(format!("Asset {name} was omitted: not a regular file."));
+                }
+                Err(crate::StoreError::NotFound) => {
+                    warnings.push(format!("Asset {name} was omitted: file not found."));
+                }
                 Err(crate::StoreError::Io(error))
                     if matches!(
                         error.kind(),
@@ -274,19 +296,7 @@ impl Store {
             cause: error.into(),
             previous_kept: None,
         };
-        if leaf.is_empty()
-            || leaf.len() > 80
-            || !leaf
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-            || leaf.starts_with('-')
-            || leaf.ends_with('-')
-        {
-            return Err(failed(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid export folder",
-            )));
-        }
+        validate_leaf(leaf).map_err(failed)?;
         let parent = fs::canonicalize(parent).map_err(failed)?;
         let graph_root = fs::canonicalize(&self.graph.root).map_err(failed)?;
         if parent.starts_with(&graph_root) {
@@ -350,7 +360,7 @@ impl Store {
         })
     }
 
-    /// Export a static site to `<graph root>/publish`. Each emitted file is
+    /// Export a static site to `<graph root>/publish`; report retained previous output. Each emitted file is
     /// fsynced, then the previous site is retired and the new site is moved
     /// into place without replacing a concurrent winner. A concurrent
     /// directory that appears at the destination stays live and causes an
@@ -368,6 +378,15 @@ impl Store {
         &self,
         emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
     ) -> Result<PublishReceipt, PublishFailed> {
+        self.publish_site_at(None, true, emit)
+    }
+
+    fn publish_site_at(
+        &self,
+        query_folder: Option<&str>,
+        replace: bool,
+        emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
+    ) -> Result<PublishReceipt, PublishFailed> {
         let _writer = self.writer.lock().unwrap();
         if self.is_closed() {
             return Err(PublishFailed {
@@ -375,12 +394,23 @@ impl Store {
                 previous_kept: None,
             });
         }
-        let out = self.graph.root.join("publish");
         let setup = (|| {
+            let out = match query_folder {
+                Some(folder) => {
+                    validate_leaf(folder)?;
+                    let parent = self.graph.root.join("published-queries");
+                    self.graph.ensure_write_target(&parent)?;
+                    fs::create_dir_all(&parent)?;
+                    crate::directory_durability::sync_directory_entry(&self.graph.root)?;
+                    parent.join(folder)
+                }
+                None => self.graph.root.join("publish"),
+            };
             self.graph.ensure_write_target(&out)?;
-            reserve_publish_stage(&self.graph)
+            let stage = reserve_publish_stage_at(out.parent().unwrap())?;
+            Ok::<_, io::Error>((out, stage))
         })();
-        let stage = setup.map_err(|cause| PublishFailed {
+        let (out, stage) = setup.map_err(|cause| PublishFailed {
             cause: cause.into(),
             previous_kept: None,
         })?;
@@ -405,16 +435,15 @@ impl Store {
             }
         }
         let files = writer.files;
-        commit_publish_stage_report(&self.graph, writer.stage, &out).map_err(
-            |(cause, previous_kept)| PublishFailed {
-                cause: cause.into(),
-                previous_kept,
-            },
-        )?;
+        let previous_kept = commit_publish_stage_report(&self.graph, writer.stage, &out, replace)
+            .map_err(|(cause, previous_kept)| PublishFailed {
+            cause: cause.into(),
+            previous_kept,
+        })?;
         Ok(PublishReceipt {
             site: out,
             files,
-            previous_kept: None,
+            previous_kept,
         })
     }
 }
@@ -429,12 +458,15 @@ pub fn publication_block_ref_counts(
 }
 
 /// Read selected pages' referenced assets through Store's validated asset
-/// reader. Missing assets are omitted; the total read is capped at 32 MiB.
+/// reader. Missing assets append warnings; TooLarge refuses the caller-supplied
+/// cumulative byte budget. Cost O(selected text + budget); no graph writes.
 pub fn publication_assets(
     store: &Store,
     corpus: &tine_core::Corpus,
+    budget: u64,
+    warnings: &mut Vec<String>,
 ) -> Result<Vec<(String, Vec<u8>)>, crate::StoreError> {
-    store.publication_assets(corpus)
+    store.publication_assets(corpus, budget, warnings)
 }
 
 /// Publish a fresh site leaf below an existing user-picked OS directory. The
@@ -447,6 +479,72 @@ pub fn publish_site_external(
     emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
 ) -> Result<PublishReceipt, PublishFailed> {
     store.publish_site_external(Path::new(parent), leaf, emit)
+}
+
+fn validate_leaf(leaf: &str) -> io::Result<()> {
+    if leaf.is_empty()
+        || leaf.len() > 80
+        || leaf.starts_with('-')
+        || leaf.ends_with('-')
+        || !leaf
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid export folder",
+        ));
+    }
+    Ok(())
+}
+
+/// Inspect a portable query leaf without creating output. Returns its display
+/// path, whether it exists, and the first unused -N suggestion on collision.
+/// Cost O(colliding sibling names). I/O/unsafe layout errors refuse review;
+/// the suggestion is advisory, and commit never reallocates a chosen name.
+pub fn query_publication_destination(
+    store: &Store,
+    folder: &str,
+) -> io::Result<(String, bool, Option<String>)> {
+    validate_leaf(folder)?;
+    let parent = store.graph.root.join("published-queries");
+    store.graph.ensure_write_target(&parent)?;
+    let exists = |name: &str| match fs::symlink_metadata(parent.join(name)) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    };
+    let occupied = exists(folder)?;
+    let mut suggested = None;
+    if occupied {
+        for n in 2u32.. {
+            let candidate = format!("{folder}-{n}");
+            if !exists(&candidate)? {
+                suggested = Some(candidate);
+                break;
+            }
+        }
+    }
+    Ok((
+        parent.join(folder).display().to_string(),
+        occupied,
+        suggested,
+    ))
+}
+
+/// Commit a query leaf under published-queries through the same staged door as
+/// Store::publish_site. Create refuses a concurrent winner; Replace preserves
+/// the directory occupying the leaf at commit and reports its recovery path on
+/// success or later failure. Cost O(emitted bytes); holds the writer lock, so
+/// emit must not call Store. Stage/retirement/install errors can leave complete
+/// output or recovery on disk: inspect reported paths before retrying.
+pub fn publish_query_site(
+    store: &Store,
+    folder: &str,
+    replace: bool,
+    emit: &mut dyn FnMut(&mut SiteWriter) -> Result<(), IoError>,
+) -> Result<PublishReceipt, PublishFailed> {
+    store.publish_site_at(Some(folder), replace, emit)
 }
 
 struct PublishRecovery {
@@ -472,6 +570,7 @@ fn dir_identity(dir: &Dir, _path: &Path) -> io::Result<FileIdentity> {
     identity_from_file(dir.try_clone()?.into_std_file())
 }
 
+#[cfg(test)]
 fn reserve_publish_stage(graph: &Graph) -> io::Result<PublishStage> {
     reserve_publish_stage_at(&graph.root)
 }
@@ -536,7 +635,15 @@ fn write_publish_stage_file(stage: &PublishStage, name: &str, bytes: &[u8]) -> i
     }
     let mut file = stage.dir.open_with(relative, &options)?;
     file.write_all(bytes)?;
-    file.sync_all()
+    file.sync_all()?;
+    // Directory entries for nested app/asset paths must be durable before the
+    // leaf is installed (crash/power-loss boundary, storage-contract.md).
+    let mut parent = relative.parent();
+    while let Some(dir) = parent {
+        crate::directory_durability::sync_directory_entry(&stage.path.join(dir))?;
+        parent = dir.parent();
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -601,6 +708,14 @@ fn reserve_publish_recovery(graph: &Graph, root: &Dir) -> io::Result<PublishReco
     graph.ensure_write_target(&recovery)?;
     root.create_dir_all(&recovery_rel)?;
     let recovery_root = root.open_dir(&recovery_rel)?;
+    for rel in [
+        "logseq/.tine-trash/conflicts",
+        "logseq/.tine-trash",
+        "logseq",
+        "",
+    ] {
+        crate::directory_durability::sync_directory_entry(&graph.root.join(rel))?;
+    }
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
@@ -612,6 +727,7 @@ fn reserve_publish_recovery(graph: &Graph, root: &Dir) -> io::Result<PublishReco
         );
         match recovery_root.create_dir(&name) {
             Ok(()) => {
+                crate::directory_durability::sync_directory_entry(&recovery)?;
                 return Ok(PublishRecovery {
                     path: recovery.join(&name),
                     dir: recovery_root.open_dir(&name)?,
@@ -631,7 +747,8 @@ fn commit_publish_stage_report(
     graph: &Graph,
     stage: PublishStage,
     out: &Path,
-) -> Result<(), (io::Error, Option<PathBuf>)> {
+    replace: bool,
+) -> Result<Option<PathBuf>, (io::Error, Option<PathBuf>)> {
     graph
         .ensure_write_target(out)
         .map_err(|error| (error, None))?;
@@ -648,11 +765,28 @@ fn commit_publish_stage_report(
     // close for the post-move replacement check.
     drop(dir);
 
+    let parent_identity = dir_identity(&root, out.parent().unwrap()).map_err(|e| (e, None))?;
+    if !identity_from_path(out.parent().unwrap()).is_ok_and(|live| live == parent_identity) {
+        return Err((
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "publication parent changed before commit",
+            ),
+            None,
+        ));
+    }
+
     // Reject a pre-existing alias without touching it. A replacement racing the
     // check is moved as an inode into bound recovery and rejected there; it is
     // never followed for a write.
-    let old_recovery = match root.symlink_metadata("publish") {
+    let leaf = out.file_name().unwrap();
+    let graph_dir =
+        Dir::open_ambient_dir(&graph.root, ambient_authority()).map_err(|e| (e, None))?;
+    let old_recovery = match root.symlink_metadata(leaf) {
         Ok(metadata) => {
+            if !replace {
+                return Err((io::Error::new(io::ErrorKind::AlreadyExists, "another export occupies the destination; replace it or choose a separate folder"), None));
+            }
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
                 return Err((
                     io::Error::new(
@@ -662,9 +796,10 @@ fn commit_publish_stage_report(
                     None,
                 ));
             }
-            let recovery = reserve_publish_recovery(graph, &root).map_err(|error| (error, None))?;
+            let recovery =
+                reserve_publish_recovery(graph, &graph_dir).map_err(|error| (error, None))?;
             publish_recovery_race_hook(&recovery).map_err(|error| (error, None))?;
-            root.rename("publish", &recovery.dir, "previous")
+            root.rename(leaf, &recovery.dir, "previous")
                 .map_err(|error| (error, None))?;
             let previous = recovery.path.join("previous");
             let retired = recovery
@@ -680,6 +815,12 @@ fn commit_publish_stage_report(
                     Some(previous),
                 ));
             }
+            crate::directory_durability::sync_directory_entry(&recovery.path)
+                .and_then(|_| {
+                    crate::directory_durability::sync_directory_entry(out.parent().unwrap())
+                })
+                .map_err(|e| (e, Some(previous)))?;
+            publication_pause("retired");
             Some(recovery)
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -690,6 +831,7 @@ fn commit_publish_stage_report(
         .as_ref()
         .map(|recovery| recovery.path.join("previous"));
 
+    publication_pause("before-install");
     if let Err(error) = crate::model::move_file_noreplace(&path, out) {
         // The previous site stays complete in conflict recovery. Avoid a
         // compare-then-replace restoration that could clobber a late winner.
@@ -700,15 +842,17 @@ fn commit_publish_stage_report(
         && !out_meta.file_type().is_symlink()
         && identity_from_path(out).is_ok_and(|live| live == identity);
     if same_stage {
-        return Ok(());
+        crate::directory_durability::sync_directory_entry(out.parent().unwrap())
+            .map_err(|e| (e, previous_kept.clone()))?;
+        return Ok(previous_kept);
     }
 
     // A replaced stage must never remain live. Move it through the bound graph
     // and recovery directory handles; the previous complete site is already
     // retained separately and is not overwritten during automatic recovery.
-    let bad =
-        reserve_publish_recovery(graph, &root).map_err(|error| (error, previous_kept.clone()))?;
-    let _ = root.rename("publish", &bad.dir, "invalid-stage");
+    let bad = reserve_publish_recovery(graph, &graph_dir)
+        .map_err(|error| (error, previous_kept.clone()))?;
+    let _ = root.rename(leaf, &bad.dir, "invalid-stage");
     Err((
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -716,6 +860,20 @@ fn commit_publish_stage_report(
         ),
         previous_kept,
     ))
+}
+
+// Process-level interruption/race hooks are compiled only for fixture tests.
+fn publication_pause(point: &str) {
+    #[cfg(feature = "test-faults")]
+    if std::env::var("TINE_PUBLICATION_PAUSE").as_deref() == Ok(point) {
+        if let Ok(marker) = std::env::var("TINE_PUBLICATION_MARKER") {
+            println!("PUBLICATION_PAUSED:{point}");
+            while !Path::new(&format!("{marker}.continue")).exists() {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
+    let _ = point;
 }
 
 #[cfg(all(test, unix))]
@@ -822,7 +980,7 @@ mod tests {
         let stage = reserve_publish_stage(&graph).unwrap();
         write_publish_stage_file(&stage, "index.html", b"generated").unwrap();
         symlink(&outside, base.join("publish")).unwrap();
-        assert!(commit_publish_stage_report(&graph, stage, &base.join("publish")).is_err());
+        assert!(commit_publish_stage_report(&graph, stage, &base.join("publish"), true).is_err());
         assert_eq!(
             fs::read_to_string(outside.join("index.html")).unwrap(),
             "outside sentinel"

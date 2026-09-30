@@ -51,6 +51,7 @@ import { ShortcutsSettingsPane } from "./HelpShortcuts";
 import { Field, Toggle } from "./settingsField";
 import { AlwaysAskSetting } from "./AlwaysAskSetting";
 import { ContentWidthFields } from "./ContentWidthFields";
+import { QueryExportLimitSetting } from "./QueryExportLimitSetting";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
 import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
@@ -73,7 +74,6 @@ import { JOURNAL_TITLE_FORMATS } from "../journalTitleFormats";
 import { writePreference, loadPreference } from "../preferenceWrites";
 import { graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
 import { readOr } from "../resourceRead";
-
 const TABS: { id: SettingsTabId; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "editor", label: "Editor" },
@@ -243,7 +243,7 @@ export function Settings(): JSX.Element {
               </Show>
               <Show when={tab() === "graph"}>
                 <HomePageSetting />
-                <GraphPublish />
+                <GraphPublish /><QueryExportLimitSetting />
               </Show>
               <Show when={tab() === "plugins"}>
                 <PluginsTab />
