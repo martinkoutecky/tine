@@ -1,6 +1,28 @@
 /* @ts-self-types="./lsdoc_wasm.d.ts" */
 
 /**
+ * Decode a Logseq page stem in legacy or triple-lowbar (legacy = false) format.
+ * O(stem bytes), no I/O; malformed percent escapes are preserved.
+ * @param {string} stem
+ * @param {boolean} legacy
+ * @returns {string}
+ */
+export function decode_page_name(stem, legacy) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(stem, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.decode_page_name(ptr0, len0, legacy);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * @param {string} raw
  * @param {boolean} is_org
  * @param {any} regions
@@ -25,6 +47,28 @@ export function edit_block_regions_json(raw, is_org, regions, request) {
         return getStringFromWasm0(ptr2, len2);
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Encode a Windows-safe Logseq page stem; legacy selects percent-encoded
+ * namespaces, false selects triple-lowbar. O(title bytes), no I/O or failure.
+ * @param {string} name
+ * @param {boolean} legacy
+ * @returns {string}
+ */
+export function encode_page_name(name, legacy) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.encode_page_name(ptr0, len0, legacy);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
 }
 

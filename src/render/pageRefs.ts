@@ -5,6 +5,7 @@
 // same references inside property values and macro arguments. References inside
 // code are literal, as in the backend. Names are returned as written; compare them
 // with `pageIdentityKey`.
+import { decode_page_name } from "./wasm/lsdoc_wasm.js";
 import { parseBody, inlineText } from "./facets";
 import { isQuotedPagePropertyValue, normalizeImplicitPageName, propertyKeyNorm, splitLinkableProperty } from "./block";
 import type { Block, Format, Inline, ListItem } from "./ast";
@@ -81,7 +82,7 @@ function collectInlines(inlines: readonly Inline[], format: Format, out: string[
         else if (inline.url.type === "file") {
           const file = inline.url.v.slice(inline.url.v.lastIndexOf("/") + 1);
           const dot = file.lastIndexOf(".");
-          out.push((dot > 0 ? file.slice(0, dot) : file).replaceAll("___", "/"));
+          out.push(decode_page_name(dot > 0 ? file.slice(0, dot) : file, false));
         }
         if (inline.label) collectInlines(inline.label, format, out);
         break;

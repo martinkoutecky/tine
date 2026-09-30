@@ -7,6 +7,23 @@
 
 use wasm_bindgen::prelude::*;
 
+#[path = "../../tine-core/src/page_filename.rs"]
+mod page_filename;
+
+/// Encode a Windows-safe Logseq page stem; legacy selects percent-encoded
+/// namespaces, false selects triple-lowbar. O(title bytes), no I/O or failure.
+#[wasm_bindgen]
+pub fn encode_page_name(name: &str, legacy: bool) -> String {
+    page_filename::encode_page_name(name, legacy)
+}
+
+/// Decode a Logseq page stem in legacy or triple-lowbar (legacy = false) format.
+/// O(stem bytes), no I/O; malformed percent escapes are preserved.
+#[wasm_bindgen]
+pub fn decode_page_name(stem: &str, legacy: bool) -> String {
+    page_filename::decode_page_name(stem, legacy)
+}
+
 /// Split already-parsed linkable property values with the native separator.
 /// O(value bytes), without parsing or I/O. Empty members retain their position.
 #[wasm_bindgen]
