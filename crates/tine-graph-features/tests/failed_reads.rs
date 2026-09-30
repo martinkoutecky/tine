@@ -93,7 +93,10 @@ fn cold_title_discovery_failure_never_blocks_other_names() {
     let missing = store.page_named("Claimed", tine_core::model::PageKind::Page);
     let view = store.whole_graph().unwrap();
     store.close();
-    assert!(matches!(missing, Ok(None)), "{missing:?}");
+    assert!(
+        matches!(missing, Ok(None)),
+        "a miss stays a miss while another file is unreadable"
+    );
     assert!(
         view.unreadable_files()
             .iter()
