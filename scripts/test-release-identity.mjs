@@ -58,7 +58,9 @@ try {
       }
       const inputs = workflowInputs(lane, conf, "owner/repo", identity);
       if (lane.startsWith("linux")) {
-        assert.ok(inputs.UPDATE_INFORMATION.includes("|beta|"));
+        assert.equal(inputs.UPDATE_INFORMATION,
+          `gh-releases-zsync|owner|repo|beta|${spec.assets[0].replace(version, "*")}.zsync`);
+        assert.equal(inputs.LDAI_UPDATE_INFORMATION, inputs.UPDATE_INFORMATION);
         assert.ok(!/\s/.test(inputs.UPDATE_INFORMATION));
         assert.equal(inputs.RELEASE_APPIMAGE, spec.sourceAssets[spec.assets[0]]);
       }
