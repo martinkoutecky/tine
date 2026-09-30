@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Nested queries in a query export no longer report how many matches were left out on other pages** (og-R3C; REG-OG-R3C-NESTED-COUNTS). This applies to the static fallback as well as the read-only app.
+
 ### Added
 
 - **An old system web engine shows an update card before startup** (GH #572; og-R2). On macOS it explains the macOS 12.3 requirement and why updating Safari alone does not update the embedded engine.
