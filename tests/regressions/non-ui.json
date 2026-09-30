@@ -2,6 +2,96 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "id": "REG-OG-QUERY-MEMO-001",
+      "title": "Queries return complete statistics while large answers and compiled plans stay outside the bounded memo",
+      "family": "query-resources",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-store/src/query/memo.rs",
+          "crates/tine-store/tests/b_query_guard.rs"
+        ],
+        "scenario": "queries.memo-complete-retention-accounting",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-OG-QUERY-ATOMS-001",
+      "title": "Queries over large flat property values finish while preserving first-occurrence atom membership and order",
+      "family": "query-correctness",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/query/atom.rs",
+          "crates/tine-store/tests/b_query.rs",
+          "crates/tine-store/tests/b_query_guard.rs"
+        ],
+        "scenario": "queries.atom-deduplication-bounded",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-OG-QUERY-MACROS-001",
+      "title": "Many query macro candidates are scanned once and valid query arguments are recovered unchanged",
+      "family": "query-correctness",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/query/macro_text.rs",
+          "crates/tine-core/src/query/macro_extents_tests.rs"
+        ],
+        "scenario": "queries.macro-extent-linear",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-OG-QUERY-LIKE-001",
+      "title": "TQL prefix comparisons and general LIKE patterns agree on escaped ordinary characters",
+      "family": "query-correctness",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/query/tql_tests.rs",
+          "crates/tine-store/tests/b_query.rs",
+          "crates/tine-store/tests/b_query_guard.rs"
+        ],
+        "scenario": "queries.like-prefix-escape",
+        "failBefore": "proven"
+      }
+    },
+    {
       "id": "REG-OG-DIRECTORY-DURABILITY-001",
       "title": "A failed parent-directory sync after a graph write or move is reported instead of acknowledging durable storage",
       "family": "data-safety",
@@ -1147,6 +1237,15 @@
     {"id":"REG-OG-CONFIG-ROOT-READ-001","title":"Graph settings read and update the same top-level EDN entry despite nested extension settings","family":"content-integrity","sources":{"issues":[],"commits":["e09edc451"]},"platforms":["all"],"layer":"store","status":"covered","coverage":{"tests":["crates/tine-store/tests/og_b_store_config.rs","crates/tine-core/tests/og_b_store_integrity.rs"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint 4 L01:43; shared root selector for ordinary and nested settings; guarded favorites write and reload preserve the nested shadow byte for byte. Complete directory settings before a torn later form retain their authored value."},
     {"id":"REG-OG-CONFIG-EDN-ESCAPES-001","title":"Imported EDN escapes select the authored directory, favorite, home, shortcut and macro values","family":"content-integrity","sources":{"issues":[],"commits":["e09edc451"]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-core/tests/og_b_store_integrity.rs"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint 4 L01:44; every config string delegates to the sidecar EDN decoder, including Unicode surrogate pairs, octal and control escapes; torn hidden vectors still fail closed."},
     {"id":"REG-OG-ORG-DIRECTIVE-OPEN-001","title":"Opening Org pages with long directive preambles performs bounded work per line","family":"performance","sources":{"issues":[],"commits":["1cbf29030"]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-core/tests/og_b_store_preamble.rs","crates/tine-core/tests/page_title_preamble.rs"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint 4 L06:40; existing inert-line filtering runs before the whole-prefix outline parse, preserving title discovery while removing repeated growing-prefix parses. The guard enforces the ordering; it has no wall-clock threshold."},
+    {"id":"REG-OG-B-COST-SNAPSHOT","title":"Saving a page while readers retain graph views avoids copying unrelated page slots and metadata","family":"performance","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"store","status":"covered","coverage":{"tests":["crates/tine-store/tests/og_b_cost.rs"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-COST at 149e0ed. Fail-before/pass-after Store save proof; five paired debug benchmark executions. Integration pending: existing i13_edit_cost literal parse-count assertion contradicts corrected accounting; formatter outline reuse requires an out-of-write-set core change."},
+    {"id":"REG-OG-B-COST-NAMES","title":"Creating or retitling a page updates only affected name winners and reference signatures","family":"performance","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"store","status":"covered","coverage":{"tests":["crates/tine-store/tests/og_b_cost.rs","crates/tine-store/tests/og_b_cost_names.rs"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-COST at 149e0ed. Fail-before/pass-after Store save proof; five paired debug benchmark executions. Integration pending: existing i13_edit_cost literal parse-count assertion contradicts corrected accounting; formatter outline reuse requires an out-of-write-set core change."},
+    {"id":"REG-OG-B-COST-PARSE","title":"Save preparation reuses the old parsed document across its preservation checks","family":"performance","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"store","status":"fixing","coverage":{"tests":["crates/tine-store/tests/og_b_cost.rs"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-COST at 149e0ed. Fail-before/pass-after Store save proof; five paired debug benchmark executions. Integration pending: existing i13_edit_cost literal parse-count assertion contradicts corrected accounting; formatter outline reuse requires an out-of-write-set core change."},
+    {"id":"REG-OG-B-DOOR2-TQL-FLAT-DEPTH","title":"Flat TQL boolean queries remain accepted without exhausting a small stack; genuinely nested expressions are bounded","family":"query-authoring","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-query","status":"covered","coverage":{"tests":["crates/tine-core/src/query/tql_tests.rs","src/ogBDoor2.guard.test.ts"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint-4 OG-B-DOOR2; pinned base 18cc6bf79. Focused necessity logs retained with lane receipt."},
+    {"id":"REG-OG-B-DOOR2-ORG-PAGE-PROPERTIES","title":"Org page drawer and directive properties keep backlinks while literal examples remain prose","family":"content-integrity","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"store","status":"covered","coverage":{"tests":["crates/tine-store/tests/og_b_door2.rs","src/ogBDoor2.guard.test.ts"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint-4 OG-B-DOOR2; pinned base 18cc6bf79. Focused necessity logs retained with lane receipt."},
+    {"id":"REG-OG-B-DOOR2-PAGE-ICON-OWNERSHIP","title":"Page icons come only from valid properties in the file format, excluding literal examples","family":"content-integrity","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"store","status":"covered","coverage":{"tests":["crates/tine-store/tests/og_b_door2.rs","src/ogBDoor2.guard.test.ts"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint-4 OG-B-DOOR2; pinned base 18cc6bf79. Focused necessity logs retained with lane receipt."},
+    {"id":"REG-OG-B-DOOR2-ORG-MARKER-LITERALS","title":"Org source blocks documenting conflict markers remain editable and do not appear as conflicts","family":"data-safety","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"store","status":"covered","coverage":{"tests":["crates/tine-store/tests/og_b_door2.rs","src/ogBDoor2.guard.test.ts"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint-4 OG-B-DOOR2; pinned base 18cc6bf79. Focused necessity logs retained with lane receipt."},
+    {"id":"REG-OG-B-DOOR2-NFD-REFERENCE-BOUNDARY","title":"Plain references do not match an unaccented prefix inside a decomposed accented grapheme","family":"content-integrity","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-core/tests/og_b_door2_reference.rs","src/ogBDoor2.guard.test.ts"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint-4 OG-B-DOOR2; pinned base 18cc6bf79. Focused necessity logs retained with lane receipt."},
+    {"id":"REG-OG-B-DOOR2-FRONT-TAG-SEPARATOR","title":"Fullwidth commas separate tag reference targets as in original Logseq","family":"content-integrity","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"unit","status":"covered","coverage":{"tests":["src/render/pageRefs.test.ts","src/ogBDoor2.guard.test.ts"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint-4 OG-B-DOOR2; pinned base 18cc6bf79. Focused necessity logs retained with lane receipt."},
     {"id":"REG-OG-B-FAIL2-ASSET-TRASH","title":"Asset trash retains files referenced by an external arrival published after the orphan scan","family":"resilience","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-graph-features/tests/failed_reads.rs","src/failedRead.guard.test.ts"],"scenario":null,"failBefore":"proven"},"notes":"Synthetic Linux Store/native proof; no real-app or other-platform race injection claimed."},
     {"id":"REG-OG-B-FAIL2-VERIFICATION-REPLACE","title":"Graph verification never certifies the bytes of a displaced open file as the live source","family":"resilience","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-graph-features/tests/graph_verification.rs","src/failedRead.guard.test.ts"],"scenario":null,"failBefore":"proven"},"notes":"Synthetic Linux Store/native proof; no real-app or other-platform race injection claimed."},
     {"id":"REG-OG-B-FAIL2-CONFIG-WRITE","title":"Unreadable graph configuration blocks writes into guessed directories and permits recovery after repair","family":"resilience","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-graph-features/tests/failed_reads.rs","src/failedRead.guard.test.ts"],"scenario":null,"failBefore":"proven"},"notes":"Synthetic Linux Store/native proof; no real-app or other-platform race injection claimed."},

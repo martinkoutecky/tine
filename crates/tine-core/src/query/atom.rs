@@ -439,7 +439,7 @@ pub fn property_atoms_in(
     }
 
     let mut atoms: Vec<Atom> = Vec::new();
-    let mut seen: Vec<String> = Vec::new();
+    let mut seen = AtomDeduper::default();
 
     // Step 3 — refs, plus comma segments for a comma-configured key. Skipped
     // entirely for a step-1 key (A1).
@@ -528,7 +528,7 @@ pub fn property_atoms_in(
 #[allow(clippy::too_many_arguments)]
 fn push_atom(
     atoms: &mut Vec<Atom>,
-    seen: &mut Vec<String>,
+    seen: &mut AtomDeduper,
     text: String,
     origin: AtomOrigin,
     config: &ParseConfig,
@@ -536,10 +536,9 @@ fn push_atom(
     og_string_len: Option<u32>,
 ) {
     let key = atom_key_in(&text, mode);
-    if key.is_empty() || seen.iter().any(|existing| existing == &key) {
+    if !seen.admit(&key) {
         return;
     }
-    seen.push(key);
     let ordinal = atoms.len() as u32;
     atoms.push(make_atom(
         text,
@@ -549,6 +548,19 @@ fn push_atom(
         mode,
         og_string_len,
     ));
+}
+
+/// First-occurrence admission for already-normalized atom keys (I-12/I-22).
+/// Both single-row atomization and cross-row flattening use this answerer.
+/// Each admission costs O(log distinct keys), with O(total key bytes) memory;
+/// empty keys are excluded. Callers emit accepted atoms in their source order.
+#[derive(Default)]
+pub struct AtomDeduper(std::collections::BTreeSet<String>);
+
+impl AtomDeduper {
+    pub fn admit(&mut self, key: &str) -> bool {
+        !key.is_empty() && self.0.insert(key.to_owned())
+    }
 }
 
 fn make_atom(
@@ -684,6 +696,24 @@ mod tests {
 
     fn config() -> ParseConfig {
         ParseConfig::default()
+    }
+
+    #[test]
+    fn b_query_many_distinct_and_repeated_atoms_keep_source_order() {
+        let distinct = (0..20_000)
+            .map(|i| format!("v{i:05}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let start = std::time::Instant::now();
+        let atoms = md("tags", &format!("{distinct},{distinct}"), &config());
+        assert_eq!(atoms.len(), 20_000);
+        assert_eq!(atoms[19_999].ordinal, 19_999);
+        assert_eq!(atoms[19_999].text, "v19999");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "I-22: admitted flat atoms must not scan all earlier atoms"
+        );
+        assert_eq!(md("tags", &"same,".repeat(20_000), &config()).len(), 1);
     }
 
     fn texts(atoms: &[Atom]) -> Vec<String> {

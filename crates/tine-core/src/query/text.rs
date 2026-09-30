@@ -16,6 +16,19 @@ pub fn like_matches(haystack: &str, pattern: &str) -> bool {
     LikePattern::compile(pattern).matches(haystack)
 }
 
+/// Encode literal data in a LIKE pattern; `%`, `_` and `\` are escaped.
+/// Linear in input scalars, with no I/O or failure path.
+pub fn escape_like_literal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// A compiled SQL `LIKE` pattern (semantics of [`like_matches`]).
 ///
 /// The pattern is split on `%` into segments; greedy leftmost placement of
@@ -36,7 +49,7 @@ pub struct LikePattern {
 #[derive(Debug, Clone)]
 struct Shape {
     /// Pattern had a `%` at all (else the one segment is anchored at both ends).
-    any: bool,
+    wildcards: usize,
     leading_any: bool,
     trailing_any: bool,
     segments: Vec<Segment>,
@@ -169,10 +182,24 @@ impl Segment {
 }
 
 impl LikePattern {
+    /// Literal prefix when the compiled pattern is exactly `literal%`.
+    /// Uses the same decoded tokens as matching; no independent escape grammar.
+    pub fn starts_with_prefix(&self) -> Option<String> {
+        let shape = self.shape.as_ref()?;
+        if shape.wildcards != 1 || !shape.trailing_any {
+            return None;
+        }
+        match shape.segments.as_slice() {
+            [] => Some(String::new()),
+            [segment] => segment.literal.clone(),
+            _ => None,
+        }
+    }
+
     pub fn compile(pattern: &str) -> LikePattern {
         let mut segments = Vec::new();
         let mut current: Vec<Option<char>> = Vec::new();
-        let (mut any, mut leading_any, mut trailing_any) = (false, false, false);
+        let (mut wildcards, mut leading_any, mut trailing_any) = (0usize, false, false);
         let mut chars = pattern.chars();
         while let Some(ch) = chars.next() {
             trailing_any = false;
@@ -184,10 +211,10 @@ impl LikePattern {
                     current.push(Some(next));
                 }
                 '%' => {
-                    if !any && current.is_empty() {
+                    if wildcards == 0 && current.is_empty() {
                         leading_any = true;
                     }
-                    any = true;
+                    wildcards += 1;
                     trailing_any = true;
                     if !current.is_empty() {
                         segments.push(Segment::new(std::mem::take(&mut current)));
@@ -203,7 +230,7 @@ impl LikePattern {
         let min_chars = segments.iter().map(|s| s.tokens.len()).sum();
         LikePattern {
             shape: Some(Shape {
-                any,
+                wildcards,
                 leading_any,
                 trailing_any,
                 segments,
@@ -224,7 +251,7 @@ impl LikePattern {
             return false;
         }
         let segments = &shape.segments[..];
-        if !shape.any {
+        if shape.wildcards == 0 {
             return match segments.first() {
                 None => haystack.is_empty(),
                 Some(only) => only.match_prefix(haystack) == Some(haystack.len()),

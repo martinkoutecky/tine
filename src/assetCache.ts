@@ -1,5 +1,6 @@
 import { createStore, reconcile } from "solid-js/store";
 import { backend } from "./backend";
+import { mime_from_path } from "./render/wasm/lsdoc_wasm";
 
 // Cache of graph-asset blob URLs keyed by path relative to `assets/`. Without it
 // every <img> mount (re-render, scroll back into view, or a second reference to
@@ -109,7 +110,7 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
       if (cache.get(key) !== entry) return "";
       const bytes = await read();
       if (!bytes.length) return "";
-      const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mimeFromExt(typePath) }));
+      const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mime_from_path(typePath) }));
       if (cache.get(key) === entry) {
         entry.bytes = bytes.byteLength;
         cacheBytes += entry.bytes;
@@ -143,53 +144,6 @@ async function acquire(entry: CacheEntry): Promise<BlobLease> {
   return { url, release };
 }
 
-function mimeFromExt(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "png":
-      return "image/png";
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "gif":
-      return "image/gif";
-    case "svg":
-      return "image/svg+xml";
-    case "webp":
-      return "image/webp";
-    // Video — so a blob-URL <video> gets a playable type (codec permitting).
-    case "mp4":
-    case "m4v":
-      return "video/mp4";
-    case "webm":
-      return "video/webm";
-    case "ogv":
-      return "video/ogg";
-    case "mov":
-      return "video/quicktime";
-    case "mkv":
-      return "video/x-matroska";
-    // Audio.
-    case "mp3":
-    case "mpeg":
-      return "audio/mpeg";
-    case "m4a":
-    case "aac":
-      return "audio/mp4";
-    case "wav":
-      return "audio/wav";
-    case "ogg":
-    case "oga":
-      return "audio/ogg";
-    case "opus":
-      return "audio/opus";
-    case "flac":
-      return "audio/flac";
-    default:
-      return "application/octet-stream";
-  }
-}
-
 /** A blob URL for the asset at `rel` (relative to `assets/`), reading it over IPC
  *  at most once per open graph. Resolves to "" if the asset is missing/unreadable. */
 export function acquireAssetBlob(rel: string): Promise<BlobLease> {
@@ -220,7 +174,7 @@ export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
       revokeEvictedUrl(livePrior.promise);
     }
   }
-  const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mimeFromExt(rel) }));
+  const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mime_from_path(rel) }));
   if (bytes.byteLength > MAX_CACHE_BYTES) {
     // The caller already owns these bytes (paste/capture), so this is not a read
     // amplification path. Avoid graph-lifetime retention; revoke after the

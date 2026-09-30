@@ -21,7 +21,7 @@ mod eval;
 pub(crate) mod exec;
 pub(crate) mod index;
 pub(crate) mod memo;
-mod page_properties;
+pub(crate) mod page_properties;
 use page_properties::{page_document_is_org, page_facets, page_property_lines};
 
 #[derive(Debug, Clone)]
@@ -425,30 +425,8 @@ fn sorted_alias_owners(
         .collect()
 }
 
-pub(crate) type RealPageNames = std::collections::HashMap<String, (std::path::PathBuf, String)>;
-
-pub(crate) fn real_page_names(graph: &impl GraphRead) -> std::sync::Arc<RealPageNames> {
-    if let Some(indexed) = graph.reference_real_page_names() {
-        return indexed;
-    }
-    std::sync::Arc::new(graph.with_pages(|pages| {
-        let mut real = RealPageNames::new();
-        for (entry, _) in pages {
-            let key = refs::page_key(&entry.name);
-            match real.get_mut(&key) {
-                Some((winner_path, winner_name)) if entry.path < *winner_path => {
-                    *winner_path = entry.path.clone();
-                    *winner_name = entry.name.clone();
-                }
-                Some(_) => {}
-                None => {
-                    real.insert(key, (entry.path.clone(), entry.name.clone()));
-                }
-            }
-        }
-        real
-    }))
-}
+mod page_names;
+pub(crate) use page_names::{real_page_names, RealPageNames};
 
 /// Resolve a requested page/alias to its canonical display name, the complete
 /// alias-connected component, and the real page to exclude as self. The
@@ -577,29 +555,29 @@ fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, t
     }
 }
 
-fn org_property_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    if let Some(rest) = trimmed.strip_prefix("#+") {
-        return rest
-            .split_once(':')
-            .is_some_and(|(key, _)| !key.trim().is_empty());
-    }
-    trimmed
-        .strip_prefix(':')
-        .and_then(|rest| rest.split_once(':'))
-        .is_some_and(|(key, _)| !key.trim().is_empty())
-}
-
-/// Keep only page-property source lines from a document pre-block. Free-form
-/// preamble text is not a Logseq page property and must not become a backlink.
+/// Project only parser-owned page properties into native block syntax. Keeping
+/// the whole Org drawer preserves parser ownership for reference evidence.
 fn page_property_raw(pre: &str, is_org: bool) -> String {
-    pre.lines()
-        .filter(|line| {
-            tine_core::doc::parse_property_line(line).is_some()
-                || (is_org && org_property_line(line))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    let entries = page_property_lines(pre, is_org);
+    if entries.is_empty() {
+        return String::new();
+    }
+    if is_org {
+        format!(
+            ":PROPERTIES:\n{}\n:END:",
+            entries
+                .iter()
+                .map(|(key, value)| format!(":{key}: {value}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    } else {
+        entries
+            .iter()
+            .map(|(key, value)| format!("{key}:: {value}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 fn property_projection(raw: &str, is_org: bool) -> DocBlock {
@@ -2774,7 +2752,9 @@ mod tests {
             let snapshot = crate::model::ReadSnapshot::capture(
                 &graph,
                 tine_core::config::Config::parse(edn),
-                graph.list_pages_shared(),
+                std::sync::Arc::new(crate::model::persistent::EntryList::from(
+                    graph.list_pages_shared().as_slice(),
+                )),
                 None,
                 &[],
             );

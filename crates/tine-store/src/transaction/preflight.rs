@@ -1,6 +1,7 @@
 //! Preflight validation and byte preparation for graph transactions.
 
 use super::*;
+use tine_core::model::Format;
 
 impl<'a> Transaction<'a> {
     pub(super) fn preflight(&self, step: &Step) -> Result<Prepared, Why> {
@@ -82,7 +83,12 @@ impl<'a> Transaction<'a> {
                 // save (ordinary, forced, merged and PDF-highlight page saves
                 // all reach it). Only `SaveBase::ResolvingMarkers` passes.
                 let found = text
-                    .map(tine_core::concord_queue::vcs_conflict_markers)
+                    .map(|text| {
+                        tine_core::concord_queue::vcs_conflict_markers(
+                            text,
+                            Format::from_path(&path),
+                        )
+                    })
                     .unwrap_or_default();
                 if !found.is_empty() && *markers == Markers::Refuse {
                     return Err(Why::Refused(Refusal::ReadOnly(format!(
@@ -238,7 +244,7 @@ impl<'a> Transaction<'a> {
                 } else {
                     rewrite(&old, &path, renames, self.store.config().file_name_format)?
                 };
-                refuse_marker_rewrite(&old, &new)?;
+                refuse_marker_rewrite(&old, &new, Format::from_path(&path))?;
                 Ok(Prepared {
                     src: file,
                     dst: None,
@@ -281,7 +287,7 @@ impl<'a> Transaction<'a> {
                     (None, Some(_)) => unreachable!(),
                 };
                 if let (Some(old), Some(new)) = (&old, &new) {
-                    refuse_marker_rewrite(old, new)?;
+                    refuse_marker_rewrite(old, new, Format::from_path(&self.path(file)?))?;
                 }
                 Ok(Prepared {
                     src: file.clone(),
@@ -328,12 +334,12 @@ impl<'a> Transaction<'a> {
 /// of a merge the user has not adjudicated. A caller (the rename) skips such
 /// files and reports them; this is the store's backstop for any caller that
 /// does not. A rewrite that changes nothing, or a byte-exact move, passes.
-fn refuse_marker_rewrite(old: &[u8], new: &[u8]) -> Result<(), Why> {
+fn refuse_marker_rewrite(old: &[u8], new: &[u8], format: Format) -> Result<(), Why> {
     if old == new {
         return Ok(());
     }
     let found = std::str::from_utf8(old)
-        .map(tine_core::concord_queue::vcs_conflict_markers)
+        .map(|text| tine_core::concord_queue::vcs_conflict_markers(text, format))
         .unwrap_or_default();
     if found.is_empty() {
         return Ok(());

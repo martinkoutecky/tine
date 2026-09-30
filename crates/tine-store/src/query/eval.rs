@@ -25,7 +25,7 @@ use tine_core::date::JournalDate;
 use tine_core::doc::{property_key_norm, DocBlock};
 use tine_core::model::PageKind;
 use tine_core::query::atom::{
-    atom_key, format_number, property_atoms, Atom, AtomFormat, ParseConfig,
+    atom_key, format_number, property_atoms, Atom, AtomDeduper, AtomFormat, ParseConfig,
 };
 use tine_core::query::ir::{Attr, CmpOp, Filter, Leaf, ObservedType, Quant, Rel, Value};
 use tine_core::query::path_refs::{closure_contains, closure_names, dfs_path_refs, PathRefCounts};
@@ -52,6 +52,47 @@ pub(crate) struct CompiledLeaves {
 }
 
 impl CompiledLeaves {
+    pub(super) fn estimated_bytes(&self) -> usize {
+        // regex::Regex exposes no allocation census. Reserve both compilation
+        // and lazy DFA ceilings for each successful program, even a tiny one.
+        let regexes = self
+            .regexes
+            .iter()
+            .fold(0usize, |bytes, (source, program)| {
+                bytes
+                    .saturating_add(source.capacity() + 128)
+                    .saturating_add(if program.is_some() {
+                        2 * REGEX_PROGRAM_MAX_BYTES
+                    } else {
+                        0
+                    })
+            });
+        self.matchers
+            .iter()
+            .fold(regexes, |bytes, (source, matcher)| {
+                let retained = match matcher {
+                    // Matcher uses regex's defaults: 10 MiB program + 2 MiB DFA.
+                    Matcher::Regex(_) => 12 * 1024 * 1024,
+                    Matcher::InvalidRegex(error) => error.capacity(),
+                    Matcher::Boolean(groups) => groups.iter().fold(
+                        groups.capacity()
+                            * std::mem::size_of::<Vec<tine_core::search_query::Term>>(),
+                        |sum, group| {
+                            group.iter().fold(
+                                sum + group.capacity()
+                                    * std::mem::size_of::<tine_core::search_query::Term>(),
+                                |sum, term| sum + term.text.capacity(),
+                            )
+                        },
+                    ),
+                    Matcher::Empty => 0,
+                };
+                bytes
+                    .saturating_add(source.capacity() + 128)
+                    .saturating_add(retained)
+            })
+    }
+
     pub(crate) fn for_query(filter: &Filter, remove_accents: bool) -> CompiledLeaves {
         let mut out = CompiledLeaves::default();
         for source in filter.match_sources() {
@@ -544,13 +585,14 @@ fn key_norm_eq(name: &str, key_norm: &str) -> bool {
 /// concatenate, de-duplicate by atom key with first occurrence winning.
 fn flatten_atoms(source_key: &str, rows: &[&str], ctx: &EvalCtx) -> Vec<Atom> {
     let mut out: Vec<Atom> = Vec::new();
+    let mut seen = AtomDeduper::default();
     for value in rows {
         for atom in ctx
             .cache
             .get(source_key, value, ctx.format, ctx.config)
             .iter()
         {
-            if out.iter().any(|existing| existing.key == atom.key) {
+            if !seen.admit(&atom.key) {
                 continue;
             }
             let ordinal = out.len() as u32;

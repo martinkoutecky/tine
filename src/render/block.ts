@@ -4,6 +4,8 @@
 import type { Format } from "./ast";
 import { MARKERS, matchLeadingMarker } from "../markers";
 import { pagePropertyEntries } from "../editor/properties";
+import { split_linkable_property as splitLinkableProperty } from "./wasm/lsdoc_wasm.js";
+export { splitLinkableProperty };
 
 export { MARKERS };
 
@@ -71,8 +73,7 @@ export function aliasNamesOf(properties: [string, string][]): string[] {
     const key = propertyKeyNorm(k);
     if (key !== "alias" && key !== "aliases") continue;
     if (isQuotedPagePropertyValue(v)) continue;
-    out.push(...v
-      .split(/[,，]/)
+    out.push(...splitLinkableProperty(v)
       .map(normalizeImplicitPageName)
       .filter(Boolean));
   }

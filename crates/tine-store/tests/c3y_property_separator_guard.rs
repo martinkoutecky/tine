@@ -2,11 +2,11 @@
 //! values (`alias::`, `tags::`, references) on `,` and the full-width `，`.
 //! Five readers each spelled that set by hand and one (`page_facets` tags)
 //! forgot `，`, so `tags:: A，B` became one tag there and two everywhere else.
-//! The set now has one definition: `tine_core::refs::is_linkable_property_separator`.
+//! The set has one native/wasm definition, re-exported by `tine_core::refs`.
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const EXEMPLAR: &str = "crates/tine-core/src/refs.rs";
+const EXEMPLAR: &str = "crates/tine-core/src/block_regions.rs";
 
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap().flatten() {

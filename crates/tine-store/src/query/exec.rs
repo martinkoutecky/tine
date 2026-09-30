@@ -58,6 +58,16 @@ pub(crate) struct Plan {
 }
 
 impl Plan {
+    pub(super) fn estimated_bytes(&self) -> usize {
+        super::memo::retained::serialized_bytes(&self.filter)
+            .saturating_add(self.compiled.estimated_bytes())
+            .saturating_add(self.registry.as_ref().map_or(0, |registry| {
+                super::memo::retained::serialized_bytes(registry.rows())
+                    .saturating_add(super::memo::retained::parse_config_bytes(registry.config()))
+            }))
+            .saturating_add(std::mem::size_of::<Self>())
+    }
+
     /// `block_rows` evaluates a `@page` query block-anchored (page attributes
     /// read through `block.page`), which is the legacy block-group bridge's
     /// semantics (master `block_anchored_filter`).
@@ -258,7 +268,7 @@ fn cost(filter: &Filter) -> u8 {
 /// other page by the mtime captured with the page table; oldest when unknown.
 fn recency(
     entry: &PageEntry,
-    mtimes: &std::collections::HashMap<String, std::time::SystemTime>,
+    mtimes: &crate::model::persistent::Map<String, std::time::SystemTime>,
 ) -> i64 {
     if let Some(day) = entry.date_key {
         return JournalDate::from_ordinal(day).to_days() * 86_400;

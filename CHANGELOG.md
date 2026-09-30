@@ -102,14 +102,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- Failed journal/discovery scans now report incomplete reads; unreadable graph config opens read-only, unreadable custom CSS reports its safe fallback, failed conflict refreshes keep their last inventory, and verification cancellation stays silent through a typed outcome.
+- Failed journal scans report incomplete reads, and a page file whose name cannot be read is reported while the rest of the graph stays usable; unreadable graph config opens read-only, unreadable custom CSS reports its safe fallback, failed conflict refreshes keep their last inventory, and verification cancellation stays silent through a typed outcome.
 
 - **Graph read failures preserve user data** (REG-OG-B-FAIL2-CONFIG-WRITE, REG-OG-B-FAIL2-ASSET-TRASH, REG-OG-B-FAIL2-VERIFICATION-REPLACE): an unreadable config blocks writes into guessed directories, asset trash rechecks published references under the writer, and graph verification detects a source replaced while its old descriptor is being hashed.
+- Long flat TQL boolean queries no longer exhaust the stack; genuine nesting is bounded (REG-OG-B-DOOR2-TQL-FLAT-DEPTH).
+- Org drawer and directive properties retain backlinks; page icons ignore prose and literal examples (REG-OG-B-DOOR2-ORG-PAGE-PROPERTIES, REG-OG-B-DOOR2-PAGE-ICON-OWNERSHIP).
+- Org blocks documenting VCS conflict markers remain editable, and plain references keep decomposed Unicode accents with their letters (REG-OG-B-DOOR2-ORG-MARKER-LITERALS, REG-OG-B-DOOR2-NFD-REFERENCE-BOUNDARY).
+- Fullwidth commas separate tag references consistently with Logseq (REG-OG-B-DOOR2-FRONT-TAG-SEPARATOR).
+- **Saving with retained graph views avoids graph-wide copies** (REG-OG-B-COST-SNAPSHOT, REG-OG-B-COST-NAMES): page slots, timestamps, reference counts and name/signature/icon indexes share untouched tree branches. Save preservation checks also reuse the old parsed document (REG-OG-B-COST-PARSE).
 - Published query snapshots retain reviewed source documents across external edits; draft loading and CSV/TSV imports bound their reads before decoding (REG-OG-B-W3-PUBLICATION-SNAPSHOT, REG-OG-B-W3-BOUNDED-DRAFT-READ, REG-OG-B-W3-BOUNDED-CSV-READ).
 - Sheet row virtualization clears its visited-row state on graph reset (UI-OG-B-W3-SHEET-BINDING-RESET).
 
 - Sheet formulas memoize shared references, reject inherited member names, and refuse excessive field-rename depth without crashing (UI-OG-B-W3-FORMULA-DAG, UI-OG-B-W3-FORMULA-OWN-MEMBERS, UI-OG-B-W3-FORMULA-RENAME-DEPTH).
 
+
+- **Published permalinks share page and block identity** (UI-OG-PERMALINK-IDENTITY-001, UI-OG-PERMALINK-BLOCK-ID-001): equivalent Unicode page/alias names resolve, and Markdown/Org block links ignore code examples of IDs.
+- **Expanded audio shares inline asset decoding** (UI-OG-AUDIO-ASSET-PATH-001), including normalized asset-directory case and separators. Native streams, cached images and media fallbacks use one Rust MIME answer through the existing wasm module.
+- **Export retains literal metadata and Org body drawers** (UI-OG-EXPORT-LITERAL-METADATA-001): HTML, OPML and source Text strip canonical properties through the parser-owned region door.
 - Fixed namespace and published-backend identity drift, published search highlights and block-ID lookup, and deeply nested namespace/snapshot handling (OG-B-FRONT).
 - Fixed recursive embed exports, oversized scientific-zero output, rejected registry response cleanup, broad table rendering, and media labels containing a literal percent. Search excerpts and query-macro scans avoid repeated input work (OG-B-FRONT).
 
@@ -129,6 +138,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Org pages with long directive preambles open without reparsing every growing prefix (REG-OG-ORG-DIRECTIVE-OPEN-001). Page moves sync each affected directory once, and both journal navigation doors share the absent-path rule (og-B-STORE).
 
 - Graph settings read their top-level EDN entries and decode authored string escapes consistently (REG-OG-CONFIG-ROOT-READ-001, REG-OG-CONFIG-EDN-ESCAPES-001).
+
+- **Query memo limits include statistics and compiled patterns** (REG-OG-QUERY-MEMO-001): oversized entries are returned without caching, and program reservations count toward both entry and total memory budgets.
+
+- **Large query property lists and macro blocks stay responsive** (REG-OG-QUERY-ATOMS-001, REG-OG-QUERY-MACROS-001): atom uniqueness uses one ordered set, and raw query macros are scanned once. TQL LIKE prefix shortcuts now share the matcher’s escaping rules, including `\a` (REG-OG-QUERY-LIKE-001); query printers share literal escaping and numeric spelling.
 
 - **Faster graph startup and first search** (og-P1). Journal-first reads avoid ordinary-page title discovery,
   completed claimant discovery is reused by direct reads, and a search without page results skips page-property hydration.

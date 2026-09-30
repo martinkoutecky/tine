@@ -10,6 +10,7 @@ use crate::refs;
 use lsdoc::ast::{Block, Inline, ListItem, Span, Url};
 use std::ops::Range;
 use unicode_normalization::UnicodeNormalization;
+use unicode_segmentation::UnicodeSegmentation;
 
 pub const ENGINE_VERSION: &str = "reference-evidence/v1";
 const MAX_OCCURRENCES_PER_BLOCK: usize = 64;
@@ -379,40 +380,6 @@ fn walk_list_item(
     }
 }
 
-fn property_values(span: Option<&Span>, mapper: SpanMapper, raw: &str) -> Vec<PropertySource> {
-    let Some(range) = span.and_then(|span| mapper.map(span, raw.len())) else {
-        return Vec::new();
-    };
-    let Some(source) = raw.get(range.clone()) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    let mut line_offset = range.start;
-    for line in source.split_inclusive('\n') {
-        let line_without_newline = line.strip_suffix('\n').unwrap_or(line);
-        if let Some((key, value)) = crate::doc::parse_property_line(line_without_newline) {
-            let base = line_without_newline.as_ptr() as usize;
-            let key_at = key.as_ptr() as usize - base;
-            let value_at = value.as_ptr() as usize - base;
-            out.push(PropertySource {
-                key: key.to_string(),
-                key_range: line_offset + key_at..line_offset + key_at + key.len(),
-                value_offset: line_offset + value_at,
-                value: value.to_string(),
-            });
-        }
-        line_offset += line.len();
-    }
-    out
-}
-
-struct PropertySource {
-    key: String,
-    key_range: Range<usize>,
-    value_offset: usize,
-    value: String,
-}
-
 fn property_key_eligible(key: &str) -> bool {
     let key = crate::doc::property_key_norm(key);
     !key.is_empty()
@@ -530,41 +497,6 @@ fn walk_blocks(
                     }
                 }
             }
-            Block::Properties { span, .. } => {
-                for property in property_values(span.as_ref(), mapper, raw) {
-                    project_property_key(
-                        projection,
-                        &property.key,
-                        property.key_range.clone(),
-                        raw.len(),
-                    );
-                    let PropertySource {
-                        key,
-                        key_range,
-                        value_offset: offset,
-                        value,
-                    } = property;
-                    if structural_property(&key, raw, is_org) {
-                        projection
-                            .withheld_ranges
-                            .push(key_range.start..offset + value.len());
-                        continue;
-                    }
-                    // Bounded like the block parse: a pathologically deep
-                    // value contributes no references rather than aborting
-                    // the index build (og C3 L03, I-22).
-                    if let Some(parsed) = crate::render::parse_text_bounded(&value, is_org) {
-                        walk_blocks(
-                            &parsed.blocks,
-                            SpanMapper::direct(offset),
-                            raw,
-                            is_org,
-                            projection,
-                        );
-                    }
-                    project_implicit_linkable_property(projection, &key, offset, &value, raw.len());
-                }
-            }
             Block::Drawer {
                 name,
                 span: Some(span),
@@ -610,6 +542,31 @@ fn plain_search_ranges(
 pub fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSourceProjection {
     let mut projection = ReferenceSourceProjection::default();
     walk_blocks(blocks, SpanMapper::block(raw), raw, is_org, &mut projection);
+    let regions = crate::block_regions::from_blocks(raw, is_org, blocks);
+    for property in regions.properties.iter().filter(|p| p.applicable) {
+        let key = &property.key;
+        let key_range = property.key_range.0..property.key_range.1;
+        let offset = property.value_range.0;
+        let value = property.value_range.slice(raw);
+        project_property_key(&mut projection, key, key_range.clone(), raw.len());
+        if structural_property(key, raw, is_org) {
+            projection
+                .withheld_ranges
+                .push(key_range.start..property.value_range.1);
+            continue;
+        }
+        if let Some(parsed) = crate::render::parse_text_bounded(value, is_org) {
+            walk_blocks(
+                &parsed.blocks,
+                SpanMapper::direct(offset),
+                raw,
+                is_org,
+                &mut projection,
+            );
+        }
+        project_implicit_linkable_property(&mut projection, key, offset, value, raw.len());
+    }
+
     projection.explicit.sort_by(|a, b| {
         a.range
             .start
@@ -671,7 +628,8 @@ fn visit_plain_matches(
         .next()
         .filter(char::is_ascii)
         .map(|ch| (ch.to_ascii_lowercase(), ch.to_ascii_uppercase()));
-    for (offset, first) in source.char_indices() {
+    for (offset, grapheme) in source.grapheme_indices(true) {
+        let first = grapheme.chars().next().expect("nonempty grapheme");
         if let Some((lower, upper)) = ascii_first {
             if first.is_ascii() && first != lower && first != upper {
                 continue;
@@ -681,15 +639,23 @@ fn visit_plain_matches(
         let mut end = start;
         let mut candidate_raw = String::new();
         let mut matched = false;
+        let mut boundaries = source[offset..]
+            .grapheme_indices(true)
+            .map(|(offset, grapheme)| start + offset + grapheme.len());
+        let mut boundary = boundaries.next().expect("nonempty suffix");
         for (relative, ch) in source[offset..].char_indices() {
             candidate_raw.push(ch);
             end = start + relative + ch.len_utf8();
+            if end > boundary {
+                boundary = boundaries.next().expect("next grapheme");
+            }
             let candidate: String = candidate_raw.to_lowercase().nfc().collect();
-            if candidate == needle {
+            if candidate == needle && end == boundary {
                 matched = true;
                 break;
             }
-            // The final scalar may still compose with the next combining mark.
+            // Accept only at a grapheme edge (I-4), while rejecting incompatible
+            // prefixes early without allocating an arbitrarily long grapheme.
             let without_last = candidate
                 .char_indices()
                 .next_back()

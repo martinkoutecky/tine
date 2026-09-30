@@ -5,7 +5,7 @@
 // pragmatic regexes (not a full inline parse) — enough for the common cases the
 // modal offers, matching OG's option set within reason.
 
-import { isPropertyLine } from "../render/block";
+import { editBlock } from "../render/parse";
 import { renderedBlockText, type RenderedTextOptions } from "../render/renderedText";
 import type { Format } from "../render/ast";
 
@@ -27,7 +27,7 @@ export interface ExportOptions {
   stripLinks: boolean; // [[Foo]] -> Foo
   removeEmphasis: boolean; // **/__/*/_/~~/== markers dropped (source mode only — rendered has none)
   removeTags: boolean; // #tag and #[[tag]] removed
-  removeProperties: boolean; // drop `key:: value` lines
+  removeProperties: boolean; // omit parser-owned metadata, retaining literals and Org body drawers
   newlineAfterBlock: boolean; // blank line after each block
   /** Apply `->`→`→` glyphs in rendered mode; the modal sets this from the app's
    *  typography mode each time (not persisted — it must match what you see). */
@@ -97,8 +97,8 @@ function blockExportLines(n: ExportNode, opts: ExportOptions): string[] {
       resolveMacro: opts.resolveMacro,
     }).split("\n");
   }
-  let lines = n.raw.split("\n");
-  if (opts.removeProperties) lines = lines.filter((l) => !isPropertyLine(l));
+  const raw = opts.removeProperties ? editBlock(n.raw, n.format ?? "md", { kind: "visible" }) : n.raw;
+  const lines = raw.split("\n");
   return lines.map((l) => stripInline(l, opts));
 }
 

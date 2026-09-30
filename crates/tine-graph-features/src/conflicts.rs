@@ -780,7 +780,7 @@ fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConf
     }
     let text = std::str::from_utf8(&bytes)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let markers = vcs_conflict_markers(text);
+    let markers = vcs_conflict_markers(text, format(file));
     Ok((!markers.is_empty()).then(|| VcsMarkerConflict {
         path: file.as_str().to_owned(),
         name,
@@ -1119,7 +1119,7 @@ pub fn vcs_marker_conflict_diff(
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    let Some(sides) = parse_vcs_marker_sides(&content) else {
+    let Some(sides) = parse_vcs_marker_sides(&content, format(&file)) else {
         return Ok(None);
     };
     let fmt = format(&file);
@@ -1176,7 +1176,7 @@ pub fn resolve_vcs_marker_conflict(
                 "file changed on disk",
             ));
         }
-        let Some(sides) = parse_vcs_marker_sides(&content) else {
+        let Some(sides) = parse_vcs_marker_sides(&content, format(&file)) else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "no VCS merge conflict markers to resolve",
