@@ -45,7 +45,7 @@ const GRID_MD = [
   "  tine.filter:: true || occurrence > 1",
   "  tine.group-by:: prop:occurrence",
   "  tine.col-aggregates:: prop:occurrence=sum;prop:severity=max",
-  "\t- WAIT row one",
+  "\t- TODO row one",
   "\t  topic:: infra",
   "\t  shipped:: false",
   "\t  label:: other",
@@ -590,6 +590,13 @@ try {
       const container = block.querySelector(".block-sheet-container");
       const heading = block.querySelector(".heading-text");
       if (!container || boards.length === 0) return { found: true, boards: boards.length, reason: "missing container or board" };
+      // WebDriver scrolls the selected card into view before clicking it. Since
+      // block-owned sheets overflow through their internal scroller (GH #473),
+      // that expected scroll moves the board's raw rect left of its viewport.
+      // Measure containment at the viewport's origin, as master does.
+      const scroller = container.querySelector(":scope > .sheet-scroll");
+      const priorScrollLeft = scroller?.scrollLeft ?? 0;
+      if (scroller) scroller.scrollLeft = 0;
       const boardRect = boards[0].getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
       const headingRect = heading?.getBoundingClientRect() ?? null;
@@ -610,6 +617,7 @@ try {
         contained,
         noHeadingOverlap,
         noNextOverlap,
+        priorScrollLeft,
         board: rectObj(boardRect),
         container: rectObj(containerRect),
         heading: headingRect ? rectObj(headingRect) : null,
@@ -703,7 +711,7 @@ try {
   });
   await sleep(2400);
   const diskMarker = fs.readFileSync(JFILE, "utf8");
-  check("marker pill single-click cycled table state", markerClick.clicked && diskMarker.includes("- LATER row one"), JSON.stringify({ markerClick, diskMarker }));
+  check("marker pill single-click toggled the open pair", markerClick.clicked && diskMarker.includes("- DOING row one"), JSON.stringify({ markerClick, diskMarker }));
   check("marker pill click selected without editing", markerClick.selected && !markerClick.editing, JSON.stringify(markerClick));
 
   // --- N27: aggregate picker is an in-DOM menu (a native <select>'s WebKitGTK
