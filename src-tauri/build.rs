@@ -41,8 +41,10 @@ fn main() {
         None
     };
     for key in ["identifier", "productName"] {
-        let expected = if key == "identifier" {
-            android_namespace.as_ref().unwrap_or(&shipped[key])
+        let expected = if key == "identifier" && android_namespace.as_ref() == Some(&conf[key]) {
+            // Direct cargo checks keep the canonical desktop config. The
+            // Android CLI instead selects the generated Kotlin source namespace.
+            android_namespace.as_ref().expect("Android namespace")
         } else {
             &shipped[key]
         };

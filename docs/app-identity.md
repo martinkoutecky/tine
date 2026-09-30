@@ -47,7 +47,8 @@ Android release preparation (`scripts/release-workflow-inputs.mjs android-config
 uses the committed Gradle Kotlin namespace for Tauri's Java source lookup in the
 ephemeral runner checkout. It keeps the switch-derived Gradle `applicationId`.
 `build.rs` accepts that namespace only on Android and verifies `applicationId`
-against the switch; desktop builds still require the selected desktop identifier.
+against the switch. Direct Android `cargo check` keeps the canonical desktop
+config; desktop builds require the selected desktop identifier.
 The Android version code uses `releaseVersion`, including the Beta sequence.
 
 Release staging copies signed bundles without changing their bytes. Only zsync
