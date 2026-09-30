@@ -2259,7 +2259,7 @@ impl Graph {
                 .map(|(id, error)| (id.clone(), error.to_string())),
         );
         Arc::make_mut(&mut rows).sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
-        Arc::make_mut(&mut rows).dedup();
+        Arc::make_mut(&mut rows).dedup_by(|a, b| a.0 == b.0);
         rows
     }
 
@@ -2868,8 +2868,10 @@ impl Graph {
                 .iter()
                 .map(|(id, error)| (id.as_str().to_owned(), error.to_string())),
         );
+        // One row per path: a discovery and a parse failure of the same file
+        // are one unreadable file (the stable sort keeps the parse reason).
         unreadable.sort_by(|a, b| a.0.cmp(&b.0));
-        unreadable.dedup();
+        unreadable.dedup_by(|a, b| a.0 == b.0);
         let revs: std::collections::HashMap<PathBuf, String> = built
             .iter()
             .map(|(e, _, r)| (e.path.clone(), r.clone()))
