@@ -2300,6 +2300,22 @@ pub enum IrAnswer {
     Registry(Arc<tine_core::query::registry::Registry>),
 }
 
+/// Consume an IR answer into wire rows without cloning or I/O (O(1)). Refuses
+/// exceeded results with store limits; other answer variants are unexpected.
+impl TryFrom<IrAnswer> for tine_core::query::ir::QueryResult {
+    type Error = String;
+    fn try_from(answer: IrAnswer) -> Result<Self, Self::Error> {
+        let IrAnswer::Result(result) = answer else {
+            return Err("query-run: unexpected answer".into());
+        };
+        if result.exceeded {
+            let complete = result.matched_total.unwrap_or(result.total);
+            return Err(format!("result-too-large: {complete} matching rows; narrow the query or add a sample (construction limits: {RESULT_BRIDGE_MAX_ROWS} rows / {RESULT_BRIDGE_MAX_BYTES} bytes)"));
+        }
+        Ok(*result)
+    }
+}
+
 /// Answer shape matching the requested query dialect.
 pub enum QueryResult {
     /// Simple query reference groups.
@@ -2421,35 +2437,31 @@ pub enum Budget {
 }
 
 impl QueryError {
-    /// Check a final serialized response estimate after assembling groups.
-    /// API adapters that add transport fields should call this before sending
-    /// the response; ordinary `WholeGraph` callers already receive bounded
-    /// results from the query methods.
+    fn bridge_result_too_large(what: Budget, count: usize, bytes: Option<usize>) -> Self {
+        Self::ResultTooLarge {
+            what,
+            count,
+            limit: RESULT_BRIDGE_MAX_ROWS,
+            bytes,
+            byte_limit: RESULT_BRIDGE_MAX_BYTES,
+        }
+    }
+
+    /// Check the serialized group estimate including transport fields before
+    /// an adapter sends it. Ordinary `WholeGraph` callers already receive
+    /// bounded results from the query methods.
     #[cfg(test)]
     pub fn bridge_matching_blocks(rows: usize, bytes: usize) -> Option<Self> {
         (rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES).then_some(
-            Self::ResultTooLarge {
-                what: Budget::BridgeMatchingBlocks,
-                count: rows,
-                limit: RESULT_BRIDGE_MAX_ROWS,
-                bytes: Some(bytes),
-                byte_limit: RESULT_BRIDGE_MAX_BYTES,
-            },
+            Self::bridge_result_too_large(Budget::BridgeMatchingBlocks, rows, Some(bytes)),
         )
     }
 
-    /// Check a final serialized search response estimate after adapter fields
-    /// are known. Call this in a transport adapter, not for a direct
-    /// `WholeGraph::search` result.
+    /// Check serialized search bytes including adapter fields; direct
+    /// `WholeGraph::search` callers already receive bounded results.
     pub fn bridge_search_hits(hits: usize, bytes: usize) -> Option<Self> {
         (hits > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES).then_some(
-            Self::ResultTooLarge {
-                what: Budget::SearchHits,
-                count: hits,
-                limit: RESULT_BRIDGE_MAX_ROWS,
-                bytes: Some(bytes),
-                byte_limit: RESULT_BRIDGE_MAX_BYTES,
-            },
+            Self::bridge_result_too_large(Budget::SearchHits, hits, Some(bytes)),
         )
     }
 }
@@ -2909,13 +2921,11 @@ impl WholeGraph {
                     RESULT_BRIDGE_MAX_BYTES,
                 );
                 if exceeded {
-                    Err(QueryError::ResultTooLarge {
-                        what: Budget::AdvancedQueryMatches,
-                        count: total,
-                        limit: RESULT_BRIDGE_MAX_ROWS,
-                        bytes: None,
-                        byte_limit: RESULT_BRIDGE_MAX_BYTES,
-                    })
+                    Err(QueryError::bridge_result_too_large(
+                        Budget::AdvancedQueryMatches,
+                        total,
+                        None,
+                    ))
                 } else {
                     Ok(QueryResult::Advanced(result))
                 }
@@ -2926,7 +2936,7 @@ impl WholeGraph {
     /// The IR query front door (SPEC §7.1): `Run` binds the query to its
     /// context and today (§4.4) and evaluates it in memory under the fixed
     /// construction bounds, returning an over-bound answer with `exceeded` set
-    /// (the command layer refuses it); `ExplainEmpty` counts each probe's rows
+    /// (`TryFrom<IrAnswer>` refuses it for transport); `ExplainEmpty` counts each probe's rows
     /// without constructing any (N19); `Registry` is the observed property
     /// registry (§6.1). Only a statistics fold over its memory budget fails.
     ///
@@ -3063,13 +3073,11 @@ impl WholeGraph {
     /// to 20,000 rows and 32 MiB.
     pub fn blocks(&self, uuids: &[String]) -> Result<Vec<Option<RefGroup>>, QueryError> {
         if uuids.len() > RESULT_BRIDGE_MAX_ROWS {
-            return Err(QueryError::ResultTooLarge {
-                what: Budget::RequestedBlockRefs,
-                count: uuids.len(),
-                limit: RESULT_BRIDGE_MAX_ROWS,
-                bytes: None,
-                byte_limit: RESULT_BRIDGE_MAX_BYTES,
-            });
+            return Err(QueryError::bridge_result_too_large(
+                Budget::RequestedBlockRefs,
+                uuids.len(),
+                None,
+            ));
         }
         let (groups, exceeded, total) = crate::query::resolve_blocks_bounded(
             &self.graph,
@@ -3078,13 +3086,11 @@ impl WholeGraph {
             RESULT_BRIDGE_MAX_BYTES,
         );
         if exceeded {
-            Err(QueryError::ResultTooLarge {
-                what: Budget::ResolvedBlockRows,
-                count: total,
-                limit: RESULT_BRIDGE_MAX_ROWS,
-                bytes: None,
-                byte_limit: RESULT_BRIDGE_MAX_BYTES,
-            })
+            Err(QueryError::bridge_result_too_large(
+                Budget::ResolvedBlockRows,
+                total,
+                None,
+            ))
         } else {
             Ok(groups)
         }
@@ -3111,13 +3117,11 @@ impl WholeGraph {
             let rows = groups.iter().map(|g| g.blocks.len()).sum::<usize>();
             let bytes = tine_core::model::ref_groups_estimated_bytes(groups);
             if rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
-                return Err(QueryError::ResultTooLarge {
-                    what: Budget::BridgeMatchingBlocks,
-                    count: rows,
-                    limit: RESULT_BRIDGE_MAX_ROWS,
-                    bytes: Some(bytes),
-                    byte_limit: RESULT_BRIDGE_MAX_BYTES,
-                });
+                return Err(QueryError::bridge_result_too_large(
+                    Budget::BridgeMatchingBlocks,
+                    rows,
+                    Some(bytes),
+                ));
             }
         }
         Ok(preview)
@@ -3171,13 +3175,11 @@ impl WholeGraph {
         let rows = groups.iter().map(|g| g.blocks.len()).sum::<usize>();
         let bytes = tine_core::model::ref_groups_estimated_bytes(&groups);
         if rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
-            Err(QueryError::ResultTooLarge {
-                what: Budget::BridgeMatchingBlocks,
-                count: rows,
-                limit: RESULT_BRIDGE_MAX_ROWS,
-                bytes: Some(bytes),
-                byte_limit: RESULT_BRIDGE_MAX_BYTES,
-            })
+            Err(QueryError::bridge_result_too_large(
+                Budget::BridgeMatchingBlocks,
+                rows,
+                Some(bytes),
+            ))
         } else {
             Ok(groups)
         }
@@ -3253,13 +3255,11 @@ impl WholeGraph {
                     RESULT_BRIDGE_MAX_BYTES,
                 );
                 if exceeded {
-                    Err(QueryError::ResultTooLarge {
-                        what: Budget::PropertyFacets,
-                        count: 0,
-                        limit: RESULT_BRIDGE_MAX_ROWS,
-                        bytes: None,
-                        byte_limit: RESULT_BRIDGE_MAX_BYTES,
-                    })
+                    Err(QueryError::bridge_result_too_large(
+                        Budget::PropertyFacets,
+                        0,
+                        None,
+                    ))
                 } else {
                     Ok(facets)
                 }

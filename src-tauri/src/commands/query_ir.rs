@@ -14,10 +14,6 @@ use tine_store::{IrAnswer, IrRequest, WholeGraph};
 
 use crate::state::{slot_for_context, GraphContext};
 
-/// Mirrors `tine-store`'s result bridge limits, quoted in the refusal text.
-const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
-const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
-
 /// The printed form a `query_print` caller wants (SPEC §4.3, §7.1).
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -76,17 +72,6 @@ fn print_query_text(
     )
 }
 
-/// A result the WebView cannot be handed is a refusal, not a truncation.
-fn query_result_or_error(result: QueryResult) -> Result<QueryResult, String> {
-    if result.exceeded {
-        let complete = result.matched_total.unwrap_or(result.total);
-        return Err(format!(
-            "result-too-large: {complete} matching rows; narrow the query or add a sample (construction limits: {RESULT_BRIDGE_MAX_ROWS} rows / {RESULT_BRIDGE_MAX_BYTES} bytes)"
-        ));
-    }
-    Ok(result)
-}
-
 fn registry(graph: &WholeGraph) -> Result<Arc<Registry>, String> {
     match graph.query_ir(IrRequest::Registry) {
         Ok(IrAnswer::Registry(registry)) => Ok(registry),
@@ -121,8 +106,7 @@ fn run(
         view,
         context,
     }) {
-        Ok(IrAnswer::Result(result)) => query_result_or_error(*result),
-        Ok(_) => Err("query-run: unexpected answer".into()),
+        Ok(answer) => QueryResult::try_from(answer),
         Err(error) => Err(error.to_string()),
     }
 }
@@ -361,21 +345,18 @@ mod tests {
 
     #[test]
     fn query_run_refuses_an_over_budget_result_rather_than_truncating_it() {
-        let result = QueryResult {
-            statistics: None,
-            rows: tine_core::query::ir::QueryRows::Page { pages: Vec::new() },
-            diagnostics: Vec::new(),
-            report: tine_core::query::ir::QueryReport {
-                supported: true,
-                ..Default::default()
-            },
-            total: 2,
-            matched_total: Some(43),
-            exceeded: true,
-        };
-        let error = query_result_or_error(result).expect_err("an exceeded result is a refusal");
+        let rows = "- TODO row\n".repeat(20_001);
+        let (_dir, graph) = graph_with(&[("pages/Rows.md", &rows)]);
+        let parsed = parsed("(task TODO)", QueryTextDialect::Og);
+        let error = run(
+            &graph,
+            &parsed.query,
+            &parsed.view,
+            &ExecutionContext::none(),
+        )
+        .expect_err("an exceeded result is a refusal");
         assert!(
-            error.starts_with("result-too-large: 43 matching rows"),
+            error.starts_with("result-too-large: 20001 matching rows"),
             "{error}"
         );
     }
