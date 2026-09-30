@@ -85,6 +85,10 @@ fn has_real_user_data(dir: &Path) -> bool {
 /// dirs differ only in the trailing identifier component across OSes, so this avoids
 /// hand-rolling per-platform base-dir logic.)
 fn migrate_app_data_dir(new_dir: &Path) -> bool {
+    migrate_after_park(new_dir, || {})
+}
+
+fn migrate_after_park(new_dir: &Path, after_park: impl Fn()) -> bool {
     let Some(parent) = new_dir.parent() else {
         return false;
     };
@@ -137,6 +141,7 @@ fn migrate_app_data_dir(new_dir: &Path) -> bool {
             }
         };
         let _ = std::fs::create_dir_all(parent);
+        after_park();
         // old & new share a parent => same filesystem => rename is atomic and cheap.
         match publish_directory_entry(&old_dir, new_dir) {
             Ok(()) => {
@@ -208,6 +213,84 @@ pub(crate) fn take_identifier_migration_notice() -> bool {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn crash_child_after_parking() {
+        let Some(root) = std::env::var_os("OG_R6_CRASH_FIXTURE") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        migrate_after_park(&root.join(crate::app_identity::RELEASE_IDENTIFIER), || {
+            std::fs::write(root.join("parked"), b"ready").unwrap();
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
+    }
+
+    #[test]
+    fn killed_migration_reopens_without_losing_either_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let old = root.join(LEGACY_IDENTIFIERS[0]);
+        let new = root.join(crate::app_identity::RELEASE_IDENTIFIER);
+        write(
+            &old,
+            "tine-settings.json",
+            r#"{"last_graph_path":"/graphs/notes"}"#,
+        );
+        write(
+            &old.join("backups"),
+            "master-snapshot",
+            "legacy backup bytes",
+        );
+        write(
+            &new.join("direct-files-projections"),
+            "master-only",
+            "current bytes",
+        );
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "migrate_identifier::tests::crash_child_after_parking",
+                "--nocapture",
+            ])
+            .env("OG_R6_CRASH_FIXTURE", root)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !root.join("parked").exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(
+            root.join("parked").exists(),
+            "child never reached the migration boundary"
+        );
+        assert!(!new.exists());
+        assert!(
+            migrate_app_data_dir(&new),
+            "reopen must finish the interrupted migration"
+        );
+        assert_eq!(
+            std::fs::read(new.join("backups/master-snapshot")).unwrap(),
+            b"legacy backup bytes"
+        );
+        let aside = root.join(format!(
+            "{}.pre-migration.0",
+            crate::app_identity::RELEASE_IDENTIFIER
+        ));
+        assert_eq!(
+            std::fs::read(aside.join("direct-files-projections/master-only")).unwrap(),
+            b"current bytes"
+        );
+        let settings: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(new.join("tine-settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(settings["last_graph_path"], "/graphs/notes");
+    }
 
     fn tmp(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!("tine-migrate-{}-{}", std::process::id(), tag))
