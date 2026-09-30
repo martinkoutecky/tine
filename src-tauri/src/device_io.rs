@@ -257,3 +257,35 @@ fn atomic_update_with_hooks(
         "config changed repeatedly during update",
     ))
 }
+
+/// Copy regular files and directories; symlinks and special files are skipped
+/// (none of the allowlisted entries contains one, and following one could read
+/// outside the released dir).
+pub(crate) fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
+    let kind = fs::symlink_metadata(from)?.file_type();
+    if kind.is_dir() {
+        fs::create_dir_all(to)?;
+        for child in fs::read_dir(from)? {
+            let child = child?;
+            copy_tree(&child.path(), &to.join(child.file_name()))?;
+        }
+        sync_dir(to)
+    } else if kind.is_file() {
+        // Reuse the audited device publication path. A copy is one existing
+        // file format, and its source is read-only throughout the operation.
+        atomic_write_new(to, &fs::read(from)?)?;
+        fs::set_permissions(to, fs::metadata(from)?.permissions())
+    } else {
+        Ok(())
+    }
+}
+
+/// The one rename: publish a staged entry, or set a Welcome-only dir aside.
+pub(crate) fn publish_directory_entry(from: &Path, to: &Path) -> io::Result<()> {
+    move_file_noreplace(from, to)?;
+    to.parent().map_or(Ok(()), sync_dir)
+}
+
+fn sync_dir(dir: &Path) -> io::Result<()> {
+    tine_store::directory_durability::sync_directory_entry(dir)
+}

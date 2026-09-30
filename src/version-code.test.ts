@@ -9,6 +9,7 @@
 // F-Droid metadata would silently disagree. This test turns that into a CI
 // failure instead of a broken release.
 
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -28,6 +29,9 @@ function deriveVersionCode(version: string): number {
 }
 
 describe("Android versionCode (F-Droid autoupdate)", () => {
+  it("preview names advance Android codes only under the separate app identity and isolate the updater channel", () => {
+    execFileSync(process.execPath, ["scripts/test-og-preview-release.mjs"], { stdio: "pipe" });
+  });
   it("matches Tauri's semver-derived versionCode", () => {
     const explicit = conf.bundle?.android?.versionCode;
     expect(explicit, "bundle.android.versionCode must be set for F-Droid").toBeTypeOf("number");

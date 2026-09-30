@@ -6,9 +6,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { releaseLayout } from "./release-layout.mjs";
 
+import { releaseChannel } from "./release-policy.mjs";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const [lane, outputRoot = "release-candidate", commit = process.env.GITHUB_SHA] = process.argv.slice(2);
-const version = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8")).version;
+const conf = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8"));
+const version = conf.version;
+const channel = releaseChannel(conf);
 const laneLayout = releaseLayout(version).lanes[lane];
 if (!laneLayout) throw new Error(`unknown release lane: ${lane}`);
 if (!/^[0-9a-f]{40}$/.test(commit ?? "")) throw new Error(`invalid source commit: ${commit}`);
@@ -56,6 +60,6 @@ for (const [platform, [asset, signatureAsset]] of Object.entries(laneLayout.plat
     signature: fs.readFileSync(path.join(destination, signatureAsset), "utf8").trim(),
   };
 }
-const fragment = { version, commit, lane, assets, platforms };
+const fragment = { version, channel, commit, lane, assets, platforms };
 fs.writeFileSync(path.join(destination, "release-fragment.json"), `${JSON.stringify(fragment, null, 2)}\n`);
 console.log(`${lane}: staged ${assets.length} asset(s), ${Object.keys(platforms).length} updater entries.`);

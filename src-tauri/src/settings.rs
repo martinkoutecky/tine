@@ -329,10 +329,58 @@ pub(crate) fn set_smooth_scroll(value: bool, app: tauri::AppHandle) -> Result<()
 /// behavior toggles that don't each warrant bespoke read/get/set code — the caller
 /// supplies the key and the default. (Used by the copy-behavior options.)
 #[tauri::command]
-pub(crate) fn get_app_bool(key: String, default: bool, app: tauri::AppHandle) -> bool {
-    settings_path(&app)
-        .map(|path| app_bool_at(&path, &key, default))
+pub(crate) fn get_app_bool(
+    key: String,
+    default: bool,
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> bool {
+    let value = device_bool(&app, &key, default);
+    if key != "queryCrossingNoticeDismissed" || value {
+        return value;
+    }
+    let root = app.try_state::<crate::state::AppState>().and_then(|state| {
+        crate::state::slot_for_window(&state, window.label())
+            .ok()
+            .map(|slot| slot.root_key.clone())
+    });
+    root.zip(app.path().app_data_dir().ok())
+        .is_some_and(|(root, dir)| master_crossing_notice_dismissed(&dir, &root))
+}
+
+pub(crate) fn device_bool(app: &tauri::AppHandle, key: &str, default: bool) -> bool {
+    settings_path(app)
+        .map(|path| app_bool_at(&path, key, default))
         .unwrap_or(default)
+}
+
+/// Read compatibility with master's graph-keyed dismissal record. Never write
+/// or translate that file in place: rollback must still see its original bytes.
+fn master_crossing_notice_dismissed(dir: &std::path::Path, root: &std::path::Path) -> bool {
+    let id = session_id(root);
+    let stem = id.strip_suffix(".json").unwrap_or(&id);
+    let path = dir.join("sessions").join(format!("{stem}-notices.json"));
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+        Err(error) => {
+            // Like master, a damaged dismissal costs one extra notice, never
+            // the graph. Record the read failure and leave the file untouched.
+            crate::debug::diag_private("notice-read-failed", error.to_string());
+            return false;
+        }
+    };
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|json| {
+            json.get("dismissed")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+        })
+        .is_some_and(|keys| {
+            keys.iter()
+                .any(|key| key.as_str() == Some("query-crossing"))
+        })
 }
 
 #[tauri::command]
@@ -652,6 +700,32 @@ fn atomic_write_session_with_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn master_notice_read_is_graph_keyed_and_rollback_preserves_all_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = std::path::Path::new("/one/graph");
+        let id = session_id(root);
+        let path = temp.path().join("sessions").join(format!(
+            "{}-notices.json",
+            id.strip_suffix(".json").unwrap()
+        ));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let master_bytes = br#"{ "dismissed": ["query-crossing", "future-notice"], "future": 1 }"#;
+        std::fs::write(&path, master_bytes).unwrap();
+        assert!(master_crossing_notice_dismissed(temp.path(), root));
+        assert!(!master_crossing_notice_dismissed(
+            temp.path(),
+            std::path::Path::new("/two/graph")
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), master_bytes);
+        let rollback: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(rollback["dismissed"][0], "query-crossing");
+        std::fs::write(&path, b"{torn").unwrap();
+        assert!(!master_crossing_notice_dismissed(temp.path(), root));
+        assert_eq!(std::fs::read(&path).unwrap(), b"{torn");
+    }
 
     #[test]
     fn session_save_syncs_published_file_and_directory() {

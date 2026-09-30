@@ -275,3 +275,100 @@ fn window_geometry_is_copied_once_and_never_over_the_builds_own() {
     );
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn desktop_webview_seed_uses_native_layouts_and_keeps_rollback_data_intact() {
+    let temp = tempfile::tempdir().unwrap();
+    for os in ["windows", "macos"] {
+        let (own, release) = webview_dirs(
+            os,
+            Some(temp.path()),
+            Some(temp.path()),
+            "experiment-id",
+            "release-id",
+        )
+        .unwrap();
+        write(
+            &release.join("Default/Local Storage/leveldb/000003.log"),
+            b"theme=dark;shortcuts=custom",
+        );
+        write(&release.join("salt"), b"origin-salt");
+        let before = tree(&release);
+        seed_webview_store(&own, &release).unwrap();
+        assert_eq!(tree(&own), before);
+        assert_eq!(
+            tree(&release),
+            before,
+            "rollback reads the exact source store"
+        );
+        write(&own.join("salt"), b"experiment-state");
+        seed_webview_store(&own, &release).unwrap();
+        assert_eq!(fs::read(own.join("salt")).unwrap(), b"experiment-state");
+        assert_eq!(tree(&release), before);
+    }
+    for os in ["linux", "android", "ios"] {
+        assert!(webview_dirs(os, Some(temp.path()), Some(temp.path()), "own", "release").is_none());
+    }
+}
+
+#[test]
+fn crash_child_after_webview_stage() {
+    let Some(root) = std::env::var_os("OG_R6_WEBVIEW_CRASH_FIXTURE") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    seed_webview_after_stage(&root.join("own-store"), &root.join("release-store"), || {
+        write(&root.join("staged"), b"ready");
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    })
+    .unwrap();
+}
+
+#[test]
+fn killed_webview_seed_retries_after_config_has_already_published() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let release = released_dir(root);
+    let own = root.join("own-id");
+    seed(&own, &release, None).unwrap();
+    let own_store = root.join("own-store");
+    let release_store = root.join("release-store");
+    write(&release_store.join("preferences"), b"master browser state");
+    let before = tree(&release_store);
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "experiment_config_seed::tests::crash_child_after_webview_stage",
+            "--nocapture",
+        ])
+        .env("OG_R6_WEBVIEW_CRASH_FIXTURE", root)
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !root.join("staged").exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(
+        root.join("staged").exists(),
+        "child never reached the staging boundary"
+    );
+    assert!(!own_store.exists());
+    assert!(matches!(
+        seed(&own, &release, None).unwrap(),
+        Seeded::Skipped(_)
+    ));
+    seed_missing_webview(
+        &own,
+        &release,
+        Some((own_store.clone(), release_store.clone())),
+    )
+    .unwrap();
+    assert_eq!(tree(&own_store), before);
+    assert_eq!(tree(&release_store), before, "rollback source changed");
+    assert!(!own_store.with_extension("seeding").exists());
+}
