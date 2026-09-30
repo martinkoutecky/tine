@@ -128,7 +128,7 @@ assert.match(
 );
 assert.match(
   ciWorkflow,
-  /test:\n    name: Full CI \/ Linux tests and release contracts[\s\S]*?uses: dtolnay\/rust-toolchain@stable\n        with:\n          targets: wasm32-unknown-unknown[\s\S]*?name: Standalone plugin template builds and conforms\n        run: npm run plugin:template-check/,
+  /test:\n    name: Full CI \/ Linux tests and release contracts[\s\S]*?uses: dtolnay\/rust-toolchain@\d+\.\d+\.\d+\n        with:\n          targets: wasm32-unknown-unknown[\s\S]*?name: Standalone plugin template builds and conforms\n        run: npm run plugin:template-check/,
   "the Linux full-CI plugin-template check does not install the WASM target"
 );
 assert.match(

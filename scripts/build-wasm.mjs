@@ -16,7 +16,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,10 +45,28 @@ console.log(`lsdoc pin: ${coreTag} (tine-core == lsdoc-wasm ✓)`);
 
 const tmp = mkdtempSync(join(tmpdir(), "lsdoc-wasm-"));
 console.log(`wasm-pack build → ${tmp}`);
+// Panic locations embed source paths. Without the remap the checkout's
+// absolute path (a private worktree name) ships in the public bytes, and the
+// clean-source rebuild check can never match a build made in another checkout.
+// Dependency sources live under CARGO_HOME (a local toolchain dir here,
+// ~/.cargo on CI); remap it too so the bytes do not depend on the machine.
+const cargoHome = process.env.CARGO_HOME || join(homedir(), ".cargo");
+// A toolchain with rust-src installed reports std panic locations under its
+// local sysroot; map them back to the canonical /rustc/<commit> form that a
+// toolchain without rust-src already uses.
+const rustcCommit = execFileSync("rustc", ["-vV"], { cwd: root, encoding: "utf8" }).match(/^commit-hash: (\S+)$/m)?.[1];
+const sysroot = execFileSync("rustc", ["--print", "sysroot"], { cwd: root, encoding: "utf8" }).trim();
+if (!rustcCommit) throw new Error("build-wasm: rustc -vV reported no commit-hash");
+const rustflags = [
+  process.env.RUSTFLAGS,
+  `--remap-path-prefix=${root}=/tine`,
+  `--remap-path-prefix=${cargoHome}=/cargo`,
+  `--remap-path-prefix=${join(sysroot, "lib", "rustlib", "src", "rust")}=/rustc/${rustcCommit}`,
+].filter(Boolean).join(" ");
 execFileSync(
   "wasm-pack",
   ["build", "crates/lsdoc-wasm", "--target", "web", "--release", "--out-dir", tmp, "--out-name", "lsdoc_wasm"],
-  { cwd: root, stdio: "inherit", env: { ...process.env, LSDOC_TAG: coreTag } },
+  { cwd: root, stdio: "inherit", env: { ...process.env, LSDOC_TAG: coreTag, RUSTFLAGS: rustflags } },
 );
 
 mkdirSync(outDir, { recursive: true });
