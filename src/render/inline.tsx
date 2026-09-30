@@ -362,7 +362,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
     <>
       <a
         ref={anchorEl}
-        class={`${props.tag ? "tag" : "page-ref"}${missing() ? " page-ref-missing" : ""}`}
+        class={props.tag ? "tag" : "page-ref"}
+        data-missing-page={missing() ? "" : undefined}
         {...(props.spanAttrs ?? {})}
         // Suppress the browser defaults the destinations replace: shift-range
         // selection (GH #42) and middle-button autoscroll / PRIMARY paste (GH #207).
