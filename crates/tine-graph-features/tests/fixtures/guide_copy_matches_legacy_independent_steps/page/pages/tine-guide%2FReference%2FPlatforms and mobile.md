@@ -28,7 +28,7 @@ icon:: 📱
   - Everything the phone skips is here: tabs with pin, reorder, and reopen, split panes, saved workspaces, multiple windows, the modifier-click gestures, and global quick capture. Releases cover Linux and Windows on x64 and ARM64, and macOS as one universal app.
   - **In-app updates** run on Windows and Linux — the app checks once per launch and Settings → **About** → **Check for updates** downloads, installs, and relaunches in place. On macOS the same notice opens the releases page instead, because today's unsigned app bundle cannot safely replace itself.
   - Any folder on your disk can be a graph — choose it with the ordinary folder picker; there is no sandboxed document picker.
-  - **On macOS, Tine draws its window with the system's web engine** — the same one Safari uses — and needs the engine of **Safari 15.4 or later**, which means **macOS 12.3 (Monterey) or later**. Apps get the engine that came with macOS: updating the Safari app on an older Mac leaves the one Tine uses unchanged, so the app bundle declares 12.3 as its minimum system version.
+  - **On macOS, Tine draws its window with the system's web engine** — the same one Safari uses — and needs the engine of **Safari 15.4 or later**, which means **macOS 12.3 (Monterey) or later**. Apps get the engine that came with macOS: updating the Safari app on an older Mac leaves the one Tine uses unchanged, so the app bundle declares 12.3 as its minimum system version. If the web engine is too old, Tine explains this at startup instead of opening half-working. Opening PDFs needs Safari 17.4 or later; the rest of Tine does not.
 - ## iOS today
   - iOS is being scoped and there is no public iOS build yet. Nothing on this page promises one.
 - ## Where next

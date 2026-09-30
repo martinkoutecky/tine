@@ -8,9 +8,9 @@
     />
     <title>demo</title>
     <script src="./assets/startup-theme.js"></script>
-    <script type="module" crossorigin src="./assets/main-jDriIN9B.js"></script>
-    <link rel="modulepreload" crossorigin href="./assets/app-Bw-2InBN.js">
-    <link rel="stylesheet" crossorigin href="./assets/app-B2QTE4Xk.css">
+    <script type="module" crossorigin src="./assets/main-BQ_uDIOO.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/app-DcJA7ZQK.js">
+    <link rel="stylesheet" crossorigin href="./assets/app-BH-Gm40v.css">
     <link rel="stylesheet" crossorigin href="./assets/main-DwHSxjtX.css">
   </head>
   <body>
@@ -20,5 +20,37 @@
         <span>Opening Tine…</span>
       </div>
     </div>
+    <script id="tine-engine-check">
+      // GH #572. Tine needs the web engine of Safari 15.4 or later: the parser is
+      // wasm with reference types (Safari 15) and the frontend uses ES2022
+      // built-ins such as Array.prototype.at (Safari 15.4). An older engine loads
+      // Tine half-broken, so say so plainly instead. Deliberately ES5: this must
+      // parse on the engines it rejects. main.tsx stops on the flag it sets.
+      (function () {
+        var wasmReferenceTypes = false;
+        try {
+          wasmReferenceTypes = WebAssembly.validate(new Uint8Array([
+            0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 1, 111, 0
+          ]));
+        } catch (_) {}
+        if (
+          typeof Array.prototype.at === "function" &&
+          typeof Object.hasOwn === "function" &&
+          typeof structuredClone === "function" &&
+          wasmReferenceTypes
+        ) return;
+        window.__tineUnsupportedEngine = true;
+        var apple = /Mac|iPhone|iPad/.test(navigator.userAgent || "");
+        var root = document.getElementById("root");
+        root.innerHTML =
+          '<div class="startup-shell" role="alert" style="flex-direction:column;padding:24px;text-align:center">' +
+          "<strong>This system's web engine is too old for Tine.</strong>" +
+          "<span>Tine needs the engine of Safari 15.4 or later.</span>" +
+          "<span>" + (apple
+            ? "On a Mac, Tine needs macOS 12.3 (Monterey) or later: apps use the web engine that came with macOS, and updating the Safari app alone does not update it."
+            : "Update your system's web view and restart Tine.") + "</span>" +
+          "</div>";
+      })();
+    </script>
   </body>
 </html>

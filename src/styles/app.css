@@ -4294,31 +4294,30 @@ html[data-system-insets="native-viewport"] {
 
 /* ---------------------------------------------------------------- inline */
 
-.page-ref {
-  color: var(--link-color);
+.page-ref, .tag {
   cursor: pointer;
   text-decoration: none;
   position: relative; /* anchor for the hover-peek card (GH #40) */
 }
-
-.page-ref:hover {
-  text-decoration: underline;
-}
+.page-ref { color: var(--link-color); }
+.tag { color: var(--tag-color); }
+.page-ref:hover, .tag:hover { text-decoration: underline; }
 
 .page-ref .bracket {
   color: var(--text-muted);
   opacity: 0.55;
 }
 
-.tag {
-  color: var(--tag-color);
-  cursor: pointer;
-  text-decoration: none;
-  position: relative; /* anchor for the hover-peek card (GH #40) */
+/* Deliberate Martin-approved OG divergence: missing page refs are muted
+   and dotted, but still navigate/create; tags are exempt. OG dims only untitled pages. */
+[data-missing-page] {
+  color: var(--text-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
 }
-
-.tag:hover {
-  text-decoration: underline;
+[data-missing-page]:hover {
+  color: var(--link-color);
+  text-decoration: underline dotted;
 }
 
 .external-link {
@@ -6511,9 +6510,6 @@ ol.md-list { list-style: decimal; }
   margin: 6px 0;
   line-height: 1.6;
 }
-.ns-hierarchy .page-ref {
-  color: var(--link-color);
-}
 .ns-hier-sep {
   margin: 0 8px;
   opacity: 0.3;
@@ -6552,18 +6548,12 @@ ol.md-list { list-style: decimal; }
   font-weight: 600;
   color: var(--text-secondary);
 }
-.ns-macro-head .page-ref {
-  color: var(--link-color);
-}
 .ns-macro-row {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 2px 0;
   line-height: 1.5;
-}
-.ns-macro-row .page-ref {
-  color: var(--link-color);
 }
 
 /* Page-property `icon::` rendered as an icon (next to a title, in the namespace
