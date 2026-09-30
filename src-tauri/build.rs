@@ -13,9 +13,41 @@ fn main() {
     let shipped = &switch["identities"][ship];
     let release = &switch["identities"]["release"];
     let conf = read("tauri.conf.json");
-    for key in ["identifier", "productName"] {
+    let android = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android");
+    let android_namespace = if android {
+        println!("cargo:rerun-if-changed=gen/android/app/build.gradle.kts");
+        let gradle =
+            std::fs::read_to_string("gen/android/app/build.gradle.kts").expect("Android Gradle");
+        let field = |key: &str| {
+            gradle
+                .lines()
+                .find_map(|line| {
+                    line.trim()
+                        .strip_prefix(&format!("{key} = \""))
+                        .and_then(|v| v.strip_suffix('"'))
+                })
+                .expect(key)
+                .to_owned()
+        };
         assert_eq!(
-            conf[key], shipped[key],
+            field("applicationId"),
+            shipped["androidApplicationId"]
+                .as_str()
+                .expect("androidApplicationId"),
+            "Android applicationId disagrees with the identity switch"
+        );
+        Some(serde_json::Value::String(field("namespace")))
+    } else {
+        None
+    };
+    for key in ["identifier", "productName"] {
+        let expected = if key == "identifier" {
+            android_namespace.as_ref().unwrap_or(&shipped[key])
+        } else {
+            &shipped[key]
+        };
+        assert_eq!(
+            &conf[key], expected,
             "tauri.conf.json `{key}` disagrees with app-identity.json (ship = {ship}); \
              run `node scripts/set-app-identity.mjs {ship}`"
         );

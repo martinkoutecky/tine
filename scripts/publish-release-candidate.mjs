@@ -46,7 +46,7 @@ if (!release) {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), `tine-release-notes-${version}-`));
   try {
     const notesPath = path.join(temporary, "notes.md");
-    const fallback = "Download an installer for your platform below. Windows and Linux ship both x64 and ARM64 builds (match your CPU). Windows users who prefer no installer can grab the portable `Tine_*-portable.zip` for their architecture. macOS and Windows builds are currently unsigned, so their operating systems may show a warning on first launch. On macOS, if Tine repeatedly asks to access Documents, see the workaround in the README.";
+    const fallback = `Download an installer for your platform below. Windows and Linux ship both x64 and ARM64 builds (match your CPU). Windows users who prefer no installer can grab the portable \`${layout.lanes["windows-x64"].assets.find((name) => name.endsWith("-portable.zip"))}\` for their architecture. macOS and Windows builds are currently unsigned, so their operating systems may show a warning on first launch. On macOS, if Tine repeatedly asks to access Documents, see the workaround in the README.`;
     fs.writeFileSync(notesPath, `${releaseNotes(root, version)}\n\n---\n\n${fallback}\n`);
     gh("release", "create", tag, "--draft", "--prerelease", "--latest=false", "--target", commit, "--title", `${IDENTITY.productName} ${version}`, "--notes-file", notesPath);
   } finally {

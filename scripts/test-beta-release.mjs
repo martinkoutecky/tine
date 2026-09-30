@@ -1,3 +1,4 @@
+import { IDENTITY } from "./lib/app-identity.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -27,7 +28,7 @@ for (const tag of ["latest", "v0.7.0", "v0.7.0-beta.1", undefined]) assert.throw
 assert.throws(() => publicationPlan({ conf, mode: "promote", publish: false }));
 assert.throws(() => publicationPlan({ conf: { ...conf, plugins: { updater: { endpoints: ["https://github.com/martinkoutecky/tine/releases/latest/download/latest.json"] } } }, mode: "build", publish: false }));
 assert.equal(updaterAssetUrl("owner/repo", "app.sig", "beta"), "https://github.com/owner/repo/releases/download/beta/app.sig");
-assert.ok(releaseLayout(conf.version).allAssets.includes(`Tine_${conf.version}_android-arm64.apk`));
+assert.ok(releaseLayout(conf.version).allAssets.includes(`${IDENTITY.productName.replace(/\s+/g, "-")}_${conf.version}_android-arm64.apk`));
 const workflow = fs.readFileSync(".github/workflows/release.yml", "utf8");
 assert.match(workflow, /mode:[\s\S]*?options: \[build\]/);
 assert.match(workflow, /publish:[\s\S]*?default: false/);

@@ -37,10 +37,25 @@ To flip it, run `node scripts/set-app-identity.mjs release` (or
 |---|---|
 | `src-tauri/tauri.conf.json` `identifier`, `productName`, main window `title` | rewritten by the script; `src-tauri/build.rs` refuses to compile when they disagree with the switch |
 | Rust code (`app_identity.rs`, `linux_window_identity.rs`, the seed) | `build.rs` emits `TINE_APP_IDENTIFIER`, `TINE_PRODUCT_NAME` and `TINE_RELEASE_IDENTIFIER` |
+| Release filenames (`scripts/release-layout.mjs`) | derive from `productName`; whitespace becomes `-` for GitHub assets, while `sourceAssets` names Tauri outputs verbatim |
 | Android `applicationId` (`src-tauri/gen/android/app/build.gradle.kts`) | rewritten by the script; the Kotlin `namespace` stays `page.tine.app` |
 | Deploy destination (`scripts/deploy.sh`) | `~/research/<deployName>` |
 | Native E2E journeys | `scripts/lib/app-identity.mjs` (`APP_ID`, `IDENTITY`) |
 | Flatpak (`.github/workflows/flatpak.yml`) | refuses to build unless `ship` is `release`; the manifest id is the release identifier |
+
+Android release preparation (`scripts/release-workflow-inputs.mjs android-config`)
+uses the committed Gradle Kotlin namespace for Tauri's Java source lookup in the
+ephemeral runner checkout. It keeps the switch-derived Gradle `applicationId`.
+`build.rs` accepts that namespace only on Android and verifies `applicationId`
+against the switch; desktop builds still require the selected desktop identifier.
+The Android version code uses `releaseVersion`, including the Beta sequence.
+
+Release staging copies signed bundles without changing their bytes. Only zsync
+headers (`Filename` and `URL`) are changed to the canonical published AppImage
+name, preserving the binary checksum payload. The workflow's embedded AppImage
+update pattern, Windows portable lookup, APK name, updater manifest and publisher
+all consume the same layout. Beta updates remain restricted to the `beta` release.
+`scripts/test-release-identity.mjs` drives staging and assembly for both ships.
 
 A few identity-bearing places need no file of their own:
 

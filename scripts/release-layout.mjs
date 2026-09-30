@@ -1,3 +1,4 @@
+import { IDENTITY } from "./lib/app-identity.mjs";
 import { BETA_TAG, releaseVersion } from "./release-policy.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -15,101 +16,109 @@ export function assertReleaseVersion(version) {
   releaseVersion(version);
 }
 
-export function releaseLayout(version) {
+export function releaseLayout(version, identity = IDENTITY) {
+  const product = identity.productName.replace(/\s+/g, "-");
   assertReleaseVersion(version);
   const lanes = {
     "linux-x64": {
       assets: [
-        `Tine_${version}_amd64.AppImage`,
-        `Tine_${version}_amd64.AppImage.sig`,
-        `Tine_${version}_amd64.AppImage.zsync`,
-        `Tine_${version}_amd64.deb`,
-        `Tine_${version}_amd64.deb.sig`,
-        `Tine-${version}-1.x86_64.rpm`,
-        `Tine-${version}-1.x86_64.rpm.sig`,
+        `${product}_${version}_amd64.AppImage`,
+        `${product}_${version}_amd64.AppImage.sig`,
+        `${product}_${version}_amd64.AppImage.zsync`,
+        `${product}_${version}_amd64.deb`,
+        `${product}_${version}_amd64.deb.sig`,
+        `${product}-${version}-1.x86_64.rpm`,
+        `${product}-${version}-1.x86_64.rpm.sig`,
       ],
       platforms: {
-        "linux-x86_64": [`Tine_${version}_amd64.AppImage`, `Tine_${version}_amd64.AppImage.sig`],
+        "linux-x86_64": [`${product}_${version}_amd64.AppImage`, `${product}_${version}_amd64.AppImage.sig`],
         "linux-x86_64-appimage": [
-          `Tine_${version}_amd64.AppImage`,
-          `Tine_${version}_amd64.AppImage.sig`,
+          `${product}_${version}_amd64.AppImage`,
+          `${product}_${version}_amd64.AppImage.sig`,
         ],
-        "linux-x86_64-deb": [`Tine_${version}_amd64.deb`, `Tine_${version}_amd64.deb.sig`],
+        "linux-x86_64-deb": [`${product}_${version}_amd64.deb`, `${product}_${version}_amd64.deb.sig`],
         "linux-x86_64-rpm": [
-          `Tine-${version}-1.x86_64.rpm`,
-          `Tine-${version}-1.x86_64.rpm.sig`,
+          `${product}-${version}-1.x86_64.rpm`,
+          `${product}-${version}-1.x86_64.rpm.sig`,
         ],
       },
     },
     "linux-arm64": {
       assets: [
-        `Tine_${version}_aarch64.AppImage`,
-        `Tine_${version}_aarch64.AppImage.sig`,
-        `Tine_${version}_aarch64.AppImage.zsync`,
-        `Tine_${version}_arm64.deb`,
-        `Tine_${version}_arm64.deb.sig`,
-        `Tine-${version}-1.aarch64.rpm`,
-        `Tine-${version}-1.aarch64.rpm.sig`,
+        `${product}_${version}_aarch64.AppImage`,
+        `${product}_${version}_aarch64.AppImage.sig`,
+        `${product}_${version}_aarch64.AppImage.zsync`,
+        `${product}_${version}_arm64.deb`,
+        `${product}_${version}_arm64.deb.sig`,
+        `${product}-${version}-1.aarch64.rpm`,
+        `${product}-${version}-1.aarch64.rpm.sig`,
       ],
       platforms: {
         "linux-aarch64": [
-          `Tine_${version}_aarch64.AppImage`,
-          `Tine_${version}_aarch64.AppImage.sig`,
+          `${product}_${version}_aarch64.AppImage`,
+          `${product}_${version}_aarch64.AppImage.sig`,
         ],
         "linux-aarch64-appimage": [
-          `Tine_${version}_aarch64.AppImage`,
-          `Tine_${version}_aarch64.AppImage.sig`,
+          `${product}_${version}_aarch64.AppImage`,
+          `${product}_${version}_aarch64.AppImage.sig`,
         ],
-        "linux-aarch64-deb": [`Tine_${version}_arm64.deb`, `Tine_${version}_arm64.deb.sig`],
+        "linux-aarch64-deb": [`${product}_${version}_arm64.deb`, `${product}_${version}_arm64.deb.sig`],
         "linux-aarch64-rpm": [
-          `Tine-${version}-1.aarch64.rpm`,
-          `Tine-${version}-1.aarch64.rpm.sig`,
+          `${product}-${version}-1.aarch64.rpm`,
+          `${product}-${version}-1.aarch64.rpm.sig`,
         ],
       },
     },
     "macos-universal": {
-      assets: [`Tine_${version}_universal.dmg`],
+      assets: [`${product}_${version}_universal.dmg`],
       platforms: {},
     },
     "windows-x64": {
       assets: [
-        `Tine_${version}_x64-setup.exe`,
-        `Tine_${version}_x64-setup.exe.sig`,
-        `Tine_${version}_x64-portable.zip`,
+        `${product}_${version}_x64-setup.exe`,
+        `${product}_${version}_x64-setup.exe.sig`,
+        `${product}_${version}_x64-portable.zip`,
       ],
       platforms: {
         "windows-x86_64": [
-          `Tine_${version}_x64-setup.exe`,
-          `Tine_${version}_x64-setup.exe.sig`,
+          `${product}_${version}_x64-setup.exe`,
+          `${product}_${version}_x64-setup.exe.sig`,
         ],
         "windows-x86_64-nsis": [
-          `Tine_${version}_x64-setup.exe`,
-          `Tine_${version}_x64-setup.exe.sig`,
+          `${product}_${version}_x64-setup.exe`,
+          `${product}_${version}_x64-setup.exe.sig`,
         ],
       },
     },
     "windows-arm64": {
       assets: [
-        `Tine_${version}_arm64-setup.exe`,
-        `Tine_${version}_arm64-setup.exe.sig`,
-        `Tine_${version}_arm64-portable.zip`,
+        `${product}_${version}_arm64-setup.exe`,
+        `${product}_${version}_arm64-setup.exe.sig`,
+        `${product}_${version}_arm64-portable.zip`,
       ],
       platforms: {
         "windows-aarch64": [
-          `Tine_${version}_arm64-setup.exe`,
-          `Tine_${version}_arm64-setup.exe.sig`,
+          `${product}_${version}_arm64-setup.exe`,
+          `${product}_${version}_arm64-setup.exe.sig`,
         ],
         "windows-aarch64-nsis": [
-          `Tine_${version}_arm64-setup.exe`,
-          `Tine_${version}_arm64-setup.exe.sig`,
+          `${product}_${version}_arm64-setup.exe`,
+          `${product}_${version}_arm64-setup.exe.sig`,
         ],
       },
     },
     android: {
-      assets: [`Tine_${version}_android-arm64.apk`],
+      assets: [`${product}_${version}_android-arm64.apk`],
       platforms: {},
     },
   };
+  for (const spec of Object.values(lanes)) {
+    // Tauri uses productName verbatim; our own zip/APK are already canonical.
+    spec.sourceAssets = Object.fromEntries(spec.assets.map((name) => [name,
+      name.endsWith("-portable.zip") || name.endsWith(".apk") ? name
+        : identity.productName + name.slice(product.length),
+    ]));
+  }
   const platformAssets = RELEASE_LANES.flatMap((lane) => lanes[lane].assets);
   return {
     lanes,

@@ -39,12 +39,27 @@ fs.mkdirSync(destination, { recursive: true });
 
 const assets = [];
 for (const name of laneLayout.assets) {
-  const matches = allFiles.filter((file) => path.basename(file) === name);
+  const matches = allFiles.filter((file) => path.basename(file) === laneLayout.sourceAssets[name]);
   if (matches.length !== 1) {
-    throw new Error(`${lane}: expected exactly one ${name}, found ${matches.length}: ${matches.join(", ")}`);
+    throw new Error(`${lane}: expected exactly one ${laneLayout.sourceAssets[name]}, found ${matches.length}: ${matches.join(", ")}`);
   }
   const target = path.join(destination, name);
   fs.copyFileSync(matches[0], target);
+  // zsync's relative target must name the published AppImage, not Tauri's
+  // space-bearing local file. This changes metadata, never signed bundle bytes.
+  if (name.endsWith(".zsync")) {
+    const bytes = fs.readFileSync(target);
+    const headerEnd = bytes.indexOf("\n\n");
+    if (headerEnd < 0) throw new Error(`${lane}: zsync lacks header boundary`);
+    const text = bytes.subarray(0, headerEnd).toString("utf8");
+    const appimage = name.slice(0, -".zsync".length);
+    if (!/^Filename: .+$/m.test(text) || !/^URL: .+$/m.test(text)) {
+      throw new Error(`${lane}: zsync lacks Filename/URL headers`);
+    }
+    const header = text.replace(/^Filename: .+$/m, `Filename: ${appimage}`)
+      .replace(/^URL: .+$/m, `URL: ${appimage}`);
+    fs.writeFileSync(target, Buffer.concat([Buffer.from(header), bytes.subarray(headerEnd)]));
+  }
   const bytes = fs.readFileSync(target);
   assets.push({
     name,

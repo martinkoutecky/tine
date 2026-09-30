@@ -29,8 +29,8 @@ concurrency:
 
 jobs:
   # Cheap deterministic guards run before any expensive release build.
-  # The same workflow also calls the real offline Flatpak build below; together
-  # these prevent dependency-pin drift from surfacing only after a tag is public.
+  # PV1 scope: Linux, Windows NSIS, macOS and Android. Flatpak stays in
+  # its dedicated CI workflow; it is not a Beta release prerequisite.
   preflight:
     runs-on: ubuntu-22.04
     steps:
@@ -64,10 +64,6 @@ jobs:
         env:
           REQUIRE_RELEASE_READINESS: "1"
         run: node scripts/check-release-preflight.mjs
-      - name: Flatpak offline npm sources are current
-        run: node scripts/check-flatpak-node-sources.mjs
-      - name: Flatpak offline Cargo sources are current
-        run: node scripts/check-flatpak-cargo-sources.mjs
       - name: lsdoc WASM pin is current
         run: node scripts/check-wasm-pin.mjs
       - name: lsdoc oracle bytes and cross-platform EOL policy are current
@@ -76,12 +72,6 @@ jobs:
         run: |
           node scripts/test-release-pipeline.mjs
           node scripts/test-env-toolchain-fallback.mjs
-
-  # Reuse the actual privileged, network-disabled Flatpak bundle build. It runs
-  # in parallel with the platform packages but is a hard publication dependency.
-  flatpak:
-    needs: preflight
-    uses: ./.github/workflows/flatpak.yml
 
   # Build each desktop platform concurrently. Jobs never mutate a GitHub Release;
   # they upload immutable workflow artifacts for the assembler/publisher below.
@@ -96,7 +86,6 @@ jobs:
             lane: linux-x64
             args: "--features custom-protocol"
             rust-targets: ""
-            appimage-update-info: "gh-releases-zsync|martinkoutecky|tine|beta|Tine_*_amd64.AppImage.zsync"
           # Linux ARM64: built NATIVELY on GitHub's aarch64 runner (free on public
           # repos). No cross-compile — GTK/WebKitGTK are system libs that are
           # painful to cross-compile, so we install the arm64 -dev packages on the
@@ -107,7 +96,6 @@ jobs:
             lane: linux-arm64
             args: "--features custom-protocol"
             rust-targets: ""
-            appimage-update-info: "gh-releases-zsync|martinkoutecky|tine|beta|Tine_*_aarch64.AppImage.zsync"
           - platform: macos-latest
             lane: macos-universal
             # one universal binary that runs on both Apple Silicon and Intel
@@ -173,6 +161,10 @@ jobs:
         if: matrix.lane == 'windows-x64'
         run: node scripts/build-e2e-receipt.mjs before --tauri-manifest-normalization --snapshot target/release/tine.exe.build.before.json
 
+      - name: Derive release filenames and update information
+        shell: bash
+        run: node scripts/release-workflow-inputs.mjs "${{ matrix.lane }}" >> "$GITHUB_ENV"
+
       - name: Build signed Tauri bundles
         env:
           # Updater signing (minisign) — the app-update root of trust, SEPARATE from
@@ -196,22 +188,14 @@ jobs:
           # the .upd_info section and creates the matching .zsync metadata.
           # Newer plugin builds read LDAI_UPDATE_INFORMATION and only warn on the
           # deprecated UPDATE_INFORMATION; set both so any plugin version embeds it.
-          UPDATE_INFORMATION: ${{ matrix.appimage-update-info }}
-          LDAI_UPDATE_INFORMATION: ${{ matrix.appimage-update-info }}
         run: node scripts/build-release-bundles.mjs -- ${{ matrix.args }}
 
       - name: Verify Linux AppImage update information
         if: startsWith(matrix.platform, 'ubuntu-')
         run: |
-          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          case "${{ matrix.lane }}" in
-            linux-x64) arch=amd64 ;;
-            linux-arm64) arch=aarch64 ;;
-            *) echo "::error::unexpected Linux release lane: ${{ matrix.lane }}"; exit 1 ;;
-          esac
           appimage_dir=./target/release/bundle/appimage
-          appimage="$appimage_dir/Tine_${version}_${arch}.AppImage"
-          zsync_name="Tine_${version}_${arch}.AppImage.zsync"
+          appimage="$appimage_dir/$RELEASE_APPIMAGE"
+          zsync_name="$RELEASE_ZSYNC"
           # appimagetool writes the .zsync into the tauri build CWD (src-tauri/),
           # NOT beside the AppImage in the bundle dir. Check the known candidate
           # locations, then fall back to a whole-tree search so a future CWD change
@@ -260,17 +244,16 @@ jobs:
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
-          $version = node -p "require('./src-tauri/tauri.conf.json').version"
           # A cross-target build (ARM64) outputs under target/<triple>/release/, a
           # native build (x64) under target/release/ — matrix.win-exe-dir carries the
-          # right one. Tauri v2 may rename the main binary to productName ("Tine.exe");
+          # right one. Tauri v2 may rename the main binary to productName;
           # the cargo bin name is "tine.exe". Pick whichever exists — and NOT the
           # secondary "tine-check.exe" helper binary.
           $dir = "${{ matrix.win-exe-dir }}"
-          $exe = @("$dir/Tine.exe", "$dir/tine.exe") |
+          $exe = @("$dir/$env:RELEASE_PRODUCT_NAME.exe", "$dir/tine.exe") |
             Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $exe) { throw "portable: main Tine exe not found under $dir" }
-          $zip = "Tine_${version}_${{ matrix.win-arch }}-portable.zip"
+          $zip = $env:RELEASE_PORTABLE
           Compress-Archive -Path $exe -DestinationPath $zip -Force
 
       # The expensive Linux build above is also the exact binary under test and
@@ -390,7 +373,11 @@ jobs:
       - name: Extract the exact staged portable app
         shell: pwsh
         run: |
-          $zip = Get-ChildItem "$env:RUNNER_TEMP\release-windows-x64" -Filter '*-portable.zip' | Select-Object -First 1
+          node scripts/release-workflow-inputs.mjs windows-x64 | ForEach-Object {
+            $key, $value = $_ -split '=', 2
+            Set-Item "Env:$key" $value
+          }
+          $zip = Get-Item "$env:RUNNER_TEMP\release-windows-x64\$env:RELEASE_PORTABLE"
           if (-not $zip) { throw "staged Windows portable zip is missing" }
           Expand-Archive $zip.FullName -DestinationPath "$env:RUNNER_TEMP\tine-portable" -Force
           $exe = Get-ChildItem "$env:RUNNER_TEMP\tine-portable" -Filter '*.exe' | Select-Object -First 1
@@ -525,33 +512,13 @@ jobs:
             echo "keyPassword=$KEY_PASS"
           } > src-tauri/gen/android/keystore.properties
 
-      # Stamp the APK's versionName/versionCode from tauri.conf.json so a version
-      # bump always reaches the Android build (tauri.properties is autogenerated;
-      # this makes the result deterministic regardless of whether the CLI resyncs
-      # it). versionCode uses tauri's scheme: major*1e6 + minor*1e3 + patch.
-      - name: Sync Android version from tauri.conf.json
+      # PV1 Android keeps its generated Kotlin namespace for Tauri's source
+      # lookup, while installation identity and version code derive from the switch.
+      - name: Prepare Android namespace and version
         if: steps.sign.outputs.enabled == 'true'
         run: |
-          v=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          IFS=. read -r MA MI PA <<< "$v"
-          code=$(( 10#$MA * 1000000 + 10#$MI * 1000 + 10#$PA ))
-          printf '// THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.\ntauri.android.versionName=%s\ntauri.android.versionCode=%s\n' "$v" "$code" \
-            > src-tauri/gen/android/app/tauri.properties
-          echo "Android version → $v (code $code)"
-
-      # The desktop/Flatpak identifier is page.tine.Tine (Flathub forbids IDs ending
-      # in .app), but Android deliberately keeps applicationId page.tine.app to protect
-      # the F-Droid listing + installed users. `tauri android build` derives the Java
-      # package path from tauri.conf.json's `identifier`, and the committed gen/android
-      # project is page.tine.app — so with the desktop id in place the build looks for
-      # java/page/tine/Tine and fails ("Project directory … does not exist"). Pin the
-      # identifier back to page.tine.app for the Android build only (ephemeral checkout;
-      # desktop jobs are unaffected). This is exactly how it built pre-rename (v0.5.0).
-      - name: Pin Android identifier to page.tine.app
-        if: steps.sign.outputs.enabled == 'true'
-        run: |
-          node -e "const f='./src-tauri/tauri.conf.json',c=require(f);c.identifier='page.tine.app';require('fs').writeFileSync(f,JSON.stringify(c,null,2)+'\n');"
-          echo "Android identifier → $(node -p "require('./src-tauri/tauri.conf.json').identifier")"
+          node scripts/release-workflow-inputs.mjs android-config
+          node scripts/release-workflow-inputs.mjs android >> "$GITHUB_ENV"
 
       - name: Build signed Android APK
         if: steps.sign.outputs.enabled == 'true'
@@ -567,12 +534,11 @@ jobs:
       - name: Prepare canonical Android APK
         if: steps.sign.outputs.enabled == 'true'
         run: |
-          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
           # The signed artifact is app-universal-release.apk (the unsigned build
           # would end in -release-unsigned.apk, which this glob excludes).
           apk=$(find src-tauri/gen/android -path '*/release/*' -name '*-release.apk' | head -1)
           if [ -z "$apk" ]; then echo "no signed APK found"; exit 1; fi
-          cp "$apk" "Tine_${version}_android-arm64.apk"
+          cp "$apk" "$RELEASE_APK"
 
       # Android API < 30 does not export bionic's renameat2 wrapper. A source
       # check missed a second call in GH #192, so inspect the final linked .so
@@ -580,8 +546,7 @@ jobs:
       - name: Verify Android 9 native-loader compatibility
         if: steps.sign.outputs.enabled == 'true'
         run: |
-          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          apk="Tine_${version}_android-arm64.apk"
+          apk="$RELEASE_APK"
           unzip -p "$apk" lib/arm64-v8a/libtine_lib.so > "$RUNNER_TEMP/libtine_lib.so"
           if readelf --dyn-syms --wide "$RUNNER_TEMP/libtine_lib.so" \
             | grep -Eq '[[:space:]]UND[[:space:]].*renameat2(@|$)'; then
@@ -612,7 +577,7 @@ jobs:
   # dispatch stops after uploading this verified candidate and never touches a
   # GitHub Release.
   assemble:
-    needs: [preflight, flatpak, build, android]
+    needs: [preflight, build, android]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4

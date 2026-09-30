@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { IDENTITIES, IDENTITY } from "./lib/app-identity.mjs";
 import { BETA_TAG } from "./release-policy.mjs";
 import { assembleCandidate } from "./assemble-release-candidate.mjs";
 import {
@@ -23,6 +24,14 @@ const version = "0.5.6";
 const commit = "a".repeat(40);
 const repository = "martinkoutecky/tine";
 const layout = releaseLayout(version);
+// I-12: product spelling comes only from the identity switch, for both ships.
+for (const identity of Object.values(IDENTITIES)) {
+  const names = releaseLayout(version, identity);
+  const prefix = identity.productName.replace(/\s+/g, "-");
+  assert.ok(names.lanes["windows-x64"].assets.includes(`${prefix}_${version}_x64-setup.exe`),
+    "release layout must derive installer names from the selected identity");
+  assert.ok(names.allAssets.every((name) => !/\s/.test(name)), "published asset names contain spaces");
+}
 const releaseWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/release.yml"), "utf8");
 const ciWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/ci.yml"), "utf8");
 const uiE2eWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/ui-e2e.yml"), "utf8");
@@ -65,23 +74,18 @@ assert.equal(
   "AppImage update metadata must not add a Tauri updater platform"
 );
 assert.ok(
-  layout.lanes["linux-x64"].assets.includes(`Tine_${version}_amd64.AppImage.zsync`),
+  layout.lanes["linux-x64"].assets.includes(`${IDENTITY.productName.replace(/\s+/g, "-")}_${version}_amd64.AppImage.zsync`),
   "linux-x64 is missing its AppImage update metadata"
 );
 assert.ok(
-  layout.lanes["linux-arm64"].assets.includes(`Tine_${version}_aarch64.AppImage.zsync`),
+  layout.lanes["linux-arm64"].assets.includes(`${IDENTITY.productName.replace(/\s+/g, "-")}_${version}_aarch64.AppImage.zsync`),
   "linux-arm64 is missing its AppImage update metadata"
 );
-assert.match(
-  releaseWorkflow,
-  new RegExp(String.raw`lane: linux-x64[\s\S]*?appimage-update-info: "gh-releases-zsync\|martinkoutecky\|tine\|${BETA_TAG}\|Tine_\*_amd64\.AppImage\.zsync"[\s\S]*?lane: linux-arm64[\s\S]*?appimage-update-info: "gh-releases-zsync\|martinkoutecky\|tine\|${BETA_TAG}\|Tine_\*_aarch64\.AppImage\.zsync"`),
-  "Linux release lanes do not declare the expected AppImage update metadata"
-);
-assert.match(
-  releaseWorkflow,
-  /UPDATE_INFORMATION: \$\{\{ matrix\.appimage-update-info \}\}/,
-  "Tauri bundles do not receive their per-lane AppImage update information"
-);
+assert.match(releaseWorkflow, /release-workflow-inputs.mjs "\$\{\{ matrix\.lane \}\}" >> "\$GITHUB_ENV"/,
+  "release workflow must derive bundle names and AppImage update information through the layout door");
+assert.doesNotMatch(releaseWorkflow, /Tine_|appimage-update-info:/,
+  "I-12: release.yml must not spell stable asset names; use release-workflow-inputs.mjs");
+assert.doesNotMatch(releaseWorkflow, /\n  flatpak:|check-flatpak-/, "PV1 excludes Flatpak from the Beta required path");
 assert.match(
   releaseWorkflow,
   /name: Verify Linux AppImage update information[\s\S]*?\.\/src-tauri\/\$zsync_name[\s\S]*?readelf --string-dump=\.upd_info "\$appimage"[\s\S]*?gh-releases-zsync\|/,
@@ -253,7 +257,7 @@ assert.match(
 );
 assert.match(
   releaseWorkflow,
-  /assemble:\n    needs: \[preflight, flatpak, build, android\]/,
+  /assemble:\n    needs: \[preflight, build, android\]/,
   "candidate assembly accidentally waits for advisory Windows scenarios"
 );
 assert.match(releaseWorkflow, /name: Upload Windows E2E evidence[\s\S]*?if: always\(\)/);
@@ -477,7 +481,7 @@ try {
   {
     const base = path.join(temporary, "missing-signature");
     const input = makeInput(base);
-    fs.rmSync(path.join(input, "release-windows-x64", `Tine_${version}_x64-setup.exe.sig`));
+    fs.rmSync(path.join(input, "release-windows-x64", layout.lanes["windows-x64"].assets.find((name) => name.endsWith("-setup.exe.sig"))));
     assert.throws(() => assemble(input, path.join(base, "output")), /ENOENT/);
   }
   {
@@ -514,3 +518,5 @@ try {
 }
 
 console.log("Release pipeline fixture tests passed (exact-SHA CI gate + release workflow + fail-closed cases).");
+
+await import("./test-release-identity.mjs");

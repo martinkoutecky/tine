@@ -7,6 +7,26 @@ and candidate assembly produces the layout's exact 23-asset inventory / 12 updat
 touching GitHub Releases. The first real tagged publisher run is intentionally
 the next explicitly authorized release; no dummy public version was cut.
 
+## Current Beta contract (PV1, 2026-09-30)
+
+PV1 covers Linux, Windows NSIS, macOS and Android. Flatpak, Flathub,
+F-Droid and iOS are outside this preview: `release.yml` does not require Flatpak
+builds or its manifest checks. Flatpak's separate CI workflow remains available.
+This overrides the historical Flatpak prerequisites below for Beta releases.
+
+`src-tauri/app-identity.json` selects the product. `releaseLayout(version)`
+derives all 22 platform asset names and the 12 updater entries from it; `latest.json`
+is the 23rd asset. Stable filenames stay unchanged. Product whitespace becomes
+`-` in published names; Tauri source filenames retain the original product name.
+Staging translates source names once and updates zsync Filename/URL headers while
+preserving checksum payload and signed bundle bytes. `release-workflow-inputs.mjs`
+provides workflow filenames and the AppImage update pattern from that layout.
+
+Beta assembly and publication use only `/releases/download/beta/` updater URLs,
+and `publish=false` performs no remote mutation. No versioned tag or stable
+release is created by this workflow. See [app identity](../app-identity.md) for
+the Android namespace/applicationId distinction and the tests for both ships.
+
 ## Outcome
 
 All expensive work runs concurrently:
@@ -116,8 +136,8 @@ After compilation, a staging script copies/renames outputs into a stable layout:
 ```text
 candidate/<lane>/
   release-fragment.json
-  Tine_<version>_<platform file>
-  Tine_<version>_<platform file>.sig   # where updater signing applies
+  <product-without-spaces>_<version>_<platform file>
+  <product-without-spaces>_<version>_<platform file>.sig   # where updater signing applies
 ```
 
 Each `release-fragment.json` records:
