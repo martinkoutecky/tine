@@ -1,0 +1,25 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { render } from "solid-js/web";
+import { backend } from "../backend";
+import { resetStore } from "../document";
+import { exportSheets } from "../sheet/exportSheets";
+import { GraphPublish } from "./GraphPublish";
+vi.mock("../sheet/exportSheets", () => ({ exportSheets: vi.fn() }));
+const tick = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
+afterEach(() => { vi.restoreAllMocks(); document.body.innerHTML = ""; });
+it.each(["switch", "unmount"])("L11:54: publication cannot start after its sheet inputs outlive a %s", async (retirement) => {
+  vi.spyOn(backend(), "pickFolder").mockResolvedValue("/mock/out");
+  const publish = vi.spyOn(backend(), "publishLive").mockResolvedValue({ path: "/mock/out", pages: 1 } as never);
+  let finish!: (sheets: never[]) => void;
+  vi.mocked(exportSheets).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+  const root = document.createElement("div"); document.body.appendChild(root);
+  const dispose = render(() => <GraphPublish />, root);
+  [...root.querySelectorAll("button")].find((b) => b.textContent?.includes("Export HTML"))!.click();
+  await tick();
+  expect(exportSheets).toHaveBeenCalled();
+  if (retirement === "switch") resetStore(); else dispose();
+  finish([]);
+  await tick();
+  expect(publish, "a retired publication must never bind to another graph").not.toHaveBeenCalled();
+  if (retirement === "switch") dispose();
+});

@@ -237,7 +237,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     const copy = c.sides.find((s) => s.role === "theirs")?.path ?? null;
     const live = c.live;
     const reviewed = read()?.draft, reviewedGeneration = read()?.generation ?? null;
-    const owner = graphOwner();
+    const owner = graphOwner(() => mounted);
     const refresh = (message: string) => {
       alignment = undefined;
       void refetch();
@@ -246,8 +246,8 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     // The page's own pending edits are saved first, then the comparison is
     // re-read against them: a resolution never lands over unseen edits.
     const saveThenReview = async (message: string) => {
-      await flushPage(pageName);
-      refresh(message);
+      const saved = await writeOwned(owner, flushPage(pageName));
+      if (saved.kind === "current") refresh(message);
     };
     setBusy(true);
     try {
@@ -279,7 +279,9 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           // after it (a crash in between offers an already-resolved draft,
           // never loses one), then show the result through the ordinary rule.
           if (live.record_id) await dismissEarlierDraft(live.record_id);
+          if (!owner()) return;
           await applyGraphChange({ path: pagePath, name: pageName, kind, created: false, removed: false }, true);
+          if (!owner()) return;
           pushToast(`Resolved your kept draft of “${pageName}”`, "success");
           return;
         }
@@ -297,6 +299,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           current.conflict_rev, current.merge_base_rev, decisions(), preChoice()));
         if (result.kind === "stale") return;
         const installed = await installLiveResolution(pageName, now.generation, reviewed, { ...result.value, id: pagePath });
+        if (!owner()) return;
         if (installed === "installed") pushToast(`Resolved the conflict in “${pageName}”`, "success");
         else if (installed === "kept") pushToast(`The resolution was written, and your edits made since the review are kept. Review “${pageName}” again.`, "info");
         return;
@@ -329,13 +332,14 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
       // through the ordinary external-change rule: a clean page takes the merged
       // file; one edited meanwhile keeps the edit and is marked conflicted.
       await applyGraphChange({ path: pagePath, name: pageName, kind, created: false, removed: false }, true);
+      if (!owner()) return;
       pushToast(source === "vcs-markers" ? `Resolved the merge in “${pageName}”`
         : source === "duplicate-journal" ? `Folded the other file into “${pageName}”` : `Merged into “${pageName}”`, "success");
       void refreshSyncConflicts();
       // A day with three files still has one to reconcile after this fold.
       if (source === "duplicate-journal") void refreshJournalConflicts();
     } catch (e) {
-      if (errorFamily(e) === "conflict") {
+      if (owner() && errorFamily(e) === "conflict") {
         pushToast("The file changed on disk — re-reading it, please redo your choices.", "error");
         alignment = undefined;
         void refetch();

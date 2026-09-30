@@ -78,6 +78,26 @@ describe("crash-surviving drafts (og ADR 0061)", () => {
     expect(records()).toEqual([]);
   });
 
+  it("L14:89: saving while the first crash-safe write is pending retires that late record", async () => {
+    let finish!: () => void;
+    vi.mocked(backend().storeDraft!).mockImplementationOnce(async (record) => {
+      await new Promise<void>((resolve) => { finish = resolve; });
+      store.set(record.id, structuredClone(record));
+    });
+    setRaw("p1", "mine");
+    markConflict("P");
+    const writing = writeAtRisk();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finish).toBeTypeOf("function");
+    failing = false;
+    await resolveConflict("P", "disk");
+    finish();
+    await writing;
+    await settle();
+    expect(records(), "a saved page must not reappear as an unsaved draft after restart").toEqual([]);
+    expect(backend().retireDraft).toHaveBeenCalledTimes(1);
+  });
+
   it("after a kill, the next session offers the kept draft until the user dismisses it", async () => {
     setRaw("p1", "typed before the crash");
     await settle();
