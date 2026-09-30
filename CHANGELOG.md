@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Query table footers show complete backend totals and save Count, Sum, Average, or None through Display without reordering repeated entries. Static export totals summarize exported rows (UI-OG-R3A3-QUERY-FOOTER).
+
+### Fixed
+
 - **Nested queries in a query export no longer report how many matches were left out on other pages** (og-R3C; REG-OG-R3C-NESTED-COUNTS). This applies to the static fallback as well as the read-only app.
 
 ### Added
