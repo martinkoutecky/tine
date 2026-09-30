@@ -164,3 +164,5 @@ the reviewer traces the path and records the scenario here before accepting it.
 | `transaction.rs::check_orphan_asset::ReadOnly` | 1 | A published external-editor/sync reference arrived after the orphan listing; retain the referenced asset and ask the caller to refresh. A partial reference inventory reports an IO failure rather than granting trash. |
 
 | `transaction.rs::check_orphan_asset::InvalidTarget` | 1 | An orphan-asset action is given a page/config/trash target; refuse without touching it. Ordinary trash remains available for intentional page or PDF artifact removal. |
+
+Launch config metadata and its read failure come from the same bounded read. A second successful read cannot clear the failure while leaving directories taken from the earlier fallback. A repaired config is applied by the existing watched refresh or a reopen.

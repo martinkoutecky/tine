@@ -313,7 +313,7 @@ function OgField(props: {
   );
 }
 
-function AdvancedSection(props: { tab: Tab; forceOpen: boolean; children: JSX.Element }): JSX.Element {
+function AdvancedSection(props: { tab: SettingsTabId; forceOpen: boolean; children: JSX.Element }): JSX.Element {
   const layerId = `settings-advanced-${createUniqueId()}`;
   const key = `tine.settings.advanced.${props.tab}`;
   let initial = false;

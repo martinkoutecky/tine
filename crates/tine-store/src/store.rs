@@ -1102,12 +1102,7 @@ impl Store {
         graph.install_live_config();
         let journals = graph.scan_journal_names();
         let journal_ids = journal_ids_from_entries(&graph, &journals);
-        let config_path = root.join("logseq/config.edn");
-        let problem = match crate::model::read_parse_input(&config_path) {
-            Ok(_) => None,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => Some(error.into()),
-        };
+        let problem = graph.config_read_problem.clone();
         let graph = Arc::new(graph);
         let config = ConfigState {
             config: Arc::new(graph.config.clone()),

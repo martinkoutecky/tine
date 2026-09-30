@@ -1,6 +1,7 @@
 //! Name-discovery transport: incomplete snapshots cannot certify absence.
 use super::{ResolvedWire, WholeGraph};
 use serde::Serialize;
+use tine_store::Resolved;
 
 #[derive(Serialize)]
 pub(crate) struct PageInventoryWire {
@@ -27,6 +28,20 @@ pub(super) fn discovered_view(view: WholeGraph) -> Result<WholeGraph, String> {
     } else {
         Err("graph name discovery is partial".into())
     }
+}
+
+// Known physical claims remain usable during recovery. Only a miss needs a
+// complete discovery to prove absence before a caller creates a new page.
+pub(super) fn resolve_name(
+    view: WholeGraph,
+    name: &str,
+    journal: bool,
+) -> Result<ResolvedWire, String> {
+    let resolved = view.resolve(name, journal);
+    if matches!(resolved, Resolved::Absent { .. }) {
+        discovered_view(view)?;
+    }
+    Ok(resolved.into())
 }
 
 pub(super) fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
@@ -221,6 +236,11 @@ mod inventory_adapter_tests {
         std::fs::write(root.join("pages/Bad.md"), b"title:: unknown \xff\n").unwrap();
         store.scan_refresh().unwrap();
         assert!(discovered_view(store.whole_graph().unwrap()).is_err());
+        assert!(matches!(
+            resolve_name(store.whole_graph().unwrap(), "Good", false),
+            Ok(ResolvedWire::Existing { .. })
+        ));
+        assert!(resolve_name(store.whole_graph().unwrap(), "Unknown", false).is_err());
         assert!(store.page(&PageId::from("pages/Good.md")).is_ok());
         std::fs::write(root.join("pages/Bad.md"), "- repaired\n").unwrap();
         store.scan_refresh().unwrap();

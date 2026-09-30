@@ -15,10 +15,10 @@ use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 #[cfg(test)]
-use tine_store::{SaveBase, SaveOutcome, SavePagesOutcome};
+use tine_store::{SaveOutcome, SavePagesOutcome};
 mod discovery;
 mod save_wire;
-use discovery::{discovered_view, page_inventory_wire, PageInventoryWire};
+use discovery::{discovered_view, page_inventory_wire, resolve_name, PageInventoryWire};
 use save_wire::SavePagesWire;
 #[cfg(test)]
 use save_wire::{save_outcome_to_wire, save_pages_outcome_to_wire};
@@ -390,8 +390,7 @@ pub(crate) async fn resolve_page(
         slot.store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))
-            .and_then(discovered_view)
-            .map(|view| view.resolve(&name, kind == PageKind::Journal).into())
+            .and_then(|view| resolve_name(view, &name, kind == PageKind::Journal))
     })
     .await
     .map_err(|error| error.to_string())?

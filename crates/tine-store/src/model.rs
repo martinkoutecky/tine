@@ -260,6 +260,7 @@ pub(crate) struct Graph {
     /// directory. No other managed graph path may use this capability.
     assets_root: PathBuf,
     pub(crate) config: Config,
+    pub(crate) config_read_problem: Option<crate::IoError>,
     live_config: RwLock<Option<Arc<Config>>>,
     /// Journal date formats (filename + title) resolved from `config.edn`, used to
     /// recognize journal files in the user's format and render new ones. The
@@ -2319,14 +2320,18 @@ impl Graph {
 
     pub(crate) fn open_inner(root: impl AsRef<Path>) -> Graph {
         let root = root.as_ref().to_path_buf();
-        let config = read_parse_input(&root.join("logseq").join("config.edn"))
-            .map(|s| Config::parse(&s))
-            .unwrap_or_default();
+        let (config, problem) = match read_parse_input(&root.join("logseq/config.edn")) {
+            Ok(text) => (Config::parse(&text), None),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (Config::default(), None),
+            Err(error) => (Config::default(), Some(error.into())),
+        };
         let journal_format = JournalFormat::new(
             config.journal_file_name_format.as_deref(),
             config.journal_page_title_format.as_deref(),
         );
-        Self::empty_with_config(root, config, journal_format)
+        let mut graph = Self::empty_with_config(root, config, journal_format);
+        graph.config_read_problem = problem;
+        graph
     }
 
     fn empty_with_config(root: PathBuf, config: Config, journal_format: JournalFormat) -> Graph {
@@ -2334,6 +2339,7 @@ impl Graph {
             assets_root: root.join("assets"),
             root,
             config,
+            config_read_problem: None,
             journal_format,
             live_config: RwLock::new(None),
             live_journal_format: RwLock::new(None),
