@@ -8,12 +8,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
-### Fixed
-
-- **Code examples do not set a page's saved indentation** (REG-OG-SIG-LAYOUT-001).
-  Formatting detection now uses the parser's actual outline headers, so a
-  bullet inside a literal code block cannot supply a false indentation unit.
-
 ### Added
 
 - **Parser-owned structural edits** (og-D1): metadata edits and template/conflict copies share native/wasm block regions, preserving parser-recognized literal contents. Empty code cards retain their body/wrapper separator after typing, code-body typing preserves literal typography, and calendar edits retain glued body text. Published block identities, logbook and repeaters use the block's format.
@@ -107,6 +101,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   (GH #382).
 
 ### Fixed
+
+- **Code examples do not set a page's saved indentation** (REG-OG-SIG-LAYOUT-001).
+  Formatting detection now uses the parser's actual outline headers, so a
+  bullet inside a literal code block cannot supply a false indentation unit.
 
 - **Saving with retained graph views avoids graph-wide copies** (REG-OG-B-COST-SNAPSHOT, REG-OG-B-COST-NAMES): page slots, timestamps, reference counts and name/signature/icon indexes share untouched tree branches. Save preservation checks also reuse the old parsed document (REG-OG-B-COST-PARSE).
 - Published query snapshots retain reviewed source documents across external edits; draft loading and CSV/TSV imports bound their reads before decoding (REG-OG-B-W3-PUBLICATION-SNAPSHOT, REG-OG-B-W3-BOUNDED-DRAFT-READ, REG-OG-B-W3-BOUNDED-CSV-READ).

@@ -2,27 +2,6 @@
   "schemaVersion": 1,
   "entries": [
     {
-      "id": "REG-OG-SIG-LAYOUT-001",
-      "title": "Literal code bullets do not change the indentation detected for saved page structure",
-      "family": "page-serialization",
-      "sources": {
-        "issues": [],
-        "commits": []
-      },
-      "platforms": [
-        "all"
-      ],
-      "layer": "core-native",
-      "status": "covered",
-      "coverage": {
-        "tests": [
-          "crates/tine-core/tests/serialization_layout.rs"
-        ],
-        "scenario": "serialization.parser-owned-layout",
-        "failBefore": "proven"
-      }
-    },
-    {
       "id": "REG-OG-QUERY-MEMO-001",
       "title": "Queries return complete statistics while large answers and compiled plans stay outside the bounded memo",
       "family": "query-resources",
@@ -1260,6 +1239,7 @@
     {"id":"REG-OG-ORG-DIRECTIVE-OPEN-001","title":"Opening Org pages with long directive preambles performs bounded work per line","family":"performance","sources":{"issues":[],"commits":["1cbf29030"]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-core/tests/og_b_store_preamble.rs","crates/tine-core/tests/page_title_preamble.rs"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint 4 L06:40; existing inert-line filtering runs before the whole-prefix outline parse, preserving title discovery while removing repeated growing-prefix parses. The guard enforces the ordering; it has no wall-clock threshold."},
     {"id":"REG-OG-B-COST-SNAPSHOT","title":"Saving a page while readers retain graph views avoids copying unrelated page slots and metadata","family":"performance","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"store","status":"covered","coverage":{"tests":["crates/tine-store/tests/og_b_cost.rs"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-COST at 149e0ed. Fail-before/pass-after Store save proof; five paired debug benchmark executions. Integration pending: existing i13_edit_cost literal parse-count assertion contradicts corrected accounting; formatter outline reuse requires an out-of-write-set core change."},
     {"id":"REG-OG-B-COST-NAMES","title":"Creating or retitling a page updates only affected name winners and reference signatures","family":"performance","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"store","status":"covered","coverage":{"tests":["crates/tine-store/tests/og_b_cost.rs","crates/tine-store/tests/og_b_cost_names.rs"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-COST at 149e0ed. Fail-before/pass-after Store save proof; five paired debug benchmark executions. Integration pending: existing i13_edit_cost literal parse-count assertion contradicts corrected accounting; formatter outline reuse requires an out-of-write-set core change."},
-    {"id":"REG-OG-B-COST-PARSE","title":"Save preparation reuses the old parsed document across its preservation checks","family":"performance","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"store","status":"fixing","coverage":{"tests":["crates/tine-store/tests/og_b_cost.rs"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-COST at 149e0ed. Fail-before/pass-after Store save proof; five paired debug benchmark executions. Integration pending: existing i13_edit_cost literal parse-count assertion contradicts corrected accounting; formatter outline reuse requires an out-of-write-set core change."}
+    {"id":"REG-OG-B-COST-PARSE","title":"Save preparation reuses the old parsed document across its preservation checks","family":"performance","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"store","status":"fixing","coverage":{"tests":["crates/tine-store/tests/og_b_cost.rs"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-COST at 149e0ed. Fail-before/pass-after Store save proof; five paired debug benchmark executions. Integration pending: existing i13_edit_cost literal parse-count assertion contradicts corrected accounting; formatter outline reuse requires an out-of-write-set core change."},
+    {"id":"REG-OG-SIG-LAYOUT-001","title":"Literal code bullets do not change the indentation detected for saved page structure","family":"page-serialization","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-core/tests/serialization_layout.rs"],"scenario":"serialization.parser-owned-layout","failBefore":"proven"}}
 ]
 }
