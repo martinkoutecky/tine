@@ -1,0 +1,30 @@
+import { expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+
+it("I-12: search grammar, fold, regex and spans come from tine-search (exemplar src/editor/searchQuery.ts)", () => {
+  const query = readFileSync("src/editor/searchQuery.ts", "utf8");
+  const fold = readFileSync("src/editor/searchFold.ts", "utf8");
+  const workspace = readFileSync("src/components/QueryWorkspace.tsx", "utf8");
+  const native = readFileSync("crates/tine-core/src/search_query.rs", "utf8");
+  const evalSource = readFileSync("crates/tine-store/src/query/eval.rs", "utf8");
+  const plan = readFileSync("crates/tine-store/src/query_plan.rs", "utf8");
+  const wasm = readFileSync("crates/lsdoc-wasm/src/lib.rs", "utf8");
+  const leaf = readFileSync("crates/tine-search/src/lib.rs", "utf8");
+  const rule = "I-12: use tine-search through wasm; do not rebuild JS/native twins. Exemplars crates/tine-search/src/lib.rs and src/editor/searchQuery.ts";
+  for (const source of [query, fold, workspace]) expect(source, rule).not.toMatch(/new RegExp\(|commonRegexPattern|foldedWithMap|keptMarkRanges/);
+  expect(query, rule).toContain("search_query_json(query, removeAccents)");
+  expect(query, rule).toContain("search_matches(m.query, m.removeAccents, lower, orig)");
+  expect(query, rule).toContain("search_spans_json(");
+  expect(query, rule).not.toContain("function tokenize(");
+  expect(fold, rule).toContain("search_fold(value, removeAccents)");
+  expect(native, rule).toContain("pub use tine_search::*;");
+  expect(evalSource, rule).toContain("tine_core::search_query::compile_regex(pattern)");
+  for (const source of [native, evalSource, plan]) expect(source, rule).not.toMatch(/RegexBuilder|common_regex_pattern/);
+  expect(plan, rule).toContain("tine_core::search_query::regex_spans(");
+  expect(wasm, rule).toContain("tine_search::Matcher::parse_with_policy(");
+  expect(wasm, rule).toContain("tine_search::substring_spans(");
+  expect(leaf, rule).not.toContain("common_regex_pattern");
+  expect(leaf, "Bound regex programs and caches in the one compiler").toContain(".size_limit(REGEX_PROGRAM_MAX_BYTES)");
+  expect(leaf).toContain(".dfa_size_limit(REGEX_PROGRAM_MAX_BYTES)");
+  expect(readFileSync("crates/tine-search/Cargo.toml", "utf8"), "Keep full Rust Unicode regex support on wasm").toContain('features = ["std", "unicode"]');
+});

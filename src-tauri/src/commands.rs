@@ -196,7 +196,7 @@ mod device_read_tests {
             graphs: std::sync::RwLock::new(graphs),
             graph_load: std::sync::Mutex::new(()),
             last_focused: std::sync::Mutex::new(None),
-            capture_graph: std::sync::Mutex::new(None),
+            capture_graph: std::sync::Mutex::new(Default::default()),
             #[cfg(desktop)]
             next_window: std::sync::atomic::AtomicU64::new(1),
         }
@@ -1162,7 +1162,7 @@ mod capture_quick_switch_tests {
             graphs: RwLock::new(GraphRegistry::default()),
             graph_load: Mutex::new(()),
             last_focused: Mutex::new(Some("main".into())),
-            capture_graph: Mutex::new(None),
+            capture_graph: Mutex::new(Default::default()),
             #[cfg(desktop)]
             next_window: AtomicU64::new(2),
         };

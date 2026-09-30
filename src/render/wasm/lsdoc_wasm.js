@@ -305,6 +305,119 @@ export function render_block_html(raw, is_org) {
 }
 
 /**
+ * Shared comparison form; O(text bytes), no graph access.
+ * @param {string} text
+ * @param {boolean} remove_accents
+ * @returns {string}
+ */
+export function search_fold(text, remove_accents) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.search_fold(ptr0, len0, remove_accents);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Membership against a policy-matched pre-folded body; O(text × terms).
+ * @param {string} query
+ * @param {boolean} remove_accents
+ * @param {string} lower
+ * @param {string} original
+ * @returns {boolean}
+ */
+export function search_matches(query, remove_accents, lower, original) {
+    const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(lower, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(original, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.search_matches(ptr0, len0, remove_accents, ptr1, len1, ptr2, len2);
+    return ret !== 0;
+}
+
+/**
+ * Parse metadata for UI builders. Same grammar, errors and folds as native.
+ * @param {string} query
+ * @param {boolean} remove_accents
+ * @returns {string}
+ */
+export function search_query_json(query, remove_accents) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.search_query_json(ptr0, len0, remove_accents);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * UTF-16 search evidence, capped by limit. First mode retains zero-width hits
+ * and considers all positive terms; multi-range mode uses the satisfied group.
+ * @param {string} query
+ * @param {boolean} remove_accents
+ * @param {string} text
+ * @param {number} limit
+ * @param {boolean} first
+ * @returns {string}
+ */
+export function search_spans_json(query, remove_accents, text, limit, first) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.search_spans_json(ptr0, len0, remove_accents, ptr1, len1, limit, first);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Bounded original UTF-16 evidence, O(text × needle scalars).
+ * @param {string} text
+ * @param {string} needle
+ * @param {number} limit
+ * @param {boolean} remove_accents
+ * @returns {string}
+ */
+export function search_substring_spans_json(text, needle, limit, remove_accents) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(needle, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.search_substring_spans_json(ptr0, len0, ptr1, len1, limit, remove_accents);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Split already-parsed linkable property values with the native separator.
  * O(value bytes), without parsing or I/O. Empty members retain their position.
  * @param {string} value

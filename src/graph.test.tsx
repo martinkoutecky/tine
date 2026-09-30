@@ -27,7 +27,9 @@ async function loadHarness(
   existing: PageRead | null,
   access = { graph_root: META.root, external_assets_path: null as string | null, approved: true },
   confirm = true,
-  warm = false
+  warm = false,
+  onEpoch?: () => void,
+  journal?: { journalTitle: () => string; setJournalTitleFormat: (format: string | null | undefined) => void },
 ) {
   vi.resetModules();
   const events: string[] = [];
@@ -79,10 +81,12 @@ async function loadHarness(
     setGraphMeta: (next: GraphMeta | null) => { meta = next; },
     graphMeta: () => meta,
     graphEpoch: () => 0,
-    bumpGraphEpoch: () => { events.push("bump-epoch"); },
+    bumpDataRev: vi.fn(),
+    bumpGraphEpoch: () => { events.push("bump-epoch"); onEpoch?.(); },
     setWorkflow: vi.fn(),
     setRightSidebar: vi.fn(),
     seedFavorites: vi.fn(),
+    favorites: () => [],
     renamePageInNavigation: vi.fn(),
     pruneSidebarBlocks: vi.fn(),
     pushToast: vi.fn(),
@@ -99,7 +103,8 @@ async function loadHarness(
     setGraphMeta: (next: GraphMeta | null) => { meta = next; },
     graphMeta: () => meta,
     graphEpoch: () => 0,
-    bumpGraphEpoch: () => { events.push("bump-epoch"); },
+    bumpDataRev: vi.fn(),
+    bumpGraphEpoch: () => { events.push("bump-epoch"); onEpoch?.(); },
   }));
   vi.doMock("./pdfOwnership", () => ({
     drainPdfWork,
@@ -135,10 +140,10 @@ async function loadHarness(
   const focused = { activeId: () => "tab", routeIntentRevision: () => 0, route: () => ({ kind: "journals" }), openPage };
   vi.doMock("./panes", () => ({ resetPaneLayoutToSingle: vi.fn(), focusedRouter: () => focused }));
   vi.doMock("./journal", () => ({
-    journalTitle: () => "Jul 10th, 2026",
+    journalTitle: journal?.journalTitle ?? (() => "Jul 10th, 2026"),
     appNow: () => new Date(),
     localDayKey: (date = new Date()) => date.getFullYear() * 10_000 + (date.getMonth() + 1) * 100 + date.getDate(),
-    setJournalTitleFormat: vi.fn(),
+    setJournalTitleFormat: journal?.setJournalTitleFormat ?? vi.fn(),
     isJournalTitle: () => false,
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars, prepareTemplateVars }));
@@ -151,9 +156,9 @@ async function loadHarness(
   vi.doMock("./workspaces", () => ({ clearWorkspaces: vi.fn() }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
 
-  const { loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay } = await import("./graph");
+  const { loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange } = await import("./graph");
   return {
-    loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, api, events, resetPageIndex, resetAt, waitForWarmCache,
+    loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange, api, events, resetPageIndex, resetAt, waitForWarmCache,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, resetTabsToJournals, flushAll, resetStore, unsaved,
     applyTemplateVars, prepareTemplateVars, openPage,
   };
@@ -621,4 +626,43 @@ it("opens with the config-read problem available to Settings and clears it on a 
   expect(api.savePages).not.toHaveBeenCalled();
   expect(await loadGraphPath(META.root, { forceRefresh: true })).toMatchObject({ kind: "loaded" });
   expect(graphConfigProblem()).toBeNull();
+});
+
+
+describe("OG-R3B custom journal format publication (I-4)", () => {
+  for (const publication of ["open", "live"] as const) {
+    it(`publishes the custom title before ${publication} wakes journal materialization`, async () => {
+      let format = "MMM do, yyyy";
+      let observe = false;
+      let materialization: Promise<unknown> | undefined;
+      let requested = "";
+      const customTitle = "2026-07-10";
+      const journal = {
+        journalTitle: () => format === "yyyy-MM-dd" ? customTitle : "Jul 10th, 2026",
+        setJournalTitleFormat: (next: string | null | undefined) => { format = next ?? "MMM do, yyyy"; },
+      };
+      const harness = await loadHarness(null, undefined, true, false,
+        () => { if (observe) materialization = harness.ensureJournalTemplateForDay(new Date()); }, journal);
+      const customMeta = { ...META, journal_page_title_format: "yyyy-MM-dd" };
+      const delivered: PageRead = { id: "journals/2026_07_10.md", name: customTitle,
+        kind: "journal", title: customTitle, pre_block: null, rev: "synced-rev",
+        blocks: [{ id: "synced", raw: "Synced custom-format journal", collapsed: false, children: [] }] };
+      harness.api.getPage.mockImplementation(async (...args: unknown[]) => {
+        requested = args[0] as string;
+        return requested === customTitle ? delivered : null;
+      });
+      if (publication === "live") await harness.loadGraphPath(META.root);
+      observe = true;
+      if (publication === "open") {
+        harness.api.loadGraph.mockResolvedValueOnce({ kind: "loaded", meta: customMeta, binding_generation: 1 });
+        await harness.loadGraphPath(META.root);
+      } else {
+        const { captureBinding } = await import("./binding");
+        harness.applyGraphConfigChange({ meta: customMeta, binding_generation: captureBinding().backendGeneration! });
+      }
+      await materialization;
+      expect(requested, "I-4: journal template must read the delivered custom-format journal; exemplar src/graph.ts").toBe(customTitle);
+      expect(harness.api.savePages).not.toHaveBeenCalled();
+    });
+  }
 });

@@ -1,0 +1,14 @@
+[package]
+name = "tine-search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+
+[dev-dependencies]
+serde_json = { workspace = true }
