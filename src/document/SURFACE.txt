@@ -42,6 +42,7 @@ ensureBlockId
 ensureEmptyBlock
 ensurePageLoaded
 ensurePagePropertyOnKeyPage  # why: one guarded document operation for a query type declaration on its key page; batch16a
+existingBlockId  # why: editor buffers reuse the shared parser-owned identity answer instead of a second seed lookup; batchog-p10b2
 expandAncestors  # why: navigation reveals a block hidden in collapsed ancestors (GH #258); batch17a
 expandBlockSelection  # why: Ctrl/Cmd+A ladder in block selection (GH #262); batch17a
 exportNodesFor

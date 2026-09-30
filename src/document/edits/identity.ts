@@ -7,18 +7,22 @@ import { markDirty, flushPage, isConflicted, persistTogether } from "../save/eng
 import { backend } from "../../backend";
 import { ensurePageLoaded } from "../workingSet";
 import { blockRegions, editBlock, type BlockIdentityFacts } from "../../render/parse";
+import { knownIdentityAbsent } from "../../render/facets";
 
 /** The block's existing durable `id` — a markdown `id:: <uuid>` trailer or an
  *  org `:PROPERTIES:` drawer `:id: <uuid>` line — case-insensitively, or null.
  *  Format-aware because in ORG `id:: x` is plain body text, NOT a property (lsdoc
  *  reads the drawer, not a `key::` line); so an org block's real id lives in its
  *  `:PROPERTIES:` drawer and must be matched there (GH #25). Optional editor
- *  facts avoid another O(block bytes) parse; mismatched raw/format throws. */
+ *  facts take precedence; mismatched raw/format throws. Exact loaded parser facts
+ *  skip known absence; unknown/possible ids keep the parser answer. Cost:
+ *  O(block bytes) lookup, with a parse only when regions are not already cached. */
 export function existingBlockId(raw: string, format: Format, facts?: BlockIdentityFacts): string | null {
   if (facts) {
     if (facts.raw !== raw || facts.format !== format) throw new Error("Identity facts belong to a different buffer");
     return facts.value?.trim() || null;
   }
+  if (knownIdentityAbsent(raw, format)) return null;
   return blockRegions(raw, format).id?.value.trim() || null;
 }
 
