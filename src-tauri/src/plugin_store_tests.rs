@@ -200,7 +200,9 @@ fn a_crash_after_retirement_leaves_no_half_package_and_recovery_reclaims_it() {
 
     // The version vanished in one no-replace move; only reclaimable residue remains.
     assert!(!root.join("dev.tine.example/1.0.0").exists());
-    assert!(list_installed_plugins_at(&root, &Default::default()).is_empty());
+    assert!(list_installed_plugins_at(&root, &Default::default())
+        .unwrap()
+        .is_empty());
     assert!(names(&root)
         .iter()
         .any(|name| name.starts_with(".retired-")));

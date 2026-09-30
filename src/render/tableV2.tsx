@@ -42,6 +42,12 @@ export function tableV2Options(properties: readonly [string, string][]): TableV2
   };
 }
 
+/** Width of a parsed table, including ragged rows. O(rows), constant space;
+ * no argument list grows with the input. Empty tables still have one column. */
+export function tableColumnCount(table: TableBlock): number {
+  return Math.max(1, table.header?.length ?? 0, table.rows.reduce((max, row) => Math.max(max, row.length), 0));
+}
+
 function headerTransform(mode: TableHeaderMode): string | undefined {
   switch (mode) {
     case "uppercase":
@@ -73,7 +79,7 @@ export function TableV2(props: {
   renderCell: (cell: Inline[]) => JSX.Element;
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
-  const columnCount = Math.max(1, props.table.header?.length ?? 0, ...props.table.rows.map((row) => row.length));
+  const columnCount = tableColumnCount(props.table);
   const alignment = (index: number) => props.table.aligns[index] ?? undefined;
   const cellStyle = (index: number, header: boolean): JSX.CSSProperties => ({
     "text-align": alignment(index),

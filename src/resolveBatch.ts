@@ -1,3 +1,4 @@
+import { reportUiFailure } from "./uiFailure";
 import { backend } from "./backend";
 import { blockRef, node as docNode, resolveGuideBlockRef } from "./document";
 import { dataRev, graphEpoch } from "./graphSession";
@@ -10,9 +11,9 @@ import type { RefGroup } from "./types";
 // one batch only after a graph transaction lands (`dataRev`), matching OG's
 // reactive UUID-entity semantics without doing graph work on every keystroke.
 let cacheRev = "";
-const cache = new Map<string, Promise<RefGroup | null>>();
+const cache = new Map<string, Promise<RefGroup | null | undefined>>();
 const resolvedCache = new Map<string, RefGroup>();
-let pending = new Map<string, (v: RefGroup | null) => void>();
+let pending = new Map<string, (v: RefGroup | null | undefined) => void>();
 let scheduled = false;
 
 function ensureCacheRev() {
@@ -48,18 +49,23 @@ function flush() {
         resolvers.get(id)?.(group);
       });
     })
-    .catch(() =>
-      batch.forEach((id) => resolvers.get(id)?.(resolveGuideBlockRef(id)))
-    );
+    .catch((error) => {
+      if (owner()) reportUiFailure("block-resolution", error);
+      batch.forEach((id) => {
+        if (cacheRev === batchRev) cache.delete(id);
+        resolvers.get(id)?.(undefined);
+      });
+    });
 }
 
 /** Resolve one visible block reference — coalesced and memoized for the current
- *  landed graph revision. */
-export function resolveBlockBatched(id: string): Promise<RefGroup | null> {
+ *  landed graph revision. `null` means absent; `undefined` means a failed read,
+ *  reported through uiFailure and evicted so a later request can retry. */
+export function resolveBlockBatched(id: string): Promise<RefGroup | null | undefined> {
   ensureCacheRev();
   const hit = cache.get(id);
   if (hit) return hit;
-  const p = new Promise<RefGroup | null>((resolve) => pending.set(id, resolve));
+  const p = new Promise<RefGroup | null | undefined>((resolve) => pending.set(id, resolve));
   cache.set(id, p);
   if (!scheduled) {
     scheduled = true;

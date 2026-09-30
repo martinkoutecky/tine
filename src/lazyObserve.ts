@@ -1,3 +1,5 @@
+import { clearOnBindingInvalidated } from "./binding";
+
 // Shared "near the viewport" lazy-mount primitive.
 // =================================================
 // One module-level IntersectionObserver for the whole app — both LiveRefGroup
@@ -56,9 +58,9 @@ export function unobserveNear(el: Element) {
 // the same block shown in a second surface, a route revisit — renders eagerly with
 // no placeholder frame and no scroll-height churn. Module-level so it is shared
 // across surfaces and survives component unmount; keyed by the stable block id.
-// Bounded in practice by the set of blocks ever brought near the viewport (the
-// working set), so it does not grow without use.
+// Graph-scoped: a store reset drops every visited id (I-21).
 export const renderedBlocks = new Set<string>();
+clearOnBindingInvalidated(() => renderedBlocks.clear());
 
 export function resetNearObserverForTests() {
   sharedNearIO?.disconnect();

@@ -382,16 +382,21 @@ async function boundedBytes(url: string, max: number, timeoutMs = NETWORK_READ_T
     const chunks: Uint8Array[] = [];
     let length = 0;
     const reader = response.body.getReader();
+    let complete = false;
     try {
       while (true) {
         const { done, value } = await abortable(reader.read(), controller.signal);
-        if (done) break;
+        if (done) { complete = true; break; }
         length += value.byteLength;
         if (length > max) throw new Error("registry response is too large");
         chunks.push(value);
       }
     } finally {
-      reader.releaseLock();
+      try {
+        if (!complete) await abortable(reader.cancel(), controller.signal);
+      } finally {
+        reader.releaseLock();
+      }
     }
     const bytes = new Uint8Array(length);
     let offset = 0;
@@ -400,6 +405,9 @@ async function boundedBytes(url: string, max: number, timeoutMs = NETWORK_READ_T
       offset += chunk.byteLength;
     }
     return bytes;
+  } catch (error) {
+    controller.abort(error);
+    throw error;
   } finally {
     clearTimeout(deadline);
   }

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const backendMock = vi.hoisted(() => ({ readAsset: vi.fn() }));
 vi.mock("./backend", () => ({ backend: () => backendMock }));
 
-import { __assetCacheStatsForTests, acquireAssetBlob, clearAssetBlobCache, seedAssetBlob } from "./assetCache";
+import { __assetCacheStatsForTests, acquireAssetBlob, assetVersion, refreshAsset, clearAssetBlobCache, seedAssetBlob } from "./assetCache";
 
 afterEach(() => {
   clearAssetBlobCache();
@@ -20,6 +20,15 @@ describe("asset blob cache bounds", () => {
     });
     for (let i = 0; i < 160; i++) seedAssetBlob(`image-${i}.png`, new Uint8Array([i]));
     expect(__assetCacheStatsForTests()).toEqual({ entries: 128, bytes: 128 });
+  });
+
+  it("L09:47: asset versions end with the graph cache", () => {
+    refreshAsset("old-graph/image.png");
+    expect(assetVersion("old-graph/image.png")).toBe(1);
+    clearAssetBlobCache();
+    expect(assetVersion("old-graph/image.png")).toBe(0);
+    refreshAsset("new-graph/image.png");
+    expect(assetVersion("new-graph/image.png")).toBe(1);
   });
 
   it("runs at most two distinct image reads concurrently", async () => {

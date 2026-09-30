@@ -83,14 +83,18 @@ interface PairResult {
 /** Read source files for the whole graph, compare lsdoc and mldoc projections
  * as requested, and report progress. Cost and memory grow with graph file
  * count and bytes; parser work and minimization may add more. Returns stale
- * if ownership retires at an owned result boundary. Backend, parser or progress
+ * when ownership retires: each parser completion stops further probes, file
+ * loops, minimization, anonymization and progress, then releases the client.
+ * An already-started probe may run until its bounded parser timeout. Backend, parser or progress
  * callback errors reject. */
 export async function runComparison(
   opts: DiffOptions,
   onProgress: (e: ProgressEvent) => void,
   owner: Owner,
 ): Promise<Owned<DiffReport>> {
-  const tineVersion = await currentTineVersion();
+  const version = await readOwned(owner, currentTineVersion());
+  if (version.kind === "stale" || !owner()) return { kind: "stale" };
+  const tineVersion = version.value;
   // Screenshot/dev hook: a preloaded fixture lets the harness render the panel's
   // populated state without a live mldoc+lsdoc run. Never set in a real build.
   const fixture = (globalThis as unknown as { __tineDiffFixture?: DiffReport }).__tineDiffFixture;
@@ -99,15 +103,30 @@ export async function runComparison(
     : { kind: "stale" };
 
   const loaded = await readOwned(owner, backend().graphSourceFiles(opts.includeJournals));
-  if (loaded.kind === "stale") return loaded;
+  if (loaded.kind === "stale" || !owner()) return { kind: "stale" };
   const files = loaded.value;
   const stats = { files: files.length, totalBytes: files.reduce((n, f) => n + f.bytes, 0) };
   const lsdocAvailable = lsdocDocumentAvailable();
   const parserVersion = lsdocVersion();
   const client = new MldocClient();
+  const retired = Symbol("retired comparison");
+  const checkOwner = () => { if (!owner()) throw retired; };
+  const progress = (event: ProgressEvent) => { checkOwner(); onProgress(event); checkOwner(); };
+  const parse = async (fresh: boolean, text: string, format: Format, timeoutMs: number) => {
+    checkOwner();
+    const result = await readOwned(owner, fresh ? client.parseFresh(text, format, timeoutMs) : client.parseWarm(text, format, timeoutMs));
+    if (result.kind === "stale") throw retired;
+    checkOwner();
+    return result.value;
+  };
+  const ownedClient = {
+    parseWarm: (text: string, format: Format, timeoutMs: number) => parse(false, text, format, timeoutMs),
+    parseFresh: (text: string, format: Format, timeoutMs: number) => parse(true, text, format, timeoutMs),
+  };
 
   // Fresh (authoritative) both-parser parse — feeds re-verify, minimize, anon.
   const parseBothFresh = async (text: string, format: Format): Promise<PairResult> => {
+    checkOwner();
     if (!lsdocAvailable) return { ok: false, diverges: false };
     let lsdocProjection: Projection;
     try {
@@ -115,7 +134,8 @@ export async function runComparison(
     } catch {
       return { ok: false, diverges: false };
     }
-    const m = await client.parseFresh(text, format, opts.timeoutMs);
+    const m = await ownedClient.parseFresh(text, format, opts.timeoutMs);
+    checkOwner();
     if (!m.ok) return { ok: false, diverges: false };
     return {
       ok: true,
@@ -130,26 +150,31 @@ export async function runComparison(
     let findings: Finding[] | undefined;
 
     if (opts.mode === "bench" || opts.mode === "both") {
-      bench = await runBench(client, files, opts, onProgress);
+      bench = await runBench(ownedClient, files, opts, progress, checkOwner);
+      checkOwner();
     }
     if (opts.mode === "diff" || opts.mode === "both") {
-      findings = lsdocAvailable ? await runDiff(client, files, opts, parseBothFresh, onProgress) : [];
+      findings = lsdocAvailable ? await runDiff(ownedClient, files, opts, parseBothFresh, progress, checkOwner) : [];
     }
 
     return owner()
       ? { kind: "current", value: { tineVersion, lsdocVersion: parserVersion, stats, lsdocAvailable, bench, findings } }
       : { kind: "stale" };
+  } catch (error) {
+    if (error === retired) return { kind: "stale" };
+    throw error;
   } finally {
     client.dispose();
   }
 }
 
 async function runDiff(
-  client: MldocClient,
+  client: Pick<MldocClient, "parseWarm" | "parseFresh">,
   files: GraphSourceFile[],
   opts: DiffOptions,
   parseBothFresh: (text: string, format: Format) => Promise<PairResult>,
   onProgress: (e: ProgressEvent) => void,
+  checkOwner: () => void,
 ): Promise<Finding[]> {
   const anonymousRels = files.map((f, i) => anonymizeSourceRel(f.rel, i));
   // Stage 1 — fast scan (warm worker) to find candidate mismatches.
@@ -166,6 +191,7 @@ async function runDiff(
       continue;
     }
     const m = await client.parseWarm(f.text, f.format, opts.timeoutMs);
+    checkOwner();
     if (!m.ok) {
       findings.push({ type: "mldoc-failure", rel: anonymousRels[i], status: m.status, detail: m.detail });
       continue;
@@ -183,7 +209,9 @@ async function runDiff(
       continue;
     }
     const buf = toBytes(f.text);
+    checkOwner();
     const min = await minimize(buf, f.format, (t, fmt) => parseBothFresh(t, fmt));
+    checkOwner();
     // `contextDependent` means the minimizer could not reproduce the mismatch in
     // any independently parsed range; every such probe used parseFresh and thus
     // a brand-new mldoc realm. Suppress only the exact issue #82 one-backtick
@@ -249,6 +277,7 @@ async function runDiff(
           minimizedOriginal,
         )
       : { ok: false };
+    checkOwner();
     findings.push({
       type: "divergence",
       rel,
@@ -417,10 +446,11 @@ async function currentTineVersion(): Promise<string> {
 }
 
 async function runBench(
-  client: MldocClient,
+  client: Pick<MldocClient, "parseWarm" | "parseFresh">,
   files: GraphSourceFile[],
   opts: DiffOptions,
   onProgress: (e: ProgressEvent) => void,
+  checkOwner: () => void,
 ): Promise<DiffReport["bench"]> {
   const lsdocAvailable = lsdocDocumentAvailable();
   const idFiles = files.map((f, i) => ({ id: `b${i}`, rel: anonymizeSourceRel(f.rel, i) }));
@@ -433,6 +463,7 @@ async function runBench(
       const f = files[i];
       onProgress({ phase: "bench", done: run * files.length + i, total: BENCH_RUNS * files.length, current: `mldoc ${idFiles[i].rel}` });
       const m = await client.parseWarm(f.text, f.format, opts.timeoutMs);
+    checkOwner();
       results.set(idFiles[i].id, m.ok ? { ok: true, parseMicros: m.parseMicros } : { ok: false, status: m.status, detail: m.detail });
     }
     mldocRuns.push(benchFromResults(idFiles, results));
@@ -445,6 +476,7 @@ async function runBench(
     for (let run = 0; run < BENCH_RUNS; run++) {
       const results = new Map<string, { ok: boolean; parseMicros?: number; status?: string; detail?: string }>();
       for (const [i, f] of files.entries()) {
+        checkOwner();
         const start = performance.now();
         try {
           parseLsdocDocument(f.text, f.format === "org");

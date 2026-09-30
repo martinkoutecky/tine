@@ -4,8 +4,9 @@
 //! source pages, knows the storage layout, or runs a second query evaluator.
 //!
 //! `plan_query` costs O(P + selected page bytes + query evaluation) and returns
-//! a fingerprint over the reviewed membership and source revisions. `publish_query`
-//! repeats that work and refuses a changed plan. `publish_live` costs O(P + B)
+//! a fingerprint over the reviewed membership and held source documents. `publish_query`
+//! repeats that work and refuses a changed plan. Every output projects those
+//! held documents, so later external edits cannot mix unreviewed content in. `publish_live` costs O(P + B)
 //! and exports public pages, or all pages on explicit request. Observable
 //! failures are parser/selection refusal, output budget, stale plan and I/O;
 //! callers show them and let the user pick a fresh destination.
@@ -72,7 +73,7 @@ pub struct ExportPage {
 }
 
 /// Stateless plan shown before publication. `fingerprint` binds selected
-/// source revisions, query input and result membership; no server-side session.
+/// source documents, query input and result membership; no server-side session.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryExportPlan {
@@ -175,7 +176,7 @@ struct Planned {
 }
 
 fn resolve_plan(
-    store: &Store,
+    _store: &Store,
     graph: &WholeGraph,
     request: &QueryExportRequest,
 ) -> io::Result<Planned> {
@@ -270,9 +271,8 @@ fn resolve_plan(
     hasher.update(serde_json::to_vec(request).map_err(io::Error::other)?);
     hasher.update(serde_json::to_vec(&result.rows).map_err(io::Error::other)?);
     for page in &selected.pages {
-        let read = store.page(&page.id).map_err(crate::store_error)?;
         hasher.update(page.id.as_str().as_bytes());
-        hasher.update(serde_json::to_vec(&read.rev).map_err(io::Error::other)?);
+        hasher.update(serde_json::to_vec(page.document.as_ref()).map_err(io::Error::other)?);
     }
     let fingerprint = format!("{:x}", hasher.finalize());
     Ok(Planned {
@@ -460,9 +460,16 @@ fn snapshot(
         }
     }
     for page in &corpus.pages {
-        let mut read = store.page(&page.id).map_err(crate::store_error)?.doc;
-        read.read_only = true;
-        let mut value = serde_json::to_value(read).map_err(io::Error::other)?;
+        let blocks: Vec<_> = page
+            .document
+            .roots
+            .iter()
+            .map(tine_core::projection::block_to_dto)
+            .collect();
+        let mut value = json!({ "name": page.name, "kind": page.kind, "title": page.name,
+            "pre_block": page.document.pre_block, "blocks": blocks,
+            "format": tine_core::model::Format::from_path(Path::new(page.id.as_str())),
+            "read_only": true, "guide": false });
         value["path"] = json!(page.id.as_str());
         value["rev"] = Value::Null;
         value["activation"] = Value::Null;
@@ -833,4 +840,44 @@ pub fn publish_static(
     // No frontend computes sheets for a CLI export: every sheet block stays a plain outline.
     let files = collect_static(store, &graph, &corpus, &SheetIndex::default())?;
     commit(store, parent, &slug(name), files, corpus.pages.len())
+}
+
+#[cfg(test)]
+mod snapshot_consistency_tests {
+    use super::*;
+    #[test]
+    fn snapshot_uses_held_reviewed_sources_after_an_external_edit() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("pages")).unwrap();
+        std::fs::write(
+            temp.path().join("pages/Public.md"),
+            "public:: true\n- TODO reviewed\n",
+        )
+        .unwrap();
+        let store = Store::open(temp.path(), Default::default()).unwrap().0;
+        let request = QueryExportRequest {
+            argument: "(task TODO)".into(),
+            dialect: QueryTextDialect::MacroQuery,
+            properties: vec![],
+            current_page: None,
+            name: "Export".into(),
+            host_block_id: None,
+        };
+        let graph = store.whole_graph().unwrap();
+        let reviewed = resolve_plan(&store, &graph, &request).unwrap();
+        std::fs::write(
+            temp.path().join("pages/Public.md"),
+            "public:: true\n- TODO unreviewed\n",
+        )
+        .unwrap();
+        store.scan_refresh().unwrap();
+        let bytes = snapshot(&store, &graph, &reviewed.selected, "Export", "Public", None).unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["pages"][0]["blocks"][0]["raw"], "TODO reviewed", "I-20: all publication projections use the held reviewed corpus; exemplar publish_query::snapshot");
+        let repeated = resolve_plan(&store, &graph, &request).unwrap();
+        assert_eq!(
+            reviewed.plan.fingerprint, repeated.plan.fingerprint,
+            "a held plan must fingerprint its held sources, not live disk bytes"
+        );
+    }
 }

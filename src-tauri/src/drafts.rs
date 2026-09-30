@@ -16,6 +16,7 @@
 //! frontend owns the rest of the record's fields. Every write is `device_io::atomic_write` (temp +
 //! fsync + rename + directory sync).
 //!
+//! Reads stop after MAX_BYTES + 1, including files growing during the read.
 //! **Bounds.** At most [`MAX_RECORDS`] records and [`MAX_BYTES`] bytes.
 //!
 //! **Refusals.** A write past a bound is refused and the draft stays in the
@@ -91,11 +92,16 @@ fn set_aside(path: &Path) -> Result<(), String> {
 }
 
 fn load_unlocked(path: &Path) -> Result<Vec<Value>, String> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
+    use std::io::Read;
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.to_string()),
     };
+    let mut bytes = Vec::new();
+    file.take((MAX_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
     match decode(&bytes) {
         Ok(drafts) => Ok(drafts),
         Err(_) => {
@@ -273,6 +279,19 @@ mod tests {
         assert_eq!(aside.len(), 3, "each unreadable file is kept: {aside:?}");
         store_at(&path, record("s2:P", "after")).unwrap();
         assert_eq!(load_at(&path).unwrap(), vec![record("s2:P", "after")]);
+    }
+
+    #[test]
+    fn oversized_draft_is_preserved_without_reading_the_whole_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("g.v1.json");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len((MAX_BYTES * 16) as u64).unwrap();
+        drop(file);
+        assert!(load_at(&path).unwrap().is_empty());
+        assert!(!path.exists());
+        let aside = path.with_extension("json.unreadable-0");
+        assert_eq!(fs::metadata(aside).unwrap().len(), (MAX_BYTES * 16) as u64);
     }
 
     #[test]

@@ -332,6 +332,39 @@ describe("installed plugin lifecycle", () => {
     });
   });
 
+  it.each(["entry", "settings", "activation"] as const)("L15:83: uninstall retires automatic startup during %s", async (phase) => {
+    const api = backend(), id = "page.tine.uninstall-startup";
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([record(id, "Uninstall startup")]);
+    const entry = vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
+    const settings = vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    vi.spyOn(api, "setAppString").mockResolvedValue();
+    vi.spyOn(api, "uninstallPlugin").mockResolvedValue();
+    const persist = vi.spyOn(api, "setPluginEnabled").mockResolvedValue();
+    const runtime = { invoke: vi.fn().mockResolvedValue({ effects: [] }), dispose: vi.fn() };
+    vi.spyOn(PluginRuntime, "create").mockResolvedValue(runtime as unknown as PluginRuntime);
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    if (phase === "entry") entry.mockImplementationOnce(async () => { await pending; return new Uint8Array([0, 97, 115, 109]); });
+    // The first settings read builds the installed catalog; the second owns startup.
+    if (phase === "settings") settings.mockImplementationOnce(async () => "{}").mockImplementationOnce(async () => { await pending; return "{}"; });
+    if (phase === "activation") runtime.invoke.mockImplementationOnce(async () => { await pending; return { effects: [] }; });
+    const manager = new PluginManager();
+    const initializing = manager.initialize();
+    await vi.waitFor(() => {
+      if (phase === "entry") expect(entry).toHaveBeenCalled();
+      else if (phase === "settings") expect(settings).toHaveBeenCalledTimes(2);
+      else expect(runtime.invoke).toHaveBeenCalled();
+    });
+    await manager.uninstall(id, "1.0.0");
+    if (phase !== "entry") expect(runtime.dispose).toHaveBeenCalled();
+    finish();
+    await initializing;
+    expect(installedPlugins().some((plugin) => plugin.manifest.id === id)).toBe(false);
+    await expect(manager.invokeCommand(id, "write")).rejects.toThrow("plugin is not running");
+    expect(persist).not.toHaveBeenCalled();
+  });
+
   it("makes a successful held enable the selected durable intent so disable can clear it", async () => {
     const api = backend();
     const id = "page.tine.held-enable-disable";

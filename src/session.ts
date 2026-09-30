@@ -1,3 +1,4 @@
+import { reportUiFailure } from "./uiFailure";
 import { backend } from "./backend";
 import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
 import type { QueryRoute } from "./routeTypes";
@@ -441,7 +442,8 @@ export async function restoreSession(): Promise<void> {
       const result = await readOwned(owner, backend().loadSession());
       if (result.kind === "stale") return;
       raw = result.value;
-    } catch {
+    } catch (error) {
+      if (owner()) reportUiFailure("session-read", error);
       initializeRegistry = false;
       return;
     }

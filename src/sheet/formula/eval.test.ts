@@ -204,3 +204,19 @@ describe("formula evaluator", () => {
     expect(evalExpr('today().format("YYYY-MM-DD HH:mm")', {}, {}, new Date(Date.UTC(2030, 5, 1, 23, 59)))).toEqual(textValue("2030-06-01 00:00"));
   });
 });
+
+// I-22: evaluation costs unique references, not their fan-out (eval.ts).
+it("memoizes an acyclic formula DAG per evaluation and forgets it between rows", () => {
+  const formulas: Record<string, Ast> = { f0: parseOk("qty") };
+  for (let i = 1; i <= 16; i++) formulas[`f${i}`] = parseOk(`formula.f${i - 1} + formula.f${i - 1}`);
+  let reads = 0, qty = 2;
+  const ctx = { field: () => { reads++; return numberValue(qty); }, formulaAst: (name: string) => formulas[name] ?? null, now: new Date() };
+  expect(evaluate(parseOk("formula.f16"), ctx)).toEqual(numberValue(131072));
+  expect(reads).toBe(1);
+  qty = 3;
+  expect(evaluate(parseOk("formula.f16"), ctx)).toEqual(numberValue(196608));
+  expect(reads).toBe(2);
+});
+it.each(["__proto__", "constructor", "hasOwnProperty", "toString"])("rejects inherited formula member %s as a cell error", (member) => {
+  expect(evalExpr(`'x'.${member}()`)).toMatchObject({ kind: "error" });
+});
