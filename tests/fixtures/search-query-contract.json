@@ -9,6 +9,6 @@
   {"query":"/\\d{3}/","kind":"regex","simple":null,"match":"a123"},
   {"query":"/a\\sb/","kind":"regex","simple":null,"match":"a b"},
   {"query":"/\\bfoo/","kind":"regex","simple":null,"match":"a foo"},
-  {"query":"/(?i)abc/","kind":"invalid","simple":null,"match":"ABC"},
+  {"query":"/(?i)abc/","kind":"regex","simple":null,"match":"ABC"},
   {"query":"/[(?]+/","kind":"regex","simple":null,"match":"(?"}
 ]

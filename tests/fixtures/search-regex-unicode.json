@@ -1,0 +1,67 @@
+[
+  {
+    "query": "/\\d+/",
+    "text": "🧠 ١٢",
+    "match": true,
+    "spans": [
+      {
+        "start": 3,
+        "end": 5
+      }
+    ]
+  },
+  {
+    "query": "/\\w+/",
+    "text": "🧠 café 東京",
+    "match": true,
+    "spans": [
+      {
+        "start": 3,
+        "end": 7
+      },
+      {
+        "start": 8,
+        "end": 10
+      }
+    ]
+  },
+  {
+    "query": "/\\bcafé\\b/",
+    "text": "🧠 café!",
+    "match": true,
+    "spans": [
+      {
+        "start": 3,
+        "end": 7
+      }
+    ]
+  },
+  {
+    "query": "/\\bfoo\\b/",
+    "text": "éfooé",
+    "match": false,
+    "spans": []
+  },
+  {
+    "query": "/\\p{Script=Greek}+/",
+    "text": "🧠 Καλημέρα",
+    "match": true,
+    "spans": [
+      {
+        "start": 3,
+        "end": 11
+      }
+    ]
+  },
+  {
+    "query": "/(?i)abc/",
+    "text": "ABC",
+    "match": true,
+    "spans": [
+      {
+        "start": 0,
+        "end": 3
+      }
+    ]
+  }
+]

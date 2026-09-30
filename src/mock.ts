@@ -953,9 +953,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     },
     async getUnlinkedRefs(name: string): Promise<RefGroup[]> {
       const n = name.toLowerCase();
-      const re = new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+      const matcher = parseSearchQuery(`/\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b/`);
       return collect(
-        (b) => re.test(b.raw.toLowerCase()) && !pageRefs(b.raw).some((r) => r.toLowerCase() === n),
+        (b) => matcherMatches(matcher, "", b.raw.toLowerCase()) && !pageRefs(b.raw).some((r) => r.toLowerCase() === n),
         name
       );
     },
