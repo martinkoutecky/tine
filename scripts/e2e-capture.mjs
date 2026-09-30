@@ -429,6 +429,17 @@ try {
     logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
   });
   const restartedHandles = await browser.getWindowHandles();
+  // Startup graph loading belongs to the visible WebView. Establish the graph
+  // fixture before asking the still-cold Capture WebView for page candidates;
+  // native window creation alone does not prove the graph has opened.
+  let restartedMain = null;
+  for (const handle of restartedHandles) {
+    await browser.switchToWindow(handle);
+    if (matchesWindowName(await browser.getTitle(), "Tine")) restartedMain = handle;
+  }
+  if (!restartedMain) throw new Error("fresh process lacked its graph window");
+  await browser.switchToWindow(restartedMain);
+  await browser.$(".ls-block").waitForExist({ timeout: 20_000 });
   const restartedCapture = await (async () => {
     for (const handle of restartedHandles) {
       await browser.switchToWindow(handle);
