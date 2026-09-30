@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { Settings } from "./Settings";
+import { setGraphConfigProblem } from "../graph";
 import { closeSettings, openSettings } from "../ui";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 afterEach(() => {
   closeSettings();
+  setGraphConfigProblem(null);
   document.body.innerHTML = "";
   localStorage.clear();
 });
@@ -128,4 +130,20 @@ describe("Settings progressive disclosure and search", () => {
     expect(localStorage.getItem("tine.settings.advanced.editor")).toBe("0");
     dispose();
   });
+});
+
+
+it("keeps the config-read error visible in Settings until a repaired reopen", async () => {
+  setGraphConfigProblem({ kind: "config-read", message: "read failed" });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const dispose = render(() => <Settings />, host);
+  openSettings("appearance");
+  await tick();
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("This graph is read-only");
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Repair the config and reopen");
+  setGraphConfigProblem(null);
+  await tick();
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  dispose();
 });

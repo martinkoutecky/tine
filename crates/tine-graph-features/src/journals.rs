@@ -26,7 +26,7 @@ fn collect_feed_page<T, F>(
     before_day: Option<i64>,
     as_of_day: i64,
     mut load: F,
-) -> Result<FeedPage<T>, String>
+) -> Result<FeedPage<T>, io::Error>
 where
     F: FnMut(&PageId) -> Result<T, io::Error>,
 {
@@ -52,7 +52,7 @@ where
         match load(&id) {
             Ok(value) => out.push(value),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.to_string()),
+            Err(error) => return Err(error),
         }
         if out.len() == limit {
             break;
@@ -73,9 +73,9 @@ pub fn feed_page(
     store: &Store,
     limit: usize,
     before_day: Option<i64>,
-) -> Result<FeedPage<tine_store::PageRead>, String> {
+) -> Result<FeedPage<tine_store::PageRead>, io::Error> {
     let as_of_day = JournalDate::today().ordinal_key();
-    let entries = feed_journals_desc_through(store, Day(as_of_day));
+    let entries = feed_journals_desc_through(store, Day(as_of_day))?;
     collect_feed_page(entries, limit, before_day, as_of_day, |id| {
         store.page(id).map_err(|error| match error {
             StoreError::NotFound => io::Error::from(io::ErrorKind::NotFound),
@@ -220,7 +220,7 @@ mod journal_feed_tests {
             collect_feed_page([3].into_iter().map(entry).collect(), 1, None, 3, |_id| {
                 Err(io::Error::new(io::ErrorKind::PermissionDenied, "denied"))
             });
-        assert!(matches!(hard, Err(err) if err.contains("denied")));
+        assert!(matches!(hard, Err(err) if err.kind() == io::ErrorKind::PermissionDenied));
     }
 }
 
@@ -232,11 +232,15 @@ fn format(store: &Store) -> JournalFormat {
     )
 }
 
-fn files(store: &Store) -> Vec<FileEntry> {
-    store
-        .scan_area(Area::Journals, None)
-        .map(|listing| listing.files)
-        .unwrap_or_default() // v0.6.5 skips unlistable journals.
+fn files(store: &Store) -> io::Result<Vec<FileEntry>> {
+    let listing = store.scan_area(Area::Journals, None).map_err(store_error)?;
+    if let Some((name, error)) = listing.unreadable.into_iter().next() {
+        return Err(io::Error::new(
+            error.kind,
+            format!("journal inventory is partial ({name}): {}", error.message),
+        ));
+    }
+    Ok(listing.files)
 }
 
 fn stem(entry: &FileEntry) -> Option<&str> {
@@ -251,41 +255,22 @@ fn stem(entry: &FileEntry) -> Option<&str> {
         .map(|(stem, _)| stem)
 }
 
-fn preview(store: &Store, entry: &FileEntry) -> String {
-    store
-        .read(&entry.id, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-        .ok()
-        .and_then(|(bytes, _)| String::from_utf8(bytes).ok())
-        .and_then(|content| {
-            content
-                .lines()
-                .map(|line| {
-                    line.trim_start_matches(|ch| matches!(ch, '*' | '-' | ' ' | '\t'))
-                        .trim()
-                        .to_owned()
-                })
-                .find(|line| !line.is_empty())
-        })
-        .map(|line| line.chars().take(80).collect())
-        .unwrap_or_default()
-}
-
 /// Dated journal ids newest first, once per day, through `cutoff`. Future days
-/// stay addressable as pages. Unreadable scan entries are skipped. Cost O(J log J).
-pub fn feed_journals_desc_through(store: &Store, cutoff: Day) -> Vec<(Day, PageId)> {
+/// stay addressable as pages. Partial scans return an error. Cost O(J log J).
+pub fn feed_journals_desc_through(store: &Store, cutoff: Day) -> io::Result<Vec<(Day, PageId)>> {
     let mut days = BTreeMap::new();
-    for entry in files(store) {
-        if entry.page.is_none() {
-            continue;
-        }
-        if let Some(day) = entry.day.filter(|day| *day <= cutoff) {
-            days.entry(day).or_insert(());
+    for entry in files(store)? {
+        if entry.page.is_some() {
+            if let Some(day) = entry.day.filter(|day| *day <= cutoff) {
+                days.entry(day).or_insert(());
+            }
         }
     }
-    days.into_keys()
+    Ok(days
+        .into_keys()
         .rev()
         .map(|day| (day, store.journal_id(day)))
-        .collect()
+        .collect())
 }
 
 fn migration_target(entry: &FileEntry, fmt: &JournalFormat) -> Option<String> {
@@ -334,18 +319,18 @@ struct Listing {
 }
 
 impl Listing {
-    fn new(store: &Store) -> Self {
-        let entries = files(store);
+    fn new(store: &Store) -> io::Result<Self> {
+        let entries = files(store)?;
         let rels = entries.iter().map(|entry| entry.rel.clone()).collect();
         let mut days = BTreeMap::new();
         for day in entries.iter().filter_map(|entry| entry.day) {
             *days.entry(day).or_insert(0) += 1;
         }
-        Self {
+        Ok(Self {
             entries,
             rels,
             days,
-        }
+        })
     }
 }
 
@@ -383,12 +368,12 @@ fn migration_plan(
 /// Exactly the renames [`migrate_journal_filenames`] would perform now, given
 /// this list back (see `migration_plan`). Read-only; the Settings panel lists
 /// them and graph open never calls this (master e6f9b6e1ceae). Sorted by
-/// `from`; an unlistable journals directory gives an empty list. Cost
+/// `from`; an incomplete listing returns an error. Cost
 /// O(J log J) over one directory listing; no file contents are read.
-pub fn journal_filename_migrations(store: &Store) -> Vec<JournalFilenameMigration> {
-    let listing = Listing::new(store);
+pub fn journal_filename_migrations(store: &Store) -> io::Result<Vec<JournalFilenameMigration>> {
+    let listing = Listing::new(store)?;
     let fmt = format(store);
-    listing
+    Ok(listing
         .entries
         .iter()
         .filter_map(|entry| {
@@ -398,7 +383,7 @@ pub fn journal_filename_migrations(store: &Store) -> Vec<JournalFilenameMigratio
                 to,
             })
         })
-        .collect()
+        .collect())
 }
 
 /// Best-effort one-file transactions over exactly the `confirmed` proposals
@@ -411,9 +396,9 @@ pub fn journal_filename_migrations(store: &Store) -> Vec<JournalFilenameMigratio
 pub fn migrate_journal_filenames(
     store: &Store,
     confirmed: &[JournalFilenameMigration],
-) -> MigrationResult {
+) -> io::Result<MigrationResult> {
     let fmt = format(store);
-    let mut listing = Listing::new(store);
+    let mut listing = Listing::new(store)?;
     let mut result = MigrationResult::default();
     for proposal in confirmed {
         let skip = |reason: String| MigrationSkip {
@@ -475,54 +460,50 @@ pub fn migrate_journal_filenames(
             }
         }
     }
-    result
+    Ok(result)
 }
 
 /// Duplicate-day files with first-line previews, canonical first. Unreadable
-/// scan entries and unreadable previews are skipped/empty as v0.6.5. Cost
+/// scans and previews return errors rather than an empty answer. Cost
 /// O(J log J + bytes of duplicate files).
-pub fn journal_conflicts(store: &Store) -> Vec<JournalConflict> {
+pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
     let mut groups: BTreeMap<Day, Vec<FileEntry>> = BTreeMap::new();
-    for entry in files(store) {
+    for entry in files(store)? {
         if let Some(day) = entry.day.filter(|_| stem(&entry).is_some()) {
             groups.entry(day).or_default().push(entry);
         }
     }
     let fmt = format(store);
-    groups
-        .into_iter()
-        .filter_map(|(day, entries)| {
-            if entries.len() < 2 {
-                return None;
-            }
-            let mut journal_files: Vec<_> = entries
-                .iter()
-                .map(|entry| {
-                    let name = entry
-                        .rel
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(&entry.rel)
-                        .to_owned();
-                    JournalFile {
-                        name,
-                        path: entry.id.as_str().to_owned(),
-                        preview: preview(store, entry),
-                        canonical: stem(&entry).is_some_and(|stem| fmt.is_canonical_stem(stem)),
-                    }
-                })
-                .collect();
-            journal_files.sort_by(|a, b| {
-                b.canonical
-                    .cmp(&a.canonical)
-                    .then_with(|| a.name.cmp(&b.name))
+    let mut conflicts = Vec::new();
+    for (day, entries) in groups {
+        if entries.len() < 2 {
+            continue;
+        }
+        let mut journal_files = Vec::new();
+        for entry in entries {
+            journal_files.push(JournalFile {
+                name: entry
+                    .rel
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&entry.rel)
+                    .to_owned(),
+                path: entry.id.as_str().to_owned(),
+                preview: crate::conflicts::preview(store, &entry.id)?,
+                canonical: stem(&entry).is_some_and(|stem| fmt.is_canonical_stem(stem)),
             });
-            Some(JournalConflict {
-                title: fmt.title(JournalDate::from_ordinal(day.0)),
-                files: journal_files,
-            })
-        })
-        .collect()
+        }
+        journal_files.sort_by(|a, b| {
+            b.canonical
+                .cmp(&a.canonical)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        conflicts.push(JournalConflict {
+            title: fmt.title(JournalDate::from_ordinal(day.0)),
+            files: journal_files,
+        });
+    }
+    Ok(conflicts)
 }
 
 fn journal_name(name: &str) -> io::Result<()> {

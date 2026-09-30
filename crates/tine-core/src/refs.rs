@@ -257,12 +257,7 @@ fn link_end(after: &str) -> Option<usize> {
     (!after[..end].contains("[[")).then_some(end)
 }
 
-/// Whether `ch` separates the members of a linkable (`tags::`/`alias::`)
-/// property value: ASCII `,` or the full-width `，`. The single answer for the
-/// reference evidence and the rename rewrite (C3W W3).
-pub fn is_linkable_property_separator(ch: char) -> bool {
-    ch == ',' || ch == '，'
-}
+pub use crate::block_regions::is_linkable_property_separator;
 
 /// Rewrite an org `[[file:…]]` link's inner text if its target file's basename
 /// (namespace-decoded `___`→`/`, extension stripped) normalizes to a key in

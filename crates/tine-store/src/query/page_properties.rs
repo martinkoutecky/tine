@@ -1,64 +1,33 @@
 use super::{property_key_norm, strip_ref};
 use tine_core::doc::{DocBlock, Document};
 
-/// Parse Markdown or Org page-property syntax; skip malformed lines.
-/// O(input text length), without external I/O.
-pub(super) fn page_property_lines(text: &str, is_org: bool) -> Vec<(String, String)> {
-    if !is_org {
-        return text
-            .lines()
-            .filter_map(tine_core::doc::parse_property_line)
-            .map(|(key, value)| (key.to_string(), value.to_string()))
-            .collect();
-    }
-    let mut props = Vec::new();
-    let mut in_drawer = false;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.eq_ignore_ascii_case(":PROPERTIES:") {
-            in_drawer = true;
-            continue;
-        }
-        if line.eq_ignore_ascii_case(":END:") {
-            in_drawer = false;
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("#+") {
-            if let Some((key, value)) = rest.split_once(':') {
-                if !key.is_empty()
-                    && key
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-                {
-                    props.push((key.to_ascii_lowercase(), value.trim().to_owned()));
-                }
-            }
-        } else if in_drawer {
-            if let Some(rest) = line.strip_prefix(':') {
-                if let Some((key, value)) = rest.split_once(':') {
-                    if !key.is_empty()
-                        && key
-                            .bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-                    {
-                        props.push((key.to_ascii_lowercase(), value.trim().to_owned()));
-                    }
-                }
-            }
-        }
-    }
-    props
+/// Page properties owned by lsdoc, including Org directives and head drawers.
+/// O(input bytes + AST nodes), without I/O; literal/prose entries are excluded.
+pub(crate) fn page_property_lines(text: &str, is_org: bool) -> Vec<(String, String)> {
+    tine_core::block_regions::parse_document(text, is_org)
+        .page_properties()
+        .map(|p| {
+            (
+                if is_org {
+                    p.key.to_ascii_lowercase()
+                } else {
+                    p.key.clone()
+                },
+                p.value.clone(),
+            )
+        })
+        .collect()
 }
 
-/// Use the first root's format, or preblock Org markers if there is no root.
-/// O(first root metadata or preblock lines).
+/// The first root carries the format; an empty document's parser-owned Org
+/// metadata distinguishes an Org drawer/directive preamble from Markdown.
 pub(super) fn page_document_is_org(doc: &Document) -> bool {
     doc.roots.first().map(DocBlock::is_org).unwrap_or_else(|| {
         doc.pre_block.as_deref().is_some_and(|pre| {
-            pre.lines().any(|line| {
-                let line = line.trim_start();
-                line.starts_with("#+") || line.eq_ignore_ascii_case(":PROPERTIES:")
-            })
+            tine_core::block_regions::parse_document(pre, true)
+                .page_properties()
+                .next()
+                .is_some()
         })
     })
 }

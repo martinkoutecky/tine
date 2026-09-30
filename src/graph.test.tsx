@@ -595,3 +595,30 @@ describe("graph home page on open (config.edn :default-home)", () => {
     expect(harness.openPage).not.toHaveBeenCalled();
   });
 });
+
+
+it("reports unreadable custom CSS once at graph open while applying no CSS", async () => {
+  const { loadGraphPath, api } = await loadHarness(null);
+  const failure = await import("./uiFailure");
+  const report = vi.spyOn(failure, "reportUiFailure");
+  api.readCustomCss.mockRejectedValue(new Error("CSS read denied"));
+  expect(await loadGraphPath(META.root)).toMatchObject({ kind: "loaded" });
+  await vi.waitFor(() => expect(report).toHaveBeenCalledWith("custom-css", expect.any(Error)));
+  expect(report.mock.calls.filter(([family]) => family === "custom-css")).toHaveLength(1);
+  expect(document.head.querySelector("#test-css")?.textContent).toBe("");
+});
+
+it("opens with the config-read problem available to Settings and clears it on a repaired reopen", async () => {
+  const { loadGraphPath, api } = await loadHarness(null);
+  const problem = { kind: "config-read" as const, message: "config read denied" };
+  api.loadGraph.mockResolvedValueOnce({ kind: "loaded", meta: META, binding_generation: 1, config_problem: problem } as Awaited<ReturnType<typeof api.loadGraph>>);
+  const failure = await import("./uiFailure");
+  const report = vi.spyOn(failure, "reportUiFailure");
+  expect(await loadGraphPath(META.root)).toMatchObject({ kind: "loaded" });
+  const { graphConfigProblem } = await import("./graph");
+  expect(graphConfigProblem()).toEqual(problem);
+  expect(report).toHaveBeenCalledWith("config-read", problem);
+  expect(api.savePages).not.toHaveBeenCalled();
+  expect(await loadGraphPath(META.root, { forceRefresh: true })).toMatchObject({ kind: "loaded" });
+  expect(graphConfigProblem()).toBeNull();
+});

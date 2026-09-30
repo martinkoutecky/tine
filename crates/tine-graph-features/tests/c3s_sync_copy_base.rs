@@ -68,7 +68,7 @@ fn a_copy_of_a_parenthesised_page_is_listed_against_it_and_never_merged_elsewher
     fs::write(root.join(copy), "- draft\n- edit from the other device\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;
 
-    let listed = conflicts::list_sync_conflicts(&store);
+    let listed = conflicts::list_sync_conflicts(&store).unwrap();
     assert_eq!(listed.len(), 1, "{listed:?}");
     assert_eq!(
         listed[0].base_path.as_deref(),

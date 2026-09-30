@@ -1,3 +1,4 @@
+import { graphConfigProblem } from "../graph";
 import { ResourceFailure } from "./ResourceFailure";
 import { reportUiFailure } from "../uiFailure";
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
@@ -73,8 +74,7 @@ import { writePreference, loadPreference } from "../preferenceWrites";
 import { graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
 import { readOr } from "../resourceRead";
 
-type Tab = SettingsTabId;
-const TABS: { id: Tab; label: string }[] = [
+const TABS: { id: SettingsTabId; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "editor", label: "Editor" },
   { id: "journals", label: "Journals" },
@@ -87,7 +87,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "about", label: "About" },
 ];
 export function Settings(): JSX.Element {
-  const [tab, setTab] = createSignal<Tab>("appearance");
+  const [tab, setTab] = createSignal<SettingsTabId>("appearance");
   const [settingsQuery, setSettingsQuery] = createSignal("");
   const matches = createMemo(() => {
     const query = settingsQuery();
@@ -101,8 +101,7 @@ export function Settings(): JSX.Element {
     });
   };
 
-  // Effective binding = local override > config.edn > built-in default.
-  const shortcuts = () => {
+    const shortcuts = () => {
     const cfg = graphMeta()?.shortcuts ?? {};
     const ov = shortcutOverrides();
     return commandDefaults().map((c) => ({
@@ -211,6 +210,7 @@ export function Settings(): JSX.Element {
               </button>
             </div>
             <div class="settings-pane-body">
+              <Show when={graphConfigProblem()}><p role="alert">config.edn could not be read. This graph is read-only. Repair the config and reopen the graph.</p></Show>
               <Suspense fallback={<div class="settings-pane-pending" aria-hidden="true" />}>
               <Show when={settingsQuery().trim() && tab() !== "shortcuts"}>
                 <div class="settings-search-results" aria-live="polite">
@@ -313,7 +313,7 @@ function OgField(props: {
   );
 }
 
-function AdvancedSection(props: { tab: Tab; forceOpen: boolean; children: JSX.Element }): JSX.Element {
+function AdvancedSection(props: { tab: SettingsTabId; forceOpen: boolean; children: JSX.Element }): JSX.Element {
   const layerId = `settings-advanced-${createUniqueId()}`;
   const key = `tine.settings.advanced.${props.tab}`;
   let initial = false;

@@ -1,7 +1,7 @@
 // In-memory mock backend seeded with a fixture graph. Used only when running
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
-
+import { split_linkable_property } from "./render/wasm/lsdoc_wasm.js";
 import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
@@ -94,7 +94,7 @@ function mockReferencedPageNames(pages: PageDto[]): string[] {
       if (!/^(tags|alias|aliases)$/i.test(key)) continue;
       const quoted = value.trim();
       if (quoted.length >= 2 && quoted.startsWith('"') && quoted.endsWith('"')) continue;
-      for (const valuePart of value.split(/[,，]/)) {
+      for (const valuePart of split_linkable_property(value)) {
         const bare = valuePart.trim().replace(/^#/, "");
         const name = bare.startsWith("[[") && bare.endsWith("]]")
           ? bare.slice(2, -2).trim()
@@ -835,7 +835,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         if (!rows.has(`journal:${key(name)}`)) add(name, "page");
       }
       const entries = [...rows.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-      return { rev: "0", entries };
+      return { rev: "0", entries, unreadable: [] };
     },
     async journalFeedPage(limit: number, beforeDay: number | null) {
       const now = new Date();

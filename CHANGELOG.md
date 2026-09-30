@@ -106,6 +106,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   Formatting detection now uses the parser's actual outline headers, so a
   bullet inside a literal code block cannot supply a false indentation unit.
 
+- Failed journal scans report incomplete reads, and a page file whose name cannot be read is reported while the rest of the graph stays usable; unreadable graph config opens read-only, unreadable custom CSS reports its safe fallback, failed conflict refreshes keep their last inventory, and verification cancellation stays silent through a typed outcome.
+
+- **Graph read failures preserve user data** (REG-OG-B-FAIL2-CONFIG-WRITE, REG-OG-B-FAIL2-ASSET-TRASH, REG-OG-B-FAIL2-VERIFICATION-REPLACE): an unreadable config blocks writes into guessed directories, asset trash rechecks published references under the writer, and graph verification detects a source replaced while its old descriptor is being hashed.
+- Long flat TQL boolean queries no longer exhaust the stack; genuine nesting is bounded (REG-OG-B-DOOR2-TQL-FLAT-DEPTH).
+- Org drawer and directive properties retain backlinks; page icons ignore prose and literal examples (REG-OG-B-DOOR2-ORG-PAGE-PROPERTIES, REG-OG-B-DOOR2-PAGE-ICON-OWNERSHIP).
+- Org blocks documenting VCS conflict markers remain editable, and plain references keep decomposed Unicode accents with their letters (REG-OG-B-DOOR2-ORG-MARKER-LITERALS, REG-OG-B-DOOR2-NFD-REFERENCE-BOUNDARY).
+- Fullwidth commas separate tag references consistently with Logseq (REG-OG-B-DOOR2-FRONT-TAG-SEPARATOR).
 - **Saving with retained graph views avoids graph-wide copies** (REG-OG-B-COST-SNAPSHOT, REG-OG-B-COST-NAMES): page slots, timestamps, reference counts and name/signature/icon indexes share untouched tree branches. Save preservation checks also reuse the old parsed document (REG-OG-B-COST-PARSE).
 - Published query snapshots retain reviewed source documents across external edits; draft loading and CSV/TSV imports bound their reads before decoding (REG-OG-B-W3-PUBLICATION-SNAPSHOT, REG-OG-B-W3-BOUNDED-DRAFT-READ, REG-OG-B-W3-BOUNDED-CSV-READ).
 - Sheet row virtualization clears its visited-row state on graph reset (UI-OG-B-W3-SHEET-BINDING-RESET).

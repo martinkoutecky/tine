@@ -8,6 +8,25 @@ replace that file between the final comparison and rename; mandatory cross-proce
 locks are outside this plain-file contract. The editor retains unsaved content
 on every refusal and offers conflict resolution or retry.
 
+A failed config read opens the graph read-only: existing files remain readable,
+page DTOs carry read-only, and transactions reject every mutation before disk
+steps. Repair `config.edn` externally and refresh/reopen to resume writes using
+its configured directories. The graph-open reply reports the config failure;
+setup never throws over it.
+
+Asset trash rechecks references in the latest published graph under the Store
+writer lock, including external/sync arrivals already published by the watcher.
+An incomplete graph view cannot prove orphan-ness and refuses trash. External
+arrivals not yet published, and changes after the final check by another process,
+remain a window the Store writer cannot exclude. Duplicate-day stray reference
+completeness remains a separate recorded finding.
+
+`Store::read_is_current` compares a streaming descriptor with a fresh validated
+open using the existing cross-platform file-identity primitive, O(1). Verification
+uses it after hashing and requires successful metadata reads; a displaced
+file makes the report incomplete. An external replacement after that check is
+still possible; verification does not lock external editors for a whole scan.
+
 The store discovers regular `.md`, `.markdown`, and `.org` pages (case insensitive
 extensions) throughout the graph, except
 hidden and reserved folders such as `assets/`, `publish/`, and `node_modules/`.
@@ -31,7 +50,7 @@ pages conflicted, and tells the user which files need inspection before retry.
 
 A held `WholeGraph` view does not wait for later writers. Acquiring the first
 view with `whole_graph()` can wait for the initial parse. The public operation
-surface is 36 combined operations: 28 `Store` methods and eight `Transaction`
+surface is 38 combined operations: 29 `Store` methods and nine `Transaction`
 methods. The graph-command boundary guard lives at
 `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
 `crates/tine-store/tests/client_root_boundary.rs`.
@@ -141,3 +160,9 @@ these in `watch.rs`, `tests/watch.rs` and `src-tauri/src/watcher.rs`.
 Review rule: a new refusal must identify a reachable scenario involving an honest
 local user, sync or external editor. Source scans cannot prove reachability;
 the reviewer traces the path and records the scenario here before accepting it.
+
+| `transaction.rs::check_orphan_asset::ReadOnly` | 1 | A published external-editor/sync reference arrived after the orphan listing; retain the referenced asset and ask the caller to refresh. A partial reference inventory reports an IO failure rather than granting trash. |
+
+| `transaction.rs::check_orphan_asset::InvalidTarget` | 1 | An orphan-asset action is given a page/config/trash target; refuse without touching it. Ordinary trash remains available for intentional page or PDF artifact removal. |
+
+Launch config metadata and its read failure come from the same bounded read. A second successful read cannot clear the failure while leaving directories taken from the earlier fallback. A repaired config is applied by the existing watched refresh or a reopen.

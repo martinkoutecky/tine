@@ -85,7 +85,10 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
         "src-tauri/src/commands.rs",
         "spawn_blocking(",
-        33,
+        // OG-B-FAIL2: trash_asset now awaits one blocking job because the
+        // writer-side reference check can await initial graph publication.
+        // Its command future owns/reaps the result; Store close revokes writes.
+        34,
         "command future",
         "caller awaits blocking result",
     ),

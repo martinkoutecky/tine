@@ -2343,7 +2343,7 @@ fn trash_sync_conflict_refuses_real_pages() {
         !pages.join(conflict).exists(),
         "conflict copy should be gone"
     );
-    assert!(conflicts::list_sync_conflicts(&store).is_empty());
+    assert!(conflicts::list_sync_conflicts(&store).unwrap().is_empty());
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -2413,7 +2413,7 @@ fn sync_conflict_copies_excluded_from_pages_and_surfaced_separately() {
     );
 
     // They ARE surfaced by list_sync_conflicts, each pointing at its winner.
-    let mut conflicts = conflicts::list_sync_conflicts(&store);
+    let mut conflicts = conflicts::list_sync_conflicts(&store).unwrap();
     conflicts.sort_by(|a, b| a.base_name.cmp(&b.base_name));
     assert_eq!(conflicts.len(), 2, "conflicts: {conflicts:?}");
     let foo = conflicts
@@ -2560,7 +2560,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
         "conflict copy not moved"
     );
     assert!(
-        conflicts::list_sync_conflicts(&store).is_empty(),
+        conflicts::list_sync_conflicts(&store).unwrap().is_empty(),
         "conflict still listed"
     );
     let trash = root.join("logseq").join(".tine-trash").join("conflicts");

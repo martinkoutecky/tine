@@ -363,7 +363,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
         is_journal: entry.kind === "journal", day: entry.date_key,
         target: { kind: "existing" as const, id: entry.path, others: [] },
       }));
-      return { rev: "0", entries };
+      return { rev: "0", entries, unreadable: [] };
     },
     async resolvePage(name: string, kind: "journal" | "page") {
       const snapshot = await load();

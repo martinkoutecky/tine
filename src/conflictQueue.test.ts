@@ -40,11 +40,12 @@ describe("the derived conflict queue", () => {
     expect(conflictQueue().map((c) => c.page_name)).toEqual(["A", "B"]);
   });
 
-  it("empties on a failed read instead of refusing anything", async () => {
+  it("keeps the last inventory and reports a failed read", async () => {
     setConflictInventory(inventoryOf("A"));
     vi.spyOn(backend(), "conflictInventory").mockRejectedValue(new Error("io:PermissionDenied"));
     await expect(refreshSyncConflicts()).resolves.toBeUndefined();
-    expect(conflictInventory()).toEqual(EMPTY);
+    expect(conflictInventory()).toEqual(inventoryOf("A"));
+    expect(toasts()).toEqual([expect.objectContaining({ kind: "error", sticky: true })]);
   });
 
   it("settles a resolved object at once, and an older walk cannot resurrect it", async () => {

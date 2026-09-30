@@ -70,6 +70,7 @@ export async function refreshPageIndex(): Promise<void> {
     if (owner()) reportUiFailure("page-inventory", error);
     return;
   }
+  if (inventory.unreadable?.length) reportUiFailure("unreadable-files", inventory.unreadable.join(", "));
   const rev = BigInt(inventory.rev);
   const current = held();
   if (current && current.generation === generation && rev < current.rev) return;

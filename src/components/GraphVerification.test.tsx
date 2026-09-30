@@ -92,9 +92,10 @@ describe("Verify synchronized graph (master 749bfb2b1)", () => {
   it("cancels a running verification and stays silent about the cancellation", async () => {
     const toasts = await import("../toasts");
     const toast = vi.spyOn(toasts, "pushToast");
-    let reject!: (error: Error) => void;
+    const failure = vi.spyOn(await import("../uiFailure"), "reportUiFailure");
+    let reject!: (error: unknown) => void;
     vi.spyOn(backend(), "createGraphVerification").mockReturnValue(new Promise((_, r) => { reject = r; }));
-    const cancel = vi.spyOn(backend(), "cancelGraphVerification").mockImplementation(async () => reject(new Error("graph verification cancelled")));
+    const cancel = vi.spyOn(backend(), "cancelGraphVerification").mockImplementation(async () => reject({ kind: "cancelled" }));
     const host = document.createElement("div");
     document.body.append(host);
     const dispose = render(() => <DiagnosticsTab />, host);
@@ -104,8 +105,22 @@ describe("Verify synchronized graph (master 749bfb2b1)", () => {
     await flush();
     expect(cancel).toHaveBeenCalledOnce();
     expect(toast).not.toHaveBeenCalled();
+    expect(failure).not.toHaveBeenCalled();
     expect(button(host, "Create graph verification report").disabled).toBe(false);
     expect(host.textContent).not.toContain("Complete ·");
     dispose();
   });
+  it("reports a failure whose diagnostic prose contains cancelled", async () => {
+    const failures = await import("../uiFailure");
+    const report = vi.spyOn(failures, "reportUiFailure");
+    vi.spyOn(backend(), "createGraphVerification").mockRejectedValue({ kind: "failed", message: "disk cancelled the read" });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => <DiagnosticsTab />, host);
+    button(host, "Create graph verification report").click();
+    await flush();
+    expect(report).toHaveBeenCalledWith("graph-verification", expect.objectContaining({ kind: "failed" }));
+    dispose();
+  });
+
 });

@@ -33,7 +33,7 @@ fn proposal(from: &str, to: &str) -> JournalFilenameMigration {
 #[test]
 fn apply_renames_only_the_confirmed_proposals() {
     let (root, store) = fixture("confirmed", &["Jun 19th, 2026.md", "Jun 21st, 2026.md"]);
-    let listed = journals::journal_filename_migrations(&store);
+    let listed = journals::journal_filename_migrations(&store).unwrap();
     assert_eq!(
         listed,
         [
@@ -46,7 +46,7 @@ fn apply_renames_only_the_confirmed_proposals() {
     fs::write(root.join("journals/Jun 22nd, 2026.md"), "- synced\n").unwrap();
     fs::remove_file(root.join("journals/Jun 21st, 2026.md")).unwrap();
     store.scan_refresh().unwrap();
-    let result = journals::migrate_journal_filenames(&store, &listed);
+    let result = journals::migrate_journal_filenames(&store, &listed).unwrap();
     assert_eq!(result.migrated, 1);
     assert_eq!(result.skipped.len(), 1, "{:?}", result.skipped);
     assert_eq!(result.skipped[0].file, "Jun 21st, 2026.md");
@@ -76,15 +76,15 @@ fn listed_proposals_are_exactly_what_apply_performs() {
             "Jun 23rd, 2026.md",
         ],
     );
-    let listed = journals::journal_filename_migrations(&store);
+    let listed = journals::journal_filename_migrations(&store).unwrap();
     assert_eq!(listed, [proposal("Jun 23rd, 2026.md", "2026_06_23.md")]);
-    let result = journals::migrate_journal_filenames(&store, &listed);
+    let result = journals::migrate_journal_filenames(&store, &listed).unwrap();
     assert_eq!((result.migrated, result.skipped.len()), (1, 0));
     let stale = [
         proposal("Jun 18th, 2026.md", "2026_06_18.md"),
         proposal("Jun 20th, 2026.org", "2026_06_20.org"),
     ];
-    let result = journals::migrate_journal_filenames(&store, &stale);
+    let result = journals::migrate_journal_filenames(&store, &stale).unwrap();
     assert_eq!(result.migrated, 0);
     assert!(
         result

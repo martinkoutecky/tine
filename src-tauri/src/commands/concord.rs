@@ -22,7 +22,9 @@ fn settle_queue(slot: &GraphSlot, paths: &[&str]) {
         .iter()
         .map(|path| tine_store::FileId::from((*path).to_owned()))
         .collect();
-    slot.conflict_queue.refresh_files(&slot.store, &files);
+    if let Err(error) = slot.conflict_queue.refresh_files(&slot.store, &files) {
+        crate::debug::diag_private("conflict-refresh-failed", error.to_string());
+    }
 }
 
 /// Sync-tool conflict copies (Syncthing/Dropbox) sitting in the graph — for the
@@ -34,9 +36,10 @@ pub(crate) async fn list_sync_conflicts(
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::conflicts::list_sync_conflicts(&slot.store)
+            .map_err(|error| error.to_string())
     })
     .await
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?
 }
 
 /// Block-level diff of a sync-conflict copy against its winner (both graph-root-
@@ -165,9 +168,13 @@ pub(crate) async fn conflict_inventory(
     state: GraphContext<'_>,
 ) -> Result<tine_core::concord_queue::ConflictInventory, String> {
     let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || slot.conflict_queue.inventory(&slot.store))
-        .await
-        .map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        slot.conflict_queue
+            .inventory(&slot.store)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Block diff of a marker-bearing page's own sides (3-way when the markers

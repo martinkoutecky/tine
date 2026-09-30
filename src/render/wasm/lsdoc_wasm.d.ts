@@ -62,6 +62,12 @@ export function render_block_html(raw: string, is_org: boolean): string;
 
 export function __tineReinstantiate(): void;
 
+/**
+ * Split already-parsed linkable property values with the native separator.
+ * O(value bytes), without parsing or I/O. Empty members retain their position.
+ */
+export function split_linkable_property(value: string): string[];
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -77,6 +83,7 @@ export interface InitOutput {
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
     readonly render_block_html: (a: number, b: number, c: number) => [number, number];
+    readonly split_linkable_property: (a: number, b: number) => [number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;
@@ -84,6 +91,7 @@ export interface InitOutput {
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

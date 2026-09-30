@@ -52,19 +52,31 @@ pub(crate) struct GraphVerificationReport {
     complete: bool,
 }
 
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum VerificationFailure {
+    Cancelled,
+    Failed { message: String },
+}
+impl From<String> for VerificationFailure {
+    fn from(message: String) -> Self {
+        Self::Failed { message }
+    }
+}
+
 fn registry_error() -> String {
     "graph verification registry is unavailable".into()
 }
 
-/// Hash every graph text file and return the report text. `cancelled` in the
-/// error string is the frontend's cue to stay silent.
+/// Hash graph text off-thread. Typed cancellation produces no report or toast;
+/// other failures are reported by the frontend. Cost O(total graph bytes).
 #[tauri::command]
 pub(crate) async fn create_graph_verification(
     state: GraphContext<'_>,
     operation_id: String,
-) -> Result<GraphVerificationReport, String> {
+) -> Result<GraphVerificationReport, VerificationFailure> {
     if operation_id.is_empty() || operation_id.len() > 128 {
-        return Err("invalid graph verification operation id".into());
+        return Err("invalid graph verification operation id".to_owned().into());
     }
     let slot = slot_for_context(&state)?;
     let window = state.window.clone();
@@ -79,7 +91,9 @@ pub(crate) async fn create_graph_verification(
             entry.insert(Arc::clone(&cancelled));
         }
         Entry::Occupied(_) => {
-            return Err("graph verification operation id is already active".into())
+            return Err("graph verification operation id is already active"
+                .to_owned()
+                .into())
         }
     }
     let registration = Registration(operation_id.clone());
@@ -103,7 +117,7 @@ pub(crate) async fn create_graph_verification(
                 },
             );
         })
-        .map_err(|_| "graph verification cancelled".to_owned())?;
+        .map_err(|_| VerificationFailure::Cancelled)?;
         let text = manifest
             .to_report()
             .map_err(|error| format!("graph verification report could not be encoded: {error}"))?;
@@ -120,7 +134,9 @@ pub(crate) async fn create_graph_verification(
         })
     })
     .await
-    .map_err(|error| format!("graph verification task failed: {error}"))?
+    .map_err(|error| {
+        VerificationFailure::from(format!("graph verification task failed: {error}"))
+    })?
 }
 
 /// Ask a running verification to stop. Unknown ids are ignored.

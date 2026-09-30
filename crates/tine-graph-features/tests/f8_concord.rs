@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::concord_queue::{vcs_conflict_markers, ConflictSource, SideRole};
+use tine_core::model::Format;
 use tine_core::pdf::{Highlight, Position, Rect};
 use tine_core::sync_diff::{DiffRow, MergedSource, RowKind};
 use tine_graph_features::{conflicts, pdf};
@@ -108,7 +109,7 @@ fn conflict_queue_derives_both_artifact_sources_and_survives_a_restart() {
     .unwrap();
 
     let store = open(&root);
-    let inventory = conflicts::conflict_inventory(&store);
+    let inventory = conflicts::conflict_inventory(&store).unwrap();
     // The listings and the queue are one answer from one walk.
     assert_eq!(
         inventory
@@ -170,7 +171,7 @@ fn conflict_queue_derives_both_artifact_sources_and_survives_a_restart() {
     // Derived: a second Store over the same disk state (a restart) reproduces
     // it, and nothing was written into the graph to make that work.
     store.close();
-    let again = conflicts::conflict_inventory(&open(&root)).queue;
+    let again = conflicts::conflict_inventory(&open(&root)).unwrap().queue;
     assert_eq!(
         again
             .iter()
@@ -256,12 +257,15 @@ fn resolving_markers_keep_both_writes_sibling_blocks_and_clears_the_quarantine()
     )
     .expect("resolution writes the merged result");
     let after = fs::read_to_string(&file).unwrap();
-    assert!(vcs_conflict_markers(&after).is_empty(), "{after:?}");
+    assert!(
+        vcs_conflict_markers(&after, Format::Md).is_empty(),
+        "{after:?}"
+    );
     assert_eq!(
         roots(&after),
         vec!["shared top", "mine wins", "theirs wins"]
     );
-    let inventory = conflicts::conflict_inventory(&store);
+    let inventory = conflicts::conflict_inventory(&store).unwrap();
     assert!(inventory.queue.is_empty() && inventory.vcs_markers.is_empty());
     assert_eq!(marker_copies(&root, "Merged.md"), vec![DIFF3.to_string()]);
     let _ = fs::remove_dir_all(&root);
@@ -703,6 +707,7 @@ fn write_highlights_refuses_a_marker_bearing_hls_page() {
     store.close();
     let store = open(&root);
     assert!(conflicts::conflict_inventory(&store)
+        .unwrap()
         .queue
         .iter()
         .any(|c| c.id == "markers:pages/hls__paper.md"));
@@ -734,7 +739,7 @@ fn end_to_end_marker_file_and_syncthing_copy_fixtures() {
     show("BEFORE", &before);
 
     let store = open(&root);
-    let inventory = conflicts::conflict_inventory(&store);
+    let inventory = conflicts::conflict_inventory(&store).unwrap();
     assert_eq!(
         inventory
             .queue
@@ -802,7 +807,7 @@ fn end_to_end_marker_file_and_syncthing_copy_fixtures() {
         trashed.contains(&"- shared\n- copy edit\n".to_string()),
         "{trashed:?}"
     );
-    let inventory = conflicts::conflict_inventory(&store);
+    let inventory = conflicts::conflict_inventory(&store).unwrap();
     assert!(inventory.queue.is_empty() && inventory.sync_conflicts.is_empty());
     let _ = fs::remove_dir_all(&root);
 }

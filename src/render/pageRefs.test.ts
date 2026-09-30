@@ -16,3 +16,7 @@ it("treats code and prose as literal text", () => {
   expect(pageRefsInText("`[[One]]` and educate #", "md")).toEqual([]);
   expect(pageRefsInText("```\n[[One]] #Two\n```", "md")).toEqual([]);
 });
+
+it("splits fullwidth-comma tags like OG sep-by-comma", () => {
+  expect(pageRefsInText("x\ntags:: Old，Other", "md")).toEqual(["Old", "Other"]);
+});

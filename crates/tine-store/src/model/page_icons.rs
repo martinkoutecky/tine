@@ -20,7 +20,7 @@ impl IconIndex {
             let mut icons = self.icons.get(&key).cloned().unwrap_or_default();
             if added {
                 real.insert(slot, ());
-                if let Some(icon) = doc.pre_block.as_deref().and_then(pre_block_icon) {
+                if let Some(icon) = pre_block_icon(entry, doc) {
                     icons.insert(slot, icon);
                 }
             } else {
@@ -68,8 +68,7 @@ impl IconIndex {
                 if let (Some((_, (a, ad))), Some((_, (b, bd)))) = (was, now) {
                     if a.kind == b.kind
                         && a.name == b.name
-                        && ad.pre_block.as_deref().and_then(pre_block_icon)
-                            == bd.pre_block.as_deref().and_then(pre_block_icon)
+                        && pre_block_icon(a, ad) == pre_block_icon(b, bd)
                         && crate::query::document_aliases(ad) == crate::query::document_aliases(bd)
                     {
                         continue;
@@ -144,31 +143,12 @@ impl ReadSnapshot {
     }
 }
 
-/// A page's `icon::` property value from its pre-block, handling markdown
-/// (`icon:: 🏁`), org property drawers (`:icon: 🏁`) and org `#+ICON:` directives.
-/// None if absent or blank.
-pub(super) fn pre_block_icon(pre: &str) -> Option<String> {
-    for line in pre.lines() {
-        // Markdown `icon:: value` (single shared parser; needs the `::`).
-        if let Some((k, v)) = tine_core::doc::parse_property_line(line) {
-            let v = v.trim();
-            if k.eq_ignore_ascii_case("icon") && !v.is_empty() {
-                return Some(v.to_string());
-            }
-        }
-        let t = line.trim();
-        // Org property drawer `:icon: value` or directive `#+ICON: value`.
-        for stripped in [t.strip_prefix(':'), t.strip_prefix("#+")]
-            .into_iter()
-            .flatten()
-        {
-            if let Some(idx) = stripped.find(':') {
-                let (k, v) = (&stripped[..idx], stripped[idx + 1..].trim());
-                if k.eq_ignore_ascii_case("icon") && !v.is_empty() {
-                    return Some(v.to_string());
-                }
-            }
-        }
-    }
-    None
+/// The first nonblank parser-owned icon property for this file's format.
+/// O(preblock bytes + AST nodes); no graph scan or I/O.
+pub(super) fn pre_block_icon(entry: &PageEntry, doc: &Document) -> Option<String> {
+    let org = Format::from_path(&entry.path) == Format::Org;
+    crate::query::page_properties::page_property_lines(doc.pre_block.as_deref()?, org)
+        .into_iter()
+        .find(|(key, value)| key.eq_ignore_ascii_case("icon") && !value.trim().is_empty())
+        .map(|(_, value)| value)
 }

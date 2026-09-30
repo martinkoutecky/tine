@@ -263,13 +263,25 @@ pub fn orphan_assets(store: &Store) -> io::Result<Vec<AssetInfo>> {
 }
 
 /// Move one top-level asset into recoverable trash. Reads its current revision
-/// and retries a concurrent external write at most four times. Cost O(file bytes)
+/// and retries a concurrent external write at most four times. The transaction
+/// rechecks the latest published asset references under its writer lock. Unreadable
+/// graph entries refuse trash; an external arrival not yet published can still
+/// race. Cost O(B + file bytes)
 /// per attempt; a missing asset reports the v0.6.5 `no such asset` error.
 pub fn trash_asset(store: &Store, name: &str) -> io::Result<()> {
     validate_name(name)?;
     let id = store.file_id(Area::Assets, name).map_err(store_error)?;
     crate::retry_on_conflict("asset changed repeatedly during trash", || {
-        crate::trash_current(store, &id, None, "no such asset")
+        let rev = match store.read(&id, None) {
+            Ok((_, rev)) => rev,
+            Err(StoreError::NotFound) => {
+                return Err(io::Error::new(io::ErrorKind::NotFound, "no such asset"))
+            }
+            Err(error) => return Err(store_error(error)),
+        };
+        let mut tx = store.transaction(None);
+        tx.trash_orphan_asset(&id, rev);
+        Ok(crate::commit_retry(tx.commit())?.then_some(()))
     })
 }
 

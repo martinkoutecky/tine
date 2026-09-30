@@ -21,7 +21,7 @@ mod eval;
 pub(crate) mod exec;
 pub(crate) mod index;
 pub(crate) mod memo;
-mod page_properties;
+pub(crate) mod page_properties;
 use page_properties::{page_document_is_org, page_facets, page_property_lines};
 
 #[derive(Debug, Clone)]
@@ -555,29 +555,29 @@ fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, t
     }
 }
 
-fn org_property_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    if let Some(rest) = trimmed.strip_prefix("#+") {
-        return rest
-            .split_once(':')
-            .is_some_and(|(key, _)| !key.trim().is_empty());
-    }
-    trimmed
-        .strip_prefix(':')
-        .and_then(|rest| rest.split_once(':'))
-        .is_some_and(|(key, _)| !key.trim().is_empty())
-}
-
-/// Keep only page-property source lines from a document pre-block. Free-form
-/// preamble text is not a Logseq page property and must not become a backlink.
+/// Project only parser-owned page properties into native block syntax. Keeping
+/// the whole Org drawer preserves parser ownership for reference evidence.
 fn page_property_raw(pre: &str, is_org: bool) -> String {
-    pre.lines()
-        .filter(|line| {
-            tine_core::doc::parse_property_line(line).is_some()
-                || (is_org && org_property_line(line))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    let entries = page_property_lines(pre, is_org);
+    if entries.is_empty() {
+        return String::new();
+    }
+    if is_org {
+        format!(
+            ":PROPERTIES:\n{}\n:END:",
+            entries
+                .iter()
+                .map(|(key, value)| format!(":{key}: {value}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    } else {
+        entries
+            .iter()
+            .map(|(key, value)| format!("{key}:: {value}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 fn property_projection(raw: &str, is_org: bool) -> DocBlock {

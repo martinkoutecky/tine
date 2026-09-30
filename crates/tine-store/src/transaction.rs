@@ -28,6 +28,7 @@ mod io_helpers;
 #[path = "../tests/support/og_k1_pause.rs"]
 mod og_k1_pause;
 mod preflight;
+mod read_checks;
 mod validation;
 use io_helpers::{
     collision, content_refusal, directory_read_error, disk_rev, failed, failed_trash_dir,
@@ -322,6 +323,7 @@ enum Step {
     Trash {
         file: FileId,
         expected: FileRev,
+        orphan_only: bool,
     },
 }
 
@@ -571,19 +573,13 @@ impl<'a> Transaction<'a> {
         self
     }
 
-    /// Queue a guarded move into graph trash. The new id is returned in the
-    /// step result. A guard failure performs no move and leaves current source
-    /// bytes at their original path.
-    /// This acts on one `FileId`; for a twinned name the caller decides which
-    /// claimant or claimants to remove. A duplicate-day journal is typed as
-    /// `TrashKind::Journal`; a sync-conflict-named page or journal copy is
-    /// typed as `TrashKind::Conflict`. Trashing an Org file does not serialize its content, so its page-edit
-    /// read-only flag does not bar this move. Commit hashes the source bytes,
-    /// moves the file, and can spend O(P) on publication metadata.
+    /// Guarded one-file trash; caller chooses twin claimants. Refusals preserve bytes.
+    /// Returns a Journal/Conflict trash id; Org read-only can move. Cost O(bytes + P metadata).
     pub fn trash(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
         self.steps.push(Step::Trash {
             file: file.clone(),
             expected,
+            orphan_only: false,
         });
         self
     }
@@ -1564,6 +1560,7 @@ impl<'a> Transaction<'a> {
                 assert!(!touches_page, "OG-RULES Rule 8: a page-file write needs an edit kind; exemplar crates/tine-graph-features/src/pages.rs");
             }
         }
+        self.await_reference_publication();
         let _writer = self.store.writer.lock().unwrap();
         let rev = || self.store.changes.rev();
         if self.store.is_closed() {
@@ -1574,6 +1571,9 @@ impl<'a> Transaction<'a> {
                 publication_errors: Vec::new(),
                 graph_rev: rev(),
             };
+        }
+        if let Some(failure) = self.config_write_failure() {
+            return failure;
         }
         let starting_rev = self.store.graph.cache_generation();
         let mut names = Vec::new();
