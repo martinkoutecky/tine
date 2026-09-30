@@ -1,0 +1,31 @@
+   Compiling tine-core v0.6.5 (/aux/koutecky/logseq/tine-og-b-store/crates/tine-core)
+   Compiling tine-store v0.6.5 (/aux/koutecky/logseq/tine-og-b-store/crates/tine-store)
+   Compiling tine-graph-features v0.6.5 (/aux/koutecky/logseq/tine-og-b-store/crates/tine-graph-features)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.34s
+     Running tests/og_b_store_config.rs (target/debug/deps/og_b_store_config-b793ebe251a57aea)
+
+running 1 test
+test favorites_setter_and_reload_read_the_same_root_entry ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/og_b_store_export.rs (target/debug/deps/og_b_store_export-c8cad04b8f8ac0d8)
+
+running 1 test
+test export_targets_use_real_ids_in_markdown_and_org ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running tests/og_b_store_journal.rs (target/debug/deps/og_b_store_journal-62575a3d0b2bee4f)
+
+running 1 test
+test absent_journal_proposals_share_the_path_rule ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+     Running tests/og_b_store_move.rs (target/debug/deps/og_b_store_move-bb56f8b234f68c38)
+
+running 1 test
+test transaction_moves_sync_each_distinct_parent_once ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s

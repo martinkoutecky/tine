@@ -1,0 +1,8 @@
+   Compiling tine-core v0.6.5 (/aux/koutecky/logseq/tine-og-b-store/crates/tine-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.51s
+     Running tests/og_b_store_integrity.rs (target/debug/deps/og_b_store_integrity-8d1bcad5298f425d)
+
+running 1 test
+test exact_l03_unicode_rename_input_is_already_fixed ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s

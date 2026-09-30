@@ -1,0 +1,22 @@
+     Running tests/og_b_store_journal.rs (target/debug/deps/og_b_store_journal-62575a3d0b2bee4f)
+
+running 1 test
+test absent_journal_proposals_share_the_path_rule ... FAILED
+
+failures:
+
+---- absent_journal_proposals_share_the_path_rule stdout ----
+
+thread 'absent_journal_proposals_share_the_path_rule' (1482949) panicked at crates/tine-store/tests/og_b_store_journal.rs:25:5:
+assertion `left == right` failed: I-12: Store::journal_id and WholeGraph::resolve must both use proposed_journal_id; one definition and two clients, exemplar store.rs
+  left: 0
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    absent_journal_proposals_share_the_path_rule
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.84s
+
+error: test failed, to rerun pass `-p tine-store --test og_b_store_journal`

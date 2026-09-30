@@ -1,0 +1,18 @@
+{
+  "workspace_exit": 101,
+  "target_results": 119,
+  "passing_tests": 1869,
+  "failed_tests": 2,
+  "ignored_tests": 7,
+  "failed_target": "-p tine-graph-features --test client",
+  "failures": [
+    "legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration",
+    "old_vs_new_matrix_on_identical_fixtures"
+  ],
+  "last_lines": [
+    "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.10s",
+    "",
+    "error: 1 target failed:",
+    "    `-p tine-graph-features --test client`"
+  ]
+}

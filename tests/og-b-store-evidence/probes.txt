@@ -1,0 +1,19 @@
+   Compiling tine-store v0.6.5 (/aux/koutecky/logseq/tine-og-b-store/crates/tine-store)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.69s
+     Running tests/og_b_store_export.rs (target/debug/deps/og_b_store_export-c8cad04b8f8ac0d8)
+
+running 1 test
+test export_targets_use_real_ids_in_markdown_and_org ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests/og_b_store_probe.rs (target/debug/deps/og_b_store_probe-10de55513b535854)
+
+running 1 test
+L06:36 icons={"Icon": "🏁"}
+L05:26 indexed unlinked=Ok([])
+L05:26 exact plain=[ReferenceOccurrence { matched_name: "Cafe", canonical: "cafe", kind: Plain, span: ReferenceSpan { start: 0, end: 4 }, rule: "plain_og_boundary" }]
+L01:45 save=ReadOnly("unresolved VCS merge conflict markers (<<<<<<< ======= >>>>>>>); resolve them first")
+test probe_remaining_findings ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s

@@ -1,0 +1,3 @@
+opened and read 1075 pages, 0 unreadable
+G6 open-untouched: 0 byte diffs
+G6 roundtrip: 1075 files | 0 structural bugs | 999 canonicalized (acceptable) | 76 byte-identical

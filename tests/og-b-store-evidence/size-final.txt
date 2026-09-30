@@ -1,0 +1,9 @@
+
+ RUN  v3.2.7 /aux/koutecky/logseq/tine-og-b-store
+
+ ✓ src/ogEnforcement.test.ts (5 tests) 163ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  02:12:53
+   Duration  3.15s (transform 175ms, setup 14ms, collect 2.73s, tests 163ms, environment 0ms, prepare 66ms)

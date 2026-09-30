@@ -1,0 +1,4 @@
+UI regression catalog OK: 262 entries, 157 GitHub issues.
+tao native-titlebar fix OK: 0.35.3 (upstream merge)
+linux native startup OK: page.tine.TineOG identity + Xlib-safe single-instance handoff
+Regression catalog index OK: 2 inventories.

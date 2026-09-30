@@ -1,0 +1,22 @@
+     Running tests/og_b_store_move.rs (target/debug/deps/og_b_store_move-bb56f8b234f68c38)
+
+running 1 test
+test transaction_moves_sync_each_distinct_parent_once ... FAILED
+
+failures:
+
+---- transaction_moves_sync_each_distinct_parent_once stdout ----
+
+thread 'transaction_moves_sync_each_distinct_parent_once' (1516478) panicked at crates/tine-store/tests/og_b_store_move.rs:27:9:
+assertion `left == right` failed: I-15: moves must sync each distinct parent once; exemplar transaction::io_helpers::sync_move_dirs
+  left: 2
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    transaction_moves_sync_each_distinct_parent_once
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+error: test failed, to rerun pass `-p tine-store --test og_b_store_move`

@@ -1,0 +1,19 @@
+     Running tests/og_b_store_integrity.rs (target/debug/deps/og_b_store_integrity-8d1bcad5298f425d)
+
+running 1 test
+
+thread 'a_torn_later_form_does_not_relocate_an_already_read_directory' (1620829) panicked at crates/tine-core/tests/og_b_store_integrity.rs:106:5:
+assertion `left == right` failed
+  left: "pages"
+ right: "archive"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test a_torn_later_form_does_not_relocate_an_already_read_directory ... FAILED
+
+failures:
+
+failures:
+    a_torn_later_form_does_not_relocate_an_already_read_directory
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p tine-core --test og_b_store_integrity`

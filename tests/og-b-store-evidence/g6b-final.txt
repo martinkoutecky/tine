@@ -1,0 +1,13 @@
+
+ RUN  v3.2.7 /aux/koutecky/logseq/tine-og-b-store
+
+ ✓ src/g6bProjection.test.ts (1 test) 396ms
+   ✓ G6b private graph frontend projection > edits one leaf on every readable page through the app model  377ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  02:05:17
+   Duration  1.53s (transform 656ms, setup 14ms, collect 891ms, tests 396ms, environment 0ms, prepare 62ms)
+
+G6b counts: {"no-leaf-block": 71, "pass": 1004}
+G6b editable-page failures: 0

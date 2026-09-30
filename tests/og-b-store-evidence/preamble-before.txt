@@ -1,0 +1,20 @@
+     Running tests/og_b_store_preamble.rs (target/debug/deps/og_b_store_preamble-889b07814ed15bfd)
+
+running 1 test
+test org_directive_discovery_does_not_reparse_growing_prefixes ... FAILED
+
+failures:
+
+---- org_directive_discovery_does_not_reparse_growing_prefixes stdout ----
+
+thread 'org_directive_discovery_does_not_reparse_growing_prefixes' (1491531) panicked at crates/tine-core/tests/og_b_store_preamble.rs:16:5:
+I-15/I-22: inert Org directives take O(last line), never parse the growing prefix; exemplar model::preamble_read
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    org_directive_discovery_does_not_reparse_growing_prefixes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.54s
+
+error: test failed, to rerun pass `-p tine-core --test og_b_store_preamble`

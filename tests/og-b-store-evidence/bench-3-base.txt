@@ -1,0 +1,71 @@
+
+running 1 test
+test open_and_retained_snapshot_save_cost ... BENCH pages=2000 run=0 open_ms=20.390 whole_graph_ms=708.162
+BENCH pages=2000 blocks=1 run=0 edit=0 save_ms=2.357 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=1 run=0 edit=1 save_ms=13.124 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=1 run=0 edit=2 save_ms=1.932 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=1 run=0 edit=3 save_ms=1.881 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=1 run=0 edit=4 save_ms=11.740 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=0 edit=0 save_ms=19.997 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=0 edit=1 save_ms=64.241 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=0 edit=2 save_ms=13.647 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=0 edit=3 save_ms=9.870 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=0 edit=4 save_ms=9.259 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 run=1 open_ms=20.423 whole_graph_ms=699.781
+BENCH pages=2000 blocks=1 run=1 edit=0 save_ms=2.171 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=1 run=1 edit=1 save_ms=2.210 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=1 run=1 edit=2 save_ms=50.527 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=1 run=1 edit=3 save_ms=1.990 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=1 run=1 edit=4 save_ms=17.480 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=1 edit=0 save_ms=26.262 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=1 edit=1 save_ms=5.929 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=1 edit=2 save_ms=16.610 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=1 edit=3 save_ms=7.984 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=1 edit=4 save_ms=19.113 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 run=2 open_ms=18.380 whole_graph_ms=645.881
+BENCH pages=2000 blocks=1 run=2 edit=0 save_ms=1.922 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=1 run=2 edit=1 save_ms=16.778 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=1 run=2 edit=2 save_ms=2.326 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=1 run=2 edit=3 save_ms=1.801 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=1 run=2 edit=4 save_ms=1.986 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=2 edit=0 save_ms=8.637 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=2 edit=1 save_ms=16.555 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=2 edit=2 save_ms=7.300 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=2 edit=3 save_ms=8.561 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=2000 blocks=60 run=2 edit=4 save_ms=25.119 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=2002
+BENCH pages=10000 run=0 open_ms=93.814 whole_graph_ms=3078.382
+BENCH pages=10000 blocks=1 run=0 edit=0 save_ms=5.941 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=1 run=0 edit=1 save_ms=7.436 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=1 run=0 edit=2 save_ms=14.482 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=1 run=0 edit=3 save_ms=5.168 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=1 run=0 edit=4 save_ms=5.224 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=0 edit=0 save_ms=10.690 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=0 edit=1 save_ms=11.173 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=0 edit=2 save_ms=11.834 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=0 edit=3 save_ms=10.426 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=0 edit=4 save_ms=15.005 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 run=1 open_ms=91.586 whole_graph_ms=2990.612
+BENCH pages=10000 blocks=1 run=1 edit=0 save_ms=5.284 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=1 run=1 edit=1 save_ms=11.732 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=1 run=1 edit=2 save_ms=10.999 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=1 run=1 edit=3 save_ms=177.064 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=1 run=1 edit=4 save_ms=5.160 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=1 edit=0 save_ms=26.591 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=1 edit=1 save_ms=11.325 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=1 edit=2 save_ms=11.626 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=1 edit=3 save_ms=16.799 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=1 edit=4 save_ms=11.031 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 run=2 open_ms=91.633 whole_graph_ms=2776.469
+BENCH pages=10000 blocks=1 run=2 edit=0 save_ms=4.946 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=1 run=2 edit=1 save_ms=5.163 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=1 run=2 edit=2 save_ms=5.727 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=1 run=2 edit=3 save_ms=4.673 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=1 run=2 edit=4 save_ms=5.142 bytes_written=12 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=2 edit=0 save_ms=8.454 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=2 edit=1 save_ms=14.416 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=2 edit=2 save_ms=11.582 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=2 edit=3 save_ms=22.503 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+BENCH pages=10000 blocks=60 run=2 edit=4 save_ms=10.520 bytes_written=543 files_written=1 instrumented_parses=1 cache_copies=10002
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.07s
