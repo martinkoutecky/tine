@@ -63,7 +63,7 @@ rewritten into another format, and none is deleted or made into an error.
 |---|---|---|
 | `tine-settings.json` | read as-is | Same file and keys. og preserves keys it does not know (`link_autocomplete_policy`, theme composition, …) when it saves. `last_graph_path` / `known_graphs` open master's graph. |
 | `sessions/<graph>-<fnv>.json`, `…-workspaces.json` | read as-is | Same FNV naming and v1 workspace validator: tabs and last page come back. |
-| `sessions/<graph>-<fnv>-notices.json` | master-only | og records the query-crossing notice as one global setting, so a user may see that notice once more. Nothing is lost. |
+| `sessions/<graph>-<fnv>-notices.json` | read/write as-is | Query-crossing dismissals are device-local and keyed by graph, including live graph switches. The old global OG boolean is ignored. Unknown dismissal keys and fields survive writes. |
 | `plugins/<id>/<version>/` | read as-is | Same package layout. |
 | WebKit localStorage (`localstorage/`, `storage/`) | read as-is | Same origin and keys (`tine.graphPath`, theme, shortcuts, sidebar, recents). |
 | `.window-state.json` (config dir) | read as-is | tauri-plugin-window-state. |
@@ -110,6 +110,12 @@ staging dir, fsyncs it, and renames it into place.
     recovery, not a refusal.
   - An experiment dir that only ever showed Welcome is renamed to
     `<id>.pre-seed.N`, not deleted.
+- Config and external browser stores publish independently. If startup stops after
+  config publication, the next launch retries any missing external browser store
+  without replacing existing experiment browser state. Windows uses the native
+  LocalData `EBWebView` directory; macOS uses `Library/WebKit/<id>/WebsiteData`.
+  Fixture copy/retry tests prove preservation; native browser reopening remains
+  a Windows/macOS integration gate.
 - In a release build it is a no-op (`APP_IDENTIFIER == RELEASE_IDENTIFIER`).
 - Only on desktop. Mobile app data is private to each application id.
 
@@ -140,15 +146,17 @@ On the pre-change og build the first check fails (Welcome, default theme).
   ledger is disposable (a lost pin costs a later conflict prompt, not data).
   Still, og should namespace its dir before the flip. The owner is
   `concord_ledger.rs` (lane 20a).
-- **Legacy identifiers.** og batch 0 deleted master's `migrate_identifier`
-  shim, which moves `page.tine.app` / `dev.tine.app` data into
-  `page.tine.Tine`. Master has done that migration since v0.5.0, so only users
-  who skipped every release since then are affected. Restore it, derived from
-  the switch, at the flip if that population matters.
-- **Unwritable data home.** Master relocates app data to `~/.tine-data` for
-  that launch when `~/.local/share` is not writable (`data_home.rs`). og has no
-  such fallback, so such a user sees an app-data error until it is ported.
-- The seed covers Linux WebKitGTK localStorage. On Windows and macOS the
-  webview store lives elsewhere, so an experiment build there gets settings,
-  sessions and plugins but not localStorage (theme, recents). This does not
-  affect the release identity.
+- **Legacy identifiers are restored.** Before settings or Tauri starts, a release
+  build migrates the newest `page.tine.app` / `dev.tine.app` app-data directory
+  into the switch-derived released directory. Experiment builds do not run it.
+  A destination containing user state (including backups) prevents migration.
+  A Welcome-only scaffold is parked and retained; complete payload directories
+  move without translating their contents. Copy fallback preserves its source.
+  The native one-shot flag produces a sticky startup toast explaining the move
+  and that some app preferences may need setting again.
+- **Unwritable data home is restored.** `data_home.rs` relocates app data to
+  `~/.tine-data` for that launch when the usual location is unwritable, and
+  App shows the sticky notice with that location.
+- Windows/macOS external browser-store seeding is implemented and retries after
+  interrupted publication. Actual WebView2/WKWebsiteDataStore reopening and
+  preference continuity still require native platform proof.

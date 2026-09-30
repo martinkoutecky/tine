@@ -325,27 +325,23 @@ pub(crate) fn set_smooth_scroll(value: bool, app: tauri::AppHandle) -> Result<()
     })
 }
 
-/// Generic device-local boolean preference (tine-settings.json). For simple
-/// behavior toggles that don't each warrant bespoke read/get/set code — the caller
-/// supplies the key and the default. (Used by the copy-behavior options.)
+/// Device-local boolean preference, O(settings bytes). The query crossing key
+/// is graph-scoped: it reads/writes the current bound graph's master-compatible
+/// notices record instead of tine-settings.json. Other keys are device-wide.
 #[tauri::command]
 pub(crate) fn get_app_bool(
     key: String,
     default: bool,
     app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
+    state: GraphContext<'_>,
 ) -> bool {
-    let value = device_bool(&app, &key, default);
-    if key != "queryCrossingNoticeDismissed" || value {
-        return value;
+    if key != "queryCrossingNoticeDismissed" {
+        return device_bool(&app, &key, default);
     }
-    let root = app.try_state::<crate::state::AppState>().and_then(|state| {
-        crate::state::slot_for_window(&state, window.label())
-            .ok()
-            .map(|slot| slot.root_key.clone())
-    });
-    root.zip(app.path().app_data_dir().ok())
-        .is_some_and(|(root, dir)| master_crossing_notice_dismissed(&dir, &root))
+    slot_for_context(&state)
+        .ok()
+        .zip(app.path().app_data_dir().ok())
+        .is_some_and(|(slot, dir)| master_crossing_notice_dismissed(&dir, &slot.root_key))
 }
 
 pub(crate) fn device_bool(app: &tauri::AppHandle, key: &str, default: bool) -> bool {
@@ -354,37 +350,85 @@ pub(crate) fn device_bool(app: &tauri::AppHandle, key: &str, default: bool) -> b
         .unwrap_or(default)
 }
 
-/// Read compatibility with master's graph-keyed dismissal record. Never write
-/// or translate that file in place: rollback must still see its original bytes.
-fn master_crossing_notice_dismissed(dir: &std::path::Path, root: &std::path::Path) -> bool {
+fn notices_id(root: &std::path::Path) -> String {
     let id = session_id(root);
-    let stem = id.strip_suffix(".json").unwrap_or(&id);
-    let path = dir.join("sessions").join(format!("{stem}-notices.json"));
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
-        Err(error) => {
-            // Like master, a damaged dismissal costs one extra notice, never
-            // the graph. Record the read failure and leave the file untouched.
-            crate::debug::diag_private("notice-read-failed", error.to_string());
-            return false;
-        }
-    };
-    serde_json::from_str::<serde_json::Value>(&text)
+    format!("{}-notices.json", id.strip_suffix(".json").unwrap_or(&id))
+}
+
+fn parse_notices(text: &str) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(text)
         .ok()
-        .and_then(|json| {
-            json.get("dismissed")
-                .and_then(serde_json::Value::as_array)
-                .cloned()
+        .filter(|json| {
+            json.is_object()
+                && json.get("dismissed").is_none_or(|keys| {
+                    keys.as_array()
+                        .is_some_and(|keys| keys.iter().all(|key| key.is_string()))
+                })
         })
+        .unwrap_or_else(|| serde_json::json!({"dismissed": []}))
+}
+
+fn load_notices_at(path: &std::path::Path) -> serde_json::Value {
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse_notices(&text),
+        Err(error) => {
+            // Recovery over refusal for disposable notices, as on master.
+            if error.kind() != std::io::ErrorKind::NotFound {
+                crate::debug::diag_private("notice-read-failed", error.to_string());
+            }
+            serde_json::json!({"dismissed": []})
+        }
+    }
+}
+
+fn master_crossing_notice_dismissed(dir: &std::path::Path, root: &std::path::Path) -> bool {
+    load_notices_at(&dir.join("sessions").join(notices_id(root)))["dismissed"]
+        .as_array()
         .is_some_and(|keys| {
             keys.iter()
                 .any(|key| key.as_str() == Some("query-crossing"))
         })
 }
 
+static NOTICES_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// One device-private, atomic read/modify/write; unknown notices/fields survive.
+/// Like master, malformed notice JSON costs one extra notice and is repaired by
+/// the next dismissal. I/O errors refuse the write and are reported to the user.
+fn set_crossing_notice_at(
+    dir: &std::path::Path,
+    root: &std::path::Path,
+    value: bool,
+) -> Result<(), String> {
+    let path = dir.join("sessions").join(notices_id(root));
+    crate::device_io::atomic_update(&path, &NOTICES_LOCK, |text| {
+        let mut json = parse_notices(text);
+        let mut keys = json["dismissed"].as_array().cloned().unwrap_or_default();
+        keys.retain(|key| key.as_str().is_some_and(|key| key != "query-crossing"));
+        if value {
+            keys.push(serde_json::json!("query-crossing"));
+        }
+        json["dismissed"] = serde_json::json!(keys);
+        serde_json::to_string(&json).map_err(std::io::Error::other)
+    })
+    .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
-pub(crate) fn set_app_bool(key: String, value: bool, app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) fn set_app_bool(
+    key: String,
+    value: bool,
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    if key == "queryCrossingNoticeDismissed" {
+        let slot = slot_for_context(&state)?;
+        let dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|error| error.to_string())?;
+        return set_crossing_notice_at(&dir, &slot.root_key, value);
+    }
     update_settings(&app, |json| {
         json[&key] = serde_json::Value::Bool(value);
     })
@@ -725,6 +769,48 @@ mod tests {
         std::fs::write(&path, b"{torn").unwrap();
         assert!(!master_crossing_notice_dismissed(temp.path(), root));
         assert_eq!(std::fs::read(&path).unwrap(), b"{torn");
+    }
+
+    #[test]
+    fn graph_notice_dismissals_roundtrip_without_touching_graph_or_device_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let graph = temp.path().join("graph");
+        std::fs::create_dir(&graph).unwrap();
+        let page = graph.join("page.md");
+        std::fs::write(&page, b"- unchanged\r\n").unwrap();
+        let settings = temp.path().join("tine-settings.json");
+        std::fs::write(&settings, br#"{"queryCrossingNoticeDismissed":true}"#).unwrap();
+        let other = temp.path().join("other");
+        let path = temp.path().join("sessions").join(notices_id(&graph));
+        set_crossing_notice_at(temp.path(), &graph, true).unwrap();
+        assert!(master_crossing_notice_dismissed(temp.path(), &graph));
+        assert!(!master_crossing_notice_dismissed(temp.path(), &other));
+        // Master consumes this exact payload and filename on rollback.
+        assert_eq!(
+            load_notices_at(&path),
+            serde_json::json!({"dismissed":["query-crossing"]})
+        );
+        std::fs::write(&path, br#"{"dismissed":["future-notice"],"future":1}"#).unwrap();
+        set_crossing_notice_at(temp.path(), &graph, true).unwrap();
+        assert_eq!(
+            load_notices_at(&path)["dismissed"],
+            serde_json::json!(["future-notice", "query-crossing"])
+        );
+        assert_eq!(load_notices_at(&path)["future"], 1);
+        set_crossing_notice_at(temp.path(), &graph, false).unwrap();
+        assert!(!master_crossing_notice_dismissed(temp.path(), &graph));
+        assert_eq!(
+            load_notices_at(&path)["dismissed"],
+            serde_json::json!(["future-notice"])
+        );
+        std::fs::write(&path, b"{torn").unwrap();
+        set_crossing_notice_at(temp.path(), &graph, true).unwrap();
+        assert!(master_crossing_notice_dismissed(temp.path(), &graph));
+        assert_eq!(std::fs::read(page).unwrap(), b"- unchanged\r\n");
+        assert_eq!(
+            std::fs::read(settings).unwrap(),
+            br#"{"queryCrossingNoticeDismissed":true}"#
+        );
     }
 
     #[test]

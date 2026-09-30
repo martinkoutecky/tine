@@ -121,18 +121,19 @@ export function withoutHostBlock(groups: RefGroup[], hostBlockId: string | undef
     .filter((group) => group.blocks.length > 0);
 }
 
-// "Don't show this again" for the §7.5 crossing notice is a DEVICE preference
-// (D-11): one read per process, never per block render (I-13).
+// Device-local dismissal keyed by graph (D-11): one read per graph binding,
+// shared by every crossing in this window (I-12/I-13).
 const CROSSING_NOTICE_KEY = "queryCrossingNoticeDismissed";
 const [crossingNoticeDismissed, setCrossingNoticeDismissed] = createSignal<boolean | undefined>(undefined);
 const crossingNoticePreference = {};
-let crossingNoticePrimed = false;
+let crossingNoticePrimed: number | undefined;
 function primeCrossingNoticePreference(): void {
-  if (crossingNoticePrimed) return;
-  crossingNoticePrimed = true;
+  if (crossingNoticePrimed === graphEpoch()) return;
+  crossingNoticePrimed = graphEpoch();
+  setCrossingNoticeDismissed(undefined);
   const revision = advanceRevision(crossingNoticePreference);
   void readOwned(
-    revisionOwner(crossingNoticePreference, revision),
+    revisionOwner(crossingNoticePreference, revision, graphOwner()),
     backend().getAppBool(CROSSING_NOTICE_KEY, false),
   ).then(
     (read) => { if (read.kind === "current") setCrossingNoticeDismissed(read.value); },
@@ -144,12 +145,12 @@ function dismissCrossingNoticeForever(): void {
   const revision = advanceRevision(crossingNoticePreference);
   setCrossingNoticeDismissed(true);
   void writeOwned(
-    revisionOwner(crossingNoticePreference, revision),
+    revisionOwner(crossingNoticePreference, revision, graphOwner()),
     backend().setAppBool(CROSSING_NOTICE_KEY, true),
   ).catch((error: unknown) => pushToast(`Couldn't save the notice preference: ${errorText(error)}`, "error"));
 }
 export function resetCrossingNoticeForTests(): void {
-  crossingNoticePrimed = false;
+  crossingNoticePrimed = undefined;
   advanceRevision(crossingNoticePreference);
   setCrossingNoticeDismissed(undefined);
 }
@@ -650,7 +651,7 @@ export function QueryMacro(props: {
     setCrossedTag(null);
   };
   // Shown only once this device's answer is KNOWN to be "not dismissed".
-  const showCrossingNotice = () => !!crossedTag() && crossingNoticeDismissed() === false;
+  const showCrossingNotice = () => !!crossedTag() && crossingNoticePrimed === graphEpoch() && crossingNoticeDismissed() === false;
   // Undo is offered only while the entry `undo()` would take back IS the crossing save.
   const crossingIsStillUndoable = () => {
     const tag = crossedTag();

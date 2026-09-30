@@ -13,7 +13,7 @@
 //      ordinary undo would still take back THIS change — in both history modes.
 //      After the undo the block's bytes are what they were before the save.
 //  C3  [Keep it] closes it; "Don't show this again" is device-local
-//      (og: one device preference; master keys it by graph) (D-11) and silences the NEXT crossing.
+//      keyed by graph (D-11) and silences the NEXT crossing.
 //  C4  A save that does not cross says nothing.
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
@@ -353,8 +353,7 @@ describe("C3: [Keep it] and the device-local dismissal", () => {
       keepButton().click();
       await settle();
 
-      // D-11: the dismissal is device app-data (og: one device preference, not
-      // master's per-graph notices record). Nothing reaches the graph's bytes.
+      // D-11: the dismissal is graph-keyed device app-data, not graph content.
       expect(save).toHaveBeenCalledWith(NOTICE_KEY, true);
       expect(doc.byId.query.raw).not.toContain("query-crossing");
     } finally {
@@ -377,6 +376,48 @@ describe("C3: [Keep it] and the device-local dismissal", () => {
     } finally {
       dispose();
     }
+  });
+
+  it("reloads the dismissal after switching graphs without resetting the window cache", async () => {
+    load('{{query (task TODO)}}');
+    arrangeCrossing(["query-crossing"]);
+    const get = vi.mocked(backend().getAppBool);
+    let view = mount(() => <Block id="query" />);
+    try {
+      await saveThroughPane(view.root, "-- task DONE");
+      expect(notice(view.root)).toBeNull();
+      view.dispose();
+      resetStore();
+      bumpGraphEpoch();
+      load('{{query (task TODO)}}');
+      get.mockResolvedValue(false);
+      view = mount(() => <Block id="query" />);
+      await saveThroughPane(view.root, "-- task DONE");
+      await waitForNotice(view.root);
+      expect(get.mock.calls.filter(([key]) => key === NOTICE_KEY)).toHaveLength(2);
+    } finally { view.dispose(); }
+  });
+
+  it("ignores a graph A dismissal read that finishes after graph B crosses", async () => {
+    load('{{query (task TODO)}}');
+    arrangeCrossing();
+    let finish!: (value: boolean) => void;
+    const get = vi.mocked(backend().getAppBool);
+    get.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    let view = mount(() => <Block id="query" />);
+    try {
+      await saveThroughPane(view.root, "-- task DONE");
+      expect(notice(view.root)).toBeNull();
+      view.dispose(); resetStore(); bumpGraphEpoch();
+      load('{{query (task TODO)}}');
+      get.mockResolvedValue(false);
+      view = mount(() => <Block id="query" />);
+      await saveThroughPane(view.root, "-- task DONE");
+      await waitForNotice(view.root);
+      finish(true);
+      await settle();
+      expect(notice(view.root)).not.toBeNull();
+    } finally { view.dispose(); }
   });
 
   it("still crosses, and still offers the notice, when the notices store cannot be read", async () => {

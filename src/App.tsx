@@ -731,6 +731,25 @@ export function App(): JSX.Element {
   // slow". Fire-and-forget; the probe is Tauri-gated and never throws.
   onMount(() => void warnIfSoftwareRendering());
 
+  // Native startup owns the one-shot migration flag; this view owns its toast.
+  onMount(async () => {
+    let alive = true;
+    onCleanup(() => { alive = false; });
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      if (!alive) return;
+      const result = await readOwned(ownedWhen(() => alive), invoke<boolean>("take_identifier_migration_notice"));
+      if (result.kind === "stale" || !result.value) return;
+      pushToast(
+        "Tine was renamed under the hood, so we moved your settings and backups across. A few app-level preferences (e.g. keyboard shortcuts) might need setting again — sorry about that!",
+        "info",
+        { sticky: true },
+      );
+    } catch {
+      dbg("identifier migration notice unavailable");
+    }
+  });
+
   // An unwritable app-data folder was relocated for this launch (data_home.rs):
   // say where settings and backups went, stickily — a silent relocation would
   // be its own defect (I-9).

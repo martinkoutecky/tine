@@ -1,5 +1,7 @@
 import type { PageDto, PageRead } from "./types";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as tauriCore from "@tauri-apps/api/core";
+import { setToasts, toasts } from "./toasts";
 import { backend } from "./backend";
 import { installMobileExternalLinkHandler } from "./App";
 import { App } from "./App";
@@ -14,6 +16,8 @@ import { isConflicted } from "./document";
 import { pageInventoryRev } from "./graphSession";
 import { bumpGraphEpoch } from "./graphSession";
 import { applyGraphChange as handleGraphChange } from "./document";
+
+vi.mock("@tauri-apps/api/core", { spy: true });
 
 function addAnchor(href: string): HTMLAnchorElement {
   const a = document.createElement("a");
@@ -358,5 +362,41 @@ describe("watcher page inventory invalidation", () => {
     const before = pageInventoryRev();
     await handleGraphChange({ name: "Created Elsewhere", kind: "page", created: true, removed: false });
     expect(pageInventoryRev()).toBeGreaterThan(before);
+  });
+});
+
+describe("identifier migration notice", () => {
+  it("does not show a late migration toast after App unmounts", async () => {
+    setToasts([]);
+    let finish!: (value: boolean) => void;
+    const take = vi.spyOn(tauriCore, "invoke").mockImplementationOnce(() =>
+      new Promise((resolve) => { finish = resolve; }));
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => <App />, host);
+    await vi.waitFor(() => expect(take).toHaveBeenCalledWith("take_identifier_migration_notice"));
+    dispose();
+    finish(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(toasts().some((toast) => toast.message.includes("moved your settings and backups"))).toBe(false);
+    setToasts([]);
+  });
+  it("shows the native one-shot notice stickily once, then stays silent on remount", async () => {
+    setToasts([]);
+    const take = vi.spyOn(tauriCore, "invoke").mockResolvedValue(false);
+    take.mockResolvedValueOnce(true);
+    const host = document.createElement("div");
+    document.body.append(host);
+    let dispose = render(() => <App />, host);
+    try {
+      await vi.waitFor(() => expect(toasts().some((toast) => toast.message.includes("moved your settings and backups"))).toBe(true));
+      const shown = toasts().filter((toast) => toast.message.includes("moved your settings and backups"));
+      expect(shown).toHaveLength(1);
+      expect(shown[0].sticky).toBe(true);
+      dispose();
+      dispose = render(() => <App />, host);
+      await vi.waitFor(() => expect(take).toHaveBeenCalledTimes(2));
+      expect(toasts().filter((toast) => toast.message.includes("moved your settings and backups"))).toHaveLength(1);
+    } finally { dispose(); setToasts([]); }
   });
 });

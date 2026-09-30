@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - REG-OG-R6-PREVIEW: Preview candidates and AppImage update metadata stay on `og-preview`; manual candidate builds do not publish, and preview publication cannot become the stable latest release.
 
 ### Fixed
+- UI-OG-R6B-GRAPH-NOTICES / UI-OG-R6B-MIGRATION-TOAST: Query notice dismissals follow the current graph, and startup explains completed legacy app-data migration once.
 - REG-OG-R6-IDENTITY: Read released Tine’s graph notice dismissals, restore legacy desktop app data before startup, and seed desktop preview browser preferences without changing the released source.
 
 
