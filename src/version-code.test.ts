@@ -30,7 +30,7 @@ function deriveVersionCode(version: string): number {
 
 describe("Android versionCode (F-Droid autoupdate)", () => {
   it("preview names advance Android codes only under the separate app identity and isolate the updater channel", () => {
-    execFileSync(process.execPath, ["scripts/test-og-preview-release.mjs"], { stdio: "pipe" });
+    execFileSync(process.execPath, ["scripts/test-beta-release.mjs"], { stdio: "pipe" });
   });
   it("matches Tauri's semver-derived versionCode", () => {
     const explicit = conf.bundle?.android?.versionCode;

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 
 it("preflights the OG v0.6.5 performance baseline, including a preview tag context", () => {
-  for (const ref of [undefined, "refs/tags/og-preview"]) {
+  for (const ref of [undefined, "refs/tags/beta"]) {
     const result = spawnSync(process.execPath, ["scripts/check-release-preflight.mjs"], {
       encoding: "utf8", env: { ...process.env, GITHUB_REF: ref },
     });

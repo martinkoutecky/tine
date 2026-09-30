@@ -4,7 +4,7 @@
 //! The OS app-data dir (settings, session, backups, plugins and, on Linux, the
 //! WebKit localStorage holding the open graph and tabs), the desktop entry and
 //! the Wayland app ID are all keyed by the identifier. Experiment builds ship
-//! `page.tine.TineOG` so they cannot read or rewrite the released Tine's state;
+//! `page.tine.TineBeta` so they cannot read or rewrite the released Tine's state;
 //! a release build ships the released identity and uses the released Tine's
 //! app-data dir in place (no migration: the formats are shared).
 
@@ -32,10 +32,10 @@ mod tests {
     fn tauri_config_accepts_the_preview_semver_without_changing_identity() {
         let mut conf: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
-        conf["version"] = serde_json::json!("0.7.0-og.1");
+        conf["version"] = serde_json::json!("0.7.0-beta.1");
         conf["bundle"]["android"]["versionCode"] = serde_json::json!(7001);
         let parsed: tauri::Config = serde_json::from_value(conf).unwrap();
-        assert_eq!(parsed.version.as_deref(), Some("0.7.0-og.1"));
+        assert_eq!(parsed.version.as_deref(), Some("0.7.0-beta.1"));
         assert_eq!(parsed.identifier, super::APP_IDENTIFIER);
     }
 

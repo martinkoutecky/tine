@@ -70,7 +70,7 @@ if (!new RegExp(`^## \\[${expected.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\
 
 if (process.env.GITHUB_REF?.startsWith("refs/tags/")) {
   const tag = process.env.GITHUB_REF.slice("refs/tags/".length);
-  if (tag !== "og-preview") problems.push(`tag ${tag} is not the og-preview channel`);
+  if (tag !== "beta") problems.push(`tag ${tag} is not the beta channel`);
 }
 
 if (process.env.REQUIRE_RELEASE_READINESS === "1") {

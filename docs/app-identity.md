@@ -5,10 +5,18 @@ user's install owns outside their graph. That covers the app-data dir
 (`~/.local/share/<id>` on Linux), the config dir (`~/.config/<id>`, window
 geometry), the WebKitGTK localStorage inside the app-data dir, the Linux desktop
 entry and Wayland `app_id`, the single-instance lock, and on Android the
-application id. The og tree runs as a separate **experiment** identity so it can
-be tested next to the released Tine without touching it. Before og can replace
-master, one switch must turn it into the released identity, and a user's
-existing app data must keep working in both directions.
+application id. Master ships stable **Tine**; og ships **Tine Beta**, a separate
+app with its own settings and a `beta` updater channel. Stable never sees Beta
+updates, and Beta never installs stable releases; Beta publication is a
+prerelease and never becomes GitHub's `latest` release.
+
+The internal switch key remains `experiment`. Its Beta identity is new: the
+former experiment identity never shipped, so there is no migration from it.
+Desktop seeding still reads only stable Tine's compatible settings and leaves
+stable data intact. The local deploy destination remains `~/research/tine-og`.
+Beta release versions use `X.Y.0-beta.N` (N = 1–999), with the Android code
+mapping and packaging checks in `scripts/release-policy.mjs`; numeric versions
+remain accepted for the current campaign build and stable tooling.
 
 ## The switch
 
@@ -18,7 +26,7 @@ existing app data must keep working in both directions.
 { "ship": "experiment",
   "identities": {
     "release":    { "identifier": "page.tine.Tine",   "productName": "Tine",    "androidApplicationId": "page.tine.app", "deployName": "tine" },
-    "experiment": { "identifier": "page.tine.TineOG", "productName": "Tine OG", "androidApplicationId": "page.tine.og",  "deployName": "tine-og" } } }
+    "experiment": { "identifier": "page.tine.TineBeta", "productName": "Tine Beta", "androidApplicationId": "page.tine.beta",  "deployName": "tine-og" } } }
 ```
 
 To flip it, run `node scripts/set-app-identity.mjs release` (or
@@ -42,15 +50,15 @@ A few identity-bearing places need no file of their own:
 - The Cargo binary is `tine` in both settings; only the deploy name differs.
 
 A desktop keyboard shortcut or dock pin bound to `page.tine.Tine.desktop` does
-not apply to an experiment build, because its window reports
-`page.tine.TineOG`. It applies again once the switch ships `release`.
+not apply to a Beta build, because its window reports
+`page.tine.TineBeta`. It applies again once the switch ships `release`.
 
 `node scripts/set-app-identity.mjs --check` exits 1 if any derived file has
 drifted. `src/appIdentity.guard.test.ts` enforces the switch. It checks that
 every derived file matches it, that both settings round-trip, and that the
 release identity is the one master ships. It also checks that no source file
 outside the derived set and this front door spells either identifier or
-"Tine OG".
+"Tine Beta".
 
 ## What the released identity finds in a master user's dir
 
@@ -91,9 +99,9 @@ Rollback (C) means master opens a dir og has used with the user's config
 intact. It holds because og writes only the shared formats above, in the same
 layout master reads.
 
-## Experiment config seed (temporary)
+## Beta config seed
 
-While the experiment identity ships, its app-data dir starts empty and a tester
+While the Beta identity ships, its app-data dir starts empty and a tester
 would see Welcome instead of their graphs. `src-tauri/src/experiment_config_seed.rs`
 fixes that, once, before the webview exists. It runs only when the experiment
 dir has no configured graph and the released dir has one. It then copies the
@@ -148,7 +156,7 @@ On the pre-change og build the first check fails (Welcome, default theme).
   `concord_ledger.rs` (lane 20a).
 - **Legacy identifiers are restored.** Before settings or Tauri starts, a release
   build migrates the newest `page.tine.app` / `dev.tine.app` app-data directory
-  into the switch-derived released directory. Experiment builds do not run it.
+  into the switch-derived released directory. Beta builds do not run it.
   A destination containing user state (including backups) prevents migration.
   A Welcome-only scaffold is parked and retained; complete payload directories
   move without translating their contents. Copy fallback preserves its source.

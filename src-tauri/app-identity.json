@@ -8,9 +8,9 @@
       "deployName": "tine"
     },
     "experiment": {
-      "identifier": "page.tine.TineOG",
-      "productName": "Tine OG",
-      "androidApplicationId": "page.tine.og",
+      "identifier": "page.tine.TineBeta",
+      "productName": "Tine Beta",
+      "androidApplicationId": "page.tine.beta",
       "deployName": "tine-og"
     }
   }

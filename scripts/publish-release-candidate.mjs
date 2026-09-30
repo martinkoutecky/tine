@@ -8,11 +8,11 @@ import { fileURLToPath } from "node:url";
 import { candidateProblems, releaseLayout, releaseNotes } from "./release-layout.mjs";
 
 import { IDENTITY } from "./lib/app-identity.mjs";
-import { publicationPlan, PREVIEW_TAG } from "./release-policy.mjs";
+import { publicationPlan, BETA_TAG } from "./release-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const [tag, candidateArg] = process.argv.slice(2);
-if (!candidateArg) throw new Error("usage: publish-release-candidate.mjs og-preview CANDIDATE_DIR");
+if (!candidateArg) throw new Error("usage: publish-release-candidate.mjs beta CANDIDATE_DIR");
 const conf = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8"));
 const plan = publicationPlan({ conf, tag, mode: process.env.RELEASE_MODE, publish: process.env.RELEASE_PUBLISH === "true" });
 const version = conf.version;
@@ -25,7 +25,7 @@ if (!repository || !/^[0-9a-f]{40}$/.test(commit ?? "")) throw new Error("GITHUB
 const problems = candidateProblems(candidate, version, plan.channel);
 if (problems.length) throw new Error(`local candidate is invalid:\n  ${problems.join("\n  ")}`);
 if (!plan.publish) {
-  console.log(`Verified ${PREVIEW_TAG} candidate; publish=false, no remote mutation.`);
+  console.log(`Verified ${BETA_TAG} candidate; publish=false, no remote mutation.`);
   process.exit(0);
 }
 const gh = (...args) => execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });

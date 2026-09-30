@@ -42,7 +42,7 @@ android {
     namespace = "page.tine.app"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "page.tine.og"
+        applicationId = "page.tine.beta"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()

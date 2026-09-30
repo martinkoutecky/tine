@@ -1,6 +1,6 @@
 // The app identity front door for scripts. The ONE switch is
 // src-tauri/app-identity.json (docs/app-identity.md): `ship` selects the
-// experiment identity (page.tine.TineOG, coexists with the released Tine) or
+// experiment identity (page.tine.TineBeta, coexists with the released Tine) or
 // the released one. Every identity-bearing file derives from it through
 // `deriveIdentityFiles`; `node scripts/set-app-identity.mjs <ship>` writes them
 // and src/appIdentity.guard.test.ts fails when any of them drifts. Journeys must

@@ -1,6 +1,6 @@
 // "A newer Tine is available" check — best-effort, once per launch.
 //
-// Notifier: ask the Tauri updater plugin what the og-preview channel offers (NEVER
+// Notifier: ask the Tauri updater plugin what the beta channel offers (NEVER
 // the shipped Tine's `releases/latest` — see RELEASES_PAGE) and, if it's newer than
 // the running build, show a sticky toast. This is the cross-platform half and is
 // always the way a user LEARNS an update exists.
@@ -28,17 +28,17 @@ import { pushToast, dismissToast } from "./toasts";
 import { openSettings } from "./ui";
 import { reportUiFailure } from "./uiFailure";
 
-/** THE update channel (og-only). This build (`page.tine.TineOG`) must never offer
+/** THE update channel (og-only). This build (`page.tine.TineBeta`) must never offer
  * the shipped Tine: `releases/latest` there carries a higher version number, and
  * installing it would REPLACE og with master. The channel is the fixed-tag GitHub
- * release `og-preview`. What it offers is answered ONCE, by the Tauri updater
+ * release `beta`. What it offers is answered ONCE, by the Tauri updater
  * plugin: `check()` reads the endpoint in `tauri.conf.json` (Rust-side, so no
  * webview CORS problem: GitHub release-asset downloads send no
  * Access-Control-Allow-Origin) and the installer downloads from that same
  * manifest. This file therefore names no channel URL to fetch and never calls
  * `fetch()`; the only URL here is the human-facing release page below (guard:
  * `src/updateChannel.guard.test.ts`). */
-const RELEASES_PAGE = "https://github.com/martinkoutecky/tine/releases/tag/og-preview";
+const RELEASES_PAGE = "https://github.com/martinkoutecky/tine/releases/tag/beta";
 
 /** Parse the first `X.Y.Z` out of a version/tag string (`v0.3.0`, `0.3.0`, …). */
 function parseVer(s: string): [number, number, number] | null {
@@ -305,7 +305,7 @@ export async function offerUpdate(version: string, current: string): Promise<voi
   );
 }
 
-/** The version the og-preview channel offers when it is newer than this build,
+/** The version the beta channel offers when it is newer than this build,
  *  else null. The updater plugin decides "newer" (and reads the manifest); it
  *  throws on a missing, unreachable or invalid manifest, which callers absorb.
  *  Releases the plugin's resource handle (the installer takes its own). */
@@ -318,7 +318,7 @@ async function offeredVersion(): Promise<[number, number, number] | null> {
   return version;
 }
 
-/** Check the og-preview channel for a newer build; toast if there is one.
+/** Check the beta channel for a newer build; toast if there is one.
  *  Resolves silently (never throws) in every failure case. */
 export async function checkForUpdate(): Promise<void> {
   if ((await updateMode()) === "unavailable") return;
@@ -360,7 +360,7 @@ export async function checkForUpdateNow(): Promise<UpdateStatus> {
   }
 }
 
-/** Open the og-preview releases page (exported for the About tab's manual link). */
+/** Open the beta releases page (exported for the About tab's manual link). */
 export function openReleasesPage(): void {
   openReleases();
 }

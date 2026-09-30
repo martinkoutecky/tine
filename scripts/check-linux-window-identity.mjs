@@ -57,7 +57,7 @@ requireMatch(
   /cargo:rustc-env=TINE_APP_IDENTIFIER=/,
   `Linux shell app ID drifted from ${APP_ID}: build.rs must export TINE_APP_IDENTIFIER`,
 );
-if (/page\.tine\.Tine\b|page\.tine\.TineOG/.test(identity.replace(/\/\/.*$/gm, ""))) {
+if (/page\.tine\.Tine\b|page\.tine\.TineBeta/.test(identity.replace(/\/\/.*$/gm, ""))) {
   throw new Error(`linux_window_identity.rs spells an app ID literal; derive it from app_identity (${APP_ID})`);
 }
 requireMatch(

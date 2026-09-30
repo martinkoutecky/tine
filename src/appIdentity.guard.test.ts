@@ -36,6 +36,10 @@ function identityLiterals(): RegExp {
 }
 
 describe("app identity switch", () => {
+  it("ships the Beta identity while retaining the stable seed source and local deploy name", () => {
+    expect(IDENTITIES.experiment).toEqual({ identifier: "page.tine.TineBeta", productName: "Tine Beta", androidApplicationId: "page.tine.beta", deployName: "tine-og" });
+    expect(SHIP).toBe("experiment");
+  });
   it("every derived file matches the switch (run `node scripts/set-app-identity.mjs <ship>`)", () => {
     for (const [file, text] of Object.entries(deriveIdentityFiles(ROOT, SHIP))) {
       expect(fs.readFileSync(path.join(ROOT, file), "utf8"), file).toBe(text);

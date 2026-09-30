@@ -70,7 +70,7 @@ async function loadUpdate(opts: {
   };
 }
 
-// The updater plugin's `check()` is the ONE answerer of what og-preview offers: it
+// The updater plugin's `check()` is the ONE answerer of what beta offers: it
 // returns an Update only when the channel's version is newer than the running app,
 // else null. `mockLatest` sets what the channel's manifest says; the mocked plugin
 // applies the same newer-than rule.
@@ -155,16 +155,16 @@ describe("update checks", () => {
     expect(updaterCheckMock).toHaveBeenCalledOnce();
     const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0 is available"));
     offer?.[2]?.action?.run();
-    await vi.waitFor(() => expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/tag/og-preview"));
+    await vi.waitFor(() => expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/tag/beta"));
     expect(updaterCheckMock, "manual mode never runs the in-place installer").toHaveBeenCalledOnce();
   });
 
-  it("points the manual releases fallback at the og-preview release page", async () => {
+  it("points the manual releases fallback at the beta release page", async () => {
     const { update, openExternalMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
 
     update.openReleasesPage();
 
-    expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/tag/og-preview");
+    expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/tag/beta");
   });
 
   it.each(["android", "ios"] as const)("never checks or offers self-update on %s", async (platform) => {

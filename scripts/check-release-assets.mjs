@@ -9,12 +9,12 @@ import os from "node:os";
 import path from "node:path";
 import { candidateProblems, releaseLayout } from "./release-layout.mjs";
 
-import { PREVIEW_TAG, releaseVersion } from "./release-policy.mjs";
+import { BETA_TAG, releaseVersion } from "./release-policy.mjs";
 
 const tag = process.argv[2];
 const version = process.argv[3];
-if (tag !== PREVIEW_TAG || !version) {
-  console.error("usage: check-release-assets.mjs og-preview VERSION");
+if (tag !== BETA_TAG || !version) {
+  console.error("usage: check-release-assets.mjs beta VERSION");
   process.exit(2);
 }
 releaseVersion(version);
@@ -38,7 +38,7 @@ try {
   fs.mkdirSync(local);
   for (const name of layout.platformAssets) fs.writeFileSync(path.join(local, name), "remote-asset-present");
   fs.copyFileSync(path.join(temp, "latest.json"), path.join(local, "latest.json"));
-  problems.push(...candidateProblems(local, version, PREVIEW_TAG));
+  problems.push(...candidateProblems(local, version, BETA_TAG));
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }
