@@ -69,8 +69,9 @@ function findBlock(blocks: PageDto["blocks"], wanted: string, format: "md" | "or
 /** Resolve a link only within the baked snapshot. Page aliases remain valid,
  *  while block UUIDs are graph-wide so moving a block does not break its link
  *  after the next export. Canonical page identity and parser-owned block IDs
- *  match publishedBackend. O(snapshot blocks) for a block, O(pages + aliases)
- *  for a page. Returns null for an absent target; parser refusal is observable. */
+ *  match publishedBackend. O(snapshot content bytes) for a block, O(page/alias
+ *  name bytes) for a page. Returns null for an absent target; block lookup
+ *  requires the initialized parser and throws when it is not ready. */
 export function resolvePublishedPermalink(
   snapshot: PublishedSnapshot,
   target: PublishedPermalinkTarget,

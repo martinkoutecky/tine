@@ -27,7 +27,7 @@ export interface ExportOptions {
   stripLinks: boolean; // [[Foo]] -> Foo
   removeEmphasis: boolean; // **/__/*/_/~~/== markers dropped (source mode only — rendered has none)
   removeTags: boolean; // #tag and #[[tag]] removed
-  removeProperties: boolean; // drop `key:: value` lines
+  removeProperties: boolean; // omit parser-owned metadata, retaining literals and Org body drawers
   newlineAfterBlock: boolean; // blank line after each block
   /** Apply `->`→`→` glyphs in rendered mode; the modal sets this from the app's
    *  typography mode each time (not persisted — it must match what you see). */
