@@ -3711,7 +3711,7 @@ impl Graph {
         // discarded, matching OG); the file's own `path` remains its load/save
         // identity. `starts_with` is a lexical prefix over path components, so a
         // file at `pages/x/foo.md` matches `pages/` but nothing outside it.
-        if path.starts_with(self.journals_path()) {
+        let entry = if path.starts_with(self.journals_path()) {
             let (name, date_key) = match self.current_journal_format().parse(stem) {
                 Some(d) => (
                     self.current_journal_format().title(d),
@@ -3719,22 +3719,24 @@ impl Graph {
                 ),
                 None => (stem.to_string(), None),
             };
-            Some(PageEntry {
+            PageEntry {
                 name,
                 kind: PageKind::Journal,
                 date_key,
                 rel_path: Some(self.rel_path(path).into()),
                 path: path.to_path_buf(),
-            })
+            }
         } else {
-            Some(PageEntry {
+            PageEntry {
                 name: effective_page_name(path, stem, self.current_config().file_name_format),
                 kind: PageKind::Page,
                 date_key: None,
                 rel_path: Some(self.rel_path(path).into()),
                 path: path.to_path_buf(),
-            })
-        }
+            }
+        };
+        self.observe_name_entry(&entry);
+        Some(entry)
     }
 
     /// Record that Tine just wrote content with rev `rev` to `path`, so the file

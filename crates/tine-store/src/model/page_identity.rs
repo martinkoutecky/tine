@@ -11,7 +11,7 @@ impl Graph {
         loop {
             let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
             if let Some((g, index)) = self.find_entry_cache.read().unwrap().as_ref() {
-                if *g == gen && index.has_kind(kind) {
+                if *g == gen && (index.has_kind(kind) || index.entries.contains_key(&key)) {
                     return index.entries.get(&key).cloned().unwrap_or_default();
                 }
             }
@@ -25,6 +25,9 @@ impl Graph {
                 match guard.as_mut() {
                     Some((g, index)) if *g == gen => {
                         if !index.has_kind(kind) {
+                            index
+                                .entries
+                                .retain(|(loaded_kind, _), _| *loaded_kind != kind);
                             index.entries.extend(built.entries);
                             index.mark_kind_loaded(kind);
                         }
@@ -39,6 +42,26 @@ impl Graph {
             };
             if self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == gen {
                 return found;
+            }
+        }
+    }
+
+    /// A direct path read can observe a new or retitled file before the watcher.
+    /// Rebuild claimant ordering if that live file is missing from its bucket;
+    /// a proposed destination that does not exist must not become a claimant.
+    pub(super) fn observe_name_entry(&self, entry: &PageEntry) {
+        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+        let mut cache = self.find_entry_cache.write().unwrap();
+        if let Some((g, index)) = cache.as_ref() {
+            let key = (entry.kind, tine_core::refs::page_key(&entry.name));
+            let known = index.entries.get(&key).is_some_and(|entries| {
+                entries.iter().any(|candidate| candidate.path == entry.path)
+            });
+            if *g == gen
+                && !known
+                && fs::symlink_metadata(&entry.path).is_ok_and(|meta| meta.is_file())
+            {
+                *cache = None;
             }
         }
     }
@@ -70,8 +93,10 @@ impl Graph {
             gen,
             FindEntryIndex {
                 entries: claimants.clone(),
-                pages_loaded: true,
-                journals_loaded: true,
+                // Reuse known claims, but a first miss must discover files
+                // that arrived after this published snapshot.
+                pages_loaded: false,
+                journals_loaded: false,
             },
         ));
         let list = Arc::new(dedup_journal_days(
@@ -107,6 +132,23 @@ fn page_claimants(
 #[cfg(test)]
 mod cold_index_tests {
     use super::*;
+
+    #[test]
+    fn a_late_title_claimant_seen_by_path_replaces_the_cached_winner() {
+        let dir = std::env::temp_dir().join(format!("tine-late-title-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(dir.join("pages/Other.md"), "title:: Claimed\n- old owner\n").unwrap();
+        let graph = Graph::open(&dir);
+        graph.snapshot_name_index();
+        let arrived = dir.join("pages/Claimed.md");
+        fs::write(&arrived, "title:: Claimed\n- new preferred owner\n").unwrap();
+        // The direct page-read path observes the title before canonical lookup.
+        let entry = graph.entry_for_path(&arrived).unwrap();
+        assert_eq!(graph.find_entry(&entry.name, entry.kind).unwrap().path, arrived,
+            "I-12: a late title claimant observed by a direct read must use the ordinary winner order");
+        let _ = fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn journal_first_read_opens_no_ordinary_preambles_and_late_titles_resolve() {
@@ -355,14 +397,14 @@ pub(super) fn effective_page_name(path: &Path, stem: &str, name_fmt: FileNameFor
 }
 
 pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
-    #[cfg(test)]
-    super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));
     list_graph_pages_kind(graph, None)
 }
 
 /// Kind selection precedes preamble reads. Journal identity depends on its
 /// date filename, so a cold journal lookup never needs ordinary page titles.
 pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
+    #[cfg(test)]
+    super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));
     let mut entries = Vec::new();
     let root = &graph.root;
     let format = graph.current_journal_format();
