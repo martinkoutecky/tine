@@ -343,17 +343,19 @@ impl Format {
     }
 
     pub fn parse(&self, s: &str) -> Option<JournalDate> {
-        let cs: Vec<char> = s.chars().collect();
+        let mut cs = Vec::with_capacity(s.len());
+        cs.extend(s.chars());
         let mut i = 0usize;
         let (mut year, mut month, mut day) = (None, None, None);
         for t in &self.toks {
             match t {
                 Tok::Lit(lit) => {
-                    let lc: Vec<char> = lit.chars().collect();
-                    if i + lc.len() > cs.len() || cs[i..i + lc.len()] != lc[..] {
-                        return None;
+                    for character in lit.chars() {
+                        if cs.get(i) != Some(&character) {
+                            return None;
+                        }
+                        i += 1;
                     }
-                    i += lc.len();
                 }
                 Tok::Year(4) => year = Some(take_digits(&cs, &mut i, 4)? as i32),
                 Tok::Year(2) => year = Some(2000 + take_digits(&cs, &mut i, 2)? as i32),
@@ -408,7 +410,11 @@ fn take_digits(cs: &[char], i: &mut usize, max: usize) -> Option<i64> {
     if *i == start {
         return None;
     }
-    cs[start..*i].iter().collect::<String>().parse().ok()
+    cs[start..*i].iter().try_fold(0i64, |value, digit| {
+        value
+            .checked_mul(10)?
+            .checked_add((*digit as u8 - b'0') as i64)
+    })
 }
 
 /// `do` requires an ordinal suffix, but OG cljs-time's parse-ordinal-suffix
@@ -418,8 +424,8 @@ fn take_ordinal_suffix(cs: &[char], i: &mut usize) -> Option<()> {
         if *i + 2 <= cs.len()
             && cs[*i..*i + 2]
                 .iter()
-                .collect::<String>()
-                .eq_ignore_ascii_case(suffix)
+                .zip(suffix.chars())
+                .all(|(character, expected)| character.eq_ignore_ascii_case(&expected))
         {
             *i += 2;
             return Some(());
@@ -434,11 +440,14 @@ fn match_name(cs: &[char], i: usize, tables: &[&[&str]]) -> Option<(usize, usize
     let mut best: Option<(usize, usize)> = None;
     for table in tables {
         for (idx, name) in table.iter().enumerate() {
-            let nc: Vec<char> = name.chars().collect();
-            if i + nc.len() <= cs.len() {
-                let seg: String = cs[i..i + nc.len()].iter().collect();
-                if seg.eq_ignore_ascii_case(name) && best.map_or(true, |(_, l)| nc.len() > l) {
-                    best = Some((idx, nc.len()));
+            let length = name.chars().count();
+            if i + length <= cs.len() {
+                let matches = cs[i..i + length]
+                    .iter()
+                    .zip(name.chars())
+                    .all(|(character, expected)| character.eq_ignore_ascii_case(&expected));
+                if matches && best.map_or(true, |(_, l)| length > l) {
+                    best = Some((idx, length));
                 }
             }
         }

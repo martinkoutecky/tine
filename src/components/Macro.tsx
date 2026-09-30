@@ -9,6 +9,7 @@ import { blockProperty, blockWritable, formatForPage, formatForBlock, graphRewri
 import { resolveBlockBatched } from "../resolveBatch";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { LiveRefGroup } from "./LiveRefGroup";
+import { QueryGroup } from "./QueryGroup";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
@@ -1126,53 +1127,6 @@ export function QueryMacro(props: {
           </Match>
         </Switch>
       </div>
-    </Show>
-  );
-}
-
-// One page's query results, rendered as LIVE editable blocks. The result page
-// is loaded into the shared working set on demand; each result is the same
-// <Block> the main view uses (so editing a result edits the real block and
-// saves to its page). Until the page is loaded, a read-only block stands in.
-//
-// Keyed by page name (outer <For>) and block uuid (inner <For>) so a reactive
-// re-query that returns the same membership reuses the existing rows — it never
-// re-mounts a block you're editing in a result and yanks the caret out.
-function QueryGroup(props: { group: () => RefGroup | undefined; flat?: boolean }): JSX.Element {
-  const kind = (): PageKind => props.group()?.kind ?? "page";
-  const page = () => props.group()?.page ?? "";
-  const target = () => ({ name: page(), pageKind: kind(), ...(props.group()?.path ? { path: props.group()!.path } : {}) });
-  return (
-    <Show when={props.group()}>
-      {(g) => (
-        <div class="query-group" classList={{ "query-group-flat": props.flat }}>
-          <div
-            class={props.flat ? "query-crumb" : "query-page"}
-            onClick={(e) => {
-              e.stopPropagation();
-              const dest = internalLinkDest(e);
-              if (dest === "sidebar") openPageInSidebar(target());
-              else if (dest === "background") openPageTargetInNewTab(target());
-              else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target() });
-              else openPageTarget(target());
-            }}
-            onMouseDown={internalLinkMouseDown}
-            onAuxClick={(e) => {
-              e.stopPropagation();
-              internalLinkAuxClick(e, () => openPageTargetInNewTab(target()));
-            }}
-            onContextMenu={(e) => {
-              if (!shouldOpenTextContextMenu(e.target)) return;
-              e.preventDefault();
-              e.stopPropagation();
-              openPageContextMenu(e.clientX, e.clientY, target());
-            }}
-          >
-            {page()}
-          </div>
-          <LiveRefGroup page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb />
-        </div>
-      )}
     </Show>
   );
 }

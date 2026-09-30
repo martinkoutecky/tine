@@ -18,12 +18,15 @@ import { searchFilter } from "../editor/queryBuilder";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { bumpDataRev } from "../graphSession";
 import * as blockRender from "../render/block";
+import { renderedBlocks, resetNearObserverForTests } from "../lazyObserve";
 
 beforeAll(async () => {
   await initParser();
 });
 
 afterEach(() => {
+  resetNearObserverForTests();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
   resetSharedQueryResultsForTests();
   resetStore();
@@ -151,6 +154,27 @@ function loadQueryDoc(queryRaw: string) {
 
 
 describe("QueryMacro sheet integration", () => {
+  it("defers offscreen List group headers and mounts them on viewport approach", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    renderedBlocks.add("query");
+    const observations = new Map<Element, IntersectionObserverCallback>();
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(private callback: IntersectionObserverCallback) {}
+      observe(element: Element) { observations.set(element, this.callback); }
+      unobserve(element: Element) { observations.delete(element); }
+      disconnect() { observations.clear(); }
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await expect.poll(() => root.querySelectorAll(".query-group").length).toBe(1);
+      expect(root.querySelector(".query-page"), "I-25: offscreen List groups reserve height without mounting headers and row subtrees").toBeNull();
+      const group = root.querySelector(".query-group")!;
+      const intersect = observations.get(group)!;
+      expect(intersect).toBeTypeOf("function");
+      intersect([{ target: group, isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+      expect(root.querySelector(".query-page")?.textContent).toBe("Sheet");
+    } finally { dispose(); }
+  });
   it("does not build search excerpts for a collapsed List query, and builds them when Search is chosen", async () => {
     loadQueryDoc('{{query (task TODO) {:collapsed? true}}}');
     const visible = vi.spyOn(blockRender, "visibleBody");
