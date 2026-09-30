@@ -56,6 +56,13 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     ),
     (
         "src-tauri/src/graph.rs",
+        ".spawn(move || {",
+        1,
+        "StartupGraph's single launch-result slot",
+        "load joins the worker once; unused results drop their Store and cancel its load worker",
+    ),
+    (
+        "src-tauri/src/graph.rs",
         "thread::spawn(",
         1,
         "GraphSlot warm_generation",

@@ -2807,59 +2807,6 @@ impl Graph {
         self.find_claimants(name, kind).into_iter().next()
     }
 
-    pub(crate) fn find_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
-        let key = (kind, tine_core::refs::page_key(name));
-        loop {
-            let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-            if let Some((g, index)) = self.find_entry_cache.read().unwrap().as_ref() {
-                if *g == gen && index.has_kind(kind) {
-                    return index.entries.get(&key).cloned().unwrap_or_default();
-                }
-            }
-
-            let mut built = FindEntryIndex::new();
-            for entry in list_graph_pages(self)
-                .into_iter()
-                .filter(|entry| entry.kind == kind)
-            {
-                let entry_key = (entry.kind, tine_core::refs::page_key(&entry.name));
-                built.entries.entry(entry_key).or_default().push(entry);
-            }
-            for claimants in built.entries.values_mut() {
-                claimants.sort_by(|a, b| {
-                    compare_page_claimants(
-                        a,
-                        b,
-                        &self.current_journal_format(),
-                        self.current_config().file_name_format,
-                    )
-                });
-            }
-            built.mark_kind_loaded(kind);
-
-            let found = {
-                let mut guard = self.find_entry_cache.write().unwrap();
-                match guard.as_mut() {
-                    Some((g, index)) if *g == gen => {
-                        if !index.has_kind(kind) {
-                            index.entries.extend(built.entries);
-                            index.mark_kind_loaded(kind);
-                        }
-                        index.entries.get(&key).cloned().unwrap_or_default()
-                    }
-                    _ => {
-                        let found = built.entries.get(&key).cloned().unwrap_or_default();
-                        *guard = Some((gen, built));
-                        found
-                    }
-                }
-            };
-            if self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == gen {
-                return found;
-            }
-        }
-    }
-
     #[cfg(test)]
     fn page_aliases(&self) -> Vec<(String, String)> {
         self.test_read_snapshot().page_aliases()
@@ -3764,7 +3711,7 @@ impl Graph {
         // discarded, matching OG); the file's own `path` remains its load/save
         // identity. `starts_with` is a lexical prefix over path components, so a
         // file at `pages/x/foo.md` matches `pages/` but nothing outside it.
-        if path.starts_with(self.journals_path()) {
+        let entry = if path.starts_with(self.journals_path()) {
             let (name, date_key) = match self.current_journal_format().parse(stem) {
                 Some(d) => (
                     self.current_journal_format().title(d),
@@ -3772,22 +3719,24 @@ impl Graph {
                 ),
                 None => (stem.to_string(), None),
             };
-            Some(PageEntry {
+            PageEntry {
                 name,
                 kind: PageKind::Journal,
                 date_key,
                 rel_path: Some(self.rel_path(path).into()),
                 path: path.to_path_buf(),
-            })
+            }
         } else {
-            Some(PageEntry {
+            PageEntry {
                 name: effective_page_name(path, stem, self.current_config().file_name_format),
                 kind: PageKind::Page,
                 date_key: None,
                 rel_path: Some(self.rel_path(path).into()),
                 path: path.to_path_buf(),
-            })
-        }
+            }
+        };
+        self.observe_name_entry(&entry);
+        Some(entry)
     }
 
     /// Record that Tine just wrote content with rev `rev` to `path`, so the file

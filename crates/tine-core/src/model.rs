@@ -121,10 +121,11 @@ pub fn page_title_from_preamble(content: &str, format: Format) -> Option<String>
 /// How much of a page [`page_title_from_preamble`] needs, for a reader that
 /// streams whole lines from the start of the file.
 #[deny(missing_docs)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreambleRead {
-    /// The prefix read so far already ends at the page's first block.
-    Settled,
+    /// The prefix ends at the first block; its title has been read in the
+    /// same outline parse (`None` means the preamble has no title).
+    Settled(Option<String>),
     /// Read the next line and ask again.
     More,
     /// Only the whole file decides where the preamble ends.
@@ -146,8 +147,14 @@ pub fn preamble_read(prefix: &str, format: Format) -> PreambleRead {
     let body = body.strip_suffix('\r').unwrap_or(body);
     let last = body.rsplit(['\r', '\n']).next().unwrap_or("");
     let trimmed = last.trim_start();
-    if trimmed.starts_with(['-', '#', '*']) && preamble_end(prefix, format) < prefix.len() {
-        return PreambleRead::Settled;
+    if trimmed.starts_with(['-', '#', '*']) {
+        let end = preamble_end(prefix, format);
+        if end < prefix.len() {
+            return PreambleRead::Settled(
+                page_title_line_before(prefix, format, end)
+                    .map(|line| prefix[line.value].to_owned()),
+            );
+        }
     }
     let inert = trimmed.trim_end().is_empty()
         || crate::doc::parse_property_line(last).is_some()
@@ -229,8 +236,11 @@ fn preamble_end(content: &str, format: Format) -> usize {
 }
 
 fn page_title_line(content: &str, format: Format) -> Option<TitleLine> {
+    page_title_line_before(content, format, preamble_end(content, format))
+}
+
+fn page_title_line_before(content: &str, format: Format, end: usize) -> Option<TitleLine> {
     let text = crate::org::lone_cr_to_lf(content);
-    let end = preamble_end(content, format);
     let mut offset = 0;
     for chunk in text[..end].split_inclusive('\n') {
         let start = offset;

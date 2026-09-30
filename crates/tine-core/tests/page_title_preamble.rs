@@ -54,7 +54,14 @@ fn streamed(text: &str, format: Format) -> String {
     for line in text.split_inclusive(['\n']) {
         prefix.push_str(line);
         match preamble_read(&prefix, format) {
-            PreambleRead::Settled => return prefix,
+            PreambleRead::Settled(title) => {
+                assert_eq!(
+                    title,
+                    page_title_from_preamble(text, format),
+                    "settled title agrees with whole file"
+                );
+                return prefix;
+            }
             PreambleRead::More => {}
             PreambleRead::Whole => return text.to_owned(),
         }

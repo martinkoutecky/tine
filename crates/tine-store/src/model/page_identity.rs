@@ -6,6 +6,78 @@ use std::io::{BufRead, BufReader, Read};
 use tine_core::model::PreambleRead;
 
 impl Graph {
+    pub(crate) fn find_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
+        let key = (kind, tine_core::refs::page_key(name));
+        loop {
+            let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+            if let Some((g, index)) = self.find_entry_cache.read().unwrap().as_ref() {
+                if *g == gen && (index.has_kind(kind) || index.entries.contains_key(&key)) {
+                    return index.entries.get(&key).cloned().unwrap_or_default();
+                }
+            }
+
+            let mut built = FindEntryIndex::new();
+            built.entries = page_claimants(self, &list_graph_pages_kind(self, Some(kind)));
+            built.mark_kind_loaded(kind);
+
+            let found = {
+                let mut guard = self.find_entry_cache.write().unwrap();
+                match guard.as_mut() {
+                    Some((g, index)) if *g == gen => {
+                        if !index.has_kind(kind) {
+                            index
+                                .entries
+                                .retain(|(loaded_kind, _), _| *loaded_kind != kind);
+                            index.entries.extend(built.entries);
+                            index.mark_kind_loaded(kind);
+                        }
+                        index.entries.get(&key).cloned().unwrap_or_default()
+                    }
+                    _ => {
+                        let found = built.entries.get(&key).cloned().unwrap_or_default();
+                        *guard = Some((gen, built));
+                        found
+                    }
+                }
+            };
+            if self.cache_gen.load(std::sync::atomic::Ordering::Acquire) == gen {
+                return found;
+            }
+        }
+    }
+
+    /// A direct path read can observe a new or retitled file before the watcher.
+    /// Rebuild claimant ordering if that live file is missing from its bucket;
+    /// a proposed destination that does not exist must not become a claimant.
+    pub(super) fn observe_name_entry(&self, entry: &PageEntry) {
+        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+        let mut cache = self.find_entry_cache.write().unwrap();
+        if let Some((g, index)) = cache.as_ref() {
+            let key = (entry.kind, tine_core::refs::page_key(&entry.name));
+            let known = index.entries.get(&key).is_some_and(|entries| {
+                entries.iter().any(|candidate| candidate.path == entry.path)
+            });
+            if *g == gen
+                && !known
+                && fs::symlink_metadata(&entry.path).is_ok_and(|meta| meta.is_file())
+            {
+                *cache = None;
+            }
+        }
+    }
+
+    /// Cold journal inventory and its complete claimant index share one walk.
+    /// Only called at open, before the watcher and load worker start.
+    pub(crate) fn scan_journal_names(&self) -> Vec<PageEntry> {
+        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+        let entries = list_graph_pages_kind(self, Some(PageKind::Journal));
+        let mut index = FindEntryIndex::new();
+        index.entries = page_claimants(self, &entries);
+        index.mark_kind_loaded(PageKind::Journal);
+        *self.find_entry_cache.write().unwrap() = Some((gen, index));
+        entries
+    }
+
     /// Build the page list and effective-name claimants from one cold walk.
     pub(crate) fn snapshot_name_index(
         &self,
@@ -13,34 +85,120 @@ impl Graph {
         Arc<Vec<PageEntry>>,
         HashMap<(PageKind, String), Vec<PageEntry>>,
     ) {
+        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
         let format = self.current_journal_format();
-        let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();
         let entries = list_graph_pages(self);
-        for entry in &entries {
-            claimants
-                .entry((entry.kind, tine_core::refs::page_key(&entry.name)))
-                .or_default()
-                .push(entry.clone());
-        }
-        for entries in claimants.values_mut() {
-            entries.sort_by(|a, b| {
-                compare_page_claimants(a, b, &format, self.current_config().file_name_format)
-            });
-        }
+        let claimants = page_claimants(self, &entries);
+        *self.find_entry_cache.write().unwrap() = Some((
+            gen,
+            FindEntryIndex {
+                entries: claimants.clone(),
+                // Reuse known claims, but a first miss must discover files
+                // that arrived after this published snapshot.
+                pages_loaded: false,
+                journals_loaded: false,
+            },
+        ));
         let list = Arc::new(dedup_journal_days(
             entries,
             &format,
             self.current_config().file_name_format,
         ));
-        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
         *self.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&list)));
         (list, claimants)
     }
 }
 
+/// The same claimant ordering for cold direct reads, journal open and snapshots.
+fn page_claimants(
+    graph: &Graph,
+    entries: &[PageEntry],
+) -> HashMap<(PageKind, String), Vec<PageEntry>> {
+    let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();
+    for entry in entries {
+        claimants
+            .entry((entry.kind, tine_core::refs::page_key(&entry.name)))
+            .or_default()
+            .push(entry.clone());
+    }
+    let format = graph.current_journal_format();
+    let name_format = graph.current_config().file_name_format;
+    for entries in claimants.values_mut() {
+        entries.sort_by(|a, b| compare_page_claimants(a, b, &format, name_format));
+    }
+    claimants
+}
+
 #[cfg(test)]
 mod cold_index_tests {
     use super::*;
+
+    #[test]
+    fn a_late_title_claimant_seen_by_path_replaces_the_cached_winner() {
+        let dir = std::env::temp_dir().join(format!("tine-late-title-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(dir.join("pages/Other.md"), "title:: Claimed\n- old owner\n").unwrap();
+        let graph = Graph::open(&dir);
+        graph.snapshot_name_index();
+        let arrived = dir.join("pages/Claimed.md");
+        fs::write(&arrived, "title:: Claimed\n- new preferred owner\n").unwrap();
+        // The direct page-read path observes the title before canonical lookup.
+        let entry = graph.entry_for_path(&arrived).unwrap();
+        assert_eq!(graph.find_entry(&entry.name, entry.kind).unwrap().path, arrived,
+            "I-12: a late title claimant observed by a direct read must use the ordinary winner order");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn journal_first_read_opens_no_ordinary_preambles_and_late_titles_resolve() {
+        let dir = std::env::temp_dir().join(format!("tine-journal-first-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(dir.join(".tine-test-pause-load"), "").unwrap();
+        fs::write(dir.join("journals/2026_09_29.md"), "- journal\n").unwrap();
+        fs::write(
+            dir.join("pages/Other.md"),
+            "title:: Claimed\n- title owner\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Claimed.md"),
+            "title:: Elsewhere\n- moved identity\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages/Org.org"), "#+title: Claimed\n* duplicate\n").unwrap();
+        GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
+        let (store, _, _) = crate::Store::open(&dir, Default::default()).unwrap();
+        let open_reads = GRAPH_PREAMBLE_READS.with(|reads| reads.replace(0));
+        let journal = store.journal_id(crate::Day(
+            tine_core::date::JournalDate {
+                year: 2026,
+                month: 9,
+                day: 29,
+            }
+            .ordinal_key(),
+        ));
+        assert_eq!(store.page(&journal).unwrap().doc.blocks[0].raw, "journal");
+        let feed_reads = GRAPH_PREAMBLE_READS.with(|reads| reads.get());
+        fs::remove_file(dir.join(".tine-test-pause-load")).unwrap();
+        let graph = store.whole_graph().unwrap();
+        let crate::Resolved::Existing { id, others } = graph.resolve("Claimed", false) else {
+            panic!("late title claimant missing")
+        };
+        assert_eq!(others.len(), 1);
+        assert_eq!(id.as_str(), "pages/Other.md");
+        assert_eq!(store.page(&id).unwrap().doc.name, "Claimed");
+        assert!(
+            matches!(graph.resolve("Elsewhere", false), crate::Resolved::Existing { id, .. } if id.as_str() == "pages/Claimed.md")
+        );
+        drop(graph);
+        store.close();
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(open_reads, 0, "I-12/E: Store::open must not open ordinary page preambles before journal paint; exemplar page_identity.rs");
+        assert_eq!(feed_reads, 0, "I-12/E: a journal-kind claimant lookup must not open ordinary page files; exemplar page_identity.rs");
+    }
 
     #[test]
     fn cold_name_snapshot_reads_each_page_preamble_once() {
@@ -72,6 +230,9 @@ mod cold_index_tests {
             8,
             "one preamble read per page"
         );
+        assert!(graph.find_entry("Name 1", PageKind::Page).is_some());
+        assert_eq!(GRAPH_PREAMBLE_READS.with(|reads| reads.get()), 8,
+            "I-12/E: direct reads reuse the snapshot's complete claimant index; exemplar page_identity.rs");
         let _ = fs::remove_dir_all(&dir);
     }
 }
@@ -222,7 +383,7 @@ pub(super) fn effective_page_name(path: &Path, stem: &str, name_fmt: FileNameFor
             }
             preamble.push_str(&line);
             match tine_core::model::preamble_read(&preamble, format) {
-                PreambleRead::Settled => break,
+                PreambleRead::Settled(title) => return title,
                 PreambleRead::More => {}
                 PreambleRead::Whole => {
                     reader.read_to_string(&mut preamble).ok()?;
@@ -236,6 +397,12 @@ pub(super) fn effective_page_name(path: &Path, stem: &str, name_fmt: FileNameFor
 }
 
 pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
+    list_graph_pages_kind(graph, None)
+}
+
+/// Kind selection precedes preamble reads. Journal identity depends on its
+/// date filename, so a cold journal lookup never needs ordinary page titles.
+pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
     #[cfg(test)]
     super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));
     let mut entries = Vec::new();
@@ -244,8 +411,16 @@ pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
     let name_format = graph.current_config().file_name_format;
     let journals = graph.journals_path();
     let config = graph.current_config();
-    walk_graph_page_files(root, &config, |path| {
-        if !graph_text_eligible(root, &path, &config) {
+    let start = if kind == Some(PageKind::Journal) {
+        &journals
+    } else {
+        root
+    };
+    if !graph_text_directory_scannable(root, start, &config) {
+        return entries;
+    }
+    walk_graph_page_files(root, start, &config, |path| {
+        if kind.is_some_and(|kind| (kind == PageKind::Journal) != path.starts_with(&journals)) {
             return;
         }
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
@@ -278,8 +453,13 @@ pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
     entries
 }
 
-fn walk_graph_page_files(root: &Path, config: &Config, mut visit: impl FnMut(PathBuf)) {
-    let mut pending = vec![root.to_path_buf()];
+fn walk_graph_page_files(
+    root: &Path,
+    start: &Path,
+    config: &Config,
+    mut visit: impl FnMut(PathBuf),
+) {
+    let mut pending = vec![start.to_path_buf()];
     while let Some(dir) = pending.pop() {
         #[cfg(feature = "test-faults")]
         crate::cost_counters::readdir();

@@ -101,6 +101,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Faster graph startup and first search** (og-P1). Journal-first reads avoid ordinary-page title discovery,
+  completed claimant discovery is reused by direct reads, and a search without page results skips page-property hydration.
+  Startup graph loading begins in the background while the frontend starts; open failures still reach the Welcome error card.
+
 - **Delayed actions retain their original targets and newer input** (OG-K3).
   Quick Capture refuses delivery after its destination graph changes and keeps
   scratch/title edits made while saving. Page-menu deletion retains its file

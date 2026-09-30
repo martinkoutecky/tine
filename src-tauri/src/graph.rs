@@ -122,6 +122,67 @@ struct LoadedGraph {
     meta: GraphMeta,
 }
 
+/// One launch-owned result, consumed under `graph_load` before binding a slot.
+/// Failed opens remain command errors, never setup errors. Dropping an unused
+/// result drops its Store and cancels its worker; no thread can bind a window.
+#[derive(Default)]
+pub(crate) struct StartupGraph(
+    std::sync::Mutex<
+        Option<(
+            std::path::PathBuf,
+            std::thread::JoinHandle<Result<LoadedGraph, String>>,
+        )>,
+    >,
+);
+
+impl StartupGraph {
+    fn begin(
+        &self,
+        root: std::path::PathBuf,
+        approved: Option<std::path::PathBuf>,
+        watch: tine_store::WatchMode,
+    ) {
+        let requested = root.clone();
+        let worker = std::thread::Builder::new()
+            .name("tine-startup-open".into())
+            .spawn(move || {
+                open_graph_for_load(&requested.display().to_string(), approved.as_deref(), watch)
+            });
+        match worker {
+            Ok(worker) => *self.0.lock().unwrap() = Some((root, worker)),
+            Err(_) => crate::debug::diag("startup-open worker unavailable; load command will open"),
+        }
+    }
+
+    fn take(&self, root: &Path) -> Option<Result<LoadedGraph, String>> {
+        let (requested, worker) = self.0.lock().unwrap().take()?;
+        if requested != root {
+            return None;
+        }
+        Some(
+            worker
+                .join()
+                .unwrap_or_else(|_| Err("startup graph open panicked".into())),
+        )
+    }
+}
+
+/// Start read-only Store opening/warming while JS boots; the webview still owns
+/// activation and error presentation through its ordinary load command (I-22).
+pub(crate) fn prepare_startup_graph(app: &tauri::AppHandle) {
+    let Some(root) = startup_graph_path(app.clone()) else {
+        return;
+    };
+    let Ok(root) = canonical_graph_root(&root) else {
+        return;
+    };
+    app.state::<StartupGraph>().begin(
+        root.clone(),
+        approved_external_assets(app, &root),
+        crate::watcher::watch_mode(app),
+    );
+}
+
 /// Open a graph without writing to it. Title-named journal files are proposed
 /// for renaming in Settings, never renamed here (master e6f9b6e1ceae): a
 /// rename at open lands as an unrequested change in a synced or git-kept graph.
@@ -247,11 +308,14 @@ pub(crate) fn load_graph_for_label(
     }
     let root = root_key.display().to_string();
     let approved_assets = approved_external_assets(app, &root_key);
-    let LoadedGraph { store, meta } = open_graph_for_load(
-        &root,
-        approved_assets.as_deref(),
-        crate::watcher::watch_mode(app),
-    )?;
+    let LoadedGraph { store, meta } = match app.state::<StartupGraph>().take(&root_key) {
+        Some(result) => result,
+        None => open_graph_for_load(
+            &root,
+            approved_assets.as_deref(),
+            crate::watcher::watch_mode(app),
+        ),
+    }?;
     let slot = Arc::new(GraphSlot::new(store, root_key));
     let warm_generation = begin_warm_cache(&slot);
     state
@@ -540,6 +604,38 @@ pub(crate) fn warm_done(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn background_startup_result_is_owned_once_and_open_errors_reach_load() {
+        let dir = scratch("startup-owned-result");
+        let startup = StartupGraph::default();
+        startup.begin(dir.clone(), None, Default::default());
+        // Wait for completion before the webview requests its result: warming
+        // starts at setup rather than at the first load command.
+        while !startup.0.lock().unwrap().as_ref().unwrap().1.is_finished() {
+            std::thread::yield_now();
+        }
+        let loaded = startup.take(&dir).unwrap().unwrap();
+        assert_eq!(loaded.meta.root, dir.display().to_string());
+        assert!(
+            startup.take(&dir).is_none(),
+            "launch result has exactly one owner"
+        );
+        drop(loaded);
+        let missing = dir.join("missing");
+        startup.begin(missing.clone(), None, Default::default());
+        assert!(
+            startup.take(&missing).unwrap().is_err(),
+            "I-22: open errors reach the load command, never setup"
+        );
+        startup.begin(dir.clone(), None, Default::default());
+        assert!(
+            startup.take(&missing).is_none(),
+            "a changed launch target cannot consume the old graph"
+        );
+        assert!(startup.take(&dir).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     /// Master 39b88bd69 (GH #543): a launch warm that ended without being
     /// cancelled always sends its completion signal exactly once -- on success,
