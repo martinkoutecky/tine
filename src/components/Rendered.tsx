@@ -63,7 +63,7 @@ export function Rendered(props: {
     if (!timetrackingEnabled()) return null;
     const marker = facets().marker;
     if (marker !== "DONE" && marker !== "TODO" && marker !== "LATER") return null;
-    const info = logbookInfo(node().raw);
+    const info = logbookInfo(node().raw, fmt());
     return info.seconds > 0 ? info : null;
   };
   const readOnly = () => blockPageReadOnly(props.id);

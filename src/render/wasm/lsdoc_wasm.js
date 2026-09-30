@@ -79,16 +79,17 @@ export function logbook_clock_in(raw, is_org, with_seconds) {
 
 /**
  * @param {string} raw
+ * @param {boolean} is_org
  * @param {boolean} with_seconds
  * @returns {string}
  */
-export function logbook_clock_out(raw, with_seconds) {
+export function logbook_clock_out(raw, is_org, with_seconds) {
     let deferred2_0;
     let deferred2_1;
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.logbook_clock_out(ptr0, len0, with_seconds);
+        const ret = wasm.logbook_clock_out(ptr0, len0, is_org, with_seconds);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);
@@ -99,15 +100,16 @@ export function logbook_clock_out(raw, with_seconds) {
 
 /**
  * @param {string} raw
+ * @param {boolean} is_org
  * @returns {string}
  */
-export function logbook_info_json(raw) {
+export function logbook_info_json(raw, is_org) {
     let deferred2_0;
     let deferred2_1;
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.logbook_info_json(ptr0, len0);
+        const ret = wasm.logbook_info_json(ptr0, len0, is_org);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);

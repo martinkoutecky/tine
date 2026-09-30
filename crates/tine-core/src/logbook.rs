@@ -85,21 +85,32 @@ pub fn clock_in_at(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn clock_out(raw: &str, _format: LogbookFormat, with_seconds: bool) -> String {
-    clock_out_at(raw, with_seconds, TimestampParts::local_now())
+pub fn clock_out(raw: &str, format: LogbookFormat, with_seconds: bool) -> String {
+    clock_out_at(raw, format, with_seconds, TimestampParts::local_now())
 }
 
-pub fn clock_out_at(raw: &str, with_seconds: bool, now: TimestampParts) -> String {
-    let regions = crate::block_regions::parse(raw, false);
-    clock_out_with_regions(raw, with_seconds, now, &regions)
+pub fn clock_out_at(
+    raw: &str,
+    format: LogbookFormat,
+    with_seconds: bool,
+    now: TimestampParts,
+) -> String {
+    let regions = crate::block_regions::parse(raw, format == LogbookFormat::Org);
+    clock_out_with_regions(
+        raw,
+        format == LogbookFormat::Org,
+        with_seconds,
+        now,
+        &regions,
+    )
 }
 fn clock_out_with_regions(
     raw: &str,
+    is_org: bool,
     with_seconds: bool,
     now: TimestampParts,
     regions: &crate::block_regions::BlockRegions,
 ) -> String {
-    let mut lines: Vec<String> = raw.split('\n').map(str::to_string).collect();
     let Some(drawer) = regions
         .drawers
         .iter()
@@ -107,21 +118,11 @@ fn clock_out_with_regions(
     else {
         return raw.to_string();
     };
-    let start = raw[..drawer.range.0]
-        .bytes()
-        .filter(|b| *b == b'\n')
-        .count();
-    let end = raw[..drawer.close].bytes().filter(|b| *b == b'\n').count();
-    if end <= start + 1 {
+    let Some(row) = drawer.clocks.last().filter(|r| r.1 == drawer.close) else {
         return raw.to_string();
-    }
-    let idx = end - 1;
-    let clock_in_log = lines[idx].trim();
-    let row_start = lines[..idx]
-        .iter()
-        .map(|line| line.len() + 1)
-        .sum::<usize>();
-    if !drawer.clocks.last().is_some_and(|r| r.0 == row_start) || clock_in_log.contains("--") {
+    };
+    let clock_in_log = row.slice(raw).trim();
+    if clock_in_log.contains("--") {
         return raw.to_string();
     }
     let Some(clock_start) = open_clock_start(clock_in_log) else {
@@ -138,12 +139,15 @@ fn clock_out_with_regions(
         return raw.to_string();
     }
     let span = format_span(end_sec - start_sec, with_seconds);
-    let eol = if lines[idx].ends_with('\r') { "\r" } else { "" };
-    lines[idx] = format!(
-        "CLOCK: [{}]--[{}] =>  {}{}",
-        clock_start, clock_end, span, eol
-    );
-    lines.join("\n")
+    regions
+        .apply(
+            raw,
+            is_org,
+            crate::block_regions::Edit::ClockOut {
+                value: format!("CLOCK: [{}]--[{}] =>  {}", clock_start, clock_end, span),
+            },
+        )
+        .expect("CLOCK edit on parsed block")
 }
 
 pub fn apply_marker_transition_at(
@@ -202,7 +206,13 @@ pub fn apply_marker_transition_at(
     ) || (matches!(old_marker, Some("now") | Some("doing"))
         && new_marker == "done");
     if should_clock_out {
-        return clock_out_with_regions(raw, with_seconds, now, &regions);
+        return clock_out_with_regions(
+            raw,
+            format == LogbookFormat::Org,
+            with_seconds,
+            now,
+            &regions,
+        );
     }
     raw.to_string()
 }
@@ -227,13 +237,15 @@ pub fn apply_marker_transition(
     )
 }
 
-pub fn has_logbook_drawer(raw: &str) -> bool {
-    let lines: Vec<&str> = raw.split('\n').collect();
-    logbook_bounds(&lines).is_some()
+pub fn has_logbook_drawer(raw: &str, is_org: bool) -> bool {
+    crate::block_regions::parse(raw, is_org)
+        .drawers
+        .iter()
+        .any(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
 }
 
-pub fn clock_summary_seconds(raw: &str) -> u64 {
-    clock_lines(raw)
+pub fn clock_summary_seconds(raw: &str, is_org: bool) -> u64 {
+    clock_lines(raw, is_org)
         .into_iter()
         .filter_map(|line| {
             let span = line.split_once("=>")?.1.trim();
@@ -242,12 +254,12 @@ pub fn clock_summary_seconds(raw: &str) -> u64 {
         .sum()
 }
 
-pub fn clock_summary_compact(raw: &str) -> String {
-    format_compact_duration(clock_summary_seconds(raw))
+pub fn clock_summary_compact(raw: &str, is_org: bool) -> String {
+    format_compact_duration(clock_summary_seconds(raw, is_org))
 }
 
-pub fn clock_rows(raw: &str) -> Vec<ClockRow> {
-    clock_lines(raw)
+pub fn clock_rows(raw: &str, is_org: bool) -> Vec<ClockRow> {
+    clock_lines(raw, is_org)
         .into_iter()
         .filter_map(parse_clock_row)
         .collect()
@@ -255,8 +267,8 @@ pub fn clock_rows(raw: &str) -> Vec<ClockRow> {
 
 /// Clock rows and total duration from one parser-owned LOGBOOK projection.
 /// O(bytes in one block); one parse, no graph work.
-pub fn clock_info(raw: &str) -> (Vec<ClockRow>, u64) {
-    let rows = clock_rows(raw);
+pub fn clock_info(raw: &str, is_org: bool) -> (Vec<ClockRow>, u64) {
+    let rows = clock_rows(raw, is_org);
     let seconds = rows
         .iter()
         .filter_map(|r| r.span.as_deref().and_then(parse_span_seconds))
@@ -307,27 +319,8 @@ fn is_md_property_line(line: &str) -> bool {
     crate::property_line::parse_property_line(line).is_some()
 }
 
-fn logbook_bounds<T: AsRef<str>>(lines: &[T]) -> Option<(usize, usize)> {
-    let raw = lines
-        .iter()
-        .map(AsRef::as_ref)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let regions = crate::block_regions::parse(&raw, false);
-    let drawer = regions
-        .drawers
-        .iter()
-        .find(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))?;
-    let start = raw[..drawer.range.0]
-        .bytes()
-        .filter(|b| *b == b'\n')
-        .count();
-    let end = raw[..drawer.close].bytes().filter(|b| *b == b'\n').count();
-    Some((start, end))
-}
-
-fn clock_lines(raw: &str) -> Vec<&str> {
-    let regions = crate::block_regions::parse(raw, false);
+fn clock_lines(raw: &str, is_org: bool) -> Vec<&str> {
+    let regions = crate::block_regions::parse(raw, is_org);
     regions
         .drawers
         .iter()
@@ -535,7 +528,7 @@ mod tests {
             running,
             "TODO Ship logbook\nSCHEDULED: <2026-06-25 Thu>\nDEADLINE: <2026-06-26 Fri>\nowner:: martin\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00:00]\n:END:\nBody stays below"
         );
-        let closed = clock_out_at(&running, true, end);
+        let closed = clock_out_at(&running, LogbookFormat::Markdown, true, end);
         assert_eq!(
             closed,
             "TODO Ship logbook\nSCHEDULED: <2026-06-25 Thu>\nDEADLINE: <2026-06-26 Fri>\nowner:: martin\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00:00]--[2026-06-25 Thu 10:02:03] =>  01:02:03\n:END:\nBody stays below"
@@ -553,7 +546,7 @@ mod tests {
             "TODO Ship\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00]\n:END:"
         );
         assert_eq!(
-            clock_out_at(&running, false, end),
+            clock_out_at(&running, LogbookFormat::Markdown, false, end),
             "TODO Ship\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00]--[2026-06-25 Thu 09:31] =>  00:31\n:END:"
         );
     }
@@ -683,9 +676,9 @@ mod tests {
     #[test]
     fn clock_summary_trusts_stored_spans_and_formats_compactly() {
         let raw = "DONE Ship\n:LOGBOOK:\nCLOCK: [2026-06-25 Thu 09:00:00]--[2026-06-25 Thu 10:00:00] =>  00:05:00\nCLOCK: [2026-06-25 Thu 10:00:00]--[2026-06-25 Thu 11:00:00] =>  1:20\nCLOCK: [2026-06-25 Thu 12:00:00]--[2026-06-25 Thu 12:00:45] =>  00:00:45\n:END:";
-        assert_eq!(clock_summary_seconds(raw), 5 * 60 + 80 * 60 + 45);
-        assert_eq!(clock_summary_compact(raw), "1h25m45s");
-        let rows = clock_rows(raw);
+        assert_eq!(clock_summary_seconds(raw, false), 5 * 60 + 80 * 60 + 45);
+        assert_eq!(clock_summary_compact(raw, false), "1h25m45s");
+        let rows = clock_rows(raw, false);
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].kind, "CLOCK");
         assert_eq!(rows[0].span.as_deref(), Some("00:05:00"));

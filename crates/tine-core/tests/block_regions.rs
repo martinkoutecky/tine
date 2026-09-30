@@ -105,3 +105,43 @@ fn legacy_trailing_property_moves_to_the_head_without_touching_body() {
         .unwrap();
     assert_eq!(out, "Title\nold:: new\nbody");
 }
+
+#[test]
+fn glued_planning_edits_detach_and_preserve_body_suffixes() {
+    for org in [false, true] {
+        for nl in ["\n", "\r\n"] {
+            let raw =
+                format!("Task{nl}DEADLINE: <2026-07-07 Tue>tail{nl}DEADLINE: <2026-07-08 Wed>尾");
+            let regions = parse(&raw, org);
+            let changed = regions
+                .apply(
+                    &raw,
+                    org,
+                    Edit::Planning {
+                        which: "Deadline".into(),
+                        value: Some("<2026-07-30 Thu>".into()),
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                changed,
+                format!("Task{nl}DEADLINE: <2026-07-30 Thu>{nl}tail{nl}尾")
+            );
+            let removed = regions
+                .apply(
+                    &raw,
+                    org,
+                    Edit::Planning {
+                        which: "Deadline".into(),
+                        value: None,
+                    },
+                )
+                .unwrap();
+            assert_eq!(removed, format!("Task{nl}tail{nl}尾"));
+            let normalized = regions.apply(&raw, org, Edit::NormalizePlanning).unwrap();
+            assert_eq!(normalized, format!("Task{nl}DEADLINE: <2026-07-07 Tue>{nl}DEADLINE: <2026-07-08 Wed>{nl}tail{nl}尾"));
+            let inline = "Discuss DEADLINE: <2026-07-07 Tue>tail";
+            assert!(parse(inline, org).planning.is_empty());
+        }
+    }
+}

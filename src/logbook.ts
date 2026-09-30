@@ -44,9 +44,9 @@ export function applyMarkerTransition(
   }
 }
 
-export function logbookInfo(raw: string): LogbookInfo {
+export function logbookInfo(raw: string, format: Format): LogbookInfo {
   try {
-    const parsed = JSON.parse(logbook_info_json(raw)) as LogbookInfo;
+    const parsed = JSON.parse(logbook_info_json(raw, format === "org")) as LogbookInfo;
     return {
       seconds: Number(parsed.seconds) || 0,
       summary: parsed.summary || "0s",

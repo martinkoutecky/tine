@@ -24,8 +24,8 @@ interface MarkerTimeOptions {
 /** True if the block has a repeater on a SCHEDULED/DEADLINE line. A line of a
  *  code/src block is content, never the task's planning (C3 L14; the one answer
  *  is editor/literalLines.ts — its Markdown parse also recognizes `#+BEGIN_SRC`). */
-export function hasRepeater(raw: string): boolean {
-  return blockRegions(raw).planning.some(p => p.kind !== "Closed" && REPEATER.test(
+export function hasRepeater(raw: string, format: Format): boolean {
+  return blockRegions(raw, format).planning.some(p => p.kind !== "Closed" && REPEATER.test(
     raw.slice(utf8ByteToUtf16Offset(raw,p.timestamp[0]),utf8ByteToUtf16Offset(raw,p.timestamp[1]))));
 }
 
@@ -70,11 +70,11 @@ function advanceTimestamp(ts: string): string | null {
 
 /** Roll a repeating task forward: advance its dates and reset the marker to the
  *  workflow's open state. Returns the new raw, or null if not repeating. */
-export function rollRepeat(raw: string, workflow: Workflow): string | null {
-  if (!hasRepeater(raw)) return null;
+export function rollRepeat(raw: string, workflow: Workflow, format: Format): string | null {
+  if (!hasRepeater(raw, format)) return null;
   const open = workflow === "now" ? "LATER" : "TODO";
   let next = raw;
-  const entries = blockRegions(raw).planning.filter(p => p.kind !== "Closed").sort((a,b) => b.timestamp[0]-a.timestamp[0]);
+  const entries = blockRegions(raw, format).planning.filter(p => p.kind !== "Closed").sort((a,b) => b.timestamp[0]-a.timestamp[0]);
   for (const p of entries) {
     const start = utf8ByteToUtf16Offset(raw,p.timestamp[0]);
     const end = utf8ByteToUtf16Offset(raw,p.timestamp[1]);
@@ -116,7 +116,7 @@ export function toggleMarkerLabel(raw: string, time?: MarkerTimeOptions): string
   return time ? applyMarkerTransition(raw, next, time.format, time.enabled, time.withSeconds) : next;
 }
 
-export function toggleTaskDone(raw: string, workflow: Workflow, time?: MarkerTimeOptions): string | null {
+export function toggleTaskDone(raw: string, workflow: Workflow, format: Format, time?: MarkerTimeOptions): string | null {
   const cur = leadingMarker(raw);
   const state = taskCheckboxState(cur);
   if (state === null) return null;
@@ -127,7 +127,7 @@ export function toggleTaskDone(raw: string, workflow: Workflow, time?: MarkerTim
     return time ? applyMarkerTransition(raw, next, time.format, time.enabled, time.withSeconds) : next;
   }
   // OPEN → DONE (check). A repeater rolls forward instead of closing.
-  const rolled = rollRepeat(raw, workflow);
+  const rolled = rollRepeat(raw, workflow, format);
   if (rolled) return time ? applyMarkerTransition(raw, rolled, time.format, time.enabled, time.withSeconds) : rolled;
   const next = setMarker(raw, "DONE");
   return time ? applyMarkerTransition(raw, next, time.format, time.enabled, time.withSeconds) : next;
@@ -142,10 +142,10 @@ function markerPrefixEnd(raw: string): number {
 
 /** Cycle the marker, but if the step would mark a *repeating* task DONE, roll it
  *  forward instead. Returns the new raw + caret delta on the first line. */
-export function cycleMarkerSmart(raw: string, workflow: Workflow, time?: MarkerTimeOptions): { raw: string; delta: number } {
+export function cycleMarkerSmart(raw: string, workflow: Workflow, format: Format, time?: MarkerTimeOptions): { raw: string; delta: number } {
   const cur = leadingMarker(raw);
   if (nextMarker(cur, workflow) === "DONE") {
-    const rolled = rollRepeat(raw, workflow);
+    const rolled = rollRepeat(raw, workflow, format);
     if (rolled) {
       return {
         raw: time ? applyMarkerTransition(raw, rolled, time.format, time.enabled, time.withSeconds) : rolled,

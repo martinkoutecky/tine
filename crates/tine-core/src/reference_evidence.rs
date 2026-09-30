@@ -489,8 +489,8 @@ fn project_implicit_linkable_property(
     }
 }
 
-fn structural_property(key: &str, raw: &str) -> bool {
-    (key.eq_ignore_ascii_case("id") && refs::block_id(raw).is_some())
+fn structural_property(key: &str, raw: &str, is_org: bool) -> bool {
+    (key.eq_ignore_ascii_case("id") && refs::block_id(raw, is_org).is_some())
         || key.eq_ignore_ascii_case("collapsed")
         || key.to_ascii_lowercase().starts_with("logseq.")
 }
@@ -544,7 +544,7 @@ fn walk_blocks(
                         value_offset: offset,
                         value,
                     } = property;
-                    if structural_property(&key, raw) {
+                    if structural_property(&key, raw, is_org) {
                         projection
                             .withheld_ranges
                             .push(key_range.start..offset + value.len());

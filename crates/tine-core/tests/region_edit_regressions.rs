@@ -20,10 +20,59 @@ fn clock_out_keeps_literal_drawer() {
         minute: 0,
         second: 0,
     };
-    assert_eq!(logbook::clock_out_at(raw, false, now), raw);
+    assert_eq!(
+        logbook::clock_out_at(raw, LogbookFormat::Markdown, false, now),
+        raw
+    );
     let raw = "Task\n```\nSCHEDULED: <2026-09-29 Tue>\n```";
     let next = logbook::clock_in_at(raw, LogbookFormat::Markdown, false, now);
     assert!(next.contains("```\nSCHEDULED: <2026-09-29 Tue>\n```"));
+}
+
+#[test]
+fn published_identity_requires_the_block_format() {
+    let raw = "Target\n:PROPERTIES:\n:id: published-id\n:END:";
+    assert_eq!(
+        tine_core::refs::block_id(raw, true).as_deref(),
+        Some("published-id")
+    );
+    assert_eq!(tine_core::refs::block_id(raw, false), None);
+    let literal = "Target\n#+BEGIN_SRC text\n:PROPERTIES:\n:id: literal\n:END:\n#+END_SRC";
+    assert_eq!(tine_core::refs::block_id(literal, true), None);
+}
+
+#[test]
+fn clock_out_splices_only_the_accepted_row_with_its_line_endings() {
+    let now = TimestampParts {
+        year: 2026,
+        month: 9,
+        day: 30,
+        weekday: 3,
+        hour: 9,
+        minute: 5,
+        second: 0,
+    };
+    for format in [LogbookFormat::Markdown, LogbookFormat::Org] {
+        for nl in ["\n", "\r\n"] {
+            let raw = format!(
+                "Task{nl}:LOGBOOK:{nl}  CLOCK: [2026-09-30 Wed 09:00]  {nl}:END:{nl}tail{nl}"
+            );
+            let expected = raw.replace(
+                "CLOCK: [2026-09-30 Wed 09:00]",
+                "CLOCK: [2026-09-30 Wed 09:00]--[2026-09-30 Wed 09:05] =>  00:05",
+            );
+            let out = logbook::clock_out_at(&raw, format, false, now);
+            assert_eq!(out, expected);
+            assert_eq!(
+                logbook::clock_summary_seconds(&out, format == LogbookFormat::Org),
+                300
+            );
+            assert!(logbook::has_logbook_drawer(
+                &out,
+                format == LogbookFormat::Org
+            ));
+        }
+    }
 }
 
 #[test]

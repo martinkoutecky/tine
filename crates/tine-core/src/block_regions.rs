@@ -310,7 +310,9 @@ fn visit_inline(raw: &str, inline: &[Inline], out: &mut BlockRegions) {
             {
                 if let Some(r) = raw_range(raw, span) {
                     let line = whole_line(raw, r);
-                    if line.slice(raw).trim() == r.slice(raw).trim() {
+                    // The Timestamp owns the planning prefix. A glued suffix
+                    // remains body text; only whitespace may precede the token.
+                    if raw[line.0..r.0].trim().is_empty() {
                         out.planning.push(Planning {
                             kind: ts.clone(),
                             line,
@@ -351,6 +353,9 @@ pub enum Edit {
     NormalizePlanning,
     DrawerRow {
         name: String,
+        value: String,
+    },
+    ClockOut {
         value: String,
     },
 }
@@ -398,6 +403,13 @@ fn newline(raw: &str) -> &'static str {
     }
 }
 impl BlockRegions {
+    fn planning_removal(raw: &str, p: &Planning) -> Range {
+        if raw[p.timestamp.1..p.line.1].trim().is_empty() {
+            p.line
+        } else {
+            Range(p.line.0, p.timestamp.1)
+        }
+    }
     pub fn property(&self, key: &str) -> Option<&Property> {
         self.properties
             .iter()
@@ -405,6 +417,38 @@ impl BlockRegions {
     }
     pub fn literal_at(&self, at: usize) -> bool {
         self.literals.iter().any(|r| r.contains(at))
+    }
+    fn hoist_planning(&self, raw: &str, after: &str) -> String {
+        let mut entries: Vec<&Planning> = self
+            .planning
+            .iter()
+            .filter(|p| p.kind != "Closed")
+            .collect();
+        entries.sort_by_key(|p| if p.kind == "Scheduled" { 0 } else { 1 });
+        let at = self.title_end(raw);
+        if entries.is_empty() || entries.iter().any(|p| p.line.0 < at) {
+            return raw.to_string();
+        }
+        let mut text = entries
+            .iter()
+            .map(|p| p.timestamp.slice(raw))
+            .collect::<Vec<_>>()
+            .join(newline(raw));
+        if !after.is_empty() {
+            text.push_str(newline(raw));
+            text.push_str(after);
+        }
+        text.push_str(newline(raw));
+        let mut edits: Vec<_> = entries
+            .iter()
+            .map(|p| (Self::planning_removal(raw, p), String::new()))
+            .collect();
+        if let Some((_, replacement)) = edits.iter_mut().find(|(r, _)| r.0 == at) {
+            *replacement = text;
+        } else {
+            edits.push((Range(at, at), text));
+        }
+        splice(raw, edits)
     }
     fn title_end(&self, raw: &str) -> usize {
         // If the first thing is a literal container, insert after it, never into it.
@@ -531,10 +575,18 @@ impl BlockRegions {
                         .ok_or("Properties drawer has no parser-owned closer")?;
                     (close.0, lines)
                 } else {
-                    (
-                        self.head_end(raw),
-                        format!(":PROPERTIES:{}{lines}{}:END:", newline(raw), newline(raw)),
-                    )
+                    let at = self.head_end(raw);
+                    let text = format!(":PROPERTIES:{}{lines}{}:END:", newline(raw), newline(raw));
+                    // OG places accepted planning above a new drawer even when
+                    // authored below body content. Literal lookalikes are absent.
+                    if self
+                        .planning
+                        .iter()
+                        .any(|p| p.kind != "Closed" && p.line.0 >= at)
+                    {
+                        return Ok(self.hoist_planning(raw, &text));
+                    }
+                    (at, text)
                 }
             } else {
                 let at = if add.iter().any(|(key, _)| {
@@ -559,7 +611,9 @@ impl BlockRegions {
                 ""
             };
             let suffix = if at < raw.len() { newline(raw) } else { "" };
-            edits.push((Range(at, at), format!("{prefix}{text}{suffix}")));
+            if !text.is_empty() {
+                edits.push((Range(at, at), format!("{prefix}{text}{suffix}")));
+            }
         }
         Ok(splice(raw, edits))
     }
@@ -595,6 +649,7 @@ impl BlockRegions {
             Edit::Visible => (vec![], true, None, None),
             Edit::Planning { which, .. } => (vec![], false, Some(which.clone()), None),
             Edit::DrawerRow { name, .. } => (vec![], false, None, Some(name.clone())),
+            Edit::ClockOut { .. } => (vec![], false, None, Some("LOGBOOK".into())),
             Edit::NormalizePlanning => (vec![], false, None, None),
         };
         let out = match edit {
@@ -631,8 +686,19 @@ impl BlockRegions {
                     }
                     let text = format!("{}: {value}", which.to_ascii_uppercase());
                     if let Some(first) = matches.first() {
+                        let suffix = &raw[first.timestamp.1..first.line.1];
+                        let text = if suffix.trim().is_empty() {
+                            text
+                        } else {
+                            format!("{text}{}", newline(raw))
+                        };
                         let mut edits = vec![(first.timestamp, text)];
-                        edits.extend(matches.iter().skip(1).map(|p| (p.line, String::new())));
+                        edits.extend(
+                            matches
+                                .iter()
+                                .skip(1)
+                                .map(|p| (Self::planning_removal(raw, p), String::new())),
+                        );
                         splice(raw, edits)
                     } else {
                         self.inserted(raw, self.title_end(raw), &text)
@@ -640,7 +706,10 @@ impl BlockRegions {
                 } else {
                     splice(
                         raw,
-                        matches.iter().map(|p| (p.line, String::new())).collect(),
+                        matches
+                            .iter()
+                            .map(|p| (Self::planning_removal(raw, p), String::new()))
+                            .collect(),
                     )
                 }
             }
@@ -669,30 +738,9 @@ impl BlockRegions {
                 if self.planning.is_empty() || self.literal_at(0) {
                     raw.to_string()
                 } else {
-                    let mut entries: Vec<&Planning> = self
-                        .planning
-                        .iter()
-                        .filter(|p| p.kind != "Closed")
-                        .collect();
-                    entries.sort_by_key(|p| if p.kind == "Scheduled" { 0 } else { 1 });
-                    let at = self.title_end(raw);
-                    if entries.iter().any(|p| p.line.0 < at) {
-                        raw.to_string()
-                    } else {
-                        let text = entries
-                            .iter()
-                            .map(|p| p.line.slice(raw).trim_end_matches(['\r', '\n']))
-                            .collect::<Vec<_>>()
-                            .join(newline(raw));
-                        let mut edits: Vec<_> =
-                            entries.iter().map(|p| (p.line, String::new())).collect();
-                        if let Some((_, replacement)) = edits.iter_mut().find(|(r, _)| r.0 == at) {
-                            *replacement = format!("{text}{}", newline(raw));
-                        } else {
-                            edits.push((Range(at, at), format!("{text}{}", newline(raw))));
-                        }
-                        splice(raw, edits).trim_end_matches('\n').to_string()
-                    }
+                    self.hoist_planning(raw, "")
+                        .trim_end_matches('\n')
+                        .to_string()
                 }
             }
             Edit::DrawerRow { name, value } => {
@@ -717,6 +765,20 @@ impl BlockRegions {
                     )
                 }
             }
+            Edit::ClockOut { value } => {
+                if value.contains(['\n', '\r']) {
+                    return Err("Invalid clock row".into());
+                }
+                let row = self
+                    .drawers
+                    .iter()
+                    .find(|d| d.name.eq_ignore_ascii_case("LOGBOOK"))
+                    .and_then(|d| d.clocks.last());
+                row.map_or_else(
+                    || raw.to_string(),
+                    |r| splice(raw, vec![(trimmed_range(raw, *r), value)]),
+                )
+            }
         };
         #[cfg(debug_assertions)]
         if out != raw {
@@ -724,6 +786,10 @@ impl BlockRegions {
             debug_assert!(
                 !after.quarantined,
                 "I-2: edited region shape must remain parseable"
+            );
+            debug_assert_eq!(
+                self.header, after.header,
+                "I-4: structural edits preserve the parsed header"
             );
             let properties = |r: &BlockRegions| {
                 r.properties

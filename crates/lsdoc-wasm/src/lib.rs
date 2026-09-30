@@ -72,8 +72,8 @@ pub fn logbook_clock_in(raw: &str, is_org: bool, with_seconds: bool) -> String {
 }
 
 #[wasm_bindgen]
-pub fn logbook_clock_out(raw: &str, with_seconds: bool) -> String {
-    logbook::clock_out_at(raw, with_seconds, now_parts())
+pub fn logbook_clock_out(raw: &str, is_org: bool, with_seconds: bool) -> String {
+    logbook::clock_out_at(raw, logbook_format(is_org), with_seconds, now_parts())
 }
 
 #[wasm_bindgen]
@@ -99,8 +99,8 @@ pub fn logbook_apply_marker_transition(
 }
 
 #[wasm_bindgen]
-pub fn logbook_info_json(raw: &str) -> String {
-    let (rows, seconds) = logbook::clock_info(raw);
+pub fn logbook_info_json(raw: &str, is_org: bool) -> String {
+    let (rows, seconds) = logbook::clock_info(raw, is_org);
     let rows = rows
         .into_iter()
         .map(|r| {

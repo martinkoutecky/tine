@@ -89,11 +89,11 @@ describe("property and id writers leave code bytes alone (C3 L13)", () => {
 describe("planning, repeater and priority edits leave code bytes alone (C3 L10/L14/L16)", () => {
   it("a repeater roll advances only the real planning line", () => {
     const code = "```\nSCHEDULED: <2026-01-01 Thu +1d>\n```";
-    expect(rollRepeat(`TODO x\nSCHEDULED: <2026-01-01 Thu +1d>\n${code}`, "todo")).toBe(
+    expect(rollRepeat(`TODO x\nSCHEDULED: <2026-01-01 Thu +1d>\n${code}`, "todo", "md")).toBe(
       `TODO x\nSCHEDULED: <2026-01-02 Fri +1d>\n${code}`
     );
     // A repeater only inside code does not make the task repeating.
-    expect(toggleTaskDone(`TODO x\n${code}`, "todo")).toBe(`DONE x\n${code}`);
+    expect(toggleTaskDone(`TODO x\n${code}`, "todo", "md")).toBe(`DONE x\n${code}`);
   });
 
   it("planning normalization never moves a line into a leading code fence", () => {

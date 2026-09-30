@@ -7,9 +7,9 @@ export function logbook_apply_marker_transition(raw: string, is_org: boolean, ol
 
 export function logbook_clock_in(raw: string, is_org: boolean, with_seconds: boolean): string;
 
-export function logbook_clock_out(raw: string, with_seconds: boolean): string;
+export function logbook_clock_out(raw: string, is_org: boolean, with_seconds: boolean): string;
 
-export function logbook_info_json(raw: string): string;
+export function logbook_info_json(raw: string, is_org: boolean): string;
 
 /**
  * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
@@ -63,8 +63,8 @@ export interface InitOutput {
     readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly logbook_clock_out: (a: number, b: number, c: number) => [number, number];
-    readonly logbook_info_json: (a: number, b: number) => [number, number];
+    readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly logbook_info_json: (a: number, b: number, c: number) => [number, number];
     readonly lsdoc_tag: () => [number, number];
     readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];

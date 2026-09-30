@@ -41,7 +41,9 @@ it.each(["prose","code"])("OG-D1 cost: 200 %s keystrokes on a 2k-block page",(su
     ta.setSelectionRange(ta.value.length,ta.value.length);
     for(let i=0;i<200;i++) type(ta,"x");
     console.info(`OG-D1 typing ${surface}: ${JSON.stringify(w.__tineParseStats)}`);
-    expect(w.__tineParseStats.misses).toBe(0);
+    // D1b decision 3: the existing facet/render path parses every changed raw.
+    // The edit door and typography must add ZERO parses to its 200 cold parses.
+    expect(w.__tineParseStats.misses).toBe(200);
   } finally {dispose();w.__tineBench=false;}
 });
 

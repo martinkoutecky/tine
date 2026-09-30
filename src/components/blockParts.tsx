@@ -27,7 +27,7 @@ export function toggleBlockMarkerLabel(id: string) {
 // Toggle the task checkbox (OG check/uncheck): open → DONE (rolling a repeater
 // forward instead), DONE → the workflow's open marker. Used by the block checkbox.
 export function toggleBlockCheckbox(id: string) {
-  const raw = toggleTaskDone(docNode(id).raw, workflow(), {
+  const raw = toggleTaskDone(docNode(id).raw, workflow(), formatForBlockId(id), {
     format: formatForBlockId(id),
     enabled: timetrackingEnabled(),
     withSeconds: logbookWithSecondSupport(),

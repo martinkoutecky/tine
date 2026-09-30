@@ -106,8 +106,8 @@ fn tag_boundary(raw: &str, i: usize) -> bool {
 // with `publish.rs`), and parser-owned literal masks.
 
 /// A block's `id::` property value (its uuid), if any.
-pub fn block_id(raw: &str) -> Option<String> {
-    crate::block_regions::parse(raw, false)
+pub fn block_id(raw: &str, is_org: bool) -> Option<String> {
+    crate::block_regions::parse(raw, is_org)
         .id
         .map(|p| p.value.trim().to_string())
 }
@@ -442,11 +442,11 @@ mod tests {
     #[test]
     fn block_id_reads_id_property() {
         assert_eq!(
-            block_id("text\nid:: 1234-abcd"),
+            block_id("text\nid:: 1234-abcd", false),
             Some("1234-abcd".to_string())
         );
-        assert_eq!(block_id("ID:: Xyz"), Some("Xyz".to_string())); // case-insensitive key
-        assert_eq!(block_id("no props here"), None);
+        assert_eq!(block_id("ID:: Xyz", false), Some("Xyz".to_string())); // case-insensitive key
+        assert_eq!(block_id("no props here", false), None);
     }
 
     #[test]
