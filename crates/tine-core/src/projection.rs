@@ -115,6 +115,7 @@ pub fn page_dto_document(page: &PageDto, is_org: bool) -> doc::Document {
 pub fn block_to_dto(b: &DocBlock) -> BlockDto {
     BlockDto {
         id: block_runtime_id(b),
+        has_id: Some(b.projection().regions.id.is_some()),
         raw: b.raw.clone(),
         collapsed: b.collapsed(),
         children: b.children.iter().map(block_to_dto).collect(),
@@ -141,6 +142,7 @@ pub fn block_to_dto(b: &DocBlock) -> BlockDto {
 pub fn block_to_shallow_dto(b: &DocBlock) -> BlockDto {
     BlockDto {
         id: block_runtime_id(b),
+        has_id: Some(b.projection().regions.id.is_some()),
         raw: b.raw.clone(),
         collapsed: b.collapsed(),
         children: Vec::new(),

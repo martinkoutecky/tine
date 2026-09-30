@@ -40,3 +40,78 @@ fn region_storage_does_not_change_document_serialization() {
     let decoded: Document = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(decoded, document);
 }
+
+#[test]
+fn wire_identity_presence_comes_from_the_existing_parser_projection() {
+    for (raw, org, has_id) in [
+        ("plain", false, false),
+        ("body\nid:: authored", false, true),
+        ("```\nid:: literal\n```", false, false),
+        ("body\n:PROPERTIES:\n:ID: authored\n:END:", true, true),
+        (
+            "#+BEGIN_SRC\n:PROPERTIES:\n:ID: literal\n:END:\n#+END_SRC",
+            true,
+            false,
+        ),
+    ] {
+        let mut block = DocBlock::new(raw);
+        block.set_org(org);
+        block.uuid = "owned-fixture".into();
+        assert_eq!(block.projection().regions.id.is_some(), has_id);
+        for dto in [
+            tine_core::projection::block_to_dto(&block),
+            tine_core::projection::block_to_shallow_dto(&block),
+        ] {
+            assert_eq!(serde_json::to_value(dto).unwrap()["has_id"], has_id,
+                "I-12/I-25: full and shallow DTOs ship parser-owned presence; exemplar projection.rs");
+        }
+    }
+}
+
+#[test]
+fn incoming_identity_presence_cannot_replace_raw_in_the_save_projection() {
+    for (raw, org, expected) in [
+        ("plain", false, None),
+        ("body\nid:: authored", false, Some("authored")),
+        (
+            "body\n:PROPERTIES:\n:ID: authored\n:END:",
+            true,
+            Some("authored"),
+        ),
+    ] {
+        for has_id in [serde_json::Value::Null, false.into(), true.into()] {
+            let dto: tine_core::model::BlockDto = serde_json::from_value(serde_json::json!({
+                "id": "runtime", "raw": raw, "has_id": has_id
+            }))
+            .unwrap();
+            let block = tine_core::projection::dto_block_to_doc(&dto, org);
+            assert_eq!(
+                block
+                    .projection()
+                    .regions
+                    .id
+                    .as_ref()
+                    .map(|id| id.value.as_str()),
+                expected
+            );
+            assert_eq!(block.raw(), raw);
+        }
+    }
+}
+
+#[test]
+fn unprojected_drafts_leave_identity_presence_unknown_and_off_the_wire() {
+    let dto: tine_core::model::BlockDto = serde_json::from_value(serde_json::json!({
+        "id": "runtime", "raw": "body\nid:: authored"
+    }))
+    .unwrap();
+    assert_eq!(dto.has_id, None);
+    assert!(serde_json::to_value(dto).unwrap().get("has_id").is_none());
+}
+
+#[test]
+fn identity_wire_facts_use_the_shared_projection_answerer() {
+    let source = include_str!("../src/projection.rs");
+    assert_eq!(source.matches("has_id: Some(b.projection().regions.id.is_some())").count(), 2,
+        "I-12/I-25: both DTO constructors reuse cached parser regions; exemplar projection.rs::block_to_dto");
+}

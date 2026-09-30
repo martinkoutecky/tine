@@ -522,6 +522,11 @@ pub struct BlockDto {
     /// identity from the physical page and structural sibling-index path, not
     /// this field or the raw text.
     pub id: String,
+    /// Parser-owned presence of an authored block id; omitted for unprojected drafts.
+    /// Read-only wire fact: saves derive identity from raw, never this field.
+    /// Unit cost: 14–15 compact JSON bytes per projected block; no persisted change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_id: Option<bool>,
     /// Raw block text, including properties. Page saves serialize this body;
     /// derived facets and `breadcrumb` do not add text. The `page_property`
     /// flag does not suppress serialization of this raw body.
