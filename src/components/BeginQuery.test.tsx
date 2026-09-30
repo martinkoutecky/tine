@@ -202,3 +202,13 @@ describe("terminated whole-block BEGIN_QUERY", () => {
     }
   });
 });
+
+it("shares decoded titles, discards and input refusals with native export", () => {
+  const query = '[:find (pull ?b [*]) :where (task ?b "TODO")]';
+  const inspect = (payload: string) => inspectBeginQuery(`#+BEGIN_QUERY\n${payload}\n#+END_QUERY`, "md");
+  expect(inspect(`{#_ :ignored :title "Line\\nTwo\\t\\u03bb" :query ${query} :inputs [:current-page]}`)).toEqual({
+    kind: "supported", query: `${query} :inputs [:current-page]`, title: "Line\nTwo\tλ",
+  });
+  expect(inspect(`{:query ${query} :inputs nope}`)).toEqual({ kind: "unsupported", reason: "expected :inputs to be a vector" });
+  expect(inspect(`{#_ [:title "hidden"] :query ${query}}`)).toEqual({ kind: "supported", query });
+});

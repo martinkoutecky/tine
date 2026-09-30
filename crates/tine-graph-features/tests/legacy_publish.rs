@@ -603,6 +603,85 @@ fn publish_begin_query_renders_authored_title_and_results() {
 }
 
 #[test]
+fn publish_begin_query_preserves_decoded_title_inputs_and_discards() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("pages")).unwrap();
+    fs::create_dir_all(dir.path().join("logseq")).unwrap();
+    fs::write(
+        dir.path().join("logseq/config.edn"),
+        "{:publishing/all-pages-public? true}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("pages/Tasks.md"),
+        "- TODO BEGIN_QUERY_PUBLIC_RESULT [[Dashboard]]\n- TODO OTHER_PAGE_RESULT [[Elsewhere]]\n",
+    )
+    .unwrap();
+    for (payload, expected_title, supported, excludes_other) in [
+        (
+            r#"{:title "Line\nTwo" :query [:find (pull ?b [*]) :where (task ?b "TODO")]}"#,
+            "Line\nTwo",
+            true,
+            false,
+        ),
+        (
+            r#"{#_ [:title "discarded"] :title "Kept" :query [:find (pull ?b [*]) :where (task ?b "TODO")]}"#,
+            "Kept",
+            true,
+            false,
+        ),
+        (
+            r#"{:title "Inputs" :query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p]] :inputs [:current-page]}"#,
+            "Inputs",
+            true,
+            true,
+        ),
+        (
+            r#"{:title "Must not run" :query [:find (pull ?b [*]) :where (task ?b "TODO")] :inputs nope}"#,
+            "",
+            false,
+            false,
+        ),
+    ] {
+        fs::write(
+            dir.path().join("pages/Dashboard.md"),
+            format!("- #+BEGIN_QUERY\n  {payload}\n  #+END_QUERY\n"),
+        )
+        .unwrap();
+        let graph = Store::open(dir.path(), Default::default()).unwrap().0;
+        let (outdir, _) = publish_graph(&graph).unwrap();
+        let dashboard =
+            fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
+        if supported {
+            assert!(
+                dashboard.contains(&format!("class=\"query-head\">{expected_title}")),
+                "{dashboard}"
+            );
+            assert!(
+                dashboard.contains("BEGIN_QUERY_PUBLIC_RESULT"),
+                "{dashboard}"
+            );
+            assert!(
+                !dashboard.contains("Unsupported BEGIN_QUERY"),
+                "{dashboard}"
+            );
+            if excludes_other {
+                assert!(!dashboard.contains("OTHER_PAGE_RESULT"), "{dashboard}");
+            }
+        } else {
+            assert!(dashboard.contains("Unsupported BEGIN_QUERY"), "{dashboard}");
+            assert!(
+                !dashboard.contains("BEGIN_QUERY_PUBLIC_RESULT"),
+                "{dashboard}"
+            );
+            assert!(!dashboard.contains("Must not run"), "{dashboard}");
+        }
+        assert!(!dashboard.contains("#+BEGIN_QUERY"), "{dashboard}");
+        assert!(!dashboard.contains("discarded"), "{dashboard}");
+    }
+}
+
+#[test]
 fn publish_begin_query_reports_private_rows_without_leaking_them() {
     let dir = std::env::temp_dir().join(format!(
         "tine-publish-begin-query-private-{}",
