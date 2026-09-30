@@ -32,7 +32,7 @@ export const __livRefGroupInternals = { pruneRuns: 0 };
 // Each block is the same component the main view uses, so editing a result edits
 // the real block and saves to its page. Keyed by uuid so a reactive refresh
 // reuses existing rows and never yanks the caret out of a block being edited.
-export function LiveRefGroup(props: {
+interface LiveRefGroupProps {
   page: string;
   kind: PageKind;
   path?: string;
@@ -43,12 +43,10 @@ export function LiveRefGroup(props: {
   showBreadcrumb?: boolean;
   surface: "ref" | "query" | "embed";
   evidence?: ReferenceBlockEvidence[];
-}): JSX.Element {
-  const linkDepth = useContext(LinkDepthContext);
+}
+
+export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
   const [near, setNear] = createSignal(false);
-  const readScope = {};
-  let alive = true;
-  onCleanup(() => { alive = false; });
   let el: HTMLDivElement | undefined;
   onMount(() => {
     if (!el) return;
@@ -57,9 +55,26 @@ export function LiveRefGroup(props: {
     onCleanup(() => unobserveNear(node));
   });
 
+  return (
+    <div ref={el} class="live-ref-group"
+      style={!near() ? { "min-height": `${Math.max(1, props.blocks.length) * 1.9}em` } : undefined}>
+      <Show when={near()}><MountedRefGroup {...props} /></Show>
+    </div>
+  );
+}
+
+// Offscreen groups own only their spacer and observation. Their row maps,
+// resources and local disclosure state are created together on first approach.
+// The mounted child keeps the existing render-once lifecycle and keyed rows.
+function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
+  const linkDepth = useContext(LinkDepthContext);
+  const readScope = {};
+  let alive = true;
+  onCleanup(() => { alive = false; });
+
   // Load the source page only once the group is near the viewport.
   const [readyResource] = createResource(
-    () => (near() ? { p: props.page, k: props.kind, path: props.path } : null),
+    () => ({ p: props.page, k: props.kind, path: props.path }),
     async ({ p, k, path }) => {
       const occupied = pageByName(p);
       if (occupied) return occupied.kind === k && (!path || occupied.id === path);
@@ -237,13 +252,6 @@ export function LiveRefGroup(props: {
   });
   onCleanup(() => initialCollapsed.clear());
   return (
-    <div
-      ref={el}
-      class="live-ref-group"
-      // Reserve approximate height while unmounted so the scrollbar stays sane.
-      style={!near() ? { "min-height": `${Math.max(1, props.blocks.length) * 1.9}em` } : undefined}
-    >
-      <Show when={near()}>
         <CollapseSurfaceContext.Provider value={collapseSurface}>
         <SurfaceContext.Provider value={surface}>
         {/* GH #415: Up from the first row of an embed's ROOT row exits the embed
@@ -322,7 +330,5 @@ export function LiveRefGroup(props: {
         </EmbedNavExitContext.Provider>
         </SurfaceContext.Provider>
         </CollapseSurfaceContext.Provider>
-      </Show>
-    </div>
   );
 }

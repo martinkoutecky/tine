@@ -2,6 +2,13 @@
 
 use super::*;
 
+// File ids are slash-separated, already validated lexical paths. Test the
+// component boundary without allocating a directory prefix on every read.
+fn in_directory(path: &str, directory: &str) -> bool {
+    path.strip_prefix(directory)
+        .is_some_and(|tail| tail.starts_with('/'))
+}
+
 impl Store {
     /// On a case-insensitive volume, an old route may reach a file through
     /// another case spelling. Canonicalization reveals the disk spelling;
@@ -29,13 +36,10 @@ impl Store {
     /// `read()` with their `FileId` to inspect raw conflict-copy bytes.
     /// No disk read or wait; cost O(path components).
     pub fn as_page(&self, file: &FileId) -> Option<PageId> {
-        self.validate_file(file).ok()?;
+        let config = self.graph.current_config();
+        self.validate_file_with_config(file, &config).ok()?;
         let path = file.as_str();
-        if !crate::model::graph_text_eligible(
-            &self.graph.root,
-            &self.graph.root.join(path),
-            &self.graph.current_config(),
-        ) {
+        if !crate::model::graph_text_relative_eligible(path, &config) {
             return None;
         }
         Some(PageId::from(path))
@@ -64,6 +68,14 @@ impl Store {
     }
 
     pub(crate) fn validate_file(&self, file: &FileId) -> Result<(), StoreError> {
+        self.validate_file_with_config(file, &self.graph.current_config())
+    }
+
+    fn validate_file_with_config(
+        &self,
+        file: &FileId,
+        config: &tine_core::config::Config,
+    ) -> Result<(), StoreError> {
         let path = file.as_str();
         if path.is_empty()
             || path.starts_with('/')
@@ -78,19 +90,15 @@ impl Store {
         // graph-text exclusion used by discovery and direct page reads.
         if crate::file_kind::is_graph_text_path(std::path::Path::new(path))
             && !path.starts_with("logseq/.tine-trash/")
-            && crate::model::configured_hidden(path, &self.graph.current_config())
+            && crate::model::configured_hidden(path, config)
         {
             return Err(StoreError::InvalidTarget(path.to_owned()));
         }
-        if !path.starts_with(&format!("{}/", self.graph.current_config().pages_dir))
-            && !path.starts_with(&format!("{}/", self.graph.current_config().journals_dir))
+        if !in_directory(path, &config.pages_dir)
+            && !in_directory(path, &config.journals_dir)
             && !path.starts_with("assets/")
             && !path.starts_with("logseq/")
-            && !crate::model::graph_text_eligible(
-                &self.graph.root,
-                &self.graph.root.join(path),
-                &self.graph.current_config(),
-            )
+            && !crate::model::graph_text_relative_eligible(path, config)
         {
             return Err(StoreError::InvalidTarget(path.to_owned()));
         }
@@ -101,15 +109,11 @@ impl Store {
         self.validate_file(file)?;
         let path = file.as_str();
         let config = self.graph.current_config();
-        let area = if path.starts_with(&format!("{}/", config.pages_dir)) {
+        let area = if in_directory(path, &config.pages_dir) {
             config.pages_dir.as_str()
-        } else if path.starts_with(&format!("{}/", config.journals_dir)) {
+        } else if in_directory(path, &config.journals_dir) {
             config.journals_dir.as_str()
-        } else if crate::model::graph_text_eligible(
-            &self.graph.root,
-            &self.graph.root.join(path),
-            &self.graph.current_config(),
-        ) {
+        } else if crate::model::graph_text_relative_eligible(path, &config) {
             return Ok(self.graph.root.clone());
         } else {
             path.split('/').next().unwrap_or_default()
