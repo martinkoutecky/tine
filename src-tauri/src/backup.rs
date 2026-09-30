@@ -63,15 +63,37 @@ fn launch_failure_token(outcome: &BackupOutcome) -> Option<String> {
 
 pub(crate) fn report_launch_outcome(outcome: &BackupOutcome) {
     if let Some(token) = launch_failure_token(outcome) {
+        eprintln!("[tine] {token}");
         crate::debug::diag_private("backup-failed", token);
     }
 }
+// The event carries only fixed phase/kind and the binding that owns the failure.
+// A detached backup must not show feedback in a replacement graph window.
+fn report_launch_failure(app: &tauri::AppHandle, slot: &GraphSlot, outcome: &BackupOutcome) {
+    use tauri::Emitter;
+    report_launch_outcome(outcome);
+    if let Some(failure) = launch_failure_token(outcome) {
+        if let Err(error) = app.emit(
+            "backup-failed",
+            serde_json::json!({
+                "bindingGeneration": slot.binding_generation, "failure": failure
+            }),
+        ) {
+            crate::debug::diag_private("backup-feedback-failed", error.to_string());
+        }
+    }
+}
+
 #[cfg(test)]
 const ASSET_RESTORE_RECOVERY_DIR: &str = ".tine-restore-recovery";
 
 pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
     let Ok(source) = BackupSource::from_store(&slot.store, &slot.root_key) else {
-        report_launch_outcome(&BackupOutcome::failed(0, "source", ErrorKind::Other));
+        report_launch_failure(
+            &app,
+            &slot,
+            &BackupOutcome::failed(0, "source", ErrorKind::Other),
+        );
         return;
     };
     std::thread::spawn(move || {
@@ -96,7 +118,7 @@ pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
             slot.background_cancelled.load(Ordering::Acquire)
         });
         if !slot.background_cancelled.load(Ordering::Acquire) {
-            report_launch_outcome(&outcome);
+            report_launch_failure(&app, &slot, &outcome);
         }
     });
 }
@@ -121,9 +143,13 @@ pub(crate) fn snapshot_before_rewrite(
     slot: &GraphSlot,
     suffix: &str,
 ) -> Result<(), String> {
-    match backup_graph_now(app, &slot.store, &slot.root_key, suffix).failure {
+    rewrite_snapshot_result(backup_graph_now(app, &slot.store, &slot.root_key, suffix))
+}
+
+fn rewrite_snapshot_result(outcome: BackupOutcome) -> Result<(), String> {
+    match outcome.failure {
         None => Ok(()),
-        Some(_) => Err("could not take a snapshot first; nothing was changed".into()),
+        Some(failure) => Err(failure.wire()),
     }
 }
 
@@ -1302,5 +1328,20 @@ mod tests {
         );
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod fail_read_tests {
+    use super::*;
+    #[test]
+    fn fail_read_backup_refusal_keeps_phase_and_io_kind() {
+        let error = rewrite_snapshot_result(BackupOutcome::failed(
+            0,
+            "pages",
+            ErrorKind::PermissionDenied,
+        ))
+        .unwrap_err();
+        assert_eq!(error, "backup-failed:pages:PermissionDenied");
     }
 }

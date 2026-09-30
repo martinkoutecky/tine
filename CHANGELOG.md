@@ -101,6 +101,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Failed native reads keep their errors and recovery details** (OG-B-FAIL): plugin and asset inventories
+  propagate disk failures, unreadable sessions cannot create blank workspaces, and incomplete transaction recovery
+  remains visible through conflict resolution. Launch-backup failures appear in the graph window.
+
 - **Failed reads stay visible** (OG-B-FAIL): page and reference refreshes keep their last successful data,
   journal-feed and session reads report failures, template creation refuses a failed name check or a read-only block,
   and the journal-template picker offers Retry. Quick Capture now shows block-action feedback with copyable errors.
