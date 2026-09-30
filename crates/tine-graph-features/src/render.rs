@@ -1,6 +1,6 @@
 //! HTML byte rendering for print and static publication.
 
-use crate::render_query_cache::{BoundedGroups, QueryCache, QueryCacheKey, SharedQueryCache};
+use crate::render_query_cache::{QueryCache, QueryCacheKey, SharedQueryCache};
 use crate::{macro_budget::within as budgeted, print::PrintOpts};
 use serde_json::json;
 use std::cell::RefCell;
@@ -10,11 +10,10 @@ use std::sync::Arc;
 use tine_core::doc::{self, DocBlock};
 use tine_core::lsdoc::ast::{Block, Inline, Url};
 use tine_core::model::{BlockDto, BlockPreview, Format, PageKind, RefGroup};
-use tine_core::query::ir::{ExecutionContext, QueryRows};
-use tine_core::query::wire_parse::{anchored_view, parse_query_pair, QueryTextDialect};
+use tine_core::query::wire_parse::QueryTextDialect;
 use tine_core::refs::block_id;
 use tine_core::{Corpus, CorpusPage};
-use tine_store::{Area, IrAnswer, IrRequest, Store, WholeGraph};
+use tine_store::{Area, Store, WholeGraph};
 
 #[path = "render_facets.rs"]
 mod render_facets;
@@ -86,59 +85,6 @@ impl<'a> RenderGraph<'a> {
     ) -> Result<Vec<u8>, tine_store::StoreError> {
         let id = self.store.file_id(Area::Assets, name)?;
         self.store.read(&id, Some(limit)).map(|(bytes, _)| bytes)
-    }
-
-    fn query_bounded(&self, source: &str, dialect: QueryTextDialect) -> BoundedGroups {
-        self.query_parsed(source, dialect, &[])
-            .map(|(_, bounded)| bounded)
-            .unwrap_or_else(|| BoundedGroups {
-                groups: Vec::new(),
-                pages: Vec::new(),
-                total: 0,
-                exceeded: false,
-            })
-    }
-
-    /// The ONE static query run: parse `source` under the host block's `tine.*`
-    /// properties, run it under the view the app runs it under, and return the
-    /// parse (its `view` and block presentation drive a query-backed sheet)
-    /// beside the bounded answer.
-    fn query_parsed(
-        &self,
-        source: &str,
-        dialect: QueryTextDialect,
-        block_properties: &[(String, String)],
-    ) -> Option<(tine_core::query::wire_parse::ParsedQuery, BoundedGroups)> {
-        let Ok(IrAnswer::Registry(registry)) = self.whole.query_ir(IrRequest::Registry) else {
-            return None;
-        };
-        // Only the block's `tine.*` properties reach the engine, as in the live macro.
-        let host: Vec<(String, String)> = block_properties
-            .iter()
-            .filter(|(key, _)| key.starts_with("tine."))
-            .cloned()
-            .collect();
-        let parsed = parse_query_pair(source, dialect, &host, &registry);
-        let view = anchored_view(&parsed, parsed.query.anchor);
-        let context = ExecutionContext::default();
-        let Ok(IrAnswer::Result(answer)) = self.whole.query_ir(IrRequest::Run {
-            query: &parsed.query,
-            view: &view,
-            context: &context,
-        }) else {
-            return None;
-        };
-        let (groups, pages) = match answer.rows {
-            QueryRows::Block { groups } => (groups, Vec::new()),
-            QueryRows::Page { pages } => (Vec::new(), pages),
-        };
-        let bounded = BoundedGroups {
-            groups,
-            pages,
-            total: answer.total,
-            exceeded: answer.exceeded,
-        };
-        Some((parsed, bounded))
     }
 }
 
@@ -1194,6 +1140,7 @@ fn ref_target_text(raw: &str) -> String {
 /// (always) and the graph (present in a real export, absent in inline-decorator unit
 /// tests — when absent, macros drop instead of expanding).
 struct Ctx<'a> {
+    current_page: Option<&'a str>,
     refs: &'a RefIndex,
     reverse_refs: Option<&'a ReverseRefIndex>,
     graph: Option<&'a RenderGraph<'a>>,
@@ -1436,22 +1383,22 @@ fn render_query_with_title(
     };
     let bounded = if let Some(cache) = ctx.query_cache {
         let key = if tql {
-            QueryCacheKey::Tql(src.to_string())
+            QueryCacheKey::Tql(src.to_string(), ctx.current_page.map(str::to_owned))
         } else if is_advanced {
-            QueryCacheKey::Advanced(src.to_string())
+            QueryCacheKey::Advanced(src.to_string(), ctx.current_page.map(str::to_owned))
         } else {
-            QueryCacheKey::Simple(src.to_string())
+            QueryCacheKey::Simple(src.to_string(), ctx.current_page.map(str::to_owned))
         };
         let cached = cache.borrow().get(&key);
         if let Some(groups) = cached {
             groups
         } else {
-            let groups = graph.query_bounded(src, dialect);
+            let groups = graph.query_bounded(src, dialect, ctx.current_page);
             cache.borrow_mut().insert(key, groups.clone());
             groups
         }
     } else {
-        graph.query_bounded(src, dialect)
+        graph.query_bounded(src, dialect, ctx.current_page)
     };
     if bounded.exceeded {
         return format!(
@@ -2088,6 +2035,7 @@ pub fn page_print_html(
     collect_block_refs(&parsed.roots, &slug, &mut refs);
     let print_asset_budget = RefCell::new(PrintAssetBudget::standard());
     let ctx = Ctx {
+        current_page: Some(name),
         refs: &refs,
         reverse_refs: None,
         graph: Some(graph),
@@ -2465,6 +2413,7 @@ pub(crate) fn publish_graph(
     // `{{namespace}}` macros can resolve against real data at publish time) + the
     // slug map (so cross-page links resolve to the actual written files).
     let ctx = Ctx {
+        current_page: None,
         refs: &refs,
         reverse_refs: Some(&reverse_refs),
         graph: Some(graph),
@@ -2477,6 +2426,10 @@ pub(crate) fn publish_graph(
     for (name, kind, parsed, _) in &public {
         let slug = slug_of(name);
         let file = format!("{slug}.html");
+        let ctx = Ctx {
+            current_page: Some(name),
+            ..ctx
+        };
         let html = page_html(
             name,
             &slug,
@@ -2555,6 +2508,7 @@ mod tests {
     fn render_body(raw: &str, refs: &RefIndex) -> String {
         // Graph-less context: the inline decorator under test; macros drop (no graph).
         let ctx = Ctx {
+            current_page: None,
             refs,
             reverse_refs: None,
             graph: None,
@@ -2720,6 +2674,7 @@ mod tests {
                 esc_attr(id)
             ),
             &Ctx {
+                current_page: None,
                 refs: &refs,
                 reverse_refs: None,
                 graph: None,

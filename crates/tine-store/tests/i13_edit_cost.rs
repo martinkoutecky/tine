@@ -87,12 +87,12 @@ fn edit_cost_is_page_bounded() {
         );
         // The counter counts every document/outline parse since OG-B-COST (it
         // counted only the publication parse before, and read 1 while a save
-        // really parsed 11 times). Ratchet: 6 today; I-15's target is 1
-        // (remaining: SerializeOpts::detect's outline parse and the new-text
+        // really parsed 11 times). Ratchet: 4 today; I-15's target is 1
+        // (remaining: the new-text
         // parses, og/followups/open-items.md 2026-09-30). It may only fall.
         assert!(
-            small.parses <= 6,
-            "I-15: parses per save may only fall (ratchet 6, target 1): {}; exemplar transaction.rs:349 Step::Save",
+            small.parses <= 4,
+            "I-15: parses per save may only fall (ratchet 4, target 1): {}; exemplar transaction.rs:349 Step::Save",
             small.parses
         );
         assert_eq!(large.parses, small.parses, "I-13/I-15: parse count must not grow with graph pages; exemplar transaction.rs:349 Step::Save");

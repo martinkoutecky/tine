@@ -348,7 +348,7 @@ pub fn sheet_inputs(
                 let query = graph.filter(|_| query_budget > 0).and_then(|graph| {
                     let found = sole_query_macro(block)?;
                     query_budget -= 1;
-                    query_rows(graph, block, &found, &|name| {
+                    query_rows(graph, block, &found, Some(&page.name), &|name| {
                         published.is_none_or(|keys| keys.contains(&tine_core::refs::page_key(name)))
                     })
                 });
@@ -430,6 +430,7 @@ fn query_rows(
     graph: &RenderGraph<'_>,
     owner: &DocBlock,
     found: &(String, String),
+    current_page: Option<&str>,
     published: &dyn Fn(&str) -> bool,
 ) -> Option<QueryRowsInput> {
     let (name, argument) = found;
@@ -444,7 +445,7 @@ fn query_rows(
         QueryTextDialect::MacroQuery
     };
     let host = owner.properties();
-    let (parsed, bounded) = graph.query_parsed(argument, dialect, &host)?;
+    let (parsed, bounded) = graph.query_parsed(argument, dialect, &host, current_page)?;
     if bounded.exceeded || !bounded.pages.is_empty() {
         return None;
     }
@@ -865,7 +866,7 @@ pub(super) fn emit_query(
     if !export.query {
         return false;
     }
-    let Some(rows) = query_rows(graph, owner, found, &|page| {
+    let Some(rows) = query_rows(graph, owner, found, e.ctx.current_page, &|page| {
         publish_page_allowed(e.ctx, page)
     }) else {
         return false;

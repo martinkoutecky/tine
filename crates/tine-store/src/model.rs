@@ -254,21 +254,17 @@ fn parse_doc(path: &Path, content: &str) -> Document {
     }
 }
 
-fn parse_old_doc(path: &Path, source: &str) -> Document {
+fn parse_doc_with_opts(path: &Path, source: &str) -> (Document, doc::SerializeOpts) {
     #[cfg(feature = "test-faults")]
-    crate::cost_counters::old_source_parse();
-    parse_doc(path, source)
-}
-
-// SerializeOpts::detect asks lsdoc for the Markdown outline as well.
-fn detect_serialize_opts(source: Option<&str>) -> doc::SerializeOpts {
-    #[cfg(feature = "test-faults")]
-    if source.is_some() {
-        crate::cost_counters::parse();
+    crate::cost_counters::parse();
+    match Format::from_path(path) {
+        Format::Md => doc::parse_with_opts(source),
+        Format::Org => (
+            tine_core::org::parse_org(source),
+            doc::SerializeOpts::default(),
+        ),
     }
-    doc::SerializeOpts::detect(source)
 }
-
 pub(crate) struct Graph {
     pub(crate) root: PathBuf,
     /// The canonical filesystem capability used for every asset operation. For
@@ -1105,7 +1101,7 @@ impl GraphRead for ReadSnapshot {
     }
 }
 
-fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
+pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
     fn add(seen: &mut HashMap<String, String>, name: String) {
         if !name.is_empty() {
             seen.entry(tine_core::refs::page_key(&name)).or_insert(name);
@@ -3813,7 +3809,7 @@ impl Graph {
         {
             panic!("injected external sync parser panic");
         }
-        let mut newdoc = parse_doc(path, content);
+        let (mut newdoc, opts) = parse_doc_with_opts(path, content);
         {
             let guard = self.cache.read().unwrap();
             if guard.is_none() {
@@ -3847,10 +3843,7 @@ impl Graph {
                 let cached_norm =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(
                         || match Format::from_path(path) {
-                            Format::Md => {
-                                let opts = detect_serialize_opts(Some(content));
-                                parse_doc(path, &doc::serialize_with(cached, &opts))
-                            }
+                            Format::Md => parse_doc(path, &doc::serialize_with(cached, &opts)),
                             Format::Org => parse_doc(
                                 path,
                                 &tine_core::org::serialize_org_detect(cached, Some(content)),
@@ -4006,7 +3999,15 @@ impl Graph {
         // file for the day instead of a misplaced default-named duplicate.)
         let dto_is_org = matches!(Format::from_path(path), Format::Org);
         let mut doc = tine_core::projection::page_dto_document(page, dto_is_org);
-        let old = existing.map(|source| parse_old_doc(path, source));
+        let (old, opts) = existing.map_or_else(
+            || (None, doc::SerializeOpts::default()),
+            |source| {
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::old_source_parse();
+                let (old, opts) = parse_doc_with_opts(path, source);
+                (Some(old), opts)
+            },
+        );
         // Data-preservation firewall for page-header properties (GH #163).
         // A frontend/store bug once reclassified a suffix of the page pre-block
         // as the first outline block (`A::` stayed in the header while `B::` and
@@ -4060,7 +4061,6 @@ impl Graph {
         let path = path.to_path_buf();
         let content = match Format::from_path(&path) {
             Format::Md => {
-                let opts = detect_serialize_opts(existing);
                 let retained = existing.zip(old.as_ref()).and_then(|(source, old)| {
                     layout_retention::serialize(&doc, source, old, &opts)
                 });

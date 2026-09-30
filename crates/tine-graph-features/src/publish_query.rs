@@ -12,6 +12,7 @@
 //! callers show them and let the user pick a fresh destination.
 
 use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
+use crate::render_query_cache::substitute_current_page;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -353,31 +354,6 @@ fn close_query_result(
     result.matched_total = Some(result.total);
     result.statistics = None;
     result
-}
-
-fn substitute_current_page(argument: &str, page: &str) -> Option<String> {
-    let mut changed = false;
-    let mut out = String::new();
-    let mut rest = argument;
-    while let Some(start) = rest.find("<%") {
-        let Some(end) = rest[start..].find("%>") else {
-            break;
-        };
-        let inner = &rest[start + 2..start + end];
-        if inner.trim().eq_ignore_ascii_case("current page") {
-            out.push_str(&rest[..start]);
-            out.push_str(&format!("[[{page}]]"));
-            changed = true;
-        } else {
-            out.push_str(&rest[..start + end + 2]);
-        }
-        rest = &rest[start + end + 2..];
-    }
-    if !changed {
-        return None;
-    }
-    out.push_str(rest);
-    Some(out)
 }
 
 fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<Vec<Value>> {

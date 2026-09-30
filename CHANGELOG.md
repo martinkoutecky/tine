@@ -102,6 +102,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Published queries use their owning page** (og-B-SIG2): current-page queries, template substitutions, and query sheets share the baked publication context; identical queries on different pages keep separate static cache answers.
+- **Saves reuse parser-owned formatting** (og-B-SIG2): old page content and serialization layout come from one parse, removing two redundant parses from ordinary saves.
+
 - **Code examples do not set a page's saved indentation** (REG-OG-SIG-LAYOUT-001).
   Formatting detection now uses the parser's actual outline headers, so a
   bullet inside a literal code block cannot supply a false indentation unit.
