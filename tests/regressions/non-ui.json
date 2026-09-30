@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "entries": [
+    {"id":"REG-OG-P11-PROPERTIES","title":"Cross-format clipboard paste preserves accepted Unicode and custom properties in order including duplicates","family":"clipboard","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"unit","status":"covered","coverage":{"tests":["src/clipboard.paste.test.ts"],"scenario":null,"failBefore":"proven"}},
     {"id":"REG-OG-R6B-PREFLIGHT","title":"OG release preflight accepts its fixed v0.6.5 performance baseline without changing budgets","family":"release","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"unit","status":"covered","coverage":{"tests":["src/ogR6bPreflight.test.ts"],"scenario":null,"failBefore":"proven"}},
     {
       "id": "REG-OG-QUERY-MEMO-001",
