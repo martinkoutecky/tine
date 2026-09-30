@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PageEntry, PageInventory, PageInventoryEntry, ResolvedPage } from "./types";
 
-const backendMock = vi.hoisted(() => ({ pageInventory: vi.fn() }));
+const backendMock = vi.hoisted(() => ({ pageInventory: vi.fn(), graphBindingGeneration: vi.fn(() => 1) }));
 vi.mock("./backend", () => ({ backend: () => backendMock }));
 
 function entry(name: string, target: ResolvedPage, key = name.toLowerCase().normalize("NFC")): PageInventoryEntry {
@@ -29,6 +29,7 @@ async function load() {
 beforeEach(() => {
   vi.resetModules();
   backendMock.pageInventory.mockReset();
+  backendMock.graphBindingGeneration.mockReset().mockReturnValue(1);
 });
 
 describe("page index: the one frontend name answerer", () => {
@@ -184,4 +185,35 @@ describe("page index: the one frontend name answerer", () => {
       "Alpha", "Another Ref", "Beta", "Jun 26th, 2026", "Only Linked", "Shared", "Team/Child",
     ]);
   });
+});
+
+
+it("reports a failed inventory read and keeps the last good page list", async () => {
+  const { refreshPageIndex, allPages } = await load();
+  const { toasts, setToasts } = await import("./toasts");
+  setToasts([]);
+  backendMock.pageInventory.mockResolvedValue(inventory(1, file("Kept")));
+  await refreshPageIndex();
+  const previous = allPages();
+  backendMock.pageInventory.mockRejectedValue(new Error("io:PermissionDenied"));
+  await refreshPageIndex();
+  expect(allPages()).toEqual(previous);
+  expect(toasts().some((t) => t.kind === "error" && t.message.includes("page list"))).toBe(true);
+});
+
+// Checkpoint-4 B-FAIL regression: at launch the webview asks for the page list
+// before the startup load has bound this window (and Quick Capture is never
+// bound). The backend refuses with `no graph loaded for window …` or
+// `missing-graph-binding`: a transient state, not a failed read, so it raises no
+// sticky error toast (Martin 2026-09-29: transient states raise none).
+it("raises no failure toast for an inventory read issued before the window is bound", async () => {
+  const { refreshPageIndex } = await load();
+  const { toasts, setToasts } = await import("./toasts");
+  setToasts([]);
+  backendMock.graphBindingGeneration.mockReturnValue(0);
+  for (const refusal of ["no graph loaded for window main", "missing-graph-binding"]) {
+    backendMock.pageInventory.mockRejectedValue(new Error(refusal));
+    await refreshPageIndex();
+  }
+  expect(toasts().filter((t) => t.kind === "error")).toEqual([]);
 });

@@ -1,3 +1,4 @@
+import { clearOnBindingInvalidated } from "../binding";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { blockPageReadOnly, formatForBlock, formatForPage, readPageProperty, readPageProperties, node as docNode } from "../document";
@@ -597,6 +598,7 @@ function moveRowToColumn(row: RowRecord, from: string | null, target: string | n
 // Render-once-keep: a card rendered once (latched by block id) renders eagerly
 // forever. Module-level, shared across surfaces, bounded by the working set.
 const renderedBoardCards = new Set<string>();
+clearOnBindingInvalidated(() => renderedBoardCards.clear());
 
 export function resetBoardCardVirtualizationForTests() {
   renderedBoardCards.clear();

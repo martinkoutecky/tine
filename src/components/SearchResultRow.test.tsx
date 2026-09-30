@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { SearchResultRow, buildSearchExcerpt } from "./SearchResultRow";
 
@@ -41,4 +41,15 @@ describe("SearchResultRow (GH #98)", () => {
     expect(excerpt).not.toMatch(/(?:^|[^e])\u0301/);
     expect(excerpt).toContain("Target");
   });
+});
+
+
+it("segments a long block once for three excerpt windows (OG-B-FRONT)", () => {
+  const text = "x".repeat(10000);
+  const segment = vi.spyOn(Intl.Segmenter.prototype, "segment");
+  try {
+    const spans = [100, 4000, 9000].map(start => ({start, end: start + 1}));
+    expect(buildSearchExcerpt(text, spans).filter(s => s.marked)).toHaveLength(3);
+    expect(segment.mock.calls.filter(([value]) => value === text)).toHaveLength(1);
+  } finally { segment.mockRestore(); }
 });

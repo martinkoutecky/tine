@@ -1,3 +1,4 @@
+import { clearOnBindingInvalidated } from "../binding";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
 import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
@@ -1121,6 +1122,7 @@ function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw:
 // Module-level so it survives remount and is shared across surfaces; bounded by
 // the working set of rows ever brought near the viewport.
 const renderedSheetRows = new Set<string>();
+clearOnBindingInvalidated(() => renderedSheetRows.clear());
 
 // Test seam: reset the render-once latch so a fresh mount defers again.
 export function resetSheetRowVirtualizationForTests() {

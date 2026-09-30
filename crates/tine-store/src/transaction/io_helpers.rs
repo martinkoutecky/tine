@@ -78,10 +78,13 @@ pub(super) fn sync_move_dirs(store: &Store, source: &Path, destination: &Path) -
     }
     #[cfg(not(all(feature = "test-faults", unix)))]
     let _ = store;
-    for parent in [source.parent(), destination.parent()]
-        .into_iter()
-        .flatten()
-    {
+    for parent in source.parent().into_iter().chain(
+        destination
+            .parent()
+            .filter(|parent| Some(*parent) != source.parent()),
+    ) {
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::fsync();
         crate::directory_durability::sync_directory_entry(parent)?;
     }
     Ok(())

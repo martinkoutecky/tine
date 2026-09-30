@@ -14,7 +14,7 @@ import {
   type MaterializeQueryDependencies,
   type QueryWorkspaceDependencies,
 } from "./QueryWorkspace";
-import { pageInventoryRev } from "../graphSession";
+import { bumpGraphEpoch, pageInventoryRev } from "../graphSession";
 import { backend } from "../backend";
 import { resetStore } from "../document";
 
@@ -515,6 +515,61 @@ describe("QueryWorkspace", () => {
       unregisterLower();
       dispose();
     }
+  });
+
+  it.each(["print", "parse"])("L12:41: builder edits compose while an older %s is pending", async (phase) => {
+    const route: QueryRoute = { kind: "query", id: "builder-race", sourceKind: "dsl", source: "initial", presentation: "list" };
+    const initial = { anchor: "block" as const, filter: { kind: "and" as const, items: [
+      { kind: "raw" as const, text: "first", diagnostic_kind: "syntax" as const },
+      { kind: "raw" as const, text: "second", diagnostic_kind: "syntax" as const },
+    ] }, source: { kind: "builder" as const } };
+    let finishParse: ((value: never) => void) | undefined;
+    vi.spyOn(backend(), "parseQuery").mockImplementation((text) => text === "initial"
+      ? Promise.resolve({ query: initial, view: {} } as never)
+      : new Promise((finish) => { finishParse = finish; }));
+    const pending: Array<{ query: typeof initial; finish: (text: string) => void }> = [];
+    vi.spyOn(backend(), "printQuery").mockImplementation((query) => new Promise<string>((finish) => {
+      pending.push({ query: query as typeof initial, finish });
+    }));
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={workspaceDeps()} />, root);
+    try {
+      root.querySelector<HTMLButtonElement>(".query-advanced-toggle")!.click();
+      await waitFor(() => expect(root.querySelectorAll(".qs-row")).toHaveLength(2));
+      // Keep a first printer in flight, then edit the other condition.
+      root.querySelector<HTMLButtonElement>('.qs-row .qs-enabled')!.click();
+      if (phase === "parse") {
+        pending.at(-1)!.finish("printed first");
+        await waitFor(() => expect(finishParse).toBeDefined());
+      }
+      root.querySelectorAll<HTMLElement>(".qs-row")[1].querySelector<HTMLButtonElement>(".qs-enabled")!.click();
+      const edits = pending.filter((p) => p.query.filter.items.some((f) => f.kind === "off" as string));
+      const latest = edits.at(-1)!;
+      expect(latest.query.filter.items.map((f) => f.kind)).toEqual(["off", "off"]);
+      finishParse?.({ query: initial, view: {} } as never);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(root.querySelectorAll(".qs-row")).toHaveLength(2);
+      latest.finish("both edits");
+      await Promise.resolve(); await Promise.resolve();
+      for (const item of pending) if (item !== latest) item.finish("older print");
+      await Promise.resolve(); await Promise.resolve();
+      const modal = root.querySelector(".query-advanced-modal")!;
+      modal.querySelector<HTMLButtonElement>(".query-advanced-actions .primary")!.click();
+      expect(root.querySelector<HTMLInputElement>(".query-workspace-source")?.value).toBe("both edits");
+    } finally { finishParse?.({ query: initial, view: {} } as never); for (const item of pending) item.finish("cleanup"); dispose(); vi.restoreAllMocks(); }
+  });
+
+  it.each(["close", "display", "switch"])("L04:37: workspace close uses its graph binding after %s", (phase) => {
+    const route: QueryRoute = { kind: "query", id: "closing-search", sourceKind: "search", source: "needle", presentation: "search" };
+    const deps = { ...workspaceDeps(), closeSearchWorkspace: vi.fn(async () => {}) };
+    const generation = backend().graphBindingGeneration();
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={deps} />, root);
+    if (phase === "display") bumpGraphEpoch();
+    if (phase === "switch") resetStore();
+    dispose();
+    if (phase === "switch") expect(deps.closeSearchWorkspace).not.toHaveBeenCalled();
+    else expect(deps.closeSearchWorkspace).toHaveBeenCalledWith(route.id, generation);
   });
 
   it("keeps empty workspaces local, neutral, and query-free", async () => {

@@ -1371,33 +1371,24 @@ impl Store {
         *self.journal_ids.lock().unwrap() = found;
     }
 
-    /// Resolve the canonical journal file for a valid day, or a proposed new
-    /// file. The day index is built from the accessible file listing before `open`
-    /// returns and refreshed before each relevant publication, including a
-    /// direct first `page()` read, own create/trash/move, transaction, restore,
-    /// watcher observation, and `scan_refresh`. No parse or disk read is needed
-    /// by this call. An unreadable journal
-    /// subtree is omitted, so this may propose a second file for an existing
-    /// day in that subtree. This does not indicate
-    /// existence: call `page(id)` and handle `NotFound`. An invalid `Day`
-    /// is not rejected and can yield a nonsensical proposed name. For a custom
-    /// journal filename format, the proposal uses that configured format and
-    /// the current `preferred_format` extension (`md` or `org`). An
-    /// unobserved external creation can change the answer later; callers must
-    /// use a guarded `CreateNew` save and handle a conflict or twin. An
-    /// unreadable destination directory can make that save fail with an I/O
-    /// or target-safety refusal rather than detecting the hidden claimant.
+    /// Return a cached canonical journal id or propose a configured path (directory,
+    /// filename format, preferred extension). The day index covers accessible files
+    /// before open and refreshes before relevant publications: direct reads/writes,
+    /// transactions, restore, watcher and scan_refresh. Cost O(format + path bytes);
+    /// no parse or disk read. Unreadable subtrees or unobserved external creations
+    /// can yield a duplicate-day proposal. It does not indicate existence: `page(id)`
+    /// may return `NotFound`. Invalid `Day` is not rejected and may yield nonsense.
+    /// Use guarded `CreateNew` saves; handle conflicts, twins, I/O and target-safety
+    /// refusals, including unreadable destination directories.
     pub fn journal_id(&self, day: Day) -> PageId {
         let date = JournalDate::from_ordinal(day.0);
         if let Some(id) = self.journal_ids.lock().unwrap().get(&day) {
             return id.clone();
         }
-        PageId::from(format!(
-            "{}/{}.{}",
-            self.graph.current_config().journals_dir,
+        proposed_journal_id(
+            &self.graph.current_config(),
             self.graph.current_journal_format().file_stem(date),
-            self.graph.current_config().preferred_format.ext()
-        ))
+        )
     }
     /// Count entries and bytes by kind in graph trash. `scan_area(Area::Trash)`
     /// can list files and `move_file` can move one to a live area with a guard,
@@ -3012,19 +3003,18 @@ impl WholeGraph {
             }
         }
         let config = &self.config.config;
-        let (dir, stem) = if is_journal {
+        if is_journal {
             let stem = self
                 .journal_format
                 .parse(name)
                 .map(|date| self.journal_format.file_stem(date))
                 .unwrap_or_else(|| name.to_owned());
-            (&config.journals_dir, stem)
-        } else {
-            (
-                &config.pages_dir,
-                tine_core::model::encode_page_name(name, config.file_name_format),
-            )
-        };
+            return Resolved::Absent {
+                id: proposed_journal_id(config, stem),
+            };
+        }
+        let dir = &config.pages_dir;
+        let stem = tine_core::model::encode_page_name(name, config.file_name_format);
         Resolved::Absent {
             id: PageId::from(format!("{dir}/{stem}.{}", config.preferred_format.ext())),
         }
@@ -3471,6 +3461,16 @@ impl WholeGraph {
             .map(Day)
             .collect()
     }
+}
+
+/// Absent-journal path from live/captured config and a stem. O(path bytes), no I/O.
+fn proposed_journal_id(config: &tine_core::config::Config, stem: String) -> PageId {
+    PageId::from(format!(
+        "{}/{}.{}",
+        config.journals_dir,
+        stem,
+        config.preferred_format.ext()
+    ))
 }
 
 fn export_bytes_error(bytes: usize) -> QueryError {

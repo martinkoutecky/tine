@@ -399,3 +399,15 @@ describe("persisted split session", () => {
     });
   });
 });
+
+
+it("reports current session read failure without replacing live session state", async () => {
+  setToasts([]);
+  const before = buildPersistedSession();
+  const read = vi.spyOn(backend(), "loadSession").mockRejectedValue(new Error("io:PermissionDenied"));
+  await restoreSession();
+  expect(buildPersistedSession()).toEqual(before);
+  expect(toasts().some((t) => t.kind === "error" && t.message.includes("saved session"))).toBe(true);
+  read.mockRestore();
+  setToasts([]);
+});

@@ -1199,6 +1199,43 @@
         "failBefore": "proven"
       },
       "notes": "og checkpoint 4 L07 S1, K1 bf11f4647. Every transaction step, including an unchanged one, checks its preflight revision before success; subprocess barrier + AbortAfterStep kill cases."
-    }
-  ]
+    },
+    {
+      "id": "REG-OG-B-LIFE-SEARCH-LANES",
+      "title": "Completed searches release cancellation lanes and workspace close cancels only its lanes",
+      "family": "resource-lifecycle",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-graph-features/src/search.rs::tests",
+          "src/components/QueryWorkspace.test.tsx"
+        ],
+        "scenario": "search.workspace-lifetime",
+        "failBefore": "proven"
+      },
+      "notes": "Checkpoint-4 L04:37; native entry-point reproduction and controlled frontend close coverage."
+    },
+    {"id":"REG-OG-B-FAIL-RETRY","title":"A conflict with incomplete undo or publication is reported with recovery details instead of automatically retried","family":"resilience","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-graph-features/src/error_tests.rs"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-FAIL checkpoint-4. Honest disk/permission failure; typed failure reaches the command boundary. Synthetic native tests, not OS EIO injection."},
+    {"id":"REG-OG-B-FAIL-ROLLBACK","title":"A failed rollback move-back reports the displaced file location so its bytes can be recovered","family":"resilience","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-store/src/model.rs"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-FAIL checkpoint-4. Honest disk/permission failure; typed failure reaches the command boundary. Synthetic native tests, not OS EIO injection."},
+    {"id":"REG-OG-B-FAIL-ASSETS","title":"A failed asset inventory read returns an error rather than claiming there are no orphan assets","family":"resilience","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-graph-features/src/error_tests.rs"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-FAIL checkpoint-4. Honest disk/permission failure; typed failure reaches the command boundary. Synthetic native tests, not OS EIO injection."},
+    {"id":"REG-OG-B-FAIL-CONCORD","title":"Conflict resolution preserves typed incomplete-transaction evidence and recovery paths through IPC","family":"resilience","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["src-tauri/src/commands.rs","src/errorFamily.test.ts"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-FAIL checkpoint-4. Honest disk/permission failure; typed failure reaches the command boundary. Synthetic native tests, not OS EIO injection."},
+    {"id":"REG-OG-B-FAIL-PLUGINS","title":"Unreadable plugin storage or failed first-use recovery is reported rather than appearing as no plugins","family":"resilience","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["src-tauri/src/plugins.rs"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-FAIL checkpoint-4. Honest disk/permission failure; typed failure reaches the command boundary. Synthetic native tests, not OS EIO injection."},
+    {"id":"REG-OG-B-FAIL-SESSION","title":"An unreadable saved session cannot be mistaken for absence or publish a blank workspace registry","family":"resilience","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["src-tauri/src/settings.rs"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-FAIL checkpoint-4. Honest disk/permission failure; typed failure reaches the command boundary. Synthetic native tests, not OS EIO injection."},
+    {"id":"REG-OG-EXCERPT-SEGMENT-ONCE-001","title":"Search excerpts segment the block once across distant match windows","family":"performance","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"unit","status":"covered","coverage":{"tests":["src/components/SearchResultRow.test.tsx"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-FRONT L12:43. Deterministic operation-count proof plus benign long fixtures."},
+    {"id":"REG-OG-MACRO-LINEAR-SCAN-001","title":"Reading many query macros does not rescan each remaining suffix","family":"performance","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"unit","status":"covered","coverage":{"tests":["src/editor/queryMacro.test.ts"],"scenario":null,"failBefore":"proven"},"notes":"OG-B-FRONT L14:88. Deterministic operation-count proof plus benign long fixtures."},
+    {"id":"REG-OG-B-W3-PUBLICATION-SNAPSHOT","title":"Published snapshots retain the reviewed source generation through an external-editor race","family":"publication","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-graph-features/src/publish_query.rs","src/ogBW3.guard.test.ts"],"scenario":"publication.reviewed-snapshot-consistency","failBefore":"proven"}},
+    {"id":"REG-OG-B-W3-BOUNDED-DRAFT-READ","title":"Oversized draft stores are read with a bound and preserved for recovery","family":"device-io","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["src-tauri/src/drafts.rs","src-tauri/src/device_io.rs","src/ogBW3.guard.test.ts"],"scenario":"device-io.bounded-draft-read","failBefore":"proven"}},
+    {"id":"REG-OG-B-W3-BOUNDED-CSV-READ","title":"Growing CSV and TSV imports stop at the byte cap before decoding","family":"device-io","sources":{"issues":[],"commits":[]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["src-tauri/src/drafts.rs","src-tauri/src/device_io.rs","src/ogBW3.guard.test.ts"],"scenario":"device-io.bounded-csv-read","failBefore":"proven"}},
+    {"id":"REG-OG-CONFIG-ROOT-READ-001","title":"Graph settings read and update the same top-level EDN entry despite nested extension settings","family":"content-integrity","sources":{"issues":[],"commits":["e09edc451"]},"platforms":["all"],"layer":"store","status":"covered","coverage":{"tests":["crates/tine-store/tests/og_b_store_config.rs","crates/tine-core/tests/og_b_store_integrity.rs"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint 4 L01:43; shared root selector for ordinary and nested settings; guarded favorites write and reload preserve the nested shadow byte for byte. Complete directory settings before a torn later form retain their authored value."},
+    {"id":"REG-OG-CONFIG-EDN-ESCAPES-001","title":"Imported EDN escapes select the authored directory, favorite, home, shortcut and macro values","family":"content-integrity","sources":{"issues":[],"commits":["e09edc451"]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-core/tests/og_b_store_integrity.rs"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint 4 L01:44; every config string delegates to the sidecar EDN decoder, including Unicode surrogate pairs, octal and control escapes; torn hidden vectors still fail closed."},
+    {"id":"REG-OG-ORG-DIRECTIVE-OPEN-001","title":"Opening Org pages with long directive preambles performs bounded work per line","family":"performance","sources":{"issues":[],"commits":["1cbf29030"]},"platforms":["all"],"layer":"core-native","status":"covered","coverage":{"tests":["crates/tine-core/tests/og_b_store_preamble.rs","crates/tine-core/tests/page_title_preamble.rs"],"scenario":null,"failBefore":"proven"},"notes":"Checkpoint 4 L06:40; existing inert-line filtering runs before the whole-prefix outline parse, preserving title discovery while removing repeated growing-prefix parses. The guard enforces the ordering; it has no wall-clock threshold."}
+]
 }

@@ -1,0 +1,40 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { render } from "solid-js/web";
+import { backend } from "../backend";
+import { audioPlayer, setAudioPlayer } from "../ui";
+import { AudioOverlay } from "./AudioOverlay";
+const tick = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+function pointer(type: string, pointerId = 7, x = 25) {
+  const event = new MouseEvent(type, { bubbles: true, clientX: x });
+  Object.defineProperty(event, "pointerId", { value: pointerId });
+  return event;
+}
+afterEach(() => { setAudioPlayer(null); document.body.innerHTML = ""; vi.restoreAllMocks(); });
+it.each(["cancel", "replace", "close", "unmount"])("L10:65: audio scrubbing ends on %s", async (end) => {
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  vi.spyOn(backend(), "streamAsset").mockResolvedValue("stream:track");
+  setAudioPlayer({ url: "../assets/track.mp3", name: "track" });
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <AudioOverlay />, root);
+  await tick();
+  const audio = root.querySelector("audio")!;
+  Object.defineProperty(audio, "duration", { value: 100 });
+  audio.dispatchEvent(new Event("loadedmetadata"));
+  const canvas = root.querySelector("canvas")!;
+  vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({ left: 0, width: 100 } as DOMRect);
+  canvas.dispatchEvent(pointer("pointerdown"));
+  expect(audio.currentTime).toBe(25);
+  if (end === "cancel") window.dispatchEvent(pointer("pointercancel"));
+  else if (end === "replace") setAudioPlayer({ url: "../assets/other.mp3", name: "other" });
+  else if (end === "close") setAudioPlayer(null);
+  else dispose();
+  await tick();
+  const current = root.querySelector("audio");
+  if (current) current.currentTime = 25;
+  window.dispatchEvent(pointer("pointermove", 7, 90));
+  expect(current?.currentTime ?? audio.currentTime).toBe(25);
+  window.dispatchEvent(pointer("pointerup"));
+  if (end !== "unmount") dispose();
+  expect(end === "close" ? audioPlayer() : true).toBe(end === "close" ? null : true);
+});

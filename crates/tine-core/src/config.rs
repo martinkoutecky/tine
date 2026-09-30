@@ -1,12 +1,10 @@
-//! `logseq/config.edn` read AND write — one cohesive module.
+//! `logseq/config.edn` readers and the shared selectors used by its setters.
 //!
-//! We don't full-parse config.edn (it contains arbitrary Clojure/datalog forms —
-//! `(…)` lists, `fn` bodies, `:where` rules — that a small EDN model can't safely
-//! represent). Instead both reads and writes use ONE shared, string/comment/escape
-//! -aware scanner family (`find_keyword`/`edn_str_end`/`match_close_*`/
-//! `next_value_span`) to locate just the handful of keys we care about and edit
-//! values surgically — so writes preserve comments + formatting + unrelated keys,
-//! and reads are immune to whatever else the file contains.
+//! Config values are located by the root-map selector shared with graph-feature
+//! setters. Only direct entries own settings, including in nested settings maps.
+//! Surgical setters preserve unrelated bytes, comments and arbitrary forms;
+//! readers decode string tokens through `edn::parse_strict`, the same decoder
+//! used by sidecars. Missing or malformed individual values use defaults.
 
 use std::collections::HashMap;
 
@@ -223,9 +221,8 @@ impl Config {
     /// Parse supported EDN keys independently, defaulting missing or malformed
     /// values. This does not report a validation error for a bad format string.
     pub fn parse(edn: &str) -> Config {
-        // Each key is located independently with the comment/string-aware
-        // `find_keyword`, then its value read with the shared scanners — no
-        // up-front comment strip and no whole-file parse.
+        // Locate only direct root entries, as the graph-feature setters do.
+        // Arbitrary unrelated forms need not fit the small sidecar value model.
         let mut cfg = Config::default();
         if let Some(v) = string_value(edn, ":journals-directory") {
             cfg.journals_dir = v;
@@ -263,7 +260,7 @@ impl Config {
         cfg.default_journal_template =
             nested_string(edn, ":default-templates", ":journals").filter(|s| !s.is_empty());
         cfg.default_home =
-            top_level_nested_string(edn, ":default-home", ":page").filter(|s| !s.trim().is_empty());
+            nested_string(edn, ":default-home", ":page").filter(|s| !s.trim().is_empty());
         cfg.favorites = parse_string_vector(edn, ":favorites");
         cfg.favorites_page =
             string_value(edn, ":tine/favorites-page").filter(|s| !s.trim().is_empty());
@@ -290,7 +287,7 @@ impl Config {
         cfg.macros = parse_macros(edn);
         cfg.enable_timetracking = bool_value(edn, ":feature/enable-timetracking?").unwrap_or(true);
         cfg.enable_search_remove_accents =
-            find_keyword(edn, ":feature/enable-search-remove-accents?")
+            read_keyword(edn, ":feature/enable-search-remove-accents?")
                 .map(|at| {
                     let from = skip_blank(edn, at + ":feature/enable-search-remove-accents?".len());
                     !edn[from..].strip_prefix("false").is_some_and(|rest| {
@@ -490,7 +487,8 @@ pub fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usi
 }
 
 // ---------------------------------------------------------------------------
-// Readers — each finds its key with `find_keyword`, then reads the value with
+// Readers — root ownership is shared with `find_top_level_keyword`; complete
+// values before a torn suffix are still readable. Strings use the EDN decoder;
 // the shared scanners.
 // ---------------------------------------------------------------------------
 
@@ -514,46 +512,27 @@ pub fn skip_blank(s: &str, from: usize) -> usize {
     i
 }
 
-/// Unescape `\"`→`"` and `\\`→`\` (the inverse of the writers' escaping); other
-/// backslashes are kept literal.
-fn unescape(inner: &str) -> String {
-    let b = inner.as_bytes();
-    let mut out = String::with_capacity(inner.len());
-    let mut i = 0;
-    while i < inner.len() {
-        if b[i] == b'\\' && matches!(b.get(i + 1), Some(b'"') | Some(b'\\')) {
-            out.push(b[i + 1] as char);
-            i += 2;
-        } else {
-            let ch = inner[i..].chars().next().unwrap();
-            out.push(ch);
-            i += ch.len_utf8();
-        }
-    }
-    out
-}
-
-/// Read the (unescaped) content of the EDN string whose opening `"` is at `open`.
-fn read_string_at(s: &str, open: usize) -> String {
+/// Decode one complete string token with the shared EDN value parser.
+fn read_string_at(s: &str, open: usize) -> Option<String> {
     let end = edn_str_end(s, open);
-    let inner_end = if end > open + 1 && s.as_bytes()[end - 1] == b'"' {
-        end - 1
-    } else {
-        end
-    };
-    unescape(&s[open + 1..inner_end])
+    match crate::edn::parse_strict(s.get(open..end)?)? {
+        crate::edn::Edn::Str(value) => Some(value),
+        _ => None,
+    }
 }
 
 /// String value following `key`, e.g. `:journals-directory "journals"`.
 fn string_value(edn: &str, key: &str) -> Option<String> {
-    let start = find_keyword(edn, key)?;
+    let start = read_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
-    (edn.as_bytes().get(from) == Some(&b'"')).then(|| read_string_at(edn, from))
+    (edn.as_bytes().get(from) == Some(&b'"'))
+        .then(|| read_string_at(edn, from))
+        .flatten()
 }
 
 /// Keyword value (`:foo` → `foo`) following `key`.
 fn keyword_value(edn: &str, key: &str) -> Option<String> {
-    let start = find_keyword(edn, key)?;
+    let start = read_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
     let b = edn.as_bytes();
     if b.get(from) != Some(&b':') {
@@ -574,7 +553,7 @@ fn keyword_value(edn: &str, key: &str) -> Option<String> {
 
 /// Boolean value (`true`/`false`) following `key`.
 fn bool_value(edn: &str, key: &str) -> Option<bool> {
-    let start = find_keyword(edn, key)?;
+    let start = read_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
     if edn[from..].starts_with("true") {
         Some(true)
@@ -587,7 +566,7 @@ fn bool_value(edn: &str, key: &str) -> Option<bool> {
 
 /// Non-negative integer following `key`.
 fn int_value(edn: &str, key: &str) -> Option<u32> {
-    let start = find_keyword(edn, key)?;
+    let start = read_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
     let digits: String = edn[from..]
         .chars()
@@ -599,7 +578,9 @@ fn int_value(edn: &str, key: &str) -> Option<u32> {
 /// Read `:hidden` as a bounded vector of strings. An invalid value hides all
 /// graph text rather than silently turning an intended exclusion into none.
 fn parse_hidden_paths(edn: &str) -> Result<Vec<String>, ()> {
-    let Some(start) = find_keyword(edn, ":hidden") else {
+    // A torn root must still expose an authored :hidden vector to its bounded
+    // validator; a missing closing brace must not turn exclusions into none.
+    let Some(start) = read_keyword(edn, ":hidden") else {
         return Ok(Vec::new());
     };
     let from = skip_blank(edn, start + ":hidden".len());
@@ -634,7 +615,7 @@ fn parse_hidden_paths(edn: &str) -> Result<Vec<String>, ()> {
                 if end > close || bytes.get(end - 1) != Some(&b'"') || entries > 256 {
                     return Err(());
                 }
-                paths.push(decode_hidden_string(&edn[i + 1..end - 1])?);
+                paths.push(read_string_at(edn, i).ok_or(())?);
                 i = end;
             }
             b'#' if bytes.get(i + 1) == Some(&b'_') => {
@@ -650,41 +631,6 @@ fn parse_hidden_paths(edn: &str) -> Result<Vec<String>, ()> {
         }
     }
     Ok(paths)
-}
-
-fn decode_hidden_string(inner: &str) -> Result<String, ()> {
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            out.push(ch);
-            continue;
-        }
-        let decoded = match chars.next().ok_or(())? {
-            '"' => '"',
-            '\\' => '\\',
-            '/' => '/',
-            'b' => '\u{0008}',
-            'f' => '\u{000c}',
-            'n' => '\n',
-            'r' => '\r',
-            't' => '\t',
-            'u' => {
-                let mut code = 0u32;
-                for _ in 0..4 {
-                    code = code * 16
-                        + chars
-                            .next()
-                            .and_then(|digit| digit.to_digit(16))
-                            .ok_or(())?;
-                }
-                char::from_u32(code).ok_or(())?
-            }
-            _ => return Err(()),
-        };
-        out.push(decoded);
-    }
-    Ok(out)
 }
 
 fn skip_hidden_form(edn: &str, start: usize, close: usize, depth: usize) -> Result<usize, ()> {
@@ -726,7 +672,7 @@ fn skip_hidden_form(edn: &str, start: usize, close: usize, depth: usize) -> Resu
 /// Quoted strings in the vector following `key` (`:favorites ["a" "b"]`),
 /// string-aware so a value containing `]` doesn't end the vector early.
 fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
-    let Some(start) = find_keyword(edn, key) else {
+    let Some(start) = read_keyword(edn, key) else {
         return Vec::new();
     };
     let from = skip_blank(edn, start + key.len());
@@ -740,7 +686,9 @@ fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
     while i < close {
         match b[i] {
             b'"' => {
-                out.push(read_string_at(edn, i));
+                if let Some(value) = read_string_at(edn, i) {
+                    out.push(value);
+                }
                 i = edn_str_end(edn, i);
             }
             b';' => {
@@ -754,31 +702,16 @@ fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
     out
 }
 
-/// The quoted string for `inner` inside the map following `outer`, e.g.
-/// `:default-templates {:journals "Daily"}` → "Daily". String/brace-aware.
+/// A direct string entry in a direct root settings map. Nested extension
+/// maps cannot shadow either the outer setting or its inner entry.
 fn nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
-    let start = find_keyword(edn, outer)?;
-    let from = skip_blank(edn, start + outer.len());
-    if edn.as_bytes().get(from) != Some(&b'{') {
-        return None;
-    }
-    let close = match_close_brace(edn, from);
-    let irel = find_keyword(&edn[from + 1..close], inner)?;
-    let vfrom = skip_blank(edn, from + 1 + irel + inner.len());
-    (edn.as_bytes().get(vfrom) == Some(&b'"')).then(|| read_string_at(edn, vfrom))
-}
-
-/// Like [`nested_string`], but depth-aware: `outer` must be a direct entry of
-/// the root map and `inner` a direct entry of its map, so a `:page` nested in
-/// a sibling (`:default-home {:sidebar {:page "x"} :page "Home"}`) or an
-/// `outer` nested elsewhere is never read.
-fn top_level_nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
-    let (root_open, root_close) = balanced_map_at(edn, skip_blank(edn, 0))?;
-    let key = root_open + 1 + find_keyword_at_map_level(&edn[root_open + 1..root_close], outer)?;
+    let key = read_keyword(edn, outer)?;
     let (open, close) = balanced_map_at(edn, skip_blank(edn, key + outer.len()))?;
     let irel = find_keyword_at_map_level(&edn[open + 1..close], inner)?;
     let vfrom = skip_blank(edn, open + 1 + irel + inner.len());
-    (edn.as_bytes().get(vfrom) == Some(&b'"')).then(|| read_string_at(edn, vfrom))
+    (edn.as_bytes().get(vfrom) == Some(&b'"'))
+        .then(|| read_string_at(edn, vfrom))
+        .flatten()
 }
 
 /// `(open, close)` of the balanced `{…}` map opening at byte `open`; `None`
@@ -803,20 +736,37 @@ pub fn root_map_bounds(s: &str) -> Option<(usize, usize)> {
 /// shadow first and the setter spliced over it (master DUP-3, 4ae2f6f4f).
 /// `None` when the key is absent or there is no balanced root map.
 pub fn find_top_level_keyword(s: &str, key: &str) -> Option<usize> {
-    let (open, close) = root_map_bounds(s)?;
+    root_keyword(s, key, true)
+}
+
+// Readers keep complete values before a torn later form. Writers additionally
+// require a balanced root before applying any edit; both share root ownership.
+fn read_keyword(s: &str, key: &str) -> Option<usize> {
+    root_keyword(s, key, false)
+}
+
+fn root_keyword(s: &str, key: &str, require_balanced: bool) -> Option<usize> {
+    let open = skip_blank(s, 0);
+    if s.as_bytes().get(open) != Some(&b'{') {
+        return None;
+    }
+    let close = match_close_brace(s, open);
+    if require_balanced && close == s.len() {
+        return None;
+    }
     find_keyword_at_map_level(&s[open + 1..close], key).map(|at| open + 1 + at)
 }
 
 /// Boolean value for `inner` inside the map following `outer`, e.g.
 /// `:logbook/settings {:with-second-support? false}`.
 fn nested_bool(edn: &str, outer: &str, inner: &str) -> Option<bool> {
-    let start = find_keyword(edn, outer)?;
+    let start = read_keyword(edn, outer)?;
     let from = skip_blank(edn, start + outer.len());
     if edn.as_bytes().get(from) != Some(&b'{') {
         return None;
     }
     let close = match_close_brace(edn, from);
-    let irel = find_keyword(&edn[from + 1..close], inner)?;
+    let irel = find_keyword_at_map_level(&edn[from + 1..close], inner)?;
     let vfrom = skip_blank(edn, from + 1 + irel + inner.len());
     if edn[vfrom..close].starts_with("true") {
         Some(true)
@@ -829,7 +779,7 @@ fn nested_bool(edn: &str, outer: &str, inner: &str) -> Option<bool> {
 
 /// Keywords in the set following `key` (`:block-hidden-properties #{:a :b}`).
 fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
-    let Some(start) = find_keyword(edn, key) else {
+    let Some(start) = read_keyword(edn, key) else {
         return Vec::new();
     };
     let from = skip_blank(edn, start + key.len());
@@ -854,7 +804,7 @@ fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
 /// `false` (disable) | `["b1" "b2"]` (first wins). String/brace-aware.
 fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    let Some(start) = find_keyword(edn, ":shortcuts") else {
+    let Some(start) = read_keyword(edn, ":shortcuts") else {
         return map;
     };
     let from = skip_blank(edn, start + ":shortcuts".len());
@@ -881,7 +831,9 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
         }
         match b[vfrom] {
             b'"' => {
-                map.insert(key, read_string_at(edn, vfrom));
+                if let Some(value) = read_string_at(edn, vfrom) {
+                    map.insert(key, value);
+                }
                 i = edn_str_end(edn, vfrom);
             }
             b'[' => {
@@ -895,7 +847,9 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
                         continue;
                     }
                     if b[k] == b'"' {
-                        map.insert(key.clone(), read_string_at(edn, k));
+                        if let Some(value) = read_string_at(edn, k) {
+                            map.insert(key.clone(), value);
+                        }
                         break;
                     }
                     k += 1;
@@ -923,7 +877,7 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
 /// first non-string key/value rather than desyncing on unexpected EDN.
 fn parse_macros(edn: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    let Some(start) = find_keyword(edn, ":macros") else {
+    let Some(start) = read_keyword(edn, ":macros") else {
         return map;
     };
     let from = skip_blank(edn, start + ":macros".len());
@@ -938,13 +892,17 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
         if i >= close || b[i] != b'"' {
             break; // key must be a string
         }
-        let key = read_string_at(edn, i);
+        let Some(key) = read_string_at(edn, i) else {
+            break;
+        };
         i = edn_str_end(edn, i);
         let vfrom = skip_blank(edn, i);
         if vfrom >= close || b[vfrom] != b'"' {
             break; // value must be a string
         }
-        let val = read_string_at(edn, vfrom);
+        let Some(val) = read_string_at(edn, vfrom) else {
+            break;
+        };
         i = edn_str_end(edn, vfrom);
         if !key.is_empty() {
             map.insert(key, val);

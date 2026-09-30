@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { createSignal } from "solid-js";
+import { resetStore } from "./document";
 import { waitForWarmCache, type WarmCacheWaitDeps } from "./warmCache";
 
 function deps(overrides: Partial<WarmCacheWaitDeps> = {}) {
@@ -61,6 +63,18 @@ describe("waitForWarmCache", () => {
     resolveWarmDone(false);
 
     await expect(ready).resolves.toBe(true);
+    expect(h.unlistened).toBe(1);
+  });
+
+  it.each(["epoch", "reset"])("L17:66: retires an eventless wait on %s", async (kind) => {
+    const [epoch, setEpoch] = createSignal(7);
+    const h = deps({ currentEpoch: epoch });
+    let result: boolean | undefined;
+    const waiting = waitForWarmCache(7, h.deps).then((value) => { result = value; });
+    await vi.waitFor(() => expect(h.listeners).toHaveLength(1));
+    if (kind === "epoch") setEpoch(8); else resetStore();
+    await vi.waitFor(() => expect(result).toBe(false), { timeout: 150 });
+    await waiting;
     expect(h.unlistened).toBe(1);
   });
 

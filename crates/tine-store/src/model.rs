@@ -3753,11 +3753,7 @@ impl Graph {
         recent.insert(path.to_path_buf(), rev);
     }
 
-    /// Remove a transaction-owned live file without ever unlinking a race winner.
-    /// The currently named inode is first moved atomically into recoverable
-    /// conflict trash. Exact expected bytes stay there as the withdrawn copy; a
-    /// different inode is restored if the live name is free, or retained in
-    /// recovery if another writer has already recreated the name.
+    /// Race-safe withdrawal preserves external bytes and names disk/read/restore recovery.
     pub(crate) fn transaction_withdraw_exact(
         &self,
         path: &Path,
@@ -3815,7 +3811,6 @@ impl Graph {
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or("file");
-        // Fits whenever `name` does (C3Y Y2); a failed stage would refuse undo.
         let staged = trash.join(crate::atomic_file::prefixed_name(
             &format!("{}__{reason}__", trash_stamp()),
             name,
@@ -3827,22 +3822,26 @@ impl Graph {
             }
             Err(error) => return Err(error),
         }
-        let equal = match matches(&staged) {
-            Ok(equal) => equal,
-            Err(error) => {
-                let _ = move_file_noreplace(&staged, path);
-                return Err(error);
-            }
-        };
+        let equal = matches(&staged).map_err(|error| match move_file_noreplace(&staged, path) {
+            Ok(()) => error,
+            Err(restore) => io::Error::new(
+                error.kind(),
+                format!(
+                    "comparison failed: {error}; restore failed: {restore}; recovery: {}",
+                    staged.display()
+                ),
+            ),
+        })?;
         if equal {
             return Ok(Withdrawal::Exact(staged));
         }
         match move_file_noreplace(&staged, path) {
             Ok(()) => Ok(Withdrawal::ExternalLive),
-            // A new live winner appeared after staging. Keeping the displaced
-            // inode in conflict trash preserves both versions.
             Err(_) if path.exists() => Ok(Withdrawal::ExternalRecovery(staged)),
-            Err(error) => Err(error),
+            Err(error) => Err(io::Error::new(
+                error.kind(),
+                format!("restore failed: {error}; recovery: {}", staged.display()),
+            )),
         }
     }
 
@@ -7620,6 +7619,7 @@ mod tests {
         .unwrap();
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let orphans: Vec<String> = tine_graph_features::assets::orphan_assets(&store)
+            .unwrap()
             .into_iter()
             .map(|a| a.name)
             .collect();
@@ -10907,5 +10907,32 @@ mod tests {
             );
         }
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+#[cfg(test)]
+mod fail_read_rollback_tests {
+    use super::*;
+    #[test]
+    fn fail_read_rollback_retains_displaced_file_location_when_restore_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join("pages")).unwrap();
+        let path = temp.path().join("pages/A.md");
+        fs::write(&path, "- retained bytes\n").unwrap();
+        let graph = Graph::open(temp.path());
+        let error = graph
+            .withdraw_file_to_conflict_if(&path, "read-failure", |_| {
+                fs::create_dir(&path).unwrap();
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "comparison failed",
+                ))
+            })
+            .err()
+            .expect("comparison must fail");
+        assert!(
+            error.to_string().contains(".tine-trash"),
+            "I-2/I-9: failed restore must preserve recovery evidence: {error}"
+        );
+        assert!(error.to_string().contains("comparison failed"));
     }
 }

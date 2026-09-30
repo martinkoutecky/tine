@@ -423,25 +423,38 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
     if (formats.size === 1) return "Markdown";
     return "Markdown/Org";
   };
+  const expanding = new Set<string>();
+  let expansions = 0;
   const resolveMacro = (name: string, args: string[]) => {
-    const warmed = warmedMacros.get(macroKey(name, args));
+    const key = macroKey(name, args);
+    const warmed = warmedMacros.get(key);
     if (warmed?.kind === "text") return { raw: "", format: "md" as const, text: warmed.text };
     if (warmed?.kind === "nodes") {
-      const body = exportOutline(warmed.nodes, {
-        ...opts(),
-        content: "rendered",
-        indent: "spaces",
-        typographicGlyphs: typographyMode() === "render",
-        resolveBlockRef: resolveExportBlockRef,
-        resolveMacro,
-      });
-      const lines = [body || warmed.emptyText, warmed.note, warmed.truncation].filter((s): s is string => !!s);
-      return { raw: "", format: "md" as const, text: lines.join("\n") };
+      // This callback reenters exportOutline, so its per-call rendering budget
+      // cannot protect it. One preview owns the cycle/depth/fan-out budget.
+      if (expanding.has(key) || expanding.size >= 64 || expansions >= EMBED_EXPORT_NODE_LIMIT) {
+        return { raw: "", format: "md" as const, text: "[embed expansion omitted]" };
+      }
+      expansions++;
+      expanding.add(key);
+      try {
+        const body = exportOutline(warmed.nodes, {
+          ...opts(),
+          content: "rendered",
+          indent: "spaces",
+          typographicGlyphs: typographyMode() === "render",
+          resolveBlockRef: resolveExportBlockRef,
+          resolveMacro,
+        });
+        const lines = [body || warmed.emptyText, warmed.note, warmed.truncation].filter((s): s is string => !!s);
+        return { raw: "", format: "md" as const, text: lines.join("\n") };
+      } finally { expanding.delete(key); }
     }
     return resolveExportMacro(name, args);
   };
   const payload = createMemo(() => {
     warmRev();
+    expansions = 0;
     if (format() === "opml") return exportOpml(nodes, opts());
     if (format() === "html") return exportHtml(nodes, opts());
     return exportOutline(nodes, {

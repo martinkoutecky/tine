@@ -1,4 +1,4 @@
-import { createStore } from "solid-js/store";
+import { createStore, reconcile } from "solid-js/store";
 import { backend } from "./backend";
 
 // Cache of graph-asset blob URLs keyed by path relative to `assets/`. Without it
@@ -247,6 +247,7 @@ export function clearAssetBlobCache(): void {
   for (const entry of liveEntries.values()) entry.evicted = true;
   liveEntries.clear();
   cacheBytes = 0;
+  setVersions(reconcile({}));
 }
 
 // Per-asset version counters (GH #38). An <img> served from a blob URL caches the

@@ -1072,8 +1072,11 @@ function MediaEmbed(props: {
   // is what `blobFallback()` above already exists to cover.
   const blob = () => readOr(blobResource, undefined, "inline audio asset");
   const src = () => blobFallback() || (external ? props.url : blob());
-  const label = () =>
-    decodeURIComponent((rel() || props.url).split("/").pop() || props.url);
+  const label = () => {
+    const name = (rel() || props.url).split("/").pop() || props.url;
+    try { return decodeURIComponent(name); }
+    catch { return name; /* An ordinary filename may contain a literal percent. */ }
+  };
   const open = (e: MouseEvent) => {
     e.stopPropagation();
     const r = rel();

@@ -10,7 +10,7 @@
 // Offsets are deliberately not compared across the pair — Rust reports byte
 // offsets, JavaScript UTF-16 code units — so the recovered TEXT is the contract.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -144,4 +144,22 @@ describe("queryMacroExtents keeps the retired edn scanner's guarantees", () => {
     ]);
     expect(queryMacroExtents("no queries here")).toEqual([]);
   });
+});
+
+
+it("reads many valid macros with only linear source slicing (OG-B-FRONT)", () => {
+  const raw = '{{query (property x "}")}} '.repeat(2000);
+  const original = String.prototype.slice;
+  let sliced = 0;
+  const spy = vi.spyOn(String.prototype, "slice").mockImplementation(function (this: string, start, end) {
+    const result = original.call(this, start, end);
+    if (String(this) === raw) sliced += result.length;
+    return result;
+  });
+  try {
+    const macros = queryMacroExtents(raw);
+    expect(macros).toHaveLength(2000);
+    expect(macros[1999].argument).toBe('(property x "}")');
+    expect(sliced, "I-15: queryMacro must not materialize each remaining suffix").toBeLessThan(raw.length * 3);
+  } finally { spy.mockRestore(); }
 });

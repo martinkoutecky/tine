@@ -181,3 +181,9 @@ describe("trailing blank lines (GH #339)", () => {
     expect(withTrailing).toEqual(bare);
   });
 });
+
+
+it("bounds scientific zero precision just like nonzero precision (OG-B-FRONT)", () => {
+  expect(evalCalc("0\n:fmt sci 10001").at(-1)).toMatchObject({error: true});
+  expect(evalCalc("0\n:fmt sci 10000").at(-1)?.output).toHaveLength(10005);
+});

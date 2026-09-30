@@ -59,6 +59,44 @@ describe("high zoom PDF tiles", () => {
     tiles.reset();
   });
 
+  it("L13:86: overlapping pages settle within one viewer budget instead of rerendering each other", async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const jobs: Array<() => void> = [];
+    const render = vi.fn(() => {
+      let finish!: () => void;
+      const promise = new Promise<void>((resolve) => { finish = resolve; });
+      jobs.push(finish);
+      return { promise, cancel: vi.fn(finish) };
+    });
+    const page = { getViewport: () => ({ width: 16_000, height: 16_000 }), render } as unknown as pdfjs.PDFPageProxy;
+    const scroll = document.createElement("div"); document.body.append(scroll);
+    let viewportSize = 1000;
+    vi.spyOn(scroll, "getBoundingClientRect").mockImplementation(() => rect(0, 0, viewportSize, viewportSize === 1000 ? 500 : viewportSize));
+    const wraps = [1, 2].map(() => {
+      const wrap = document.createElement("div"); scroll.append(wrap);
+      vi.spyOn(wrap, "getBoundingClientRect").mockReturnValue(rect(0, 0, 16_000, 16_000));
+      return wrap;
+    });
+    const tiles = createPdfTiles(() => { throw new Error("render failed"); });
+    try {
+      tiles.refresh(page, 1, wraps[0], scroll, 4);
+      // Page A still has a pending task when page B starts filling the cap.
+      jobs.shift()!(); for (let i = 0; i < 5; i++) await Promise.resolve();
+      viewportSize = 10_000;
+      tiles.refresh(page, 2, wraps[1], scroll, 4);
+      for (let i = 0; i < 30; i++) {
+        jobs.shift()?.();
+        for (let j = 0; j < 5; j++) await Promise.resolve();
+      }
+      const settled = render.mock.calls.length;
+      expect(settled, "one stable viewport must stop creating tile work").toBeLessThanOrEqual(10);
+      expect(wraps.every((wrap) => wrap.querySelectorAll("canvas").length > 0)).toBe(true);
+      tiles.releasePage(1);
+      while (jobs.length) { jobs.shift()!(); for (let j = 0; j < 5; j++) await Promise.resolve(); }
+      expect(wraps[0].querySelectorAll("canvas")).toHaveLength(0);
+    } finally { tiles.reset(); }
+  });
+
   it("admits new zoom tiles after canceling unresolved old tasks", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
     const render = vi.fn(() => ({ promise: new Promise<void>(() => {}), cancel: vi.fn() }));

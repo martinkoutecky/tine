@@ -1,3 +1,4 @@
+import { reportUiFailure } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
 import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
@@ -470,8 +471,11 @@ export function PageView(): JSX.Element {
       }
       nextBeforeDay = response.next_before_day;
       feedDone = response.done;
-    } catch {
-      if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
+    } catch (error) {
+      if (requestOwner()) {
+        pendingFeedRestart = true;
+        reportUiFailure("journal-feed", error);
+      }
     } finally {
       if (loadingGeneration === generation) loadingGeneration = null;
     }

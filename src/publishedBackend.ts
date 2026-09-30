@@ -13,8 +13,11 @@
  *  Classification of every method is pinned by `publishedBackend.guard.test.ts`.
  */
 import type { Backend, LoadGraphResult } from "./backend";
-import type { ExecutionContext, GraphSearchConsumer, GraphSearchDisplayOptions, ParsedQuery, Query, QueryResult, QueryTextDialect, ViewSettings } from "./editor/queryIr";
+import type { ExecutionContext, ParsedQuery, Query, QueryResult, QueryTextDialect, ViewSettings } from "./editor/queryIr";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, MatchEvidence, PageDto, PageEntry, PageRead, QueryExecution, QueryHit, QueryPageScope, RefGroup } from "./types";
+import { pageIdentityKey } from "./pageIdentity";
+import { blockRegions } from "./render/parse";
+import { searchSubstringSpans } from "./editor/searchQuery";
 import { searchFold } from "./editor/searchFold";
 
 type PublishedPage = PageDto & { path: string };
@@ -97,6 +100,7 @@ export function __resetPublishedSnapshotForTest(): void {
 
 /** Refuse snapshots without the expected schema and required read-only data. */
 export function validateSnapshot(snapshot: PublishedSnapshot): void {
+  assertSnapshotDepth(snapshot);
   if (snapshot.schema !== PUBLISHED_SNAPSHOT_SCHEMA) {
     throw new Error(`snapshot schema ${String(snapshot.schema)} is not ${PUBLISHED_SNAPSHOT_SCHEMA}`);
   }
@@ -105,11 +109,25 @@ export function validateSnapshot(snapshot: PublishedSnapshot): void {
   }
 }
 
+/** Admission bound for served JSON and query keys. Iterative O(JSON nodes),
+ * including query/result trees and backlinks, before any recursive reader or
+ * clone. Excessive depth and cycles refuse with a visible snapshot error. */
+function assertSnapshotDepth(value: unknown): void {
+  const pending = [{ value, depth: 0 }];
+  while (pending.length) {
+    const { value: node, depth } = pending.pop()!;
+    if (!node || typeof node !== "object") continue;
+    if (depth > 512) throw new Error("snapshot depth exceeds 512");
+    for (const child of Object.values(node)) pending.push({ value: child, depth: depth + 1 });
+  }
+}
+
 // ---- key parity with the engine -------------------------------------------
 
 /** JSON with object keys sorted at every depth: two IR values are the same
  *  query exactly when their stable text is. */
 export function stableJson(value: unknown): string {
+  assertSnapshotDepth(value);
   return JSON.stringify(sortKeys(value));
 }
 
@@ -152,10 +170,6 @@ function propertiesEqual(a: [string, string][], b: [string, string][]): boolean 
   return left.every((entry, index) => entry === right[index]);
 }
 
-function identityFold(name: string): string {
-  return name.trim().toLowerCase();
-}
-
 function literalNeedle(query: string): { empty: boolean; folded: string } {
   const raw = query.trim();
   return { empty: raw === "", folded: raw === "" ? "" : searchFold(raw) };
@@ -167,8 +181,7 @@ function includesFolded(text: string, needle: string): boolean {
 
 function firstMappedSpan(text: string, needle: string): { start: number; end: number } | null {
   if (!needle) return null;
-  const start = searchFold(text).indexOf(needle);
-  return start < 0 ? null : { start, end: start + needle.length };
+  return searchSubstringSpans(text, needle, 1)[0] ?? null;
 }
 
 // ---- the backend --------------------------------------------------------------
@@ -201,11 +214,11 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
   const unsubscribed = async () => () => {};
 
   const pageByName = (snapshot: PublishedSnapshot, name: string): PublishedPage | null => {
-    const wanted = identityFold(name);
-    const direct = snapshot.pages.find((page) => identityFold(page.name) === wanted);
+    const wanted = pageIdentityKey(name);
+    const direct = snapshot.pages.find((page) => pageIdentityKey(page.name) === wanted);
     if (direct) return direct;
-    const alias = snapshot.aliases.find(([from]) => identityFold(from) === wanted);
-    return alias ? snapshot.pages.find((page) => identityFold(page.name) === identityFold(alias[1])) ?? null : null;
+    const alias = snapshot.aliases.find(([from]) => pageIdentityKey(from) === wanted);
+    return alias ? snapshot.pages.find((page) => pageIdentityKey(page.name) === pageIdentityKey(alias[1])) ?? null : null;
   };
   const walk = (blocks: BlockDto[], visit: (block: BlockDto, ancestors: string[]) => void, ancestors: string[] = []) => {
     for (const block of blocks) {
@@ -233,7 +246,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     for (const page of snapshot.pages) {
       let found: BlockDto | null = null;
       walk(page.blocks, (block) => {
-        if (!found && (block.id === uuid || block.raw.includes(`id:: ${uuid}`))) found = block;
+        if (!found && ((blockRegions(block.raw, page.format ?? "md").id?.value.trim() ?? block.id) === uuid)) found = block;
       });
       if (found) return { page, block: found };
     }
@@ -264,13 +277,13 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
   const backlinkGroups = (snapshot: PublishedSnapshot, name: string): RefGroup[] => {
     const exact = snapshot.backlinks[name];
     if (exact) return exact;
-    const wanted = identityFold(name);
-    const key = Object.keys(snapshot.backlinks).find((candidate) => identityFold(candidate) === wanted);
+    const wanted = pageIdentityKey(name);
+    const key = Object.keys(snapshot.backlinks).find((candidate) => pageIdentityKey(candidate) === wanted);
     return key ? snapshot.backlinks[key] : [];
   };
   const backlinkRoot = (groups: RefGroup[], target: BacklinkFilterTarget): { group: RefGroup; block: BlockDto } | null => {
     for (const group of groups) {
-      if (group.kind !== target.kind || identityFold(group.page) !== identityFold(target.page)) continue;
+      if (group.kind !== target.kind || pageIdentityKey(group.page) !== pageIdentityKey(target.page)) continue;
       let found: BlockDto | null = null;
       walk(group.blocks, (block) => {
         if (!found && block.id === target.block_id) found = block;
@@ -346,7 +359,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     // ---- pages ----
     async pageInventory() {
       const entries = (await load()).entries.map((entry) => ({
-        key: identityFold(entry.name), name: entry.name,
+        key: pageIdentityKey(entry.name), name: entry.name,
         is_journal: entry.kind === "journal", day: entry.date_key,
         target: { kind: "existing" as const, id: entry.path, others: [] },
       }));
@@ -417,7 +430,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const roots: { group: RefGroup; block: BlockDto; text: string }[] = [];
       const requested = new Set<string>();
       for (const target of targets) {
-        const key = `${target.kind}\0${identityFold(target.page)}\0${target.block_id}`;
+        const key = `${target.kind}\0${pageIdentityKey(target.page)}\0${target.block_id}`;
         if (requested.has(key)) continue;
         requested.add(key);
         const root = backlinkRoot(groups, target);
@@ -509,10 +522,11 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const snapshot = await load();
       const wanted = stableJson(query);
       const wantedView = viewKey(view);
-      const page = context?.current_page ?? undefined;
+      const page = context?.current_page == null ? undefined : pageIdentityKey(context.current_page);
       const candidates = snapshot.queries.filter((record) =>
         stableJson(record.parsed.query) === wanted || (record.execution && stableJson(record.execution.parsed.query) === wanted));
-      const inContext = candidates.filter((record) => (record.context.current_page ?? undefined) === page);
+      const inContext = candidates.filter((record) =>
+        (record.context.current_page == null ? undefined : pageIdentityKey(record.context.current_page)) === page);
       const hit = inContext.find((record) => viewKey(record.view) === wantedView)
         ?? inContext[0]
         ?? (page === undefined ? candidates[0] : undefined);
@@ -523,9 +537,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
      *  aliases and block text from the snapshot — navigation, not a query. A
      *  query-language search (any other consumer) is refused: the export holds
      *  answers, not an index. */
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, _explain?: boolean, scope?: QueryPageScope, _options?: GraphSearchDisplayOptions, consumer: GraphSearchConsumer = "non_interactive"): Promise<QueryExecution> {
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane?: string, _explain?: boolean, scope?: QueryPageScope, _pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, _views?: { page: ViewSettings; block: ViewSettings }): Promise<QueryExecution> {
       const snapshot = await load();
-      if (consumer !== "ctrl_k") throw await staticQueryRefusal();
+      if (lane !== "quick-switch" && lane !== "quick-switch:current-page") throw await staticQueryRefusal();
       const wanted = literalNeedle(source);
       const hits: QueryHit[] = [];
       const empty = { hits, diagnostics: [], explanation: { branches: [] }, has_more: { pages: false, blocks: false }, cancelled: false };
@@ -538,7 +552,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       if (!scope) {
         for (const entry of snapshot.entries) {
           const alias = snapshot.aliases.find(([from, to]) =>
-            identityFold(to) === identityFold(entry.name) && includesFolded(from.trim(), wanted.folded)
+            pageIdentityKey(to) === pageIdentityKey(entry.name) && includesFolded(from.trim(), wanted.folded)
           )?.[0];
           const name = searchFold(entry.name.trim());
           if (!name.includes(wanted.folded) && !alias) continue;
@@ -550,7 +564,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       }
       const blockHits: QueryHit[] = [];
       for (const page of snapshot.pages) {
-        if (scope && (scope.path ? page.path !== scope.path : identityFold(page.name) !== identityFold(scope.name))) continue;
+        if (scope && (scope.path ? page.path !== scope.path : pageIdentityKey(page.name) !== pageIdentityKey(scope.name))) continue;
         walk(page.blocks, (block) => {
           const text = block.raw.split("\n")[0] ?? "";
           if (!includesFolded(block.raw, wanted.folded)) return;

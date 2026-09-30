@@ -1,3 +1,4 @@
+import { reportUiFailure } from "../uiFailure";
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openBlockProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
 import { isMobilePlatform } from "../nativeChrome";
@@ -726,10 +727,21 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
     const title = name().trim();
     if (!title) return;
     const owner = graphOwner();
-    const existing = await readOwned(owner, backend().listTemplates().catch(() => []));
+    let existing;
+    try {
+      existing = await readOwned(owner, backend().listTemplates());
+    } catch (error) {
+      if (owner()) reportUiFailure("template-read", error);
+      return;
+    }
     if (existing.kind === "stale") return;
     if (existing.value.some((t) => t.name.toLowerCase() === title.toLowerCase())) {
       pushToast(`A template named “${title}” already exists.`, "error");
+      return;
+    }
+    // A permission/read-only change can land while the name read is pending.
+    if (!blockWritable(props.id)) {
+      reportUiFailure("template-write", "read-only");
       return;
     }
     setBlockProperty(props.id, "template", title);

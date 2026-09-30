@@ -436,8 +436,12 @@ fn read_bounded(path: &Path, max: usize) -> std::io::Result<Option<Vec<u8>>> {
     Ok((bytes.len() <= max).then_some(bytes))
 }
 
-fn read_manifest_bounded(path: &Path) -> Option<String> {
-    String::from_utf8(read_bounded(path, MAX_MANIFEST_BYTES).ok()??).ok()
+fn read_manifest_bounded(path: &Path) -> std::io::Result<Option<String>> {
+    match read_bounded(path, MAX_MANIFEST_BYTES) {
+        Ok(bytes) => Ok(bytes.and_then(|bytes| String::from_utf8(bytes).ok())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// Decodes a sideloaded plugin entry, refusing an over-limit payload from its
@@ -522,6 +526,7 @@ fn validate_uninstall_target(
         return Err("installed plugin package is unsafe".to_string());
     }
     let manifest_json = read_manifest_bounded(&target.join("manifest.json"))
+        .map_err(|error| error.to_string())?
         .ok_or_else(|| "installed plugin manifest is unreadable".to_string())?;
     if manifest_identity(&manifest_json).ok().as_ref()
         != Some(&(id.to_string(), version.to_string()))
@@ -726,42 +731,48 @@ pub(crate) fn uninstall_plugin(
 
 /// List valid packages under app-owned plugin storage, across all versions.
 /// Reads and hashes each wasm (at most 8 MiB each) and a 64 KiB manifest;
-/// malformed, missing, oversized or unreadable packages are omitted. A root
-/// lookup error returns an empty list; an unreadable or unparseable device
+/// malformed, missing or oversized packages are omitted. Storage/recovery
+/// failures propagate; an unreadable or unparseable device
 /// settings file is an error, never silently "all disabled". Cost O(installed wasm bytes).
 #[tauri::command]
 pub(crate) fn list_installed_plugins(
     app: tauri::AppHandle,
 ) -> Result<Vec<InstalledPlugin>, String> {
-    let Ok(root) = plugins_dir(&app) else {
-        return Ok(Vec::new());
-    };
+    let root = plugins_dir(&app)?;
     let states = match crate::settings::settings_path(&app) {
         Some(path) => plugin_states_at(&path)?,
         None => Default::default(),
     };
-    Ok(list_installed_plugins_at(&root, &states))
+    list_installed_plugins_at(&root, &states).map_err(|error| error.to_string())
 }
 
 fn list_installed_plugins_at(
     root: &Path,
     states: &std::collections::HashMap<String, PluginState>,
-) -> Vec<InstalledPlugin> {
+) -> std::io::Result<Vec<InstalledPlugin>> {
     let mut installed = Vec::new();
-    let Ok(ids) = std::fs::read_dir(root) else {
-        return installed;
+    let ids = match std::fs::read_dir(root) {
+        Ok(ids) => ids,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(installed),
+        Err(error) => return Err(error),
     };
-    for id_entry in ids.flatten().filter(|entry| entry.path().is_dir()) {
+    for id_entry in ids {
+        let id_entry = id_entry?;
+        if !id_entry.metadata()?.is_dir() {
+            continue;
+        }
         let Some(id) = id_entry.file_name().to_str().map(str::to_string) else {
             continue;
         };
         if !safe_component(&id, true) {
             continue;
         }
-        let Ok(versions) = std::fs::read_dir(id_entry.path()) else {
-            continue;
-        };
-        for version_entry in versions.flatten().filter(|entry| entry.path().is_dir()) {
+        let versions = std::fs::read_dir(id_entry.path())?;
+        for version_entry in versions {
+            let version_entry = version_entry?;
+            if !version_entry.metadata()?.is_dir() {
+                continue;
+            }
             let Some(version) = version_entry.file_name().to_str().map(str::to_string) else {
                 continue;
             };
@@ -769,7 +780,7 @@ fn list_installed_plugins_at(
                 continue;
             }
             let Some(manifest_json) =
-                read_manifest_bounded(&version_entry.path().join("manifest.json"))
+                read_manifest_bounded(&version_entry.path().join("manifest.json"))?
             else {
                 continue;
             };
@@ -778,9 +789,13 @@ fn list_installed_plugins_at(
             {
                 continue;
             }
-            let Ok(Some(wasm)) =
-                read_bounded(&version_entry.path().join("plugin.wasm"), MAX_WASM_BYTES)
-            else {
+            let wasm = match read_bounded(&version_entry.path().join("plugin.wasm"), MAX_WASM_BYTES)
+            {
+                Ok(wasm) => wasm,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error),
+            };
+            let Some(wasm) = wasm else {
                 continue;
             };
             let state = states.get(&id);
@@ -796,7 +811,7 @@ fn list_installed_plugins_at(
         }
     }
     installed.sort_by(|a, b| a.manifest_json.cmp(&b.manifest_json));
-    installed
+    Ok(installed)
 }
 
 /// Read one installed wasm from app-owned plugin storage. Unsafe id/version,
@@ -1264,7 +1279,7 @@ mod tests {
         wasm.truncate(MAX_WASM_BYTES);
         std::fs::write(ok.join("plugin.wasm"), &wasm).unwrap();
 
-        let listed = list_installed_plugins_at(root, &Default::default());
+        let listed = list_installed_plugins_at(root, &Default::default()).unwrap();
         let ids: Vec<_> = listed.iter().map(|item| item.id.as_str()).collect();
         assert_eq!(ids, ["dev.tine.ok"]);
 
@@ -1279,6 +1294,28 @@ mod tests {
             Some(MAX_WASM_BYTES)
         );
         std::fs::write(ok.join("manifest.json"), "x".repeat(MAX_MANIFEST_BYTES + 1)).unwrap();
-        assert_eq!(read_manifest_bounded(&ok.join("manifest.json")), None);
+        assert_eq!(
+            read_manifest_bounded(&ok.join("manifest.json")).unwrap(),
+            None
+        );
+    }
+}
+
+#[cfg(test)]
+mod fail_read_tests {
+    use super::*;
+    #[test]
+    fn fail_read_plugin_inventory_cannot_be_an_empty_success() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("plugins");
+        std::fs::write(&root, "directory unavailable").unwrap();
+        assert!(
+            format!(
+                "{:?}",
+                list_installed_plugins_at(&root, &Default::default())
+            )
+            .contains("Err"),
+            "I-2: a failed plugin inventory read cannot mean no plugins"
+        );
     }
 }

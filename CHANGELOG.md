@@ -101,6 +101,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   (GH #382).
 
 ### Fixed
+- Published query snapshots retain reviewed source documents across external edits; draft loading and CSV/TSV imports bound their reads before decoding (REG-OG-B-W3-PUBLICATION-SNAPSHOT, REG-OG-B-W3-BOUNDED-DRAFT-READ, REG-OG-B-W3-BOUNDED-CSV-READ).
+- Sheet row virtualization clears its visited-row state on graph reset (UI-OG-B-W3-SHEET-BINDING-RESET).
+
+- Sheet formulas memoize shared references, reject inherited member names, and refuse excessive field-rename depth without crashing (UI-OG-B-W3-FORMULA-DAG, UI-OG-B-W3-FORMULA-OWN-MEMBERS, UI-OG-B-W3-FORMULA-RENAME-DEPTH).
+
+- Fixed namespace and published-backend identity drift, published search highlights and block-ID lookup, and deeply nested namespace/snapshot handling (OG-B-FRONT).
+- Fixed recursive embed exports, oversized scientific-zero output, rejected registry response cleanup, broad table rendering, and media labels containing a literal percent. Search excerpts and query-macro scans avoid repeated input work (OG-B-FRONT).
+
+- **Exported grids show the same bounded rows their footer totals**, and count their full area against export limits (og B-SHEET).
+
+- **Sheet cell operations preserve their own configuration**, query sheets keep the physical page already open, and field rename accepts Unicode property siblings (og B-SHEET).
+- Kept-draft conflict resolution and publication remain with their original graph; saving retires a pending first-write crash-safe draft in order, and uninstall stops a plugin still starting.
+- Asset versions, rendered block and board markers, readiness listeners, audio scrub gestures and updater handles retire with their owner. Query builder edits compose while print/parse work is pending, completed workspace searches release their cancellation lanes, parser comparisons stop on retirement, and visible PDF pages share a bounded tile budget.
+- **Failed native reads keep their errors and recovery details** (OG-B-FAIL): plugin and asset inventories
+  propagate disk failures, unreadable sessions cannot create blank workspaces, and incomplete transaction recovery
+  remains visible through conflict resolution. Launch-backup failures appear in the graph window.
+
+- **Failed reads stay visible** (OG-B-FAIL): page and reference refreshes keep their last successful data,
+  journal-feed and session reads report failures, template creation refuses a failed name check or a read-only block,
+  and the journal-template picker offers Retry. Quick Capture now shows block-action feedback with copyable errors.
+
+- Org pages with long directive preambles open without reparsing every growing prefix (REG-OG-ORG-DIRECTIVE-OPEN-001). Page moves sync each affected directory once, and both journal navigation doors share the absent-path rule (og-B-STORE).
+
+- Graph settings read their top-level EDN entries and decode authored string escapes consistently (REG-OG-CONFIG-ROOT-READ-001, REG-OG-CONFIG-EDN-ESCAPES-001).
 
 - **Query memo limits include statistics and compiled patterns** (REG-OG-QUERY-MEMO-001): oversized entries are returned without caching, and program reservations count toward both entry and total memory budgets.
 

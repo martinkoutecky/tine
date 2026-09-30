@@ -147,6 +147,12 @@ pub fn preamble_read(prefix: &str, format: Format) -> PreambleRead {
     let body = body.strip_suffix('\r').unwrap_or(body);
     let last = body.rsplit(['\r', '\n']).next().unwrap_or("");
     let trimmed = last.trim_start();
+    let inert = trimmed.trim_end().is_empty()
+        || crate::doc::parse_property_line(last).is_some()
+        || (format == Format::Org && org_meta_line(trimmed));
+    if inert {
+        return PreambleRead::More;
+    }
     if trimmed.starts_with(['-', '#', '*']) {
         let end = preamble_end(prefix, format);
         if end < prefix.len() {
@@ -156,14 +162,7 @@ pub fn preamble_read(prefix: &str, format: Format) -> PreambleRead {
             );
         }
     }
-    let inert = trimmed.trim_end().is_empty()
-        || crate::doc::parse_property_line(last).is_some()
-        || (format == Format::Org && org_meta_line(trimmed));
-    if inert {
-        PreambleRead::More
-    } else {
-        PreambleRead::Whole
-    }
+    PreambleRead::Whole
 }
 
 /// An Org `#+key: value` directive (not a `#+BEGIN_…` opener) or a `:key:`

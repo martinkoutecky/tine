@@ -589,3 +589,50 @@ fn the_scope_the_app_sends_deserializes_as_the_wire_shape() {
     .unwrap();
     assert!(matches!(query, SheetScope::Query { .. }));
 }
+
+#[test]
+fn grid_render_uses_only_rows_sent_for_aggregates_and_charges_their_area() {
+    for (cols, admitted) in [(1, true), (21, false)] {
+        let (base, store) = open_fixture();
+        let mut page = String::from("public:: true\n\n- Big\n  tine.view:: grid\n");
+        for i in 0..5_001 {
+            page.push_str(&format!("  - row {i}\n    - value-{i}\n"));
+        }
+        fs::write(base.join("graph/pages/Big.md"), page).unwrap();
+        store.scan_refresh().unwrap();
+        let input = sheet_export_inputs(&store, Some(&["Big".to_owned()]), None)
+            .unwrap()
+            .remove(0);
+        let sheets = serde_json::from_value(serde_json::json!([{
+            "page": "Big", "path": input.path, "fp": input.fp,
+            "view": "grid", "cols": cols, "header": false,
+            "footer": [{"label": "Sum", "text": "5000"}], "omitted": input.omitted
+        }]))
+        .unwrap();
+        publish_live_with_sheets(
+            &store,
+            &base.join("output"),
+            "export",
+            false,
+            &bundle(),
+            sheets,
+        )
+        .unwrap();
+        let html = fs::read_to_string(base.join("output/export/big.html")).unwrap();
+        assert_eq!(
+            html.contains("sheet-grid"),
+            admitted,
+            "grid area must obey the sheet budget"
+        );
+        if admitted {
+            assert!(html.contains("value-4999"));
+            assert!(
+                !html.contains("value-5000"),
+                "native layout must use the same bounded row set as aggregates"
+            );
+            assert!(html.contains("1 more rows are not shown."));
+            assert!(html.contains("sheet-agg-label\">Sum</span> 5000"));
+        }
+        store.close();
+    }
+}
