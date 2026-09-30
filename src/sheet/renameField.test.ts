@@ -43,6 +43,18 @@ describe("Sheet field rename planner", () => {
       ok: true, count: 1, raw: md.replace("qty::", "amount::") });
   });
 
+  it("round-trips an Org owner and rows with canonical facet verification", () => {
+    const owner = source("table", "Table\n:PROPERTIES:\n:tine.view: table\n:tine.fields: occurrence=number\n:tine.formula.rpn: occurrence * 2\n:END:\nbody", "org");
+    const row = source("row", "Row\n:PROPERTIES:\n:occurrence: 2\n:other: kept\n:END:\nbody", "org");
+    owner.recognizedProperties = facetsOf(owner.raw, "org").properties;
+    row.recognizedProperties = facetsOf(row.raw, "org").properties;
+    expect(propertyOccurrences(owner.raw, "org").map((p) => [p.key, p.value])).toEqual(owner.recognizedProperties);
+    const result = planSheetFieldRename({ rowSource: "children", ownerWritable: true, schemaHome: "block",
+      owner, rows: [row], recognizeProperties: (raw, format) => facetsOf(raw, format).properties,
+      oldField: "prop:occurrence", newName: "OCC" });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+  });
+
   it("renames canonical Markdown and Org keys in place without touching body or fences", () => {
     const md = [
       "Row",

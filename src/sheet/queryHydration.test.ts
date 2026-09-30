@@ -57,9 +57,28 @@ describe("query sheet hydration identity", () => {
     const source = { ...group("Twin", "page", "other-row"), path: "pages/other.md" };
     const pending = hydrateVisibleQueryPages([{ id: "other-row", page: "Twin" }], [source]);
     loadSingle({ ...page("Twin", "page"), id: "pages/Twin.md" });
-    finish({ ...page("Twin", "page"), id: "pages/other.md" });
+    const dto = { ...page("Twin", "page"), id: "pages/other.md" };
+    finish(dto);
     await pending;
     expect(pageByName("Twin")?.id).toBe("pages/Twin.md");
+  });
+
+  it("leaves same-kind path twins DTO-only when both are visible", async () => {
+    const groups = [
+      { ...group("Twin", "page", "a"), path: "pages/a.md" },
+      { ...group("Twin", "page", "b"), path: "pages/b.md" },
+    ];
+    await hydrateVisibleQueryPages([{ id: "a", page: "Twin" }, { id: "b", page: "Twin" }], groups);
+    expect(backendMock.getPageByPath).not.toHaveBeenCalled();
+    expect(pageByName("Twin")).toBeUndefined();
+  });
+
+  it("loads the exact path into an empty name slot", async () => {
+    backendMock.getPageByPath.mockResolvedValue({ ...page("Twin", "page"), id: "pages/exact.md" });
+    const source = { ...group("Twin", "page", "exact"), path: "pages/exact.md" };
+    await hydrateVisibleQueryPages([{ id: "exact", page: "Twin" }], [source]);
+    expect(backendMock.getPageByPath).toHaveBeenCalledWith("pages/exact.md");
+    expect(pageByName("Twin")?.id).toBe("pages/exact.md");
   });
 
   it("reports a failed visible-page hydration with fixed text", async () => {

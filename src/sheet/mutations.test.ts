@@ -781,3 +781,38 @@ describe("fill preserves target hidden properties", () => {
     expect(doc.byId.b.raw).toBe("A\nuser:: kept\nid:: keep\ncollapsed:: false\ntine.plugin-config:: target");
   });
 });
+
+describe("sheet hidden metadata transfer class", () => {
+  it.each(["md", "org"] as const)("fill-down copies user properties but keeps target configuration (%s)", (format) => {
+    const source = format === "md"
+      ? "A\ncollapsed:: true\ntine.view:: grid\nuser:: kept"
+      : "A\n:PROPERTIES:\n:collapsed: true\n:tine.view: grid\n:user: kept\n:END:";
+    const target = format === "md"
+      ? "B\nid:: target\ncollapsed:: false\ntine.plugin:: target"
+      : "B\n:PROPERTIES:\n:id: target\n:collapsed: false\n:tine.plugin: target\n:END:";
+    const grid = blk(format === "md" ? "Grid\ntine.view:: grid" : "Grid\n:PROPERTIES:\n:tine.view: grid\n:END:",
+      [blk("", [blk(source)]), blk("", [blk(target)])]);
+    grid.properties = [["tine.view", "grid"]];
+    loadSingle({ name: "Sheet", kind: "page", title: "Sheet", pre_block: null, blocks: [grid], format });
+    const id = cellId(grid.id, 1, 0)!;
+    expect(fillSheetSelection({ kind: "range", gridId: grid.id, anchor: { row: 0, col: 0 }, focus: { row: 1, col: 0 } }, "down")).toBe(true);
+    expect(blockProperty(id, "id")).toBe("target");
+    expect(blockProperty(id, "collapsed")).toBe("false");
+    expect(blockProperty(id, "tine.plugin")).toBe("target");
+    expect(blockProperty(id, "tine.view")).toBeNull();
+    expect(blockProperty(id, "user")).toBe("kept");
+    undo();
+    expect(doc.byId[id].raw).toBe(target);
+  });
+
+  it("structural paste strips source hidden keys through the same visible-cell writer", async () => {
+    loadStructuralPasteDoc();
+    setDoc("byId", "s11", "raw", "Source\ncollapsed:: true\ntine.view:: grid\ntine.plugin:: source\nuser:: kept");
+    setDoc("byId", "target", "raw", "Target\nid:: target\ncollapsed:: false\ntine.plugin:: target");
+    const copied = { kind: "range", gridId: "src", anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } } as const;
+    const { text } = sheetSelectionText(copied);
+    await copySheetSelection(copied);
+    expect(splatStructuralSheetSelection({ kind: "cell", gridId: "dst", row: 0, col: 0 }, text)).toBeTruthy();
+    expect(doc.byId.target.raw).toBe("Source\nuser:: kept\nid:: target\ncollapsed:: false\ntine.plugin:: target");
+  });
+});

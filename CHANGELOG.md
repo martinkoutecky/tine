@@ -101,6 +101,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Exported grids show the same bounded rows their footer totals**, and count their full area against export limits (og B-SHEET).
+
 - **Sheet cell operations preserve their own configuration**, query sheets keep the physical page already open, and field rename accepts Unicode property siblings (og B-SHEET).
 
 - **Faster graph startup and first search** (og-P1). Journal-first reads avoid ordinary-page title discovery,

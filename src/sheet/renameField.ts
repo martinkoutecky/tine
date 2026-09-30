@@ -1,7 +1,7 @@
 import { isAggregateFn } from "./aggregate";
 import { parseFields, sheetConfig, type FieldSpec } from "./config";
 import { astToExpr, decodeFormulaExpr, encodeFormulaExpr, formulaNameValid, parseFormula, type Ast } from "./formula";
-import { PROP_LINE, pagePropertyEntries } from "../editor/properties";
+import { PROP_LINE } from "../editor/properties";
 import { parseBody } from "../render/facets";
 import type { Format } from "../render/ast";
 
@@ -105,12 +105,15 @@ function mdOccurrence(line: RawLine, index: number): PropertyOccurrence | null {
 }
 
 function orgOccurrence(line: RawLine, index: number): PropertyOccurrence | null {
-  const entry = pagePropertyEntries(`:PROPERTIES:\n${line.text}\n:END:`, "org")[0];
-  if (!entry) return null;
-  // The shared drawer reader recognizes the key; retain the source spelling and
+  const propertyBlock = parseBody(`Row\n:PROPERTIES:\n${line.text}\n:END:`, "org")
+    .find((block) => block.kind === "properties");
+  const pair = propertyBlock?.kind === "properties" ? propertyBlock.props[0] : undefined;
+  if (!pair) return null;
+  const key = pair[0];
+  // The parser recognizes the drawer key; retain the source spelling and
   // whitespace for the lossless edit rather than its lowercased projection.
-  const keyStartInLine = line.text.toLowerCase().indexOf(entry.key);
-  const keyEndInLine = keyStartInLine + entry.key.length;
+  const keyStartInLine = line.text.toLowerCase().indexOf(key.toLowerCase());
+  const keyEndInLine = keyStartInLine + key.length;
   const valueStartInLine = keyEndInLine + 1 +
     (line.text.slice(keyEndInLine + 1).length - line.text.slice(keyEndInLine + 1).trimStart().length);
   return {
@@ -139,7 +142,10 @@ export function propertyOccurrences(raw: string, format: Format): readonly Prope
     if (startByte < 0 || endByte > bytes.length) continue;
     const start = decoder.decode(bytes.subarray(0, startByte)).length;
     const source = decoder.decode(bytes.subarray(startByte, endByte));
-    for (const [index, line] of linesOf(source).entries()) {
+    // An Org properties span includes its two drawer wrapper lines.
+    const lines = linesOf(source);
+    const payload = format === "org" ? lines.slice(1, -1) : lines;
+    for (const [index, line] of payload.entries()) {
       const occurrence = format === "org" ? orgOccurrence(line, index) : mdOccurrence(line, index);
       if (!occurrence) continue;
       out.push({ ...occurrence,
