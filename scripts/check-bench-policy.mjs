@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const policy = JSON.parse(fs.readFileSync(path.join(root, "scripts/bench-policy.json"), "utf8"));
-const version = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8")).version;
+const app = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8"));
+const version = app.version;
 const problems = [];
 
 if (policy.schemaVersion !== 2) problems.push(`bench policy schema is ${policy.schemaVersion}; expected 2`);
@@ -39,6 +40,17 @@ function reachableReleaseTags() {
 }
 
 let expectedPrevious = argument("--expected-previous");
+const selection = policy.previousRelease?.selection ?? "latest-release";
+if (selection === "og-campaign") {
+  // A master's latest release is not the experiment's performance anchor.
+  // This selector cannot advance the anchor or apply to a stable build.
+  if (app.identifier !== "page.tine.TineOG") {
+    problems.push("og-campaign performance selection requires the OG application identity");
+  }
+  expectedPrevious = "v0.6.5";
+} else if (selection !== "latest-release") {
+  problems.push(`unknown previousRelease.selection: ${selection}`);
+}
 if (!expectedPrevious) {
   const candidateTag = `v${version}`;
   const workflowTag = process.env.GITHUB_REF?.startsWith("refs/tags/")
@@ -65,7 +77,7 @@ if (!expectedPrevious) {
   problems.push("could not determine the most recent published release tag; fetch full tag history");
 } else if (policy.previousRelease?.ref !== expectedPrevious) {
   problems.push(
-    `previousRelease.ref is ${policy.previousRelease?.ref ?? "missing"}; expected most recent published release ${expectedPrevious}`
+    `previousRelease.ref is ${policy.previousRelease?.ref ?? "missing"}; expected ${selection === "og-campaign" ? "fixed OG campaign anchor" : "most recent published release"} ${expectedPrevious}`
   );
 }
 if (policy.immutableBaseline?.ref !== "v0.4.7") {

@@ -6,6 +6,7 @@
   },
   "previousRelease": {
     "ref": "v0.6.5",
+    "selection": "og-campaign",
     "purpose": "OG v0.6.5 release performance baseline. Keep fixed during the parity campaign; budgets are unchanged."
   },
   "reliability": {
