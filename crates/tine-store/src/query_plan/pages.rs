@@ -424,26 +424,30 @@ pub(super) fn execute_pages(
             PageCandidate::Referenced(_) => None,
         })
         .collect();
-    let rows = graph.with_pages(|pages| {
-        let index = graph.query_index();
-        pages
-            .iter()
-            .filter(|(entry, _)| wanted.contains(entry.rel_path_str()))
-            .map(|(entry, doc)| {
-                let facts = index.facts(entry, doc);
-                (
-                    entry.rel_path_str().to_owned(),
-                    tine_core::query::ir::PageRow {
-                        path: entry.rel_path_str().to_owned(),
-                        name: entry.name.clone(),
-                        kind: entry.kind,
-                        journal_day: entry.date_key,
-                        properties: facts.properties().to_vec(),
-                    },
-                )
-            })
-            .collect::<HashMap<_, _>>()
-    });
+    let rows = if wanted.is_empty() {
+        HashMap::new()
+    } else {
+        graph.with_pages(|pages| {
+            let index = graph.query_index();
+            pages
+                .iter()
+                .filter(|(entry, _)| wanted.contains(entry.rel_path_str()))
+                .map(|(entry, doc)| {
+                    let facts = index.facts(entry, doc);
+                    (
+                        entry.rel_path_str().to_owned(),
+                        tine_core::query::ir::PageRow {
+                            path: entry.rel_path_str().to_owned(),
+                            name: entry.name.clone(),
+                            kind: entry.kind,
+                            journal_day: entry.date_key,
+                            properties: facts.properties().to_vec(),
+                        },
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        })
+    };
     Some((
         winners
             .into_iter()

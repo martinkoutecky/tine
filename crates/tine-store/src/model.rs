@@ -13,7 +13,7 @@ pub(crate) use page_identity::configured_hidden;
 use page_identity::{effective_page_name, list_graph_pages};
 pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
-    graph_text_watch_relevant, list_graph_pages_kind,
+    graph_text_watch_relevant,
 };
 use page_parse::{isolate_page_parse, parse_page_content, parse_page_entry_isolated};
 

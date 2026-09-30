@@ -1107,7 +1107,7 @@ impl Store {
                     CheckedOpenError::Io(error) => OpenError::Io(error.into()),
                 })?;
         graph.install_live_config();
-        let journals = crate::model::list_graph_pages_kind(&graph, Some(PageKind::Journal));
+        let journals = graph.scan_journal_names();
         let journal_ids = journal_ids_from_entries(&graph, &journals);
         let config_path = root.join("logseq/config.edn");
         let problem = match crate::model::read_parse_input(&config_path) {

@@ -17,20 +17,7 @@ impl Graph {
             }
 
             let mut built = FindEntryIndex::new();
-            for entry in list_graph_pages_kind(self, Some(kind)) {
-                let entry_key = (entry.kind, tine_core::refs::page_key(&entry.name));
-                built.entries.entry(entry_key).or_default().push(entry);
-            }
-            for claimants in built.entries.values_mut() {
-                claimants.sort_by(|a, b| {
-                    compare_page_claimants(
-                        a,
-                        b,
-                        &self.current_journal_format(),
-                        self.current_config().file_name_format,
-                    )
-                });
-            }
+            built.entries = page_claimants(self, &list_graph_pages_kind(self, Some(kind)));
             built.mark_kind_loaded(kind);
 
             let found = {
@@ -56,6 +43,18 @@ impl Graph {
         }
     }
 
+    /// Cold journal inventory and its complete claimant index share one walk.
+    /// Only called at open, before the watcher and load worker start.
+    pub(crate) fn scan_journal_names(&self) -> Vec<PageEntry> {
+        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+        let entries = list_graph_pages_kind(self, Some(PageKind::Journal));
+        let mut index = FindEntryIndex::new();
+        index.entries = page_claimants(self, &entries);
+        index.mark_kind_loaded(PageKind::Journal);
+        *self.find_entry_cache.write().unwrap() = Some((gen, index));
+        entries
+    }
+
     /// Build the page list and effective-name claimants from one cold walk.
     pub(crate) fn snapshot_name_index(
         &self,
@@ -63,29 +62,46 @@ impl Graph {
         Arc<Vec<PageEntry>>,
         HashMap<(PageKind, String), Vec<PageEntry>>,
     ) {
+        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
         let format = self.current_journal_format();
-        let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();
         let entries = list_graph_pages(self);
-        for entry in &entries {
-            claimants
-                .entry((entry.kind, tine_core::refs::page_key(&entry.name)))
-                .or_default()
-                .push(entry.clone());
-        }
-        for entries in claimants.values_mut() {
-            entries.sort_by(|a, b| {
-                compare_page_claimants(a, b, &format, self.current_config().file_name_format)
-            });
-        }
+        let claimants = page_claimants(self, &entries);
+        *self.find_entry_cache.write().unwrap() = Some((
+            gen,
+            FindEntryIndex {
+                entries: claimants.clone(),
+                pages_loaded: true,
+                journals_loaded: true,
+            },
+        ));
         let list = Arc::new(dedup_journal_days(
             entries,
             &format,
             self.current_config().file_name_format,
         ));
-        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
         *self.page_list_cache.write().unwrap() = Some((gen, Arc::clone(&list)));
         (list, claimants)
     }
+}
+
+/// The same claimant ordering for cold direct reads, journal open and snapshots.
+fn page_claimants(
+    graph: &Graph,
+    entries: &[PageEntry],
+) -> HashMap<(PageKind, String), Vec<PageEntry>> {
+    let mut claimants: HashMap<(PageKind, String), Vec<PageEntry>> = HashMap::new();
+    for entry in entries {
+        claimants
+            .entry((entry.kind, tine_core::refs::page_key(&entry.name)))
+            .or_default()
+            .push(entry.clone());
+    }
+    let format = graph.current_journal_format();
+    let name_format = graph.current_config().file_name_format;
+    for entries in claimants.values_mut() {
+        entries.sort_by(|a, b| compare_page_claimants(a, b, &format, name_format));
+    }
+    claimants
 }
 
 #[cfg(test)]
@@ -172,6 +188,9 @@ mod cold_index_tests {
             8,
             "one preamble read per page"
         );
+        assert!(graph.find_entry("Name 1", PageKind::Page).is_some());
+        assert_eq!(GRAPH_PREAMBLE_READS.with(|reads| reads.get()), 8,
+            "I-12/E: direct reads reuse the snapshot's complete claimant index; exemplar page_identity.rs");
         let _ = fs::remove_dir_all(&dir);
     }
 }
@@ -359,9 +378,6 @@ pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Ve
         return entries;
     }
     walk_graph_page_files(root, start, &config, |path| {
-        if !graph_text_eligible(root, &path, &config) {
-            return;
-        }
         if kind.is_some_and(|kind| (kind == PageKind::Journal) != path.starts_with(&journals)) {
             return;
         }
