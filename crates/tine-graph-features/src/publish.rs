@@ -79,7 +79,10 @@ pub fn sheet_export_inputs(
     let whole = store
         .whole_graph()
         .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?;
-    let corpus = whole.corpus();
+    let mut corpus = whole.corpus();
+    // Page order comes from directory enumeration, which differs by platform;
+    // hand sheets over by page name so the handoff and its MAX_SHEETS cut are stable.
+    corpus.pages.sort_by(|a, b| a.name.cmp(&b.name));
     let graph = RenderGraph::new(&corpus, &whole, store, None);
     let published = match scope {
         None => None,
