@@ -202,7 +202,6 @@ const LEGACY_COLLECTIONS = new Set([
   "src/binding.ts#scopedClears",
   "src/components/Macro.tsx#youtubePlayers",
   "src/components/SheetContainer.tsx#sheetContainerMeasures",
-  "src/components/SheetTable.tsx#renderedSheetRows",
   "src/conflictQueue.ts#arrivalNotices",
   "src/document/save/engine.ts#kindLedger",
   "src/document/save/engine.ts#titleIdentityIntents",
@@ -262,7 +261,7 @@ const LEGACY_COLLECTIONS = new Set([
   "src/transientLayers.ts#layers",
   "src/themes/manager.ts#[revokedThemeVersions, setRevokedThemeVersions]",
 ]);
-const LEGACY_COLLECTION_COUNT = 62;
+const LEGACY_COLLECTION_COUNT = 61;
 function unownedCollections(sources: Sources): string[] {
   return moduleCollections(sources).filter((c) => !c.scoped && !c.fixed && !BOUNDED_COLLECTIONS[c.key]).map((c) => c.key);
 }
