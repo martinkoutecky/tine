@@ -205,5 +205,6 @@
         "argument": "(task TODO)"
       }
     ]
-  }
+  },
+  {"why":"Separated closing braces do not close a macro (OG-R4C)","raw":"{{query x} }","extents":[]}
 ]

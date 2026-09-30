@@ -26,12 +26,12 @@ import { QUERY_MACRO_NAMES, QUERY_MACRO_SCAFFOLD } from "./editor/queryMacroName
 const REPO = fileURLToPath(new URL("..", import.meta.url));
 const SRC = join(REPO, "src");
 const CRATES = join(REPO, "crates");
-const RUST_CONSTANT_FILE = join(CRATES, "tine-core/src/query/ir.rs");
+const RUST_CONSTANT_FILE = join(CRATES, "tine-core/src/query/macro_names.rs");
 
 const RULE =
   `I-12 / SPEC §7.9 (Y1) — a query macro name is spelled in ONE place per language.\n`
   + `  TypeScript: QUERY_MACRO_NAMES in src/editor/queryMacroName.ts\n`
-  + `  Rust:       QUERY_MACRO_NAMES in crates/tine-core/src/query/ir.rs\n`
+  + `  Rust:       QUERY_MACRO_NAMES in crates/tine-core/src/query/macro_names.rs\n`
   + `A packet may not write a macro name its own tree cannot recognise, re-edit or\n`
   + `export — which is what happens when a new matcher spells "query" inline and the\n`
   + `{{tine-query}} half of the pair silently falls through to literal text.\n`

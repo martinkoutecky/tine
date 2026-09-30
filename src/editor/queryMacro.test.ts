@@ -163,3 +163,14 @@ it("reads many valid macros with only linear source slicing (OG-B-FRONT)", () =>
     expect(sliced, "I-15: queryMacro must not materialize each remaining suffix").toBeLessThan(raw.length * 3);
   } finally { spy.mockRestore(); }
 });
+
+it("rejects separated closing braces like the native macro extent reader", () => {
+  expect(queryMacroExtents("{{query x} }")).toEqual([]);
+});
+
+it("converts native byte extents into UTF-16 indices after emoji and multibyte text", () => {
+  const raw = "🙂 中文 {{query (task TODO)}} é {{tine-query @block}}";
+  const found = queryMacroExtents(raw);
+  expect(found.map((e) => raw.slice(e.start, e.end))).toEqual(["{{query (task TODO)}}", "{{tine-query @block}}"]);
+  expect(found.map((e) => e.start)).toEqual([raw.indexOf("{{query"), raw.indexOf("{{tine-query")]);
+});
