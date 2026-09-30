@@ -19,12 +19,14 @@ import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { bumpDataRev } from "../graphSession";
 import * as blockRender from "../render/block";
 import { renderedBlocks, resetNearObserverForTests } from "../lazyObserve";
+import { openSwitcher, closeSwitcher } from "../ui";
 
 beforeAll(async () => {
   await initParser();
 });
 
 afterEach(() => {
+  closeSwitcher();
   resetNearObserverForTests();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -154,6 +156,45 @@ function loadQueryDoc(queryRaw: string) {
 
 
 describe("QueryMacro sheet integration", () => {
+  it("leaves background List mounts pending while the picker owns foreground input", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    renderedBlocks.add("query");
+    mockRun(Array.from({ length: 100 }, (_, index) => ({
+      page: `Result ${index}`, kind: "page", blocks: [{ id: `result-${index}`, raw: "TODO found", children: [], collapsed: false }],
+    })));
+    const frames = new Map<number, FrameRequestCallback>();
+    let serial = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++serial, callback);
+      return serial;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+    vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
+    openSwitcher();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      expect(root.querySelectorAll(".query-group").length,
+        "I-25: covered background List DOM must yield to foreground picker input").toBe(0);
+      expect(root.querySelector(".query-pending-groups")).not.toBeNull();
+      closeSwitcher();
+      expect(root.querySelectorAll(".query-group").length).toBe(0);
+      const queued = [...frames.values()].at(-1)!;
+      expect(queued).toBeTypeOf("function");
+      openSwitcher();
+      queued(0);
+      expect(root.querySelectorAll(".query-group").length).toBe(0);
+      closeSwitcher();
+      for (let turn = 0; root.querySelectorAll(".query-group").length === 0 && turn < 20; turn += 1) {
+        const [id, frame] = [...frames][0];
+        frames.delete(id);
+        frame(0);
+      }
+      expect(root.querySelectorAll(".query-group").length).toBe(32);
+      openSwitcher();
+      expect(root.querySelectorAll(".query-group").length).toBe(32);
+    } finally { dispose(); }
+  });
   it("mounts broad List results in bounded frames while retaining keyed groups and cancelling retired work", async () => {
     loadQueryDoc("{{query (task TODO)}}");
     renderedBlocks.add("query");

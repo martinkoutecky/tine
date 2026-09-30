@@ -2,7 +2,7 @@ import { For, Show, Switch, Match, createMemo, createResource, createSignal, use
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
-import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, pageIdentityKey, openQueryExport } from "../ui";
+import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, pageIdentityKey, openQueryExport, switcherOpen } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
 import { blockProperty, blockWritable, formatForPage, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
@@ -1057,11 +1057,11 @@ export function QueryMacro(props: {
                         <Show
                           when={globalSort()}
                           fallback={
-                            <QueryGroups groups={groupedQueryByKey} />
+                            <QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} />
                           }
                         >
                           {/* Sorted: the engine's flat global order, one group per run of rows. */}
-                          <QueryGroups groups={flatQueryByKey} flat />
+                          <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} />
                         </Show>
                       }
                     >

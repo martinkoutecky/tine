@@ -13,11 +13,13 @@ interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean }
 /** Present the complete keyed List without one graph-sized DOM commit. Existing
  * groups survive membership refreshes; at most 32 new shells mount per frame.
  * Pending groups reserve the same approximate height as their eventual shells.
+ * A covering picker pauses new mounts while retaining the existing keyed rows.
  * Without browser layout all groups mount immediately, like observeNear. */
-export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?: boolean }): JSX.Element {
+export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?: boolean; paused?: boolean }): JSX.Element {
   const [keys, setKeys] = createSignal<string[]>([]);
   let frame: number | undefined;
   let generation = 0;
+  let wasPaused = false;
   const cancel = () => {
     generation += 1;
     if (frame !== undefined) cancelAnimationFrame(frame);
@@ -26,6 +28,9 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
   onCleanup(cancel);
   createEffect(() => {
     const all = [...props.groups().keys()];
+    const paused = !!props.paused;
+    const resumed = wasPaused && !paused;
+    wasPaused = paused;
     cancel();
     if (typeof IntersectionObserver === "undefined" || typeof requestAnimationFrame === "undefined") {
       setKeys(all);
@@ -33,6 +38,10 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
     }
     const current = generation;
     const retained = new Set(untrack(keys));
+    if (paused) {
+      setKeys(all.filter((key) => retained.has(key)));
+      return;
+    }
     const pending = all.filter((key) => !retained.has(key));
     let cursor = 0;
     const advance = () => {
@@ -43,7 +52,10 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
       setKeys(all.filter((key) => retained.has(key)));
       if (cursor < pending.length) frame = requestAnimationFrame(advance);
     };
-    advance();
+    // Give a reopened foreground picker a chance to claim the next frame
+    // before starting work on the newly uncovered background list.
+    if (resumed) frame = requestAnimationFrame(advance);
+    else advance();
   });
   const pendingHeight = createMemo(() => {
     const mounted = new Set(keys());

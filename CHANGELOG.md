@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - REG-OG-R6-PREVIEW: Preview candidates and AppImage update metadata stay on `og-preview`; manual candidate builds do not publish, and preview publication cannot become the stable latest release.
 
 ### Fixed
+- REG-OG-P10-QUERY-PRIORITY: Background List mounting yields while the search picker covers it, retains existing rows, and resumes on a later frame when the picker closes.
 - REG-OG-P10-QUERY-FRAMES: Broad List queries mount at most 32 new keyed groups per frame, reserve pending scroll height, and cancel queued rendering when their owner retires.
 - REG-OG-P10-QUERY-VIEWPORT / REG-OG-P10-DATE-PARSE: Large List queries defer group headers and live subtrees until viewport approach; compiled journal date patterns parse without allocating temporary token strings.
 - REG-OG-P10-LAZY-GROUPS / REG-OG-P10-JOURNAL-SCAN: Offscreen query and reference groups defer row state until they approach the viewport; journal inventories validate relative paths without repeatedly allocating configured directory prefixes.
