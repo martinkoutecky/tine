@@ -23,7 +23,7 @@ function scan(dir: string, relative = ""): Record<string,number> {
     if (entry.isDirectory()) {
       if (["target","node_modules","tests","examples","fixtures","wasm"].includes(entry.name)) continue;
       Object.assign(result,scan(join(dir,entry.name),file));
-    } else if (/\.(rs|tsx?|js)$/.test(file) && !/\.test\.|testSetup/.test(file) && file!=="crates/tine-core/src/block_regions.rs") {
+    } else if (/\.(rs|tsx?|js)$/.test(file) && !/\.test\.|_tests\.rs$|testSetup/.test(file) && file!=="crates/tine-core/src/block_regions.rs") {
       const n=count(readFileSync(join(dir,entry.name),"utf8"),file.endsWith(".rs"));
       if (n) result[file]=n;
     }

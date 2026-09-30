@@ -9,7 +9,9 @@ use wasm_bindgen::prelude::*;
 
 #[path = "../../tine-core/src/block_regions.rs"]
 mod block_regions;
-mod render { pub(crate) use crate::lsdoc_block_parse::parse_block; }
+mod render {
+    pub(crate) use crate::lsdoc_block_parse::parse_block;
+}
 
 #[path = "../../tine-core/src/logbook.rs"]
 mod logbook;
@@ -98,7 +100,7 @@ pub fn logbook_apply_marker_transition(
 
 #[wasm_bindgen]
 pub fn logbook_info_json(raw: &str) -> String {
-    let (rows,seconds)=logbook::clock_info(raw);
+    let (rows, seconds) = logbook::clock_info(raw);
     let rows = rows
         .into_iter()
         .map(|r| {
@@ -153,44 +155,110 @@ pub fn lsdoc_tag() -> String {
 pub fn parse_block_bundle_json(raw: &str, is_org: bool) -> String {
     let blocks = lsdoc_block_parse::parse_block(raw, is_org);
     let regions = block_regions::from_blocks(raw, is_org, &blocks);
-    format!("{{\"blocks\":{},\"regions\":{}}}", lsdoc::blocks_to_json(&blocks).unwrap(), serde_json::to_string(&regions).unwrap())
+    format!(
+        "{{\"blocks\":{},\"regions\":{}}}",
+        lsdoc::blocks_to_json(&blocks).unwrap(),
+        serde_json::to_string(&regions).unwrap()
+    )
 }
 #[wasm_bindgen]
-pub fn edit_block_regions_json(raw: &str, is_org: bool, regions: &JsValue, request: &JsValue) -> Result<String, JsValue> {
-    use block_regions::{BlockRegions,Range,Property,Planning,Drawer,Edit};
-    fn get(v: &JsValue, key: &str) -> JsValue { js_sys::Reflect::get(v,&JsValue::from_str(key)).unwrap_or(JsValue::UNDEFINED) }
-    fn text(v: &JsValue, key: &str) -> String { get(v,key).as_string().unwrap_or_default() }
-    fn optional(v: &JsValue,key: &str) -> Option<String> {get(v,key).as_string()}
-    fn array(v: &JsValue, key: &str) -> js_sys::Array { js_sys::Array::from(&get(v,key)) }
-    let range = |v: &JsValue| -> Result<Range,JsValue> {
-        let a=js_sys::Array::from(v);
-        let start=a.get(0).as_f64().ok_or_else(||JsValue::from_str("Invalid region"))? as usize;
-        let end=a.get(1).as_f64().ok_or_else(||JsValue::from_str("Invalid region"))? as usize;
-        if start>end||end>raw.len()||!raw.is_char_boundary(start)||!raw.is_char_boundary(end) {return Err(JsValue::from_str("Invalid region"));}
-        Ok(Range(start,end))
+pub fn edit_block_regions_json(
+    raw: &str,
+    is_org: bool,
+    regions: &JsValue,
+    request: &JsValue,
+) -> Result<String, JsValue> {
+    use block_regions::{BlockRegions, Drawer, Edit, Planning, Property, Range};
+    fn get(v: &JsValue, key: &str) -> JsValue {
+        js_sys::Reflect::get(v, &JsValue::from_str(key)).unwrap_or(JsValue::UNDEFINED)
+    }
+    fn text(v: &JsValue, key: &str) -> String {
+        get(v, key).as_string().unwrap_or_default()
+    }
+    fn optional(v: &JsValue, key: &str) -> Option<String> {
+        get(v, key).as_string()
+    }
+    fn array(v: &JsValue, key: &str) -> js_sys::Array {
+        js_sys::Array::from(&get(v, key))
+    }
+    let range = |v: &JsValue| -> Result<Range, JsValue> {
+        let a = js_sys::Array::from(v);
+        let start = a
+            .get(0)
+            .as_f64()
+            .ok_or_else(|| JsValue::from_str("Invalid region"))? as usize;
+        let end = a
+            .get(1)
+            .as_f64()
+            .ok_or_else(|| JsValue::from_str("Invalid region"))? as usize;
+        if start > end
+            || end > raw.len()
+            || !raw.is_char_boundary(start)
+            || !raw.is_char_boundary(end)
+        {
+            return Err(JsValue::from_str("Invalid region"));
+        }
+        Ok(Range(start, end))
     };
-    let mut r=BlockRegions::default();
-    r.quarantined=get(regions,"quarantined").as_bool().unwrap_or(true);
-    for v in array(regions,"literals").iter() {r.literals.push(range(&v)?);}
-    for v in array(regions,"property_regions").iter() {r.property_regions.push(range(&v)?);}
-    for p in array(regions,"properties").iter() {
-        r.properties.push(Property {key:text(&p,"key"),value:text(&p,"value"),line:range(&get(&p,"line"))?,key_range:range(&get(&p,"key_range"))?,value_range:range(&get(&p,"value_range"))?,region:get(&p,"region").as_f64().unwrap_or(0.0) as usize,primary:get(&p,"primary").as_bool().unwrap_or(false)});
+    let mut r = BlockRegions::default();
+    r.quarantined = get(regions, "quarantined").as_bool().unwrap_or(true);
+    for v in array(regions, "literals").iter() {
+        r.literals.push(range(&v)?);
     }
-    for p in array(regions,"planning").iter() {
-        r.planning.push(Planning {kind:text(&p,"kind"),line:range(&get(&p,"line"))?,timestamp:range(&get(&p,"timestamp"))?,date:serde_json::Value::Null});
+    for v in array(regions, "property_regions").iter() {
+        r.property_regions.push(range(&v)?);
     }
-    for d in array(regions,"drawers").iter() {
-        let clocks=array(&d,"clocks").iter().map(|v|range(&v)).collect::<Result<Vec<_>,_>>()?;
-        r.drawers.push(Drawer{name:text(&d,"name"),range:range(&get(&d,"range"))?,close:get(&d,"close").as_f64().unwrap_or(0.0) as usize,clocks});
+    for p in array(regions, "properties").iter() {
+        r.properties.push(Property {
+            key: text(&p, "key"),
+            value: text(&p, "value"),
+            line: range(&get(&p, "line"))?,
+            key_range: range(&get(&p, "key_range"))?,
+            value_range: range(&get(&p, "value_range"))?,
+            region: get(&p, "region").as_f64().unwrap_or(0.0) as usize,
+            primary: get(&p, "primary").as_bool().unwrap_or(false),
+        });
     }
-    let edit=match text(request,"kind").as_str() {
-        "property"=>Edit::Property{key:text(request,"key"),value:optional(request,"value")},
-        "planning"=>Edit::Planning{which:text(request,"which"),value:optional(request,"value")},
-        "strip_copy"=>Edit::StripCopy{template:get(request,"template").as_bool().unwrap_or(false)},
-        "visible"=>Edit::Visible,
-        "normalize_planning"=>Edit::NormalizePlanning,
-        "drawer_row"=>Edit::DrawerRow{name:text(request,"name"),value:text(request,"value")},
-        _=>return Err(JsValue::from_str("Invalid structural operation")),
+    for p in array(regions, "planning").iter() {
+        r.planning.push(Planning {
+            kind: text(&p, "kind"),
+            line: range(&get(&p, "line"))?,
+            timestamp: range(&get(&p, "timestamp"))?,
+            date: serde_json::Value::Null,
+        });
+    }
+    for d in array(regions, "drawers").iter() {
+        let clocks = array(&d, "clocks")
+            .iter()
+            .map(|v| range(&v))
+            .collect::<Result<Vec<_>, _>>()?;
+        r.drawers.push(Drawer {
+            name: text(&d, "name"),
+            range: range(&get(&d, "range"))?,
+            close: get(&d, "close").as_f64().unwrap_or(0.0) as usize,
+            clocks,
+        });
+    }
+    let edit = match text(request, "kind").as_str() {
+        "property" => Edit::Property {
+            key: text(request, "key"),
+            value: optional(request, "value"),
+        },
+        "planning" => Edit::Planning {
+            which: text(request, "which"),
+            value: optional(request, "value"),
+        },
+        "strip_copy" => Edit::StripCopy {
+            template: get(request, "template").as_bool().unwrap_or(false),
+        },
+        "visible" => Edit::Visible,
+        "normalize_planning" => Edit::NormalizePlanning,
+        "drawer_row" => Edit::DrawerRow {
+            name: text(request, "name"),
+            value: text(request, "value"),
+        },
+        _ => return Err(JsValue::from_str("Invalid structural operation")),
     };
-    r.apply(raw,is_org,edit).map_err(|e|JsValue::from_str(&e))
+    r.apply(raw, is_org, edit)
+        .map_err(|e| JsValue::from_str(&e))
 }

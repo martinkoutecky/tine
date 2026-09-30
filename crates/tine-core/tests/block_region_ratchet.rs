@@ -54,6 +54,7 @@ fn scan(root: &Path, dir: &Path, out: &mut BTreeMap<String, usize>) {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if !["rs", "ts", "tsx", "js"].contains(&ext)
                 || file.contains(".test.")
+                || file.ends_with("_tests.rs")
                 || file.contains("testSetup")
                 || file == "crates/tine-core/src/block_regions.rs"
             {

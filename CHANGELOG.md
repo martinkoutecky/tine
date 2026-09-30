@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Parser-owned structural edits** (og-D1, pending acceptance): metadata edits and template/conflict copies share native/wasm block regions, preserving parser-recognized literal contents. Empty code cards retain their body/wrapper separator after typing. Typography and typing-cost acceptance remain pending.
 - **An image replaced outside Tine refreshes where it is shown** (master d017d1afc, 2f54a8d5e, og-J2).
   A picture changed by an editor, Syncthing, Dropbox or another Tine window updates in place without reloading the page,
   and one deleted outside shows its missing-image placeholder. This includes an `assets` link to an approved folder outside the
