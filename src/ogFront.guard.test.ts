@@ -16,3 +16,10 @@ it("I-12: published IDs and highlights use the structural/provenance doors (exem
   expect(source).not.toMatch(/raw\.includes\([^\n]*id::/);
   expect(source, "Map evidence with searchSubstringSpans; I-12 exemplar src/editor/searchQuery.ts").toContain("searchSubstringSpans(text, needle, 1)");
 });
+
+
+it("I-22: the table render uses the width answerer tested on populated 150k-row fixtures (exemplar src/render/tableV2.tsx)", () => {
+  const source = readFileSync("src/render/tableV2.tsx", "utf8");
+  expect(source, "TableV2 must call the bounded width answerer, I-22 exemplar tableColumnCount").toContain("const columnCount = tableColumnCount(props.table)");
+  expect(source).not.toMatch(/Math\.max\([^;]*\.\.\./);
+});

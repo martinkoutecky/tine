@@ -61,7 +61,7 @@ function pageRefEnd(text: string, at: number): number {
   return close === -1 ? text.length : close + 2;
 }
 
-/** **The one scan.** Walk `text` once and report every `{` / `}` that is not
+/** **The one scan.** Walk `text` from `from` lazily and report each `{` / `}` that is not
 *  inside a protected region, with the depth it produces.
 *
 *  `formDepth` is the depth at which the form text sits: 0 when scanning a macro
@@ -70,11 +70,11 @@ function pageRefEnd(text: string, at: number): number {
 *  protect a brace; deeper than that we are inside an options map and EDN rules
 *  apply. An unterminated literal consumes to end of input rather than
 *  resynchronising — that is what makes an unbalanced `}` inside a literal
-*  invisible to the split. Transcribes `macro_text::scan_braces`. */
-function scanBraces(text: string, family: FormFamily, formDepth: number): Brace[] {
-  const out: Brace[] = [];
+*  invisible to the split. The extent reader stops at its own close; later macros are never rescanned.
+*  Transcribes `macro_text::scan_braces`. */
+function* scanBraces(text: string, family: FormFamily, formDepth: number, from: number): Generator<Brace> {
   let depth = formDepth;
-  let i = 0;
+  let i = from;
   while (i < text.length) {
     // Inside a map the text is EDN whatever the form was: an EDN symbol's apostrophe (`'foo`, `#'x`) is never a …
     const edn = depth > formDepth || family === "edn";
@@ -97,14 +97,13 @@ function scanBraces(text: string, family: FormFamily, formDepth: number): Brace[
     }
     if (c === "{") {
       depth += 1;
-      out.push({ at: i, open: true, depth });
+      yield { at: i, open: true, depth };
     } else if (c === "}") {
       depth -= 1;
-      out.push({ at: i, open: false, depth });
+      yield { at: i, open: false, depth };
     }
     i += 1;
   }
-  return out;
 }
 
 /** One query macro as it sits in the ORIGINAL raw source. */
@@ -119,12 +118,11 @@ export interface MacroExtent {
 
 /** Read one macro whose `{{` is at `start`, if its name is a query macro name. */
 function macroAt(raw: string, start: number): MacroExtent | null {
-  const rest = raw.slice(start + 2);
   let name: string | null = null;
   for (const candidate of QUERY_MACRO_NAMES) {
-    if (rest.length < candidate.length) continue;
-    if (rest.slice(0, candidate.length).toLowerCase() !== candidate) continue;
-    const after = rest[candidate.length];
+    if (raw.length - start - 2 < candidate.length) continue;
+    if (raw.slice(start + 2, start + 2 + candidate.length).toLowerCase() !== candidate) continue;
+    const after = raw[start + 2 + candidate.length];
     if (after !== undefined && after !== " " && after !== "\t" && after !== "}") continue;
     if (name === null || candidate.length > name.length) name = candidate;
   }
@@ -132,10 +130,12 @@ function macroAt(raw: string, start: number): MacroExtent | null {
   const argumentStart = start + 2 + name.length;
   const family = formFamilyForMacroName(name);
   // Depth 2 is what the two opening braces already contributed, so form text sits at depth 2 and a `{` of the …
-  const braces = scanBraces(raw.slice(argumentStart), family, 2);
-  const close = braces.find((brace) => !brace.open && brace.depth === 0);
+  let close: Brace | undefined;
+  for (const brace of scanBraces(raw, family, 2, argumentStart)) {
+    if (!brace.open && brace.depth === 0) { close = brace; break; }
+  }
   if (!close) return null; // unterminated
-  const end = argumentStart + close.at + 1;
+  const end = close.at + 1;
   // Everything between the name and the LAST closing brace is the argument; one leading space is the macro's …
   const argument = raw.slice(argumentStart, end - 2);
   return {

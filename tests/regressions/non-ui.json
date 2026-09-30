@@ -1109,6 +1109,50 @@
         "failBefore": "proven"
       },
       "notes": "og checkpoint 4 L07 S1, K1 bf11f4647. Every transaction step, including an unchanged one, checks its preflight revision before success; subprocess barrier + AbortAfterStep kill cases."
+    },
+    {
+          "id": "REG-OG-EXCERPT-SEGMENT-ONCE-001",
+          "title": "Search excerpts segment the block once across distant match windows",
+          "family": "performance",
+          "sources": {
+                "issues": [],
+                "commits": []
+          },
+          "platforms": [
+                "all"
+          ],
+          "layer": "unit",
+          "status": "covered",
+          "coverage": {
+                "tests": [
+                      "src/components/SearchResultRow.test.tsx"
+                ],
+                "scenario": null,
+                "failBefore": "proven"
+          },
+          "notes": "OG-B-FRONT L12:43. Deterministic operation-count proof plus benign long fixtures."
+    },
+    {
+          "id": "REG-OG-MACRO-LINEAR-SCAN-001",
+          "title": "Reading many query macros does not rescan each remaining suffix",
+          "family": "performance",
+          "sources": {
+                "issues": [],
+                "commits": []
+          },
+          "platforms": [
+                "all"
+          ],
+          "layer": "unit",
+          "status": "covered",
+          "coverage": {
+                "tests": [
+                      "src/editor/queryMacro.test.ts"
+                ],
+                "scenario": null,
+                "failBefore": "proven"
+          },
+          "notes": "OG-B-FRONT L14:88. Deterministic operation-count proof plus benign long fixtures."
     }
   ]
 }
