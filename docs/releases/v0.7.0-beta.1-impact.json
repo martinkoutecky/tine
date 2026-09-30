@@ -6182,6 +6182,67 @@
         "reason": "Martin approved a separate GitHub Discussion for the first Tine Beta announcement; this release does not add or update a website blog post.",
         "refs": []
       }
+    },
+    {
+      "section": "Fixed",
+      "text": "REG-OG-P11-ASSET-LIVENESS: Unused-media discovery and trash protect linked filenames containing parentheses and percent escapes, using parser-owned targets.",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-P11-ASSET-LIVENESS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Fail-before/pass-after coverage from OG-P11 (tine-agents/og/evidence/og-k/p11/RECEIPT-OG-P11.md).",
+        "refs": [
+          "crates/tine-store/src/model.rs",
+          "src/ogP11Parser.guard.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Correctness repair of existing unused-media cleanup; the workflow described in the Guide is unchanged.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Bug fix; no website or positioning change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Covered by the separate Tine Beta announcement Martin approved.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "REG-OG-P11-PROPERTIES: Cross-format paste preserves parser-accepted Unicode and custom property keys, duplicate entries, and their order.",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-P11-PROPERTIES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Fail-before/pass-after coverage from OG-P11 (tine-agents/og/evidence/og-k/p11/RECEIPT-OG-P11.md).",
+        "refs": [
+          "src/clipboard.paste.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Correctness repair of existing cross-format paste; the documented paste workflow is unchanged.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Bug fix; no website or positioning change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Covered by the separate Tine Beta announcement Martin approved.",
+        "refs": []
+      }
     }
   ]
 }
