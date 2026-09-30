@@ -764,8 +764,8 @@ describe("fill preserves target hidden properties", () => {
       byId: {
         grid: { id: "grid", raw: "Grid\ntine.view:: grid", collapsed: false, parent: null, page: "Sheet", children: ["r1"] },
         r1: { id: "r1", raw: "", collapsed: false, parent: "grid", page: "Sheet", children: ["a", "b"] },
-        a: { id: "a", raw: "A", collapsed: false, parent: "r1", page: "Sheet", children: [] },
-        b: { id: "b", raw: "B\nid:: keep", collapsed: false, parent: "r1", page: "Sheet", children: [] },
+        a: { id: "a", raw: "A\ncollapsed:: true\ntine.view:: grid\ntine.plugin-config:: source\nuser:: kept", collapsed: false, parent: "r1", page: "Sheet", children: [] },
+        b: { id: "b", raw: "B\nid:: keep\ncollapsed:: false\ntine.plugin-config:: target", collapsed: false, parent: "r1", page: "Sheet", children: [] },
       },
       pages: [{ name: "Sheet", kind: "page", title: "Sheet", preBlock: null, roots: ["grid"], format: "md", readOnly: false, guide: false }],
       feed: ["Sheet"],
@@ -778,6 +778,6 @@ describe("fill preserves target hidden properties", () => {
     );
 
     expect(ok).toBe(true);
-    expect(doc.byId.b.raw).toBe("A\nid:: keep");
+    expect(doc.byId.b.raw).toBe("A\nuser:: kept\nid:: keep\ncollapsed:: false\ntine.plugin-config:: target");
   });
 });

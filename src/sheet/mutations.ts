@@ -121,12 +121,13 @@ function cellText(blockId: string | null): string {
 function writeCellVisible(id: string, visible: string): void {
   const fmt = formatForBlock(id);
   const hidden = splitProps(docNode(id)?.raw ?? "", isSheetCellHidden, fmt).hidden;
-  setRaw(id, hidden ? joinProps(visible, hidden, fmt) : visible, { timetracking: false });
+  const body = splitProps(visible, isSheetCellHidden, fmt).visible;
+  setRaw(id, hidden ? joinProps(body, hidden, fmt) : body, { timetracking: false });
 }
 
-function rawWithoutId(id: string): string {
+function rawForCellTransfer(id: string): string {
   const raw = docNode(id)?.raw ?? "";
-  return splitProps(raw, (key) => key.toLowerCase() === "id", formatForBlock(id)).visible;
+  return splitProps(raw, isSheetCellHidden, formatForBlock(id)).visible;
 }
 
 function escapeHtml(s: string): string {
@@ -535,7 +536,7 @@ export function fillSheetSelection(sel: SheetMutationSelection, dir: "down" | "r
       const sources: string[] = [];
       for (let col = rect.left; col <= rect.right; col++) {
         const id = cellIdAt(sel.gridId, rect.top, col);
-        sources.push(id ? rawWithoutId(id) : "");
+        sources.push(id ? rawForCellTransfer(id) : "");
       }
       for (let row = rect.top + 1; row <= rect.bottom; row++) {
         for (let col = rect.left; col <= rect.right; col++) {
@@ -549,7 +550,7 @@ export function fillSheetSelection(sel: SheetMutationSelection, dir: "down" | "r
     const sources: string[] = [];
     for (let row = rect.top; row <= rect.bottom; row++) {
       const id = cellIdAt(sel.gridId, row, rect.left);
-      sources.push(id ? rawWithoutId(id) : "");
+      sources.push(id ? rawForCellTransfer(id) : "");
     }
     for (let row = rect.top; row <= rect.bottom; row++) {
       for (let col = rect.left + 1; col <= rect.right; col++) {

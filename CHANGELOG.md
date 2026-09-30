@@ -101,6 +101,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Sheet cell operations preserve their own configuration**, query sheets keep the physical page already open, and field rename accepts Unicode property siblings (og B-SHEET).
+
 - **Faster graph startup and first search** (og-P1). Journal-first reads avoid ordinary-page title discovery,
   completed claimant discovery is reused by direct reads, and a search without page results skips page-property hydration.
   Startup graph loading begins in the background while the frontend starts; open failures still reach the Welcome error card.

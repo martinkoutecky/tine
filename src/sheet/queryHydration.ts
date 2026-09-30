@@ -273,8 +273,8 @@ export async function hydrateVisibleQueryPages(
     groupsByPage.set(group.page, pageGroups);
   }
 
-  // First resolve every visible row by composite identity. If both a page and a
-  // journal with the same name are visible, the current working set cannot hold
+  // First resolve every visible row by composite identity. If multiple physical sources
+  // with the same name are visible, the current working set cannot hold
   // them simultaneously (it is keyed by page name), so keep both DTO-only and
   // read-only instead of racing which file becomes the editable one.
   const requested = new Map<string, RefGroup>();
@@ -282,20 +282,18 @@ export async function hydrateVisibleQueryPages(
     const group = sourceGroupForRow(row, groupsByPage);
     if (group) requested.set(groupIdentity(group), group);
   }
-  const kindsByName = new Map<string, Set<RefGroup["kind"]>>();
+  const identitiesByName = new Map<string, Set<string>>();
   for (const group of requested.values()) {
-    const kinds = kindsByName.get(group.page) ?? new Set<RefGroup["kind"]>();
-    kinds.add(group.kind);
-    kindsByName.set(group.page, kinds);
+    const identities = identitiesByName.get(group.page) ?? new Set<string>();
+    identities.add(groupIdentity(group));
+    identitiesByName.set(group.page, identities);
   }
 
-  const pending = [...requested.values()].filter((group) => {
-    if ((kindsByName.get(group.page)?.size ?? 0) > 1) return false;
-    // A differently-kinded same-name page already occupies the name-keyed store.
-    // ensurePageLoaded cannot install this group safely without replacing it.
-    const loaded = pageByName(group.page);
-    return !loaded || (!!group.path && loaded.id !== group.path);
-  });
+  // Hydration may fill an empty name slot, never replace an occupied physical
+  // identity. Multiple requested paths for one name all remain DTO-only.
+  const pending = [...requested.values()].filter((group) =>
+    identitiesByName.get(group.page)?.size === 1 && !pageByName(group.page)
+  );
   await Promise.all(pending.map((group) => {
     const epoch = graphEpoch();
     const root = graphMeta()?.root ?? "";
@@ -305,9 +303,9 @@ export async function hydrateVisibleQueryPages(
     const existing = pageHydrations.get(key);
     if (existing) return existing;
 
-    // The store can hold only one kind for a display name. Serialize that claim
+    // The store can hold only one physical identity for a display name. Serialize that claim
     // globally across separate SheetTable/SheetBoard invocations; a concurrent
-    // opposite-kind request remains DTO-only instead of racing for the slot.
+    // different-source request remains DTO-only instead of racing for the slot.
     const claimKey = `${scope}\0${group.page}`;
     const claim = hydrationClaims.get(claimKey);
     if (claim && claim !== identity) return Promise.resolve();
@@ -317,7 +315,7 @@ export async function hydrateVisibleQueryPages(
       // A stale queued task must die before IPC, not merely discard afterward.
       if (!sameGraph(root, epoch)) return;
       const occupied = pageByName(group.page);
-      if (occupied && occupied.kind === group.kind && (!group.path || occupied.id === group.path)) return;
+      if (occupied) return;
       const result = await readOwned(graphOwner(() => sameGraph(root, epoch)), group.path
         ? backend().getPageByPath(group.path)
         : backend().getPage(group.page, group.kind));
@@ -326,7 +324,7 @@ export async function hydrateVisibleQueryPages(
       // Recheck occupancy after the await: another surface may have loaded a
       // same-name twin meanwhile. Never replace or alias that identity.
       const after = pageByName(group.page);
-      if (after && (!group.path || after.id === group.path)) return;
+      if (after) return;
       if (!dto || dto.name !== group.page || dto.kind !== group.kind || (group.path && dto.id !== group.path)) return;
       // Consume the refusal rather than assume installation: a declined load
       // leaves the row DTO-only; a later interaction re-drives it (master
