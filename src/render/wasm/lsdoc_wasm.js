@@ -1,7 +1,5 @@
 /* @ts-self-types="./lsdoc_wasm.d.ts" */
 
-//#region exports
-
 /**
  * Decode a Logseq page stem in legacy or triple-lowbar (legacy = false) format.
  * O(stem bytes), no I/O; malformed percent escapes are preserved.
@@ -15,7 +13,6 @@ export function decode_page_name(stem, legacy) {
     try {
         const ptr0 = passStringToWasm0(stem, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(legacy);
         const ret = wasm.decode_page_name(ptr0, len0, legacy);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
@@ -38,7 +35,6 @@ export function edit_block_regions_json(raw, is_org, regions, request) {
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(is_org);
         const ret = wasm.edit_block_regions_json(ptr0, len0, is_org, regions, request);
         var ptr2 = ret[0];
         var len2 = ret[1];
@@ -67,7 +63,6 @@ export function encode_page_name(name, legacy) {
     try {
         const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(legacy);
         const ret = wasm.encode_page_name(ptr0, len0, legacy);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
@@ -104,13 +99,10 @@ export function logbook_apply_marker_transition(raw, is_org, old_marker, new_mar
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(is_org);
         const ptr1 = passStringToWasm0(old_marker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
         const ptr2 = passStringToWasm0(new_marker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len2 = WASM_VECTOR_LEN;
-        _assertBoolean(enabled);
-        _assertBoolean(with_seconds);
         const ret = wasm.logbook_apply_marker_transition(ptr0, len0, is_org, ptr1, len1, ptr2, len2, enabled, with_seconds);
         deferred4_0 = ret[0];
         deferred4_1 = ret[1];
@@ -132,8 +124,6 @@ export function logbook_clock_in(raw, is_org, with_seconds) {
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(is_org);
-        _assertBoolean(with_seconds);
         const ret = wasm.logbook_clock_in(ptr0, len0, is_org, with_seconds);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
@@ -155,8 +145,6 @@ export function logbook_clock_out(raw, is_org, with_seconds) {
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(is_org);
-        _assertBoolean(with_seconds);
         const ret = wasm.logbook_clock_out(ptr0, len0, is_org, with_seconds);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
@@ -177,7 +165,6 @@ export function logbook_info_json(raw, is_org) {
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(is_org);
         const ret = wasm.logbook_info_json(ptr0, len0, is_org);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
@@ -240,7 +227,6 @@ export function parse_block_bundle_json(raw, is_org) {
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(is_org);
         const ret = wasm.parse_block_bundle_json(ptr0, len0, is_org);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
@@ -266,7 +252,6 @@ export function parse_block_json(raw, is_org) {
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(is_org);
         const ret = wasm.parse_block_json(ptr0, len0, is_org);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
@@ -292,7 +277,6 @@ export function parse_document_json(text, is_org) {
     try {
         const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(is_org);
         const ret = wasm.parse_document_json(ptr0, len0, is_org);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
@@ -384,7 +368,6 @@ export function render_block_html(raw, is_org) {
     try {
         const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(is_org);
         const ret = wasm.render_block_html(ptr0, len0, is_org);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
@@ -406,7 +389,6 @@ export function search_fold(text, remove_accents) {
     try {
         const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(remove_accents);
         const ret = wasm.search_fold(ptr0, len0, remove_accents);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
@@ -427,7 +409,6 @@ export function search_fold(text, remove_accents) {
 export function search_matches(query, remove_accents, lower, original) {
     const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    _assertBoolean(remove_accents);
     const ptr1 = passStringToWasm0(lower, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
     const ptr2 = passStringToWasm0(original, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -448,7 +429,6 @@ export function search_query_json(query, remove_accents) {
     try {
         const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(remove_accents);
         const ret = wasm.search_query_json(ptr0, len0, remove_accents);
         deferred2_0 = ret[0];
         deferred2_1 = ret[1];
@@ -474,11 +454,8 @@ export function search_spans_json(query, remove_accents, text, limit, first) {
     try {
         const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        _assertBoolean(remove_accents);
         const ptr1 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        _assertNum(limit);
-        _assertBoolean(first);
         const ret = wasm.search_spans_json(ptr0, len0, remove_accents, ptr1, len1, limit, first);
         deferred3_0 = ret[0];
         deferred3_1 = ret[1];
@@ -504,8 +481,6 @@ export function search_substring_spans_json(text, needle, limit, remove_accents)
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(needle, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        _assertNum(limit);
-        _assertBoolean(remove_accents);
         const ret = wasm.search_substring_spans_json(ptr0, len0, ptr1, len1, limit, remove_accents);
         deferred3_0 = ret[0];
         deferred3_1 = ret[1];
@@ -529,27 +504,17 @@ export function split_linkable_property(value) {
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
 }
-
-//#endregion
-
-//#region wasm imports
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
         __wbg___wbindgen_boolean_get_fa956cfa2d1bd751: function(arg0) {
             const v = arg0;
             const ret = typeof(v) === 'boolean' ? v : undefined;
-            if (!isLikeNone(ret)) {
-                _assertBoolean(ret);
-            }
             return isLikeNone(ret) ? 0xFFFFFF : ret ? 1 : 0;
         },
         __wbg___wbindgen_number_get_394265ed1e1b84ee: function(arg0, arg1) {
             const obj = arg1;
             const ret = typeof(obj) === 'number' ? obj : undefined;
-            if (!isLikeNone(ret)) {
-                _assertNum(ret);
-            }
             getDataViewMemory0().setFloat64(arg0 + 8 * 1, isLikeNone(ret) ? 0 : ret, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, !isLikeNone(ret), true);
         },
@@ -564,71 +529,63 @@ function __wbg_get_imports() {
         __wbg___wbindgen_throw_344f42d3211c4765: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
-        __wbg_from_13e323c65fc8f464: function() { return logError(function (arg0) {
+        __wbg_from_13e323c65fc8f464: function(arg0) {
             const ret = Array.from(arg0);
             return ret;
-        }, arguments); },
-        __wbg_getDate_a1a40c1c5f40fe3b: function() { return logError(function (arg0) {
+        },
+        __wbg_getDate_a1a40c1c5f40fe3b: function(arg0) {
             const ret = arg0.getDate();
-            _assertNum(ret);
             return ret;
-        }, arguments); },
-        __wbg_getDay_aa318cce5da74c49: function() { return logError(function (arg0) {
+        },
+        __wbg_getDay_aa318cce5da74c49: function(arg0) {
             const ret = arg0.getDay();
-            _assertNum(ret);
             return ret;
-        }, arguments); },
-        __wbg_getFullYear_6af8b229792ae254: function() { return logError(function (arg0) {
+        },
+        __wbg_getFullYear_6af8b229792ae254: function(arg0) {
             const ret = arg0.getFullYear();
-            _assertNum(ret);
             return ret;
-        }, arguments); },
-        __wbg_getHours_9f6561095682ce51: function() { return logError(function (arg0) {
+        },
+        __wbg_getHours_9f6561095682ce51: function(arg0) {
             const ret = arg0.getHours();
-            _assertNum(ret);
             return ret;
-        }, arguments); },
-        __wbg_getMinutes_b0d5cd90bf9b8f22: function() { return logError(function (arg0) {
+        },
+        __wbg_getMinutes_b0d5cd90bf9b8f22: function(arg0) {
             const ret = arg0.getMinutes();
-            _assertNum(ret);
             return ret;
-        }, arguments); },
-        __wbg_getMonth_fffe29d654d5eb69: function() { return logError(function (arg0) {
+        },
+        __wbg_getMonth_fffe29d654d5eb69: function(arg0) {
             const ret = arg0.getMonth();
-            _assertNum(ret);
             return ret;
-        }, arguments); },
-        __wbg_getSeconds_40c565b3a6cb05fe: function() { return logError(function (arg0) {
+        },
+        __wbg_getSeconds_40c565b3a6cb05fe: function(arg0) {
             const ret = arg0.getSeconds();
-            _assertNum(ret);
             return ret;
-        }, arguments); },
-        __wbg_get_507a50627bffa49b: function() { return logError(function (arg0, arg1) {
+        },
+        __wbg_get_507a50627bffa49b: function(arg0, arg1) {
             const ret = arg0[arg1 >>> 0];
             return ret;
-        }, arguments); },
+        },
         __wbg_get_78f252d074a84d0b: function() { return handleError(function (arg0, arg1) {
             const ret = Reflect.get(arg0, arg1);
             return ret;
         }, arguments); },
-        __wbg_get_unchecked_6e0ad6d2a41b06f6: function() { return logError(function (arg0, arg1) {
+        __wbg_get_unchecked_6e0ad6d2a41b06f6: function(arg0, arg1) {
             const ret = arg0[arg1 >>> 0];
             return ret;
-        }, arguments); },
-        __wbg_length_370319915dc99107: function() { return logError(function (arg0) {
+        },
+        __wbg_length_370319915dc99107: function(arg0) {
             const ret = arg0.length;
-            _assertNum(ret);
             return ret;
-        }, arguments); },
-        __wbg_new_0_3da9e97f24fc69be: function() { return logError(function () {
+        },
+        __wbg_new_0_3da9e97f24fc69be: function() {
             const ret = new Date();
             return ret;
-        }, arguments); },
-        __wbindgen_cast_0000000000000001: function() { return logError(function (arg0, arg1) {
+        },
+        __wbindgen_cast_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
             return ret;
-        }, arguments); },
+        },
         __wbindgen_init_externref_table: function() {
             const table = wasm.__wbindgen_externrefs;
             const offset = table.grow(4);
@@ -645,24 +602,10 @@ function __wbg_get_imports() {
     };
 }
 
-
-//#endregion
-
-//#region intrinsics
 function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();
     wasm.__wbindgen_externrefs.set(idx, obj);
     return idx;
-}
-
-function _assertBoolean(n) {
-    if (typeof(n) !== 'boolean') {
-        throw new Error(`expected a boolean argument, found ${typeof(n)}`);
-    }
-}
-
-function _assertNum(n) {
-    if (typeof(n) !== 'number') throw new Error(`expected a number argument, found ${typeof(n)}`);
 }
 
 function getArrayJsValueFromWasm0(ptr, len) {
@@ -709,24 +652,7 @@ function isLikeNone(x) {
     return x === undefined || x === null;
 }
 
-function logError(f, args) {
-    try {
-        return f.apply(this, args);
-    } catch (e) {
-        let error = (function () {
-            try {
-                return e instanceof Error ? `${e.message}\n\nStack:\n${e.stack}` : e.toString();
-            } catch(_) {
-                return "<failed to stringify thrown value>";
-            }
-        }());
-        console.error("wasm-bindgen: imported JS function that was not marked as `catch` threw an error:", error);
-        throw e;
-    }
-}
-
 function passStringToWasm0(arg, malloc, realloc) {
-    if (typeof(arg) !== 'string') throw new Error(`expected a string argument, found ${typeof(arg)}`);
     if (realloc === undefined) {
         const buf = cachedTextEncoder.encode(arg);
         const ptr = malloc(buf.length, 1) >>> 0;
@@ -754,7 +680,7 @@ function passStringToWasm0(arg, malloc, realloc) {
         ptr = realloc(ptr, len, len = offset + arg.length * 3, 1) >>> 0;
         const view = getUint8ArrayMemory0().subarray(ptr + offset, ptr + len);
         const ret = cachedTextEncoder.encodeInto(arg, view);
-        if (ret.read !== arg.length) throw new Error('failed to pass whole string');
+
         offset += ret.written;
         ptr = realloc(ptr, len, offset, 1) >>> 0;
     }
@@ -798,10 +724,6 @@ if (!('encodeInto' in cachedTextEncoder)) {
 
 let WASM_VECTOR_LEN = 0;
 
-
-//#endregion
-
-//#region wasm loading
 let wasmModule, wasmInstance, wasm;
 function __wbg_finalize_init(instance, module) {
     wasmInstance = instance;
@@ -905,5 +827,3 @@ export function __tineReinstantiate() {
   const instance = new WebAssembly.Instance(wasmModule, __wbg_get_imports());
   return __wbg_finalize_init(instance, wasmModule);
 }
-//#endregion
-export { wasm as __wasm }

@@ -133,7 +133,7 @@ try {
   for (const root of [BULLET_SHOTS, QUERY_SHOTS, HEADING_SHOTS]) mkdirSync(root, { recursive: true });
   await openPlugins(page);
   await installLocal(page, BULLET_ROOT, "tine_plugin_bullet_threading.wasm");
-  await page.locator(".settings-pane-head .icon-btn").click();
+  await page.locator(".settings-pane-head .icon-btn:not(.settings-maximize)").click();
   await navigate(page, "Jun 14th, 2026");
   const threaded = page.locator(".ls-block.plugin-thread-lines:has(> .block-children-container)").first();
   await threaded.waitFor();
@@ -141,7 +141,7 @@ try {
 
   await openPlugins(page);
   await installLocal(page, QUERY_ROOT, "tine_plugin_query_filter.wasm");
-  await page.locator(".settings-pane-head .icon-btn").click();
+  await page.locator(".settings-pane-head .icon-btn:not(.settings-maximize)").click();
   await navigate(page, "Jun 14th, 2026");
 
   const queryBlock = page.locator(".ls-block", { hasText: "All todos + Prio A" }).first();
@@ -186,7 +186,7 @@ try {
 
   await openPlugins(page);
   await installLocal(page, HEADING_ROOT, "tine_plugin_heading_level_shortcuts.wasm");
-  await page.locator(".settings-pane-head .icon-btn").click();
+  await page.locator(".settings-pane-head .icon-btn:not(.settings-maximize)").click();
   await navigate(page, "Jun 14th, 2026");
   const headingBlock = page.locator(".ls-block", { hasText: "Started the" }).first();
   await headingBlock.locator(".block-content").first().click({ position: { x: 80, y: 12 } });
