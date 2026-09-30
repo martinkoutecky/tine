@@ -835,7 +835,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         if (!rows.has(`journal:${key(name)}`)) add(name, "page");
       }
       const entries = [...rows.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-      return { rev: "0", entries };
+      return { rev: "0", entries, unreadable: [] };
     },
     async journalFeedPage(limit: number, beforeDay: number | null) {
       const now = new Date();

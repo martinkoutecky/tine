@@ -28,13 +28,15 @@ export type UiFailureFamily =
   | "custom-css"
   | "config-read"
   | "conflict-inventory"
-  | "graph-verification";
+  | "graph-verification"
+  | "unreadable-files";
 
 const MESSAGES: Record<UiFailureFamily, string> = {
   "custom-css": "Couldn't read custom.css. No custom CSS was applied.",
   "config-read": "Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.",
   "conflict-inventory": "Couldn't refresh conflicts. The last successful inventory is kept.",
   "graph-verification": "Couldn't verify graph files.",
+  "unreadable-files": "Some page files couldn't be read. The rest of the graph is available; the file list is in the debug log.",
   "asset-inventory": "Couldn't inspect orphan assets. The last successful scan is kept.",
   "trash-inventory": "Couldn't inspect recoverable trash. The last successful count is kept.",
   "backup-read": "Couldn't complete the launch backup. Your graph is still open.",
@@ -60,7 +62,7 @@ const MESSAGES: Record<UiFailureFamily, string> = {
 const GRAPH_READS: ReadonlySet<UiFailureFamily> = new Set<UiFailureFamily>([
   "query-hydration", "page-inventory", "session-read", "template-read", "journal-feed",
   "block-counts", "block-resolution", "backup-read", "asset-inventory", "trash-inventory",
-  "custom-css", "config-read", "conflict-inventory", "graph-verification",
+  "custom-css", "config-read", "conflict-inventory", "graph-verification", "unreadable-files",
 ]);
 
 /** Show a fixed message for `family` and log `error` only when debug is enabled.

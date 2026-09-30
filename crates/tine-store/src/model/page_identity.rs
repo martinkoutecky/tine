@@ -18,9 +18,7 @@ impl Graph {
 
             let mut built = FindEntryIndex::new();
             built.entries = page_claimants(self, &list_graph_pages_kind(self, Some(kind)));
-            if self.discovery_problem().is_none() {
-                built.mark_kind_loaded(kind);
-            }
+            built.mark_kind_loaded(kind);
 
             let found = {
                 let mut guard = self.find_entry_cache.write().unwrap();
@@ -31,9 +29,7 @@ impl Graph {
                                 .entries
                                 .retain(|(loaded_kind, _), _| *loaded_kind != kind);
                             index.entries.extend(built.entries);
-                            if self.discovery_problem().is_none() {
-                                index.mark_kind_loaded(kind);
-                            }
+                            index.mark_kind_loaded(kind);
                         }
                         index.entries.get(&key).cloned().unwrap_or_default()
                     }
@@ -77,9 +73,7 @@ impl Graph {
         let entries = list_graph_pages_kind(self, Some(PageKind::Journal));
         let mut index = FindEntryIndex::new();
         index.entries = page_claimants(self, &entries);
-        if self.discovery_problem().is_none() {
-            index.mark_kind_loaded(PageKind::Journal);
-        }
+        index.mark_kind_loaded(PageKind::Journal);
         *self.find_entry_cache.write().unwrap() = Some((gen, index));
         entries
     }
@@ -430,13 +424,6 @@ pub(super) fn effective_page_name(
 }
 
 impl Graph {
-    pub(crate) fn discovery_problem(&self) -> Option<crate::IoError> {
-        self.discovery_errors
-            .read()
-            .unwrap()
-            .first()
-            .map(|(_, error)| error.clone())
-    }
     pub(super) fn discover_page_name(
         &self,
         path: &Path,
@@ -512,8 +499,8 @@ pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Ve
                     Ok(name) => name,
                     Err(error) => {
                         failures.push((crate::FileId::from(graph.rel_path(&path)), error.into()));
-                        // Keep the physical claim for conservative rename/trash
-                        // checks; discovery_problem bars complete name answers.
+                        // Keep the physical claim; the file is reported as
+                        // unreadable and the readable names stay available.
                         decode_page_name(stem, name_format)
                     }
                 },

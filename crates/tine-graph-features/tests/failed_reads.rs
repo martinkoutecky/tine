@@ -85,17 +85,20 @@ fn trash_rechecks_references_after_an_external_publication() {
 }
 
 #[test]
-fn cold_title_discovery_failure_is_not_a_missing_name() {
+fn cold_title_discovery_failure_never_blocks_other_names() {
     let (root, old) = graph("cold-title");
     old.close();
-    fs::write(root.join(".tine-test-pause-load"), "").unwrap();
     fs::write(root.join("pages/Bad.md"), b"title:: Claimed \xff\n- bad\n").unwrap();
     let (store, _, _) = Store::open(&root, Default::default()).unwrap();
-    let result = store.page_named("Claimed", tine_core::model::PageKind::Page);
+    let missing = store.page_named("Claimed", tine_core::model::PageKind::Page);
+    let view = store.whole_graph().unwrap();
     store.close();
+    assert!(matches!(missing, Ok(None)), "{missing:?}");
     assert!(
-        result.is_err(),
-        "partial discovery must not establish name absence"
+        view.unreadable_files()
+            .iter()
+            .any(|(id, _)| id.as_str() == "pages/Bad.md"),
+        "an undecodable name is reported, not silently absent"
     );
     let _ = fs::remove_dir_all(root);
 }

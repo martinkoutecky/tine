@@ -1,4 +1,4 @@
-//! Name-discovery transport: incomplete snapshots cannot certify absence.
+//! Name-discovery transport: readable names plus the unreadable paths.
 use super::{ResolvedWire, WholeGraph};
 use serde::Serialize;
 use tine_store::Resolved;
@@ -9,6 +9,8 @@ pub(crate) struct PageInventoryWire {
     /// older than one it already holds.
     rev: String,
     entries: Vec<PageInventoryEntryWire>,
+    /// Graph-relative paths whose page name could not be read.
+    unreadable: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -21,27 +23,11 @@ pub(crate) struct PageInventoryEntryWire {
     target: ResolvedWire,
 }
 
-// A partial discovery cannot certify a complete list or a missing name.
-pub(super) fn discovered_view(view: WholeGraph) -> Result<WholeGraph, String> {
-    if view.unreadable_files().is_empty() {
-        Ok(view)
-    } else {
-        Err("graph name discovery is partial".into())
-    }
-}
-
-// Known physical claims remain usable during recovery. Only a miss needs a
-// complete discovery to prove absence before a caller creates a new page.
-pub(super) fn resolve_name(
-    view: WholeGraph,
-    name: &str,
-    journal: bool,
-) -> Result<ResolvedWire, String> {
-    let resolved = view.resolve(name, journal);
-    if matches!(resolved, Resolved::Absent { .. }) {
-        discovered_view(view)?;
-    }
-    Ok(resolved.into())
+// One unreadable file never blocks name answers for the rest of the graph
+// (I-22): readable claims resolve and a miss is `Absent`. The unreadable paths
+// travel on the inventory so the frontend reports them (I-2).
+pub(super) fn resolve_name(view: WholeGraph, name: &str, journal: bool) -> ResolvedWire {
+    view.resolve(name, journal).into()
 }
 
 pub(super) fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
@@ -59,6 +45,11 @@ pub(super) fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
                 day: entry.day.map(|day| day.0),
                 target: ResolvedWire::from(&entry.target),
             })
+            .collect(),
+        unreadable: view
+            .unreadable_files()
+            .iter()
+            .map(|(id, _)| id.as_str().to_owned())
             .collect(),
     }
 }
@@ -230,21 +221,27 @@ mod inventory_adapter_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn incomplete_discovery_cannot_certify_inventory_or_absence() {
+    fn one_unreadable_name_is_listed_and_never_blocks_the_graph() {
         let root = temp_root("partial");
         let store = open(&root, &[("pages/Good.md", "- good\n")]);
         std::fs::write(root.join("pages/Bad.md"), b"title:: unknown \xff\n").unwrap();
         store.scan_refresh().unwrap();
-        assert!(discovered_view(store.whole_graph().unwrap()).is_err());
+        let wire = page_inventory_wire(&store.whole_graph().unwrap());
+        assert!(wire.entries.iter().any(|entry| entry.name == "Good"));
+        assert_eq!(wire.unreadable, vec!["pages/Bad.md".to_owned()]);
         assert!(matches!(
             resolve_name(store.whole_graph().unwrap(), "Good", false),
-            Ok(ResolvedWire::Existing { .. })
+            ResolvedWire::Existing { .. }
         ));
-        assert!(resolve_name(store.whole_graph().unwrap(), "Unknown", false).is_err());
-        assert!(store.page(&PageId::from("pages/Good.md")).is_ok());
+        assert!(matches!(
+            resolve_name(store.whole_graph().unwrap(), "Unknown", false),
+            ResolvedWire::Absent { .. }
+        ));
         std::fs::write(root.join("pages/Bad.md"), "- repaired\n").unwrap();
         store.scan_refresh().unwrap();
-        assert!(discovered_view(store.whole_graph().unwrap()).is_ok());
+        assert!(page_inventory_wire(&store.whole_graph().unwrap())
+            .unreadable
+            .is_empty());
         store.close();
         std::fs::remove_dir_all(root).unwrap();
     }

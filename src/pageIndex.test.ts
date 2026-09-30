@@ -217,3 +217,16 @@ it("raises no failure toast for an inventory read issued before the window is bo
   }
   expect(toasts().filter((t) => t.kind === "error")).toEqual([]);
 });
+
+it("keeps readable names and reports unreadable files once when a file name can't be read", async () => {
+  const { refreshPageIndex, resolvedTarget } = await load();
+  const { toasts, setToasts } = await import("./toasts");
+  setToasts([]);
+  backendMock.pageInventory.mockResolvedValue({ ...inventory(1, file("Good")), unreadable: ["pages/Bad.md"] });
+  await refreshPageIndex();
+  await refreshPageIndex();
+  expect(resolvedTarget("Good")).toEqual({ kind: "existing", id: "pages/Good.md", others: [] });
+  const errors = toasts().filter((t) => t.kind === "error");
+  expect(errors).toHaveLength(1);
+  expect(errors[0].message).toContain("couldn't be read");
+});

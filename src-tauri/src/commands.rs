@@ -18,7 +18,7 @@ use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 use tine_store::{SaveOutcome, SavePagesOutcome};
 mod discovery;
 mod save_wire;
-use discovery::{discovered_view, page_inventory_wire, resolve_name, PageInventoryWire};
+use discovery::{page_inventory_wire, resolve_name, PageInventoryWire};
 use save_wire::SavePagesWire;
 #[cfg(test)]
 use save_wire::{save_outcome_to_wire, save_pages_outcome_to_wire};
@@ -318,7 +318,7 @@ pub(crate) use asset_ingress::decode_asset_b64;
 /// that are only referenced. A thin adapter over `WholeGraph::inventory`; the
 /// frontend caches it in `pageIndex.ts` and keeps no other name map.
 ///
-/// Graph-wide off-thread; a partial discovery returns an error, never a complete name inventory.
+/// Graph-wide off-thread; unreadable files are listed, never fail the inventory.
 #[tauri::command]
 pub(crate) async fn page_inventory(state: GraphContext<'_>) -> Result<PageInventoryWire, String> {
     let slot = slot_for_context(&state)?;
@@ -326,7 +326,6 @@ pub(crate) async fn page_inventory(state: GraphContext<'_>) -> Result<PageInvent
         slot.store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))
-            .and_then(discovered_view)
             .map(|view| page_inventory_wire(&view))
     })
     .await
@@ -390,7 +389,7 @@ pub(crate) async fn resolve_page(
         slot.store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))
-            .and_then(|view| resolve_name(view, &name, kind == PageKind::Journal))
+            .map(|view| resolve_name(view, &name, kind == PageKind::Journal))
     })
     .await
     .map_err(|error| error.to_string())?

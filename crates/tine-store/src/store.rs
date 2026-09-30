@@ -1967,8 +1967,9 @@ impl Store {
     /// not resolved here. When files claim the same name or journal day, it
     /// uses the same claimant ranking as `WholeGraph::resolve` (canonical
     /// date-stem journal first, then Markdown before Org). A missing name
-    /// returns `None`. The selected file is
-    /// read through `page()`, with the same safety, revision, and publication
+    /// returns `None`, also while a file's name is undecodable: that file is
+    /// listed in `unreadable_files()` and one bad file never blocks the graph.
+    /// The selected file is read through `page()`, with the same safety, revision, and publication
     /// rules, including lock wait and read errors. It writes no page bytes.
     pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
         let lookup = if kind == PageKind::Journal {
@@ -1981,9 +1982,6 @@ impl Store {
             name.to_owned()
         };
         let Some(entry) = self.graph.find_entry(&lookup, kind) else {
-            if let Some(error) = self.graph.discovery_problem() {
-                return Err(StoreError::Io(error));
-            }
             return Ok(None);
         };
         let id = PageId::from(self.graph.rel_path(&entry.path));
