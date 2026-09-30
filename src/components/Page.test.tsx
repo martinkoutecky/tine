@@ -1175,21 +1175,25 @@ describe("page actions entry point", () => {
     }
   });
 
-  it("lands on the renamed page when the rename was reached from another page (og 12e P1)", async () => {
+
+  it.each(["Previous page", "journals"])("reads only the final route after title rename from %s (OG-P10C)", async (previous) => {
     const dto: PageRead = { name: "Reached rename", kind: "page", title: "Reached rename", pre_block: null,
       id: "pages/Reached rename.md", blocks: [{ id: "reached-root", raw: "Body", collapsed: false, children: [] }] };
     setDoc({ byId: { "reached-root": node("reached-root", "Body", dto.name) },
       pages: [{ ...page(dto.name, "page", ["reached-root"]), id: dto.id }], feed: [], loaded: true });
     vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
-    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const reads = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+    const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([]));
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
     vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
     const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [] });
-    mainPaneRouter.openPage("Previous page", "page", { inPlace: true });
+    if (previous === "journals") resetTabsToJournals();
+    else mainPaneRouter.openPage(previous, "page", { inPlace: true });
     mainPaneRouter.openFile(dto.id, dto.name, "page");
     const { root, dispose } = mount(() => <PageView />);
     try {
       await tick(); await tick();
+      reads.mockClear(); feed.mockClear();
       root.querySelector<HTMLElement>(".page-title")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
       await tick();
       const input = root.querySelector<HTMLInputElement>(".page-title-input")!;
@@ -1199,6 +1203,8 @@ describe("page actions entry point", () => {
       await vi.waitFor(() => expect(rename).toHaveBeenCalledOnce());
       await flushMicrotasks();
       await vi.waitFor(() => expect(mainPaneRouter.route()).toMatchObject({ kind: "page", name: "Reached renamed" }));
+      expect(reads.mock.calls.map(([name]) => name)).toEqual(["Reached renamed"]);
+      expect(feed).not.toHaveBeenCalled();
     } finally {
       dispose();
     }

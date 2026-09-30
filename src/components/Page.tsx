@@ -859,14 +859,15 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     if (!next || next === from) return;
     renameInFlight = true;
     try {
-      const outcome = await renameOrMergePage(from, next, target);
+      const outcome = await renameOrMergePage(from, next, target, () => {
+        if (stillOnRenameTab()) router.openPage(next, "page");
+      });
       if (outcome === "cancelled") return;
       const message = renameOutcomeMessage(outcome, from, next);
       if (message) {
         if (stillOnRenameTab()) pushToast(message, outcome === "unchanged" ? "info" : "error");
         return;
       }
-      if (stillOnRenameTab()) router.openPage(next, "page");
     } catch (e) {
       if (stillOnRenameTab()) alert(`Rename failed: ${String(e)}`);
     } finally {

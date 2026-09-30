@@ -1,3 +1,4 @@
+import { batch } from "solid-js";
 import { backend } from "../backend";
 import { graphOwner, readOwned, writeOwned, type Owner } from "../owned";
 import type { PageTarget } from "../router";
@@ -48,7 +49,8 @@ export type DiskRename = RenameDone["outcome"] | "busy" | { unsaved: string; men
  * rewritten page. A backend failure can require inspecting disk before
  * retrying. The refresh retires every graph owner captured before it, so a
  * caller that must act on success (open the page, confirm) receives the graph
- * owner captured after the refresh through `onRefreshed`. */
+ * owner captured after the refresh through `onRefreshed`. Navigation in that
+ * callback shares the refresh batch, so views read only the final route. */
 export async function renamePageOnDisk(
   from: string, to: string, target?: PageTarget, mergeInto?: string, onRefreshed?: (owner: Owner) => void,
 ): Promise<DiskRename> {
@@ -83,9 +85,12 @@ export async function renamePageOnDisk(
     const home = result.value.home_page;
     const meta = graphMeta();
     if (home && meta) setGraphMeta({ ...meta, default_home: home });
-    const reloads = forgetMovedPages(result.value.touched);
-    refreshRenamedNavigation?.(from, to, target);
-    onRefreshed?.(graphOwner());
+    const reloads = batch(() => {
+      const pages = forgetMovedPages(result.value.touched);
+      refreshRenamedNavigation?.(from, to, target);
+      onRefreshed?.(graphOwner());
+      return pages;
+    });
     await reloadRewrittenPages(reloads);
     return result.value.outcome;
   } finally {

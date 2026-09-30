@@ -109,3 +109,22 @@ it("takes in the home page a rename moved with it (og 22b, OG rename-page-aux)",
   expect(graphMeta()?.default_home).toBe("Begin");
   setGraphMeta(null);
 });
+
+it("keeps rewritten referrers frozen until their disk reload lands (OG-P10C)", async () => {
+  setDoc({ byId: { ref: { id: "ref", raw: "[[Old]]", collapsed: false, parent: null, page: "Ref", children: [] } },
+    pages: [{ name: "Ref", id: "pages/Ref.md", kind: "page", title: "Ref", preBlock: null, roots: ["ref"], format: "md", readOnly: false, guide: false }], feed: [], loaded: true });
+  activatePageInstance("Ref");
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [{ path: "pages/Ref.md", moved: false }] });
+  let finish!: (value: null) => void;
+  const reload = vi.spyOn(backend(), "getPageByPath").mockImplementationOnce(() => new Promise((done) => { finish = done; }));
+  installRenameRefreshHandler(() => bumpGraphEpoch());
+  const refreshed = vi.fn();
+  let completed = false;
+  const pending = renamePageOnDisk("Old", "New", undefined, undefined, refreshed).then((value) => { completed = true; return value; });
+  await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+  expect(refreshed).toHaveBeenCalledOnce(); expect(completed).toBe(false);
+  setRaw("ref", "typed during reload", { timetracking: false });
+  expect(doc.byId.ref.raw).toBe("[[Old]]");
+  finish(null); expect(await pending).toBe("renamed");
+  expect(doc.pages).toHaveLength(0);
+});
