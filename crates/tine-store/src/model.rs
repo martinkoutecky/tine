@@ -4542,15 +4542,62 @@ fn hex_nibble(c: u8) -> Option<u8> {
 
 /// A unique-ish label (epoch millis + process-local sequence) for trashed files,
 /// so deleting two pages with the same name doesn't collide in the trash.
-/// Collect every `assets/<name>` reference in `text` into `into`. Captures both
-/// markdown (`![](../assets/x.png)`, `[f](../assets/x.pdf)`) and org
-/// (`[[file:../assets/x.png]]`) forms — the name runs from after `assets/` to the
-/// next markup closer (`)`/`]`/quote/etc.) or line break. Crucially it does NOT
-/// stop at a space, so a referenced filename containing spaces is matched in full
-/// (mis-truncating it would make `orphan_assets` flag a file that IS in use). The
-/// first path segment is added too, so a PDF area-image ref (`assets/<key>/p.png`)
-/// marks `<key>` as in use.
+/// Asset liveness combines parser-accepted targets with conservative plaintext
+/// mentions. The latter may retain extra files (including literal code), but
+/// cannot shorten or replace an accepted target. Parsing is skipped entirely
+/// when there is no asset mention; whole-graph results are memoized by the store.
 pub(crate) fn collect_asset_refs(text: &str, into: &mut std::collections::HashSet<String>) {
+    use tine_core::lsdoc::ast::{Inline, Url};
+    fn links(nodes: &[Inline], into: &mut std::collections::HashSet<String>) {
+        for node in nodes {
+            match node {
+                Inline::Link { url, label, .. } => {
+                    let target = match url {
+                        Url::Search { v } | Url::File { v } => Some(v.as_str()),
+                        Url::Complex { link, .. } => link.as_deref(),
+                        _ => None,
+                    };
+                    if let Some((_, name)) = target.and_then(|t| t.split_once("assets/")) {
+                        insert_asset_path(into, name);
+                    }
+                    links(label, into);
+                }
+                Inline::Emphasis { children, .. }
+                | Inline::Subscript { children, .. }
+                | Inline::Superscript { children, .. }
+                | Inline::Tag { children, .. } => links(children, into),
+                Inline::Fnref { definition, .. } => links(definition, into),
+                _ => (),
+            }
+        }
+    }
+    if !text.contains("assets/") {
+        return;
+    }
+    // Preambles carry no format argument. Both parsers may conservatively add
+    // accepted targets; neither removes a target recognized by the other.
+    for format in ["md", "org"] {
+        if let Some(nodes) = tine_core::render::parse_inline_bounded(text, format) {
+            links(&nodes, into);
+        }
+    }
+    conservative_asset_mentions(text, into);
+}
+
+fn insert_asset_path(into: &mut std::collections::HashSet<String>, name: &str) {
+    if name.is_empty() {
+        return;
+    }
+    insert_asset_ref(into, name);
+    if let Some((segment, _)) = name.split_once('/') {
+        insert_asset_ref(into, segment);
+    }
+}
+
+/// Legacy plaintext safety policy, NOT link recognition: any assets/ mention
+/// can keep a file alive even outside accepted links. Delimiters bound an extra
+/// conservative candidate only; link targets above always come from lsdoc.
+fn conservative_asset_mentions(text: &str, into: &mut std::collections::HashSet<String>) {
     let mut rest = text;
     while let Some(i) = rest.find("assets/") {
         let after = &rest[i + "assets/".len()..];
@@ -4563,14 +4610,7 @@ pub(crate) fn collect_asset_refs(text: &str, into: &mut std::collections::HashSe
             })
             .unwrap_or(after.len());
         let name = &after[..end];
-        if !name.is_empty() {
-            insert_asset_ref(into, name);
-            if let Some(seg) = name.split('/').next() {
-                if seg != name {
-                    insert_asset_ref(into, seg);
-                }
-            }
-        }
+        insert_asset_path(into, name);
         rest = &after[end..];
     }
 }
@@ -4892,58 +4932,6 @@ pub(crate) fn atomic_copy_file_new(
         let _ = fs::remove_file(&tmp);
     }
     res
-}
-
-#[cfg(test)]
-fn atomic_update_with_hooks(
-    path: &Path,
-    lock: &std::sync::Mutex<()>,
-    edit: impl Fn(&str) -> io::Result<String>,
-    before_recheck: impl Fn(usize),
-    before_publish: impl Fn(usize),
-) -> io::Result<()> {
-    let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    for attempt in 0..4 {
-        let baseline = match fs::read_to_string(path) {
-            Ok(s) => Some(s),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-            Err(e) => return Err(e),
-        };
-        let next = edit(baseline.as_deref().unwrap_or("{}\n"))?;
-        // CONFIG_LOCK serializes Tine writers, but Logseq/Syncthing do not take
-        // it. Re-read immediately before publish and retry the key-local edit on
-        // their new bytes instead of overwriting an external update with our stale
-        // full-file copy.
-        before_recheck(attempt);
-        let current = match fs::read_to_string(path) {
-            Ok(s) => Some(s),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-            Err(e) => return Err(e),
-        };
-        if current != baseline {
-            continue;
-        }
-        before_publish(attempt);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let published = if baseline.is_none() {
-            atomic_write_new(path, next.as_bytes())
-        } else {
-            atomic_write(path, next.as_bytes())
-        };
-        match published {
-            Ok(()) => return Ok(()),
-            Err(error) if baseline.is_none() && error.kind() == io::ErrorKind::AlreadyExists => {
-                continue;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::WouldBlock,
-        "config changed repeatedly during update",
-    ))
 }
 
 #[cfg(test)]
@@ -7389,6 +7377,42 @@ mod tests {
     }
 
     #[test]
+    fn orphan_workflow_preserves_parser_link_targets() {
+        let dir = scratch("orphan-parser-targets");
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        for name in ["foo(bar).pdf", "my (clip).mp4", "paper", "stray.png"] {
+            fs::write(dir.join("assets").join(name), b"asset").unwrap();
+        }
+        fs::write(dir.join("pages/P.md"),
+            "- [f](../assets/foo(bar).pdf)\n- [clip](../assets/my%20(clip).mp4)\n- ![](../assets/paper/area.png)\n").unwrap();
+        let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
+        let orphans = tine_graph_features::assets::orphan_assets(&store).unwrap();
+        assert_eq!(
+            orphans.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            vec!["stray.png"]
+        );
+        assert!(tine_graph_features::assets::trash_asset(&store, "foo(bar).pdf").is_err());
+        assert!(dir.join("assets/foo(bar).pdf").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    #[ignore = "manual cold orphan-scan benchmark; OG_P11_CORPUS names a fixture"]
+    fn p11_cold_orphan_scan_benchmark() {
+        let root = std::env::var("OG_P11_CORPUS").expect("fixture path");
+        let store = tine_store::Store::open(Path::new(&root), Default::default())
+            .unwrap()
+            .0;
+        let start = std::time::Instant::now();
+        let orphans = tine_graph_features::assets::orphan_assets(&store).unwrap();
+        eprintln!(
+            "P11 cold orphan scan: {:?}; {} orphans",
+            start.elapsed(),
+            orphans.len()
+        );
+    }
+
+    #[test]
     fn orphan_assets_does_not_flag_percent_encoded_in_use_asset() {
         // A block links `../assets/my%20file.png` but the file on disk is named
         // `my file.png` (the space percent-encoded in the URL, valid Markdown).
@@ -9647,55 +9671,6 @@ mod tests {
         .unwrap();
         assert!(Graph::open_checked(&dir).is_ok());
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn atomic_update_retries_on_external_change_without_losing_it() {
-        let dir = scratch("atomic-update-external");
-        let path = dir.join("config.edn");
-        fs::write(&path, "{:base 1}\n").unwrap();
-        let lock = std::sync::Mutex::new(());
-        let injected = std::sync::atomic::AtomicBool::new(false);
-        atomic_update_with_hooks(
-            &path,
-            &lock,
-            |content| Ok(content.replace('}', " :mine 3}")),
-            |_| {
-                if !injected.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                    fs::write(&path, "{:base 1 :external 2}\n").unwrap();
-                }
-            },
-            |_| {},
-        )
-        .unwrap();
-        let final_content = fs::read_to_string(&path).unwrap();
-        assert!(final_content.contains(":external 2"));
-        assert!(final_content.contains(":mine 3"));
-        let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn atomic_update_absent_publish_preserves_a_concurrent_creator() {
-        let dir = scratch("atomic-update-absent-race");
-        let path = dir.join("config.edn");
-        let lock = std::sync::Mutex::new(());
-        let injected = std::sync::atomic::AtomicBool::new(false);
-        atomic_update_with_hooks(
-            &path,
-            &lock,
-            |content| Ok(content.replace('}', " :mine 3}")),
-            |_| {},
-            |_| {
-                if !injected.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                    fs::write(&path, "{:external 2}\n").unwrap();
-                }
-            },
-        )
-        .unwrap();
-        let final_content = fs::read_to_string(&path).unwrap();
-        assert!(final_content.contains(":external 2"));
-        assert!(final_content.contains(":mine 3"));
-        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

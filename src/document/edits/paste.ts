@@ -13,6 +13,7 @@ import { existingBlockId, UUID_RE } from "./identity";
 import { pushUndo } from "../history";
 import { backend } from "../../backend";
 import { pushToast } from "../../toasts";
+import { blockRegions } from "../../render/parse";
 import type { OutlineNode } from "../../editor/outline";
 
 const ID_LOOKUP_CHUNK_SIZE = 128;
@@ -33,16 +34,15 @@ async function resolvePastedIds(owner: () => boolean, ids: readonly string[]) {
 type ClipboardProperty = { key: string; value: string };
 
 function clipboardProperties(raw: string, format: Format): ClipboardProperty[] {
-  const hidden = splitProps(raw, hideAll, format).hidden;
-  if (!hidden) return [];
-  const properties: ClipboardProperty[] = [];
-  for (const line of hidden.split("\n")) {
-    const match = format === "org"
-      ? /^\s*:([A-Za-z0-9_@./-]+):\s*(.*)$/.exec(line)
-      : /^\s*([A-Za-z0-9_./-]+)::\s*(.*)$/.exec(line);
-    if (match) properties.push({ key: match[1], value: match[2] });
-  }
-  return properties;
+  const regions = blockRegions(raw, format);
+  if (regions.quarantined) throw new Error("Clipboard paste refused: block parsing is quarantined");
+  const bytes = new TextEncoder().encode(raw);
+  const decoder = new TextDecoder();
+  return regions.properties.filter((property) => property.primary)
+    .map((property) => ({ key: property.key,
+      value: decoder.decode(bytes.subarray(property.value_range[0], property.line[1]))
+        .replace(/\r?\n$/, "").trimStart(),
+    }));
 }
 
 function clipboardIdsForBlock(block: ClipboardBlock): string[] {
