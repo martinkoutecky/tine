@@ -397,3 +397,24 @@ fn guide_explains_missing_links_and_old_web_engines() {
     assert!(platforms.contains("too old") && platforms.contains("startup"));
     assert!(platforms.contains("macOS 12.3") && platforms.contains("updating the Safari app"));
 }
+
+#[test]
+fn guide_explains_query_sort_search_retry_and_print_refusal() {
+    let pages = bundled_guide_pages();
+    let page = |title: &str| {
+        &pages
+            .iter()
+            .find(|page| page.title == title)
+            .unwrap()
+            .markdown
+    };
+    assert!(page("Features/Sheets").contains("**Table-only sort**"));
+    assert!(page("Features/Sheets").contains("clear that local order"));
+    assert!(page("Features/Sheets").contains("repeated aggregate entries"));
+    assert!(page("Workflows/Find and revisit").contains("**Retry**"));
+    assert!(page("Workflows/Find and revisit").contains("**Searching blocks…**"));
+    assert!(page("Workflows/Find and revisit").contains("**No matched blocks**"));
+    assert!(page("Reference/Files, external edits, and backups").contains("**Print query limit**"));
+    assert!(page("Reference/Files, external edits, and backups")
+        .contains("supersedes the pending export"));
+}

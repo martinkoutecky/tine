@@ -106,6 +106,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Sheet field rename preserves ordered query aggregates, including repeated keys, average, whole-result count and unrelated configuration (UI-OG-R3A2-AGGREGATE-RENAME).
+- Starting another PDF export supersedes pending preparation; graph changes and window teardown discard stale output (UI-OG-R3A2-PRINT-SUPERSESSION).
+- Guide explains table-only sort clearing, search Retry and block-picker states, aggregate rename preservation, and Print query-limit refusal.
+
 - **Caret selection follows code editors with wrapping disabled** (og-R3A, master 587bdc431).
   The shared caret mirror copies shaping and wrapping styles instead of inventing wrapped rows.
 - **Search failures can be retried in place** (og-R3A, master 371241774).

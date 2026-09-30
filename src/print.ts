@@ -69,7 +69,7 @@ class PrintQueryLimitError extends Error {
 
 /**
  * Upgrade the core's inert print markup using only code already bundled with
- * Tine. The returned document contains no scripts or third-party resources; it
+ * Tine. The returned document contains no scripts or remote stylesheets; it
  * is safe to load in a same-origin iframe whose sandbox does not allow scripts.
  * Cost scales with the supplied markup and math/code spans. Optional renderer
  * failures leave readable raw markup. Renderer-declared query limits reject
@@ -126,9 +126,11 @@ export async function preparePrintHtml(html: string): Promise<string> {
  * and backend errors also toast; this function does not reject. It resolves
  * when the frame is attached, before its load/fonts/print dialog complete.
  * Renderer-declared query limits show their reason and attach no frame. HTML
- * preparation scales with the rendered page; a newer call supersedes pending preparation or an attached frame.
- * A frame releases on afterprint, load/print failure, graph retirement or a
- * 60-second watchdog; native print exceptions toast and remove it. */
+ * preparation scales with the rendered page; a newer call supersedes pending
+ * preparation or an attached frame.
+ * Supersession, graph retirement and window teardown silently settle pending
+ * preparation. A frame releases on afterprint, load/print failure, retirement,
+ * teardown, supersession or a 60-second watchdog; native print exceptions toast and remove it. */
 export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRINT_OPTS): Promise<void> {
   activePrint?.abort();
   const controller = new AbortController();
@@ -167,7 +169,9 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     }
     const sheets = await owned(exportSheets([name]));
     if (!sheets || sheets.kind === "stale" || !owner()) { cleanup(); return; }
-    const result = await owned(backend().pagePrintHtml(name, opts, sheets.value));
+    const result = await Promise.race([
+      readOwned(owner, backend().pagePrintHtml(name, opts, sheets.value)), cancelled,
+    ]);
     if (!result || result.kind === "stale") { cleanup(); return; }
     const prepared = await owned(preparePrintHtml(result.value));
     if (!prepared || prepared.kind === "stale") { cleanup(); return; }
@@ -183,46 +187,53 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     return;
   }
 
-  iframe = document.createElement("iframe");
-  iframe.setAttribute("aria-hidden", "true");
-  // Keep same-origin DOM access so the parent can wait for fonts and invoke the
-  // native print dialog, but categorically disable child scripts. The core also
-  // emits script-src 'none'; neither graph markup nor a remote dependency can
-  // reach Tauri's privileged parent/IPC surface.
-  iframe.setAttribute("sandbox", PRINT_IFRAME_SANDBOX);
-  // Off-screen + hidden: the print engine paginates the document at page width
-  // regardless of the iframe's on-screen box, so a 0-size hidden frame prints fine.
-  iframe.style.cssText =
-    "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
-  iframe.srcdoc = html;
+  try {
+    iframe = document.createElement("iframe");
+    iframe.setAttribute("aria-hidden", "true");
+    // Keep same-origin DOM access so the parent can wait for fonts and invoke the
+    // native print dialog, but categorically disable child scripts. The core also
+    // emits script-src 'none'; neither graph markup nor a remote dependency can
+    // reach Tauri's privileged parent/IPC surface.
+    iframe.setAttribute("sandbox", PRINT_IFRAME_SANDBOX);
+    // Off-screen + hidden: the print engine paginates the document at page width
+    // regardless of the iframe's on-screen box, so a 0-size hidden frame prints fine.
+    iframe.style.cssText =
+      "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+    iframe.srcdoc = html;
 
-  iframe.onload = async () => {
-    if (done) return;
-    const win = iframe!.contentWindow;
-    if (!win) {
-      cleanup();
-      return;
-    }
-    try {
-      // Let the locally bundled styles/fonts settle so pagination measures the
-      // final, already-typeset static layout.
-      const fonts = iframe!.contentDocument?.fonts;
-      if (fonts?.ready) await fonts.ready;
-      await new Promise((r) => setTimeout(r, 400));
+    iframe.onload = async () => {
       if (done) return;
-      if (!owner()) { cleanup(); return; }
-      win.addEventListener("afterprint", cleanup, { once: true });
-      win.focus();
-      win.print();
-    } catch (e) {
-      if (owner()) pushToast("Print failed", "error");
-      console.error("iframe print failed");
-      cleanup();
-    }
-  };
+      const win = iframe!.contentWindow;
+      if (!win) {
+        cleanup();
+        return;
+      }
+      try {
+        // Let the locally bundled styles/fonts settle so pagination measures the
+        // final, already-typeset static layout.
+        const fonts = iframe!.contentDocument?.fonts;
+        if (fonts?.ready) await fonts.ready;
+        await new Promise((r) => setTimeout(r, 400));
+        if (done) return;
+        if (!owner()) { cleanup(); return; }
+        win.addEventListener("afterprint", cleanup, { once: true });
+        win.focus();
+        win.print();
+      } catch (e) {
+        if (owner()) pushToast("Print failed", "error");
+        console.error("iframe print failed");
+        cleanup();
+      }
+    };
 
-  iframe.onerror = cleanup;
-  // A failed load, stalled font, or missing afterprint must release the guard.
-  watchdog = setTimeout(cleanup, 60_000);
-  document.body.appendChild(iframe);
+    iframe.onerror = cleanup;
+    // A failed load, stalled font, or missing afterprint must release the guard.
+    watchdog = setTimeout(cleanup, 60_000);
+    document.body.appendChild(iframe);
+  } catch {
+    const current = owner();
+    cleanup();
+    if (current) pushToast("Print failed", "error");
+    console.error("iframe setup failed");
+  }
 }
