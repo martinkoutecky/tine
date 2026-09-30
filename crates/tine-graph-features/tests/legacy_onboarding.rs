@@ -379,3 +379,21 @@ fn copy_guide_rejects_assets_directory_symlink_swap() {
     assert!(guide::copy_guide_into_graph(&store, "Tine Guide").is_err());
     assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
 }
+
+#[test]
+fn guide_explains_missing_links_and_old_web_engines() {
+    let pages = bundled_guide_pages();
+    let links = &pages
+        .iter()
+        .find(|p| p.title == "Reference/Pages, links, references, and search")
+        .unwrap()
+        .markdown;
+    let platforms = &pages
+        .iter()
+        .find(|p| p.title == "Reference/Platforms and mobile")
+        .unwrap()
+        .markdown;
+    assert!(links.contains("dotted underline") && links.contains("create the page"));
+    assert!(platforms.contains("too old") && platforms.contains("startup"));
+    assert!(platforms.contains("macOS 12.3") && platforms.contains("updating the Safari app"));
+}

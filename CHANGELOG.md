@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **An old system web engine shows an update card before startup** (GH #572; og-R2). On macOS it explains the macOS 12.3 requirement and why updating Safari alone does not update the embedded engine.
+
+- **Missing page links are muted with a dotted underline** (tags are not) (og-R2; UI-OG-R2-MISSING-LINKS). They still open their destination, and become live when a page or alias is created; deletion dims them again without reloading. This deliberately differs from Logseq, which dims only untitled pages.
+
 - **Parser-owned structural edits** (og-D1): metadata edits and template/conflict copies share native/wasm block regions, preserving parser-recognized literal contents. Empty code cards retain their body/wrapper separator after typing, code-body typing preserves literal typography, and calendar edits retain glued body text. Published block identities, logbook and repeaters use the block's format.
 - **An image replaced outside Tine refreshes where it is shown** (master d017d1afc, 2f54a8d5e, og-J2).
   A picture changed by an editor, Syncthing, Dropbox or another Tine window updates in place without reloading the page,

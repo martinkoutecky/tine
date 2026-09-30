@@ -24,6 +24,7 @@ import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
 import { sanitizeRawHtml, rawHtmlLocalImages } from "./htmlSanitize";
 import { allowLocalFileImages } from "../localFileSettings";
+import { resolvedTarget } from "../pageIndex";
 import { pageIcon } from "../pageIconBatch";
 import { typographic } from "./typography";
 import { coarseSpanAttrs, literalSpanAttrs, plainSpanAttrs, rebulletedSourceByteToRawByte, typographicPlainSpanAttrs, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
@@ -315,6 +316,11 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // graph; an icon-less graph costs one IPC and no re-render (see pageIconBatch).
   const icon = () => (isGuidePageName(targetName()) ? null : pageIcon(targetName()));
   const kind = (): PageKind => (isGuidePageName(targetName()) ? "page" : isJournalTitle(targetName()) ? "journal" : "page");
+  // Deliberate Martin-approved OG divergence (master fd1fd6e1c): a missing page
+  // link signals a blank destination. Tags are exempt: a tag whose page has no
+  // file is ordinary Logseq usage, and dimming them would mark most tags in a
+  // normal graph. I-12/I-25: existence comes from the page index only.
+  const missing = () => !props.tag && !isGuidePageName(targetName()) && resolvedTarget(targetName(), kind())?.kind === "absent";
   const open = (e: MouseEvent) => {
     if (longPress.consumeClick(e)) {
       e.preventDefault();
@@ -359,6 +365,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
       <a
         ref={anchorEl}
         class={props.tag ? "tag" : "page-ref"}
+        data-missing-page={missing() ? "" : undefined}
         {...(props.spanAttrs ?? {})}
         // Suppress the browser defaults the destinations replace: shift-range
         // selection (GH #42) and middle-button autoscroll / PRIMARY paste (GH #207).
