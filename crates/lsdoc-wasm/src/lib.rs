@@ -7,10 +7,20 @@
 
 use wasm_bindgen::prelude::*;
 
+/// Split already-parsed linkable property values with the native separator.
+/// O(value bytes), without parsing or I/O. Empty members retain their position.
+#[wasm_bindgen]
+pub fn split_linkable_property(value: &str) -> Vec<String> {
+    value.split(block_regions::is_linkable_property_separator).map(str::to_owned).collect()
+}
+
 #[path = "../../tine-core/src/block_regions.rs"]
 mod block_regions;
 mod render {
     pub(crate) use crate::lsdoc_block_parse::parse_block;
+    pub(crate) fn parse_text_bounded(text: &str, is_org: bool) -> Option<lsdoc::ast::Projection> {
+        crate::lsdoc_block_parse::parse_text_bounded(text, if is_org { "org" } else { "md" })
+    }
 }
 
 #[path = "../../tine-core/src/logbook.rs"]
@@ -226,6 +236,8 @@ pub fn edit_block_regions_json(
             value_range: range(&get(&p, "value_range"))?,
             region: get(&p, "region").as_f64().unwrap_or(0.0) as usize,
             primary: get(&p, "primary").as_bool().unwrap_or(false),
+            directive: get(&p, "directive").as_bool().unwrap_or(false),
+            applicable: get(&p, "applicable").as_bool().unwrap_or(false),
         });
     }
     for p in array(regions, "planning").iter() {

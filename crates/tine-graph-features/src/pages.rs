@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 
 use tine_core::doc;
-use tine_core::model::{PageDto, PageKind};
+use tine_core::model::{Format, PageDto, PageKind};
 use tine_core::refs;
 use tine_store::{
     Area, FileId, FileRev, LoadError, PageId, PageRead, RenameMap, Resolved, SaveBase, SaveOutcome,
@@ -577,7 +577,11 @@ fn rename_page_after_inventory(
             // sync service left it mid-conflict). It stays byte-identical, a
             // moved one moves verbatim, and the rename reports it.
             if updated != content
-                && !tine_core::concord_queue::vcs_conflict_markers(&content).is_empty()
+                && !tine_core::concord_queue::vcs_conflict_markers(
+                    &content,
+                    if org { Format::Org } else { Format::Md },
+                )
+                .is_empty()
             {
                 skipped.push(id.as_str().to_owned());
                 if moves.contains_key(&id) {

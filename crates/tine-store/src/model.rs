@@ -688,8 +688,8 @@ impl ReadSnapshot {
                         (Some((a, ad)), Some((b, bd))) => {
                             a.kind == b.kind
                                 && a.name == b.name
-                                && ad.pre_block.as_deref().and_then(page_icons::pre_block_icon)
-                                    == bd.pre_block.as_deref().and_then(page_icons::pre_block_icon)
+                                && page_icons::pre_block_icon(a, ad)
+                                    == page_icons::pre_block_icon(b, bd)
                                 && crate::query::document_aliases(ad)
                                     == crate::query::document_aliases(bd)
                         }

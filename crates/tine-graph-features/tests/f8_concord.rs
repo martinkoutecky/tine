@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tine_core::concord_queue::{vcs_conflict_markers, ConflictSource, SideRole};
+use tine_core::model::Format;
 use tine_core::pdf::{Highlight, Position, Rect};
 use tine_core::sync_diff::{DiffRow, MergedSource, RowKind};
 use tine_graph_features::{conflicts, pdf};
@@ -256,7 +257,10 @@ fn resolving_markers_keep_both_writes_sibling_blocks_and_clears_the_quarantine()
     )
     .expect("resolution writes the merged result");
     let after = fs::read_to_string(&file).unwrap();
-    assert!(vcs_conflict_markers(&after).is_empty(), "{after:?}");
+    assert!(
+        vcs_conflict_markers(&after, Format::Md).is_empty(),
+        "{after:?}"
+    );
     assert_eq!(
         roots(&after),
         vec!["shared top", "mine wins", "theirs wins"]

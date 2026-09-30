@@ -25,7 +25,7 @@
 //! ordinary block-level machinery (`sync_diff::diff_docs` / `diff3_docs`,
 //! `sync_diff::merge_blocks3`) applies unchanged.
 
-use crate::model::PageKind;
+use crate::model::{Format, PageKind};
 use serde::{Deserialize, Serialize};
 
 /// Distinct VCS merge-conflict marker kinds present in `content`, in order of
@@ -41,13 +41,13 @@ use serde::{Deserialize, Serialize};
 ///
 /// Two guards keep a page that merely DOCUMENTS merge conflicts from being
 /// flagged:
-/// - lines inside column-0 fenced code blocks (``` / ~~~) are ignored; markers
-///   quoted in an indented fence inside a bullet are not at column 0 anyway;
+/// - lsdoc literal regions in the actual file format (Markdown fences, Org
+///   source/example/export blocks and other opaque syntax) are ignored;
 /// - the file counts as conflicted only if an anchor line (`<<<<<<< ` or
 ///   `>>>>>>> `) is present — a lone `=======` (e.g. a setext-style divider)
 ///   never quarantines a page.
-pub fn vcs_conflict_markers(content: &str) -> Vec<&'static str> {
-    let scan = scan_vcs_conflict_markers(content);
+pub fn vcs_conflict_markers(content: &str, format: Format) -> Vec<&'static str> {
+    let scan = scan_vcs_conflict_markers(content, format);
     if !scan
         .iter()
         .any(|(_, kind)| matches!(kind, ConflictMarkerKind::Ours | ConflictMarkerKind::Theirs))
@@ -97,31 +97,34 @@ impl ConflictMarkerKind {
 }
 
 /// THE scanner for VCS merge-conflict marker lines: `(line index, kind)` for
-/// every column-0 marker outside a column-0 fenced code block, in file order.
+/// every column-0 marker outside parser-owned literal regions, in file order.
+/// Cost O(file bytes + AST nodes); format is the actual graph-file format.
 ///
 /// Single source of truth — [`vcs_conflict_markers`] (detection/quarantine) and
 /// the marker parser ([`parse_vcs_marker_sides`]) both derive from it, so
 /// "what counts as a marker" can never diverge between the code that REFUSES to
 /// rewrite a file and the code that RESOLVES it. See [`vcs_conflict_markers`]
 /// for the recognized dialects and the two false-positive guards.
-pub fn scan_vcs_conflict_markers(content: &str) -> Vec<(usize, ConflictMarkerKind)> {
-    let mut fence: Option<char> = None;
+pub fn scan_vcs_conflict_markers(
+    content: &str,
+    format: Format,
+) -> Vec<(usize, ConflictMarkerKind)> {
+    let regions = crate::block_regions::parse_document(content, format == Format::Org);
+    let mut literals = regions.literals.iter().peekable();
     let mut out = Vec::new();
-    for (index, line) in content.lines().enumerate() {
-        if let Some(delimiter) = fence {
-            if line.chars().take_while(|&c| c == delimiter).count() >= 3 {
-                fence = None;
-            }
+    let mut offset = 0;
+    // These are VCS protocol tokens, not Logseq structure. Only lsdoc decides
+    // which source bytes are literal (I-12), in the actual file format.
+    for (index, chunk) in content.split_inclusive('\n').enumerate() {
+        let at = offset;
+        offset += chunk.len();
+        while literals.peek().is_some_and(|r| r.1 <= at) {
+            literals.next();
+        }
+        if literals.peek().is_some_and(|r| r.contains(at)) {
             continue;
         }
-        if line.starts_with("```") {
-            fence = Some('`');
-            continue;
-        }
-        if line.starts_with("~~~") {
-            fence = Some('~');
-            continue;
-        }
+        let line = chunk.trim_end_matches(['\r', '\n']);
         let kind = if line.starts_with("<<<<<<< ") {
             Some(ConflictMarkerKind::Ours)
         } else if line.starts_with(">>>>>>> ") {
@@ -290,16 +293,17 @@ enum Section {
 
 /// Reconstruct the sides of a marker-bearing file.
 ///
+/// Uses the actual file format to ignore literal examples. Cost O(file bytes).
 /// Returns `None` when the content is not conflicted by the shared scanner's
 /// rules, or when the marker structure is malformed (unclosed region, `=======`
 /// with no open region, …) — a malformed file is left strictly alone rather than
 /// guessed at, so invariant 3 (never rewrite a marker file except as the direct
 /// result of a resolution) can never be violated on a file we misread.
-pub fn parse_vcs_marker_sides(content: &str) -> Option<MarkerSides> {
-    if vcs_conflict_markers(content).is_empty() {
+pub fn parse_vcs_marker_sides(content: &str, format: Format) -> Option<MarkerSides> {
+    if vcs_conflict_markers(content, format).is_empty() {
         return None;
     }
-    let markers = scan_vcs_conflict_markers(content);
+    let markers = scan_vcs_conflict_markers(content, format);
     let mut by_line = std::collections::HashMap::new();
     for (index, kind) in &markers {
         by_line.insert(*index, *kind);
@@ -443,7 +447,7 @@ mod tests {
 
     #[test]
     fn parses_a_two_way_git_conflict_into_two_full_pages() {
-        let sides = parse_vcs_marker_sides(GIT_2WAY).expect("conflicted");
+        let sides = parse_vcs_marker_sides(GIT_2WAY, Format::Md).expect("conflicted");
         assert_eq!(sides.mine, "- shared top\n- mine wins\n- shared bottom\n");
         assert_eq!(
             sides.theirs,
@@ -457,7 +461,7 @@ mod tests {
 
     #[test]
     fn parses_a_diff3_conflict_and_recovers_the_ancestor() {
-        let sides = parse_vcs_marker_sides(GIT_DIFF3).expect("conflicted");
+        let sides = parse_vcs_marker_sides(GIT_DIFF3, Format::Md).expect("conflicted");
         assert_eq!(sides.mine, "- shared top\n- mine wins\n- shared bottom\n");
         assert_eq!(
             sides.theirs,
@@ -484,7 +488,7 @@ mod tests {
             "- theirs wins\n",
             ">>>>>>> END MERGE CONFLICT >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n",
         );
-        let sides = parse_vcs_marker_sides(fossil).expect("conflicted");
+        let sides = parse_vcs_marker_sides(fossil, Format::Md).expect("conflicted");
         assert_eq!(sides.mine, "- shared\n- mine wins\n");
         assert_eq!(sides.theirs, "- shared\n- theirs wins\n");
         assert_eq!(sides.base.as_deref(), Some("- shared\n- original\n"));
@@ -525,7 +529,7 @@ mod tests {
             ">>>>>>> END MERGE CONFLICT >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n",
             "- bottom shared\n",
         );
-        let sides = parse_vcs_marker_sides(fossil).expect("conflicted");
+        let sides = parse_vcs_marker_sides(fossil, Format::Md).expect("conflicted");
         let shared = |body: &str| format!("- top shared\n- second shared\n{body}- bottom shared\n");
         assert_eq!(sides.mine, shared("- alpha mine\n- beta\n"));
         assert_eq!(sides.theirs, shared("- alpha\n- beta theirs\n"));
@@ -551,7 +555,7 @@ mod tests {
             "- middle\n",
             "<<<<<<< HEAD\n- b1\n||||||| base\n- b0\n=======\n- b2\n>>>>>>> x\n",
         );
-        let sides = parse_vcs_marker_sides(two).expect("conflicted");
+        let sides = parse_vcs_marker_sides(two, Format::Md).expect("conflicted");
         assert_eq!(sides.regions, 2);
         assert_eq!(sides.suggested, None);
         // The sides and the ancestor are unaffected, and still carry no
@@ -572,7 +576,7 @@ mod tests {
             "####### SUGGESTED CONFLICT RESOLUTION follows ###\n- b merged\n",
             "||||||| base\n- b0\n=======\n- b2\n>>>>>>> x\n",
         );
-        let sides = parse_vcs_marker_sides(two).expect("conflicted");
+        let sides = parse_vcs_marker_sides(two, Format::Md).expect("conflicted");
         assert_eq!(
             sides.suggested.as_deref(),
             Some("- a merged\n- middle\n- b merged\n")
@@ -582,8 +586,18 @@ mod tests {
     #[test]
     fn a_git_conflict_offers_no_artifact() {
         // Only Fossil writes the section; git's two styles never do.
-        assert_eq!(parse_vcs_marker_sides(GIT_2WAY).unwrap().suggested, None);
-        assert_eq!(parse_vcs_marker_sides(GIT_DIFF3).unwrap().suggested, None);
+        assert_eq!(
+            parse_vcs_marker_sides(GIT_2WAY, Format::Md)
+                .unwrap()
+                .suggested,
+            None
+        );
+        assert_eq!(
+            parse_vcs_marker_sides(GIT_DIFF3, Format::Md)
+                .unwrap()
+                .suggested,
+            None
+        );
     }
 
     #[test]
@@ -593,7 +607,7 @@ mod tests {
             "- middle\n",
             "<<<<<<< HEAD\n- b1\n||||||| base\n- b0\n=======\n- b2\n>>>>>>> x\n",
         );
-        let sides = parse_vcs_marker_sides(two).expect("conflicted");
+        let sides = parse_vcs_marker_sides(two, Format::Md).expect("conflicted");
         assert_eq!(sides.regions, 2);
         assert_eq!(sides.mine, "- a1\n- middle\n- b1\n");
         assert_eq!(sides.theirs, "- a2\n- middle\n- b2\n");
@@ -605,25 +619,28 @@ mod tests {
     #[test]
     fn a_page_merely_documenting_markers_is_not_parsed() {
         let fenced = "- how git marks conflicts:\n```\n<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> other\n```\n";
-        assert!(vcs_conflict_markers(fenced).is_empty());
-        assert_eq!(parse_vcs_marker_sides(fenced), None);
-        assert_eq!(parse_vcs_marker_sides("- plain page\n"), None);
+        assert!(vcs_conflict_markers(fenced, Format::Md).is_empty());
+        assert_eq!(parse_vcs_marker_sides(fenced, Format::Md), None);
+        assert_eq!(parse_vcs_marker_sides("- plain page\n", Format::Md), None);
     }
 
     #[test]
     fn malformed_marker_structure_is_refused_rather_than_guessed() {
         // Unclosed region.
         assert_eq!(
-            parse_vcs_marker_sides("<<<<<<< HEAD\n- mine\n=======\n- theirs\n"),
+            parse_vcs_marker_sides("<<<<<<< HEAD\n- mine\n=======\n- theirs\n", Format::Md),
             None
         );
         // Nested opener.
         assert_eq!(
-            parse_vcs_marker_sides("<<<<<<< HEAD\n<<<<<<< HEAD\n- x\n=======\n- y\n>>>>>>> b\n"),
+            parse_vcs_marker_sides(
+                "<<<<<<< HEAD\n<<<<<<< HEAD\n- x\n=======\n- y\n>>>>>>> b\n",
+                Format::Md
+            ),
             None
         );
         // Closer with no region open.
-        assert_eq!(parse_vcs_marker_sides("- x\n>>>>>>> b\n"), None);
+        assert_eq!(parse_vcs_marker_sides("- x\n>>>>>>> b\n", Format::Md), None);
     }
 
     #[test]
@@ -640,7 +657,7 @@ mod tests {
             ">>>>>>> feature\n",
             "- shared bottom\n",
         );
-        let sides = parse_vcs_marker_sides(content).expect("conflicted");
+        let sides = parse_vcs_marker_sides(content, Format::Md).expect("conflicted");
         let diff = crate::sync_diff::diff3_docs(
             &crate::doc::parse(sides.base.as_deref().expect("ancestor recovered")),
             &crate::doc::parse(&sides.mine),
@@ -663,7 +680,7 @@ mod tests {
 
     #[test]
     fn a_two_way_marker_file_still_yields_a_reviewable_diff() {
-        let sides = parse_vcs_marker_sides(GIT_2WAY).expect("conflicted");
+        let sides = parse_vcs_marker_sides(GIT_2WAY, Format::Md).expect("conflicted");
         assert!(sides.base.is_none());
         let diff = crate::sync_diff::diff_docs(
             &crate::doc::parse(&sides.mine),
@@ -679,47 +696,57 @@ mod tests {
         // git (merge and diff3 styles).
         assert_eq!(
                 vcs_conflict_markers(
-                    "<<<<<<< HEAD\n- mine\n||||||| merged common ancestors\n- old\n=======\n- theirs\n>>>>>>> feature\n"
+                    "<<<<<<< HEAD\n- mine\n||||||| merged common ancestors\n- old\n=======\n- theirs\n>>>>>>> feature\n",
+                    Format::Md,
                 ),
                 vec!["<<<<<<<", "|||||||", "=======", ">>>>>>>"]
             );
         // Fossil's verbose variants (mergeMarker table in fossil src/merge3.c).
         assert_eq!(
-            vcs_conflict_markers(concat!(
-                "<<<<<<< BEGIN MERGE CONFLICT: local copy shown first <<<<<<<<<<<<\n",
-                "- mine\n",
-                "####### SUGGESTED CONFLICT RESOLUTION follows ###################\n",
-                "- suggestion\n",
-                "||||||| COMMON ANCESTOR content follows |||||||||||||||||||||||||\n",
-                "- old\n",
-                "======= MERGED IN content follows ===============================\n",
-                "- theirs\n",
-                ">>>>>>> END MERGE CONFLICT >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> (line 3)\n"
-            )),
+            vcs_conflict_markers(
+                concat!(
+                    "<<<<<<< BEGIN MERGE CONFLICT: local copy shown first <<<<<<<<<<<<\n",
+                    "- mine\n",
+                    "####### SUGGESTED CONFLICT RESOLUTION follows ###################\n",
+                    "- suggestion\n",
+                    "||||||| COMMON ANCESTOR content follows |||||||||||||||||||||||||\n",
+                    "- old\n",
+                    "======= MERGED IN content follows ===============================\n",
+                    "- theirs\n",
+                    ">>>>>>> END MERGE CONFLICT >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> (line 3)\n"
+                ),
+                Format::Md
+            ),
             vec!["<<<<<<<", "#######", "|||||||", "=======", ">>>>>>>"]
         );
         // Markers quoted inside a column-0 fenced code block (someone
         // DOCUMENTING git) must not flag the page.
         assert!(vcs_conflict_markers(
-            "```\n<<<<<<< HEAD\n=======\n>>>>>>> feature\n```\n- notes about git\n"
+            "```\n<<<<<<< HEAD\n=======\n>>>>>>> feature\n```\n- notes about git\n",
+            Format::Md
         )
         .is_empty());
-        assert!(vcs_conflict_markers("~~~text\n<<<<<<< HEAD\n>>>>>>> feature\n~~~\n").is_empty());
+        assert!(
+            vcs_conflict_markers("~~~text\n<<<<<<< HEAD\n>>>>>>> feature\n~~~\n", Format::Md)
+                .is_empty()
+        );
         // Markers quoted in an indented fence inside a bullet are not at
         // column 0 at all.
         assert!(vcs_conflict_markers(
-            "- how git conflicts look:\n  ```\n  <<<<<<< HEAD\n  =======\n  >>>>>>> theirs\n  ```\n"
+            "- how git conflicts look:\n  ```\n  <<<<<<< HEAD\n  =======\n  >>>>>>> theirs\n  ```\n",
+            Format::Md,
         )
         .is_empty());
         // A lone `=======` (setext-style divider) never quarantines a page —
         // an anchor marker must be present.
-        assert!(vcs_conflict_markers("Heading\n=======\n- content\n").is_empty());
+        assert!(vcs_conflict_markers("Heading\n=======\n- content\n", Format::Md).is_empty());
         // Markers must start at column 0 with their trailing space/shape.
-        assert!(vcs_conflict_markers("- <<<<<<< HEAD\n- >>>>>>> x\n").is_empty());
+        assert!(vcs_conflict_markers("- <<<<<<< HEAD\n- >>>>>>> x\n", Format::Md).is_empty());
         // A real conflict below a closed fence is still detected.
         assert_eq!(
             vcs_conflict_markers(
-                "```\nexample\n```\n<<<<<<< HEAD\n- mine\n=======\n- theirs\n>>>>>>> feature\n"
+                "```\nexample\n```\n<<<<<<< HEAD\n- mine\n=======\n- theirs\n>>>>>>> feature\n",
+                Format::Md
             ),
             vec!["<<<<<<<", "=======", ">>>>>>>"]
         );
