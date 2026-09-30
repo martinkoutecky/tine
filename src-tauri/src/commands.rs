@@ -1447,7 +1447,7 @@ pub(crate) fn read_local_image(
     // OFF by default; gated here too (defense in depth — the frontend also checks),
     // restricted to image extensions + a size cap so an allowed note can't slurp an
     // arbitrary file. Returns RAW bytes like `read_asset`. See ADR 0019.
-    if !crate::settings::get_app_bool("allow_local_file_images".into(), false, app) {
+    if !crate::settings::device_bool(&app, "allow_local_file_images", false) {
         return Err("local-file images are disabled".into());
     }
     let p = std::path::Path::new(&path);

@@ -275,3 +275,38 @@ fn window_geometry_is_copied_once_and_never_over_the_builds_own() {
     );
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn desktop_webview_seed_uses_native_layouts_and_keeps_rollback_data_intact() {
+    let temp = tempfile::tempdir().unwrap();
+    for os in ["windows", "macos"] {
+        let (own, release) = webview_dirs(
+            os,
+            Some(temp.path()),
+            Some(temp.path()),
+            "experiment-id",
+            "release-id",
+        )
+        .unwrap();
+        write(
+            &release.join("Default/Local Storage/leveldb/000003.log"),
+            b"theme=dark;shortcuts=custom",
+        );
+        write(&release.join("salt"), b"origin-salt");
+        let before = tree(&release);
+        seed_webview_store(&own, &release).unwrap();
+        assert_eq!(tree(&own), before);
+        assert_eq!(
+            tree(&release),
+            before,
+            "rollback reads the exact source store"
+        );
+        write(&own.join("salt"), b"experiment-state");
+        seed_webview_store(&own, &release).unwrap();
+        assert_eq!(fs::read(own.join("salt")).unwrap(), b"experiment-state");
+        assert_eq!(tree(&release), before);
+    }
+    for os in ["linux", "android", "ios"] {
+        assert!(webview_dirs(os, Some(temp.path()), Some(temp.path()), "own", "release").is_none());
+    }
+}

@@ -24,6 +24,7 @@
 //!   WebKit, which discards it. The graph still opens from the copied
 //!   `tine-settings.json` (`last_graph_path`).
 
+use crate::device_io::{copy_tree, publish_directory_entry as publish};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -60,16 +61,66 @@ pub(crate) fn seed_from_release_once() {
     let config_dirs =
         dirs::config_dir().map(|base| (base.join(APP_IDENTIFIER), base.join(RELEASE_IDENTIFIER)));
     match seed(&own, &release, config_dirs) {
-        Ok(Seeded::Copied(entries)) => crate::debug::diag_private(
-            "experiment-config-seeded",
-            format!("copied {entries:?} from the released Tine's app-data dir"),
-        ),
+        Ok(Seeded::Copied(entries)) => {
+            if let Some((own_store, release_store)) = desktop_webview_dirs() {
+                if let Err(error) = seed_webview_store(&own_store, &release_store) {
+                    crate::debug::diag_private("experiment-webview-seed-failed", error.to_string());
+                }
+            }
+            crate::debug::diag_private(
+                "experiment-config-seeded",
+                format!("copied {entries:?} from the released Tine's app-data dir"),
+            );
+        }
         Ok(Seeded::Skipped(_)) => {}
         Err(error) => crate::debug::diag_private(
             "experiment-config-seed-failed",
             format!("starting without the released Tine's config: {error}"),
         ),
     }
+}
+
+/// Tauri's Windows default uses LocalData/<identifier>/EBWebView, while
+/// settings use RoamingAppData. Wry uses WKWebsiteDataStore::defaultDataStore
+/// on macOS; WebKit keeps its origin data in Library/WebKit/<bundle>/WebsiteData.
+fn desktop_webview_dirs() -> Option<(PathBuf, PathBuf)> {
+    use crate::app_identity::{APP_IDENTIFIER, RELEASE_IDENTIFIER};
+    webview_dirs(
+        std::env::consts::OS,
+        dirs::data_local_dir().as_deref(),
+        dirs::home_dir().as_deref(),
+        APP_IDENTIFIER,
+        RELEASE_IDENTIFIER,
+    )
+}
+
+fn webview_dirs(
+    os: &str,
+    local: Option<&Path>,
+    home: Option<&Path>,
+    own: &str,
+    release: &str,
+) -> Option<(PathBuf, PathBuf)> {
+    let (base, leaf) = match os {
+        "windows" => (local?.to_path_buf(), "EBWebView"),
+        "macos" => (home?.join("Library/WebKit"), "WebsiteData"),
+        // Linux is covered by CONFIG_ENTRIES. Mobile data is app-private.
+        "linux" | "android" | "ios" => return None,
+        _ => return None,
+    };
+    Some((base.join(own).join(leaf), base.join(release).join(leaf)))
+}
+
+fn seed_webview_store(own: &Path, release: &Path) -> io::Result<()> {
+    if own.exists() || !release.is_dir() {
+        return Ok(());
+    }
+    let staged = own.with_extension("seeding");
+    if staged.exists() {
+        fs::remove_dir_all(&staged)?;
+    }
+    copy_tree(release, &staged)?;
+    publish(&staged, own)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -143,30 +194,8 @@ fn stage(release: &Path, staging: &Path) -> io::Result<Vec<&'static str>> {
             copied.push(*entry);
         }
     }
-    sync_dir(staging)?;
+    tine_store::directory_durability::sync_directory_entry(staging)?;
     Ok(copied)
-}
-
-/// Copy regular files and directories; symlinks and special files are skipped
-/// (none of the allowlisted entries contains one, and following one could read
-/// outside the released dir).
-fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
-    let kind = fs::symlink_metadata(from)?.file_type();
-    if kind.is_dir() {
-        fs::create_dir_all(to)?;
-        for child in fs::read_dir(from)? {
-            let child = child?;
-            copy_tree(&child.path(), &to.join(child.file_name()))?;
-        }
-        sync_dir(to)
-    } else if kind.is_file() {
-        fs::copy(from, to)?;
-        // Opened for write: Windows refuses to flush a read-only handle.
-        let copied = fs::OpenOptions::new().write(true).open(to)?;
-        copied.sync_all()
-    } else {
-        Ok(())
-    }
 }
 
 fn seed_window_state(own_config: &Path, release_config: &Path) -> io::Result<()> {
@@ -186,16 +215,6 @@ fn free_aside_path(parent: &Path, leaf: &str) -> io::Result<PathBuf> {
         .map(|n| parent.join(format!("{leaf}.pre-seed.{n}")))
         .find(|candidate| fs::symlink_metadata(candidate).is_err())
         .ok_or_else(|| io::Error::new(io::ErrorKind::AlreadyExists, "no free aside name"))
-}
-
-/// The one rename: publish a staged entry, or set a Welcome-only dir aside.
-fn publish(from: &Path, to: &Path) -> io::Result<()> {
-    fs::rename(from, to)?;
-    to.parent().map_or(Ok(()), sync_dir)
-}
-
-fn sync_dir(dir: &Path) -> io::Result<()> {
-    tine_store::directory_durability::sync_directory_entry(dir)
 }
 
 #[cfg(test)]

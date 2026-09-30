@@ -32,6 +32,7 @@ mod linux_window_identity;
 #[cfg(test)]
 mod load_wait_guard_tests;
 mod media_protocol;
+mod migrate_identifier;
 mod native_mouse_history;
 mod pdf_crop_rollback;
 mod platform;
@@ -566,6 +567,7 @@ pub fn run() {
     // cannot; an unwritable app-data home was a crash loop. Probe it (and
     // relocate for this launch) before anything resolves that path.
     data_home::ensure_usable(app_identity::APP_IDENTIFIER);
+    migrate_identifier::run_early();
 
     // GPU/DMABUF rendering is ON by default (smoother scrolling — that's the point
     // of Tine). On the rare GPU/compositor combo where WebKitGTK's DMABUF renderer
@@ -802,7 +804,7 @@ pub fn run() {
             // several ⇒ bilingual. The frontend re-applies after its own init too.
             {
                 let h = app.handle();
-                let enabled = get_app_bool("spellcheck_enabled".to_string(), true, h.clone());
+                let enabled = settings::device_bool(h, "spellcheck_enabled", true);
                 let langs = parse_spellcheck_langs(&get_app_string(
                     "spellcheck_languages".to_string(),
                     String::new(),
@@ -821,6 +823,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             data_home::take_data_home_fallback_notice,
+            migrate_identifier::take_identifier_migration_notice,
             load_graph,
             inspect_graph_access,
             approve_external_assets,
