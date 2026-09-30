@@ -1791,15 +1791,9 @@ fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<Str
     if !delimited_ext(&resolved) {
         return Err("unsupported file type".into());
     }
-    let meta = std::fs::metadata(&resolved).map_err(|e| e.to_string())?;
-    if !meta.is_file() {
-        return Err("not a file".into());
-    }
     const MAX_BYTES: u64 = 10 * 1024 * 1024;
-    if meta.len() > MAX_BYTES {
-        return Err("text file too large".into());
-    }
-    std::fs::read_to_string(&resolved).map_err(|e| e.to_string())
+    let bytes = crate::device_io::read_regular_file_bounded(&resolved, MAX_BYTES)?;
+    String::from_utf8(bytes).map_err(|e| e.to_string())
 }
 
 /// Open an `assets/`-relative file, directory, or (empty name) the assets root (GH #367)
