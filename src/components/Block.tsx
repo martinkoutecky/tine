@@ -98,6 +98,7 @@ import { assetEditorIsCurrent, captureAssetEditor, importCaptureToOrigin, report
 import { captureBinding, stillBound } from "../binding";
 import { graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { blockRefCount } from "../blockRefCounts";
+import { parserReady } from "../render/parse";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
 import { cycleMarkerSmart } from "../editor/repeat";
@@ -280,7 +281,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const [showRefs, setShowRefs] = createSignal(false);
   createEffect(() => {
     const requested = blockReferencesRequest()?.id;
-    if (requested === props.id || requested === blockExternalId(props.id)) setShowRefs(true);
+    if (requested && parserReady()
+      && (requested === props.id || requested === blockExternalId(props.id))) setShowRefs(true);
   });
   // Ordered-list label for THIS block's own bullet (OG numbers the block itself,
   // not its children); null for a normal bullet.
@@ -307,7 +309,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         ...rowDecorationClasses(threadLineDecoration()),
       }}
       data-block-id={props.id}
-      data-block-ref={blockExternalId(props.id) ?? props.id}
+      data-block-ref={parserReady() ? blockExternalId(props.id) ?? props.id : undefined}
     >
       <div
         class="block-main"
@@ -416,7 +418,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                   // is referenced. Plain click toggles the referrers panel below;
                   // shift-click opens the block in the sidebar (matching OG and the
                   // bullet's shift-click).
-                  <Show when={blockRefCount(props.id) > 0 && !props.hideRefCount}>
+                  <Show when={parserReady() && blockRefCount(props.id) > 0 && !props.hideRefCount}>
                     <a
                       class="block-refs-count"
                       classList={{ open: showRefs() }}

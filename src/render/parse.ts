@@ -10,7 +10,8 @@
 // Loading: the wasm bytes are base64-inlined in ./wasm/lsdoc_wasm_bytes.ts and
 // handed to the wasm-bindgen glue's async init as an explicit buffer — NO fetch,
 // so it works under Tauri's custom protocol and offline. `initParser()` is awaited
-// once at app boot (main.tsx + capture.tsx) before the first render.
+// once at app boot. Main awaits it; Capture paints its seeded empty editor while
+// initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
 import init, { parse_block_bundle_json, edit_block_regions_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
@@ -33,8 +34,9 @@ function base64ToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
-/** Instantiate the wasm parser once (idempotent). Awaited before first paint in
- *  every window. Async (not `initSync`) so the vendored module compiles off the
+/** Instantiate the wasm parser once (idempotent). Main awaits it before paint;
+ *  Capture starts it before paint and defers structural reads until ready.
+ *  Async (not `initSync`) so the vendored module compiles off the
  *  synchronous-compile size limit some engines enforce on the main thread. */
 export function initParser(): Promise<void> {
   if (ready()) return Promise.resolve();

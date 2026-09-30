@@ -27,8 +27,10 @@ header, unrelated metadata/drawers/planning and literal source slices.
 
 Raw identity, logbook and repeater APIs require a format. Published anchors,
 block-reference targets and referrer links thread the document block's format.
-The frontend initializes the parser before rendering or synchronous structural
-calls. Its bounded AST cache retains regions from the same parse bundle. Parser
+Main initializes the frontend parser before rendering. Capture can paint its
+seeded empty editor during initialization; Block defers durable identity and
+reference-count reads until ready. Synchronous structural calls require init.
+The bounded AST cache retains regions from the same parse bundle. Parser
 traps quarantine the block as literal; structural edits refuse quarantine.
 
 Typography uses the editor's existing code-body/calc surface, adding no parse
