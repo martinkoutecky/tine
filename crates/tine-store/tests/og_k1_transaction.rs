@@ -20,7 +20,8 @@ fn k1_merge_race_worker() {
     if let Ok(boundary) = std::env::var("TINE_K1_KILL_BOUNDARY") {
         graph.inject_fault(FaultPoint::AbortAfterStep(boundary.parse().unwrap()));
     }
-    let _ = tine_graph_features::pages::merge_pages(&graph, "pages/A.md", "pages/B.md");
+    let result = tine_graph_features::pages::merge_pages(&graph, "pages/A.md", "pages/B.md");
+    eprintln!("merge worker result: {result:?}");
 }
 
 fn run_race(kill: Option<usize>) {
@@ -32,14 +33,16 @@ fn run_race(kill: Option<usize>) {
     fs::write(root.join("pages/A.md"), b"- keep\n").unwrap();
     fs::write(root.join("pages/B.md"), b"- survivor\n- keep\n").unwrap();
     let barrier = root.join("barrier");
+    let stdout = root.join("worker.stdout");
+    let stderr = root.join("worker.stderr");
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args(["--exact", "k1_merge_race_worker", "--nocapture"])
         .env("TINE_K1_MERGE_ROOT", root)
         .env("TINE_K1_RACE_TARGET", root.join("pages/B.md"))
         .env("TINE_K1_RACE_BARRIER", &barrier)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::from(fs::File::create(&stdout).unwrap()))
+        .stderr(Stdio::from(fs::File::create(&stderr).unwrap()));
     if let Some(boundary) = kill {
         command.env("TINE_K1_KILL_BOUNDARY", boundary.to_string());
     }
@@ -49,7 +52,11 @@ fn run_race(kill: Option<usize>) {
         if Instant::now() >= deadline || child.try_wait().unwrap().is_some() {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("worker never reached apply after preflight");
+            panic!(
+                "worker never reached apply after preflight\nstdout:\n{}\nstderr:\n{}",
+                fs::read_to_string(&stdout).unwrap(),
+                fs::read_to_string(&stderr).unwrap()
+            );
         }
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -63,7 +70,11 @@ fn run_race(kill: Option<usize>) {
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("merge worker timed out");
+            panic!(
+                "merge worker timed out\nstdout:\n{}\nstderr:\n{}",
+                fs::read_to_string(&stdout).unwrap(),
+                fs::read_to_string(&stderr).unwrap()
+            );
         }
         std::thread::sleep(Duration::from_millis(5));
     };
