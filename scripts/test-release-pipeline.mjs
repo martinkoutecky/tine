@@ -110,13 +110,13 @@ assert.match(
 );
 assert.match(
   ciWorkflow,
-  /pr-validation:[\s\S]*?tool: wasm-pack@0\.15\.0[\s\S]*?name: F-Droid clean-source WASM rebuild is current[\s\S]*?npm run build:wasm[\s\S]*?git diff --exit-code -- src\/render\/wasm/,
-  "pull requests do not rebuild the same WASM source boundary F-Droid consumes (GH #392)"
+  /pr-validation:[\s\S]*?tool: wasm-pack@0\.15\.0[\s\S]*?name: Committed lsdoc WASM contract is current[\s\S]*?check-wasm-pin\.mjs[\s\S]*?name: F-Droid clean-source WASM rebuild succeeds[\s\S]*?npm run build:wasm[\s\S]*?check-wasm-pin\.mjs/,
+  "pull requests do not validate both committed and clean-source rebuilt WASM"
 );
 assert.match(
   ciWorkflow,
-  /test:[\s\S]*?name: Full CI \/ Linux tests and release contracts[\s\S]*?tool: wasm-pack@0\.15\.0[\s\S]*?name: F-Droid clean-source WASM rebuild is current[\s\S]*?npm run build:wasm[\s\S]*?git diff --exit-code -- src\/render\/wasm/,
-  "full release CI does not prove the F-Droid WASM source rebuild (GH #392)"
+  /test:[\s\S]*?name: Full CI \/ Linux tests and release contracts[\s\S]*?tool: wasm-pack@0\.15\.0[\s\S]*?name: Committed lsdoc WASM contract is current[\s\S]*?check-wasm-pin\.mjs[\s\S]*?name: F-Droid clean-source WASM rebuild succeeds[\s\S]*?npm run build:wasm[\s\S]*?check-wasm-pin\.mjs/,
+  "full release CI does not validate both committed and clean-source rebuilt WASM"
 );
 for (const name of REQUIRED_FULL_CI_JOBS) {
   assert.ok(ciWorkflow.includes(`name: ${name}`), `CI workflow is missing stable evidence job ${name}`);

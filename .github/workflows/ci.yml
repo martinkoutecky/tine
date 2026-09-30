@@ -59,10 +59,17 @@ jobs:
         with:
           tool: wasm-pack@0.15.0
 
-      - name: F-Droid clean-source WASM rebuild is current
+      # wasm-opt's optimized bytes are not reproducible across otherwise pinned
+      # hosts. Prove the committed artifact first, then replace it with the
+      # clean-source build that the rest of this job tests. The tag/ABI guards
+      # and frontend suite are the semantic contract; byte equality is not.
+      - name: Committed lsdoc WASM contract is current
+        run: node scripts/check-wasm-pin.mjs
+
+      - name: F-Droid clean-source WASM rebuild succeeds
         run: |
           npm run build:wasm
-          git diff --exit-code -- src/render/wasm
+          node scripts/check-wasm-pin.mjs
 
       - name: Release and offline-source contract fixtures
         run: |
@@ -113,10 +120,15 @@ jobs:
         with:
           tool: wasm-pack@0.15.0
 
-      - name: F-Droid clean-source WASM rebuild is current
+      # See the PR-validation copy above: wasm-opt output is host-variable, so
+      # validate the committed artifact and the rebuilt artifact semantically.
+      - name: Committed lsdoc WASM contract is current
+        run: node scripts/check-wasm-pin.mjs
+
+      - name: F-Droid clean-source WASM rebuild succeeds
         run: |
           npm run build:wasm
-          git diff --exit-code -- src/render/wasm
+          node scripts/check-wasm-pin.mjs
 
       - name: Flatpak offline npm sources are current
         run: node scripts/check-flatpak-node-sources.mjs
