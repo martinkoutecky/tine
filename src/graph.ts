@@ -46,29 +46,28 @@ export function applyGraphConfigChange(change: GraphConfigChange): void {
   if (!previous || previous.root !== change.meta.root
       || captureBinding().backendGeneration !== change.binding_generation) return;
   const meta = change.meta;
-  setJournalTitleFormat(meta.journal_page_title_format);
-  setGraphMeta(meta);
-  if (previous.journal_page_title_format !== meta.journal_page_title_format
-      || previous.preferred_format !== meta.preferred_format)
-    bumpGraphEpoch();
   applyConfigDerivedState(meta, previous);
   bumpDataRev();
 }
 
-/** The ONE producer (I-12) of config-derived state that is not read
- *  reactively from `graphMeta`: task workflow, journal title format and the
- *  favorites. Graph open passes `previous = null` (apply everything); a live
+/** Publish one config snapshot and its derived state (I-12). The journal
+ *  title format lands before meta or epoch can wake journal observers; the
+ *  epoch invalidates older reads before favorites start their arrangement
+ *  read. Task workflow, title format, meta publication and favorites have
+ *  this one producer. Graph open passes `previous = null` (apply everything); a live
  *  config change passes the meta it replaces, so only what moved is applied,
  *  and favorites the user is already shown are not re-seeded (Tine's own
  *  settings writes reach here too). Everything else on GraphMeta (shortcuts,
- *  macros, hidden properties, start of week, …) updates from the signal and
- *  must not be re-applied here. Cost: O(favorites), plus one arrangement page
+ *  macros, hidden properties, start of week, …) updates from the signal. Cost: O(favorites), plus one arrangement page
  *  read when membership or the arrangement page moved. */
 export function applyConfigDerivedState(meta: GraphMeta, previous: GraphMeta | null): void {
   if (!previous || previous.preferred_workflow !== meta.preferred_workflow)
     setWorkflow(meta.preferred_workflow === "todo" ? "todo" : "now");
   if (!previous || previous.journal_page_title_format !== meta.journal_page_title_format)
     setJournalTitleFormat(meta.journal_page_title_format);
+  setGraphMeta(meta);
+  if (!previous || previous.journal_page_title_format !== meta.journal_page_title_format
+      || previous.preferred_format !== meta.preferred_format) bumpGraphEpoch();
   const incoming = meta.favorites ?? [];
   const alreadyShown = previous !== null && previous.favorites_page === meta.favorites_page
     && sameNames(favorites().map((item) => item.name), incoming);
@@ -236,20 +235,12 @@ export async function loadGraphPath(
     clearRecent();
   }
   if (switching || !hadGraph) resetLeftSidebarSections();
-  // Journal observers may run as soon as meta or epoch is published (GH #550).
-  setJournalTitleFormat(meta.journal_page_title_format);
-  setGraphMeta(meta ?? null);
-  // Revoke every in-flight result from the previous binding NOW. This is also
-  // required for same-root force refresh (restore): root equality cannot
-  // distinguish pre-restore DTOs from the freshly rebound graph. A visible
-  // Journals surface materializes the default journal template before fetching
-  // its feed (Page.tsx), preserving #73's populated-first observation without
-  // blocking graph open.
-  bumpGraphEpoch();
+  // The shared config door publishes the title format before meta/epoch,
+  // then starts derived reads in that epoch (including force refresh).
+  applyConfigDerivedState(meta, null);
   const configProblem = "config_problem" in result ? result.config_problem : null;
   setGraphConfigProblem(configProblem);
   if (configProblem) reportUiFailure("config-read", configProblem);
-  applyConfigDerivedState(meta, null);
   void refreshJournalConflicts(); // duplicate days surface through the conflict queue, not a toast
   void refreshSyncConflicts(); // conflict copies + VCS markers feed the sidebar badge
   if (path) {

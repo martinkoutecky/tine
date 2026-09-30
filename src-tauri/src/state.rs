@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::time::{Duration, Instant};
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
 use tauri::{Runtime, State, WebviewWindow};
 use tine_store::Store;
@@ -27,6 +28,8 @@ pub(crate) struct GraphSlot {
     /// it so an IPC queued before an in-place graph switch cannot execute against
     /// the replacement graph after the window label is rebound.
     pub(crate) binding_generation: u64,
+    startup_idle: Mutex<Option<Instant>>,
+    startup_changed: Condvar,
     pub(crate) warm_done: AtomicBool,
     pub(crate) warm_generation: AtomicU64,
     /// Revoked as soon as this exact window→graph binding is replaced/removed.
@@ -49,12 +52,77 @@ impl GraphSlot {
             block_search_lanes: tine_graph_features::search::SearchLanes::default(),
             root_key,
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            startup_idle: Mutex::new(None),
+            startup_changed: Condvar::new(),
             warm_done: AtomicBool::new(false),
             warm_generation: AtomicU64::new(0),
             background_cancelled: AtomicBool::new(false),
             conflict_queue: Default::default(),
             concord_ledger: Default::default(),
             rescan: Default::default(),
+        }
+    }
+
+    pub(crate) fn begin_startup_warm(&self) -> u64 {
+        let mut idle = self.startup_idle.lock().unwrap();
+        *idle = None;
+        self.warm_done
+            .store(false, std::sync::atomic::Ordering::Release);
+        let generation = self
+            .warm_generation
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            + 1;
+        self.startup_changed.notify_all();
+        generation
+    }
+
+    pub(crate) fn finish_startup_warm(&self, generation: u64) -> bool {
+        let mut idle = self.startup_idle.lock().unwrap();
+        if self
+            .warm_generation
+            .load(std::sync::atomic::Ordering::Acquire)
+            != generation
+        {
+            return false;
+        }
+        self.warm_done
+            .store(true, std::sync::atomic::Ordering::Release);
+        *idle = Some(Instant::now());
+        self.startup_changed.notify_all();
+        true
+    }
+
+    pub(crate) fn cancel_background(&self) {
+        let _idle = self.startup_idle.lock().unwrap();
+        self.background_cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.startup_changed.notify_all();
+    }
+
+    /// Wait off the UI thread for this binding's warm completion plus quiet,
+    /// or the safety-net deadline. Cancellation wakes immediately and returns
+    /// false. O(1), no graph reads; completion/reset and revocation signal the
+    /// same condition, so neither an early signal nor a graph switch is lost.
+    pub(crate) fn wait_startup_idle(&self, quiet: Duration, deadline: Duration) -> bool {
+        let deadline = Instant::now() + deadline;
+        let mut idle = self.startup_idle.lock().unwrap();
+        loop {
+            if self
+                .background_cancelled
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                return false;
+            }
+            let due = idle.map_or(deadline, |done| (done + quiet).min(deadline));
+            let now = Instant::now();
+            if now >= due {
+                return true;
+            }
+            idle = self
+                .startup_changed
+                .wait_timeout(idle, due - now)
+                .unwrap()
+                .0;
         }
     }
 }
@@ -120,8 +188,7 @@ impl GraphRegistry {
             // A graph switch revokes the old binding. Same-root scans keep the
             // slot and never pass through the registry.
             if old.binding_generation != slot.binding_generation || old.root_key != slot.root_key {
-                old.background_cancelled
-                    .store(true, std::sync::atomic::Ordering::Release);
+                old.cancel_background();
             }
             self.by_root.remove(&old.root_key);
         }
@@ -131,10 +198,38 @@ impl GraphRegistry {
 
     pub(crate) fn remove(&mut self, window: &str) -> Option<Arc<GraphSlot>> {
         let slot = self.by_window.remove(window)?;
-        slot.background_cancelled
-            .store(true, std::sync::atomic::Ordering::Release);
+        slot.cancel_background();
         self.by_root.remove(&slot.root_key);
         Some(slot)
+    }
+}
+
+/// Owns each native show from request through one frozen graph selection.
+/// Beginning revokes the older lease; completion can consume only the current
+/// pending request. Generation checks also own delayed focus callbacks. O(1),
+/// memory only; a cold launch remains pending until a graph is published.
+#[derive(Default)]
+pub(crate) struct CaptureShow {
+    generation: u64,
+    pending: bool,
+    binding: Option<CaptureGraphBinding>,
+}
+
+impl CaptureShow {
+    fn begin(&mut self) -> u64 {
+        self.generation += 1;
+        self.pending = true;
+        self.binding = None;
+        self.generation
+    }
+
+    fn complete(&mut self, generation: u64, binding: CaptureGraphBinding) -> bool {
+        if self.generation != generation || !self.pending {
+            return false;
+        }
+        self.pending = false;
+        self.binding = Some(binding);
+        true
     }
 }
 
@@ -144,7 +239,7 @@ pub(crate) struct AppState {
     // take this lock, so a slow graph open cannot stall another graph's editor.
     pub(crate) graph_load: Mutex<()>,
     pub(crate) last_focused: Mutex<Option<WindowKey>>,
-    pub(crate) capture_graph: Mutex<Option<CaptureGraphBinding>>,
+    pub(crate) capture_graph: Mutex<CaptureShow>,
     #[cfg(desktop)]
     pub(crate) next_window: AtomicU64,
 }
@@ -170,19 +265,48 @@ impl AppState {
     /// Capture show. The capture WebView must present this exact generation on
     /// every graph-scoped invoke; a later show, graph switch, or close makes
     /// older requests stale rather than letting them read another graph.
+    #[cfg(test)]
     pub(crate) fn bind_capture_graph(&self, target: WindowKey, binding_generation: u64) {
-        *self.capture_graph.lock().unwrap() = Some(CaptureGraphBinding {
-            target,
-            binding_generation,
-        });
+        let generation = self.begin_capture_show();
+        assert!(self.complete_capture_show(generation, target, binding_generation));
+    }
+
+    pub(crate) fn begin_capture_show(&self) -> u64 {
+        self.capture_graph.lock().unwrap().begin()
+    }
+
+    pub(crate) fn pending_capture_show(&self) -> Option<u64> {
+        let show = self.capture_graph.lock().unwrap();
+        show.pending.then_some(show.generation)
+    }
+
+    pub(crate) fn complete_capture_show(
+        &self,
+        generation: u64,
+        target: WindowKey,
+        binding_generation: u64,
+    ) -> bool {
+        self.capture_graph.lock().unwrap().complete(
+            generation,
+            CaptureGraphBinding {
+                target,
+                binding_generation,
+            },
+        )
+    }
+
+    pub(crate) fn capture_show_is_current(&self, generation: u64) -> bool {
+        let show = self.capture_graph.lock().unwrap();
+        show.generation == generation && show.binding.is_some()
+    }
+
+    pub(crate) fn bound_capture_show(&self) -> Option<u64> {
+        let show = self.capture_graph.lock().unwrap();
+        show.binding.as_ref().map(|_| show.generation)
     }
 
     pub(crate) fn capture_graph_binding(&self) -> Option<CaptureGraphBinding> {
-        self.capture_graph.lock().unwrap().clone()
-    }
-
-    pub(crate) fn clear_capture_graph(&self) {
-        *self.capture_graph.lock().unwrap() = None;
+        self.capture_graph.lock().unwrap().binding.clone()
     }
 }
 
@@ -294,7 +418,7 @@ mod tests {
             graphs: RwLock::new(GraphRegistry::default()),
             graph_load: Mutex::new(()),
             last_focused: Mutex::new(Some("graph-1".into())),
-            capture_graph: Mutex::new(None),
+            capture_graph: Mutex::new(Default::default()),
             #[cfg(desktop)]
             next_window: AtomicU64::new(2),
         };
@@ -305,12 +429,41 @@ mod tests {
     }
 
     #[test]
+    fn pending_capture_show_is_completed_once_and_newer_show_revokes_it() {
+        let mut show = CaptureShow::default();
+        let first = show.begin();
+        let second = show.begin();
+        let binding = CaptureGraphBinding {
+            target: "main".into(),
+            binding_generation: 17,
+        };
+        assert!(
+            !show.complete(first, binding.clone()),
+            "I-20: an older show cannot bind the newer capture request"
+        );
+        assert!(show.pending);
+        assert!(show.complete(second, binding.clone()));
+        assert_eq!(show.binding, Some(binding));
+        assert!(!show.complete(
+            second,
+            CaptureGraphBinding {
+                target: "other".into(),
+                binding_generation: 18
+            }
+        ));
+        assert_eq!(show.binding.as_ref().unwrap().target, "main");
+        assert!(!show.pending);
+        assert!(show.begin() > second);
+        assert!(show.binding.is_none());
+    }
+
+    #[test]
     fn capture_binding_retains_the_selected_graph_lease() {
         let state = AppState {
             graphs: RwLock::new(GraphRegistry::default()),
             graph_load: Mutex::new(()),
             last_focused: Mutex::new(Some("main".into())),
-            capture_graph: Mutex::new(None),
+            capture_graph: Mutex::new(Default::default()),
             #[cfg(desktop)]
             next_window: AtomicU64::new(2),
         };

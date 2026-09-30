@@ -15,6 +15,7 @@ import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 ensurePrivateSessionBus();
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const COLD_CAPTURE = process.env.E2E_CAPTURE_COLD === "1";
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
 const XDOTOOL = process.env.E2E_XDOTOOL || "xdotool";
 const TD = process.env.TAURI_DRIVER || "tauri-driver";
@@ -155,13 +156,13 @@ try {
     capabilities: {
       browserName: "wry",
       "wdio:enforceWebDriverClassic": true,
-      "tauri:options": { application: APP },
+      "tauri:options": { application: APP, ...(COLD_CAPTURE ? { args: ["--capture"] } : {}) },
     },
     logLevel: "error",
     connectionRetryCount: 1,
     connectionRetryTimeout: 60_000,
   });
-  await waitForWindow("Tine", 20_000);
+  await waitForWindow(COLD_CAPTURE ? "Quick Capture" : "Tine", 20_000);
   const handles = await browser.getWindowHandles();
   if (handles.length !== 2) throw new Error(`expected main + hidden capture WebViews, got ${handles.length}`);
   let mainHandle;
@@ -177,24 +178,27 @@ try {
   if (!mainHandle || !captureHandle) {
     throw new Error(`could not identify Tine WebViews: ${JSON.stringify({ webviews, mainHandle, captureHandle })}`);
   }
-  await browser.switchToWindow(mainHandle);
-  // This scenario exercises the normal global-shortcut path: hand off to an
-  // app that is already running. GitHub's cold WebKit/portal startup can expose
-  // a titled main window before its native surfaces have settled; launching the
-  // second process during that unrelated cold-start race can leave Openbox
-  // focused on its root window. Require one stable turn before the handoff.
-  await sleep(1500);
-  await waitForWindow("Tine", 5000);
+  if (!COLD_CAPTURE) {
+    await browser.switchToWindow(mainHandle);
+    // This scenario exercises the normal global-shortcut path: hand off to an
+    // app that is already running. GitHub's cold WebKit/portal startup can expose
+    // a titled main window before its native surfaces have settled; launching the
+    // second process during that unrelated cold-start race can leave Openbox
+    // focused on its root window. Require one stable turn before the handoff.
+    await sleep(1500);
+    await waitForWindow("Tine", 5000);
 
-  const second = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
-  // The single-instance callback runs in the primary while this short-lived
-  // forwarding process still owns GTK/X11 resources. On slower hosted runners,
-  // probing native focus during that teardown observes a destroyed transient
-  // frame rather than the final user-visible state. Require the forwarder to
-  // exit successfully, then prove that Quick Capture owns focus without clicks.
-  await waitForForwarderExit(second, 5000);
-  second.unref();
-  await waitForWindow("Quick Capture", 10_000);
+    const second = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+    // The single-instance callback runs in the primary while this short-lived
+    // forwarding process still owns GTK/X11 resources. On slower hosted runners,
+    // probing native focus during that teardown observes a destroyed transient
+    // frame rather than the final user-visible state. Require the forwarder to
+    // exit successfully, then prove that Quick Capture owns focus without clicks.
+    await waitForForwarderExit(second, 5000);
+    second.unref();
+    await waitForWindow("Quick Capture", 10_000);
+
+  }
 
   // Model the short interval between seeing the newly painted window and a
   // human's first keystroke, while still proving that focus remains native.

@@ -102,6 +102,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Cold Quick Capture waits for its graph before showing the editor** (UI-OG-CAPTURE-COLD-R3B): graph-backed suggestions and the first captured entry work on `tine --capture` startup; superseded shows cannot focus or retarget the window.
+- **Launch backups wait until startup is idle** (REG-OG-LAUNCH-BACKUP-IDLE-R3B): warm completion signals the background snapshot after a quiet period, with a safety deadline and immediate graph-switch cancellation.
+
 - **Custom journal titles apply before graph activation and live settings refresh** (REG-OG-CUSTOM-JOURNAL-TITLE-R3B): journal-template lookup reads a sync-delivered journal under its configured title. Missing-baseline saves remain guarded.
 
 - **Percent-escaped Org file links resolve to their page names** (REG-OG-PAGE-FILENAME-001, og-B-TAIL). Reference extraction now uses the native filename codec through wasm, including escaped punctuation and namespace separators.

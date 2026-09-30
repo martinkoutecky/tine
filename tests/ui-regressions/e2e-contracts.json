@@ -47,7 +47,7 @@
       "stability": "stable"
     },
     "scripts/e2e-capture.mjs": {
-      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture activates, accepts first-show typing, saves the journal entry, and supports a safe second-instance handoff.", "blocking": true }],
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "Quick Capture waits for its graph on a cold --capture launch, activates, accepts first-show typing, saves the journal entry, and supports a safe second-instance handoff.", "blocking": true }],
       "acceptableVariations": ["Native focus timing and frame decoration may vary by window manager."],
       "nonRequirements": ["Exact window position, border pixels, or focus-animation timing."],
       "stability": "stable"
