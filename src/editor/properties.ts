@@ -4,7 +4,6 @@
 import { transitionFence, displayMathOpenAfter, closesDisplayMath, type FenceState } from "./fences";
 import { literalBlockOfLine } from "./literalLines";
 import { blockRegions, parserReady } from "../render/parse";
-import { utf8ByteToUtf16Offset } from "../render/spans";
 
 /** Ordinary `key:: value` lines share the page-header key class at column zero. */
 export const PROP_LINE = /^([\p{L}\p{M}\p{N}_./-]+):: ?(.*)$/u;
@@ -218,13 +217,13 @@ function classifyLines(
   const regions = blockRegions(raw, format);
   if (regions.quarantined) return cls;
   const starts = [0];
-  for (let i = 0; i < lines.length - 1; i++) starts.push(starts[i] + lines[i].length + 1);
+  const encoder = new TextEncoder();
+  for (let i = 0; i < lines.length - 1; i++) starts.push(starts[i] + encoder.encode(lines[i]).length + 1);
   const lineAt = (byte: number) => {
-    const at = utf8ByteToUtf16Offset(raw, byte);
     let lo = 0, hi = starts.length;
     while (lo + 1 < hi) {
       const mid = (lo + hi) >>> 1;
-      if (starts[mid] <= at) lo = mid;
+      if (starts[mid] <= byte) lo = mid;
       else hi = mid;
     }
     return lo;
