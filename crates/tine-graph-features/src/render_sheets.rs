@@ -309,7 +309,11 @@ pub fn sheet_inputs(
     let mut query_budget = MAX_QUERY_SHEETS;
     let wanted: Option<HashSet<&str>> = pages.map(|p| p.iter().map(String::as_str).collect());
     let mut out = Vec::new();
-    for page in &corpus.pages {
+    // Page order comes from directory enumeration, which differs by platform;
+    // walk pages by name so the handoff (and the MAX_SHEETS cut) is stable.
+    let mut ordered: Vec<_> = corpus.pages.iter().collect();
+    ordered.sort_by(|a, b| a.name.cmp(&b.name));
+    for page in ordered {
         if wanted
             .as_ref()
             .is_some_and(|w| !w.contains(page.name.as_str()))
