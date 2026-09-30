@@ -7,7 +7,7 @@ import { GraphPublish } from "./GraphPublish";
 vi.mock("../sheet/exportSheets", () => ({ exportSheets: vi.fn() }));
 const tick = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0)); };
 afterEach(() => { vi.restoreAllMocks(); document.body.innerHTML = ""; });
-it.each(["switch", "unmount"])("L11:54: publication cannot start after its sheet inputs outlive a %s", async (retirement) => {
+it.each(["switch", "unmount", "between-continuations"])("L11:54: publication cannot start after its sheet inputs outlive a %s", async (retirement) => {
   vi.spyOn(backend(), "pickFolder").mockResolvedValue("/mock/out");
   const publish = vi.spyOn(backend(), "publishLive").mockResolvedValue({ path: "/mock/out", pages: 1 } as never);
   let finish!: (sheets: never[]) => void;
@@ -17,9 +17,11 @@ it.each(["switch", "unmount"])("L11:54: publication cannot start after its sheet
   [...root.querySelectorAll("button")].find((b) => b.textContent?.includes("Export HTML"))!.click();
   await tick();
   expect(exportSheets).toHaveBeenCalled();
-  if (retirement === "switch") resetStore(); else dispose();
+  if (retirement === "switch") resetStore();
+  else if (retirement === "unmount") dispose();
   finish([]);
+  if (retirement === "between-continuations") queueMicrotask(() => resetStore());
   await tick();
   expect(publish, "a retired publication must never bind to another graph").not.toHaveBeenCalled();
-  if (retirement === "switch") dispose();
+  if (retirement !== "unmount") dispose();
 });

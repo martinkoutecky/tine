@@ -101,6 +101,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Kept-draft conflict resolution and publication remain with their original graph; saving retires a pending first-write crash-safe draft in order, and uninstall stops a plugin still starting.
+- Asset versions, rendered block and board markers, readiness listeners, audio scrub gestures and updater handles retire with their owner. Query builder edits compose while print/parse work is pending, completed workspace searches release their cancellation lanes, parser comparisons stop on retirement, and visible PDF pages share a bounded tile budget.
+
 - **Faster graph startup and first search** (og-P1). Journal-first reads avoid ordinary-page title discovery,
   completed claimant discovery is reused by direct reads, and a search without page results skips page-property hydration.
   Startup graph loading begins in the background while the frontend starts; open failures still reach the Welcome error card.

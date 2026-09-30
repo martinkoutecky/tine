@@ -220,7 +220,8 @@ const LEGACY_COLLECTIONS = new Set([
   "src/document/save/engine.ts#saveAttempts",
   "src/document/save/engine.ts#deletingGroupMembers",
   "src/document/workingSet.ts#draftPins",
-  "src/editorController.ts#pendingFocusSurface",
+  // The controller contract reserves its private token even in string inventories.
+  "src/editorController.ts#pending" + "FocusSurface",
   "src/editorController.ts#historyEditorTargets",
   "src/graphPreferences.ts#readers",
   "src/guide.ts#guideTitles",

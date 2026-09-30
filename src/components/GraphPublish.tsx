@@ -18,7 +18,7 @@ export function GraphPublish(): JSX.Element {
   const publish = async () => {
     const owner = graphOwner(() => mounted);
     const selected = await readOwned(owner, backend().pickFolder("Choose a folder outside this graph for the export"));
-    if (selected.kind !== "current" || !selected.value) return;
+    if (selected.kind !== "current" || !owner() || !selected.value) return;
     const destination = selected.value;
     const everyPage = allPages();
     setBusy(true);
@@ -26,10 +26,10 @@ export function GraphPublish(): JSX.Element {
     try {
       const exportName = name().trim() || "Tine graph";
       const sheets = await readOwned(owner, exportSheets(undefined, { kind: "live", allPages: everyPage }));
-      if (sheets.kind === "stale") return;
+      if (sheets.kind === "stale" || !owner()) return;
       const result = await writeOwned(owner, backend().publishLive(destination, exportName, everyPage, sheets.value));
       // A zero reads as a broken button unless it names the rule (GH #560, master 350efef1f).
-      if (result.kind === "current") setMessage(result.value.pages === 0 && !everyPage
+      if (result.kind === "current" && owner()) setMessage(result.value.pages === 0 && !everyPage
         ? `Exported 0 pages to ${result.value.path} — only pages with “public:: true” are exported.`
         : `Exported ${result.value.pages} pages to ${result.value.path}`);
     } catch (error) {

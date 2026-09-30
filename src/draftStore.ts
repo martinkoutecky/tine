@@ -73,7 +73,7 @@ export async function writeAtRisk(): Promise<void> {
       await serializeDurable(kept, owner, async () => {
         if (!kept.risky || text === kept.written) return;
         const written = await writeOwned(owner, backend().storeDraft?.(record) ?? Promise.resolve());
-        if (written.kind === "stale") return;
+        if (written.kind === "stale" || !owner()) return;
         // Record completion before the queued retirement examines it. Already
         // started writes finish even when the page becomes safe meanwhile.
         kept.written = text;
@@ -95,7 +95,7 @@ async function retire(name: string, kept: Kept) {
       if (kept.risky) return;
       if (kept.written !== null) {
         const retired = await writeOwned(owner, backend().retireDraft?.(idFor(name)) ?? Promise.resolve());
-        if (retired.kind === "stale") return;
+        if (retired.kind === "stale" || !owner()) return;
         kept.written = null;
       }
       if (!kept.risky && atRisk.get(name) === kept) atRisk.delete(name);

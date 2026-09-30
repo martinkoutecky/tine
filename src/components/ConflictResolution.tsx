@@ -247,7 +247,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     // re-read against them: a resolution never lands over unseen edits.
     const saveThenReview = async (message: string) => {
       const saved = await writeOwned(owner, flushPage(pageName));
-      if (saved.kind === "current") refresh(message);
+      if (saved.kind === "current" && owner()) refresh(message);
     };
     setBusy(true);
     try {
@@ -274,7 +274,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           }
           const result = await writeOwned(owner, backend().resolveLiveConflict(pagePath, reviewed, live.base_rev,
             current.conflict_rev, current.merge_base_rev, decisions(), preChoice()));
-          if (result.kind === "stale") return;
+          if (result.kind === "stale" || !owner()) return;
           // The guarded commit is the durable resolution; retire the capsule
           // after it (a crash in between offers an already-resolved draft,
           // never loses one), then show the result through the ordinary rule.
@@ -297,7 +297,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         }
         const result = await writeOwned(owner, backend().resolveLiveConflict(pagePath, reviewed, now.baseRev,
           current.conflict_rev, current.merge_base_rev, decisions(), preChoice()));
-        if (result.kind === "stale") return;
+        if (result.kind === "stale" || !owner()) return;
         const installed = await installLiveResolution(pageName, now.generation, reviewed, { ...result.value, id: pagePath });
         if (!owner()) return;
         if (installed === "installed") pushToast(`Resolved the conflict in “${pageName}”`, "success");
@@ -326,7 +326,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           : null;
       if (!write) return;
       const result = await writeOwned(owner, write);
-      if (result.kind === "stale") return;
+      if (result.kind === "stale" || !owner()) return;
       settleArtifactConflict(id);
       // Own-origin writes raise no watcher event, so the open page reloads here
       // through the ordinary external-change rule: a clean page takes the merged
@@ -347,7 +347,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         pushToast(`Couldn’t resolve it: ${errorDetail(e)}`, "error");
       }
     } finally {
-      if (mounted) setBusy(false);
+      if (owner()) setBusy(false);
     }
   };
 
@@ -366,9 +366,10 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     : [];
   if (conflict().source === "duplicate-journal") void refreshJournalConflicts();
   const reconcileFile = async (op: () => Promise<Owned<void>>, ok: string) => {
+    const owner = graphOwner(() => mounted);
     try {
       const result = await op();
-      if (result.kind === "stale") return;
+      if (result.kind === "stale" || !owner()) return;
       pushToast(ok, "success");
       void refreshJournalConflicts();
       void refreshSyncConflicts();
@@ -377,11 +378,12 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     }
   };
   const trashDayFile = async (name: string) => {
-    const confirmed = await readOwned(graphOwner(() => mounted), backend().confirm(
+    const owner = graphOwner(() => mounted);
+    const confirmed = await readOwned(owner, backend().confirm(
       `Move the journal file “${name}” to the trash?\n\n` +
         `It's a duplicate of another file for the same day. It moves to logseq/.tine-trash (recoverable).`
     ));
-    if (confirmed.kind === "stale" || !confirmed.value) return;
+    if (confirmed.kind === "stale" || !owner() || !confirmed.value) return;
     await reconcileFile(() => writeOwned(graphOwner(() => mounted), backend().trashJournalFile(name, "delete-page")), `Moved ${name} to trash`);
   };
 
