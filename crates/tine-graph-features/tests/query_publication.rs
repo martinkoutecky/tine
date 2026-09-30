@@ -118,6 +118,41 @@ fn live_snapshot_bakes_queries_on_selected_pages_and_closes_their_rows() {
     store.close();
 }
 
+/// E1: even the static fallback must not disclose how many matches live on
+/// pages outside a query export. Exercise both page and block query renderers.
+#[test]
+fn query_export_nested_queries_do_not_disclose_outside_match_counts() {
+    let (graph, output, store) = fixture();
+    fs::write(
+        graph.join("pages/Public.md"),
+        "public:: true\n- TODO selected\n- {{query (task DOING)}}\n- {{tine-query @page}}\n",
+    )
+    .unwrap();
+    store.scan_refresh().unwrap();
+    let request = QueryExportRequest {
+        argument: "(task TODO)".into(),
+        dialect: QueryTextDialect::MacroQuery,
+        properties: vec![],
+        current_page: None,
+        name: "Nested queries".into(),
+        host_block_id: None,
+    };
+    let plan = plan_query(&store, &request).unwrap();
+    let receipt = publish_query(&store, &request, &plan.fingerprint, &output, &bundle()).unwrap();
+    let html = fs::read_to_string(PathBuf::from(receipt.path).join("public.html")).unwrap();
+    assert!(html.contains("No matching blocks."));
+    assert!(html.contains("query-count\">1</span>"));
+    assert!(
+        !html.contains("query-omitted"),
+        "I-4/E1: query exports disclose only selected results; exemplar render_query_with_title"
+    );
+    assert!(!html.contains("DOING hidden"));
+    tine_graph_features::publish::publish_html(&store).unwrap();
+    let graph_html = fs::read_to_string(graph.join("publish/public.html")).unwrap();
+    assert!(graph_html.contains("1 result on non-public pages omitted."));
+    store.close();
+}
+
 #[test]
 fn static_fallback_renders_tql_page_rows_from_the_ir_answerer() {
     let (graph, output, store) = fixture();
@@ -181,6 +216,23 @@ fn live_export_artifact_cost_is_bounded_per_selected_block() {
         fs::write(graph.join("pages/Public.md"), source).unwrap();
         store.scan_refresh().unwrap();
         publish_live(&store, &output, name, false, &bundle()).unwrap();
+        let request = QueryExportRequest {
+            argument: "(task TODO)".into(),
+            dialect: QueryTextDialect::MacroQuery,
+            properties: vec![],
+            current_page: None,
+            name: format!("Query {name}"),
+            host_block_id: None,
+        };
+        let plan = plan_query(&store, &request).unwrap();
+        let receipt =
+            publish_query(&store, &request, &plan.fingerprint, &output, &bundle()).unwrap();
+        let bytes = bytes_under(&PathBuf::from(&receipt.path));
+        eprintln!(
+            "query unit cost: blocks={count} bytes={bytes} files={}",
+            receipt.files
+        );
+        assert_eq!(receipt.pages, 1);
     }
     let one = bytes_under(&output.join("one"));
     let sixty = bytes_under(&output.join("sixty"));

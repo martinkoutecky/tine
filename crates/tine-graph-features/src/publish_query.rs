@@ -7,7 +7,8 @@
 //! a fingerprint over the reviewed membership and held source documents. `publish_query`
 //! repeats that work and refuses a changed plan. Every output projects those
 //! held documents, so later external edits cannot mix unreviewed content in. `publish_live` costs O(P + B)
-//! and exports public pages, or all pages on explicit request. Observable
+//! and exports public pages, or all pages on explicit request. Query exports
+//! suppress nested-query counts of outside results. Observable
 //! failures are parser/selection refusal, output budget, stale plan and I/O;
 //! callers show them and let the user pick a fresh destination.
 
@@ -304,9 +305,11 @@ fn collect_static(
     graph: &WholeGraph,
     corpus: &tine_core::Corpus,
     sheets: &SheetIndex,
+    query_export: bool,
 ) -> io::Result<Vec<(String, Vec<u8>)>> {
     let config = store.config();
-    let render_graph = RenderGraph::new(corpus, graph, store, Some(sheets));
+    let mut render_graph = RenderGraph::new(corpus, graph, store, Some(sheets));
+    render_graph.query_export = query_export;
     let mut files = Vec::new();
     let mut used = 0usize;
     render::publish_graph(
@@ -667,7 +670,13 @@ pub fn publish_query_with_sheets(
     if planned.selected.pages.is_empty() {
         return Err(refusal("query has no pages to export"));
     }
-    let mut files = collect_static(store, &graph, &planned.selected, &SheetIndex::new(sheets))?;
+    let mut files = collect_static(
+        store,
+        &graph,
+        &planned.selected,
+        &SheetIndex::new(sheets),
+        true,
+    )?;
     let mut taken: HashSet<_> = planned
         .selected
         .pages
@@ -785,7 +794,7 @@ fn live(
         }
         .map(|p| p.name.clone())
         .unwrap_or_default();
-    let mut files = collect_static(store, &graph, &corpus, &SheetIndex::new(sheets))?;
+    let mut files = collect_static(store, &graph, &corpus, &SheetIndex::new(sheets), false)?;
     let snap = snapshot(store, &graph, &corpus, name, &home, None)?;
     app_files(&mut files, bundle, snap, name)?;
     commit(store, parent, &slug(name), files, corpus.pages.len())
@@ -814,7 +823,7 @@ pub fn publish_static(
     }
     corpus.pages.sort_by(|a, b| a.name.cmp(&b.name));
     // No frontend computes sheets for a CLI export: every sheet block stays a plain outline.
-    let files = collect_static(store, &graph, &corpus, &SheetIndex::default())?;
+    let files = collect_static(store, &graph, &corpus, &SheetIndex::default(), false)?;
     commit(store, parent, &slug(name), files, corpus.pages.len())
 }
 
