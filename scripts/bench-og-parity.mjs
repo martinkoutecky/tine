@@ -125,6 +125,25 @@ async function paint(browser) {
 async function startProbe(browser) {
   return browser.execute(() => {
     const p = { mode: "raf-gap", journey: "open", events: [], typing: [], last: performance.now() };
+    // Production Linux IPC returns a fetch response only after the command
+    // completes. Read its complete body rather than timing filename visibility,
+    // which can precede the referrer rewrites on historical binaries.
+    const originalFetch = window.fetch;
+    window.fetch = async function (url, options) {
+      const rename = String(url).split("/").pop() === "rename_page" && p.renameSubmittedAt != null;
+      try {
+        const response = await originalFetch.call(this, url, options);
+        if (rename) {
+          const body = await response.clone().text();
+          p.renameResult = { elapsedMs: performance.now() - p.renameSubmittedAt,
+            error: response.headers.get("Tauri-Response") === "error" ? body : null };
+        }
+        return response;
+      } catch (error) {
+        if (rename) p.renameResult = { error: String(error) };
+        throw error;
+      }
+    };
     const support = typeof PerformanceObserver === "undefined" ? [] : PerformanceObserver.supportedEntryTypes ?? [];
     if (support.includes("longtask")) {
       p.mode = "longtask";
@@ -162,6 +181,15 @@ async function probeResults(browser) {
     typing: window.__ogBenchProbe.typing,
     lastEditEpoch: window.__ogBenchProbe.lastEditEpoch,
   }));
+}
+
+function verifyRenameReferences(graph) {
+  for (let i = 0; i < 200; i++) {
+    const file = path.join(graph, "pages", `Bench Ref ${String(i).padStart(3, "0")}.md`);
+    const expected = `- linked [[Bench Hub Renamed]]\n- unlinked Bench Hub mention ${i}\n`;
+    if (fs.readFileSync(file, "utf8") !== expected) throw new Error(`rename API completed without rewriting reference ${i}`);
+  }
+  return 200;
 }
 function rssFor(binary, graph) {
   const target = fs.realpathSync(binary);
@@ -404,6 +432,8 @@ async function renameTrial(result, corpus, kind, index) {
     const started = performance.now();
     result.renameStage = "submit";
     await browser.execute((name) => {
+      window.__ogBenchProbe.renameSubmittedAt = performance.now();
+      window.__ogBenchProbe.renameResult = null;
       const input = document.querySelector(".page-title-input");
       input.focus();
       input.value = name;
@@ -415,9 +445,16 @@ async function renameTrial(result, corpus, kind, index) {
     const old = path.join(graph, "pages/Bench Hub.md");
     const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
-      if (fs.existsSync(renamed) && !fs.existsSync(old)) {
+      if (!result.metrics.renameFilenameVisibleMs && fs.existsSync(renamed) && !fs.existsSync(old)) {
         await paint(browser);
-        result.metrics.rename200Ms = performance.now() - started;
+        result.metrics.renameFilenameVisibleMs = performance.now() - started;
+      }
+      const completed = await browser.execute(() => window.__ogBenchProbe.renameResult);
+      if (completed) {
+        if (completed.error) throw new Error(`rename API failed: ${completed.error}`);
+        if (!fs.existsSync(renamed) || fs.existsSync(old)) throw new Error("rename API completed without moving the source");
+        result.renameReferencesVerified = verifyRenameReferences(graph);
+        result.metrics.rename200Ms = completed.elapsedMs;
         break;
       }
       if (await browser.$(".conflict-banner").isExisting()) {
@@ -426,7 +463,7 @@ async function renameTrial(result, corpus, kind, index) {
       }
       await sleep(100);
     }
-    if (!result.metrics.rename200Ms && !result.journeyFailures.rename) result.journeyFailures.rename = "rename did not reach disk within 60s";
+    if (!result.metrics.rename200Ms && !result.journeyFailures.rename) result.journeyFailures.rename = "rename API did not complete within 60s";
     if (corpus === "10k") {
       result.metrics.rssAfterRenameBytes = rssFor(binaries[kind], graph);
       const readings = [result.metrics.rssAfterJourneysBytes, result.metrics.rssAfterRenameBytes].filter(Number.isFinite);
@@ -480,7 +517,7 @@ if (SUMMARY_ONLY) {
     }
   }
 }
-const metrics = ["openMs", "openPageMs", "typingP50Ms", "typingP95Ms", "saveMs", "searchMs", "linkedReferencesMs", "unlinkedReferencesMs", "rename200Ms", "rssAfterOpenBytes", "rssAfterJourneysBytes", "rssAfterRenameBytes"];
+const metrics = ["openMs", "openPageMs", "typingP50Ms", "typingP95Ms", "saveMs", "searchMs", "linkedReferencesMs", "unlinkedReferencesMs", "rename200Ms", "renameFilenameVisibleMs", "rssAfterOpenBytes", "rssAfterJourneysBytes", "rssAfterRenameBytes"];
 const table = ["# og vs master native parity bench", "", "Five runs per metric. Cells are median [min, max] in ms (RSS in MiB).", "", "| Corpus | Metric | og | master | og vs master |", "|---|---|---:|---:|---:|"];
 const summary = {};
 for (const corpus of Object.keys(corpora)) {
