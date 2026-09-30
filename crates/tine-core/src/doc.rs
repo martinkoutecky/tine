@@ -660,6 +660,22 @@ pub fn normalize_line_endings(content: &str) -> std::borrow::Cow<'_, str> {
 /// text is the pre-block, so a save writes it back unchanged. Pure,
 /// infallible; one lsdoc parse, O(page bytes).
 pub fn parse(content: &str) -> Document {
+    parse_document_with(content, |_, _, _| ()).0
+}
+
+/// Parse a Markdown page and infer its serialization layout from the SAME
+/// lsdoc outline. Returns the document and formatting knobs together, so a
+/// writer inspecting old content need not parse it again to detect layout.
+/// Pure, infallible; one lsdoc outline parse, O(page bytes). Line terminators
+/// are normalized for parsing; the store restores them when writing.
+pub fn parse_with_opts(content: &str) -> (Document, SerializeOpts) {
+    parse_document_with(content, SerializeOpts::from_outline)
+}
+
+fn parse_document_with<T>(
+    content: &str,
+    layout: impl FnOnce(&str, &[&str], &[outline::Header]) -> T,
+) -> (Document, T) {
     // A stray `\r` in the model would pollute property / `id::` values.
     let normalized = normalize_line_endings(content);
     let content: &str = &normalized;
@@ -675,10 +691,12 @@ pub fn parse(content: &str) -> Document {
     while pre_end > 0 && lines[pre_end - 1].trim().is_empty() {
         pre_end -= 1;
     }
-    Document {
+    let opts = layout(content, &lines, &headers);
+    let document = Document {
         pre_block: (pre_end > 0).then(|| lines[..pre_end].join("\n")),
         roots: outline::blocks(&lines, &headers, false),
-    }
+    };
+    (document, opts)
 }
 
 /// Whether lsdoc reads `line` alone as an unbulleted Markdown ATX heading
@@ -731,26 +749,25 @@ impl SerializeOpts {
         match existing {
             None => SerializeOpts::default(),
             Some(s) => {
-                // Detect on the LF form, so CRLF and lone-CR files count their
-                // trailing line breaks and lines like LF files (`…\r\n\r\n` ⇒ 2).
                 let s = normalize_line_endings(s);
-                SerializeOpts {
-                    trailing_newlines: s.bytes().rev().take_while(|b| *b == b'\n').count(),
-                    blank_after_props: blank_after_props(&s),
-                    indent: detect_indent(&s),
-                }
+                let lines: Vec<&str> = s.split('\n').collect();
+                Self::from_outline(
+                    &s,
+                    &lines,
+                    &outline::headers_or_none(&s, OutlineFormat::Markdown),
+                )
             }
         }
     }
-}
-
-/// Does the file put a blank line between its pre-block and the first block?
-/// The first block's line is the outline authority's first header.
-fn blank_after_props(s: &str) -> bool {
-    let lines: Vec<&str> = s.split('\n').collect();
-    match outline::headers_or_none(s, OutlineFormat::Markdown).first() {
-        Some(header) if header.line > 0 => lines[header.line - 1].trim().is_empty(),
-        _ => true,
+    fn from_outline(s: &str, lines: &[&str], headers: &[outline::Header]) -> Self {
+        Self {
+            trailing_newlines: s.bytes().rev().take_while(|b| *b == b'\n').count(),
+            blank_after_props: match headers.first() {
+                Some(header) if header.line > 0 => lines[header.line - 1].trim().is_empty(),
+                _ => true,
+            },
+            indent: detect_indent(lines, headers),
+        }
     }
 }
 
@@ -764,18 +781,17 @@ fn gcd(a: usize, b: usize) -> usize {
 
 /// Infer the per-level indentation unit from a file's indented bullet lines:
 /// a tab if any are tab-indented, else N spaces (the GCD of space widths).
-fn detect_indent(s: &str) -> String {
+fn detect_indent(lines: &[&str], headers: &[outline::Header]) -> String {
     let mut space_widths: Vec<usize> = Vec::new();
-    for line in s.split('\n') {
-        let lead_len = line.len() - line.trim_start_matches([' ', '\t']).len();
+    for header in headers {
+        // Inspect only the structural prefix lsdoc already identified. Literal
+        // lines cannot contribute a bogus indent unit.
+        let prefix = &lines[header.line][..header.prefix_len];
+        let lead_len = prefix.len() - prefix.trim_start_matches([' ', '\t']).len();
         if lead_len == 0 {
             continue;
         }
-        let rest = &line[lead_len..];
-        if !(rest == "-" || rest.starts_with("- ")) {
-            continue; // only indented bullet lines reveal the level unit
-        }
-        if line[..lead_len].contains('\t') {
+        if prefix[..lead_len].contains('\t') {
             return "\t".into();
         }
         space_widths.push(lead_len);

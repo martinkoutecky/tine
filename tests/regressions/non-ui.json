@@ -2,6 +2,27 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "id": "REG-OG-SIG-LAYOUT-001",
+      "title": "Literal code bullets do not change the indentation detected for saved page structure",
+      "family": "page-serialization",
+      "sources": {
+        "issues": [],
+        "commits": []
+      },
+      "platforms": [
+        "all"
+      ],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/tests/serialization_layout.rs"
+        ],
+        "scenario": "serialization.parser-owned-layout",
+        "failBefore": "proven"
+      }
+    },
+    {
       "id": "REG-OG-QUERY-MEMO-001",
       "title": "Queries return complete statistics while large answers and compiled plans stay outside the bounded memo",
       "family": "query-resources",

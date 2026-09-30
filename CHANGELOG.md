@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Code examples do not set a page's saved indentation** (REG-OG-SIG-LAYOUT-001).
+  Formatting detection now uses the parser's actual outline headers, so a
+  bullet inside a literal code block cannot supply a false indentation unit.
+
 ### Added
 
 - **Parser-owned structural edits** (og-D1): metadata edits and template/conflict copies share native/wasm block regions, preserving parser-recognized literal contents. Empty code cards retain their body/wrapper separator after typing, code-body typing preserves literal typography, and calendar edits retain glued body text. Published block identities, logbook and repeaters use the block's format.
