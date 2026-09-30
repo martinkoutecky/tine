@@ -46,3 +46,58 @@ describe("read-only published snapshot", () => {
     expect(openPublishedPermalink).toBeTypeOf("function");
   });
 });
+
+
+describe("published semantic answers and admission (OG-B-FRONT)", () => {
+  it("resolves NFC and boundary slash page identities", async () => {
+    const s = structuredClone(snapshot); s.pages[0].name = "Cafe\u0301";
+    const api = publishedBackend(async () => s);
+    expect((await api.getPage("/Café/", "page"))?.name).toBe("Cafe\u0301");
+  });
+  it("maps folded evidence back to authored UTF-16 text", async () => {
+    const s = structuredClone(snapshot); s.pages[0].blocks[0].raw = "a\u0301b";
+    const hits = await publishedBackend(async () => s).runGraphSearch("b", 0, 10, "quick-switch");
+    expect(hits.hits[0].evidence?.[0].spans).toEqual([{start: 2, end: 3}]);
+  });
+  it("resolves the authored ID instead of a fenced example", async () => {
+    const s = structuredClone(snapshot);
+    s.pages[0].blocks = [
+      {id: "example", raw: "```\nid:: wanted\n```", collapsed: false, children: []},
+      {id: "runtime", raw: "Real\nid:: wanted", collapsed: false, children: []},
+    ];
+    const api = publishedBackend(async () => s);
+    expect((await api.resolveBlock("wanted"))?.blocks[0].id).toBe("runtime");
+    expect((await api.previewBlock("wanted", 10))?.group.blocks[0].id).toBe("runtime");
+  });
+  it("refuses hostile served depth but accepts a broad ordinary export", () => {
+    const s = structuredClone(snapshot); let child = s.pages[0].blocks[0];
+    for (let i = 0; i < 2000; i++) {
+      const next = {id: String(i), raw: "x", collapsed: false, children: []};
+      child.children.push(next); child = next;
+    }
+    expect(() => validateSnapshot(s)).toThrow(/depth/);
+    const broad = structuredClone(snapshot);
+    broad.pages[0].blocks = Array.from({length: 20000}, (_, i) => ({id: String(i), raw: "x", collapsed: false, children: []}));
+    expect(() => validateSnapshot(broad)).not.toThrow();
+  });
+});
+
+
+it("accepts the native maximum block depth and previews it with a node budget", async () => {
+  const s = structuredClone(snapshot); let child = s.pages[0].blocks[0];
+  for (let i = 1; i < 128; i++) {
+    const next = {id: String(i), raw: "x", collapsed: false, children: []};
+    child.children.push(next); child = next;
+  }
+  expect(() => validateSnapshot(s)).not.toThrow();
+  const preview = await publishedBackend(async () => s).previewBlock("one", 1);
+  expect(preview?.group.blocks[0].children).toEqual([]);
+  expect(preview?.truncated).toBe(127);
+});
+
+
+it("matches baked query contexts by canonical page identity", async () => {
+  const s = structuredClone(snapshot); s.queries[0].context.current_page = "Cafe\u0301";
+  const api = publishedBackend(async () => s);
+  expect(await api.queryRun(parsed.query, {}, {current_page: "/Café/"})).toEqual(result);
+});

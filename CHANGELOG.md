@@ -101,6 +101,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   (GH #382).
 
 ### Fixed
+- Fixed namespace and published-backend identity drift, published search highlights and block-ID lookup, and deeply nested namespace/snapshot handling (OG-B-FRONT).
 
 - **Faster graph startup and first search** (og-P1). Journal-first reads avoid ordinary-page title discovery,
   completed claimant discovery is reused by direct reads, and a search without page results skips page-property hydration.

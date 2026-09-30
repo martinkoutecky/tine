@@ -1,4 +1,5 @@
 import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
+import { pageIdentityKey } from "../pageIdentity";
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
@@ -76,20 +77,21 @@ export function buildNamespaceTree(names: string[]): NsNode[] {
     let prefix = "";
     for (const seg of name.split("/")) {
       prefix = prefix ? `${prefix}/${seg}` : seg;
-      let node = byFull.get(prefix.toLowerCase());
+      let node = byFull.get(pageIdentityKey(prefix));
       if (!node) {
         node = { seg, full: prefix, children: [] };
-        byFull.set(prefix.toLowerCase(), node);
+        byFull.set(pageIdentityKey(prefix), node);
         level.push(node);
       }
       level = node.children;
     }
   }
-  const sortRec = (ns: NsNode[]) => {
-    ns.sort((a, b) => a.seg.localeCompare(b.seg));
-    ns.forEach((n) => sortRec(n.children));
-  };
-  sortRec(roots);
+  const pending = [roots];
+  while (pending.length) {
+    const level = pending.pop()!;
+    level.sort((a, b) => a.seg.localeCompare(b.seg));
+    for (const node of level) if (node.children.length) pending.push(node.children);
+  }
   return roots;
 }
 
@@ -155,11 +157,18 @@ export function NamespaceTree(props: {
 
 // --- {{namespace X}} macro --------------------------------------------------
 
-function collectFulls(nodes: NsNode[], acc: string[]) {
-  for (const n of nodes) {
-    acc.push(n.full);
-    collectFulls(n.children, acc);
+/** Preorder rows without recursion, even for deeply imported names. Cost O(nodes). */
+export function namespaceRows(nodes: NsNode[]): { node: NsNode; depth: number }[] {
+  const rows: { node: NsNode; depth: number }[] = [];
+  const pending = nodes.map(node => ({ node, depth: 0 })).reverse();
+  while (pending.length) {
+    const row = pending.pop()!;
+    rows.push(row);
+    for (let i = row.node.children.length - 1; i >= 0; i--) {
+      pending.push({ node: row.node.children[i], depth: row.depth + 1 });
+    }
   }
+  return rows;
 }
 
 function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string, string> }): JSX.Element {
@@ -176,9 +185,6 @@ function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string,
           <EmojiText text={props.node.seg} />
         </a>
       </div>
-      <For each={props.node.children}>
-        {(c) => <NsMacroNode node={c} depth={props.depth + 1} icons={props.icons} />}
-      </For>
     </div>
   );
 }
@@ -190,11 +196,10 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
   // inventory (src/pages.ts). Only the per-page icon lookup stays an IPC, keyed on the
   // resulting `fulls` set (so it refetches when the page set changes, not per nav).
   const treeData = createMemo(() => {
-    const prefix = `${props.root}/`.toLowerCase();
-    const names = allPageNames().filter((n) => n.toLowerCase().startsWith(prefix));
+    const prefix = `${pageIdentityKey(props.root)}/`;
+    const names = allPageNames().filter((n) => pageIdentityKey(n).startsWith(prefix));
     const tree = buildNamespaceTree(names);
-    const fulls: string[] = [];
-    collectFulls(tree, fulls);
+    const fulls = namespaceRows(tree).map(row => row.node.full);
     return { tree, fulls };
   });
   const [iconsResource] = createResource(
@@ -228,8 +233,8 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
               </a>
             </div>
             <div class="ns-macro-tree">
-              <For each={root.children}>
-                {(c) => <NsMacroNode node={c} depth={0} icons={icons() ?? {}} />}
+              <For each={namespaceRows(root.children)}>
+                {(row) => <NsMacroNode node={row.node} depth={row.depth} icons={icons() ?? {}} />}
               </For>
             </div>
           </div>
@@ -248,20 +253,20 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
  *  A namespaced leaf with no descendants → one row: its parent namespace path. */
 export function namespaceHierarchyRows(allNames: string[], name: string): string[][] {
   const pSegs = name.split("/");
-  const prefix = `${name}/`.toLowerCase();
+  const prefix = `${pageIdentityKey(name)}/`;
   const byLower = new Map<string, string[]>(); // cumulative-path (lc) → original segs
   for (const n of allNames) {
-    if (!n.toLowerCase().startsWith(prefix)) continue;
+    if (!pageIdentityKey(n).startsWith(prefix)) continue;
     const segs = n.split("/");
     for (let k = pSegs.length + 1; k <= segs.length; k++) {
       const sub = segs.slice(0, k);
-      const key = sub.join("/").toLowerCase();
+      const key = pageIdentityKey(sub.join("/"));
       if (!byLower.has(key)) byLower.set(key, sub);
     }
   }
   if (byLower.size) {
     return [...byLower.values()].sort((a, b) =>
-      a.join("/").toLowerCase().localeCompare(b.join("/").toLowerCase())
+      pageIdentityKey(a.join("/")).localeCompare(pageIdentityKey(b.join("/")))
     );
   }
   // Namespaced leaf with no descendants → the parent namespace's path.
