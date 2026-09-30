@@ -9,7 +9,9 @@ pub(crate) fn before_apply(path: &Path) {
     let Ok(target) = std::env::var("TINE_K1_RACE_TARGET") else {
         return;
     };
-    if path != Path::new(&target) {
+    // Store resolves its root; the parent may name that file through a short
+    // Windows path, a link, or another absolute spelling. Match the file.
+    if !same_file::is_same_file(path, &target).unwrap() {
         return;
     }
     let barrier = std::env::var("TINE_K1_RACE_BARRIER").unwrap();

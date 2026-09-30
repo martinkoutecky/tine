@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Windows validation uses portable structural-ratchet keys and exercises page-merge races across alternate path spellings (og-W1; test harness only).
+
 - **Page saves reuse their checked parse when publishing, and renames use the known page-name index** (og-R5; REG-OG-R5-SAVE-PARSE, REG-OG-R5-RENAME-COST). Saves retain their existing byte-preservation checks; a rename no longer rereads unrelated page headers for its same-name check.
 - **Browser and native query rewrites use the same macro extent reader**, preserving authored arguments and rejecting malformed closing braces consistently (og-R4C; REG-OG-R4C-MACRO-EXTENTS).
 

@@ -24,7 +24,7 @@ fn k1_merge_race_worker() {
     eprintln!("merge worker result: {result:?}");
 }
 
-fn run_race(kill: Option<usize>) {
+fn run_race(kill: Option<usize>, alternate_target: bool) {
     let scratch = tempfile::tempdir().unwrap();
     let root = scratch.path();
     for dir in ["pages", "journals", "assets", "logseq"] {
@@ -32,6 +32,13 @@ fn run_race(kill: Option<usize>) {
     }
     fs::write(root.join("pages/A.md"), b"- keep\n").unwrap();
     fs::write(root.join("pages/B.md"), b"- survivor\n- keep\n").unwrap();
+    let target = if alternate_target {
+        let alias = root.join("assets/race-target.md");
+        fs::hard_link(root.join("pages/B.md"), &alias).unwrap();
+        alias
+    } else {
+        root.join("pages/B.md")
+    };
     let barrier = root.join("barrier");
     let stdout = root.join("worker.stdout");
     let stderr = root.join("worker.stderr");
@@ -39,7 +46,7 @@ fn run_race(kill: Option<usize>) {
     command
         .args(["--exact", "k1_merge_race_worker", "--nocapture"])
         .env("TINE_K1_MERGE_ROOT", root)
-        .env("TINE_K1_RACE_TARGET", root.join("pages/B.md"))
+        .env("TINE_K1_RACE_TARGET", target)
         .env("TINE_K1_RACE_BARRIER", &barrier)
         .stdout(Stdio::from(fs::File::create(&stdout).unwrap()))
         .stderr(Stdio::from(fs::File::create(&stderr).unwrap()));
@@ -98,12 +105,17 @@ fn run_race(kill: Option<usize>) {
 
 #[test]
 fn k1_merge_external_editor_race_never_silently_retires_payload() {
-    run_race(None);
+    run_race(None, false);
 }
 
 #[test]
 fn k1_merge_external_editor_race_kill_and_reopen_keeps_payload_live() {
     for boundary in 0..2 {
-        run_race(Some(boundary));
+        run_race(Some(boundary), false);
     }
+}
+
+#[test]
+fn k1_merge_race_barrier_matches_the_file_under_an_alternate_path() {
+    run_race(None, true);
 }

@@ -1198,7 +1198,7 @@
         "scenario": null,
         "failBefore": "proven"
       },
-      "notes": "og checkpoint 4 L07 S1, K1 bf11f4647. Every transaction step, including an unchanged one, checks its preflight revision before success; subprocess barrier + AbortAfterStep kill cases."
+      "notes": "og checkpoint 4 L07 S1, K1 bf11f4647. Every transaction step, including an unchanged one, checks its preflight revision before success; subprocess barrier + AbortAfterStep kill cases. OG-W1: the test barrier matches file identity across Windows short/canonical paths and alternate links; a hard-link target exercises the race, and worker failures include captured stdout/stderr."
     },
     {
       "id": "REG-OG-B-LIFE-SEARCH-LANES",
