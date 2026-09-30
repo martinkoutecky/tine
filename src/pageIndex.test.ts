@@ -185,3 +185,17 @@ describe("page index: the one frontend name answerer", () => {
     ]);
   });
 });
+
+
+it("reports a failed inventory read and keeps the last good page list", async () => {
+  const { refreshPageIndex, allPages } = await load();
+  const { toasts, setToasts } = await import("./toasts");
+  setToasts([]);
+  backendMock.pageInventory.mockResolvedValue(inventory(1, file("Kept")));
+  await refreshPageIndex();
+  const previous = allPages();
+  backendMock.pageInventory.mockRejectedValue(new Error("io:PermissionDenied"));
+  await refreshPageIndex();
+  expect(allPages()).toEqual(previous);
+  expect(toasts().some((t) => t.kind === "error" && t.message.includes("page list"))).toBe(true);
+});

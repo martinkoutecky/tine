@@ -107,6 +107,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Sheet cell operations preserve their own configuration**, query sheets keep the physical page already open, and field rename accepts Unicode property siblings (og B-SHEET).
 - Kept-draft conflict resolution and publication remain with their original graph; saving retires a pending first-write crash-safe draft in order, and uninstall stops a plugin still starting.
 - Asset versions, rendered block and board markers, readiness listeners, audio scrub gestures and updater handles retire with their owner. Query builder edits compose while print/parse work is pending, completed workspace searches release their cancellation lanes, parser comparisons stop on retirement, and visible PDF pages share a bounded tile budget.
+- **Failed native reads keep their errors and recovery details** (OG-B-FAIL): plugin and asset inventories
+  propagate disk failures, unreadable sessions cannot create blank workspaces, and incomplete transaction recovery
+  remains visible through conflict resolution. Launch-backup failures appear in the graph window.
+
+- **Failed reads stay visible** (OG-B-FAIL): page and reference refreshes keep their last successful data,
+  journal-feed and session reads report failures, template creation refuses a failed name check or a read-only block,
+  and the journal-template picker offers Retry. Quick Capture now shows block-action feedback with copyable errors.
 
 - **Faster graph startup and first search** (og-P1). Journal-first reads avoid ordinary-page title discovery,
   completed claimant discovery is reused by direct reads, and a search without page results skips page-property hydration.

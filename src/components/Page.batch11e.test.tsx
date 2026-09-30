@@ -194,3 +194,24 @@ describe("batch 11e page identity and journal continuity", () => {
     } finally { mounted.dispose(); }
   });
 });
+
+
+it("reports a failed journal feed append while retaining the loaded feed", async () => {
+  let intersect!: IntersectionObserverCallback;
+  vi.stubGlobal("IntersectionObserver", class {
+    constructor(callback: IntersectionObserverCallback) { intersect = callback; }
+    observe() {} unobserve() {} disconnect() {}
+  });
+  const today = journalTitle(new Date());
+  const api = vi.spyOn(backend(), "journalFeedPage")
+    .mockResolvedValueOnce({ ...feedResponse([journalDto(today, "Keep this journal")]), next_before_day: localDay(), done: false })
+    .mockRejectedValueOnce(new Error("io:PermissionDenied"));
+  const mounted = mount(() => <PageView />);
+  await vi.waitFor(() => expect(mounted.root.textContent).toContain("Keep this journal"));
+  intersect([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+  await vi.waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(mounted.root.textContent).toContain("Keep this journal");
+  expect(toasts().some((t) => t.kind === "error" && t.message.includes("journals"))).toBe(true);
+  mounted.dispose();
+});

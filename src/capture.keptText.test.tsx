@@ -108,3 +108,16 @@ it("clears and hides after a successful acknowledgement when the snapshot is unc
   expect(h.setRaw).toEqual(["scratch-root"]);
   expect(document.querySelector<HTMLInputElement>(".capture-title")!.value).toBe("");
 });
+
+
+it("renders block-action feedback with a sticky copyable error in Quick Capture", async () => {
+  const { pushToast, setToasts } = await import("./toasts");
+  setToasts([]);
+  pushToast("Block action failed", "error");
+  await Promise.resolve();
+  const toast = document.querySelector(".toast-error")!;
+  expect(toast?.textContent).toContain("Block action failed");
+  expect(toast?.querySelector(".toast-copy")?.textContent).toBe("Copy");
+  expect(toast?.classList.contains("toast-sticky")).toBe(true);
+  setToasts([]);
+});
