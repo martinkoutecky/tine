@@ -1,5 +1,7 @@
 //! Search request coordination. A lane cancels its previous request, and the
-//! graph snapshot resolves scope before evaluation. Cost O(graph search).
+//! graph snapshot resolves scope before evaluation. Completed/error requests
+//! release their exact lane; workspace close cancels both its lanes. Cost
+//! O(graph search) for work, O(1) for request lifecycle.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,7 +21,7 @@ use tine_store::{
 pub struct SearchLanes(Mutex<HashMap<String, Arc<AtomicBool>>>);
 
 impl SearchLanes {
-    fn begin(&self, lane: Option<&str>) -> Arc<AtomicBool> {
+    fn begin<'a>(&'a self, lane: Option<&'a str>) -> SearchLease<'a> {
         let flag = Arc::new(AtomicBool::new(false));
         if let Some(lane) = lane {
             if let Some(previous) = self
@@ -31,7 +33,55 @@ impl SearchLanes {
                 previous.store(true, Ordering::Release);
             }
         }
-        flag
+        SearchLease {
+            lanes: self,
+            lane,
+            flag,
+        }
+    }
+
+    /// Cancel and release both search lanes owned by a closed workspace.
+    /// O(1) lookups; other workspaces and replacement requests are unaffected.
+    /// An already-running search observes cancellation through its existing flag.
+    pub fn close_workspace(&self, workspace: &str) {
+        let mut lanes = self.0.lock().unwrap();
+        for key in [
+            format!("query-workspace:{workspace}"),
+            format!("query-workspace:{workspace}:materialize"),
+        ] {
+            if let Some(flag) = lanes.remove(&key) {
+                flag.store(true, Ordering::Release);
+            }
+        }
+    }
+}
+
+// The request owns the map entry, including errors and unwinding. A superseded
+// request must never remove its successor's cancellation flag (I-20/I-21).
+struct SearchLease<'a> {
+    lanes: &'a SearchLanes,
+    lane: Option<&'a str>,
+    flag: Arc<AtomicBool>,
+}
+
+impl std::ops::Deref for SearchLease<'_> {
+    type Target = AtomicBool;
+    fn deref(&self) -> &AtomicBool {
+        &self.flag
+    }
+}
+
+impl Drop for SearchLease<'_> {
+    fn drop(&mut self) {
+        if let Some(lane) = self.lane {
+            let mut lanes = self.lanes.0.lock().unwrap();
+            if lanes
+                .get(lane)
+                .is_some_and(|flag| Arc::ptr_eq(flag, &self.flag))
+            {
+                lanes.remove(lane);
+            }
+        }
     }
 }
 
@@ -99,7 +149,7 @@ fn run_graph_search_after_scope(
     #[cfg(test)] after_scope: impl FnOnce(),
 ) -> Result<QueryExecution, SearchError> {
     let view = store.whole_graph().map_err(SearchError::Load)?;
-    let flag = lanes.begin(lane);
+    let lease = lanes.begin(lane);
     let within = scope.map(|scope| match scope.path {
         Some(path) => PageId::from(path),
         None => match view.resolve(&scope.name, scope.kind == PageKind::Journal) {
@@ -119,7 +169,7 @@ fn run_graph_search_after_scope(
     };
     #[cfg(test)]
     after_scope();
-    let execution = match view.search(&request, &Cancel(flag)) {
+    let execution = match view.search(&request, &Cancel(Arc::clone(&lease.flag))) {
         Ok(execution) => execution,
         Err(QueryError::Cancelled) => QueryExecution {
             hits: Vec::new(),
@@ -145,8 +195,8 @@ pub fn find_blocks(
     lane: Option<&str>,
 ) -> Result<Vec<RefGroup>, SearchError> {
     let view = store.whole_graph().map_err(SearchError::Load)?;
-    let flag = lanes.begin(lane);
-    view.find_blocks(query, limit, &Cancel(flag))
+    let lease = lanes.begin(lane);
+    view.find_blocks(query, limit, &Cancel(Arc::clone(&lease.flag)))
         .map_err(SearchError::Query)
 }
 
@@ -370,6 +420,60 @@ mod tests {
         assert!(
             reason(validate_source(&nested).unwrap_err()).starts_with("query-nesting-too-deep:")
         );
+    }
+
+    #[test]
+    fn completed_workspace_searches_release_their_lanes() {
+        let root = std::env::temp_dir().join(format!("tine-life-search-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::write(root.join("pages/P.md"), "- needle\n").unwrap();
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let lanes = SearchLanes::default();
+        for i in 0..50 {
+            let lane = format!("query-workspace:{i}");
+            let result = run_graph_search(
+                &store,
+                &lanes,
+                "needle".into(),
+                10,
+                10,
+                Some(&lane),
+                false,
+                None,
+                None,
+                None,
+                None,
+            );
+            assert!(result.is_ok());
+            assert_eq!(
+                lanes.0.lock().unwrap().len(),
+                0,
+                "I-21: completed search lanes are not graph-lifetime records"
+            );
+        }
+        store.close();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_close_cancels_its_requests_and_late_drop_keeps_a_successor() {
+        let lanes = SearchLanes::default();
+        let first = lanes.begin(Some("query-workspace:a"));
+        let validating = lanes.begin(Some("query-workspace:a:materialize"));
+        let other = lanes.begin(Some("query-workspace:b"));
+        lanes.close_workspace("a");
+        assert!(first.load(Ordering::Acquire));
+        assert!(validating.load(Ordering::Acquire));
+        assert!(!other.load(Ordering::Acquire));
+        assert_eq!(lanes.0.lock().unwrap().len(), 1);
+        let next = lanes.begin(Some("query-workspace:a"));
+        drop(first);
+        drop(validating);
+        assert_eq!(lanes.0.lock().unwrap().len(), 2);
+        assert!(!next.load(Ordering::Acquire));
+        drop(next);
+        drop(other);
+        assert!(lanes.0.lock().unwrap().is_empty());
     }
 
     #[test]
