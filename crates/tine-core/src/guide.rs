@@ -511,6 +511,21 @@ mod rename_guide_tests {
     #[test]
     fn query_export_guide_explains_closed_nested_result_reporting() {
         let files = include_str!("templates/files-external-edits-backups.md");
+        for outcome in [
+            "published-queries/<folder>/",
+            "**Replace**",
+            "**Create a separate export**",
+            "its path is reported",
+            "default **1 GiB**",
+            "**Adjust limit in Settings…**",
+            "Missing assets are reported",
+            "move or share the whole export folder",
+        ] {
+            assert!(
+                files.contains(outcome),
+                "query-export onboarding must explain {outcome}"
+            );
+        }
         assert!(
             files.contains("Queries inside a query export show only results on the exported pages")
         );
