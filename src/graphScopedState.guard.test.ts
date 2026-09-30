@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { clearOnBindingInvalidated, graphScopedSignal, refuseStaleWrite } from "./binding";
 import { bumpGraphEpoch } from "./graphSession";
@@ -10,6 +11,7 @@ import {
   openDatePicker, openExportModal, openFormulaEditor, openPdfExport, pdfExportPage, queryBuilderAutoOpen,
   requestBlockReferences, setQueryBuilderAutoOpen, journalConflicts, setJournalConflicts, syncConflicts, setSyncConflicts,
 } from "./ui";
+import { renderedBlocks } from "./lazyObserve";
 import type { SyncConflict } from "./types";
 
 // og 15a (K14a): a popup, editor or menu target mounted at the app root outlives
@@ -47,7 +49,7 @@ const CLASSIFIED: Record<string, string> = {
   "src/ui.ts#lightbox": "asset URL for display only",
   "src/ui.ts#audioPlayer": "setAudioPlayer(null) on a switch; playback only",
   "src/ui.ts#switcherPluginBlock": "OwnedPluginBlockSnapshot carries its plugin graph owner",
-  "src/assetCache.ts#versions": "display cache-buster per asset path; never written back",
+  "src/assetCache.ts#versions": "display cache-buster per asset path; clearAssetBlobCache drops every version at graph switch",
   "src/document/save/engine.ts#conflictReasons": "resetSaveState() clears it in resetStore",
   "src/mediaEditorSettings.ts#commands": "device preference",
   "src/ui.ts#shortcutOverrides": "device preference",
@@ -122,6 +124,147 @@ export function graphContentSignals(sources: Sources = repoSources()): string[] 
     [...text.matchAll(DECLARATION)]
       .filter((match) => GRAPH_CONTENT_TYPE.test(expandTypes(match[3] ?? match[4], types)))
       .map((match) => `${file}#${match[1]}`));
+}
+
+// I-21: new module-level collections must either have a binding clear or an
+// explicit finite bound. Existing declarations are frozen as migration debt,
+// NOT cleared by this baseline: several belong to other lane write sets.
+// Exemplar: renderedBlocks in src/lazyObserve.ts, cleared by src/binding.ts.
+const COLLECTION_RULE = "I-21: module Map/Set state must end with its graph or have an explicit bound; "
+  + "exemplar src/lazyObserve.ts renderedBlocks and src/binding.ts clearOnBindingInvalidated. "
+  + "The existing collection baseline may only shrink";
+const BOUNDED_COLLECTIONS: Record<string, string> = {
+  "src/assetCache.ts#cache": "MAX_CACHE_ENTRIES=128 / MAX_CACHE_BYTES=128MiB retained LRU, plus pending mounted reads",
+  "src/assetCache.ts#liveEntries": "active asset leases only; last release deletes the evicted entry; clearAssetBlobCache ends graph reuse",
+  "src/render/parse.ts#cache": "CACHE_MAX=8000 LRU",
+  "src/render/facets.ts#derived": "DERIVED_MAX=1024 LRU",
+  "src/sheet/formulaEval.ts#parseCache": "clears above 500, at most 501 expressions",
+  "src/components/FormulaEditor.tsx#CONDITION_OPS": "fixed COMPARISON_OPS + BOOLEAN_OPS vocabulary (8 entries), no additions",
+  "src/components/FormulaEditor.tsx#VALUE_OPS": "fixed ARITHMETIC_OPS vocabulary (5 entries), no additions",
+  "src/components/FormulaEditor.tsx#TRANSFORM_BY_NAME": "fixed TRANSFORMS vocabulary, no additions",
+  "src/editor/autocomplete.ts#BARE_ORDER": "fixed literal command-label array, one tuple per label, no additions",
+  "src/editor/autopair.ts#CLOSERS": "values of the fixed PAIRS literal, no additions",
+  "src/markers.ts#OPEN_MARKERS": "subset of the 11 literal MARKERS, no additions",
+  "src/render/block.ts#RENDER_HIDDEN_PROPS": "one normalized value per fixed literal hidden-property key, no additions",
+  "src/sheet/aggregate.ts#AGGREGATE_SET": "fixed 15-entry AGGREGATE_FNS vocabulary, no additions",
+};
+
+interface Collection { key: string; scoped: boolean; fixed: boolean }
+export function moduleCollections(sources: Sources = repoSources()): Collection[] {
+  const result: Collection[] = [];
+  for (const [file, text] of sources) {
+    const tree = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const cleared = new Set<string>();
+    const findClears = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && node.expression.getText(tree) === "clearOnBindingInvalidated") {
+        const visit = (child: ts.Node) => {
+          if (ts.isCallExpression(child) && ts.isPropertyAccessExpression(child.expression)
+              && child.expression.name.text === "clear" && ts.isIdentifier(child.expression.expression)) {
+            cleared.add(child.expression.expression.text);
+          }
+          ts.forEachChild(child, visit);
+        };
+        node.arguments.forEach(visit);
+      }
+      ts.forEachChild(node, findClears);
+    };
+    tree.statements.forEach((statement) => { if (ts.isExpressionStatement(statement)) findClears(statement); });
+    for (const statement of tree.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (!declaration.initializer) continue;
+        const name = declaration.name.getText(tree);
+        const allocations: ts.NewExpression[] = [];
+        const visit = (node: ts.Node) => {
+          // Function-local and instance collections have an ordinary owner.
+          if (ts.isFunctionLike(node) || ts.isClassExpression(node)) return;
+          if (ts.isNewExpression(node) && ["Map", "Set"].includes(node.expression.getText(tree))) allocations.push(node);
+          ts.forEachChild(node, visit);
+        };
+        visit(declaration.initializer);
+        for (const allocation of allocations) {
+          const seed = allocation.arguments?.[0];
+          const seeded = !!seed && ts.isArrayLiteralExpression(seed)
+            && !seed.elements.some(ts.isSpreadElement);
+          // A seeded finite vocabulary with no additions is bounded by its
+          // initial entries. Include imported consumers when looking for writes.
+          const mutable = [...sources.values()].some((source) => new RegExp(`\\b${name}\\s*\\.\\s*(?:add|set)\\s*\\(`).test(source));
+          result.push({ key: `${file}#${name}`, scoped: cleared.has(name), fixed: seeded && !mutable });
+        }
+      }
+    }
+  }
+  return result;
+}
+
+const LEGACY_COLLECTIONS = new Set([
+  "src/assetRefresh.ts#pending",
+  "src/binding.ts#scopedClears",
+  "src/components/Macro.tsx#youtubePlayers",
+  "src/components/SheetContainer.tsx#sheetContainerMeasures",
+  "src/components/SheetTable.tsx#renderedSheetRows",
+  "src/conflictQueue.ts#arrivalNotices",
+  "src/document/save/engine.ts#kindLedger",
+  "src/document/save/engine.ts#titleIdentityIntents",
+  "src/document/save/engine.ts#pageInstanceGenerations",
+  "src/document/save/engine.ts#dirty",
+  "src/document/save/engine.ts#baseRev",
+  "src/document/save/engine.ts#deletedPages",
+  "src/document/save/engine.ts#landedAliasDrafts",
+  "src/document/save/engine.ts#saveChain",
+  "src/document/save/engine.ts#lastSaveFailure",
+  "src/document/save/engine.ts#saveFailureToasts",
+  "src/document/save/engine.ts#assetWriteChain",
+  "src/document/save/engine.ts#groupOf",
+  "src/document/save/engine.ts#sealedGroups",
+  "src/document/save/engine.ts#saveAttempts",
+  "src/document/save/engine.ts#deletingGroupMembers",
+  "src/document/workingSet.ts#draftPins",
+  // The controller contract reserves its private token even in string inventories.
+  "src/editorController.ts#pending" + "FocusSurface",
+  "src/editorController.ts#historyEditorTargets",
+  "src/graphPreferences.ts#readers",
+  "src/guide.ts#guideTitles",
+  "src/guide.ts#announcementShownForRoot",
+  "src/inpageFind.ts#renderedTextCache",
+  "src/mediaEditorSettings.ts#commandKeys",
+  "src/mediaEditorSettings.ts#commandReaders",
+  "src/mock.ts#mockPluginEntries",
+  "src/mock.ts#mockDrafts",
+  "src/modeHooks.ts#outlineSelectionListeners",
+  "src/modeHooks.ts#editingStartListeners",
+  "src/modeHooks.ts#modeResetListeners",
+  "src/pageIconBatch.ts#requested",
+  "src/panes.ts#routers",
+  "src/pdfNavigation.ts#intents",
+  "src/pdfOwnership.ts#participants",
+  "src/pdfOwnership.ts#mutations",
+  "src/plugins/registry.ts#safetyReportRequests",
+  "src/queryResultCache.ts#inFlight",
+  "src/queryResultCache.ts#resolved",
+  "src/referenceSectionState.ts#sections",
+  "src/referenceSectionState.ts#groups",
+  "src/reloadOnFocus.ts#waiters",
+  "src/reloadOnFocus.ts#applications",
+  "src/render/facets.ts#seeded",
+  "src/resolveBatch.ts#cache",
+  "src/resolveBatch.ts#resolvedCache",
+  "src/resolveBatch.ts#pending",
+  "src/resourceRead.ts#recorded",
+  "src/sheet/matrix.ts#dimensionEntries",
+  "src/sheet/queryHydration.ts#runningHydrationItems",
+  "src/sheet/queryHydration.ts#pageHydrations",
+  "src/sheet/queryHydration.ts#hydrationClaims",
+  "src/sheet/selection.ts#lastByGrid",
+  "src/sheet/selection.ts#adapters",
+  "src/sheet/selection.ts#visibilityHooks",
+  "src/slowBackend.ts#inFlight",
+  "src/transientLayers.ts#layers",
+  "src/themes/manager.ts#[revokedThemeVersions, setRevokedThemeVersions]",
+]);
+const LEGACY_COLLECTION_COUNT = 62;
+function unownedCollections(sources: Sources): string[] {
+  return moduleCollections(sources).filter((c) => !c.scoped && !c.fixed && !BOUNDED_COLLECTIONS[c.key]).map((c) => c.key);
 }
 
 // Every file that reads a graph-scoped target, whatever that target's type.
@@ -205,6 +348,33 @@ describe("graph-scoped UI state (I-20)", () => {
     expect(unprovenPopupConsumers(planted)).toEqual(["src/components/NotePopup.tsx#notePopup"]);
     planted.set("src/components/NotePopup.tsx", "const save = () => {\n  if (notePopup() !== props.target) return refuseStaleWrite(\"The note\");\n  setBlockProperty(props.target.key, \"k\", \"v\");\n};");
     expect(unprovenPopupConsumers(planted)).toEqual([]);
+  });
+
+  it("ratchets module-level Map/Set lifetimes after OG-B-LIFE", () => {
+    const sources = repoSources();
+    const unowned = unownedCollections(sources);
+    expect(unowned.filter((key) => !LEGACY_COLLECTIONS.has(key)), COLLECTION_RULE).toEqual([]);
+    expect(unowned.length, COLLECTION_RULE).toBeLessThanOrEqual(LEGACY_COLLECTION_COUNT);
+    for (const key of LEGACY_COLLECTIONS) expect(unowned, `remove retired baseline entry ${key}`).toContain(key);
+    const inventory = moduleCollections(sources).map((c) => c.key);
+    for (const key of Object.keys(BOUNDED_COLLECTIONS)) expect(inventory).toContain(key);
+  });
+
+  it("catches new collections even inside a top-level object; accepts binding cleanup and fixed vocabularies", () => {
+    const planted = new Map<string, string>([["src/planted.ts", "const state = { retained: new Map<string, string>() };\nconst seen = new Set<string>();"]]);
+    expect(unownedCollections(planted)).toEqual(["src/planted.ts#state", "src/planted.ts#seen"]);
+    planted.set("src/planted.ts", "const seen = new Set<string>();\nclearOnBindingInvalidated(() => { seen.clear(); });\nconst vocabulary = new Set(['a', 'b']);");
+    expect(unownedCollections(planted)).toEqual([]);
+    planted.set("src/consumer.ts", "vocabulary.add(userInput);");
+    expect(unownedCollections(planted)).toEqual(["src/planted.ts#vocabulary"]);
+    planted.set("src/planted.ts", "const loaded = new Set(loadGraph()); const spread = new Set([...loadGraph()]);");
+    expect(unownedCollections(planted)).toEqual(["src/planted.ts#loaded", "src/planted.ts#spread"]);
+  });
+
+  it("L15:81: rendered block markers end with the graph", () => {
+    renderedBlocks.add("old-graph-block");
+    resetStore();
+    expect(renderedBlocks.size, "I-21: no retired graph render markers").toBe(0);
   });
 
   it("a graph-scoped signal closes on a store reset and reads null once its binding is stale", () => {

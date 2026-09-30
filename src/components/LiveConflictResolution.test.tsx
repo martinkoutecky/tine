@@ -218,6 +218,31 @@ describe("Concord live-draft conflicts (og 8e)", () => {
     dispose();
   });
 
+  it("L10:63: capsule retirement finishing after a switch never marks graph B conflicted", async () => {
+    await conflictedDraft("graph A draft");
+    await settle();
+    await killAndReopen(page("r2", "disk"));
+    vi.spyOn(api, "resolveLiveConflict").mockImplementation(async (_p, draft) => ({ ...draft, rev: "r3" }));
+    let finish!: () => void;
+    vi.mocked(api.retireDraft).mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    installExternalChangeUiHandler(() => ({ pageOpen: () => true, journalsOpen: false, leaveRemovedPage() {}, restartJournalFeed() {} }));
+    vi.spyOn(api, "getPage").mockResolvedValue(page("r2", "B disk"));
+    const { host, dispose } = mount(liveConflictForPage("P", PATH)!);
+    await tick();
+    apply(host);
+    await tick();
+    expect(finish).toBeTypeOf("function");
+    resetStore();
+    loadFeed([page("r2", "B disk")] as never);
+    setRaw("p1", "B edit");
+    finish();
+    await tick();
+    expect(raw()).toBe("B edit");
+    expect(isConflicted("P"), "the retired resolution cannot adopt graph B's binding").toBe(false);
+    expect(api.getPage).not.toHaveBeenCalled();
+    dispose();
+  });
+
   it("the sidebar badge counts open and restored live drafts (master: one combined queue)", async () => {
     const host = document.createElement("div");
     document.body.appendChild(host);

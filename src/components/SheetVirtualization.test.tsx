@@ -139,6 +139,20 @@ describe("sheet lazy-mount virtualization", () => {
     root.remove();
   });
 
+  it("L12:44: board render markers do not survive a graph reset", () => {
+    setDoc(boardDoc());
+    const root = document.createElement("div"); document.body.appendChild(root);
+    const first = render(() => <Block id="board" />, root);
+    expect(root.querySelectorAll(".sheet-cell-defer")).toHaveLength(0);
+    first();
+    resetStore();
+    (globalThis as any).IntersectionObserver = NoopIO;
+    setDoc(boardDoc());
+    const second = render(() => <Block id="board" />, root);
+    try { expect(root.querySelectorAll(".sheet-cell-defer").length).toBeGreaterThan(0); }
+    finally { second(); }
+  });
+
   it("board: eager path renders card titles and chips, no placeholders", () => {
     setDoc(boardDoc());
     const root = document.createElement("div");

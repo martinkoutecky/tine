@@ -1,3 +1,5 @@
+import { initDebug } from "./debug";
+import { Toasts } from "./components/Toasts";
 // Quick-capture mini window. A separate Tauri webview (capture.html) that the
 // running app pops on a `tine --capture` signal. It renders the SAME block tree
 // the main app uses (Block + Editor) over an isolated scratch store — so all
@@ -482,6 +484,7 @@ function Capture() {
   });
 
   onMount(() => {
+    void initDebug();
     // Populate the keybinding table so editor shortcuts (bold/italic/…) work the
     // same as the main window — defaults until the main window sends the merged
     // map (see the capture-apply-shortcuts listener). Its global handler is
@@ -625,6 +628,7 @@ function Capture() {
         </Show>
       </div>
       <DatePicker />
+      <Toasts />
     </CaptureCtx.Provider>
   );
 }

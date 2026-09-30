@@ -531,7 +531,7 @@ fn load_workspaces_at(path: &std::path::Path, session: &std::path::Path) -> Resu
             Ok(data)
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let legacy = std::fs::read_to_string(session).ok();
+            let legacy = read_optional_session(session).map_err(|error| error.to_string())?;
             let data = migrated_workspaces_json(legacy.as_deref());
             atomic_write_workspaces(path, &data)?;
             Ok(data)
@@ -568,6 +568,24 @@ pub(crate) fn save_workspaces(
     save_workspaces_at(&path, &data)
 }
 
+// A missing session is fresh state; a disk/permission failure must not publish
+// a blank workspace over state that still exists. Shared by restore and migration.
+fn read_optional_session(path: &std::path::Path) -> std::io::Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn session_present(path: &std::path::Path) -> Result<bool, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 static SESSION_MIGRATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[tauri::command]
@@ -577,10 +595,13 @@ pub(crate) fn load_session(
 ) -> Result<Option<String>, String> {
     let slot = slot_for_context(&state)?;
     let path = session_path(&app, &slot.root_key).ok_or("no app-data dir")?;
-    if !path.exists() {
+    if !session_present(&path)? {
         let _migration = SESSION_MIGRATION_LOCK.lock().unwrap();
-        if !path.exists() {
-            if let Some(legacy) = legacy_session_path(&app).filter(|p| p.exists()) {
+        if !session_present(&path)? {
+            if let Some(legacy) = legacy_session_path(&app) {
+                if !session_present(&legacy)? {
+                    return Ok(None);
+                }
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
@@ -588,7 +609,7 @@ pub(crate) fn load_session(
             }
         }
     }
-    Ok(std::fs::read_to_string(path).ok())
+    read_optional_session(&path).map_err(|error| error.to_string())
 }
 
 /// Durably replace the bound graph's app-data session JSON with unvalidated
@@ -875,4 +896,23 @@ pub(crate) fn set_default_home(
     let slot = slot_for_context(&state)?;
     tine_graph_features::config::set_default_home_page(&slot.store, name.as_deref())
         .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod fail_read_tests {
+    use super::*;
+    #[test]
+    fn fail_read_legacy_session_refuses_blank_workspace_publication() {
+        let temp = tempfile::tempdir().unwrap();
+        let session = temp.path().join("session.json");
+        assert!(read_optional_session(&session).unwrap().is_none());
+        std::fs::create_dir(&session).unwrap();
+        assert!(read_optional_session(&session).is_err());
+        let registry = temp.path().join("workspaces.json");
+        assert!(load_workspaces_at(&registry, &session).is_err());
+        assert!(
+            !registry.exists(),
+            "I-2: read failure cannot publish an empty registry"
+        );
+    }
 }

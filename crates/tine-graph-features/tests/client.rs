@@ -923,6 +923,7 @@ fn old_vs_new_matrix_on_identical_fixtures() {
             .unwrap();
     }
     let new_orphans = assets::orphan_assets(&store)
+        .unwrap()
         .into_iter()
         .map(|a| (a.name, a.size, a.modified))
         .collect::<Vec<_>>();

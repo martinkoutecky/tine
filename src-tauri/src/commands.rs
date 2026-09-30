@@ -9,9 +9,10 @@ use serde::Serialize;
 use std::sync::Arc;
 use tauri::{State, WebviewWindow};
 use tine_core::model::{
-    BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
+    AssetInfo, BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
 };
 use tine_graph_features::journals::{self, JournalFilenameMigration};
+use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 #[cfg(test)]
 use tine_store::{SaveBase, SaveOutcome, SavePagesOutcome};
@@ -112,6 +113,9 @@ fn asset_error(error: StoreError) -> String {
 }
 
 pub(crate) fn sync_conflict_error(error: std::io::Error) -> String {
+    if error.get_ref().is_some_and(|e| e.is::<IncompleteTx>()) {
+        return error.to_string();
+    }
     if error.kind() == std::io::ErrorKind::AlreadyExists {
         "conflict".into()
     } else {
@@ -799,6 +803,19 @@ mod save_wire_tests {
             "{RULE}"
         );
     }
+    #[test]
+    fn fail_read_concord_adapter_keeps_recovery_evidence() {
+        let token = sync_conflict_error(std::io::Error::other(
+            tine_graph_features::IncompleteTransaction::Rollback(
+                "recovery: logseq/.tine-trash/a.md".into(),
+            ),
+        ));
+        assert!(
+            token.contains("rollback-incomplete"),
+            "I-2/I-9: an adapter must retain incomplete transaction evidence"
+        );
+        assert!(token.contains("logseq/.tine-trash/a.md"));
+    }
 }
 
 #[tauri::command]
@@ -1234,9 +1251,7 @@ pub(crate) fn set_journal_title_format(
 
 #[tauri::command]
 pub(crate) fn read_custom_css(state: GraphContext<'_>) -> Result<String, String> {
-    with_config_store(&state, |store| {
-        Ok(tine_graph_features::config::custom_css(store))
-    })
+    with_config_store(&state, |store| Ok(config::custom_css(store)))
 }
 
 #[tauri::command]
@@ -2216,15 +2231,13 @@ mod editor_argv_tests {
 
 /// Orphaned `assets/` files (no block references them) for the cleanup UI.
 #[tauri::command]
-pub(crate) async fn list_orphan_assets(
-    state: GraphContext<'_>,
-) -> Result<Vec<tine_core::model::AssetInfo>, String> {
+pub(crate) async fn list_orphan_assets(state: GraphContext<'_>) -> Result<Vec<AssetInfo>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::assets::orphan_assets(&slot.store)
+        tine_graph_features::assets::orphan_assets(&slot.store).map_err(sync_conflict_error)
     })
     .await
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?
 }
 
 /// Move an orphaned asset to the recoverable trash.

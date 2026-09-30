@@ -24,6 +24,7 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::cell::Cell as Budget;
 use std::collections::{HashMap, HashSet};
 use tine_core::doc::DocBlock;
 use tine_core::lsdoc::ast::Block;
@@ -184,7 +185,8 @@ impl Body {
         match self {
             Body::Table { columns, rows, .. } => rows.len().saturating_mul(columns.len().max(1)),
             Body::Board { columns, .. } => columns.iter().map(|c| c.cards.len()).sum(),
-            Body::Grid { cols, .. } => *cols,
+            // Grid area is charged at emit time, when the source row count is known.
+            Body::Grid { .. } => 0,
             Body::Error { .. } => 0,
         }
     }
@@ -192,11 +194,12 @@ impl Body {
 
 /// The app's sheet answers for one export, keyed by (page name, block path).
 #[derive(Debug, Default)]
-pub struct SheetIndex(HashMap<(String, Vec<u32>), SheetExport>);
+pub struct SheetIndex(HashMap<(String, Vec<u32>), SheetExport>, Budget<usize>);
 
 impl SheetIndex {
     /// Admit the app's answers within the export budget; an over-budget or
-    /// duplicate sheet is dropped (its block keeps the plain outline).
+    /// duplicate sheet is dropped (its block keeps the plain outline). Grid area
+    /// is admitted during rendering against the same remaining export budget.
     pub fn new(exports: Vec<SheetExport>) -> Self {
         let mut total = 0usize;
         let mut map = HashMap::new();
@@ -215,7 +218,17 @@ impl SheetIndex {
             map.entry((export.page.clone(), export.path.clone()))
                 .or_insert(export);
         }
-        Self(map)
+        Self(map, Budget::new(MAX_TOTAL_CELLS - total))
+    }
+
+    /// Charge the exact bounded grid area before rendering any cell. O(1).
+    fn admit_grid(&self, rows: usize, cols: usize) -> bool {
+        let cells = rows.min(MAX_INPUT_ROWS).saturating_mul(cols);
+        if cols > MAX_INPUT_COLS || cells > MAX_SHEET_CELLS || cells > self.1.get() {
+            return false;
+        }
+        self.1.set(self.1.get() - cells);
+        true
     }
 }
 
@@ -728,7 +741,7 @@ fn render_grid(owner: &DocBlock, at: &SheetPath, body: &Body, e: &mut Emit, out:
         return;
     };
     let (mut head, mut rows) = (String::new(), String::new());
-    for (r, row) in owner.children.iter().enumerate() {
+    for (r, row) in owner.children.iter().take(MAX_INPUT_ROWS).enumerate() {
         let is_head = *header && r == 0;
         let tag = if is_head { "th" } else { "td" };
         let dst = if is_head { &mut head } else { &mut rows };
@@ -804,7 +817,17 @@ pub(super) fn emit(owner: &DocBlock, at: &SheetPath, e: &mut Emit, out: &mut Str
         }
         Body::Table { .. } => render_table(Some(owner), &export.body, e, out),
         Body::Board { .. } => render_board(Some(owner), &export.body, e, out),
-        Body::Grid { .. } => render_grid(owner, at, &export.body, e, out),
+        Body::Grid { cols, .. } => {
+            if !sheets.admit_grid(owner.children.len(), *cols) {
+                out.push_str(&note(
+                    "",
+                    "This sheet exceeds the export budget; showing its outline.",
+                    None,
+                ));
+                return false;
+            }
+            render_grid(owner, at, &export.body, e, out);
+        }
     }
     true
 }
@@ -869,4 +892,37 @@ pub(super) fn emit_query(
         Body::Grid { .. } => return false,
     }
     true
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn grid_area_shares_the_export_budget_with_other_sheets() {
+        let table: SheetExport = serde_json::from_value(json!({
+            "page": "Table", "path": [0], "fp": "fp", "view": "table",
+            "columns": [{"label": "Block", "formula": false}],
+            "rows": [{"ix": 0, "title": "row", "bg": null, "cells": []}],
+            "footer": null, "filterError": null, "omitted": 0
+        }))
+        .unwrap();
+        let index = SheetIndex::new(vec![table]);
+        assert!(
+            !index.admit_grid(5_000, 21),
+            "I-22: grid budget charges rows times columns"
+        );
+        for _ in 0..9 {
+            assert!(index.admit_grid(5_001, 20));
+        }
+        assert!(
+            !index.admit_grid(5_000, 20),
+            "I-22: grids share the million-cell budget with tables"
+        );
+        assert!(index.admit_grid(4_999, 20));
+        assert!(
+            !index.admit_grid(1, 256),
+            "I-22: admission reserves grid area before layout"
+        );
+    }
 }

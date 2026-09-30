@@ -44,15 +44,34 @@ fn store_error(error: StoreError) -> io::Error {
     }
 }
 
+/// An incomplete transaction after disk failure. Its fixed wire family and
+/// recovery evidence survive native adapters; ordinary I/O messages need not be
+/// exposed. Inspection/display costs O(1)/O(detail bytes), with no graph work.
+#[derive(Debug)]
+pub enum IncompleteTransaction {
+    Rollback(String),
+    Publication(String),
+}
+impl std::fmt::Display for IncompleteTransaction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (family, detail) = match self {
+            Self::Rollback(detail) => ("rollback-incomplete", detail),
+            Self::Publication(detail) => ("publication-incomplete", detail),
+        };
+        write!(f, "{family}: {detail}")
+    }
+}
+impl std::error::Error for IncompleteTransaction {}
+
 /// Preserve the original transaction refusal and every rollback/publication
 /// failure location so callers can inspect disk before retrying.
 fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
     match outcome {
         TxOutcome::Committed { steps, .. } => Ok(steps),
-        TxOutcome::PublicationIncomplete { files, .. } => Err(io::Error::other(format!(
-            "publication-incomplete: disk write applied but final state could not be published for {}; inspect disk before retrying",
+        TxOutcome::PublicationIncomplete { files, .. } => Err(io::Error::other(IncompleteTransaction::Publication(format!(
+            "disk write applied but final state could not be published for {}; inspect disk before retrying",
             <[&str]>::join(&files.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ", ")
-        ))),
+        )))),
         TxOutcome::NotCommitted { why, rollback, publication_errors, .. } => {
             if !rollback.undo_failed.is_empty() {
                 let failed: Vec<String> = rollback
@@ -81,18 +100,18 @@ fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
                             .collect::<Vec<_>>(), ", ")
                     )
                 };
-                return Err(io::Error::other(format!(
-                    "rollback-incomplete: undo failed for {failed}; recovery: {recovery}{publication}; original: {why:?}; inspect disk before retrying"
-                )));
+                return Err(io::Error::other(IncompleteTransaction::Rollback(format!(
+                    "undo failed for {failed}; recovery: {recovery}{publication}; original: {why:?}; inspect disk before retrying"
+                ))));
             }
             if !publication_errors.is_empty() {
-                return Err(io::Error::other(format!(
-                    "publication-incomplete: transaction refused ({why:?}); final state could not be published for {}; inspect disk before retrying",
+                return Err(io::Error::other(IncompleteTransaction::Publication(format!(
+                    "transaction refused ({why:?}); final state could not be published for {}; inspect disk before retrying",
                     <[String]>::join(&publication_errors
                         .iter()
                         .map(|(file, error)| format!("{} ({:?}: {})", file.as_str(), error.kind, error.message))
                         .collect::<Vec<_>>(), ", ")
-                )));
+                ))));
             }
             Err(match why {
                 Why::Conflict { .. } => {
@@ -120,13 +139,9 @@ fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
 }
 
 fn is_conflict(outcome: &TxOutcome) -> bool {
-    matches!(
-        outcome,
-        TxOutcome::NotCommitted {
-            why: Why::Conflict { .. },
-            ..
-        }
-    )
+    matches!(outcome, TxOutcome::NotCommitted {
+        why: Why::Conflict { .. }, rollback, publication_errors, ..
+    } if rollback.undo_failed.is_empty() && publication_errors.is_empty())
 }
 
 fn retry_on_conflict<T>(
