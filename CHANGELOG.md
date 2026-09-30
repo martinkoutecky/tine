@@ -8,10 +8,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
-### Fixed
-
-- **Unicode regex search agrees across native queries and browser filters** (REG-OG-R1-REGEX-001): matching and highlights use the same bounded Rust engine. `\d`, `\w`, and `\b` recognize Unicode text; inline flags such as `(?i)` work in friendly search, while backreferences, look-around, and programs above 1 MiB are refused.
-
 ### Added
 
 - **Parser-owned structural edits** (og-D1): metadata edits and template/conflict copies share native/wasm block regions, preserving parser-recognized literal contents. Empty code cards retain their body/wrapper separator after typing, code-body typing preserves literal typography, and calendar edits retain glued body text. Published block identities, logbook and repeaters use the block's format.
@@ -106,6 +102,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Unicode regex search agrees across native queries and browser filters** (REG-OG-R1-REGEX-001): matching and highlights use the same bounded Rust engine. `\d`, `\w`, and `\b` recognize Unicode text; inline flags such as `(?i)` work in friendly search, while backreferences, look-around, and programs above 1 MiB are refused.
 - **Percent-escaped Org file links resolve to their page names** (REG-OG-PAGE-FILENAME-001, og-B-TAIL). Reference extraction now uses the native filename codec through wasm, including escaped punctuation and namespace separators.
 - **Saves keep reference counts and names live without full refetches** (og-B-SIG2): native save and watcher signals update changed count targets and refresh names only when their sources change; ordinary text edits avoid both graph-wide reads.
 - **Published queries use their owning page** (og-B-SIG2): current-page queries, template substitutions, and query sheets share the baked publication context; identical queries on different pages keep separate static cache answers.
