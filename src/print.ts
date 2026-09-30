@@ -69,8 +69,10 @@ class PrintQueryLimitError extends Error {
  * Upgrade the core's inert print markup using only code already bundled with
  * Tine. The returned document contains no scripts or third-party resources; it
  * is safe to load in a same-origin iframe whose sandbox does not allow scripts.
- * Renderer-declared query limits reject before rendering: no partial page may
- * enter the print dialog. The core owns admission; this adapter reads its markup.
+ * Cost scales with the supplied markup and math/code spans. Optional renderer
+ * failures leave readable raw markup. Renderer-declared query limits reject
+ * before rendering: no partial page may enter the print dialog. The core owns
+ * admission; this adapter reads its markup.
  */
 export async function preparePrintHtml(html: string): Promise<string> {
   const parsed = new DOMParser().parseFromString(html, "text/html");
@@ -121,7 +123,10 @@ export async function preparePrintHtml(html: string): Promise<string> {
  * unresolved conflict shows an error toast and opens no dialog. Missing pages
  * and backend errors also toast; this function does not reject. It resolves
  * when the frame is attached, before its load/fonts/print dialog complete.
- * Concurrent calls while a frame is being prepared or printed are ignored. */
+ * Renderer-declared query limits show their reason and attach no frame. HTML
+ * preparation scales with the rendered page; concurrent calls are ignored.
+ * A frame releases on afterprint, load/print failure, graph retirement or a
+ * 60-second watchdog; native print exceptions toast and remove it. */
 export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRINT_OPTS): Promise<void> {
   if (printInProgress) return;
   printInProgress = true;

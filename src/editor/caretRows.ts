@@ -58,12 +58,11 @@ function buildMirror(ta: HTMLTextAreaElement): HTMLDivElement {
   return div;
 }
 
-/** Map a viewport point to the nearest caret offset in a textarea. Used only
- *  after a rendered-block mousedown has already swapped in the editor and the
- *  user continues dragging: the original rendered DOM no longer exists, so the
- *  browser cannot extend its native selection. One mirror pass preserves the
- *  same wrapping/font metrics and gives the gesture a raw-editor selection.
- *  Returns null in no-layout environments. */
+/** Return one content-coordinate point for each UTF-16 caret offset, including
+ *  end-of-text, using the textarea's value, computed styles and browser layout.
+ *  The drag caller maps its pointer to these points after swapping in the editor.
+ *  Cost O(value length) Range measurements in one shared style mirror; returns
+ *  null when layout or a required caret rectangle is unavailable. */
 export function textareaCaretPoints(ta: HTMLTextAreaElement): Array<{ x: number; y: number }> | null {
   if (typeof document === "undefined") return null;
   const div = buildMirror(ta);

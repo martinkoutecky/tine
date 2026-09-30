@@ -102,6 +102,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Caret selection follows code editors with wrapping disabled** (og-R3A, master 587bdc431).
+  The shared caret mirror copies shaping and wrapping styles instead of inventing wrapped rows.
+- **Search failures can be retried in place** (og-R3A, master 371241774).
+  The quick switcher offers Retry, and the block-reference picker distinguishes Searching, a failed
+  read with Retry, and an empty answer while preserving the editor text.
+- **PDF export stops at the Print query limit** (og-R3A, master e04b0e7f).
+  A renderer-declared source, nesting or match limit now stops preparation with its reason instead
+  of opening the print dialog over a placeholder.
+- **A local query-table sort identifies itself as Table-only sort** (og-R3A, master a9c8b2596).
+  Its label clears that local order without changing the saved query sort.
+
 - **Percent-escaped Org file links resolve to their page names** (REG-OG-PAGE-FILENAME-001, og-B-TAIL). Reference extraction now uses the native filename codec through wasm, including escaped punctuation and namespace separators.
 - **Saves keep reference counts and names live without full refetches** (og-B-SIG2): native save and watcher signals update changed count targets and refresh names only when their sources change; ordinary text edits avoid both graph-wide reads.
 - **Published queries use their owning page** (og-B-SIG2): current-page queries, template substitutions, and query sheets share the baked publication context; identical queries on different pages keep separate static cache answers.
