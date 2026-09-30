@@ -6,7 +6,7 @@ export const dispositionStatuses = new Set(["update", "current", "not-applicable
 
 export function releaseSection(changelog, version) {
   const escaped = version.replaceAll(".", "\\.");
-  const match = changelog.match(new RegExp(`^## \\[${escaped}\\] - \\d{4}-\\d{2}-\\d{2}\\n([\\s\\S]*?)(?=^## \\[|\\Z)`, "m"));
+  const match = changelog.match(new RegExp(`^## \\[${escaped}\\] - \\d{4}-\\d{2}-\\d{2}\\n([\\s\\S]*?)(?=^## \\[|(?![\\s\\S]))`, "m"));
   return match?.[1] ?? null;
 }
 

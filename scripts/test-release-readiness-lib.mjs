@@ -4,7 +4,33 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { auditableSourceFingerprint } from "./release-readiness-lib.mjs";
+import { auditableSourceFingerprint, changelogItems, releaseSection } from "./release-readiness-lib.mjs";
+
+
+const releaseChangelog = `## [Unreleased]
+
+## [0.7.0-beta.1] - 2026-09-30
+
+### Fixed
+- LAZY groups retain their rows.
+- A later fix remains covered.
+
+## [0.6.5] - 2026-07-22
+
+### Added
+- Previous release item.
+`;
+assert.deepEqual(
+  changelogItems(releaseSection(releaseChangelog, "0.7.0-beta.1")).map((item) => item.text),
+  ["LAZY groups retain their rows.", "A later fix remains covered."],
+  "release sections must retain literal Z and stop only at the next release heading",
+);
+assert.deepEqual(
+  changelogItems(releaseSection(releaseChangelog, "0.6.5")).map((item) => item.text),
+  ["Previous release item."],
+  "the final release section must extend to end of input",
+);
+assert.equal(releaseSection(releaseChangelog, "0.7.0-beta.2"), null);
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tine-release-readiness-test-"));
 

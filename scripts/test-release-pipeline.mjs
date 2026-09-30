@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { BETA_TAG } from "./release-policy.mjs";
 import { assembleCandidate } from "./assemble-release-candidate.mjs";
 import {
   collectGithubPages,
@@ -73,7 +74,7 @@ assert.ok(
 );
 assert.match(
   releaseWorkflow,
-  /lane: linux-x64[\s\S]*?appimage-update-info: "gh-releases-zsync\|martinkoutecky\|tine\|latest\|Tine_\*_amd64\.AppImage\.zsync"[\s\S]*?lane: linux-arm64[\s\S]*?appimage-update-info: "gh-releases-zsync\|martinkoutecky\|tine\|latest\|Tine_\*_aarch64\.AppImage\.zsync"/,
+  new RegExp(String.raw`lane: linux-x64[\s\S]*?appimage-update-info: "gh-releases-zsync\|martinkoutecky\|tine\|${BETA_TAG}\|Tine_\*_amd64\.AppImage\.zsync"[\s\S]*?lane: linux-arm64[\s\S]*?appimage-update-info: "gh-releases-zsync\|martinkoutecky\|tine\|${BETA_TAG}\|Tine_\*_aarch64\.AppImage\.zsync"`),
   "Linux release lanes do not declare the expected AppImage update metadata"
 );
 assert.match(
