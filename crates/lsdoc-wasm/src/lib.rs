@@ -64,6 +64,13 @@ pub fn page_regions_json(raw: &str, is_org: bool) -> String {
     serde_json::to_string(&regions.page_properties().collect::<Vec<_>>()).unwrap()
 }
 
+/// Accepted marker/priority of one block with their byte spans (`block_regions::header_tokens`).
+/// O(block bytes); no regions walk.
+#[wasm_bindgen]
+pub fn header_tokens_json(raw: &str, is_org: bool) -> String {
+    serde_json::to_string(&block_regions::header_tokens(raw, is_org)).unwrap()
+}
+
 /// Markdown page header (leading accepted properties, see `block_regions::page_header`).
 /// O(preamble bytes); no I/O.
 #[wasm_bindgen]

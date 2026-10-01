@@ -73,6 +73,28 @@ export function encode_page_name(name, legacy) {
 }
 
 /**
+ * Accepted marker/priority of one block with their byte spans (`block_regions::header_tokens`).
+ * O(block bytes); no regions walk.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+export function header_tokens_json(raw, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.header_tokens_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
  * @param {string} name
  * @returns {boolean}

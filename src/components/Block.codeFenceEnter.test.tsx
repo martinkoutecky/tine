@@ -69,8 +69,8 @@ describe("Enter inside a code fence", () => {
     }
   });
 
-  it("stays inside a four-backtick fence after a shorter three-backtick run", () => {
-    loadSingle(page("Code", [blk("code-4", "````js\n```\nconst x = 1\n````") ]));
+  it("stays inside a four-backtick fence closed by a four-backtick run", () => {
+    loadSingle(page("Code", [blk("code-4", "````js\nconst x = 1\n````") ]));
     const id = pageByName("Code")!.roots[0];
     startEditing(id, 0);
     const { root, dispose } = mount(() => (
@@ -82,6 +82,25 @@ describe("Enter inside a code fence", () => {
       pressEnter(ta, caret);
       expect(pageByName("Code")!.roots).toEqual([id]);
       expect(doc.byId[id].raw).toContain("const x = 1\n\n````");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("leaves a four-backtick fence at the parser's shorter closing run (OG/mldoc, not CommonMark)", () => {
+    // mldoc closes the container at the inner three-backtick run, so the line after it is
+    // ordinary text and Enter there splits the block (Martin 2026-10-01).
+    loadSingle(page("Code", [blk("code-4", "````js\n```\nconst x = 1\n````") ]));
+    const id = pageByName("Code")!.roots[0];
+    startEditing(id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Code")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
+      const caret = ta.value.indexOf("const x = 1") + "const x = 1".length;
+      pressEnter(ta, caret);
+      expect(pageByName("Code")!.roots.length).toBe(2);
     } finally {
       dispose();
     }

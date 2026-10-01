@@ -15,7 +15,8 @@
 // can't share this literal — `markers.test.ts` guards the two sets against drift).
 //
 // Order is prefix-safe for substring pre-filtering only (WAITING before WAIT).
-import { blockRegions, parserReady } from "./render/parse";
+import { parserReady } from "./render/parse";
+import { header_tokens_json, __tineReinstantiate } from "./render/wasm/lsdoc_wasm.js";
 import { utf8ToUtf16Cursor } from "./render/utf16Cursor";
 
 export const MARKERS = [
@@ -58,23 +59,34 @@ export interface HeaderToken {
   end: number;
 }
 
+let memo: { raw: string; format: "md" | "org"; tokens: { marker: HeaderToken | null; priority: HeaderToken | null } } | undefined;
+
 /**
  * The ONE accepted marker / priority answer for readers and writers (I-12): lsdoc's header facts
- * (`blockRegions(raw).header`, marker and priority spans located inside the accepted header only),
- * converted to UTF-16. Whatever whitespace the parser skips before the marker (U+0085 yes, U+FEFF
+ * (`header_tokens_json`: the regions door's header without the regions walk, marker and priority
+ * spans located inside the accepted header only), converted to UTF-16. Whatever whitespace the parser skips before the marker (U+0085 yes, U+FEFF
  * no), the literal-space rule after it, and `[#X]` placement come from the parser, not from here.
  * `MARKERS` below stays the vocabulary; nothing in the editor re-derives where a marker sits.
  * The substring test is only a cheap pre-filter that cannot reject any parser-accepted marker, so
  * ordinary blocks never reach the parser. Before the parser is ready there is no answer (null).
+ * One-entry memo: a typing step reads the previous raw (hit) and the new one (one light parse).
  */
-export function headerTokens(raw: string): { marker: HeaderToken | null; priority: HeaderToken | null } {
+export function headerTokens(raw: string, format: "md" | "org" = "md"): { marker: HeaderToken | null; priority: HeaderToken | null } {
   const none = { marker: null, priority: null };
   if (!parserReady() || (!MARKERS.some((m) => raw.includes(m)) && !raw.includes("[#"))) return none;
-  const { header } = blockRegions(raw, "md");
-  const toUtf16 = utf8ToUtf16Cursor(raw);
-  const token = (text: string | null, range: [number, number] | null): HeaderToken | null =>
-    text !== null && range ? { text, start: toUtf16(range[0]), end: toUtf16(range[1]) } : null;
-  return { marker: token(header.marker, header.marker_range), priority: token(header.priority, header.priority_range) };
+  if (memo?.raw !== raw || memo.format !== format) {
+    let json: string | undefined;
+    for (let attempt = 0; attempt < 2 && json === undefined; attempt++) {
+      try { json = header_tokens_json(raw, format === "org"); } catch { __tineReinstantiate(); }
+    }
+    if (json === undefined) return none;
+    const header = JSON.parse(json) as { marker: string | null; priority: string | null; marker_range: [number, number] | null; priority_range: [number, number] | null };
+    const toUtf16 = utf8ToUtf16Cursor(raw);
+    const token = (text: string | null, range: [number, number] | null): HeaderToken | null =>
+      text !== null && range ? { text, start: toUtf16(range[0]), end: toUtf16(range[1]) } : null;
+    memo = { raw, format, tokens: { marker: token(header.marker, header.marker_range), priority: token(header.priority, header.priority_range) } };
+  }
+  return memo.tokens;
 }
 
 /** Defines `marker`/`priority` on `block` as accessors that read {@link headerTokens} on first access
@@ -96,14 +108,14 @@ export function lazyHeaderFacets<T extends { raw: string }>(block: T): T {
 }
 
 /** The leading task marker the parser accepted, with its UTF-16 span, or null. */
-export function matchLeadingMarker(raw: string): LeadingMarkerMatch | null {
-  const marker = headerTokens(raw).marker;
+export function matchLeadingMarker(raw: string, format: "md" | "org" = "md"): LeadingMarkerMatch | null {
+  const marker = headerTokens(raw, format).marker;
   return marker ? { marker: marker.text, start: marker.start, end: marker.end } : null;
 }
 
 /** The recognized leading marker's name, or null. */
-export function leadingMarker(raw: string): string | null {
-  return matchLeadingMarker(raw)?.marker ?? null;
+export function leadingMarker(raw: string, format: "md" | "org" = "md"): string | null {
+  return matchLeadingMarker(raw, format)?.marker ?? null;
 }
 
 /** Whether a block with this leading marker renders a task checkbox, and if so

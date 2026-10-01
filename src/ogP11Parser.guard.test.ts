@@ -211,7 +211,7 @@ describe("OG-P12B one answerer for page headers, fences and task markers", () =>
     const format = readFileSync("src/editor/format.ts", "utf8");
     const setPriority = format.slice(format.indexOf("export function setPriority"), format.indexOf("\nexport ", format.indexOf("export function setPriority") + 1));
     expect(priorityOrMarkerRecognizers(setPriority), "I-12: setPriority must edit the parser's priority span").toEqual([]);
-    expect(readFileSync("src/markers.ts", "utf8")).toContain("blockRegions(");
+    expect(readFileSync("src/markers.ts", "utf8")).toContain("header_tokens_json(");
   });
   it("detects planted second fence and marker grammars", () => {
     for (const source of ['const f = /^`{3,}/.exec(line);', 'const f = /^\\s*(`{3,}|~{3,})/.exec(line)', 'const s = line.startsWith("#+BEGIN_SRC");', 'const g = new RegExp("^(`{3,}|~{3,})")', 'const t = line.match("```")']) {

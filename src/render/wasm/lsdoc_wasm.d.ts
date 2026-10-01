@@ -16,6 +16,12 @@ export function edit_block_regions_json(raw: string, is_org: boolean, regions: a
 export function encode_page_name(name: string, legacy: boolean): string;
 
 /**
+ * Accepted marker/priority of one block with their byte spans (`block_regions::header_tokens`).
+ * O(block bytes); no regions walk.
+ */
+export function header_tokens_json(raw: string, is_org: boolean): string;
+
+/**
  * Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
  */
 export function is_query_macro_name(name: string): boolean;
@@ -164,6 +170,7 @@ export interface InitOutput {
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];
     readonly encode_page_name: (a: number, b: number, c: number) => [number, number];
+    readonly header_tokens_json: (a: number, b: number, c: number) => [number, number];
     readonly is_query_macro_name: (a: number, b: number) => number;
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];

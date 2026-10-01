@@ -234,3 +234,19 @@ fn literal_blocks_and_open_fence_follow_the_parser() {
     );
     assert!(parse("\u{feff}TODO x", false).header.marker.is_none());
 }
+
+#[test]
+fn header_tokens_door_equals_the_regions_header() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("fixtures/block-regions.json")).unwrap();
+    for f in fixtures.iter().chain(std::iter::once(
+        &serde_json::json!({"raw": "\u{85}TODO [#A] x", "org": false}),
+    )) {
+        let (raw, org) = (f["raw"].as_str().unwrap(), f["org"].as_bool().unwrap());
+        assert_eq!(
+            tine_core::block_regions::header_tokens(raw, org),
+            parse(raw, org).header,
+            "{raw:?}"
+        );
+    }
+}

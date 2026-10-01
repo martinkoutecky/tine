@@ -359,9 +359,9 @@ pub fn parse_document(raw: &str, is_org: bool) -> BlockRegions {
     mapped_regions(raw, is_org, &parsed.blocks, true)
 }
 
-fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> BlockRegions {
-    let mut result = BlockRegions::default();
-    if let Some(
+/// The accepted header of a block's first node, with token spans when `locate`.
+fn header_of(raw: &str, blocks: &[Block], locate: bool) -> Header {
+    let Some(
         Block::Bullet {
             marker,
             priority,
@@ -375,17 +375,31 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
             ..
         },
     ) = blocks.first()
-    {
-        result.header = Header {
-            marker: marker.clone(),
-            priority: priority.clone(),
-            heading: *size,
-            ..Header::default()
-        };
-        if !document {
-            result.header.locate(raw);
-        }
+    else {
+        return Header::default();
+    };
+    let mut header = Header {
+        marker: marker.clone(),
+        priority: priority.clone(),
+        heading: *size,
+        ..Header::default()
+    };
+    if locate {
+        header.locate(raw);
     }
+    header
+}
+
+/// Only the accepted header (marker, priority, their spans) of one raw block: the same
+/// answer as `parse(raw, is_org).header`, without the regions walk or its JSON. Typing paths
+/// that need just the task marker use this lighter door. O(block bytes).
+pub fn header_tokens(raw: &str, is_org: bool) -> Header {
+    header_of(raw, &crate::render::parse_block(raw, is_org), true)
+}
+
+fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> BlockRegions {
+    let mut result = BlockRegions::default();
+    result.header = header_of(raw, blocks, !document);
     visit_blocks(raw, is_org, blocks, document, &mut result);
     result.literals.sort_by_key(|r| r.0);
     let mut merged: Vec<Range> = Vec::new();
