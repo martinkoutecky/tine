@@ -15,6 +15,8 @@ import {
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -59,28 +61,6 @@ const driver = spawn(
 );
 
 let browser;
-async function openPage(name) {
-  if ((await browser.$$(".nav-page")).length === 0) {
-    const expanded = await browser.execute(() => {
-      const header = [...document.querySelectorAll(".nav-section-header")]
-        .find((element) => element.textContent?.includes("ALL PAGES"));
-      if (!header) return false;
-      header.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-      return true;
-    });
-    if (!expanded) throw new Error("missing ALL PAGES sidebar section");
-  }
-  await browser.waitUntil(async () => (await browser.$$(".nav-page")).length > 0, { timeout: 15_000, timeoutMsg: "page index did not load" });
-  const result = await browser.execute((wanted) => {
-    const row = [...document.querySelectorAll(".nav-page")].find((element) => element.textContent?.trim() === wanted);
-    if (!row) return { ok: false, names: [...document.querySelectorAll(".nav-page")].map((element) => element.textContent?.trim()) };
-    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-    return { ok: true, names: [] };
-  }, name);
-  if (!result.ok) throw new Error(`missing page ${name}: ${JSON.stringify(result.names)}`);
-  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === name, { timeout: 10_000, timeoutMsg: `did not route to ${name}` });
-}
-
 async function activeEditorReceipt(label) {
   const receipt = await browser.execute(() => {
     const active = document.activeElement;
@@ -101,16 +81,6 @@ async function activeEditorReceipt(label) {
   return receipt;
 }
 
-async function waitForFile(text, label) {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const body = fs.readFileSync(PAGE_FILE, "utf8");
-    if (body.includes(text)) return body;
-    await sleep(100);
-  }
-  throw new Error(`${label} did not persist: ${JSON.stringify(fs.readFileSync(PAGE_FILE, "utf8"))}`);
-}
-
 async function target() {
   const button = await browser.$(".page-trailing-block-target");
   await button.waitForExist({ timeout: 5_000 });
@@ -125,8 +95,7 @@ try {
   });
   await ensureMainWindow(browser);
   await browser.$(".page-title").waitForExist({ timeout: 20_000 });
-  await sleep(2500);
-  await openPage(PAGE);
+  await openPageByName(browser, PAGE, { entry: process.platform === "win32" ? "button" : "shortcut" });
 
   // Literal pointer path: WebDriver clicks the target, then ordinary keyboard
   // text enters the mounted textarea immediately.
@@ -134,12 +103,12 @@ try {
   const pointer = await activeEditorReceipt("pointer");
   await (await browser.$(`[data-block-id="${pointer.id}"] textarea`)).addValue("native trailing text");
   await browser.keys("Tab");
-  const persisted = await waitForFile("native trailing text", "pointer text");
+  const persisted = await waitForFileText(PAGE_FILE, (text) => text.includes("native trailing text"), { timeoutMs: 10_000 });
   if ((persisted.match(/native trailing text/g) || []).length !== 1) throw new Error(`pointer text duplicated: ${JSON.stringify(persisted)}`);
 
   await browser.refresh();
   await browser.$(".page-title").waitForExist({ timeout: 15_000 });
-  await openPage(PAGE);
+  await openPageByName(browser, PAGE, { entry: process.platform === "win32" ? "button" : "shortcut" });
   const renderedCopies = await browser.execute(() => (document.body.textContent?.match(/native trailing text/g) || []).length);
   if (renderedCopies !== 1) throw new Error("reloaded page did not render exactly one persisted text copy");
 

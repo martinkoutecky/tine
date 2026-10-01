@@ -105,3 +105,17 @@ test("a session exposing only capture fails at the window boundary with its URL"
   const browser = session([{ handle: "capture", url: CAPTURE }], "capture");
   await assert.rejects(ensureMainWindow(browser), /application window.*capture=http:\/\/tauri.localhost\/capture.html/);
 });
+
+test("Windows smoke page journeys use the shared navigation and persisted-file doors", () => {
+  for (const journey of ["e2e-page-properties.mjs", "e2e-page-trailing-block.mjs"]) {
+    const source = fs.readFileSync(path.join(scriptsDir, journey), "utf8");
+    assert.ok(source.includes('from "./lib/e2e-navigation.mjs"'),
+      `I-9/I-12: ${journey} must use openPageByName from scripts/lib/e2e-navigation.mjs so list readiness repairs reach every journey.`);
+    assert.doesNotMatch(source, /async function (?:openPage|gotoPage)\(/,
+      `I-9/I-12: ${journey} must not fork page navigation; imitate scripts/e2e-pdf-logseq.mjs.`);
+    assert.ok(source.includes('from "./e2e-file-poll.mjs"'),
+      `I-9: ${journey} must observe persistence through waitForFileText, not a journey-local timer or poll.`);
+    assert.doesNotMatch(source, /const deadline = Date\.now\(\)/,
+      `I-9: ${journey} must use the shared waitForFileText observation boundary.`);
+  }
+});

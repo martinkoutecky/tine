@@ -15,6 +15,8 @@ import {
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -88,41 +90,6 @@ const driver = spawn(TD, driverArgs, {
 await sleep(2500);
 let browser;
 
-async function openPage(name) {
-  if ((await browser.$$(".nav-page")).length === 0) {
-    const toggled = await browser.execute(() => {
-      const header = [...document.querySelectorAll(".nav-section-header")]
-        .find((element) => element.textContent?.includes("ALL PAGES"));
-      if (!header) return false;
-      header.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-      return true;
-    });
-    if (!toggled) throw new Error("missing ALL PAGES sidebar section");
-    await browser.waitUntil(async () => (await browser.$$(".nav-page")).length >= 2, {
-      timeout: 5_000,
-      timeoutMsg: "ALL PAGES did not reveal fixture pages",
-    });
-  }
-  const opened = await browser.execute((target) => {
-    const rows = [...document.querySelectorAll(".nav-page")];
-    const row = rows.find((element) => element.textContent?.trim() === target);
-    if (!row) return { ok: false, rows: rows.map((element) => element.textContent?.trim()) };
-    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-    return { ok: true, rows: [] };
-  }, name);
-  if (!opened.ok) {
-    const context = await browser.execute(() => ({
-      title: document.querySelector("h1.page-title")?.textContent?.trim(),
-      body: document.body.textContent?.trim().slice(0, 1_000),
-    }));
-    throw new Error(`missing ALL PAGES result ${name}: ${JSON.stringify({ rows: opened.rows, context })}`);
-  }
-  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === name, {
-    timeout: 10_000,
-    timeoutMsg: `could not open ${name}`,
-  });
-}
-
 async function openPageProperties() {
   await browser.$("[data-page-actions-trigger]").click();
   const item = await browser.$('[data-page-action-id="page-properties"]');
@@ -142,16 +109,6 @@ async function setPagePropertyField(label, value) {
   await input.setValue(value);
   await browser.keys("Enter");
   await browser.$(".page-props-panel").waitForExist({ reverse: true, timeout: 5_000 });
-}
-
-async function waitForFile(file, predicate, label) {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const text = fs.readFileSync(file, "utf8");
-    if (predicate(text)) return text;
-    await sleep(100);
-  }
-  throw new Error(`${label} was not persisted: ${fs.readFileSync(file, "utf8")}`);
 }
 
 async function nativeTab({ shift = false } = {}) {
@@ -356,10 +313,10 @@ async function exerciseNativeFormTabTraversal(aliasValue) {
   if (await activePagePropertyControl() !== "Tags") {
     throw new Error(`native Tab did not leave Aliases for Tags; active=${JSON.stringify(await activePagePropertyControl())}`);
   }
-  await waitForFile(
+  await waitForFileText(
     `${GRAPH}/pages/Property detailed.md`,
     (text) => text.includes(`alias:: ${aliasValue}`),
-    "Aliases blur commit after native Tab",
+    { timeoutMs: 10_000 },
   );
 
   await nativeTab({ shift: true });
@@ -411,15 +368,10 @@ try {
   await ensureMainWindow(browser);
   // This fixture starts on today's journal so it has a durable navigation
   // source for the seeded pages. Journals render blocks (and a journal title),
-  // not a named-page `.page-title`; waiting for the latter prevented openPage()
+  // not a named-page `.page-title`; waiting for the latter prevented navigation
   // from ever exercising the routed page-properties journey on WebView2.
   await browser.$(".ls-block, .journal-title, .page-title").waitForExist({ timeout: 20_000 });
-  // The graph page index warms asynchronously after first paint. Wait for the
-  // complete list before using Ctrl+K, otherwise a cold run offers only the
-  // misleading "Create page" row for an already-existing file.
-  await sleep(3500);
-
-  await openPage("Property detailed");
+  await openPageByName(browser, "Property detailed", { entry: process.platform === "win32" ? "button" : "shortcut" });
   await exerciseNativeFormTabTraversal("Test Record, Alternate");
   const customRow = await browser.execute(() => {
     const rows = [...document.querySelectorAll(".page-properties .prop-row")];
@@ -482,10 +434,10 @@ try {
     if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("missing page-header editor");
     textarea.blur();
   });
-  const detailedAfter = await waitForFile(
+  const detailedAfter = await waitForFileText(
     `${GRAPH}/pages/Property detailed.md`,
     (text) => text.includes("alias:: Test Record, Alternate") && text.includes("ai-prompt:: [[Prompt-Edited]]"),
-    "detailed page property edit",
+    { timeoutMs: 10_000 },
   );
   const detailedExpected = detailed
     .replace("alias:: Test Record", "alias:: Test Record, Alternate")
@@ -494,12 +446,12 @@ try {
     throw new Error(`detailed page changed outside the edited line\nEXPECTED:\n${detailedExpected}\nACTUAL:\n${detailedAfter}`);
   }
 
-  await openPage("Property simple");
+  await openPageByName(browser, "Property simple", { entry: process.platform === "win32" ? "button" : "shortcut" });
   await setPagePropertyField("Icon", "★");
-  const simpleAfter = await waitForFile(
+  const simpleAfter = await waitForFileText(
     `${GRAPH}/pages/Property simple.md`,
     (text) => text.includes("icon:: ★"),
-    "simple page property edit",
+    { timeoutMs: 10_000 },
   );
   const simpleExpected = "icon:: ★\r\nA:: XX\r\nB:: XX\r\nC:: XX\r\n";
   if (simpleAfter !== simpleExpected) {
@@ -512,14 +464,14 @@ try {
   if (!lines.includes("A:: XX") || !lines.includes("B:: XX") || !lines.includes("C:: XX") || !lines.includes("icon:: ★")) {
     throw new Error(`simple page properties were lost or merged: ${JSON.stringify(lines)}`);
   }
-  await openPage("Property detailed");
+  await openPageByName(browser, "Property detailed", { entry: process.platform === "win32" ? "button" : "shortcut" });
   const reopenedCustom = await browser.execute(() => [...document.querySelectorAll(".page-properties .prop-row")]
     .find((row) => row.querySelector(".prop-key")?.textContent?.trim() === "ai-prompt")
     ?.querySelector(".prop-value")?.textContent?.trim() ?? null);
   if (!reopenedCustom?.includes("Prompt-Edited")) {
     throw new Error(`reopened page did not parse the edited custom header: ${JSON.stringify(reopenedCustom)}`);
   }
-  await openPage("Property deletion");
+  await openPageByName(browser, "Property deletion", { entry: process.platform === "win32" ? "button" : "shortcut" });
   const deleteTarget = await browser.execute(() => {
     const rows = [...document.querySelectorAll(".page-properties .prop-row")];
     const row = rows.find((element) => element.querySelector(".prop-key")?.textContent?.trim() === "custom/key");
@@ -539,15 +491,15 @@ try {
     if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("missing page-header editor");
     textarea.blur();
   });
-  const replacementAfter = await waitForFile(
+  const replacementAfter = await waitForFileText(
     `${GRAPH}/pages/Property deletion.md`,
     (text) => text.startsWith("alias:: Delete Me Later\n\n"),
-    "Ctrl+A page-header replacement",
+    { timeoutMs: 10_000 },
   );
   if (replacementAfter !== "alias:: Delete Me Later\n\n- Body survives\n") {
     throw new Error(`Ctrl+A page-header replacement changed body bytes: ${JSON.stringify(replacementAfter)}`);
   }
-  await openPage("Property deletion");
+  await openPageByName(browser, "Property deletion", { entry: process.platform === "win32" ? "button" : "shortcut" });
   const replacedTarget = await browser.execute(() => {
     const row = [...document.querySelectorAll(".page-aliases, .page-properties .prop-row")]
       .find((element) => element.textContent?.includes("Delete Me Later"));
@@ -559,15 +511,15 @@ try {
   headerEditor = await browser.$(".page-blocks textarea.block-editor");
   await headerEditor.waitForExist({ timeout: 5_000 });
   await deleteHeaderLikeUser(headerEditor);
-  const deletionAfter = await waitForFile(
+  const deletionAfter = await waitForFileText(
     `${GRAPH}/pages/Property deletion.md`,
     (text) => !text.includes("alias::") && !text.includes("custom/key::"),
-    "deliberate page-header deletion",
+    { timeoutMs: 10_000 },
   );
   if (deletionAfter !== "- Body survives\n") {
     throw new Error(`deleting the page header changed body bytes: ${JSON.stringify(deletionAfter)}`);
   }
-  await openPage("Property deletion");
+  await openPageByName(browser, "Property deletion", { entry: process.platform === "win32" ? "button" : "shortcut" });
   if ((await browser.$$(".page-properties .prop-row")).length !== 0) {
     throw new Error("deleted page-header properties reappeared after real-app reopen");
   }
