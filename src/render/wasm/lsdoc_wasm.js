@@ -231,6 +231,27 @@ export function nested_reference_names(content) {
 }
 
 /**
+ * Markdown page header (leading accepted properties, see `block_regions::page_header`).
+ * O(preamble bytes); no I/O.
+ * @param {string} raw
+ * @returns {string}
+ */
+export function page_header_json(raw) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_header_json(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Whole-preamble property ownership, with parser-owned literals excluded.
  * O(preamble bytes); no block wrapper or I/O.
  * @param {string} raw

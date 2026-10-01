@@ -49,6 +49,12 @@ export function mime_from_path(path: string): string;
 export function nested_reference_names(content: string): string[];
 
 /**
+ * Markdown page header (leading accepted properties, see `block_regions::page_header`).
+ * O(preamble bytes); no I/O.
+ */
+export function page_header_json(raw: string): string;
+
+/**
  * Whole-preamble property ownership, with parser-owned literals excluded.
  * O(preamble bytes); no block wrapper or I/O.
  */
@@ -166,6 +172,7 @@ export interface InitOutput {
     readonly lsdoc_tag: () => [number, number];
     readonly mime_from_path: (a: number, b: number) => [number, number];
     readonly nested_reference_names: (a: number, b: number) => [number, number];
+    readonly page_header_json: (a: number, b: number) => [number, number];
     readonly page_regions_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];

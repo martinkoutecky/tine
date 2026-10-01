@@ -112,6 +112,128 @@ pub struct Header {
     pub marker: Option<String>,
     pub priority: Option<String>,
     pub heading: Option<u32>,
+    /// Source bytes of the accepted marker / `[#X]` priority token (I-12: one
+    /// answer for readers and writers). Located inside the accepted header only.
+    pub marker_range: Option<Range>,
+    pub priority_range: Option<Range>,
+}
+
+impl Header {
+    /// lsdoc accepted `marker`/`priority` as the first tokens of the block, so
+    /// the first match of each accepted text IS that token: only skipped
+    /// whitespace (and a Markdown heading prefix) can precede it. O(block bytes).
+    fn locate(&mut self, raw: &str) {
+        let mut from = 0;
+        if let Some(marker) = &self.marker {
+            if let Some(at) = raw.find(marker.as_str()) {
+                from = at + marker.len();
+                self.marker_range = Some(Range(at, from));
+            }
+        }
+        if let Some(priority) = &self.priority {
+            self.priority_range = raw[from..].match_indices("[#").find_map(|(at, _)| {
+                let rest = &raw[from + at + 2..];
+                let end = rest.find(']')?;
+                rest[..end]
+                    .eq_ignore_ascii_case(priority)
+                    .then(|| Range(from + at, from + at + 2 + end + 1))
+            });
+        }
+    }
+}
+
+/// A block-level literal container lsdoc accepted (fence, `#+BEGIN_SRC`,
+/// example, export, comment, `$$` math, LaTeX environment, raw HTML, custom).
+/// `range` is the whole container including any trailing blank lines lsdoc
+/// folded in; `open_end` ends its first (opener) line and `close_start` begins
+/// its last non-blank (closer) line. Line arithmetic only, never fence syntax.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LiteralBlock {
+    pub kind: &'static str,
+    pub lang: String,
+    pub range: Range,
+    pub open_end: usize,
+    pub close_start: usize,
+    /// End of the opener's delimiter token (the backtick/tilde run, or
+    /// `#+BEGIN_X`); the info string / language follows it.
+    pub delim_end: usize,
+}
+
+/// The editor-state policy for a fence still being typed: lsdoc forms no
+/// container without a closer, but Tine's editor treats the first fence-looking
+/// line outside every accepted literal as an open fence running to the end of
+/// the text. It is the only fence-shaped recognition outside the parser and is
+/// computed only here (guarded by `src/ogP11Parser.guard.test.ts`, I-12).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct OpenFence {
+    pub lang: String,
+    pub start: usize,
+    pub open_end: usize,
+    pub delim_end: usize,
+}
+
+fn opener_delim_end(opener: &str) -> usize {
+    let t = opener.trim_start();
+    let lead = opener.len() - t.len();
+    let c = t.as_bytes().first().copied();
+    lead + if matches!(c, Some(b'`' | b'~')) {
+        t.bytes().take_while(|&b| Some(b) == c).count()
+    } else {
+        t.find(char::is_whitespace).unwrap_or(t.len())
+    }
+}
+
+impl LiteralBlock {
+    fn new(raw: &str, kind: &'static str, lang: &str, range: Range) -> Self {
+        let text = range.slice(raw);
+        let open_end = range.0 + text.find('\n').map_or(text.len(), |at| at + 1);
+        let body = text.trim_end();
+        let close_start = range.0 + body.rfind('\n').map_or(0, |at| at + 1);
+        let delim_end = range.0 + opener_delim_end(&raw[range.0..open_end]);
+        LiteralBlock {
+            kind,
+            lang: lang.to_owned(),
+            range,
+            open_end,
+            close_start,
+            delim_end,
+        }
+    }
+}
+
+fn open_fence(raw: &str, literals: &[Range]) -> Option<OpenFence> {
+    if !(raw.contains("```") || raw.contains("~~~") || raw.contains("#+")) {
+        return None;
+    }
+    let (mut at, mut cursor) = (0, 0);
+    for line in raw.split_inclusive('\n') {
+        let start = at;
+        at += line.len();
+        while literals.get(cursor).is_some_and(|r| r.1 <= start) {
+            cursor += 1;
+        }
+        if literals.get(cursor).is_some_and(|r| r.contains(start)) {
+            continue;
+        }
+        let t = line.trim_start();
+        let opens = t.starts_with("```")
+            || t.starts_with("~~~")
+            || ["#+begin_src", "#+begin_example"]
+                .iter()
+                .any(|n| t.get(..n.len()).is_some_and(|h| h.eq_ignore_ascii_case(n)));
+        if opens {
+            let delim_end = start + opener_delim_end(line);
+            let fence_start = start + (line.len() - t.len());
+            let info = raw[delim_end..start + line.trim_end().len()].trim();
+            return Some(OpenFence {
+                lang: info.split_whitespace().next().unwrap_or("").to_owned(),
+                start: fence_start,
+                open_end: start + line.len(),
+                delim_end,
+            });
+        }
+    }
+    None
 }
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Property {
@@ -151,6 +273,10 @@ pub struct BlockRegions {
     pub drawers: Vec<Drawer>,
     pub id: Option<Property>,
     pub quarantined: bool,
+    /// Block-level literal containers in source order (see [`LiteralBlock`]).
+    pub literal_blocks: Vec<LiteralBlock>,
+    /// A fence being typed, when no accepted container closes it.
+    pub open_fence: Option<OpenFence>,
 }
 
 // The only conversion from prepared single-block coordinates to raw coordinates.
@@ -254,7 +380,11 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
             marker: marker.clone(),
             priority: priority.clone(),
             heading: *size,
+            ..Header::default()
         };
+        if !document {
+            result.header.locate(raw);
+        }
     }
     visit_blocks(raw, is_org, blocks, document, &mut result);
     result.literals.sort_by_key(|r| r.0);
@@ -267,6 +397,10 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
         }
     }
     result.literals = merged;
+    result.literal_blocks.sort_by_key(|b| b.range.0);
+    if !document {
+        result.open_fence = open_fence(raw, &result.literals);
+    }
     // Nested content under a literal Custom belongs to that container, even if
     // lsdoc emitted child Properties or timestamps there.
     exclude_literals(&mut result.properties, &result.literals, |p| p.line.0);
@@ -309,11 +443,20 @@ fn visit_blocks(raw: &str, org: bool, blocks: &[Block], document: bool, out: &mu
             | Block::RawHtml { span, .. } => {
                 if let Some(r) = raw_range(raw, span, document) {
                     out.literals.push(r);
+                    let (kind, lang) = match block {
+                        Block::Src { lang, .. } => ("src", lang.as_str()),
+                        Block::Example { .. } => ("example", ""),
+                        _ => ("other", ""),
+                    };
+                    out.literal_blocks
+                        .push(LiteralBlock::new(raw, kind, lang, r));
                 }
             }
             Block::Custom { span, children, .. } => {
                 if let Some(r) = raw_range(raw, span, document) {
                     out.literals.push(r);
+                    out.literal_blocks
+                        .push(LiteralBlock::new(raw, "other", "", r));
                 }
                 visit_blocks(raw, org, children, document, out);
             }
@@ -482,6 +625,76 @@ fn visit_inline(raw: &str, inline: &[Inline], document: bool, out: &mut BlockReg
             _ => {}
         }
     }
+}
+
+/// One Markdown page-header property: the parser's accepted key and value, its
+/// 0-based line index, and the byte range of its line without the newline.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HeaderEntry {
+    pub key: String,
+    pub value: String,
+    pub line: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Leading Markdown page-header properties (see [`page_header`]).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct PageHeader {
+    /// Byte end of the last header line, newline excluded; 0 with no entries.
+    pub end: usize,
+    pub entries: Vec<HeaderEntry>,
+}
+
+/// The page header of a Markdown page preamble or first root block: the parser's
+/// accepted properties (`parse_document`; literals and no-space `key::value`
+/// excluded) that form the leading run of the text, joined only by empty lines.
+/// Named Tine policies over that answer: the run starts at byte 0, every line
+/// starts at column zero, and a key may not start with `#` (a `#tag::` line is
+/// prose that merely parses). A parser-refused input has no header. O(bytes).
+pub fn page_header(raw: &str) -> PageHeader {
+    let regions = parse_document(raw, false);
+    let mut header = PageHeader::default();
+    if regions.quarantined {
+        return header;
+    }
+    let (mut at, mut line_no) = (0, 0);
+    for p in regions.properties.iter().filter(|p| p.primary) {
+        let gap = &raw[at..p.line.0.max(at)];
+        let eligible = p.line.0 >= at
+            && gap.bytes().all(|b| b == b'\n' || b == b'\r')
+            && p.key_range.0 == p.line.0
+            && !p.key.starts_with('#')
+            && (!header.entries.is_empty() || p.line.0 == 0);
+        if !eligible {
+            break;
+        }
+        line_no += gap.matches('\n').count();
+        let end = p.line.1 - usize::from(raw.as_bytes()[p.line.1 - 1] == b'\n');
+        header.entries.push(HeaderEntry {
+            key: p.key.clone(),
+            value: p.value.clone(),
+            line: line_no,
+            start: p.line.0,
+            end,
+        });
+        header.end = end;
+        at = p.line.1;
+        line_no += 1;
+    }
+    header
+}
+
+/// The page header of `raw` when the text is nothing but header properties (no
+/// leading or trailing newline, at least one entry). Single answerer (I-12) for
+/// "is this first block a page-properties block": a header line is a parser
+/// property, so `key::value` (no space) and literal-fence content are prose.
+pub fn page_header_only(raw: &str) -> Option<PageHeader> {
+    if raw.is_empty() || raw.starts_with('\n') || raw.ends_with('\n') {
+        return None;
+    }
+    let header = page_header(raw);
+    (!header.entries.is_empty() && header.end == raw.len()).then_some(header)
 }
 
 #[derive(Debug, Deserialize)]
