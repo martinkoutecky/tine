@@ -2,7 +2,7 @@ import { type BlockDto, type Format, type PageDto, type RefGroup } from "../type
 import { Node, FeedPage, DocState, doc } from "./model";
 import { seedFacets, facetsFromDto } from "../render/facets";
 import { trimBlockTrailingSpace } from "../editor/format";
-import { isPageHeaderPropertiesOnly, parsePageHeaderPropertyLine } from "../editor/properties";
+import { isPageHeaderPropertiesOnly, pageHeaderKeys } from "../editor/properties";
 import { journalTitle, appNow } from "../journal";
 import { rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
@@ -199,10 +199,7 @@ function isPromotablePageHeaderRoot(node: Node): boolean {
   return (
     node.children.length === 0 &&
     isPageHeaderPropertiesOnly(canonicalRaw) &&
-    !canonicalRaw.split("\n").some((line) => {
-      const key = parsePageHeaderPropertyLine(line)?.key.toLowerCase();
-      return key !== undefined && BLOCK_SCOPED_PROPERTY_KEYS.includes(key);
-    })
+    !pageHeaderKeys(canonicalRaw).some((key) => BLOCK_SCOPED_PROPERTY_KEYS.includes(key))
   );
 }
 

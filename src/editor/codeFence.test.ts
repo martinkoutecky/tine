@@ -87,21 +87,26 @@ describe("codeBodyProjection", () => {
     expect(p!.open + p!.body + p!.close).toBe(text);
   });
 
-  it("a shorter fence run is body content, not the closer (CommonMark length rule)", () => {
-    const text = "````js\n```\nconst x = 1\n````";
-    const p = codeBodyProjection(text, "md");
-    expect(p).toEqual({ open: "````js\n", body: "```\nconst x = 1", close: "\n````", lang: "js" });
-    expect(p!.open + p!.body + p!.close).toBe(text);
-    // And the same text without its closing four-run is INCOMPLETE (typing it
-    // by hand must not make the shorter inner run the closer).
+  it("the parser's fence close ignores run length (OG/mldoc, not CommonMark)", () => {
+    // mldoc closes a fence at the FIRST fence-looking run of either length, so
+    // the four-run opener is closed by the inner three-run and the remaining
+    // `const x = 1` / four-run lines are outside the block. The wrapper is
+    // therefore mixed content and keeps raw editing (I-12, Martin 2026-10-01).
+    expect(codeBodyProjection("````js\n```\nconst x = 1\n````", "md")).toBeNull();
     expect(codeBodyProjection("````js\n```\nconst x = 1", "md")).toBeNull();
+    // The parser-literal wrapper itself still projects exactly. The language is
+    // the parser's own answer: mldoc reads it after the first three backticks,
+    // so a four-run opener yields "`js" (OG behaviour, noted in the receipt).
+    const text = "````js\nconst x = 1\n```";
+    const p = codeBodyProjection(text, "md");
+    expect(p).toEqual({ open: "````js\n", body: "const x = 1", close: "\n```", lang: "`js" });
+    expect(p!.open + p!.body + p!.close).toBe(text);
   });
 
-  it("a fence run with an info string is body content, never a closer", () => {
-    const text = "```\n```x\n```";
-    const p = codeBodyProjection(text, "md");
-    expect(p).toEqual({ open: "```\n", body: "```x", close: "\n```", lang: "" });
-    expect(p!.open + p!.body + p!.close).toBe(text);
+  it("a fence run with an info string closes the parser's block (OG/mldoc)", () => {
+    // mldoc ends the block at the `` ```x`` run, leaving the final run as a
+    // second (unclosed) fence: mixed content, raw editing.
+    expect(codeBodyProjection("```\n```x\n```", "md")).toBeNull();
   });
 
   it("projects org #+begin_src and #+begin_example with exact case preserved", () => {

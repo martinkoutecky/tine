@@ -9,7 +9,7 @@ import { mockQueryCommands } from "./mockQuery";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, DraftRecord, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
-import { leadingMarker } from "./markers";
+import { lazyHeaderFacets, leadingMarker } from "./markers";
 import { fuzzyScore } from "./editor/autocomplete";
 import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
 import { searchFold } from "./editor/searchFold";
@@ -51,12 +51,6 @@ function blockRefIds(raw: string): string[] {
   const rest = raw.replace(labeled, "");
   while ((m = bare.exec(rest))) push(m[1]);
   return out;
-}
-// Marker recognition comes from the one shared recognizer (imported above), so
-// the demo graph facet synthesis agrees with the real (lsdoc) one.
-function priorityOf(raw: string): string | undefined {
-  const m = /(?:^|\s)\[#([ABC])\]/.exec(raw.split("\n", 1)[0] ?? "");
-  return m?.[1];
 }
 function planningOf(raw: string, tag: "SCHEDULED" | "DEADLINE"): string | undefined {
   const m = new RegExp(`^${tag}:\\s*<([^>]+)>`, "m").exec(raw);
@@ -126,18 +120,17 @@ function b(raw: string, children: BlockDto[] = [], collapsed = false, properties
   // Mirror the real backend: a block carrying an `id::` property uses that uuid as
   // its store id (so block refs resolve to it and the count badge keys correctly).
   const m = raw.match(/^\s*id::\s*(.+)$/m);
-  return {
+  // Marker/priority are the parser's answer, read lazily: the wasm parser is not ready while PAGES builds at import.
+  return lazyHeaderFacets({
     id: m ? m[1].trim() : nid(),
     raw,
     collapsed,
     children,
-    marker: leadingMarker(raw) ?? undefined,
-    priority: priorityOf(raw),
     scheduled: planningOf(raw, "SCHEDULED"),
     deadline: planningOf(raw, "DEADLINE"),
     tags: tagsOf(raw),
     properties: properties ?? propertyLines(raw),
-  };
+  });
 }
 
 function mockPagePath(p: PageDto): string {
@@ -517,7 +510,11 @@ function decodeB64(b64: string): Uint8Array {
 }
 
 function cloneBlock(block: BlockDto): BlockDto {
-  return { ...block, children: block.children.map(cloneBlock) };
+  // Descriptors, not values: keeps the lazy marker/priority accessors lazy.
+  return Object.defineProperties({} as BlockDto, {
+    ...Object.getOwnPropertyDescriptors(block),
+    children: { value: block.children.map(cloneBlock), enumerable: true, writable: true, configurable: true },
+  });
 }
 
 function clonePage(page: PageDto): PageDto {

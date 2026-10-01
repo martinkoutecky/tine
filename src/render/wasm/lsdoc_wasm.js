@@ -73,6 +73,28 @@ export function encode_page_name(name, legacy) {
 }
 
 /**
+ * Accepted marker/priority of one block with their byte spans (`block_regions::header_tokens`).
+ * O(block bytes); no regions walk.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+export function header_tokens_json(raw, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.header_tokens_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
  * @param {string} name
  * @returns {boolean}
@@ -228,6 +250,27 @@ export function nested_reference_names(content) {
     var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
+}
+
+/**
+ * Markdown page header (leading accepted properties, see `block_regions::page_header`).
+ * O(preamble bytes); no I/O.
+ * @param {string} raw
+ * @returns {string}
+ */
+export function page_header_json(raw) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_header_json(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
 }
 
 /**

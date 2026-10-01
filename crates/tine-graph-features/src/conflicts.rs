@@ -274,15 +274,61 @@ pub fn sync_conflict_diff(
     Ok(Some(diff))
 }
 
-/// A pre-block property line as (lowercase key, value): Markdown `key:: value`,
-/// Org `#+KEY: value`.
-fn pre_property(line: &str, fmt: Format) -> Option<(String, &str)> {
-    if fmt == Format::Md {
-        return doc::parse_property_line(line).map(|(k, v)| (k.to_ascii_lowercase(), v));
+/// What the parser says about one pre-block text (I-12, D06): its accepted
+/// property lines and its literal containers. Markdown properties are the
+/// parser's primary `key:: value` lines; Org properties are `#+KEY: value`
+/// directives. Content inside a literal container (fence, `#+BEGIN_SRC`, quote,
+/// ...) is never a property. Parsed once per text. A parser-refused text
+/// (quarantined) exposes nothing, so every line is plain text and kept as such.
+struct PreRegions {
+    /// Byte offset of a property's line start -> (lowercase key, trimmed value).
+    props: HashMap<usize, (String, String)>,
+    /// Literal containers as (first line start, end) byte ranges.
+    containers: Vec<(usize, usize)>,
+}
+
+fn pre_regions(text: &str, fmt: Format) -> PreRegions {
+    let org = fmt == Format::Org;
+    let regions = tine_core::block_regions::parse_document(text, org);
+    let mut found = PreRegions {
+        props: HashMap::new(),
+        containers: Vec::new(),
+    };
+    if regions.quarantined {
+        return found;
     }
-    let (key, value) = line.trim_start().strip_prefix("#+")?.split_once(':')?;
-    (!key.is_empty() && !key.contains(char::is_whitespace))
-        .then(|| (key.to_ascii_lowercase(), value.trim()))
+    for p in &regions.properties {
+        if if org { p.directive } else { p.primary } {
+            found
+                .props
+                .insert(p.line.0, (p.key.to_ascii_lowercase(), p.value.clone()));
+        }
+    }
+    for block in &regions.literal_blocks {
+        let start = text[..block.range.0].rfind('\n').map_or(0, |at| at + 1);
+        found
+            .containers
+            .push((start, block.range.1.min(text.len())));
+    }
+    found
+}
+
+impl PreRegions {
+    /// The container whose lines include the line `start..end`, if any.
+    fn container_of(&self, start: usize, end: usize) -> Option<usize> {
+        self.containers
+            .iter()
+            .position(|&(from, to)| start < to && end > from)
+    }
+    fn property(&self, line_start: usize) -> Option<&(String, String)> {
+        self.props.get(&line_start)
+    }
+}
+
+/// A container compared as one unit: line endings and trailing blank lines are
+/// not content.
+fn container_text(text: &str, (from, to): (usize, usize)) -> String {
+    text[from..to].replace('\r', "").trim_end().to_owned()
 }
 
 /// `a, b, c` without the join method (the client path guard scans for it).
@@ -310,31 +356,65 @@ fn union_pre(mine: Option<&str>, theirs: Option<&str>, fmt: Format) -> io::Resul
     let Some(theirs) = theirs else {
         return Ok((!mine.is_empty()).then(|| mine.to_owned()));
     };
-    let mine_lines: Vec<&str> = mine.split_inclusive('\n').collect();
+    let mine_regions = pre_regions(mine, fmt);
+    let their_regions = pre_regions(theirs, fmt);
+    let mine_lines: Vec<(usize, &str)> = {
+        let mut at = 0;
+        mine.split_inclusive('\n')
+            .map(|line| {
+                at += line.len();
+                (at - line.len(), line)
+            })
+            .collect()
+    };
     let body = |l: &str| l.trim_end_matches(['\r', '\n']).to_owned();
-    let mine_props: HashMap<String, (usize, &str)> = mine_lines
+    let mut mine_props: HashMap<String, (usize, &str)> = HashMap::new();
+    let mut mine_text: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (i, &(start, line)) in mine_lines.iter().enumerate() {
+        if mine_regions
+            .container_of(start, start + line.len())
+            .is_some()
+        {
+            continue;
+        }
+        mine_text.insert(body(line).trim().to_owned());
+        if let Some((key, value)) = mine_regions.property(start) {
+            mine_props.insert(key.clone(), (i, value.as_str()));
+        }
+    }
+    let mine_containers: std::collections::HashSet<String> = mine_regions
+        .containers
         .iter()
-        .enumerate()
-        .filter_map(|(i, l)| {
-            let l = l.trim_end_matches(['\r', '\n']);
-            pre_property(l, fmt).map(|(k, v)| (k, (i, v)))
-        })
-        .collect();
-    let mine_text: std::collections::HashSet<String> = mine_lines
-        .iter()
-        .map(|l| body(l).trim().to_owned())
+        .map(|&c| container_text(mine, c))
         .collect();
     let mut extra_props = Vec::new();
     let mut extra_text = Vec::new();
     let mut members: HashMap<usize, Vec<String>> = HashMap::new();
     let mut clashes = Vec::new();
-    for line in theirs.lines() {
+    let mut seen_containers = std::collections::HashSet::new();
+    let mut at = 0;
+    for raw_line in theirs.split_inclusive('\n') {
+        let (start, end) = (at, at + raw_line.len());
+        at = end;
+        let line = raw_line.trim_end_matches(['\r', '\n']);
+        // A literal container is one atomic unit: identical to one of mine's it
+        // is dropped, otherwise it is kept whole after mine's text, never
+        // line-merged with mine's lines or properties.
+        if let Some(c) = their_regions.container_of(start, end) {
+            if seen_containers.insert(c) {
+                let unit = container_text(theirs, their_regions.containers[c]);
+                if !mine_containers.contains(&unit) {
+                    extra_text.push(unit);
+                }
+            }
+            continue;
+        }
         let trimmed = line.trim();
         if trimmed.is_empty() || mine_text.contains(trimmed) {
             continue;
         }
-        match pre_property(line, fmt) {
-            Some((key, value)) => match mine_props.get(&key) {
+        match their_regions.property(start) {
+            Some((key, value)) => match mine_props.get(key) {
                 None => extra_props.push(line.to_owned()),
                 Some((_, mine_value)) if mine_value.trim() == value.trim() => {}
                 Some((at, mine_value)) if matches!(key.as_str(), "tags" | "alias" | "aliases") => {
@@ -355,7 +435,7 @@ fn union_pre(mine: Option<&str>, theirs: Option<&str>, fmt: Format) -> io::Resul
                         .collect();
                     members.entry(*at).or_default().extend(new);
                 }
-                Some(_) => clashes.push(key),
+                Some(_) => clashes.push(key.clone()),
             },
             None if fmt == Format::Org && trimmed.starts_with(':') => {
                 clashes.push("properties drawer".to_owned())
@@ -377,7 +457,7 @@ fn union_pre(mine: Option<&str>, theirs: Option<&str>, fmt: Format) -> io::Resul
     }
     let lead = mine_lines
         .iter()
-        .take_while(|l| pre_property(l.trim_end_matches(['\r', '\n']), fmt).is_some())
+        .take_while(|&&(start, _)| mine_regions.property(start).is_some())
         .count();
     let mut out = String::with_capacity(mine.len() + theirs.len());
     let push_line = |out: &mut String, line: &str| {
@@ -386,7 +466,7 @@ fn union_pre(mine: Option<&str>, theirs: Option<&str>, fmt: Format) -> io::Resul
         }
         out.push_str(line);
     };
-    for (i, line) in mine_lines.iter().enumerate() {
+    for (i, &(_, line)) in mine_lines.iter().enumerate() {
         if i == lead {
             for prop in &extra_props {
                 push_line(&mut out, prop);

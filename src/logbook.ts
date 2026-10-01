@@ -33,8 +33,8 @@ export function applyMarkerTransition(
     return logbook_apply_marker_transition(
       nextRaw,
       format === "org",
-      leadingMarker(oldRaw) ?? "",
-      leadingMarker(nextRaw) ?? "",
+      leadingMarker(oldRaw, format) ?? "",
+      leadingMarker(nextRaw, format) ?? "",
       enabled,
       withSeconds,
     );

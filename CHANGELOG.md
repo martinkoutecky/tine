@@ -12,8 +12,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Settings → About: **Check for updates automatically** can disable startup update checks and notifications on this device; manual checks remain available (GH #618).
 
+### Changed
+
+- REG-OG-P12B-PAGE-HEADER: A Markdown page header is now exactly the leading properties the parser accepts, so a no-space `key::value` line is page text rather than a property, in the editor, page promotion on save and alias lookup alike.
+- REG-OG-P12B-FENCES: Fence-aware editing (property and language autocomplete, code-body editing, calc blocks, hidden metadata) follows Logseq's parser instead of CommonMark: any fence run closes a fence, whatever its length.
+
 ### Fixed
 
+- REG-OG-P12B-CONFLICT-PREAMBLE: Merging a conflict copy's page preamble no longer treats property-looking lines inside code blocks as page properties, and keeps differing code blocks whole instead of merging them line by line.
+- REG-OG-P12B-MARKERS: Task markers and priorities share one parser-derived span for reading and writing, and the demo graph reads them once the parser is ready.
 - Property readers and sheet field rename now use accepted parser properties and source spans, including Unicode keys and literal-code protection (REG-OG-P12-PROPERTY-SPANS).
 - Page aliases and titles ignore metadata-looking source-block contents (REG-OG-P12-PREAMBLE-LITERALS).
 - Page-reference candidates share native target classification, exclude unlabeled local assets, and include nested links; Org filename candidates retain their existing selection policy (REG-OG-P12-REFERENCE-TARGETS).

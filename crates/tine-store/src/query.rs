@@ -347,21 +347,11 @@ fn collect_bounded(
     }
 }
 
-/// True when every non-empty line of a block's raw text is a `key:: value`
-/// property line — i.e. the block carries only properties. OG treats such a
-/// FIRST block as the page-properties (pre-)block. Empty (no property) → false.
+/// True when a block's raw text is only page-header properties (OG treats such
+/// a FIRST block as the page-properties (pre-)block). One answerer: the parser's
+/// page header (`tine_core::block_regions::page_header_only`, I-12).
 fn is_properties_only(raw: &str) -> bool {
-    let mut saw_prop = false;
-    for line in raw.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        if tine_core::doc::parse_property_line(line).is_none() {
-            return false;
-        }
-        saw_prop = true;
-    }
-    saw_prop
+    tine_core::block_regions::page_header_only(raw.trim_end_matches(['\n', '\r'])).is_some()
 }
 
 /// Map of `alias::` → canonical page name (original case). The alias key is

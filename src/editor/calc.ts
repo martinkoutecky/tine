@@ -10,6 +10,8 @@
 // The upstream source is /aux/koutecky/logseq/og at 6e7afa8eb; precise semantic
 // citations appear alongside each grammar/evaluation transcription below.
 
+import { codeFences, type LiteralContainer } from "./fences";
+
 export interface CalcLine {
   input: string;
   /** Formatted result, or null for blank/comment/assignment-display/error. */
@@ -17,19 +19,21 @@ export interface CalcLine {
   error?: boolean;
 }
 
-/** If `text` is a ```calc fenced block, return its inner source (the lines
- *  between the fences); otherwise null. Tolerates a missing closing fence (the
- *  block is mid-edit) by taking everything after the opener — so the editor's
- *  live preview keeps working while you type. */
+function calcFence(text: string): LiteralContainer | null {
+  const fence = codeFences(text)[0];
+  return fence && fence.lang === "calc" && !text.slice(0, fence.start).includes("\n") && text.slice(0, fence.start).trim() === "" ? fence : null;
+}
+
+/** If `text` is a ```calc fenced block (the parser's source container with language `calc`, on the
+ *  text's first line), return its inner source (the lines between the fences); otherwise null.
+ *  Tolerates a missing closing fence (the block is mid-edit) by taking everything after the
+ *  opener — so the editor's live preview keeps working while you type. */
 export function calcSource(text: string): string | null {
-  const lines = text.split("\n");
-  if ((lines[0]?.trim().toLowerCase() ?? "") !== "```calc") return null;
-  const inner: string[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    if (lines[i].trim() === "```") break;
-    inner.push(lines[i]);
-  }
-  return inner.join("\n");
+  const fence = calcFence(text);
+  if (!fence) return null;
+  if (!fence.closed) return text.slice(Math.min(fence.openEnd, text.length));
+  const body = text.slice(fence.openEnd, fence.closeStart);
+  return body.endsWith("\n") ? body.slice(0, -1) : body;
 }
 
 /** Wrap calc expression lines back into a ```calc fenced block — the inverse of
@@ -47,9 +51,9 @@ export function wrapCalc(inner: string): string {
 export function serializeCalcExitCommit(text: string, previousRaw?: string): string {
   const source = calcSource(text);
   const suffixAfterFence = (raw?: string): string[] => {
-    const lines = raw?.split("\n") ?? [];
-    const close = lines.findIndex((line, i) => i > 0 && line.trim() === "```");
-    return close >= 0 ? lines.slice(close + 1) : [];
+    const fence = raw === undefined ? undefined : codeFences(raw)[0];
+    const closerEnd = fence?.closed ? raw!.indexOf("\n", fence.closeStart) : -1;
+    return closerEnd === -1 ? [] : raw!.slice(closerEnd + 1).split("\n");
   };
   const suffix = source !== null ? suffixAfterFence(text) : [];
   if (suffix.length === 0) suffix.push(...suffixAfterFence(previousRaw));

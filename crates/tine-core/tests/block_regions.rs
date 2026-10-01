@@ -176,3 +176,77 @@ fn glued_planning_edits_detach_and_preserve_body_suffixes() {
         }
     }
 }
+
+#[test]
+fn page_header_is_the_parsers_leading_property_run() {
+    use tine_core::block_regions::{page_header, page_header_only};
+    let keys = |raw: &str| -> Vec<String> {
+        page_header(raw)
+            .entries
+            .into_iter()
+            .map(|e| e.key)
+            .collect()
+    };
+    assert_eq!(keys("title:: A\n\nalias:: B\nprose"), ["title", "alias"]);
+    // I-12 (Martin 2026-10-01): not properties to the parser, so not header lines.
+    assert!(keys("title::A").is_empty());
+    assert!(keys(" title:: A").is_empty());
+    assert!(keys("#tag:: x").is_empty());
+    assert!(keys("prose\ntitle:: A").is_empty());
+    assert_eq!(keys("title:: A\n```\nx:: y\n```\nalias:: B"), ["title"]);
+    let h = page_header("klíč:: é\r\nb:: c");
+    assert_eq!(h.entries.len(), 2);
+    assert_eq!(h.end, "klíč:: é\r\nb:: c".len());
+    assert!(page_header_only("a:: 1\n\nb:: 2").is_some());
+    assert!(page_header_only("a:: 1\n").is_none());
+    assert!(page_header_only("a:: 1\nprose").is_none());
+    assert!(page_header_only("a:: 1\nb::2").is_none());
+}
+
+#[test]
+fn literal_blocks_and_open_fence_follow_the_parser() {
+    // Any fence run closes any opener; trailing blank lines are in the literal.
+    let raw = "````text\nalpha\n```\nafter";
+    let r = parse(raw, false);
+    assert_eq!(r.literal_blocks.len(), 1);
+    assert_eq!(
+        r.literal_blocks[0].range.slice(raw),
+        "````text\nalpha\n```\n"
+    );
+    assert!(r.open_fence.is_none());
+    // `- ```js` opens nothing; the final lone run is the editor-state open fence.
+    let raw = "- ```js\nx\n```";
+    let r = parse(raw, false);
+    assert!(r.literal_blocks.is_empty());
+    assert_eq!(
+        r.open_fence.as_ref().unwrap().start,
+        raw.rfind("```").unwrap()
+    );
+    // Marker/priority spans are located inside the accepted header only.
+    let r = parse("\u{85}TODO [#A] x", false);
+    assert_eq!(
+        r.header.marker_range.unwrap().slice("\u{85}TODO [#A] x"),
+        "TODO"
+    );
+    assert_eq!(
+        r.header.priority_range.unwrap().slice("\u{85}TODO [#A] x"),
+        "[#A]"
+    );
+    assert!(parse("\u{feff}TODO x", false).header.marker.is_none());
+}
+
+#[test]
+fn header_tokens_door_equals_the_regions_header() {
+    let fixtures: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("fixtures/block-regions.json")).unwrap();
+    for f in fixtures.iter().chain(std::iter::once(
+        &serde_json::json!({"raw": "\u{85}TODO [#A] x", "org": false}),
+    )) {
+        let (raw, org) = (f["raw"].as_str().unwrap(), f["org"].as_bool().unwrap());
+        assert_eq!(
+            tine_core::block_regions::header_tokens(raw, org),
+            parse(raw, org).header,
+            "{raw:?}"
+        );
+    }
+}

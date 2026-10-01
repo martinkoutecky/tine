@@ -2,7 +2,8 @@
 // authoritative (round-trip); these are computed projections.
 
 import type { Format } from "./ast";
-import { MARKERS, matchLeadingMarker } from "../markers";
+import { MARKERS, headerTokens } from "../markers";
+import { codeFences } from "../editor/fences";
 import { acceptedPropertyLine, pagePropertyEntries } from "../editor/properties";
 import { split_linkable_property as splitLinkableProperty } from "./wasm/lsdoc_wasm.js";
 export { splitLinkableProperty };
@@ -112,21 +113,22 @@ const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*<[^>]+>\s*$/;
 export function visibleBody(raw: string): string[] {
   // Recognize against the whole raw, as the source block does. Looking only at
   // line one mistakes `TODO\nbody` for a task and misses leading blank lines.
-  const markerMatch = matchLeadingMarker(raw);
-  const body = markerMatch ? raw.slice(markerMatch.end).replace(/^ /, "") : raw;
+  const { marker, priority } = headerTokens(raw);
+  const from = marker ? marker.end + (raw[marker.end] === " " ? 1 : 0) : 0;
+  let body = raw.slice(from);
+  // The accepted priority token (only whitespace can precede it) is facet, not body text.
+  if (priority && priority.start >= from) {
+    body = body.slice(0, priority.start - from) + body.slice(priority.end - from).replace(/^\s/, "");
+  }
   const lines: string[] = [];
   let inDrawer = false;
-  let fence: string | null = null;
+  // Lines of a code container (the parser's, src/editor/fences.ts) are content, never metadata.
+  const fences = codeFences(body);
+  let pos = 0;
   for (const line of body.split("\n")) {
-    const fm = /^\s*(`{3,}|~{3,})/.exec(line);
-    if (fm) {
-      const ch = fm[1][0];
-      if (fence === null) fence = ch;
-      else if (ch === fence) fence = null;
-      lines.push(line);
-      continue;
-    }
-    if (fence !== null) {
+    const lineStart = pos;
+    pos += line.length + 1;
+    if (fences.some((f) => f.start <= lineStart + line.length && lineStart < f.end)) {
       lines.push(line);
       continue;
     }
@@ -145,10 +147,8 @@ export function visibleBody(raw: string): string[] {
     lines.push(line);
   }
   if (lines.length === 0) lines.push("");
-  // Strip the remaining priority / heading prefix from the first line.
+  // Strip the heading prefix from the first line.
   let first = lines[0];
-  const pm = /^\[#[ABC]\]\s?/.exec(first);
-  if (pm) first = first.slice(pm[0].length);
   const hm = /^(#{1,6}) /.exec(first);
   if (hm) first = first.slice(hm[1].length + 1);
   lines[0] = first;

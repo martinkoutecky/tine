@@ -3,7 +3,7 @@
 // the raw text + selection and returns the new text + selection, so Block.tsx
 // just applies the result to the textarea. Unit-testable.
 
-import { matchLeadingMarker } from "../markers";
+import { headerTokens } from "../markers";
 
 export interface Edit {
   text: string;
@@ -218,17 +218,23 @@ export function killWordBackward(text: string, caret: number): Edit {
 }
 
 // --- priority (sets/replaces `[#A]` after a leading task marker) ---
-// The shared leading-marker recognizer (src/markers.ts) is the marker anchor.
+// The marker and priority spans are the parser's accepted header tokens (src/markers.ts
+// `headerTokens`, I-12): this writer only splices at them.
 
-/** Set (or replace) the `[#X]` priority on a block's first line, placed after
- *  any task marker. Mirrors OG's add-or-update-priority. */
-export function setPriority(firstLine: string, level: "A" | "B" | "C"): string {
-  const m = matchLeadingMarker(firstLine);
-  const head = m ? firstLine.slice(0, m.end) : ""; // "TODO" (plus any lead ws)
-  let rest = firstLine.slice(m?.end ?? 0).replace(/^\s+/, ""); // body after marker
-  rest = rest.replace(/^\[#[ABC]\]\s*/, ""); // drop an existing priority token
+/** Set (`level`), replace, or remove (`null`) the `[#X]` priority on the first line of `raw`,
+ *  placed after any task marker. Mirrors OG's add-or-update-priority. Text after the first line
+ *  is returned unchanged. */
+export function setPriority(raw: string, level: "A" | "B" | "C" | null): string {
+  const lineEnd = raw.indexOf("\n") === -1 ? raw.length : raw.indexOf("\n");
+  const { marker, priority } = headerTokens(raw);
+  const onLine = (t: { end: number } | null) => (t && t.end <= lineEnd ? t : null);
+  const m = onLine(marker);
+  const p = onLine(priority);
+  const head = m ? raw.slice(0, m.end) : ""; // "TODO" (plus any lead ws)
+  const rest = raw.slice(p ? p.end : (m?.end ?? 0), lineEnd).replace(/^\s+/, ""); // body after the tokens
   const prefix = head ? `${head} ` : "";
-  return rest ? `${prefix}[#${level}] ${rest}` : `${prefix}[#${level}]`;
+  const title = level ? (rest ? `${prefix}[#${level}] ${rest}` : `${prefix}[#${level}]`) : `${prefix}${rest}`;
+  return title + raw.slice(lineEnd);
 }
 
 // A trimmed last line that is JUST an (empty) in-block list-item prefix — a bare
