@@ -477,11 +477,7 @@ fn rename_page_after_inventory(
                     "target page identity already exists elsewhere in the graph",
                 ));
             }
-            let ext = if id.as_str().ends_with(".org") {
-                "org"
-            } else {
-                "md"
-            };
+            let ext = Format::from_path(id.as_str().as_ref()).ext();
             let rel = format!(
                 "{}.{}",
                 tine_core::model::encode_page_name(&new_name, store.config().file_name_format),
@@ -566,7 +562,7 @@ fn rename_page_after_inventory(
             // master page_rename.rs fails the same way (audit R15-09).
             let (content, rev) = read_text(store, &file)
                 .map_err(|e| error(e.kind(), &format!("{}: {e}", file.as_str())))?;
-            let org = id.as_str().ends_with(".org");
+            let org = Format::from_path(id.as_str().as_ref()) == Format::Org;
             let updated = refs::rename_tags_property_multi(
                 &refs::rename_refs_multi(&content, &lookup, org, store.config().file_name_format),
                 &lookup,
@@ -795,11 +791,7 @@ pub fn rename_file_to_page(store: &Store, src_rel: &str, new_name: &str) -> io::
         return Err(error(io::ErrorKind::InvalidInput, "empty page name"));
     }
     let src = text_file(store, src_rel)?;
-    let ext = if src.as_str().ends_with(".org") {
-        "org"
-    } else {
-        "md"
-    };
+    let ext = Format::from_path(src.as_str().as_ref()).ext();
     let rel = format!(
         "{}.{}",
         tine_core::model::encode_page_name(name, store.config().file_name_format),
@@ -899,8 +891,8 @@ fn merged_survivor(
     renames: Option<&HashMap<String, String>>,
     held_renames: Option<&HashMap<String, String>>,
 ) -> io::Result<Survivor> {
-    let org = src.as_str().ends_with(".org");
-    if org != dst.as_str().ends_with(".org") {
+    let org = Format::from_path(src.as_str().as_ref()) == Format::Org;
+    if org != (Format::from_path(dst.as_str().as_ref()) == Format::Org) {
         return Err(error(
             io::ErrorKind::InvalidInput,
             "files are in different formats",

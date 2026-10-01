@@ -1,6 +1,7 @@
+import { removeSubtree } from "./subtree";
 import { blockRegions } from "../../render/parse";
 import { blockWritable, pageWritable, rawWithInheritedOrderListType, isOrdered, rawWithOrderListType, rawWithCollapsed, writeCollapsed } from "./properties";
-import { doc, docHasBlockIdentity, formatForBlock, setDoc, freshId, formatForPage, pageByName } from "../model";
+import { doc, docHasBlockIdentity, formatForBlock, setDoc, freshId, type DocState, formatForPage, pageByName } from "../model";
 
 /** Reveal a search result without creating an edit, undo entry, or save. */
 export function revealNode(id: string): void {
@@ -33,6 +34,26 @@ function outlineRaw(raw: string, format: "md" | "org", incoming: Set<string>): s
     return splitProps(raw, (key) => key.toLowerCase() === "id", format).visible;
   incoming.add(id);
   return raw;
+}
+
+/** Build imported nodes inside the existing transaction. The first root may
+ * reuse an empty host's identity/hidden props; all other nodes get fresh ids. */
+function createOutline(
+  state: DocState, nodes: readonly OutlineNode[], parent: string | null,
+  page: string, inheritFrom: string, incoming: Set<string>,
+  reuse?: { id: string; hidden: string },
+): string[] {
+  const format = formatForPage(page);
+  const create = (outline: OutlineNode, parent: string | null, host?: typeof reuse): string => {
+    const id = host?.id ?? freshId();
+    const children = outline.children.map((child) => create(child, id));
+    const imported = outlineRaw(outline.raw, format, incoming);
+    const source = host ? joinProps(imported, host.hidden, format) : imported;
+    const raw = rawWithInheritedOrderListType(source, format, inheritFrom);
+    state.byId[id] = { id, raw, collapsed: false, parent, page, children };
+    return id;
+  };
+  return nodes.map((outline, index) => create(outline, parent, index === 0 ? reuse : undefined));
 }
 
 export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean }) {
@@ -128,24 +149,10 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
   const pageName = parent.page;
   let lastId: string | null = null;
   pushUndo("paste-children", [pageName]);
-  const format = formatForPage(pageName);
   const incoming = new Set<string>();
   setDoc(
     produce((s) => {
-      const create = (n: OutlineNode, par: string): string => {
-        const id = freshId();
-        const childIds = n.children.map((c) => create(c, id));
-        s.byId[id] = {
-          id,
-          raw: rawWithInheritedOrderListType(outlineRaw(n.raw, format, incoming), format, parentId),
-          collapsed: false,
-          parent: par,
-          page: pageName,
-          children: childIds,
-        };
-        return id;
-      };
-      const created = nodes.map((n) => create(n, parentId));
+      const created = createOutline(s, nodes, parentId, pageName, parentId, incoming);
       s.byId[parentId].children.push(...created);
       lastId = created[created.length - 1] ?? null;
     })
@@ -461,25 +468,11 @@ function insertOutlineBeside(
   pushUndo(undoLabel, [doc.byId[anchorId].page]);
   const parent = doc.byId[anchorId].parent;
   const pageName = doc.byId[anchorId].page;
-  const format = formatForPage(pageName);
   const incoming = new Set<string>();
   let focusId = anchorId;
   setDoc(
     produce((s) => {
-      const create = (n: OutlineNode, par: string | null): string => {
-        const id = freshId();
-        const childIds = n.children.map((c) => create(c, id));
-        s.byId[id] = {
-          id,
-          raw: rawWithInheritedOrderListType(outlineRaw(n.raw, format, incoming), format, anchorId),
-          collapsed: false,
-          parent: par,
-          page: pageName,
-          children: childIds,
-        };
-        return id;
-      };
-      const created = nodes.map((n) => create(n, parent));
+      const created = createOutline(s, nodes, parent, pageName, anchorId, incoming);
       const sibs =
         parent === null
           ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
@@ -507,18 +500,8 @@ export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): 
   pushUndo("paste-replace-empty", [current.page]);
   let lastId = id;
   setDoc(produce((state) => {
-    const create = (outline: OutlineNode, parent: string | null, reuseId?: string): string => {
-      const created = reuseId ?? freshId();
-      const children = outline.children.map((child) => create(child, created));
-      const imported = outlineRaw(outline.raw, format, incoming);
-      const sourceRaw = reuseId ? joinProps(imported, split.hidden, format) : imported;
-      const raw = rawWithInheritedOrderListType(sourceRaw, format, id);
-      state.byId[created] = { id: created, raw, collapsed: false, parent, page: current.page, children };
-      return created;
-    };
-    // Reuse the host for the first imported root. Besides avoiding a ghost blank,
-    // this preserves its hidden id/properties and therefore inbound references.
-    const created = nodes.map((node, index) => create(node, current.parent, index === 0 ? id : undefined));
+    // Reuse the first host's identity and hidden props, preserving inbound refs.
+    const created = createOutline(state, nodes, current.parent, current.page, id, incoming, { id, hidden: split.hidden });
     const siblings = current.parent === null
       ? state.pages[state.pages.findIndex((page) => page.name === current.page)].roots
       : state.byId[current.parent].children;
@@ -553,11 +536,7 @@ function deleteBlockInternal(id: string) {
           : s.byId[node.parent!].children;
       const ix = arr.indexOf(id);
       if (ix >= 0) arr.splice(ix, 1);
-      const rm = (bid: string) => {
-        for (const c of s.byId[bid].children) rm(c);
-        delete s.byId[bid];
-      };
-      rm(id);
+      removeSubtree(s, id);
     })
   );
   removeDeletedBlocksFromSidebar(removedSidebarIds);

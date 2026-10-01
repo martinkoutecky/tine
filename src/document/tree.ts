@@ -18,6 +18,21 @@ export function indexInSiblings(id: string): number {
   return rootsOf(id).indexOf(id);
 }
 
+/** Page-local preorder without DTO copies. Scopes omit missing nodes and can
+ * override collapse; ordinary page/feed order retains missing root ids. O(visible nodes). */
+function visitVisible(ids: readonly string[], visit: (id: string) => void, scope?: OutlineScope): void {
+  for (const id of ids) {
+    const node = doc.byId[id];
+    if (!node && scope) continue;
+    visit(id);
+    if (!node) continue;
+    const collapsed = scope?.collapsed?.(id, node.collapsed) ?? node.collapsed;
+    if ((!collapsed || id === scope?.forceExpandedRoot) && node.children.length && !blockIsOpaqueSheetView(id)) {
+      visitVisible(node.children, visit, scope);
+    }
+  }
+}
+
 /** Visible blocks in the MAIN view, in display order (drives editor arrow-nav),
  *  plus an id→index map. Memoized: it's recomputed only when the feed or a
  *  collapsed/children state changes (NOT on plain typing), and shared across the
@@ -27,15 +42,8 @@ export const visibleData = createRoot(() =>
   createMemo(() => {
     const order: string[] = [];
     const index = new Map<string, number>();
-    const walk = (ids: readonly string[]) => {
-      for (const id of ids) {
-        index.set(id, order.length);
-        order.push(id);
-        const n = doc.byId[id];
-        if (n && !n.collapsed && n.children.length && !blockIsOpaqueSheetView(id)) walk(n.children);
-      }
-    };
-    for (const p of mainPages()) walk(p.roots);
+    const append = (id: string) => { index.set(id, order.length); order.push(id); };
+    for (const p of mainPages()) visitVisible(p.roots, append);
     return { order, index };
   })
 );
@@ -51,14 +59,7 @@ export function pageVisibleOrder(pageName: string): string[] {
   const order: string[] = [];
   const page = doc.pages.find((p) => p.name === pageName);
   if (!page) return order;
-  const walk = (ids: string[]) => {
-    for (const id of ids) {
-      order.push(id);
-      const n = doc.byId[id];
-      if (n && !n.collapsed && n.children.length && !blockIsOpaqueSheetView(id)) walk(n.children);
-    }
-  };
-  walk(page.roots);
+  visitVisible(page.roots, (id) => order.push(id));
   return order;
 }
 
@@ -81,17 +82,7 @@ export interface OutlineScope {
 
 export function scopedVisibleOrder(scope: OutlineScope): string[] {
   const order: string[] = [];
-  const walk = (ids: readonly string[]) => {
-    for (const id of ids) {
-      const node = doc.byId[id];
-      if (!node) continue;
-      order.push(id);
-      const collapsed = scope.collapsed?.(id, node.collapsed) ?? node.collapsed;
-      const expanded = !collapsed || id === scope.forceExpandedRoot;
-      if (expanded && node.children.length && !blockIsOpaqueSheetView(id)) walk(node.children);
-    }
-  };
-  walk(scope.roots);
+  visitVisible(scope.roots, (id) => order.push(id), scope);
   return order;
 }
 

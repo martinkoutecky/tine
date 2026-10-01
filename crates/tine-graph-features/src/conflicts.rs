@@ -44,11 +44,7 @@ pub(crate) fn read_text(store: &Store, id: &FileId) -> io::Result<(String, FileR
 }
 
 pub(crate) fn format(id: &FileId) -> Format {
-    if id.as_str().ends_with(".org") {
-        Format::Org
-    } else {
-        Format::Md
-    }
+    Format::from_path(id.as_str().as_ref())
 }
 
 pub(crate) fn parse(raw: &str, fmt: Format) -> Document {

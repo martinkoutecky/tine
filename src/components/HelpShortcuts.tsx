@@ -1,6 +1,5 @@
 import { For, Show, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
-import { backend } from "../backend";
-import { reportUiFailure } from "../uiFailure";
+import { openExternal } from "./primitives";
 import { closeHelpPopup, helpPopupOpen, openSettings, openWelcome, toggleHelpPopup } from "../ui";
 import { graphMeta } from "../graphSession";
 import { BUILTIN_KEYS, type BuiltinKeyDef, type ShortcutScope } from "../keybindings";
@@ -48,9 +47,7 @@ export const HELP_ITEMS: HelpItem[] = [
   },
 ];
 
-function openExternal(url: string) {
-  void backend().openExternal(url).catch((error) => reportUiFailure("external-link", error));
-}
+
 
 export function HelpPopup(): JSX.Element {
   let root: HTMLDivElement | undefined;

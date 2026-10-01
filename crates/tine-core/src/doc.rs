@@ -775,7 +775,7 @@ impl SerializeOpts {
     }
     fn from_outline(s: &str, lines: &[&str], headers: &[outline::Header]) -> Self {
         Self {
-            trailing_newlines: s.bytes().rev().take_while(|b| *b == b'\n').count(),
+            trailing_newlines: crate::org::trailing_newlines(s),
             blank_after_props: match headers.first() {
                 Some(header) if header.line > 0 => lines[header.line - 1].trim().is_empty(),
                 _ => true,

@@ -1,3 +1,4 @@
+import { stepMonth } from "./primitives";
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openPage } from "../router";
 import { journalTitle, appNow } from "../journal";
@@ -52,10 +53,7 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
     for (let d = 1; d <= days; d++) cells.push(d);
     return cells;
   });
-  const step = (delta: number) => {
-    const total = view().y * 12 + view().m + delta;
-    setView({ y: Math.floor(total / 12), m: ((total % 12) + 12) % 12 });
-  };
+  const step = (delta: number) => setView(stepMonth(view(), delta));
   const pick = (d: number) => {
     openPage(journalTitle(new Date(view().y, view().m, d)), "journal");
     setOpen(false);

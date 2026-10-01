@@ -1,6 +1,7 @@
 //! Shared admission for feature clients that parse stored text.
 
 use std::io;
+use tine_core::model::Format;
 use tine_store::{FileId, FileRev, Store};
 
 pub(crate) fn read(store: &Store, file: &FileId) -> io::Result<(String, FileRev)> {
@@ -14,7 +15,7 @@ pub(crate) fn read(store: &Store, file: &FileId) -> io::Result<(String, FileRev)
         )
     })?;
     if !tine_store::parse_input_depth_within_limit(&text)
-        || (file.as_str().to_ascii_lowercase().ends_with(".org")
+        || (Format::from_path(file.as_str().as_ref()) == Format::Org
             && !tine_core::org::headline_levels_within_limit(&text, 128))
     {
         return Err(io::Error::new(

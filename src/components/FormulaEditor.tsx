@@ -872,21 +872,24 @@ function TransformPick(props: {
   );
 }
 
-function RawCommitInput(props: { source: string; onCommit: (ast: Ast) => void }): JSX.Element {
-  const [value, setValue] = createSignal(props.source);
+/** Parse/commit state shared by the full raw input and inline face. No extra effects. */
+function createAstCommit(source: () => string, onCommit: (ast: Ast) => void) {
+  const [value, setValue] = createSignal(source());
   const [error, setError] = createSignal<string | null>(null);
   createEffect(() => {
-    setValue(props.source);
+    setValue(source());
     setError(null);
   });
   const commit = () => {
     const ast = parseAstText(value());
-    if (!ast) {
-      setError("Invalid expression");
-      return;
-    }
-    props.onCommit(ast);
+    if (!ast) { setError("Invalid expression"); return; }
+    onCommit(ast);
   };
+  return { value, setValue, error, commit };
+}
+
+function RawCommitInput(props: { source: string; onCommit: (ast: Ast) => void }): JSX.Element {
+  const { value, setValue, error, commit } = createAstCommit(() => props.source, (ast) => props.onCommit(ast));
   return (
     <div class="formula-builder-raw-commit">
       <input
@@ -910,20 +913,7 @@ function RawCommitInput(props: { source: string; onCommit: (ast: Ast) => void })
 }
 
 function AstRawExpressionFace(props: { source: string; onAst: (ast: Ast) => void }): JSX.Element {
-  const [value, setValue] = createSignal(props.source);
-  const [error, setError] = createSignal<string | null>(null);
-  createEffect(() => {
-    setValue(props.source);
-    setError(null);
-  });
-  const commit = () => {
-    const ast = parseAstText(value());
-    if (!ast) {
-      setError("Invalid expression");
-      return;
-    }
-    props.onAst(ast);
-  };
+  const { value, setValue, error, commit } = createAstCommit(() => props.source, (ast) => props.onAst(ast));
   return (
     <span class="formula-builder-raw-face qb-chip-raw">
       <input

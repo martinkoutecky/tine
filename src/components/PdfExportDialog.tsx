@@ -1,3 +1,4 @@
+import { optionsUpdater } from "./primitives";
 import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { pdfExportPage, closePdfExport } from "../ui";
 import { exportPagePdf, DEFAULT_PRINT_OPTS } from "../print";
@@ -56,11 +57,7 @@ function Dialog(props: { name: string }): JSX.Element {
     onCleanup(unregister);
   });
   const [opts, setOpts] = createSignal<PrintOpts>(loadOpts());
-  const update = (patch: Partial<PrintOpts>) => {
-    const next = { ...opts(), ...patch };
-    setOpts(next);
-    saveOpts(next);
-  };
+  const update = optionsUpdater(opts, setOpts, saveOpts);
 
   const doExport = () => {
     const name = props.name;

@@ -15,6 +15,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tine_core::doc;
+use tine_core::org::trailing_newlines;
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -129,10 +130,6 @@ fn indent_style(content: &str) -> Option<char> {
     } else {
         Some(' ')
     }
-}
-
-fn trailing_newlines(content: &str) -> usize {
-    content.bytes().rev().take_while(|b| *b == b'\n').count()
 }
 
 /// Classify the *kinds* of difference without revealing content.

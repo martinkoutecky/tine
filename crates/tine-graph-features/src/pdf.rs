@@ -150,11 +150,7 @@ fn page_id(store: &Store, name: &str) -> io::Result<(PageId, Option<(String, Fil
 }
 
 fn format(id: &PageId) -> Format {
-    if id.as_str().ends_with(".org") {
-        Format::Org
-    } else {
-        Format::Md
-    }
+    Format::from_path(id.as_str().as_ref())
 }
 
 fn parse_doc(raw: &str, fmt: Format) -> tine_core::doc::Document {

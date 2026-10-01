@@ -1,3 +1,4 @@
+import { removeSubtree } from "./subtree";
 import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf, existingSubtreeFits } from "../tree";
 import { doc, setDoc, bumpCollapseEpochs, type DocState } from "../model";
 import { createSignal, createRoot, createMemo } from "solid-js";
@@ -408,11 +409,7 @@ export function deleteSelection() {
             : s.byId[node.parent].children;
         const ix = arr.indexOf(id);
         if (ix >= 0) arr.splice(ix, 1);
-        const rm = (bid: string) => {
-          for (const c of s.byId[bid].children) rm(c);
-          delete s.byId[bid];
-        };
-        rm(id);
+        removeSubtree(s, id);
       }
     })
   );

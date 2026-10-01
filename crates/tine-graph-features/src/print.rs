@@ -2,6 +2,7 @@
 
 use std::io;
 use tine_core::doc;
+use tine_core::model::Format;
 use tine_store::Store;
 
 use crate::render::{self, RenderGraph, SheetExport, SheetIndex};
@@ -54,7 +55,7 @@ pub fn page_print_html_with_sheets(
     store.page(&page.id).map_err(crate::store_error)?;
     // The old print path parses Org source as Markdown. Keep that behavior in
     // the print client, within the shared parse input byte limit.
-    let org_document = if page.id.as_str().to_ascii_lowercase().ends_with(".org") {
+    let org_document = if Format::from_path(page.id.as_str().as_ref()) == Format::Org {
         let file = tine_store::FileId::from(page.id.as_str().to_owned());
         let (source, _) = crate::parsed_text::read(store, &file)?;
         Some(doc::parse(&source))

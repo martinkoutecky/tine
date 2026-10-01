@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- Uppercase `.ORG` files retain Org format in conflict diffs, PDF annotations and page rename/merge (REG-OG-DUPAL2-F12).
 - Preserve code literals during text, HTML and OPML export cleanup; recognize standalone embeds from parsed content; preserve early journal years and advance timed repeaters (REG-OG-DUPD2-D15–D19).
 
 ### Added

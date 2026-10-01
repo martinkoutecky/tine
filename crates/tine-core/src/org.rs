@@ -36,8 +36,9 @@ pub fn headline_levels_within_limit(content: &str, max_level: usize) -> bool {
 
 /// Number of trailing `\n` bytes (the document-level trailing-newline run),
 /// stripped on parse and reproduced on serialize so block bodies stay free of
-/// trailing-blank artifacts.
-fn trailing_newlines(s: &str) -> usize {
+/// trailing-blank artifacts. Counts LF bytes only (a terminal CR interrupts the run),
+/// O(trailing LF bytes), allocation-free and infallible.
+pub fn trailing_newlines(s: &str) -> usize {
     s.bytes().rev().take_while(|&b| b == b'\n').count()
 }
 

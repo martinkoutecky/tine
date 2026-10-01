@@ -37,7 +37,7 @@ import {
 } from "../sheet/fields";
 import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
 import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
-import { boardCardChips, boardGroupField, boardRowTitle, buildBoardColumns, type BoardColumn as BoardColumnOf } from "../sheet/boardColumns";
+import { formulaReferenceName, boardCardChips, boardGroupField, boardRowTitle, buildBoardColumns, type BoardColumn as BoardColumnOf } from "../sheet/boardColumns";
 import { fieldIdsForRecords, recordFacets } from "../sheet/tableFields";
 import { createFormulaFilterMemo, formulaRowKey, liveFormulaRowNode, type FormulaEvalRow } from "../sheet/formulaEval";
 import { setBoardGroupBy } from "../sheet/mutations";
@@ -570,11 +570,7 @@ function observedFieldsForRows(rows: readonly RowRecord[], includePage: boolean)
   return fieldIdsForRecords(rows, includePage);
 }
 
-function formulaReferenceName(field: FieldId): string | null {
-  if (isFormulaField(field)) return null;
-  if (field.startsWith("prop:")) return field.slice(5);
-  return field;
-}
+
 
 function moveRowToColumn(row: RowRecord, from: string | null, target: string | null, field: FieldId): boolean {
   if (isFormulaField(field)) return false;
