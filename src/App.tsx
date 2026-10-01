@@ -43,7 +43,7 @@ import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
 import { applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
 import { installPageIndex } from "./pageIndex";
-import { checkForUpdate, setUpdateExitGuard } from "./update";
+import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
@@ -769,13 +769,8 @@ export function App(): JSX.Element {
     }
   });
 
-  // Once per launch, a few seconds after startup (so it never competes with the
-  // first paint or the graph load), check GitHub for a newer release and toast if
-  // there is one. Best-effort + silent on failure (see update.ts).
-  onMount(() => {
-    const t = setTimeout(() => void checkForUpdate(), 3000);
-    onCleanup(() => clearTimeout(t));
-  });
+  // The updater owns preference loading, automatic scheduling and cancellation.
+  onMount(() => onCleanup(scheduleAutomaticUpdateCheck()));
 
   // Re-install experimental smooth scrolling (Lenis) if it was left on. The feed
   // (`.main-content`) is mounted by now (onMount runs after first render).

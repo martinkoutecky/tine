@@ -28,6 +28,7 @@ import { ownedWhen, readOwned } from "./owned";
 import { platformKind } from "./platform";
 import { pushToast, dismissToast } from "./toasts";
 import { openSettings } from "./ui";
+import { checkForUpdatesAutomatically, initUpdateSettings } from "./updateSettings";
 import { reportUiFailure } from "./uiFailure";
 
 /** THE update channel (og-only). This build (`page.tine.TineBeta`) must never offer
@@ -298,12 +299,13 @@ let offerGeneration = 0;
  * itself: the user picks "Install update" (or "Download manually" on the
  * manual-only build). Startup and an explicit check may resolve concurrently;
  * only the newest attempt replaces the singleton toast (master 5cc573f2,
- * b80c54f3, ca1b48f5). O(1) plus one architecture probe.
+ * b80c54f3, ca1b48f5). The optional owner must still allow publication after
+ * the architecture probe. O(1) plus one architecture probe.
  * @internal Exported for deterministic concurrency coverage. */
-export async function offerUpdate(version: string, current: string): Promise<void> {
+export async function offerUpdate(version: string, current: string, live: () => boolean = () => true): Promise<void> {
   const generation = ++offerGeneration;
   const manualOnly = await isManualOnlyBuild();
-  if (generation !== offerGeneration) return;
+  if (generation !== offerGeneration || !live()) return;
   if (offeredUpdateToastId !== null) dismissToast(offeredUpdateToastId);
   if (manualOnly) {
     offeredUpdateToastId = offerManualOnly(version);
@@ -331,17 +333,34 @@ async function offeredVersion(): Promise<string | null> {
   return version;
 }
 
-/** Check the beta channel for a newer build; toast if there is one.
+/** Schedule the one launch check after loading the device preference. OFF or an
+ * unreadable preference schedules nothing. O(1) plus settings/platform I/O;
+ * returned cleanup cancels the timer and retires a pending load. */
+export function scheduleAutomaticUpdateCheck(): () => void {
+  let alive = true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  void (async () => {
+    if ((await updateMode()) === "unavailable") return;
+    if (!(await initUpdateSettings()) || !alive || !checkForUpdatesAutomatically()) return;
+    timer = setTimeout(() => void checkForUpdate(), 3000);
+  })();
+  return () => { alive = false; if (timer !== undefined) clearTimeout(timer); };
+}
+
+/** Check the beta channel automatically only when the device preference is ON;
+ * toast if there is one and the preference is still ON after the check.
  *  Resolves silently (never throws) in every failure case. */
 export async function checkForUpdate(): Promise<void> {
   if ((await updateMode()) === "unavailable") return;
+  if (!(await initUpdateSettings()) || !checkForUpdatesAutomatically()) return;
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
     const cur = await getVersion();
     releaseVersion(cur);
+    if (!checkForUpdatesAutomatically()) return;
     const latest = await offeredVersion();
-    if (!latest) return;
-    await offerUpdate(latest, cur);
+    if (!latest || !checkForUpdatesAutomatically()) return;
+    await offerUpdate(latest, cur, checkForUpdatesAutomatically);
   } catch {
     // offline / rate-limited / network blocked — never bother the user.
   }

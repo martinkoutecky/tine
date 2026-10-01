@@ -3,7 +3,9 @@ import { render } from "solid-js/web";
 import { AboutTab } from "./AboutTab";
 import { setToasts, toasts } from "../toasts";
 
-const { getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExternalMock, checkNowMock } = vi.hoisted(() => ({
+const { getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExternalMock, checkNowMock, getAppBoolMock, setAppBoolMock } = vi.hoisted(() => ({
+  getAppBoolMock: vi.fn(async () => true),
+  setAppBoolMock: vi.fn(async () => {}),
   getVersionMock: vi.fn(async () => "0.5.3"),
   copyVersionMock: vi.fn(async (_text: string) => {}),
   checkNowMock: vi.fn(async (): Promise<{ kind: string; version?: string; current?: string }> => ({ kind: "current", version: "0.5.3" })),
@@ -14,7 +16,7 @@ const { getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExte
 
 vi.mock("../backend", () => ({
   isTauri: isTauriMock,
-  backend: () => ({ openExternal: openExternalMock }),
+  backend: () => ({ openExternal: openExternalMock, getAppBool: getAppBoolMock, setAppBool: setAppBoolMock }),
 }));
 vi.mock("../platform", () => ({ platformKind: platformKindMock }));
 vi.mock("../update", () => ({
@@ -38,6 +40,28 @@ describe("AboutTab", () => {
     platformKindMock.mockResolvedValue("desktop");
     openExternalMock.mockResolvedValue(undefined);
     setToasts([]);
+  });
+
+  it("GH #618: exposes a device-local automatic-check toggle and keeps manual checks", async () => {
+    isTauriMock.mockReturnValue(true);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <AboutTab />, host);
+    try {
+      await flush();
+      const checkbox = host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Check for updates automatically"]');
+      expect(checkbox, "automatic updates must be configurable in About").not.toBeNull();
+      expect(checkbox!.getAttribute("aria-checked")).toBe("true");
+      expect(host.textContent).toContain("Check for updates automatically");
+      checkbox!.click();
+      await flush();
+      expect(checkbox!.getAttribute("aria-checked")).toBe("false");
+      expect(setAppBoolMock).toHaveBeenCalledWith("check_for_updates_automatically", false);
+      const manual = [...host.querySelectorAll("button")].find((b) => b.textContent === "Check for updates");
+      manual!.click();
+      await flush();
+      expect(checkNowMock).toHaveBeenCalledOnce();
+    } finally { dispose(); host.remove(); }
   });
 
   it("displays and copies the channel with the full prerelease version", async () => {

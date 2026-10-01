@@ -69,3 +69,14 @@ it("I-21: workspace resource ownership observes identity, not route replacement"
   expect(source, rule).toContain("const workspaceIdentity = createMemo(() => props.route.id);");
   expect(source, rule).toContain("createEffect(on(workspaceIdentity,");
 });
+
+
+it("I-12: all automatic updates use the preference-aware updater door", () => {
+  const app = readFileSync(path.join(root, "src/App.tsx"), "utf8");
+  const updater = readFileSync(path.join(root, "src/update.ts"), "utf8");
+  const rule = "I-12: automatic scheduling/checks belong to update.ts; imitate scheduleAutomaticUpdateCheck";
+  expect(app, rule).toContain("onCleanup(scheduleAutomaticUpdateCheck())");
+  expect(app, rule).not.toMatch(/\bcheckForUpdate\(/);
+  expect(updater, rule).toContain("await initUpdateSettings()");
+  expect(updater, rule).toContain("await offerUpdate(latest, cur, checkForUpdatesAutomatically)");
+});

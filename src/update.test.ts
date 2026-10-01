@@ -10,6 +10,9 @@ function toastCalls(mock: { mock: { calls: unknown[][] } }): ToastCall[] {
 }
 
 async function loadUpdate(opts: {
+  autoUpdates?: boolean;
+  settingsRead?: () => Promise<boolean>;
+  settingsWriteFails?: boolean;
   tauri?: boolean;
   platform?: Platform;
   platformReject?: boolean;
@@ -37,9 +40,13 @@ async function loadUpdate(opts: {
     : vi.fn<() => Promise<unknown>>(async () => opts.updaterUpdate ?? offerFromChannel(opts.version ?? "0.5.3"));
   const relaunchMock = vi.fn(async () => {});
 
+  const getAppBoolMock = vi.fn(opts.settingsRead ?? (async () => opts.autoUpdates ?? true));
+  const setAppBoolMock = vi.fn(async () => { if (opts.settingsWriteFails) throw new Error("settings write failed"); });
   vi.doMock("./backend", () => ({
     isTauri: isTauriMock,
     backend: () => ({
+      getAppBool: getAppBoolMock,
+      setAppBool: setAppBoolMock,
       openExternal: openExternalMock,
       appArchitecture: appArchitectureMock,
       diagnosticFrontendEvent: diagnosticFrontendEventMock,
@@ -59,6 +66,8 @@ async function loadUpdate(opts: {
   const update = await import("./update");
   return {
     update,
+    getAppBoolMock,
+    setAppBoolMock,
     platformKindMock,
     getVersionMock,
     updaterCheckMock,
@@ -88,6 +97,90 @@ function mockLatest(version: string): void {
 }
 
 describe("update checks", () => {
+  it("GH #618: OFF prevents automatic network checks but permits manual checks", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const { update, updaterCheckMock, pushToastMock } = await loadUpdate({ autoUpdates: false });
+    await update.checkForUpdate();
+    expect(updaterCheckMock).not.toHaveBeenCalled();
+    expect(pushToastMock).not.toHaveBeenCalled();
+    await expect(update.checkForUpdateNow()).resolves.toMatchObject({ kind: "available" });
+    expect(updaterCheckMock).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("GH #618: automatic scheduling respects saved %s", async (on) => {
+    const { update, getAppBoolMock } = await loadUpdate({ autoUpdates: on });
+    const timer = vi.spyOn(globalThis, "setTimeout");
+    const cancel = update.scheduleAutomaticUpdateCheck();
+    try {
+      // Flush native mode detection and the cached preference read.
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      expect(getAppBoolMock).toHaveBeenCalledWith("check_for_updates_automatically", true);
+      expect(timer.mock.calls.filter(([, delay]) => delay === 3000)).toHaveLength(on ? 1 : 0);
+    } finally { cancel(); }
+  });
+
+  it("GH #618: cleanup while settings load prevents scheduling", async () => {
+    let resolve!: (on: boolean) => void;
+    const { update } = await loadUpdate({ settingsRead: () => new Promise((r) => { resolve = r; }) });
+    const timer = vi.spyOn(globalThis, "setTimeout");
+    const cancel = update.scheduleAutomaticUpdateCheck();
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+    cancel();
+    resolve(true);
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+    expect(timer.mock.calls.filter(([, delay]) => delay === 3000)).toHaveLength(0);
+  });
+
+  it("GH #618: unreadable preferences report failure and skip automatic checks", async () => {
+    const { update, updaterCheckMock, pushToastMock } = await loadUpdate({ settingsRead: async () => { throw new Error("read failed"); } });
+    await update.checkForUpdate();
+    expect(updaterCheckMock).not.toHaveBeenCalled();
+    expect(pushToastMock).toHaveBeenCalledWith("Could not load automatic update preference.", "error");
+    await expect(update.checkForUpdateNow()).resolves.toMatchObject({ kind: "current" });
+    expect(updaterCheckMock).toHaveBeenCalledOnce();
+  });
+
+  it("GH #618: failed writes restore the committed setting and report failure", async () => {
+    const { setAppBoolMock, pushToastMock } = await loadUpdate({ settingsWriteFails: true });
+    const settings = await import("./updateSettings");
+    await settings.initUpdateSettings();
+    settings.setCheckForUpdatesAutomatically(false);
+    expect(settings.checkForUpdatesAutomatically()).toBe(false);
+    await vi.waitFor(() => expect(settings.checkForUpdatesAutomatically()).toBe(true));
+    expect(setAppBoolMock).toHaveBeenCalledWith("check_for_updates_automatically", false);
+    expect(pushToastMock).toHaveBeenCalledWith("Could not save automatic update preference.", "error");
+  });
+
+  it("GH #618: a late startup read cannot overwrite a newer toggle", async () => {
+    let resolve!: (on: boolean) => void;
+    await loadUpdate({ settingsRead: () => new Promise((r) => { resolve = r; }) });
+    const settings = await import("./updateSettings");
+    const loading = settings.initUpdateSettings();
+    settings.setCheckForUpdatesAutomatically(false);
+    resolve(true);
+    await loading;
+    expect(settings.checkForUpdatesAutomatically()).toBe(false);
+  });
+
+  it.each(["network", "architecture"] as const)("GH #618: turning OFF during %s prevents a late automatic offer", async (stage) => {
+    let resolve!: (value: unknown) => void;
+    const { update, updaterCheckMock, pushToastMock } = await loadUpdate({
+      updaterUpdate: { version: "0.6.0-beta.1", close: async () => {} },
+    });
+    const settings = await import("./updateSettings");
+    if (stage === "network") updaterCheckMock.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+    else {
+      const { backend } = await import("./backend");
+      vi.mocked(backend().appArchitecture).mockImplementationOnce(() => new Promise<string>((r) => { resolve = r as (value: unknown) => void; }));
+    }
+    const pending = update.checkForUpdate();
+    await vi.waitFor(() => expect(resolve).toBeDefined());
+    settings.setCheckForUpdatesAutomatically(false);
+    resolve(stage === "network" ? { version: "0.6.0-beta.1", close: async () => {} } : "x86_64");
+    await pending;
+    expect(pushToastMock).not.toHaveBeenCalled();
+  });
+
   it("refuses a stable payload on the install action's fresh check", async () => {
     const stable = { version: "0.8.0", close: vi.fn(async () => {}), download: vi.fn(async () => {}), install: vi.fn(async () => {}) };
     const loaded = await loadUpdate({ version: "0.7.0-beta.1" });

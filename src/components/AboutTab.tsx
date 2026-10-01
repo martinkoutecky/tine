@@ -1,13 +1,11 @@
-// The "About" settings tab (GH #32): version, build info, project links, and
-// credits. Read-only — it configures nothing; it lives in Settings only because
-// that's already where Tine keeps its other informational panes (shortcuts,
-// backups, help-improve) and it needs no separate window plumbing.
+// About: build/project information and device-local update controls.
 import { createSignal, onMount, Show, type JSX } from "solid-js";
 import { APP_PRODUCT_NAME } from "../appIdentity";
 import { writeClipboardTextStrict } from "../clipboard";
 import { backend, isTauri } from "../backend";
 import { platformKind } from "../platform";
 import { checkForUpdateNow, openReleasesPage } from "../update";
+import { checkForUpdatesAutomatically, setCheckForUpdatesAutomatically, initUpdateSettings } from "../updateSettings";
 import { reportUiFailure } from "../uiFailure";
 
 const WEBSITE = "https://tine.page";
@@ -30,7 +28,7 @@ function buildStamp(): string {
   }
 }
 
-/** Render read-only build and project information. Each link opens through the
+/** Render build/project information and the automatic-update preference. Each link opens through the
  * backend once per click; a failed open shows fixed text without error detail. */
 export function AboutTab(): JSX.Element {
   const [version, setVersion] = createSignal("");
@@ -49,7 +47,9 @@ export function AboutTab(): JSX.Element {
   onMount(async () => {
     if (!isTauri()) return;
     try {
-      setUpdatePlatform((await platformKind()) === "desktop" ? "desktop" : "mobile");
+      const desktop = (await platformKind()) === "desktop";
+      if (desktop) await initUpdateSettings();
+      setUpdatePlatform(desktop ? "desktop" : "mobile");
     } catch {
       // Fail closed: an unknown native platform must not expose the desktop updater.
       setUpdatePlatform("unavailable");
@@ -101,6 +101,17 @@ export function AboutTab(): JSX.Element {
           </button>
         </Show>
       </div>
+      <Show when={updatePlatform() === "desktop"}>
+        <div class="settings-row">
+          <span class="settings-label">Check for updates automatically</span>
+          <button class="settings-toggle" classList={{ on: checkForUpdatesAutomatically() }}
+            role="switch" aria-label="Check for updates automatically" aria-checked={checkForUpdatesAutomatically()}
+            onClick={() => setCheckForUpdatesAutomatically(!checkForUpdatesAutomatically())}>
+            <span class="settings-toggle-knob" />
+          </button>
+        </div>
+        <div class="settings-hint">Applies to this device. Manual checks remain available when turned off.</div>
+      </Show>
       <Show when={updatePlatform() === "mobile"}>
         <div class="settings-hint about-status">
           Updates arrive through your app's distribution channel.
