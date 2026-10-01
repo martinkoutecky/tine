@@ -1,3 +1,4 @@
+import { schemaGuards } from "../schemaGuards";
 import { parsePluginSettingDefinitions, type PluginSettingDefinition } from "./settings";
 
 export const PLUGIN_API_VERSION = "0.2" as const;
@@ -97,25 +98,11 @@ const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)
 const CONTRIBUTION_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SAFE_ENTRY_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*\.wasm$/;
 
-function record(value: unknown, where: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new PluginManifestError(`${where} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function knownKeys(obj: Record<string, unknown>, where: string, allowed: readonly string[]) {
-  const known = new Set(allowed);
-  const unknown = Object.keys(obj).find((key) => !known.has(key));
-  if (unknown) throw new PluginManifestError(`${where} contains unknown field ${unknown}`);
-}
-
-function stringField(value: unknown, where: string, max: number): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > max) {
-    throw new PluginManifestError(`${where} must be a non-empty string of at most ${max} characters`);
-  }
-  return value;
-}
+const { record, knownKeys, text: stringField } = schemaGuards(PluginManifestError, {
+  object: (where) => `${where} must be an object`,
+  string: (where, max) => `${where} must be a non-empty string of at most ${max} characters`,
+  plainText: false,
+});
 
 function stringArray<T extends string>(
   value: unknown,

@@ -1,10 +1,11 @@
+import { sheetClickOffset, sheetCellMenu, displayLimitThrough } from "../sheet/interactions";
+import { cellIsSelected } from "../sheet/selection";
 import { clearOnBindingInvalidated } from "../binding";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
 import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
 import { InlineText } from "../render/inline";
 import { observeNear, unobserveNear } from "../lazyObserve";
-import { editorOffsetFromRenderedRange } from "../render/spans";
 import { isBuiltinHidden } from "../editor/properties";
 import { isLegacyBareColumnList } from "../editor/queryViewProperties";
 import { forbidsEditEntry } from "../editor/editTargets";
@@ -54,7 +55,7 @@ import {
 } from "../sheet/formulaEval";
 import type { FormulaValue } from "../sheet/formula";
 import { isPlainDecimalNumber } from "../sheet/typed";
-import { openActionContextMenu, openDatePicker, openFormulaEditor, openSheetCellContextMenu, openSheetContextMenu, type ContextMenuAction } from "../ui";
+import { openActionContextMenu, openDatePicker, openFormulaEditor, openSheetContextMenu, type ContextMenuAction } from "../ui";
 import { pushToast } from "../toasts";
 import { blockBackgroundColor } from "../blockColors";
 import type { RefGroup } from "../types";
@@ -331,8 +332,8 @@ export function SheetTable(props: {
   });
   const sortedRowIndex = () => rowIndexes().byRowKey;
   const ensureDisplayedThrough = (row: number) => {
-    if (row < 0 || row < displayedRows().length) return;
-    setRenderLimit(Math.min(sortedRows().length, Math.ceil((row + 1) / SHEET_RENDER_PAGE) * SHEET_RENDER_PAGE));
+    const limit = displayLimitThrough(row, displayedRows().length, sortedRows().length, SHEET_RENDER_PAGE);
+    if (limit !== null) setRenderLimit(limit);
   };
   createEffect(() => {
     const sel = cellSel();
@@ -707,14 +708,7 @@ export function SheetTable(props: {
     if (actions.length) openActionContextMenu(e.clientX, e.clientY, actions);
   };
 
-  const selected = (row: number, col: number) => {
-    const sel = cellSel();
-    if (!sel || sel.gridId !== props.ownerId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
-    if (sel.kind === "cell") return sel.row === row && sel.col === col;
-    if (sel.kind === "range") return sel.focus.row === row && sel.focus.col === col;
-    return false;
-  };
-  const inRange = (row: number, col: number) => cellIsInRange(props.ownerId, row, col, surfaceId);
+  const selected = (row: number, col: number) => cellIsSelected(props.ownerId, row, col, surfaceId);  const inRange = (row: number, col: number) => cellIsInRange(props.ownerId, row, col, surfaceId);
 
   const openPropInput = (rowId: string, field: FieldId, initial?: string) => {
     setEditingProp({ rowId, field, initial: initial ?? readField(rowId, field)?.text ?? "" });
@@ -1120,14 +1114,6 @@ function formulaReferenceName(field: FieldId): string | null {
   return field;
 }
 
-function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw: string): number | null {
-  if (!contentRef) return null;
-  const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
-  const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
-  if (!range) return null;
-  return editorOffsetFromRenderedRange(contentRef, range, raw, isBuiltinHidden);
-}
-
 // Lazy-mount virtualization (P2): a table row's heavy cell CONTENT (title
 // InlineText parse, value-view chips, the hover handle) is deferred until the
 // row first comes near the viewport, mirroring the block-body pattern
@@ -1184,22 +1170,15 @@ function TitleCell(props: {
       setCellSel(cell());
       return;
     }
-    startCellEditing(cell(), clickOffset(e, contentRef, raw()) ?? undefined);
+    startCellEditing(cell(), sheetClickOffset(e, contentRef, raw(), isBuiltinHidden) ?? undefined);
   };
   const openCellMenu = (e: MouseEvent) => {
     if (!liveFormulaRowNode(props.row)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setCellSel(cell());
-    openSheetCellContextMenu(e.clientX, e.clientY, props.row.id);
+    sheetCellMenu(e, () => setCellSel(cell()), props.row.id, undefined);
   };
   const openCellMenuFromHandle = (e: MouseEvent) => {
     if (!liveFormulaRowNode(props.row)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setCellSel(cell());
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    openSheetCellContextMenu(rect.right, rect.bottom + 2, props.row.id);
+    sheetCellMenu(e, () => setCellSel(cell()), props.row.id, undefined, true);
   };
 
   return (
@@ -1376,18 +1355,11 @@ function FieldCell(props: {
   };
   const openCellMenu = (e: MouseEvent) => {
     if (!editable()) return;
-    e.preventDefault();
-    e.stopPropagation();
-    select();
-    openSheetCellContextMenu(e.clientX, e.clientY, props.row.id, { rowId: props.row.id });
+    sheetCellMenu(e, select, props.row.id, { rowId: props.row.id });
   };
   const openCellMenuFromHandle = (e: MouseEvent) => {
     if (!editable()) return;
-    e.preventDefault();
-    e.stopPropagation();
-    select();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    openSheetCellContextMenu(rect.right, rect.bottom + 2, props.row.id, { rowId: props.row.id });
+    sheetCellMenu(e, select, props.row.id, { rowId: props.row.id }, true);
   };
 
   return (

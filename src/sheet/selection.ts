@@ -475,9 +475,33 @@ export function sheetSelectionRectForGrid(gridId: string, surfaceId?: string): S
   return rectForSheetSelection(sel);
 }
 
+/** Focus highlight for legacy selections with no surface id. O(1). */
+export function cellIsSelected(gridId: string, row: number, col: number, surfaceId: string): boolean {
+  const sel = cellSel();
+  if (!sel || sel.gridId !== gridId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
+  const point = sel.kind === "cell" ? sel : sel.kind === "range" ? sel.focus : null;
+  return !!point && point.row === row && point.col === col;
+}
+
+/** Grid highlights ranges only and accepts legacy unscoped selections. O(1). */
+export function cellIsInLegacyRange(gridId: string, row: number, col: number, surfaceId: string): boolean {
+  const sel = cellSel();
+  if (!sel || sel.kind !== "range" || sel.gridId !== gridId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
+  return pointInSelection(row, col, sel);
+}
+
+// Containment asks for a boolean, so it must not allocate a rectangle per cell.
+function pointInSelection(row: number, col: number, sel: CellSel | RangeSel): boolean {
+  const anchor = sel.kind === "cell" ? sel : sel.anchor;
+  const focus = sel.kind === "cell" ? sel : sel.focus;
+  return row >= Math.min(anchor.row, focus.row) && row <= Math.max(anchor.row, focus.row)
+    && col >= Math.min(anchor.col, focus.col) && col <= Math.max(anchor.col, focus.col);
+}
+
 export function cellIsInRange(gridId: string, row: number, col: number, surfaceId?: string): boolean {
-  const rect = sheetSelectionRectForGrid(gridId, surfaceId);
-  return !!rect && row >= rect.top && row <= rect.bottom && col >= rect.left && col <= rect.right;
+  const sel = cellSel();
+  if (!sel || sel.gridId !== gridId || sel.surfaceId !== surfaceId || isSeamSel(sel)) return false;
+  return pointInSelection(row, col, sel);
 }
 
 function clampCell(gridId: string, wanted: { row: number; col: number }, surfaceId?: string): CellSel | null {

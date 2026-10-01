@@ -1,3 +1,4 @@
+import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
 import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
@@ -16,7 +17,7 @@ import { searchFold } from "../editor/searchFold";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
 import { pageIdentityKey } from "../pageIdentity";
 import { mergeReferenceGroups } from "../referenceGroups";
-import { collapsedGroupsFor, sectionOverride, setCollapsedGroupsFor, setSectionOverride } from "../referenceSectionState";
+import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { readOr } from "../resourceRead";
 
 // One identity fold for chips, filters and group merging: the old private `norm`
@@ -124,8 +125,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
       }
     }
   );
-  // `createReferenceFetcher` already routes a failure to `loadError` (rendered
-  // below), so this covers the read itself rather than replacing that channel.
+  // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "linked references");
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
   const [collapsedOverride, setCollapsedOverrideSignal] = createSignal<boolean | null>(sectionOverride("linked", props.name) ?? null);
@@ -133,14 +133,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     setSectionOverride("linked", props.name, value);
     setCollapsedOverrideSignal(value);
   };
-  const [collapsedGroups, setCollapsedGroupsSignal] = createSignal<Set<string>>(collapsedGroupsFor("linked", props.name));
-  const setCollapsedGroups = (update: Set<string> | ((current: Set<string>) => Set<string>)) => {
-    setCollapsedGroupsSignal((current) => {
-      const next = typeof update === "function" ? update(current) : update;
-      setCollapsedGroupsFor("linked", props.name, next);
-      return next;
-    });
-  };
+  const { groupCollapsed, setGroupCollapsed, setAll, reload: reloadGroupCollapse } = createReferenceGroupCollapse("linked", () => props.name);
   const [filterOpen, setFilterOpen] = createSignal(false);
   const [exportChooserOpen, setExportChooserOpen] = createSignal(false);
   const [searchDraft, setSearchDraft] = createSignal("");
@@ -154,8 +147,8 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   // Reload the saved filter when the page changes.
   createEffect(() => {
     const page = props.name;
+    reloadGroupCollapse();
     setCollapsedOverrideSignal(sectionOverride("linked", page) ?? null);
-    setCollapsedGroupsSignal(collapsedGroupsFor("linked", page));
     setFilters(loadFilters(props.name));
     setFilterOpen(false);
     setSearchDraft("");
@@ -270,18 +263,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
 
   const groupKey = (group: RefGroup) => pageIdentityKey(group.page);
   const shownByKey = createMemo(() => new Map(shown().map((group) => [groupKey(group), group] as const)));
-  const groupCollapsed = (group: RefGroup) => collapsedGroups().has(groupKey(group));
-  const setGroupCollapsed = (group: RefGroup, value: boolean) => {
-    setCollapsedGroups((current) => {
-      const next = new Set(current);
-      if (value) next.add(groupKey(group));
-      else next.delete(groupKey(group));
-      return next;
-    });
-  };
-  const setAllGroups = (value: boolean) => {
-    setCollapsedGroups(value ? new Set<string>(shown().map(groupKey)) : new Set<string>());
-  };
+  const setAllGroups = (value: boolean) => setAll(shown(), value);
 
   const cycle = (name: string) => {
     const key = norm(name);

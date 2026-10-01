@@ -696,6 +696,8 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
 }
 
 /// The destination string of a link `url` (mirrors the frontend `urlDest`).
+// Native export preserves Some("") protocols; the browser destination policy
+// uses a bare link for empty protocols. Keep synthetic-node behavior explicit.
 fn url_dest(url: &Url) -> String {
     match url {
         Url::PageRef { v }
@@ -2279,6 +2281,25 @@ pub(crate) fn publish_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_destination_preserves_optional_protocol_policy() {
+        assert_eq!(
+            url_dest(&Url::Complex {
+                protocol: Some(String::new()),
+                link: Some("x".into())
+            }),
+            "://x"
+        );
+        assert_eq!(
+            url_dest(&Url::Complex {
+                protocol: None,
+                link: Some("x".into())
+            }),
+            "x"
+        );
+    }
+
     fn no_refs() -> RefIndex {
         RefIndex::new()
     }

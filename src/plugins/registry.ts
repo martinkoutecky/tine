@@ -1,3 +1,4 @@
+import { schemaGuards } from "../schemaGuards";
 import { createSignal } from "solid-js";
 import { backend, type PluginRegistryCacheLoad } from "../backend";
 import { ownedWhen, writeOwned } from "../owned";
@@ -131,21 +132,11 @@ let refreshGeneration = 0;
 let latestVerifiedGeneration = 0;
 let liveApplyChain = Promise.resolve();
 
-function object(value: unknown, where: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${where} is invalid`);
-  return value as Record<string, unknown>;
-}
-
-function knownKeys(value: Record<string, unknown>, where: string, allowed: readonly string[]): void {
-  const known = new Set(allowed);
-  const unknown = Object.keys(value).find((key) => !known.has(key));
-  if (unknown) throw new Error(`${where} contains unknown field ${unknown}`);
-}
-
-function text(value: unknown, where: string, max = 500): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > max) throw new Error(`${where} is invalid`);
-  return value;
-}
+const { record: object, knownKeys, text } = schemaGuards(Error, {
+  object: (where) => `${where} is invalid`,
+  string: (where, _max) => `${where} is invalid`,
+  plainText: false,
+});
 
 function https(value: unknown, where: string): string {
   const result = text(value, where, 1_000);

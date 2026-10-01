@@ -1,3 +1,4 @@
+import { blockSubtreeMarkdown, dtoSubtreeMarkdown, exportNodesFor } from "./document/edits/serialize";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildClipboardPayload, ensurePageLoaded, resetStore } from "./document";
 import { forgetPage, reloadPage } from "./document/workingSet";
@@ -78,4 +79,15 @@ describe("page-instance generations", () => {
     ensurePageLoaded(page("P0", [{ id: "p0-new", raw: "new", collapsed: false, children: [] }]));
     expect(pageInstanceGeneration("P0")!).toBeGreaterThan(original);
   });
+});
+
+it("shares exact clipboard outline bytes and selection-root filtering across live/fetched inputs", () => {
+  const child: BlockDto = { id: "child", raw: "Child\n\ncontinued", collapsed: false, children: [] };
+  const root: BlockDto = { id: "root", raw: "Parent  \nline\n", collapsed: false, children: [child] };
+  loadSingle(page("Page", [root]));
+  const expected = "- Parent\n  line\n\n\t- Child\n\n\t  continued";
+  expect(blockSubtreeMarkdown("root")).toBe(expected);
+  expect(dtoSubtreeMarkdown(root)).toBe(expected);
+  expect(buildClipboardPayload(["root", "child"])?.blocks.map((b) => b.key)).toEqual(["root"]);
+  expect(exportNodesFor(["root", "child"]).map((b) => b.raw)).toEqual([root.raw]);
 });

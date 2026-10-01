@@ -11,7 +11,7 @@
 //! **The wire format is fixed by SPEC §3.1 and is not a lane's choice.** Every
 //! enum is internally tagged on `kind` with `snake_case` names and every struct
 //! field is `snake_case`, because a hand-written frontend mirror
-//! (`src/editor/queryIr.ts` on master; not yet in og, lane Q4a) is pinned
+//! (`src/editor/queryIr.ts`) is pinned
 //! against it by the golden fixtures in
 //! `crates/tine-core/src/query/fixtures/query-ir/`.
 //!
@@ -448,22 +448,40 @@ impl Filter {
 
     /// Depth-first existential over every leaf of the tree.
     pub fn any_leaf(&self, test: &mut impl FnMut(&Leaf) -> bool) -> bool {
+        self.visit_leaves(&mut |leaf| {
+            if test(leaf) {
+                std::ops::ControlFlow::Break(())
+            } else {
+                std::ops::ControlFlow::Continue(())
+            }
+        })
+        .is_break()
+    }
+
+    // One structural walk, including relation predicates and disabled nodes.
+    // ControlFlow preserves allocation-free early exit for any_leaf.
+    fn visit_leaves<'a>(
+        &'a self,
+        visit: &mut impl FnMut(&'a Leaf) -> std::ops::ControlFlow<()>,
+    ) -> std::ops::ControlFlow<()> {
         match self {
             Filter::Leaf { leaf } => {
-                if test(leaf) {
-                    return true;
-                }
-                match leaf {
-                    Leaf::Rel { pred, .. } => pred.any_leaf(test),
-                    Leaf::Attr { .. } => false,
+                visit(leaf)?;
+                if let Leaf::Rel { pred, .. } = leaf {
+                    pred.visit_leaves(visit)?;
                 }
             }
             Filter::And { items } | Filter::Or { items } => {
-                items.iter().any(|item| item.any_leaf(test))
+                for item in items {
+                    item.visit_leaves(visit)?;
+                }
             }
-            Filter::Not { inner } | Filter::Off { inner } => inner.any_leaf(test),
-            Filter::Raw { .. } | Filter::True | Filter::False => false,
+            Filter::Not { inner } | Filter::Off { inner } => {
+                inner.visit_leaves(visit)?;
+            }
+            Filter::Raw { .. } | Filter::True | Filter::False => {}
         }
+        std::ops::ControlFlow::Continue(())
     }
 
     /// Every `content match` payload (see [`Leaf::match_source`]) in this tree,
@@ -475,7 +493,7 @@ impl Filter {
     /// syntax. This is the one place the tree is asked which of its leaves carry
     /// one, so an executor should parse each payload once and share the parsed
     /// matcher rather than re-deriving what `foo -draft OR "a b"` means (I-12).
-    /// No og executor consumes it yet (lane Q2). O(tree size).
+    /// The store executor consumes these payloads. O(tree size).
     pub fn match_sources(&self) -> Vec<&str> {
         let mut out: Vec<&str> = Vec::new();
         self.for_each_leaf(&mut |leaf| {
@@ -488,21 +506,10 @@ impl Filter {
 
     /// Depth-first visit of every leaf of the tree.
     pub fn for_each_leaf<'a>(&'a self, visit: &mut impl FnMut(&'a Leaf)) {
-        match self {
-            Filter::Leaf { leaf } => {
-                visit(leaf);
-                if let Leaf::Rel { pred, .. } = leaf {
-                    pred.for_each_leaf(visit);
-                }
-            }
-            Filter::And { items } | Filter::Or { items } => {
-                for item in items {
-                    item.for_each_leaf(visit);
-                }
-            }
-            Filter::Not { inner } | Filter::Off { inner } => inner.for_each_leaf(visit),
-            Filter::Raw { .. } | Filter::True | Filter::False => {}
-        }
+        let _ = self.visit_leaves(&mut |leaf| {
+            visit(leaf);
+            std::ops::ControlFlow::Continue(())
+        });
     }
 
     /// The key a `props` relation predicate selects. §3.3 writes every property
@@ -965,7 +972,7 @@ impl Bounds {
 
 /// One query. Its JSON is pinned by the golden fixtures under
 /// `crates/tine-core/src/query/fixtures/query-ir/` (the TypeScript mirror,
-/// `src/editor/queryIr.ts` on master, is not yet in og).
+/// `src/editor/queryIr.ts`, validates the wire variants).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Query {
     pub anchor: Anchor,
@@ -1437,5 +1444,34 @@ mod tests {
         ));
         assert!(filter.has_props_leaf());
         assert!(!Filter::off(leaf_a()).has_props_leaf());
+    }
+    #[test]
+    fn leaf_walk_order_and_short_circuit_share_disabled_relation_traversal() {
+        let filter = Filter::off(Filter::rel(
+            Rel::Children,
+            Quant::Any,
+            Filter::And {
+                items: vec![leaf_a(), leaf_a()],
+            },
+        ));
+        let mut visited = Vec::new();
+        filter.for_each_leaf(&mut |leaf| visited.push(leaf));
+        assert_eq!(visited.len(), 5);
+        let mut calls = 0;
+        assert!(filter.any_leaf(&mut |leaf| {
+            assert!(std::ptr::eq(leaf, visited[calls]));
+            calls += 1;
+            calls == 2
+        }));
+        assert_eq!(
+            calls, 2,
+            "I-12: Filter::visit_leaves must retain allocation-free early exit"
+        );
+        calls = 0;
+        assert!(!filter.any_leaf(&mut |_| {
+            calls += 1;
+            false
+        }));
+        assert_eq!(calls, 5);
     }
 }

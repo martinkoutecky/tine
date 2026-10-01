@@ -1,4 +1,7 @@
 // **The TypeScript mirror of the Rust query IR** (SPEC §3.1, §7.1).
+// I-12: structural classification lives here; golden Rust wire fixtures pin the
+// vocabulary. Evaluators retain their row/context and Off policies, and omission
+// and normalization remain distinct transforms, not generic Boolean folds.
 
 import type { PageKind, RefGroup } from "../types";
 /** The validated, non-presentation half of a workspace display. */
@@ -414,6 +417,18 @@ export function assertMirrorsIr(query: Query): void {
     if (!RELS.includes(leaf.rel)) throw new UnknownIrVariantError("Rel", leaf.rel);
     if (!QUANTS.includes(leaf.quant)) throw new UnknownIrVariantError("Quant", leaf.quant);
   });
+}
+
+/** Whether a node is a single condition rather than a group — the unit that
+*  renders as ONE row, and the unit a `not`/`off` wrapper can decorate without
+*  costing a level of indentation. */
+export function isLeafLike(filter: Filter): boolean {
+  return (
+    filter.kind === "leaf" ||
+    filter.kind === "raw" ||
+    filter.kind === "true" ||
+    filter.kind === "false"
+  );
 }
 
 // Command dialects (SPEC §7.1, §4.3)

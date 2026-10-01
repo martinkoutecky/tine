@@ -31,14 +31,7 @@ export function blockSubtreeMarkdown(
         format,
       ).visible
     : n.raw;
-  const lines = raw.split("\n");
-  const out: string[] = [];
-  // OG's clipboard path intentionally exports blocks as Markdown even when the
-  // source page is Org (`export-blocks-as-markdown`), but removes IDs using the
-  // SOURCE format. Keep that portable outline shape while stripping Org drawers.
-  const tabs = "\t".repeat(level);
-  out.push(`${tabs}- ${lines[0] ?? ""}`.replace(/\s+$/, ""));
-  for (const line of lines.slice(1)) out.push(line === "" ? "" : `${tabs}  ${line}`);
+  const out = markdownBlockLines(raw, level);
   for (const c of n.children) {
     if (onlySelected && !onlySelected.has(c)) continue;
     out.push(blockSubtreeMarkdown(c, level + 1, stripId, stripCollapsed, onlySelected));
@@ -54,15 +47,7 @@ export function blockSubtreeMarkdown(
  */
 export function buildClipboardPayload(ids: string[]): ClipboardPayloadData | null {
   const selected = new Set(ids.filter((id) => !!doc.byId[id]));
-  const hasSelectedAncestor = (id: string): boolean => {
-    let parent = doc.byId[id]?.parent ?? null;
-    while (parent !== null) {
-      if (selected.has(parent)) return true;
-      parent = doc.byId[parent]?.parent ?? null;
-    }
-    return false;
-  };
-  const roots = [...selected].filter((id) => !hasSelectedAncestor(id));
+  const roots = [...selected].filter((id) => !hasSelectedAncestor(id, selected));
   if (roots.length === 0) return null;
 
   let blockCount = 0;
@@ -115,14 +100,6 @@ export function exportNodesFor(ids: string[]): ExportNode[] {
   // contain BOTH a parent and its descendants. Export only the selection's roots
   // — a kept node's subtree already carries its children, so emitting a selected
   // child again as a top-level node would duplicate it (the "1 2 3 1 2 3" bug).
-  const hasSelectedAncestor = (id: string): boolean => {
-    let p = doc.byId[id]?.parent ?? null;
-    while (p !== null) {
-      if (set.has(p)) return true;
-      p = doc.byId[p]?.parent ?? null;
-    }
-    return false;
-  };
   const toNode = (id: string): ExportNode | null => {
     const n = doc.byId[id];
     if (!n) return null;
@@ -133,7 +110,7 @@ export function exportNodesFor(ids: string[]): ExportNode[] {
     };
   };
   return ids
-    .filter((id) => !hasSelectedAncestor(id))
+    .filter((id) => !hasSelectedAncestor(id, set))
     .map(toNode)
     .filter((x): x is ExportNode => x != null);
 }
@@ -141,11 +118,27 @@ export function exportNodesFor(ids: string[]): ExportNode[] {
 /** Serialize a fetched BlockDto subtree to Logseq markdown (for pages not in the
  *  working set, e.g. copy-page-as-markdown). */
 export function dtoSubtreeMarkdown(b: BlockDto, level = 0): string {
-  const tabs = "\t".repeat(level);
-  const lines = b.raw.split("\n");
-  const out: string[] = [];
-  out.push(`${tabs}- ${lines[0] ?? ""}`.replace(/\s+$/, ""));
-  for (const line of lines.slice(1)) out.push(line === "" ? "" : `${tabs}  ${line}`);
+  const out = markdownBlockLines(b.raw, level);
   for (const c of b.children) out.push(dtoSubtreeMarkdown(c, level + 1));
   return out.join("\n");
+}
+
+/** Clipboard outline formatting, shared by live and fetched inputs; O(raw).
+ * OG copies Org blocks as Markdown; metadata stripping above uses the SOURCE
+ * format so Org drawers are removed before this portable outline is emitted. */
+function markdownBlockLines(raw: string, level: number): string[] {
+  const tabs = "\t".repeat(level);
+  const lines = raw.split("\n");
+  const out = [`${tabs}- ${lines[0] ?? ""}`.replace(/\s+$/, "")];
+  for (const line of lines.slice(1)) out.push(line === "" ? "" : `${tabs}  ${line}`);
+  return out;
+}
+
+function hasSelectedAncestor(id: string, selected: Set<string>): boolean {
+  let parent = doc.byId[id]?.parent ?? null;
+  while (parent !== null) {
+    if (selected.has(parent)) return true;
+    parent = doc.byId[parent]?.parent ?? null;
+  }
+  return false;
 }

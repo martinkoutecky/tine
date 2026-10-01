@@ -1,3 +1,4 @@
+import { urlDest } from "./urlDest";
 // Inline markdown -> Solid components. Produces real interactive DOM (clickable
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
@@ -18,7 +19,7 @@ import { reportLinkOpenFailure } from "../components/ExternalLink";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import { mime_from_path } from "./wasm/lsdoc_wasm";
-import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format, Span } from "./ast";
+import type { Inline, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format, Span } from "./ast";
 import type { PageKind } from "../types";
 import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
@@ -56,7 +57,6 @@ import { createLongPress } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
-
 
 // ===========================================================================
 // AST renderer (lsdoc). Renders an `Inline[]` produced by the Rust parser to
@@ -216,20 +216,6 @@ export function astText(inlines: Inline[]): string {
     }
   }
   return out;
-}
-
-// The destination string of a link/image `url`.
-function urlDest(url: Url): string {
-  switch (url.type) {
-    case "page_ref":
-    case "block_ref":
-    case "search":
-    case "file":
-    case "embed_data":
-      return url.v;
-    case "complex":
-      return url.protocol && url.link != null ? `${url.protocol}://${url.link}` : url.link ?? "";
-  }
 }
 
 function macroBody(s: MacroInline): string {
