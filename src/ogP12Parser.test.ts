@@ -25,3 +25,8 @@ it("D05 refilling an accepted empty property preserves readable syntax", () => {
   const next = editBlock(raw, "md", { kind: "property", key: "tine.group-field", value: "prop:status" });
   expect(blockRegions(next).properties.find(p => p.key === "tine.group-field")?.value).toBe("prop:status");
 });
+
+it("D11 rename candidates keep the explicit-reference and bare-tags policy for aliases", () => {
+  expect(pageRefsInText("x\nalias:: Alias", "md")).toEqual([]);
+  expect(pageRefsInText("x\nalias:: [[Alias]]", "md")).toEqual(["Alias"]);
+});

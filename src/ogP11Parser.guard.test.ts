@@ -78,3 +78,60 @@ describe("OG-P11B one parser door", () => {
     expect(live).not.toMatch(/readEdn|ednSlice|unquoteEdnString|function queryMap/);
   });
 });
+
+function propertyOrMarkerScanners(source: string): string[] {
+  const file = ts.createSourceFile("client.ts", source, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isRegularExpressionLiteral(node) && /::|TODO|DOING|\[\^?ABC/.test(node.text)) found.push(node.text);
+    if (ts.isNewExpression(node) && node.expression.getText(file) === "RegExp") found.push(node.getText(file));
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+        && ["indexOf", "lastIndexOf", "split", "startsWith"].includes(node.expression.name.text)
+        && node.arguments.some((arg) => ts.isStringLiteralLike(arg) && /::|TODO|DOING/.test(arg.text))) {
+      found.push(node.getText(file));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+describe("OG-P12 parser-owned properties, references and header spans", () => {
+  it("I-12: property clients use render/parse.ts blockRegions or native property_line_json; imitate sheet/renameField.ts", () => {
+    const rename = readFileSync("src/sheet/renameField.ts", "utf8");
+    expect(rename).toContain("blockRegions(raw, format).properties");
+    expect(rename).not.toMatch(/mdOccurrence|orgOccurrence|PROP_LINE/);
+    expect(propertyOrMarkerScanners(rename)).toEqual([]);
+    const block = readFileSync("src/render/block.ts", "utf8");
+    const lineReader = block.slice(block.indexOf("export function isPropertyLine"), block.indexOf("/** A page-property"));
+    expect(lineReader).toContain("acceptedPropertyLine(line)");
+    expect(propertyOrMarkerScanners(lineReader)).toEqual([]);
+    const props = readFileSync("src/editor/properties.ts", "utf8");
+    for (const name of ["readPropertyValue", "upsertPropertyLine", "pagePropertyEntries"]) {
+      const start = props.indexOf(`export function ${name}`);
+      const next = props.indexOf("\nexport ", start + 1);
+      expect(propertyOrMarkerScanners(props.slice(start, next < 0 ? undefined : next))).toEqual([]);
+    }
+    expect(props).toContain("property_line_json(line)");
+    expect(props).toContain("page_regions_json(source, true)");
+  });
+  it("I-12: reference targets and accepted nested nodes use native block_regions policies; imitate render/pageRefs.ts", () => {
+    const frontend = readFileSync("src/render/pageRefs.ts", "utf8");
+    expect(frontend).toContain("reference_target_name(");
+    expect(frontend).toContain("nested_reference_names(inline.content)");
+    expect(frontend).not.toMatch(/decode_page_name|lastIndexOf|new RegExp|\.indexOf\(|\.match(?:All)?\(|\.exec\(|\.test\(/);
+    const native = readFileSync("crates/tine-core/src/reference_evidence.rs", "utf8");
+    expect(native).toContain("crate::block_regions::reference_target_name(");
+    expect(native).not.toMatch(/fn nested_names|fn local_asset/);
+    const model = readFileSync("crates/tine-store/src/model.rs", "utf8");
+    const references = model.slice(model.indexOf("fn property_refs"), model.indexOf("pub(crate) enum Withdrawal"));
+    expect(references).not.toContain("parse_property_line");
+    expect(references).toContain("reference_evidence::linkable_property_names(");
+    expect(references).toContain("&projection.reference_source");
+  });
+  it("recognizes planted second property and task grammars", () => {
+    for (const source of ['const p = /^foo::/.test(raw)', 'const m = /^(TODO|DOING) /.exec(raw)', 'const p = raw.indexOf("::")', 'const m = raw.startsWith("TODO ")', 'const p = new RegExp(grammar)']) {
+      expect(propertyOrMarkerScanners(source)).toHaveLength(1);
+    }
+  });
+});

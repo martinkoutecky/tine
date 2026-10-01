@@ -345,8 +345,14 @@ export function upsertPropertyLine(
   const raw = block ?? "";
   const decoder = new TextDecoder();
   const bytes = new TextEncoder().encode(raw);
-  const accepted = new Map(blockRegions(raw).properties.filter((p) => p.primary)
-    .map((p) => [decoder.decode(bytes.subarray(0, p.line[0])).split("\n").length - 1, p]));
+  const lineIndices = new Map<number, number>();
+  let byteStart = 0;
+  const encoder = new TextEncoder();
+  lines.forEach((line, i) => { lineIndices.set(byteStart, i); byteStart += encoder.encode(line).length + 1; });
+  const regions = blockRegions(raw);
+  if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
+  const accepted = new Map(regions.properties.filter((p) => p.primary)
+    .map((p) => [lineIndices.get(p.line[0]), p]));
   for (const [index, line] of lines.entries()) {
     const p = accepted.get(index);
     if (p && p.key.toLowerCase() === key.toLowerCase()) {
@@ -371,12 +377,12 @@ export interface PagePropertyEntry {
   line: number;
 }
 
-const pageRegionsCache = new Map<string, RegionProperty[]>();
+let lastPageEntries: { raw: string; entries: PagePropertyEntry[] } | undefined;
 
 /** Accepted whole-preamble properties, in file order. Markdown's canonical
  * column-zero header policy is retained; Org uses parser-owned directives and
- * drawers, excluding literal src/example regions. Cost O(preamble bytes) cold,
- * O(property count) warm; bounded to 64 retained preambles. */
+ * drawers, excluding literal src/example regions. Markdown costs O(text); Org
+ * costs O(text) cold and O(properties) for repeated reads. One source is retained. */
 export function pagePropertyEntries(text: string | null | undefined, format: PropFormat): PagePropertyEntry[] {
   if (!text) return [];
   if (format === "md") {
@@ -386,19 +392,18 @@ export function pagePropertyEntries(text: string | null | undefined, format: Pro
     });
   }
   const source = text;
-  let regions = pageRegionsCache.get(source);
-  if (!regions) {
-    regions = JSON.parse(page_regions_json(source, true)) as RegionProperty[];
-    if (pageRegionsCache.size >= 64) pageRegionsCache.delete(pageRegionsCache.keys().next().value!);
-    pageRegionsCache.set(source, regions);
-  }
+  if (lastPageEntries?.raw === source) return lastPageEntries.entries.map((e) => ({ ...e }));
+  const regions = JSON.parse(page_regions_json(source, true)) as RegionProperty[];
   const bytes = new TextEncoder().encode(source);
   const decoder = new TextDecoder();
-  return regions.map((p) => ({
-    key: format === "org" ? p.key.toLowerCase() : p.key,
-    value: p.value,
-    line: decoder.decode(bytes.subarray(0, p.line[0])).split("\n").length - 1,
-  }));
+  let byte = 0, line = 0;
+  const entries = regions.map((p) => {
+    line += decoder.decode(bytes.subarray(byte, p.line[0])).split("\n").length - 1;
+    byte = p.line[0];
+    return { key: p.key.toLowerCase(), value: p.value, line };
+  });
+  lastPageEntries = { raw: source, entries };
+  return entries.map((e) => ({ ...e }));
 }
 
 /** Set (or, for a null/blank value, remove) page property `key` across `parts`

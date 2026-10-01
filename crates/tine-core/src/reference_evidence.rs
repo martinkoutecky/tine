@@ -366,6 +366,46 @@ fn project_property_key(
     }
 }
 
+/// Page candidates in accepted tags/alias/aliases values. Quoted values stay
+/// literal; explicit and implicit references share the existing evidence.
+/// O(properties + references), zero parses or allocation; inputs must be the
+/// memoized regions and evidence of the same raw block.
+pub fn linkable_property_names<'a>(
+    projection: &'a ReferenceSourceProjection,
+    regions: &'a crate::block_regions::BlockRegions,
+) -> impl Iterator<Item = &'a str> {
+    let mut properties = regions
+        .properties
+        .iter()
+        .filter(|p| {
+            p.applicable
+                && (p.key.eq_ignore_ascii_case("tags")
+                    || p.key.eq_ignore_ascii_case("alias")
+                    || p.key.eq_ignore_ascii_case("aliases"))
+                && !quoted_linkable_value(&p.value)
+        })
+        .peekable();
+    projection.explicit.iter().filter_map(move |reference| {
+        while properties
+            .peek()
+            .is_some_and(|p| p.value_range.1 <= reference.range.start)
+        {
+            properties.next();
+        }
+        properties
+            .peek()
+            .filter(|p| {
+                p.value_range.0 <= reference.range.start && reference.range.end <= p.value_range.1
+            })
+            .map(|_| reference.name.as_str())
+    })
+}
+
+fn quoted_linkable_value(value: &str) -> bool {
+    let whole = value.trim();
+    whole.len() >= 2 && whole.starts_with('"') && whole.ends_with('"')
+}
+
 fn project_implicit_linkable_property(
     projection: &mut ReferenceSourceProjection,
     key: &str,
@@ -379,8 +419,7 @@ fn project_implicit_linkable_property(
     {
         return;
     }
-    let whole = value.trim();
-    if whole.len() >= 2 && whole.starts_with('"') && whole.ends_with('"') {
+    if quoted_linkable_value(value) {
         return;
     }
 

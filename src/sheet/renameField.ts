@@ -76,14 +76,22 @@ function fail(error: string): SheetFieldRenamePlanResult {
 export function propertyOccurrences(raw: string, format: Format): readonly PropertyOccurrence[] {
   const bytes = new TextEncoder().encode(raw);
   const decoder = new TextDecoder();
-  const at = (byte: number) => decoder.decode(bytes.subarray(0, byte)).length;
-  return blockRegions(raw, format).properties.filter((p) => p.primary).map((p) => ({
-    line: raw.slice(0, at(p.line[0])).split("\n").length - 1,
-    key: raw.slice(at(p.key_range[0]), at(p.key_range[1])),
-    value: p.value,
-    keyStart: at(p.key_range[0]), keyEnd: at(p.key_range[1]),
-    valueStart: at(p.value_range[0]), valueEnd: at(p.value_range[1]),
-  }));
+  let byte = 0, offset = 0, line = 0;
+  const at = (next: number) => {
+    const segment = decoder.decode(bytes.subarray(byte, next));
+    offset += segment.length;
+    line += segment.split("\n").length - 1;
+    byte = next;
+    return offset;
+  };
+  return blockRegions(raw, format).properties.filter((p) => p.primary).map((p) => {
+    at(p.line[0]);
+    const index = line;
+    const keyStart = at(p.key_range[0]), keyEnd = at(p.key_range[1]);
+    const valueStart = at(p.value_range[0]), valueEnd = at(p.value_range[1]);
+    return { line: index, key: raw.slice(keyStart, keyEnd), value: p.value,
+      keyStart, keyEnd, valueStart, valueEnd };
+  });
 }
 
 function normalizedPair(key: string, value: string): string {

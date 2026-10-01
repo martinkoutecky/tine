@@ -1111,10 +1111,12 @@ pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
         }
     }
     fn property_refs(seen: &mut HashMap<String, String>, block: &DocBlock) {
-        for reference in &block.projection().reference_source.explicit {
-            if reference.rule == "implicit_linkable_property" {
-                add(seen, reference.name.clone());
-            }
+        let projection = block.projection();
+        for name in tine_core::reference_evidence::linkable_property_names(
+            &projection.reference_source,
+            &projection.regions,
+        ) {
+            add(seen, name.to_owned());
         }
     }
     fn visit(block: &DocBlock, seen: &mut HashMap<String, String>) {

@@ -72,3 +72,28 @@ fn empty_property_refill_preserves_accepted_syntax() {
         );
     }
 }
+
+#[test]
+fn quick_switch_candidates_include_accepted_alias_and_tag_values() {
+    let block = tine_core::doc::DocBlock::new("tags:: ProjectX， [[Linear IP]]\naliases:: LP Survey，Paper Notes\nstatus:: \"Private, Draft\"");
+    let projection = block.projection();
+    let names: Vec<_> = tine_core::reference_evidence::linkable_property_names(
+        &projection.reference_source,
+        &projection.regions,
+    )
+    .collect();
+    assert_eq!(
+        names,
+        vec!["ProjectX", "Linear IP", "LP Survey", "Paper Notes"]
+    );
+    let quoted = tine_core::doc::DocBlock::new("alias:: \"[[Ghost]]\"");
+    let projection = quoted.projection();
+    assert_eq!(
+        tine_core::reference_evidence::linkable_property_names(
+            &projection.reference_source,
+            &projection.regions
+        )
+        .count(),
+        0
+    );
+}
