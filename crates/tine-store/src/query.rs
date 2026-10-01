@@ -13,6 +13,7 @@ use tine_core::model::{
     Format, PageEntry, PageKind, RefGroup, ReferenceBlockEvidence, ReferenceKind, TemplateDto,
 };
 use tine_core::projection::block_to_shallow_dto;
+use tine_core::projection::{block_to_bounded_dto, subtree_node_count};
 use tine_core::query::{
     admit_source, AdvancedResult, QueryExportBatch, QueryExportResult, QueryExportSpec,
 };
@@ -1782,52 +1783,6 @@ pub(crate) fn resolve_blocks_bounded(
         resolved_budget.exceeded || output_budget.exceeded,
         output_budget.total,
     )
-}
-
-fn subtree_node_count(root: &DocBlock) -> usize {
-    let mut count = 0usize;
-    let mut stack = vec![root];
-    while let Some(block) = stack.pop() {
-        count = count.saturating_add(1);
-        stack.extend(block.children.iter());
-    }
-    count
-}
-
-fn block_to_bounded_dto(
-    block: &DocBlock,
-    remaining_nodes: &mut usize,
-    remaining_bytes: &mut usize,
-) -> Option<BlockDto> {
-    if *remaining_nodes == 0 {
-        return None;
-    }
-    let minimum_bytes = block
-        .raw()
-        .len()
-        .saturating_add(if block.uuid.is_empty() {
-            36
-        } else {
-            block.uuid.len()
-        })
-        .saturating_add(128);
-    if minimum_bytes > *remaining_bytes {
-        return None;
-    }
-    let mut dto = block_to_shallow_dto(block);
-    let dto_bytes = tine_core::model::block_dto_estimated_bytes(&dto);
-    if dto_bytes > *remaining_bytes {
-        return None;
-    }
-    *remaining_nodes -= 1;
-    *remaining_bytes -= dto_bytes;
-    for child in &block.children {
-        let Some(child_dto) = block_to_bounded_dto(child, remaining_nodes, remaining_bytes) else {
-            break;
-        };
-        dto.children.push(child_dto);
-    }
-    Some(dto)
 }
 
 #[derive(Debug)]

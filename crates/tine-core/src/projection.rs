@@ -158,6 +158,60 @@ pub fn block_to_shallow_dto(b: &DocBlock) -> BlockDto {
     }
 }
 
+/// Count all nodes in a borrowed subtree, including the root. O(subtree nodes)
+/// work with an explicit traversal stack; does not construct DTOs.
+pub fn subtree_node_count(root: &DocBlock) -> usize {
+    let mut count = 0usize;
+    let mut stack = vec![root];
+    while let Some(block) = stack.pop() {
+        count = count.saturating_add(1);
+        stack.extend(block.children.iter());
+    }
+    count
+}
+
+/// Project admitted nodes in preorder using shared node/estimated-byte budgets.
+/// Zero budget or an oversized root returns None without consuming budget.
+/// Stops each sibling list at its first child that cannot fit; later siblings
+/// of an ancestor may still fit. O(admitted nodes + their facets),
+/// DTO allocation is bounded by admitted nodes plus rejected shallow candidates.
+/// Callers own limit clamping and use [`subtree_node_count`] for omitted counts.
+pub fn block_to_bounded_dto(
+    block: &DocBlock,
+    remaining_nodes: &mut usize,
+    remaining_bytes: &mut usize,
+) -> Option<BlockDto> {
+    if *remaining_nodes == 0 {
+        return None;
+    }
+    let minimum_bytes = block
+        .raw()
+        .len()
+        .saturating_add(if block.uuid.is_empty() {
+            36
+        } else {
+            block.uuid.len()
+        })
+        .saturating_add(128);
+    if minimum_bytes > *remaining_bytes {
+        return None;
+    }
+    let mut dto = block_to_shallow_dto(block);
+    let dto_bytes = crate::model::block_dto_estimated_bytes(&dto);
+    if dto_bytes > *remaining_bytes {
+        return None;
+    }
+    *remaining_nodes -= 1;
+    *remaining_bytes -= dto_bytes;
+    for child in &block.children {
+        let Some(child_dto) = block_to_bounded_dto(child, remaining_nodes, remaining_bytes) else {
+            break;
+        };
+        dto.children.push(child_dto);
+    }
+    Some(dto)
+}
+
 /// Build a Markdown page DTO from raw Logseq Markdown without touching disk.
 /// Used by the bundled in-app Guide so it reuses the same document parser and
 /// DTO projection as normal graph pages.

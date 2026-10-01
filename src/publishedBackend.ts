@@ -15,6 +15,7 @@
 import type { Backend, LoadGraphResult } from "./backend";
 import type { ExecutionContext, ParsedQuery, Query, QueryResult, QueryTextDialect, ViewSettings } from "./editor/queryIr";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, MatchEvidence, PageDto, PageEntry, PageRead, QueryExecution, QueryHit, QueryPageScope, RefGroup } from "./types";
+import { previewDtoSubtree } from "./previewProjection";
 import { pageIdentityKey } from "./pageIdentity";
 import { blockRegions } from "./render/parse";
 import { searchSubstringSpans } from "./editor/searchQuery";
@@ -466,23 +467,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const snapshot = await load();
       const found = findBlock(snapshot, uuid);
       if (!found) return null;
-      let emitted = 0;
-      let truncated = 0;
-      const count = (blocks: BlockDto[]): number => blocks.reduce((n, b) => n + 1 + count(b.children), 0);
-      const copy = (blocks: BlockDto[]): BlockDto[] => {
-        const out: BlockDto[] = [];
-        for (const block of blocks) {
-          if (emitted >= Math.max(1, maxNodes)) {
-            truncated += count([block]);
-            continue;
-          }
-          emitted++;
-          out.push({ ...block, children: copy(block.children) });
-        }
-        return out;
-      };
+      const { blocks, truncated } = previewDtoSubtree(found.block, maxNodes, "owned");
       return {
-        group: { page: found.page.name, kind: found.page.kind, path: found.page.path, blocks: copy([structuredClone(found.block)]) },
+        group: { page: found.page.name, kind: found.page.kind, path: found.page.path, blocks },
         truncated,
       };
     },

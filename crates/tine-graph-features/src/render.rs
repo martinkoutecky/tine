@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tine_core::doc::{self, DocBlock};
 use tine_core::lsdoc::ast::{Block, Inline, Url};
 use tine_core::model::{BlockDto, BlockPreview, Format, PageKind, RefGroup};
+use tine_core::projection::{block_to_bounded_dto, subtree_node_count};
 use tine_core::query::wire_parse::QueryTextDialect;
 use tine_core::refs::block_id;
 use tine_core::{Corpus, CorpusPage};
@@ -63,7 +64,7 @@ impl<'a> RenderGraph<'a> {
         let total = subtree_node_count(block);
         let mut remaining_nodes = 10_000;
         let mut remaining_bytes = 8 * 1024 * 1024;
-        let blocks = bounded_preview_dto(block, &mut remaining_nodes, &mut remaining_bytes)
+        let blocks = block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes)
             .into_iter()
             .collect();
         Some(BlockPreview {
@@ -89,52 +90,6 @@ impl<'a> RenderGraph<'a> {
         let id = self.store.file_id(Area::Assets, name)?;
         self.store.read(&id, Some(limit)).map(|(bytes, _)| bytes)
     }
-}
-
-fn subtree_node_count(root: &DocBlock) -> usize {
-    let mut count = 0usize;
-    let mut stack = vec![root];
-    while let Some(block) = stack.pop() {
-        count = count.saturating_add(1);
-        stack.extend(block.children.iter());
-    }
-    count
-}
-
-fn bounded_preview_dto(
-    block: &DocBlock,
-    remaining_nodes: &mut usize,
-    remaining_bytes: &mut usize,
-) -> Option<BlockDto> {
-    if *remaining_nodes == 0 {
-        return None;
-    }
-    let minimum_bytes = block
-        .raw()
-        .len()
-        .saturating_add(if block.uuid.is_empty() {
-            36
-        } else {
-            block.uuid.len()
-        })
-        .saturating_add(128);
-    if minimum_bytes > *remaining_bytes {
-        return None;
-    }
-    let mut dto = tine_core::projection::block_to_shallow_dto(block);
-    let dto_bytes = tine_core::model::block_dto_estimated_bytes(&dto);
-    if dto_bytes > *remaining_bytes {
-        return None;
-    }
-    *remaining_nodes -= 1;
-    *remaining_bytes -= dto_bytes;
-    for child in &block.children {
-        let Some(child_dto) = bounded_preview_dto(child, remaining_nodes, remaining_bytes) else {
-            break;
-        };
-        dto.children.push(child_dto);
-    }
-    Some(dto)
 }
 
 /// URL/file-safe slug for a page name (links and filenames must match).

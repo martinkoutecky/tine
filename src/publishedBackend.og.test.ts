@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { publishedBackend, validateSnapshot, type PublishedSnapshot } from "./publishedBackend";
 import { openPublishedPermalink, parsePublishedPermalinkHash, publishedPermalinkHash } from "./publishedPermalink";
 import type { ParsedQuery, QueryResult } from "./editor/queryIr";
@@ -100,4 +100,25 @@ it("matches baked query contexts by canonical page identity", async () => {
   const s = structuredClone(snapshot); s.queries[0].context.current_page = "Cafe\u0301";
   const api = publishedBackend(async () => s);
   expect(await api.queryRun(parsed.query, {}, {current_page: "/Café/"})).toEqual(result);
+});
+
+
+it("bounds preview cloning before allocation and owns emitted metadata (OG-DUPF03)", async () => {
+  const s = structuredClone(snapshot);
+  const root = s.pages[0].blocks[0];
+  root.tags = ["tag"]; root.properties = [["key", "value"]]; root.breadcrumb = ["ancestor"];
+  root.children = Array.from({length: 20000}, (_, i) => ({id: `child-${i}`, raw: "x".repeat(1024), collapsed: false, children: []}));
+  const clone = vi.spyOn(globalThis, "structuredClone");
+  try {
+    const start = performance.now();
+    const preview = await publishedBackend(async () => s).previewBlock("one", 1);
+    console.log(`OG-DUPF03 broad preview: ${(performance.now() - start).toFixed(2)} ms`);
+    expect(preview?.truncated).toBe(20000);
+    const copied = preview!.group.blocks[0];
+    expect(copied.children).toEqual([]);
+    const clonedDescendants = clone.mock.calls.reduce((n, [value]) => n + (value as {children?: unknown[]}).children!.length, 0);
+    expect(clonedDescendants, "preview allocation must be bounded before cloning").toBe(0);
+    copied.tags![0] = "changed"; copied.properties![0][1] = "changed"; copied.breadcrumb![0] = "changed";
+    expect(root.tags).toEqual(["tag"]); expect(root.properties).toEqual([["key", "value"]]); expect(root.breadcrumb).toEqual(["ancestor"]);
+  } finally { clone.mockRestore(); }
 });
