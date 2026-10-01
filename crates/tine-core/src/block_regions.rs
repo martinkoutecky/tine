@@ -28,6 +28,75 @@ pub fn is_linkable_property_separator(ch: char) -> bool {
     ch == ',' || ch == '，'
 }
 
+#[path = "page_filename.rs"]
+mod reference_filename;
+
+/// Interpret an already accepted link target. Evidence uses File labels;
+/// filename candidates use decoded page filenames, preserving the existing
+/// rename-candidate policy. Unlabeled local assets never name pages. O(target).
+pub fn reference_target_name(
+    kind: &str,
+    value: &str,
+    label: &str,
+    org: bool,
+    filename_candidates: bool,
+) -> Option<String> {
+    let path = value.strip_prefix("file:").unwrap_or(value);
+    let local_asset =
+        path.trim_start_matches(['.', '/']).starts_with("assets") || path.starts_with("draws");
+    match kind {
+        "page_ref" if !local_asset => Some(value.to_owned()),
+        "search" if value.trim().starts_with("[[") && value.trim().ends_with("]]") => {
+            Some(unbracket(value).to_owned())
+        }
+        "search" if org && !local_asset => Some(value.to_owned()),
+        "file" if filename_candidates && !local_asset => {
+            let file = path.rsplit('/').next().unwrap_or(value);
+            let stem = file
+                .rfind('.')
+                .filter(|&i| i > 0)
+                .map_or(file, |i| &file[..i]);
+            Some(reference_filename::decode_page_name(stem, false))
+        }
+        "file" if !label.trim().is_empty() && label != value => Some(label.to_owned()),
+        _ => None,
+    }
+}
+
+pub fn unbracket(value: &str) -> &str {
+    let trimmed = value.trim();
+    trimmed
+        .strip_prefix("[[")
+        .and_then(|rest| rest.strip_suffix("]]"))
+        .unwrap_or(value)
+}
+
+pub fn nested_reference_names(content: &str) -> Vec<String> {
+    let mut starts = Vec::new();
+    let mut out = Vec::new();
+    let bytes = content.as_bytes();
+    let mut index = 0;
+    while index + 1 < bytes.len() {
+        if bytes[index] == b'[' && bytes[index + 1] == b'[' {
+            starts.push(index + 2);
+            index += 2;
+        } else if bytes[index] == b']' && bytes[index + 1] == b']' {
+            if let Some(start) = starts.pop() {
+                if start <= index {
+                    out.push(content[start..index].to_string());
+                }
+            }
+            index += 2;
+        } else {
+            index += content[index..].chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    if out.is_empty() && !content.trim().is_empty() {
+        out.push(unbracket(content).to_string());
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct Range(pub usize, pub usize);
 impl Range {
@@ -635,6 +704,17 @@ impl BlockRegions {
                     edits.extend(matching.iter().map(|p| (p.line, String::new())));
                     add.push((key, value));
                 } else {
+                    // An accepted empty Markdown property can end immediately
+                    // after `::`. Refilling it must supply the grammar's space;
+                    // the accepted key/value ranges establish the delimiter slot.
+                    let value = if !org
+                        && !value.is_empty()
+                        && first.value_range.0 == first.key_range.1 + 2
+                    {
+                        format!(" {value}")
+                    } else {
+                        value
+                    };
                     edits.push((first.value_range, value));
                     edits.extend(matching.iter().skip(1).map(|p| (p.line, String::new())));
                 }

@@ -217,6 +217,42 @@ export function mime_from_path(path) {
 }
 
 /**
+ * Names inside an accepted NestedLink node; O(node bytes).
+ * @param {string} content
+ * @returns {string[]}
+ */
+export function nested_reference_names(content) {
+    const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.nested_reference_names(ptr0, len0);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * Whole-preamble property ownership, with parser-owned literals excluded.
+ * O(preamble bytes); no block wrapper or I/O.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+export function page_regions_json(raw, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.page_regions_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * @param {string} raw
  * @param {boolean} is_org
  * @returns {string}
@@ -287,6 +323,27 @@ export function parse_document_json(text, is_org) {
 }
 
 /**
+ * Accepted single Markdown property line, using the native borrowed grammar.
+ * O(line bytes), no parse or I/O; malformed input serializes as null.
+ * @param {string} line
+ * @returns {string}
+ */
+export function property_line_json(line) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(line, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.property_line_json(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Query EDN reads/splices from the same byte-span reader as native macro_text.
  * O(source bytes), at most 1 MiB / 128 levels; null refuses unreadable EDN.
  * Title edits preserve all unrelated bytes. No I/O or graph state.
@@ -345,6 +402,31 @@ export function query_macro_is_tql(name) {
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.query_macro_is_tql(ptr0, len0);
     return ret !== 0;
+}
+
+/**
+ * Shared native target classification on an accepted AST link. O(target).
+ * @param {string} kind
+ * @param {string} value
+ * @param {string} label
+ * @param {boolean} org
+ * @param {boolean} filename_candidates
+ * @returns {string | undefined}
+ */
+export function reference_target_name(kind, value, label, org, filename_candidates) {
+    const ptr0 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(label, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.reference_target_name(ptr0, len0, ptr1, len1, ptr2, len2, org, filename_candidates);
+    let v4;
+    if (ret[0] !== 0) {
+        v4 = getStringFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v4;
 }
 
 /**

@@ -3,7 +3,7 @@
 
 import type { Format } from "./ast";
 import { MARKERS, matchLeadingMarker } from "../markers";
-import { pagePropertyEntries } from "../editor/properties";
+import { acceptedPropertyLine, pagePropertyEntries } from "../editor/properties";
 import { split_linkable_property as splitLinkableProperty } from "./wasm/lsdoc_wasm.js";
 export { splitLinkableProperty };
 
@@ -42,13 +42,8 @@ export function isRenderHiddenProp(key: string, userHidden: readonly string[] = 
     || userHidden.some((k) => propertyKeyNorm(k) === normalized);
 }
 
-const PROP_RE = /^[A-Za-z0-9_./-]+::\s?.*$/;
-
 export function isPropertyLine(line: string): boolean {
-  const idx = line.indexOf("::");
-  if (idx <= 0) return false;
-  const key = line.slice(0, idx).trim();
-  return key.length > 0 && /^[A-Za-z0-9_./-]+$/.test(key) && PROP_RE.test(line);
+  return acceptedPropertyLine(line) !== null;
 }
 
 /** A page-property text's properties as `[key, value]` pairs, in file order,

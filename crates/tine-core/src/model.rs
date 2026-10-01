@@ -158,51 +158,16 @@ fn page_title_line(content: &str, format: Format) -> Option<TitleLine> {
 
 fn page_title_line_before(content: &str, format: Format, end: usize) -> Option<TitleLine> {
     let text = crate::org::lone_cr_to_lf(content);
-    let mut offset = 0;
-    for chunk in text[..end].split_inclusive('\n') {
-        let start = offset;
-        offset += chunk.len();
-        let line = chunk.trim_end_matches(['\r', '\n']);
-        let trimmed = line.trim_start();
-        let at = |value: &str| {
-            // `value` is a subslice of `line`: locate it by address.
-            let from = start + (value.as_ptr() as usize - line.as_ptr() as usize);
-            from..from + value.len()
-        };
-        let range = start..start + line.len();
-        if let Some((key, value)) = crate::doc::parse_property_line(line) {
-            if key.eq_ignore_ascii_case("title") && !value.is_empty() {
-                // The same value `parse_property_line` returns, as a subslice.
-                let value = line.split_once("::").map_or("", |(_, rest)| rest.trim());
-                return Some(TitleLine {
-                    line: range,
-                    value: at(value),
-                    property: true,
-                });
-            }
-        }
-        if format == Format::Org {
-            let directive = trimmed
-                .split_once(':')
-                .and_then(|(key, value)| key.eq_ignore_ascii_case("#+title").then_some(value));
-            let drawer = trimmed
-                .strip_prefix(':')
-                .and_then(|rest| rest.split_once(':'))
-                .and_then(|(key, value)| key.eq_ignore_ascii_case("title").then_some(value));
-            if let Some(title) = directive
-                .or(drawer)
-                .map(str::trim)
-                .filter(|title| !title.is_empty())
-            {
-                return Some(TitleLine {
-                    line: range,
-                    value: at(title),
-                    property: false,
-                });
-            }
-        }
-    }
-    None
+    let regions = crate::block_regions::parse_document(&text[..end], format == Format::Org);
+    let p = regions
+        .page_properties()
+        .find(|p| p.key.eq_ignore_ascii_case("title") && !p.value.is_empty())?;
+    let line = p.line.0..text[..p.line.1].trim_end_matches(['\r', '\n']).len();
+    Some(TitleLine {
+        line,
+        value: p.value_range.0..p.value_range.1,
+        property: format == Format::Md,
+    })
 }
 
 /// Whether a page file is a journal or an ordinary page.

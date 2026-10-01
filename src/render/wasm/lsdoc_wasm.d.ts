@@ -43,6 +43,17 @@ export function lsdoc_tag(): string;
  */
 export function mime_from_path(path: string): string;
 
+/**
+ * Names inside an accepted NestedLink node; O(node bytes).
+ */
+export function nested_reference_names(content: string): string[];
+
+/**
+ * Whole-preamble property ownership, with parser-owned literals excluded.
+ * O(preamble bytes); no block wrapper or I/O.
+ */
+export function page_regions_json(raw: string, is_org: boolean): string;
+
 export function parse_block_bundle_json(raw: string, is_org: boolean): string;
 
 /**
@@ -64,6 +75,12 @@ export function parse_block_json(raw: string, is_org: boolean): string;
 export function parse_document_json(text: string, is_org: boolean): string;
 
 /**
+ * Accepted single Markdown property line, using the native borrowed grammar.
+ * O(line bytes), no parse or I/O; malformed input serializes as null.
+ */
+export function property_line_json(line: string): string;
+
+/**
  * Query EDN reads/splices from the same byte-span reader as native macro_text.
  * O(source bytes), at most 1 MiB / 128 levels; null refuses unreadable EDN.
  * Title edits preserve all unrelated bytes. No I/O or graph state.
@@ -80,6 +97,11 @@ export function query_macro_extents_json(raw: string): string;
  * The raw reader's literal grammar for a macro name; O(name bytes), no I/O.
  */
 export function query_macro_is_tql(name: string): boolean;
+
+/**
+ * Shared native target classification on an accepted AST link. O(target).
+ */
+export function reference_target_name(kind: string, value: string, label: string, org: boolean, filename_candidates: boolean): string | undefined;
 
 /**
  * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
@@ -143,12 +165,16 @@ export interface InitOutput {
     readonly logbook_info_json: (a: number, b: number, c: number) => [number, number];
     readonly lsdoc_tag: () => [number, number];
     readonly mime_from_path: (a: number, b: number) => [number, number];
+    readonly nested_reference_names: (a: number, b: number) => [number, number];
+    readonly page_regions_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
+    readonly property_line_json: (a: number, b: number) => [number, number];
     readonly query_edn_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly query_macro_extents_json: (a: number, b: number) => [number, number];
     readonly query_macro_is_tql: (a: number, b: number) => number;
+    readonly reference_target_name: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
     readonly render_block_html: (a: number, b: number, c: number) => [number, number];
     readonly search_fold: (a: number, b: number, c: number) => [number, number];
     readonly search_matches: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;

@@ -5,7 +5,7 @@
 // same references inside property values and macro arguments. References inside
 // code are literal, as in the backend. Names are returned as written; compare them
 // with `pageIdentityKey`.
-import { decode_page_name } from "./wasm/lsdoc_wasm.js";
+import { reference_target_name, nested_reference_names } from "./wasm/lsdoc_wasm.js";
 import { parseBody, inlineText } from "./facets";
 import { isQuotedPagePropertyValue, normalizeImplicitPageName, propertyKeyNorm, splitLinkableProperty } from "./block";
 import type { Block, Format, Inline, ListItem } from "./ast";
@@ -78,13 +78,15 @@ function collectInlines(inlines: readonly Inline[], format: Format, out: string[
         collectInlines(inline.children, format, out);
         break;
       case "link":
-        if (inline.url.type === "page_ref") out.push(inline.url.v);
-        else if (inline.url.type === "file") {
-          const file = inline.url.v.slice(inline.url.v.lastIndexOf("/") + 1);
-          const dot = file.lastIndexOf(".");
-          out.push(decode_page_name(dot > 0 ? file.slice(0, dot) : file, false));
-        }
+        // FilenameCandidates is the established rename-candidate policy:
+        // Org file links select decoded stems, native evidence selects labels.
+        const name = reference_target_name(inline.url.type, "v" in inline.url ? inline.url.v : "",
+          inline.label ? inlineText(inline.label) : "", format === "org", true);
+        if (name) out.push(name);
         if (inline.label) collectInlines(inline.label, format, out);
+        break;
+      case "nested_link":
+        out.push(...nested_reference_names(inline.content));
         break;
       case "macro":
         for (const arg of inline.args) collectRaw(arg, format, out, false);

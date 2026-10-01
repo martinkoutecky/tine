@@ -1110,29 +1110,10 @@ pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
             seen.entry(tine_core::refs::page_key(&name)).or_insert(name);
         }
     }
-    fn property_refs(seen: &mut HashMap<String, String>, text: &str) {
-        for line in text.lines() {
-            let Some((key, value)) = tine_core::doc::parse_property_line(line) else {
-                continue;
-            };
-            if !(key.eq_ignore_ascii_case("tags")
-                || key.eq_ignore_ascii_case("alias")
-                || key.eq_ignore_ascii_case("aliases"))
-            {
-                continue;
-            }
-            let quoted = value.trim();
-            if quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"') {
-                continue;
-            }
-            for value in value.split(tine_core::refs::is_linkable_property_separator) {
-                let name = value.trim();
-                let name = name.strip_prefix('#').unwrap_or(name).trim();
-                let name = name
-                    .strip_prefix("[[")
-                    .and_then(|s| s.strip_suffix("]]"))
-                    .unwrap_or(name);
-                add(seen, name.trim().to_string());
+    fn property_refs(seen: &mut HashMap<String, String>, block: &DocBlock) {
+        for reference in &block.projection().reference_source.explicit {
+            if reference.rule == "implicit_linkable_property" {
+                add(seen, reference.name.clone());
             }
         }
     }
@@ -1140,14 +1121,16 @@ pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
         for name in &block.projection().refs_page {
             add(seen, name.clone());
         }
-        property_refs(seen, block.raw());
+        property_refs(seen, block);
         for child in &block.children {
             visit(child, seen);
         }
     }
     let mut seen = HashMap::new();
     if let Some(pre) = &doc.pre_block {
-        property_refs(&mut seen, pre);
+        let mut block = DocBlock::new(pre);
+        block.set_org(crate::query::page_properties::page_document_is_org(doc));
+        property_refs(&mut seen, &block);
     }
     for block in &doc.roots {
         visit(block, &mut seen);

@@ -49,6 +49,33 @@ mod lsdoc_block_parse;
 #[path = "../../tine-core/src/property_line.rs"]
 mod property_line;
 
+/// Accepted single Markdown property line, using the native borrowed grammar.
+/// O(line bytes), no parse or I/O; malformed input serializes as null.
+#[wasm_bindgen]
+pub fn property_line_json(line: &str) -> String {
+    serde_json::to_string(&property_line::parse_property_line(line)).unwrap()
+}
+
+/// Whole-preamble property ownership, with parser-owned literals excluded.
+/// O(preamble bytes); no block wrapper or I/O.
+#[wasm_bindgen]
+pub fn page_regions_json(raw: &str, is_org: bool) -> String {
+    let regions = block_regions::parse_document(raw, is_org);
+    serde_json::to_string(&regions.page_properties().collect::<Vec<_>>()).unwrap()
+}
+
+/// Shared native target classification on an accepted AST link. O(target).
+#[wasm_bindgen]
+pub fn reference_target_name(kind: &str, value: &str, label: &str, org: bool, filename_candidates: bool) -> Option<String> {
+    block_regions::reference_target_name(kind, value, label, org, filename_candidates)
+}
+
+/// Names inside an accepted NestedLink node; O(node bytes).
+#[wasm_bindgen]
+pub fn nested_reference_names(content: &str) -> Vec<String> {
+    block_regions::nested_reference_names(content)
+}
+
 /// MIME from the final case-insensitive path extension; O(path bytes), no I/O.
 /// Unknown extensions return application/octet-stream. Shared with native media.
 #[wasm_bindgen]

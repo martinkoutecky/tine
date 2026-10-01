@@ -5,7 +5,7 @@
 // drift on either side fails a test instead of shipping an invisible property.
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
-import { PROP_LINE, isEditablePropertyKey, pagePropertyEntries, splitProps } from "./properties";
+import { acceptedPropertyLine, isEditablePropertyKey, pagePropertyEntries, splitProps } from "./properties";
 import { initParser } from "../render/parse";
 import { facetsOf } from "../render/facets";
 
@@ -29,7 +29,7 @@ describe("isEditablePropertyKey = the intersection of every Tine reader (shared 
   it("every accepted key reads back through every TypeScript reader, both formats", () => {
     for (const key of accepted) {
       const lower = key.toLowerCase();
-      expect(PROP_LINE.exec(`${key}:: v`)?.[1], key).toBe(key);
+      expect(acceptedPropertyLine(`${key}:: v`)?.key, key).toBe(key);
       expect(pagePropertyEntries(`${key}:: v`, "md").map((e) => [e.key, e.value]), key).toEqual([[key, "v"]]);
       expect(pagePropertyEntries(`#+${key}: v`, "org").map((e) => [e.key, e.value]), key).toEqual([[lower, "v"]]);
       expect(pagePropertyEntries(`:PROPERTIES:\n:${key}: v\n:END:`, "org").map((e) => [e.key, e.value]), key).toEqual([[lower, "v"]]);

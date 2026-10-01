@@ -21,7 +21,7 @@ pub(crate) fn page_property_lines(text: &str, is_org: bool) -> Vec<(String, Stri
 
 /// The first root carries the format; an empty document's parser-owned Org
 /// metadata distinguishes an Org drawer/directive preamble from Markdown.
-pub(super) fn page_document_is_org(doc: &Document) -> bool {
+pub(crate) fn page_document_is_org(doc: &Document) -> bool {
     doc.roots.first().map(DocBlock::is_org).unwrap_or_else(|| {
         doc.pre_block.as_deref().is_some_and(|pre| {
             tine_core::block_regions::parse_document(pre, true)

@@ -4,8 +4,15 @@
 import { transitionFence, displayMathOpenAfter, closesDisplayMath, type FenceState } from "./fences";
 import { blockRegions, editBlock, parserReady } from "../render/parse";
 
-/** Ordinary `key:: value` lines share the page-header key class at column zero. */
-export const PROP_LINE = /^([\p{L}\p{M}\p{N}_./-]+):: ?(.*)$/u;
+import { property_line_json, page_regions_json } from "../render/wasm/lsdoc_wasm.js";
+import type { RegionProperty } from "../render/parse";
+
+/** Native accepted line grammar; callers choose placement and authoring policy. */
+export function acceptedPropertyLine(line: string): { key: string; value: string } | null {
+  if (!line) return null;
+  const pair = JSON.parse(property_line_json(line)) as [string, string] | null;
+  return pair ? { key: pair[0], value: pair[1] } : null;
+}
 
 /** Whether the properties panel may write `key` (GH #164): letters, marks,
  *  digits, `_`, `.`, `/` or `-` — the intersection of Tine's Markdown page
@@ -315,10 +322,8 @@ export function joinProps(visible: string, hidden: string, format: PropFormat = 
 /** First value for `key` (case-insensitive) in a property block, or null. */
 export function readPropertyValue(block: string | null, key: string): string | null {
   if (!block) return null;
-  for (const l of block.split("\n")) {
-    const m = PROP_LINE.exec(l);
-    if (m && m[1].toLowerCase() === key.toLowerCase()) return m[2].trim();
-  }
+  const property = blockRegions(block).properties.find((p) => p.primary && p.key.toLowerCase() === key.toLowerCase());
+  if (property) return property.value;
   return null;
 }
 
@@ -337,10 +342,15 @@ export function upsertPropertyLine(
   const lines = block == null || block === "" ? [] : block.split("\n");
   const out: string[] = [];
   let matched = false;
-  for (const line of lines) {
-    const m = PROP_LINE.exec(line);
-    if (m && m[1].toLowerCase() === key.toLowerCase()) {
-      if (!matched && v) out.push(`${m[1]}:: ${v}`);
+  const raw = block ?? "";
+  const decoder = new TextDecoder();
+  const bytes = new TextEncoder().encode(raw);
+  const accepted = new Map(blockRegions(raw).properties.filter((p) => p.primary)
+    .map((p) => [decoder.decode(bytes.subarray(0, p.line[0])).split("\n").length - 1, p]));
+  for (const [index, line] of lines.entries()) {
+    const p = accepted.get(index);
+    if (p && p.key.toLowerCase() === key.toLowerCase()) {
+      if (!matched && v) out.push(`${line.slice(0, decoder.decode(bytes.subarray(p.line[0], p.key_range[1])).length)}:: ${v}${line.endsWith("\r") ? "\r" : ""}`);
       matched = true;
       continue;
     }
@@ -361,39 +371,34 @@ export interface PagePropertyEntry {
   line: number;
 }
 
-// Org page keys use the Markdown page-header key class (GH #164 / master 0a1d537fa: non-ASCII Org page keys).
-const ORG_DIRECTIVE = /^#\+([\p{L}\p{M}\p{N}_./-]+):\s*(.*)$/u;
-const ORG_DRAWER_LINE = /^:([\p{L}\p{M}\p{N}_./-]+):\s*(.*)$/u;
+const pageRegionsCache = new Map<string, RegionProperty[]>();
 
-/** THE page-property grammar (I-12: every page-property reader and writer
- *  derives from it, including render/block.ts `pageProperties`). Markdown: each
- *  `key:: value` line of the fence-aware canonical header
- *  ({@link splitPagePreamble}); prose, later lines and fenced code are never
- *  properties. Org: every `#+key:` directive (space optional) and every `:key:`
- *  line inside a `:PROPERTIES:` … `:END:` drawer. File order, duplicates kept.
- *  Cost O(text). */
+/** Accepted whole-preamble properties, in file order. Markdown's canonical
+ * column-zero header policy is retained; Org uses parser-owned directives and
+ * drawers, excluding literal src/example regions. Cost O(preamble bytes) cold,
+ * O(property count) warm; bounded to 64 retained preambles. */
 export function pagePropertyEntries(text: string | null | undefined, format: PropFormat): PagePropertyEntry[] {
   if (!text) return [];
-  const out: PagePropertyEntry[] = [];
-  if (format === "org") {
-    let inDrawer = false;
-    text.split("\n").forEach((line, i) => {
-      const t = line.trim();
-      if (/^:PROPERTIES:$/i.test(t)) inDrawer = true;
-      else if (/^:END:$/i.test(t)) inDrawer = false;
-      else {
-        const m = ORG_DIRECTIVE.exec(t) ?? (inDrawer ? ORG_DRAWER_LINE.exec(t) : null);
-        if (m) out.push({ key: m[1].toLowerCase(), value: m[2].trim(), line: i });
-      }
+  if (format === "md") {
+    return (splitPagePreamble(text).properties?.split("\n") ?? []).flatMap((line, i) => {
+      const p = parsePageHeaderPropertyLine(line);
+      return p ? [{ key: p.key, value: p.value.trim(), line: i }] : [];
     });
-    return out;
   }
-  const header = splitPagePreamble(text).properties;
-  header?.split("\n").forEach((line, i) => {
-    const property = parsePageHeaderPropertyLine(line);
-    if (property) out.push({ key: property.key, value: property.value.trim(), line: i });
-  });
-  return out;
+  const source = text;
+  let regions = pageRegionsCache.get(source);
+  if (!regions) {
+    regions = JSON.parse(page_regions_json(source, true)) as RegionProperty[];
+    if (pageRegionsCache.size >= 64) pageRegionsCache.delete(pageRegionsCache.keys().next().value!);
+    pageRegionsCache.set(source, regions);
+  }
+  const bytes = new TextEncoder().encode(source);
+  const decoder = new TextDecoder();
+  return regions.map((p) => ({
+    key: format === "org" ? p.key.toLowerCase() : p.key,
+    value: p.value,
+    line: decoder.decode(bytes.subarray(0, p.line[0])).split("\n").length - 1,
+  }));
 }
 
 /** Set (or, for a null/blank value, remove) page property `key` across `parts`

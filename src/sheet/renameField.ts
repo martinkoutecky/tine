@@ -1,8 +1,7 @@
 import { isAggregateFn } from "./aggregate";
 import { parseFields, sheetConfig, type FieldSpec } from "./config";
 import { astToExpr, decodeFormulaExpr, encodeFormulaExpr, formulaNameValid, parseFormula, type Ast } from "./formula";
-import { PROP_LINE } from "../editor/properties";
-import { parseBody } from "../render/facets";
+import { blockRegions } from "../render/parse";
 import type { Format } from "../render/ast";
 
 const PROPERTY_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
@@ -50,10 +49,7 @@ export type SheetFieldRenamePlanResult =
   | { ok: true; plan: SheetFieldRenamePlan }
   | { ok: false; error: string };
 
-interface RawLine {
-  text: string;
-  start: number;
-}
+
 
 interface PropertyOccurrence {
   line: number;
@@ -75,85 +71,19 @@ function fail(error: string): SheetFieldRenamePlanResult {
   return { ok: false, error };
 }
 
-function linesOf(raw: string): RawLine[] {
-  const out: RawLine[] = [];
-  let start = 0;
-  for (const part of raw.matchAll(/.*?(?:\r\n|\n|\r|$)/g)) {
-    if (!part[0] && start === raw.length && out.length) break;
-    const text = part[0].replace(/(?:\r\n|\n|\r)$/, "");
-    out.push({ text, start });
-    start += part[0].length;
-    if (start >= raw.length) break;
-  }
-  return out.length ? out : [{ text: "", start: 0 }];
-}
-
-function mdOccurrence(line: RawLine, index: number): PropertyOccurrence | null {
-  const match = PROP_LINE.exec(line.text);
-  if (!match) return null;
-  const separator = line.text.indexOf("::");
-  const valueStartInLine = separator + 2 + (line.text[separator + 2] === " " ? 1 : 0);
-  return {
-    line: index,
-    key: match[1],
-    value: match[2],
-    keyStart: line.start,
-    keyEnd: line.start + match[1].length,
-    valueStart: line.start + valueStartInLine,
-    valueEnd: line.start + line.text.length,
-  };
-}
-
-function orgOccurrence(line: RawLine, index: number): PropertyOccurrence | null {
-  const propertyBlock = parseBody(`Row\n:PROPERTIES:\n${line.text}\n:END:`, "org")
-    .find((block) => block.kind === "properties");
-  const pair = propertyBlock?.kind === "properties" ? propertyBlock.props[0] : undefined;
-  if (!pair) return null;
-  const key = pair[0];
-  // The parser recognizes the drawer key; retain the source spelling and
-  // whitespace for the lossless edit rather than its lowercased projection.
-  const keyStartInLine = line.text.toLowerCase().indexOf(key.toLowerCase());
-  const keyEndInLine = keyStartInLine + key.length;
-  const valueStartInLine = keyEndInLine + 1 +
-    (line.text.slice(keyEndInLine + 1).length - line.text.slice(keyEndInLine + 1).trimStart().length);
-  return {
-    line: index,
-    key: line.text.slice(keyStartInLine, keyEndInLine),
-    value: line.text.slice(valueStartInLine),
-    keyStart: line.start + keyStartInLine,
-    keyEnd: line.start + keyEndInLine,
-    valueStart: line.start + valueStartInLine,
-    valueEnd: line.start + line.text.length,
-  };
-}
-
-/** lsdoc selects property regions; the shared editor grammar locates keys
- * within those regions. Offsets exposed to the planner are UTF-16 indices into
- * the original raw, preserving CRLF and non-ASCII body bytes. Cost O(raw). */
+/** Accepted property key/value spans; UTF-8 transport coordinates are mapped
+ * to the editor's UTF-16 without recognizing source grammar. Cost O(raw). */
 export function propertyOccurrences(raw: string, format: Format): readonly PropertyOccurrence[] {
   const bytes = new TextEncoder().encode(raw);
   const decoder = new TextDecoder();
-  const leadBytes = bytes.length - new TextEncoder().encode(raw.trimStart()).length;
-  const out: PropertyOccurrence[] = [];
-  for (const block of parseBody(raw, format)) {
-    if (block.kind !== "properties" || !block.span) continue;
-    const startByte = block.span[0] - 2 + leadBytes;
-    const endByte = block.span[1] - 2 + leadBytes;
-    if (startByte < 0 || endByte > bytes.length) continue;
-    const start = decoder.decode(bytes.subarray(0, startByte)).length;
-    const source = decoder.decode(bytes.subarray(startByte, endByte));
-    // An Org properties span includes its two drawer wrapper lines.
-    const lines = linesOf(source);
-    const payload = format === "org" ? lines.slice(1, -1) : lines;
-    for (const [index, line] of payload.entries()) {
-      const occurrence = format === "org" ? orgOccurrence(line, index) : mdOccurrence(line, index);
-      if (!occurrence) continue;
-      out.push({ ...occurrence,
-        keyStart: start + occurrence.keyStart, keyEnd: start + occurrence.keyEnd,
-        valueStart: start + occurrence.valueStart, valueEnd: start + occurrence.valueEnd });
-    }
-  }
-  return out;
+  const at = (byte: number) => decoder.decode(bytes.subarray(0, byte)).length;
+  return blockRegions(raw, format).properties.filter((p) => p.primary).map((p) => ({
+    line: raw.slice(0, at(p.line[0])).split("\n").length - 1,
+    key: raw.slice(at(p.key_range[0]), at(p.key_range[1])),
+    value: p.value,
+    keyStart: at(p.key_range[0]), keyEnd: at(p.key_range[1]),
+    valueStart: at(p.value_range[0]), valueEnd: at(p.value_range[1]),
+  }));
 }
 
 function normalizedPair(key: string, value: string): string {

@@ -194,32 +194,18 @@ fn flatten_inlines(inlines: &[Inline], out: &mut String) {
     }
 }
 
-fn local_asset(value: &str) -> bool {
-    value.trim_start_matches(['.', '/']).starts_with("assets") || value.starts_with("draws")
-}
-
-fn unbracket(value: &str) -> &str {
-    let trimmed = value.trim();
-    trimmed
-        .strip_prefix("[[")
-        .and_then(|rest| rest.strip_suffix("]]"))
-        .unwrap_or(value)
-}
+use crate::block_regions::{nested_reference_names as nested_names, unbracket};
 
 fn link_page_name(url: &Url, label: &[Inline], is_org: bool) -> Option<String> {
-    match url {
-        Url::PageRef { v } if !local_asset(v) => Some(v.clone()),
-        Url::Search { v } if v.trim().starts_with("[[") && v.trim().ends_with("]]") => {
-            Some(unbracket(v).to_string())
-        }
-        Url::Search { v } if is_org && !local_asset(v) => Some(v.clone()),
-        Url::File { .. } if !label.is_empty() => {
-            let mut value = String::new();
-            flatten_inlines(label, &mut value);
-            (!value.trim().is_empty()).then_some(value)
-        }
-        _ => None,
-    }
+    let mut text = String::new();
+    flatten_inlines(label, &mut text);
+    let (kind, value) = match url {
+        Url::PageRef { v } => ("page_ref", v.as_str()),
+        Url::Search { v } => ("search", v.as_str()),
+        Url::File { v } => ("file", v.as_str()),
+        _ => return None,
+    };
+    crate::block_regions::reference_target_name(kind, value, &text, is_org, false)
 }
 
 fn tag_name(children: &[Inline]) -> String {
@@ -257,32 +243,6 @@ fn push_explicit_range(
             .explicit
             .push(ProjectedPageRef { name, range, rule });
     }
-}
-
-fn nested_names(content: &str) -> Vec<String> {
-    let mut starts = Vec::new();
-    let mut out = Vec::new();
-    let bytes = content.as_bytes();
-    let mut index = 0;
-    while index + 1 < bytes.len() {
-        if bytes[index] == b'[' && bytes[index + 1] == b'[' {
-            starts.push(index + 2);
-            index += 2;
-        } else if bytes[index] == b']' && bytes[index + 1] == b']' {
-            if let Some(start) = starts.pop() {
-                if start <= index {
-                    out.push(content[start..index].to_string());
-                }
-            }
-            index += 2;
-        } else {
-            index += content[index..].chars().next().map_or(1, char::len_utf8);
-        }
-    }
-    if out.is_empty() && !content.trim().is_empty() {
-        out.push(unbracket(content).to_string());
-    }
-    out
 }
 
 fn walk_inlines(
