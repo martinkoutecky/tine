@@ -14,9 +14,9 @@
 // initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_bundle_json, edit_block_regions_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
-import type { Block } from "./ast";
+import type { Block, MacroInline, Inline } from "./ast";
 
 // `ready` is a Solid signal so components (AstBody) reactively render once the
 // parser is loaded. In the normal flow init is awaited before mount, so it's
@@ -117,6 +117,7 @@ export interface BlockRegions {
 /** An accepted identity value carried with the exact editor buffer that owns
  * it. Coordinates are deliberately absent: inserting hidden rows moves spans. */
 export interface BlockIdentityFacts { raw: string; format: "md" | "org"; value: string | null }
+const soleMacroCache = new WeakMap<Block[], MacroInline | null>();
 const regionCache = new WeakMap<Block[], BlockRegions>();
 
 
@@ -188,7 +189,8 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
       return quarantine(key, text);
     }
   }
-  const bundle = JSON.parse(json) as { blocks: Block[]; regions: BlockRegions };
+  const bundle = JSON.parse(json) as { blocks: Block[]; regions: BlockRegions; sole_macro: MacroInline | null };
+  soleMacroCache.set(bundle.blocks, bundle.sole_macro);
   regionCache.set(bundle.blocks, bundle.regions);
   return remember(key, bundle.blocks);
 }
@@ -205,4 +207,26 @@ export function editBlock(raw: string, format: "md" | "org", request: object): s
   const regions = blockRegions(raw, format);
   if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
   return edit_block_regions_json(raw, format === "org", regions, request);
+}
+
+/** Sole visible macro from the native AST policy (standalone_macro::sole_macro).
+ * O(1) on a warm block; cold parsing is O(block bytes), with no second parse. */
+export function soleBlockMacro(raw: string, format: "md" | "org" = "md"): MacroInline | null {
+  // Candidate admission only: without an opening token there cannot be a macro.
+  // Positive classification still belongs entirely to the native AST policy.
+  if (!parserReady() || !raw.includes("{{")) return null;
+  return soleMacroCache.get(parseBlock(raw, format === "org")) ?? null;
+}
+
+const propertyInlineCache = new WeakMap<RegionProperty, Inline[]>();
+/** Inline syntax of one accepted property value, using lsdoc's bounded inline
+ * door. O(value bytes) cold, O(1) warm; coordinates start at the value's byte 0.
+ * Refusal throws, preserving source rather than dropping unreadable content. */
+export function propertyValueInline(property: RegionProperty, format: "md" | "org"): Inline[] {
+  const cached = propertyInlineCache.get(property);
+  if (cached) return cached;
+  const inline = JSON.parse(parse_inline_json(property.value, format === "org")) as Inline[] | null;
+  if (!inline) throw new Error("Inline export refused: property value is too deep");
+  propertyInlineCache.set(property, inline);
+  return inline;
 }

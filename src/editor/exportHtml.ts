@@ -1,16 +1,12 @@
 import type { ExportNode } from "./exportText";
 import {
   includesChildren,
-  nodeText,
-  renderHtmlInline,
+  nodeHtml,
   type MarkupExportOptions,
 } from "./exportMarkup";
 
 function listItem(node: ExportNode, options: MarkupExportOptions, level: number, indent: string): string[] {
-  const text = nodeText(node, options)
-    .split("\n")
-    .map((line) => renderHtmlInline(line, node.format ?? "md", options.removeEmphasis))
-    .join("<br>\n");
+  const text = nodeHtml(node, options);
   const children = includesChildren(level, options.maxDepth) ? node.children : [];
   if (!children.length) return [`${indent}<li>${text}</li>`];
   return [

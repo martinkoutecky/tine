@@ -122,3 +122,13 @@ it("offers all three dotted Logseq journal title formats", () => {
     expect(parseJournalWith(title, pattern)).toEqual({ y: 2026, m: 7, d: 21 });
   }
 });
+
+ it("classification and conversion agree for trimmed titles and early years (D17)", () => {
+   setJournalTitleFormat(null);
+   for (const title of ["0099-01-01", " 0099-01-01 ", "0000_02_29"]) {
+     expect(isJournalTitle(title)).toBe(true);
+     const date = parseJournalTitle(title)!;
+     expect(date).not.toBeNull();
+     expect(date.getFullYear()).toBe(Number(title.trim().slice(0, 4)));
+   }
+ });

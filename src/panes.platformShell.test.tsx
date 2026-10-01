@@ -8,6 +8,8 @@ async function loadPanes(platform: "ios" | "desktop", width: number, height: num
   globalThis.__TINE_PLATFORM__ = platform;
   Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
   Object.defineProperty(window, "innerHeight", { configurable: true, value: height });
+  const { initParser } = await import("./render/parse");
+  await initParser();
   const panes = await import("./panes");
   panes.resetPaneLayoutToSingle({
     tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],

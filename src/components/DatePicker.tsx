@@ -6,6 +6,7 @@ import { parseIsoDateLike } from "../sheet/typed";
 import { registerTransientLayer } from "../transientLayers";
 import { refuseStaleWrite } from "../binding";
 
+import { parseRepeater, type RepMode } from "../editor/repeat";
 import { appNow } from "../journal";
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -26,15 +27,6 @@ export function DatePicker(): JSX.Element {
       {(dp) => <Picker bid={dp().blockId} which={dp().which} x={dp().x} y={dp().y} />}
     </Show>
   );
-}
-
-// Parse an org repeater cookie (`+1w`, `.+1w`, `++1w`) into UI state. `.+` means
-// "from the completion day"; `+` from the stored date; `++` is catch-up. The mode
-// is preserved verbatim so editing a `++` task's date doesn't rewrite it to `+`.
-type RepMode = "+" | "++" | ".+";
-function parseRepeater(r: string | null): { unit: string; num: number; mode: RepMode } {
-  const m = r ? /^(\.\+|\+\+|\+)(\d+)([dwmy])$/.exec(r) : null;
-  return m ? { unit: m[3], num: +m[2], mode: m[1] as RepMode } : { unit: "", num: 1, mode: "+" };
 }
 
 function isScheduleTarget(which: DatePickerTarget): which is "scheduled" | "deadline" {

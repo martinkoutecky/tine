@@ -2,9 +2,9 @@
 // take on OG Logseq's "Copy / Export" modal (handler/export/text.cljs). The core
 // is pure (operates on an ExportNode tree) so it's unit-testable; the store
 // builds the tree from the live doc. The inline "remove" transforms are
-// pragmatic regexes (not a full inline parse) — enough for the common cases the
-// modal offers, matching OG's option set within reason.
+// policies over parser-owned spans, shared with markup export.
 
+import { cleanInline } from "./exportMarkup";
 import { editBlock } from "../render/parse";
 import { renderedBlockText, type RenderedTextOptions } from "../render/renderedText";
 import type { Format } from "../render/ast";
@@ -17,7 +17,7 @@ export type MaxDepth = "all" | number;
 
 // rendered = the text as displayed (glyphs, no markup markers) — lsdoc-AST
 //            flattening via render/renderedText.ts, never a regex re-scan.
-// source   = the raw markdown/org, with the regex "remove" transforms below.
+// source   = the raw markdown/org, with parser-owned cleanup spans.
 export type ExportContent = "rendered" | "source";
 
 export interface ExportOptions {
@@ -61,28 +61,7 @@ export interface ExportNode {
   children: ExportNode[];
 }
 
-/** Apply the inline "remove" transforms to one content line. */
-function stripInline(text: string, opts: ExportOptions): string {
-  let s = text;
-  if (opts.removeTags) {
-    s = s.replace(/#\[\[[^\]]*\]\]/g, ""); // #[[Foo Bar]]
-    s = s.replace(/(^|\s)#[\w/-]+/g, "$1"); // #tag (keep the boundary char)
-    s = s.replace(/[ \t]{2,}/g, " "); // tidy gaps left by removed tags
-  }
-  if (opts.stripLinks) {
-    s = s.replace(/\[\[([^\]]*)\]\]/g, "$1"); // [[Foo]] -> Foo
-  }
-  if (opts.removeEmphasis) {
-    s = s.replace(/(\*\*|__)(.*?)\1/g, "$2"); // bold
-    s = s.replace(/(\*|_)(.*?)\1/g, "$2"); // italic
-    s = s.replace(/~~(.*?)~~/g, "$1"); // strikethrough
-    s = s.replace(/==(.*?)==/g, "$1"); // highlight
-  }
-  return s;
-}
-
-/** One block's export lines: rendered (AST flattening) or source (raw + regex
- *  transforms). Both honor removeProperties/stripLinks/removeTags; emphasis
+/** One block's export lines: rendered (AST flattening) or source (raw + parser-owned cleanup). Both honor removeProperties/stripLinks/removeTags; emphasis
  *  markers only exist in source. */
 function blockExportLines(n: ExportNode, opts: ExportOptions): string[] {
   if (opts.content === "rendered") {
@@ -98,8 +77,7 @@ function blockExportLines(n: ExportNode, opts: ExportOptions): string[] {
     }).split("\n");
   }
   const raw = opts.removeProperties ? editBlock(n.raw, n.format ?? "md", { kind: "visible" }) : n.raw;
-  const lines = raw.split("\n");
-  return lines.map((l) => stripInline(l, opts));
+  return cleanInline(raw, n.format ?? "md", opts).split("\n");
 }
 
 /** Serialize an export-node forest to text per `opts`. */

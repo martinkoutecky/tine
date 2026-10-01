@@ -5,7 +5,7 @@
 // blocks on IPC. Journal-page-title tokens are NOT resolved here (that needs the
 // graph); they pass through to the backend verbatim.
 
-import { journalTitle, appNow } from "../journal";
+import { journalTitle, appNow, localCalendarDate } from "../journal";
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
@@ -13,13 +13,6 @@ function addDays(d: Date, n: number): Date {
   const r = new Date(d);
   r.setDate(r.getDate() + n);
   return r;
-}
-// Build a Date only if the y/m/d round-trip exactly (rejects 2026-02-31 etc.).
-// Use setFullYear so years 0–99 aren't reinterpreted as 1900-based by the Date ctor.
-function validDate(y: number, m: number, d: number): Date | null {
-  const dt = new Date(2000, 0, 1);
-  dt.setFullYear(y, m, d);
-  return dt.getFullYear() === y && dt.getMonth() === m && dt.getDate() === d ? dt : null;
 }
 function addMonths(d: Date, n: number): Date {
   const r = new Date(d);
@@ -66,13 +59,13 @@ export function resolveDateToken(tok: string, today = appNow()): Date | null {
   // JS Date silently roll them over to a wrong day.
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
   if (iso) {
-    return validDate(+iso[1], +iso[2] - 1, +iso[3]);
+    return localCalendarDate(+iso[1], +iso[2] - 1, +iso[3]);
   }
   // "MMM do, yyyy" journal title (e.g. "Jun 16th, 2026") — resolvable locally.
   const jt = /^([a-z]{3})\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$/i.exec(t);
   if (jt) {
     const m = MONTHS.indexOf(jt[1].toLowerCase());
-    if (m >= 0) return validDate(+jt[3], m, +jt[2]);
+    if (m >= 0) return localCalendarDate(+jt[3], m, +jt[2]);
   }
   return null;
 }

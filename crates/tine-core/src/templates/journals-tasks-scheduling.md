@@ -33,6 +33,7 @@ icon:: 📅
 - ## Repeating tasks
   - Put a repeater inside the timestamp, e.g. `<2026-07-07 Tue +1w>` (or pick one in the calendar popup); the units are `d`, `w`, `m`, `y` for days, weeks, months, years.
   - Marking a repeating task done does not close it: the date advances to the next occurrence and the marker resets to the workflow's open state (TODO, or LATER under NOW / LATER). This works from the checkbox, the marker chip, and Ctrl+Enter.
+  - A timed repeater such as `<2026-09-30 Wed 09:00 +1w>` advances to the next date while keeping `09:00`; the date picker keeps that time and repeater when you re-pick its date.
   - `+1w` advances from the stored date; `.+1w` counts from the day you complete it; `++1w` skips missed occurrences, landing past today. The repeater survives date re-picks in the calendar.
 - ## Carry-over
   - On a past day, **Carry unfinished tasks → today** moves its open tasks (every marker except DONE / CANCELED / CANCELLED) to today. On today, **Carry from previous day** pulls from the most recent day that has content and **Carry last N days** goes further back. The same action is on a past journal day's right-click menu, and the command palette (**Ctrl+Shift+P**) has last-7 / 30 / 365-day presets.

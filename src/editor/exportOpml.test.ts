@@ -44,3 +44,16 @@ describe("exportOpml", () => {
     expect(result).not.toContain("Grandchild");
   });
 });
+
+it("D16 cleanup preserves inline and block literals in both formats", () => {
+  for (const [format, raw] of [
+    ["md", "`[[literal]] #tag **code**` [[Page]] #real **bold**"],
+    ["org", "~[[literal]] #tag *code*~ [[Page]] #real *bold*"],
+    ["org", "#+BEGIN_SRC text\n[[literal]] #tag *code*\n#+END_SRC\n[[Page]] #real *bold*"],
+  ] as const) {
+    const xml = exportOpml([{raw, format, children:[]}], {stripLinks:true, removeTags:true, removeEmphasis:true});
+    expect(xml).toContain("[[literal]] #tag");
+    expect(xml).not.toContain("[[Page]]");
+    expect(xml).not.toContain("#real");
+  }
+});

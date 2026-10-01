@@ -1169,7 +1169,8 @@ describe("page-scoped structural undo", () => {
 });
 
 describe("carry unfinished tasks → today", () => {
-  const TODAY = journalTitle(new Date());
+  let TODAY: string;
+  beforeAll(() => { TODAY = journalTitle(new Date()); });
   const journal = (name: string, blocks: BlockDto[]): PageDto => ({
     name, kind: "journal", title: name, pre_block: null, blocks,
   });

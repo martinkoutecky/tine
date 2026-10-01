@@ -15,9 +15,9 @@ const meta = (template: string | null): GraphMeta => ({
   macros: {}, enable_timetracking: true, show_brackets: true, logbook_with_second_support: true,
   logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true,
 });
-const path = `journals/${journalTitle(new Date())}.md`;
+let path: string;
 
-beforeEach(() => { resetStore(); setGraphMeta(null); });
+beforeEach(() => { resetStore(); setGraphMeta(null); path = `journals/${journalTitle(new Date())}.md`; });
 afterEach(() => { vi.restoreAllMocks(); resetStore(); setGraphMeta(null); localStorage.clear(); });
 
 describe("graph creators that bypass the save engine", () => {

@@ -293,7 +293,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // outline. Showing both this storage block's controls and the referenced root's
   // controls produces two consecutive bullets. Keep the referenced root controls
   // (they own collapse/zoom/sidebar behavior) and suppress only the macro host.
-  const macro = createMemo(() => detectMacro(node().raw)); // shared with `Rendered`
+  const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => {
     const m = macro();
     return m?.kind === "embed" && /^embed\s*\(\([^)]+\)\)\s*$/i.test(m.inner);
