@@ -25,8 +25,15 @@ pub fn create_main(app: &tauri::App) -> tauri::Result<()> {
             if std::env::var_os("TINE_SPIKE_MW").is_none() || url.as_str() != "about:blank" {
                 return tauri::webview::NewWindowResponse::Deny;
             }
+            static NEXT_POPUP: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(1);
+            let label = format!(
+                "spike-popup-{}",
+                NEXT_POPUP.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            eprintln!("SPIKE popup build start label={label}");
             let window =
-                WebviewWindowBuilder::new(&handle, "spike-popup", tauri::WebviewUrl::External(url))
+                WebviewWindowBuilder::new(&handle, &label, tauri::WebviewUrl::External(url))
                     .window_features(features)
                     .title("Tine Spike Popup")
                     .decorations(true)
@@ -37,7 +44,10 @@ pub fn create_main(app: &tauri::App) -> tauri::Result<()> {
                     })
                     .build();
             match window {
-                Ok(window) => tauri::webview::NewWindowResponse::Create { window },
+                Ok(window) => {
+                    eprintln!("SPIKE popup build completed label={label}");
+                    tauri::webview::NewWindowResponse::Create { window }
+                }
                 Err(error) => {
                     eprintln!("spike popup: {error}");
                     tauri::webview::NewWindowResponse::Deny
@@ -94,18 +104,22 @@ pub async fn spike_mw(
         },
         "minimize" => { app.get_webview_window("main").ok_or("main missing")?.minimize().map_err(|e| e.to_string())?; Ok(serde_json::Value::Null) },
         "restore" => { app.get_webview_window("main").ok_or("main missing")?.unminimize().map_err(|e| e.to_string())?; Ok(serde_json::Value::Null) },
-        "focus-popup" => { app.get_webview_window("spike-popup").ok_or("popup missing")?.set_focus().map_err(|e| e.to_string())?; Ok(serde_json::Value::Null) },
+        "focus-popup" => { app.webview_windows().into_values().find(|w| w.label().starts_with("spike-popup-")).ok_or("popup missing")?.set_focus().map_err(|e| e.to_string())?; Ok(serde_json::Value::Null) },
         "screenshot-result" => {
             let bytes = std::fs::read(out.join("screenshot.json")).map_err(|e| e.to_string())?;
             serde_json::from_slice(&bytes).map_err(|e| e.to_string())
         },
-        "close-popup" => { app.get_webview_window("spike-popup").ok_or("popup missing")?.close().map_err(|e| e.to_string())?; Ok(serde_json::Value::Null) },
+        "close-popup" => { app.webview_windows().into_values().find(|w| w.label().starts_with("spike-popup-")).ok_or("popup missing")?.close().map_err(|e| e.to_string())?; Ok(serde_json::Value::Null) },
         "screenshots" => {
             let titles: Vec<_> = app.webview_windows().into_iter().map(|(label, w)| serde_json::json!({"label": label, "title": w.title().unwrap_or_default()})).collect();
             std::fs::write(out.join("screenshots.ready"), serde_json::to_vec(&titles).unwrap()).map_err(|e| e.to_string())?;
             Ok(serde_json::Value::Null)
         },
         "ready" => { std::fs::write(out.join(format!("{action}.ready")), "ready").map_err(|e| e.to_string())?; Ok(serde_json::Value::Null) },
+        "checkpoint" => {
+            std::fs::write(out.join("result.json"), serde_json::to_vec_pretty(&value.ok_or("result missing")?).unwrap()).map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::Null)
+        },
         "finish" => {
             let result = value.ok_or("result missing")?;
             std::fs::write(out.join("result.json"), serde_json::to_vec_pretty(&result).unwrap()).map_err(|e| e.to_string())?;
@@ -140,7 +154,10 @@ pub fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) -> bool 
     }
     if let tauri::WindowEvent::CloseRequested { .. } = event {
         let app = window.app_handle();
-        let popup = app.get_webview_window("spike-popup");
+        let popup = app
+            .webview_windows()
+            .into_values()
+            .find(|w| w.label().starts_with("spike-popup-"));
         let existed = popup.is_some();
         let closed = popup.map(|w| w.destroy().is_ok()).unwrap_or(false);
         if let Ok(bytes) = std::fs::read(out.join("result.json")) {

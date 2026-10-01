@@ -54,7 +54,7 @@ async function screenshot() {
       await writeFile(path.join(out, 'screenshot.json'), JSON.stringify({ status: 'error', detail: String(e) }, null, 2));
     }
 }
-let shot = false, keys = false;
+let shot = false, fallbackShot = false, keys = false;
 const started = Date.now();
 while (!ended && Date.now() - started < 120000) {
   if (!shot && await exists('screenshots.ready')) {
@@ -79,7 +79,7 @@ while (!ended && Date.now() - started < 120000) {
       await writeFile(path.join(out, 'oskeys.json'), JSON.stringify({ status: 'error', detail: String(e) }, null, 2));
     }
   }
-  if (!shot && Date.now() - started > 20000) { shot = true; await screenshot(); }
+  if (!shot && !fallbackShot && Date.now() - started > 20000) { fallbackShot = true; await screenshot(); }
   await pause(100);
 }
 if (!shot) await screenshot();
@@ -92,6 +92,7 @@ let result;
 try { result = JSON.parse(await readFile(path.join(out, 'result.json'), 'utf8')); }
 catch { errors.push('No result.json: crash, failed launch, or hang'); }
 if (result) {
+  for (const id of ['C1','C2','C3','C4','C5','C6','C7','C8','C9','R']) result[id] ??= { status: 'fail', detail: 'App did not complete this check; see app.stderr and process.json' };
   try {
     const capture = JSON.parse(await readFile(path.join(out, 'screenshot.json'), 'utf8'));
     result.C9 ??= capture;

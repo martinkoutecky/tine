@@ -22,9 +22,10 @@ async function until(test: () => boolean | Promise<boolean>, ms = 5000, realm: W
 }
 
 const log = (message: string, detail?: unknown) => native("log", { message, detail });
+let nextPopup = 0;
 export async function openPopout() {
   await log("window.open calling", { userActivation: navigator.userActivation?.isActive });
-  const popup = window.open("about:blank", "spike-popup", "popup,width=780,height=800,left=1200,top=50") as Realm | null;
+  const popup = window.open("about:blank", `spike-popup-${++nextPopup}`, "popup,width=780,height=800,left=1200,top=50") as Realm | null;
   await log("window.open returned", { nonNull: !!popup, closed: popup?.closed });
   if (!popup) throw new Error("window.open returned null");
   await until(() => !!popup.document.body);
@@ -104,6 +105,7 @@ export async function runSpike() {
     try { result[id] = { status: "pass", detail: await fn() }; }
     catch (error) { result[id] = { status: error instanceof CheckFailure ? "fail" : "error", detail: error instanceof CheckFailure ? error.detail : String(error) }; }
     await log(`check ${id}`, result[id]);
+    await native("checkpoint", result);
   };
   const assert = (ok: boolean, detail: unknown) => { if (!ok) throw new CheckFailure(detail); return detail; };
   let aux: Awaited<ReturnType<typeof openPopout>> | undefined;
@@ -118,7 +120,7 @@ export async function runSpike() {
     await check("C1", async () => {
       aux = await openPopout(); popup = aux.popup;
       const windows = await native<Array<{label: string; visible: boolean}>>("windows");
-      return assert(popup.document !== document && windows.filter(w => w.label === "main" || w.label === "spike-popup").length === 2, { windows, distinctDocument: popup.document !== document, opener: popup.opener === window, note: "capture is the pre-existing hidden third webview" });
+      return assert(popup.document !== document && windows.filter(w => w.label === "main" || w.label.startsWith("spike-popup-")).length === 2, { windows, distinctDocument: popup.document !== document, opener: popup.opener === window, note: "capture is the pre-existing hidden third webview" });
     });
     if (!aux) throw new Error("No scriptable native popup; later checks cannot run");
     popup = aux.popup;
@@ -164,7 +166,7 @@ export async function runSpike() {
       const windows = await native<Array<{ label: string; decorated: boolean }>>("windows");
       const mainStyle = window.getComputedStyle(rows(document)[0]);
       const popupStyle = popup.getComputedStyle(rows(popup.document)[0]);
-      return assert(capture.status === "pass" && windows.some(w => w.label === "spike-popup" && w.decorated)
+      return assert(capture.status === "pass" && windows.some(w => w.label.startsWith("spike-popup-") && w.decorated)
         && mainStyle.fontFamily === popupStyle.fontFamily && mainStyle.fontSize === popupStyle.fontSize,
         { capture, popupNativeDecorations: true, mainFont: [mainStyle.fontFamily, mainStyle.fontSize], popupFont: [popupStyle.fontFamily, popupStyle.fontSize], note: "External screenshot requires human visual inspection." });
     });
@@ -214,13 +216,15 @@ export async function runSpike() {
       return { textReachedDisk: true, enterCreatedBlock: true, before, after: rows(popup.document).length };
     });
     await check("C7", async () => {
+      await log("C7 closing popup");
       aux!.dispose(); popup.close();
       await sleep(500);
-      const jsCloseLeftNativeFrame = (await native<Array<{label: string}>>("windows")).some(w => w.label === "spike-popup");
+      const jsCloseLeftNativeFrame = (await native<Array<{label: string}>>("windows")).some(w => w.label.startsWith("spike-popup-"));
       if (jsCloseLeftNativeFrame) await native("close-popup");
-      await until(async () => !(await native<Array<{label: string}>>("windows")).some(w => w.label === "spike-popup"));
+      await until(async () => !(await native<Array<{label: string}>>("windows")).some(w => w.label.startsWith("spike-popup-")));
       input(window, await edit(window, 10), "main healthy after popup close");
       await until(async () => (await native<string>("read")).includes("main healthy after popup close"));
+      await log("C7 main healthy, reopening popup");
       aux = await openPopout(); // final main close is observed on Rust's native event
       return { popupCloseLeavesMainHealthy: true, reopenedForMainClose: true, jsCloseLeftNativeFrame, workaround: jsCloseLeftNativeFrame ? "Native window.close() through Tauri after JS popup.close()" : "none" };
     });
