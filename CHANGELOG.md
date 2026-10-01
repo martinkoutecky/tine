@@ -8,9 +8,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
-### Fixed
-- UI-OG-E2EB-WORKSPACE-LIFETIME: Editing a query workspace's source, presentation or Display keeps its live answers; replacing the route object no longer closes the active workspace's search.
-
 ## [0.7.0-beta.1] - 2026-09-30
 
 ### Changed
@@ -19,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - REG-OG-R6-PREVIEW: Preview candidates and AppImage update metadata stay on `og-preview`; manual candidate builds do not publish, and preview publication cannot become the stable latest release.
 
 ### Fixed
+- UI-OG-E2EB-WORKSPACE-LIFETIME: Editing a query workspace's source, presentation or Display keeps its live answers; replacing the route object no longer closes the active workspace's search.
 - REG-OG-P11-ASSET-LIVENESS: Unused-media discovery and trash protect linked filenames containing parentheses and percent escapes, using parser-owned targets.
 - REG-OG-P11-PROPERTIES: Cross-format paste preserves parser-accepted Unicode and custom property keys, duplicate entries, and their order.
 - Title rename avoids reading temporary navigation destinations while refreshing the graph (UI-OG-P10C-RENAME-READS).

@@ -6243,6 +6243,37 @@
         "reason": "Covered by the separate Tine Beta announcement Martin approved.",
         "refs": []
       }
+    },
+    {
+      "section": "Fixed",
+      "text": "UI-OG-E2EB-WORKSPACE-LIFETIME: Editing a query workspace's source, presentation or Display keeps its live answers; replacing the route object no longer closes the active workspace's search.",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-E2EB-WORKSPACE-LIFETIME"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Fail-before/pass-after render coverage plus the query-workspace release journey (tine-agents/og/evidence/og-k/e2eb/RECEIPT-OG-E2EB.md).",
+        "refs": [
+          "src/components/QueryWorkspace.test.tsx",
+          "scripts/e2e-query-workspace.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the documented behaviour that switching view never changes membership; no new control or workflow.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Bug fix; no website or positioning change.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Covered by the separate Tine Beta announcement Martin approved.",
+        "refs": []
+      }
     }
   ]
 }
