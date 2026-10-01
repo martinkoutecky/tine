@@ -1,5 +1,5 @@
 import type { FieldValue } from "./fields";
-import { isoDatePrefix } from "./typed";
+import { isoDatePrefix, sheetNumber } from "./typed";
 
 export type AggregateFn =
   | "sum"
@@ -81,8 +81,8 @@ function numericValues(values: readonly (FieldValue | string | null | undefined)
   let skipped = 0;
   for (const value of values) {
     const text = textOf(value).trim();
-    const n = parseFloat(text);
-    if (Number.isFinite(n)) nums.push(n);
+    const n = sheetNumber(text, "aggregate-prefix");
+    if (n !== null) nums.push(n);
     else skipped++;
   }
   return { nums, skipped };
@@ -98,7 +98,7 @@ function dateValues(values: readonly (FieldValue | string | null | undefined)[])
     if (iso) {
       dates.push(iso);
     } else {
-      if (Number.isFinite(parseFloat(text))) numericNonDates++;
+      if (sheetNumber(text, "aggregate-prefix") !== null) numericNonDates++;
       skipped++;
     }
   }

@@ -1,4 +1,5 @@
 import type { Ast, BinaryOp } from "./parser";
+import { daysInCalendarMonth, utcCalendarMillis } from "../typed";
 import {
   booleanValue,
   dateToUtcDate,
@@ -74,16 +75,12 @@ function durationFromValue(value: FormulaValue): FormulaDurationValue | null {
   return null;
 }
 
-function daysInMonth(y: number, m: number): number {
-  return new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-}
-
 function addMonths(value: FormulaDateValue, delta: number): FormulaValue {
   const source = dateToUtcDate(value);
   const monthIndex = source.getUTCFullYear() * 12 + source.getUTCMonth() + delta;
   const y = Math.floor(monthIndex / 12);
   const m = ((monthIndex % 12) + 12) % 12;
-  const d = Math.min(source.getUTCDate(), daysInMonth(y, m));
+  const d = Math.min(source.getUTCDate(), daysInCalendarMonth(y, m));
   // Calendar month/year math clamps the day to the target month's end instead
   // of allowing JS Date overflow (Jan 31 + 1M => Feb 28/29, not March).
   return makeDateValue(y, m, d, source.getUTCHours(), source.getUTCMinutes(), value.value.time != null);
@@ -204,8 +201,8 @@ function formatDate(value: FormulaDateValue, fmt: string): string {
 }
 
 function relativeDate(value: FormulaDateValue, ctx: EvaluationContext): FormulaValue {
-  const target = Date.UTC(value.value.y, value.value.m, value.value.d);
-  const today = Date.UTC(ctx.now.getUTCFullYear(), ctx.now.getUTCMonth(), ctx.now.getUTCDate());
+  const target = utcCalendarMillis(value.value.y, value.value.m, value.value.d);
+  const today = utcCalendarMillis(ctx.now.getUTCFullYear(), ctx.now.getUTCMonth(), ctx.now.getUTCDate());
   const days = Math.round((target - today) / DAY_MS);
   if (days === 0) return textValue("today");
   return textValue(days > 0 ? `in ${days}d` : `${Math.abs(days)}d ago`);
