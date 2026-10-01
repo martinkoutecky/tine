@@ -1,3 +1,4 @@
+import { isPackageId, isPackageVersion } from "../packageIdentity";
 import { schemaGuards } from "../schemaGuards";
 import { parsePluginSettingDefinitions, type PluginSettingDefinition } from "./settings";
 
@@ -93,8 +94,6 @@ export class PluginManifestError extends Error {
   }
 }
 
-const ID_RE = /^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])?$/;
-const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/;
 const CONTRIBUTION_ID_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SAFE_ENTRY_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*\.wasm$/;
 
@@ -259,9 +258,9 @@ export function parsePluginManifest(value: unknown): PluginManifest {
     throw new PluginManifestError(`apiVersion must be ${PLUGIN_API_VERSION}`);
   }
   const id = stringField(obj.id, "id", 64);
-  if (!ID_RE.test(id) || !id.includes(".")) throw new PluginManifestError("id must be a lowercase dotted identifier");
+  if (!isPackageId(id)) throw new PluginManifestError("id must be a lowercase dotted identifier");
   const version = stringField(obj.version, "version", 64);
-  if (!VERSION_RE.test(version)) throw new PluginManifestError("version must be SemVer");
+  if (!isPackageVersion(version)) throw new PluginManifestError("version must be SemVer");
   const entry = stringField(obj.entry, "entry", 160);
   if (!SAFE_ENTRY_RE.test(entry) || entry.startsWith("/") || entry.split("/").includes("..")) {
     throw new PluginManifestError("entry must be a relative .wasm path without traversal");

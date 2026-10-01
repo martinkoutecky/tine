@@ -1,3 +1,4 @@
+import { isPackageId, isPackageVersion } from "../packageIdentity";
 import { schemaGuards } from "../schemaGuards";
 import { createSignal } from "solid-js";
 import { backend, type PluginRegistryCacheLoad } from "../backend";
@@ -167,7 +168,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
     const item = object(candidate, `plugins[${pluginIndex}]`);
     knownKeys(item, `plugins[${pluginIndex}]`, ["id", "name", "description", "source", "license", "aiDevelopment", "versions"]);
     const id = text(item.id, `plugins[${pluginIndex}].id`, 64);
-    if (!/^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])?$/.test(id) || !id.includes(".")) {
+    if (!isPackageId(id)) {
       throw new Error(`plugins[${pluginIndex}].id is invalid`);
     }
     if (ids.has(id)) throw new Error(`duplicate registry plugin ${id}`);
@@ -188,7 +189,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
         throw new Error(`${id} version metadata is invalid`);
       }
       const parsedVersion = text(version.version, `${id}.version`, 64);
-      if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(parsedVersion)) {
+      if (!isPackageVersion(parsedVersion)) {
         throw new Error(`${id} has an invalid version`);
       }
       if (seenVersions.has(parsedVersion)) throw new Error(`${id} has duplicate version ${parsedVersion}`);
@@ -260,7 +261,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
     const item = object(candidate, `themes[${themeIndex}]`);
     knownKeys(item, `themes[${themeIndex}]`, ["id", "name", "description", "source", "license", "aiDevelopment", "versions"]);
     const id = text(item.id, `themes[${themeIndex}].id`, 64);
-    if (!/^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])?$/.test(id) || !id.includes(".")) {
+    if (!isPackageId(id)) {
       throw new Error(`themes[${themeIndex}].id is invalid`);
     }
     if (ids.has(id)) throw new Error(`duplicate registry extension ${id}`);
@@ -273,7 +274,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
         "version", "apiVersion", "modes", "manifestSha256", "manifestUrl", "audit", "publishedAt",
       ]);
       const parsedVersion = text(version.version, `${id}.version`, 64);
-      if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(parsedVersion)) {
+      if (!isPackageVersion(parsedVersion)) {
         throw new Error(`${id} has an invalid version`);
       }
       if (seenVersions.has(parsedVersion)) throw new Error(`${id} has duplicate version ${parsedVersion}`);
