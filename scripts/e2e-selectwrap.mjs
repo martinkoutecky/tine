@@ -25,13 +25,18 @@ const check = (name, got, want) => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}: ${JSON.stringify(got)}${ok ? "" : ` (want ${JSON.stringify(want)})`}`);
 };
 
+// Fill fixture text without invoking select-all: on an empty block that command
+// correctly enters block selection. The wrapping/formatting keys below remain
+// real keydown events through the editor.
+async function prepareEditor(page, content) {
+  await page.locator(".ls-block .block-content").first().click();
+  await page.locator("textarea.block-editor").fill(content);
+}
+
 // Enter the first block's editor, replace its text with `content`, then select
 // [selStart,selEnd) and press each key in `keys`. Returns {value, acOpen}.
 async function gesture(page, content, selStart, selEnd, keys) {
-  await page.locator(".ls-block .block-content").first().click();
-  await page.waitForSelector("textarea.block-editor", { timeout: 3000 });
-  await page.keyboard.press("Control+a");
-  await page.keyboard.type(content);
+  await prepareEditor(page, content);
   await sleep(120);
   await page.evaluate(([s, e]) => {
     const ta = document.querySelector("textarea.block-editor");
@@ -48,10 +53,7 @@ async function gesture(page, content, selStart, selEnd, keys) {
 // Exercise the configured semantic command path rather than literal delimiter
 // auto-wrapping. `direction=backward` matches Ctrl+Shift+Left's live selection.
 async function formatGesture(page, content, selStart, selEnd, key, direction = "backward") {
-  await page.locator(".ls-block .block-content").first().click();
-  await page.waitForSelector("textarea.block-editor", { timeout: 3000 });
-  await page.keyboard.press("Control+a");
-  await page.keyboard.type(content);
+  await prepareEditor(page, content);
   await sleep(120);
   await page.evaluate(([s, e, dir]) => {
     const ta = document.querySelector("textarea.block-editor");
