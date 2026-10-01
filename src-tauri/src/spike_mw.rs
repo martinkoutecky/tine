@@ -14,6 +14,7 @@ pub fn create_main(app: &tauri::App) -> tauri::Result<()> {
         .iter()
         .find(|w| w.label == "main")
         .unwrap();
+    eprintln!("SPIKE create_main from_config");
     let builder = WebviewWindowBuilder::from_config(app, config)?;
     #[cfg(desktop)]
     let builder = {
@@ -51,7 +52,9 @@ pub fn create_main(app: &tauri::App) -> tauri::Result<()> {
     } else {
         builder
     };
+    eprintln!("SPIKE create_main build");
     let main = builder.build()?;
+    eprintln!("SPIKE create_main built");
     #[cfg(target_os = "linux")]
     if std::env::var_os("TINE_SPIKE_MW").is_some() {
         main.with_webview(|view| {
@@ -82,7 +85,8 @@ pub async fn spike_mw(
     let out = outdir()?;
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     match action.as_str() {
-        "config" => Ok(serde_json::json!({"graph": std::env::var("TINE_SPIKE_GRAPH").map_err(|e| e.to_string())?, "oskeys": std::env::var("TINE_SPIKE_MW_OSKEYS").as_deref() == Ok("1")})),
+        "log" => { eprintln!("SPIKE JS {}", value.unwrap_or_default()); Ok(serde_json::Value::Null) },
+        "config" => Ok(serde_json::json!({"graph": std::fs::canonicalize(std::env::var("TINE_SPIKE_GRAPH").map_err(|e| e.to_string())?).map_err(|e| e.to_string())?.display().to_string(), "oskeys": std::env::var("TINE_SPIKE_MW_OSKEYS").as_deref() == Ok("1")})),
         "windows" => Ok(serde_json::json!(app.webview_windows().into_iter().map(|(label, w)| serde_json::json!({"label": label, "visible": w.is_visible().unwrap_or(false), "title": w.title().unwrap_or_default(), "decorated": w.is_decorated().unwrap_or(false)})).collect::<Vec<_>>())),
         "read" => {
             let root = std::env::var("TINE_SPIKE_GRAPH").map_err(|e| e.to_string())?;

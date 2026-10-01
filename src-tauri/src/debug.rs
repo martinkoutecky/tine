@@ -119,6 +119,9 @@ pub(crate) fn install_panic_logger() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
     std::panic::set_hook(Box::new(move |info| {
+        if std::env::var_os("TINE_SPIKE_MW").is_some() {
+            eprintln!("SPIKE panic: {info}");
+        }
         crate::flight::record_panic(info);
         let location = info
             .location()

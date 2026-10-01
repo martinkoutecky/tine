@@ -34,15 +34,12 @@ async function external(command, args) {
     p.on('exit', code => { clearTimeout(deadline); code === 0 ? resolve(output.trim()) : reject(new Error(`${command} exit ${code}: ${output}`)); });
   });
 }
-let shot = false, keys = false;
-const started = Date.now();
-while (!ended && Date.now() - started < 120000) {
-  if (!shot && await exists('screenshots.ready')) {
-    shot = true;
+async function screenshot() {
     try {
       if (process.platform === 'linux') {
         await external('import', ['-window', 'root', path.join(out, 'desktop.png')]);
-        const titles = JSON.parse(await readFile(path.join(out, 'screenshots.ready'), 'utf8'));
+        const titles = JSON.parse(await readFile(path.join(out, 'screenshots.ready'), 'utf8').catch(() => '[]'));
+        if (!titles.length) return;
         for (const [name, title] of [['main', titles.find(w => w.label === 'main').title], ['popup', 'Tine Spike Popup']]) {
           const ids = await external('xdotool', ['search', '--onlyvisible', '--name', `^${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`]);
           await external('import', ['-window', ids.split('\n')[0], path.join(out, `${name}.png`)]);
@@ -56,6 +53,13 @@ while (!ended && Date.now() - started < 120000) {
     } catch (e) {
       await writeFile(path.join(out, 'screenshot.json'), JSON.stringify({ status: 'error', detail: String(e) }, null, 2));
     }
+}
+let shot = false, keys = false;
+const started = Date.now();
+while (!ended && Date.now() - started < 120000) {
+  if (!shot && await exists('screenshots.ready')) {
+    shot = true;
+    await screenshot();
   }
   if (!keys && await exists('ready.ready')) {
     keys = true;
@@ -75,8 +79,10 @@ while (!ended && Date.now() - started < 120000) {
       await writeFile(path.join(out, 'oskeys.json'), JSON.stringify({ status: 'error', detail: String(e) }, null, 2));
     }
   }
+  if (!shot && Date.now() - started > 20000) { shot = true; await screenshot(); }
   await pause(100);
 }
+if (!shot) await screenshot();
 if (!ended) { errors.push('App hung: 120s deadline'); child.kill('SIGKILL'); await pause(500); }
 await Promise.all([new Promise(r => stderrFile.end(r)), new Promise(r => stdoutFile.end(r))]);
 await writeFile(path.join(out, 'app.stderr'), stderr);

@@ -21,10 +21,14 @@ async function until(test: () => boolean | Promise<boolean>, ms = 5000, realm: W
   throw new Error(`condition timed out after ${ms}ms`);
 }
 
+const log = (message: string, detail?: unknown) => native("log", { message, detail });
 export async function openPopout() {
+  await log("window.open calling", { userActivation: navigator.userActivation?.isActive });
   const popup = window.open("about:blank", "spike-popup", "popup,width=780,height=800,left=1200,top=50") as Realm | null;
+  await log("window.open returned", { nonNull: !!popup, closed: popup?.closed });
   if (!popup) throw new Error("window.open returned null");
   await until(() => !!popup.document.body);
+  await log("popup document ready");
   const doc = popup.document;
   doc.title = "Tine Spike Popup";
   const mirror = () => {
@@ -54,6 +58,7 @@ export async function openPopout() {
       value: "pane:spike-popup", get children() { return createComponent(PageView, {}); }
     }); }
   }), root);
+  await log("popup Solid rendered", { rows: rows(doc).length });
   const keys = installKeybindings({}, popup);
   let disposed = false;
   const close = () => {
@@ -98,15 +103,18 @@ export async function runSpike() {
   const check = async (id: string, fn: () => Promise<unknown>) => {
     try { result[id] = { status: "pass", detail: await fn() }; }
     catch (error) { result[id] = { status: error instanceof CheckFailure ? "fail" : "error", detail: error instanceof CheckFailure ? error.detail : String(error) }; }
-    console.info(`SPIKE ${id} ${JSON.stringify(result[id])}`);
+    await log(`check ${id}`, result[id]);
   };
   const assert = (ok: boolean, detail: unknown) => { if (!ok) throw new CheckFailure(detail); return detail; };
   let aux: Awaited<ReturnType<typeof openPopout>> | undefined;
   let popup: Realm;
   try {
+    await log("self-test loaded", { config, graph: graphMeta(), href: location.href });
     await until(() => graphMeta()?.root === config.graph, 30000);
+    await log("graph ready", graphMeta());
     openPage("Spike");
     await until(() => rows(document).length === 20, 15000);
+    await log("main page loaded", { rows: rows(document).length });
     await check("C1", async () => {
       aux = await openPopout(); popup = aux.popup;
       const windows = await native<Array<{label: string; visible: boolean}>>("windows");
@@ -217,7 +225,7 @@ export async function runSpike() {
       return { popupCloseLeavesMainHealthy: true, reopenedForMainClose: true, jsCloseLeftNativeFrame, workaround: jsCloseLeftNativeFrame ? "Native window.close() through Tauri after JS popup.close()" : "none" };
     });
   } catch (error) {
-    console.error("SPIKE startup", String(error));
+    await log("startup failed", { error: String(error), graph: graphMeta(), config });
     for (const id of ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "R"]) result[id] ??= { status: "error", detail: String(error) };
   }
   await native("finish", result);
