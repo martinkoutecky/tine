@@ -861,7 +861,8 @@ export interface Command {
 
 /** Install the global shortcut handler, merging config overrides over defaults.
  *  Returns a disposer. */
-export function installKeybindings(overrides: Record<string, string> = {}): () => void {
+export function installKeybindings(overrides: Record<string, string> = {}, targetWindow: Window = window): () => void {
+  const window = targetWindow;
   overridesApplied = overrides;
   bindings = {};
   const allCommands = [...COMMANDS, ...pluginCommandDefs()];

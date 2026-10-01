@@ -44,6 +44,7 @@ mod query_ir;
 mod search_workspace;
 mod settings;
 mod spellcheck;
+mod spike_mw;
 mod state;
 mod watcher;
 
@@ -725,6 +726,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .on_window_event(|window, event| {
+            if spike_mw::window_event(window, event) {
+                return;
+            }
             let label = window.label();
             if label != "main" && !label.starts_with("graph-") {
                 return;
@@ -770,6 +774,7 @@ pub fn run() {
             next_window: AtomicU64::new(1),
         })
         .setup(|app| {
+            spike_mw::create_main(app)?;
             // After the single-instance plugin: a forwarded second launch has
             // already exited and cannot rotate the primary's diagnostics.
             // Tauri's app-data path is the sandbox-private home on mobile too.
@@ -822,6 +827,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            spike_mw::spike_mw,
             data_home::take_data_home_fallback_notice,
             migrate_identifier::take_identifier_migration_notice,
             load_graph,
@@ -1004,6 +1010,9 @@ pub fn run() {
                 // `App::run` never returns, so the orderly end of a run is
                 // here: clear the unclean-exit marker (master d9763603).
                 flight::mark_clean_shutdown();
+                if let Some(code) = spike_mw::exit_code() {
+                    std::process::exit(code);
+                }
                 // tao delivers this callback for WM_ENDSESSION (Windows sign-out,
                 // restart, shutdown), but on that path its message loop neither
                 // receives WM_QUIT nor switches to an exiting ControlFlow.

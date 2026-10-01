@@ -640,7 +640,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     const setRawOpts = opts && "timetracking" in opts ? { timetracking: opts.timetracking } : undefined;
     // GH #515: capture once for the autosize frame, before live mirrors above react.
     if (pendingScrollAnchor === undefined) {
-      pendingScrollAnchor = ref && document.activeElement === ref
+      pendingScrollAnchor = ref && ref.ownerDocument.activeElement === ref
         ? captureEditorScrollAnchor(ref, nearestScrollableY(ref)) : null;
     }
     autosize();
@@ -1754,7 +1754,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   let autosizeRaf: number | undefined;
   const autosize = () => {
     if (autosizeRaf !== undefined) return; // already scheduled this frame
-    autosizeRaf = requestAnimationFrame(() => {
+    autosizeRaf = ref.ownerDocument.defaultView!.requestAnimationFrame(() => {
       autosizeRaf = undefined;
       resizeNow();
       pendingScrollAnchor?.restore();
@@ -1831,7 +1831,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       surface: surfaceKey,
       selection: () => ({ start: ref.selectionStart, end: ref.selectionEnd }),
       viewport: () => ({ editor: ref, scroller: nearestScrollableY(ref) }),
-      focused: () => typeof document !== "undefined" && document.activeElement === ref,
+      focused: () => typeof document !== "undefined" && ref.ownerDocument.activeElement === ref,
     });
     onCleanup(unregisterHistoryTarget);
     // If this block is rendered in several surfaces at once (main pane + sidebar),
@@ -2832,7 +2832,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // The whole window lost focus (switched to another app/window): stay in edit
     // mode and remember the caret so onWindowFocus can resume exactly here. Commit
     // as-is — we're still editing, not exiting.
-    if (!document.hasFocus()) {
+    if (!ref.ownerDocument.hasFocus()) {
       commit(ref.value);
       savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
       return;
@@ -2862,8 +2862,11 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       savedSel = null;
     }
   };
-  onMount(() => window.addEventListener("focus", onWindowFocus));
-  onCleanup(() => window.removeEventListener("focus", onWindowFocus));
+  onMount(() => {
+    const ownerWindow = ref.ownerDocument.defaultView!;
+    ownerWindow.addEventListener("focus", onWindowFocus);
+    onCleanup(() => ownerWindow.removeEventListener("focus", onWindowFocus));
+  });
 
   // Paste copied files/images as graph assets. Native file lists use path-based
   // imports; browser-only file payloads use a bounded byte fallback. Ordinary
