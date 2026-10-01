@@ -14,6 +14,7 @@ import {
   tauriCapabilities,
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
+import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -71,6 +72,7 @@ try {
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
     capabilities: tauriCapabilities(APP, "default", process.platform, webviewTarget.debuggerAddress),
   });
+  await ensureMainWindow(browser);
   await browser.setWindowSize(1000, 720);
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
 

@@ -14,6 +14,7 @@ import {
   tauriCapabilities,
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
+import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -407,6 +408,7 @@ try {
     connectionRetryTimeout: 60_000,
     capabilities: tauriCapabilities(APP, "default", process.platform, webviewTarget.debuggerAddress),
   });
+  await ensureMainWindow(browser);
   // This fixture starts on today's journal so it has a durable navigation
   // source for the seeded pages. Journals render blocks (and a journal title),
   // not a named-page `.page-title`; waiting for the latter prevented openPage()

@@ -11,6 +11,7 @@ import {
   tauriCapabilities,
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
+import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 
 if (process.platform !== "win32") throw new Error("windows smoke must run on Windows");
 const APP = process.env.TINE_APP;
@@ -47,6 +48,7 @@ try {
     connectionRetryCount: 1,
     connectionRetryTimeout: 60000,
   });
+  await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 30000 });
   // The first journal block can paint before the application shell's reactive
   // content subtree is mounted on WebView2. The styles below are the actual

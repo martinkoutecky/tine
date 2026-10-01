@@ -15,6 +15,7 @@ import {
   tauriCapabilities,
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
+import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { APP_ID } from "./lib/app-identity.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 
@@ -838,6 +839,7 @@ async function proveNativeUploadsThemesAndHighlights() {
     connectionRetryCount: 1, connectionRetryTimeout: 60_000,
     capabilities: tauriCapabilities(APP, "pdf-theme-relaunch", process.platform, webviewTarget.debuggerAddress),
   });
+  await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   await routeToPage("PDF Outline");
   await reopenCurrentPagePdf(path.basename(OUTLINE_STORED), "Outline fixture", "outline-reopen-after-process-relaunch");
@@ -1171,6 +1173,7 @@ try {
     connectionRetryCount: 1, connectionRetryTimeout: 60_000,
     capabilities: tauriCapabilities(APP, "default", process.platform, webviewTarget.debuggerAddress),
   });
+  await ensureMainWindow(browser);
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   const pdfLink = browser.$(".pdf-link");
   try {

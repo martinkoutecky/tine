@@ -40,6 +40,12 @@
       "nonRequirements": ["Exact selection highlight color or transition timing."],
       "stability": "stable"
     },
+    "scripts/e2e-main-window.test.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "Every Windows smoke session, including a process relaunch, selects the application WebView before exercising the main-window journey.", "blocking": false }],
+      "acceptableVariations": ["WebDriver may attach initially to any WebView and enumerate its handles in any order."],
+      "nonRequirements": ["An end-user journey by itself; changing any smoke outcome or retrying a failed journey."],
+      "stability": "stable"
+    },
     "scripts/e2e-capabilities.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "The E2E runner can discover native-driver capabilities and retain browser-specific evidence.", "blocking": true }],
       "acceptableVariations": ["Driver feature detection may vary by supported platform and browser version."],
