@@ -517,3 +517,20 @@ mod standalone_macro;
 pub fn parse_inline_json(raw: &str, is_org: bool) -> String {
     serde_json::to_string(&lsdoc_block_parse::parse_inline_bounded(raw, if is_org { "org" } else { "md" })).unwrap()
 }
+
+#[path = "../../tine-core/src/ordinal.rs"]
+mod ordinal;
+#[path = "../../tine-core/src/pdf_key.rs"]
+mod pdf_key;
+
+/// Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
+#[wasm_bindgen]
+pub fn ordered_list_glyph(index: u32, depth: u32) -> String {
+    ordinal::glyph(index, depth)
+}
+
+/// PDF identity with the existing preview/native suffix policy. O(filename bytes).
+#[wasm_bindgen]
+pub fn pdf_asset_key(filename: &str, preview: bool) -> String {
+    pdf_key::asset_key(filename, if preview { pdf_key::PdfSuffix::Preview } else { pdf_key::PdfSuffix::Native })
+}

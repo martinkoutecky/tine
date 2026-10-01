@@ -42,3 +42,6 @@ pub use doc::{DocBlock, Document};
 pub use model::{BlockDto, BlockPreview, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};
 
 pub mod standalone_macro;
+
+pub mod ordinal;
+pub mod pdf_key;

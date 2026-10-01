@@ -293,6 +293,25 @@ export function nested_reference_names(content) {
 }
 
 /**
+ * Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
+ * @param {number} index
+ * @param {number} depth
+ * @returns {string}
+ */
+export function ordered_list_glyph(index, depth) {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.ordered_list_glyph(index, depth);
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * Markdown page header (leading accepted properties, see `block_regions::page_header`).
  * O(preamble bytes); no I/O.
  * @param {string} raw
@@ -468,6 +487,27 @@ export function parse_journal_format_json(text, pattern) {
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * PDF identity with the existing preview/native suffix policy. O(filename bytes).
+ * @param {string} filename
+ * @param {boolean} preview
+ * @returns {string}
+ */
+export function pdf_asset_key(filename, preview) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(filename, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.pdf_asset_key(ptr0, len0, preview);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
 }
 

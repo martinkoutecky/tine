@@ -65,6 +65,11 @@ export function mime_from_path(path: string): string;
 export function nested_reference_names(content: string): string[];
 
 /**
+ * Ordered-list label without surface punctuation; O(label bytes), no parse/I/O.
+ */
+export function ordered_list_glyph(index: number, depth: number): string;
+
+/**
  * Markdown page header (leading accepted properties, see `block_regions::page_header`).
  * O(preamble bytes); no I/O.
  */
@@ -112,6 +117,11 @@ export function parse_inline_json(raw: string, is_org: boolean): string;
  * cold compile, O(title) warm; null means invalid. No clock, graph or I/O.
  */
 export function parse_journal_format_json(text: string, pattern: string): string;
+
+/**
+ * PDF identity with the existing preview/native suffix policy. O(filename bytes).
+ */
+export function pdf_asset_key(filename: string, preview: boolean): string;
 
 /**
  * Accepted single Markdown property line, using the native borrowed grammar.
@@ -208,6 +218,7 @@ export interface InitOutput {
     readonly lsdoc_tag: () => [number, number];
     readonly mime_from_path: (a: number, b: number) => [number, number];
     readonly nested_reference_names: (a: number, b: number) => [number, number];
+    readonly ordered_list_glyph: (a: number, b: number) => [number, number];
     readonly page_header_json: (a: number, b: number) => [number, number];
     readonly page_identity_key: (a: number, b: number) => [number, number];
     readonly page_regions_json: (a: number, b: number, c: number) => [number, number];
@@ -216,6 +227,7 @@ export interface InitOutput {
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_inline_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_journal_format_json: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly pdf_asset_key: (a: number, b: number, c: number) => [number, number];
     readonly property_line_json: (a: number, b: number) => [number, number];
     readonly query_edn_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly query_macro_extents_json: (a: number, b: number) => [number, number];

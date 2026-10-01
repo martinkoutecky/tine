@@ -17,6 +17,11 @@ describe("assetKey (OG sanitize-filename parity with Rust)", () => {
     expect(assetKey("draft. .pdf")).toBe("draft");
     expect(assetKey("CON.pdf")).toBe("");
   });
+  it("preserves the preview suffix policy for mixed-case and Unicode filenames", () => {
+    expect(assetKey("Paper.PdF")).toBe("Paper");
+    expect(assetKey("résumé.pdf")).toBe("résumé");
+    expect(assetKey("COM7.extra.pdf")).toBe("");
+  });
   it("hlsPageName composes the key", () => {
     expect(hlsPageName("My Paper.pdf")).toBe("hls__My Paper");
   });
