@@ -2,6 +2,7 @@ import { canonical_group_field } from "../render/wasm/lsdoc_wasm.js";
 // Query display facts are read by query_parse in tine-core and written here
 // through src/document. This module only encodes the same property grammar.
 import type { ViewSettings } from "./queryIr";
+import { decodeAggregateSegment, encodeQueryAggregate } from "../sheet/aggregate";
 export { normalizeQueryDisplayDraft, queryDisplaySettings } from "./queryDisplayDraft";
 export type DisplayNamespace = "legacy" | "page" | "block";
 
@@ -24,7 +25,7 @@ export function displayPropertyPatch(view: ViewSettings, scope: DisplayNamespace
     view.group_by ?? "",
     view.sample === undefined ? "" : String(view.sample),
     (view.columns ?? []).join(";"),
-    (view.aggregates ?? []).map(([field, fn]) => field ? `${field}=${fn}` : fn).join(";"),
+    (view.aggregates ?? []).map(encodeQueryAggregate).join(";"),
   ];
   const patch = keys.map((key, index): [string, string | null] =>
     [`${prefix}${key}`, scope === "legacy" && index !== 2 && values[index] === "" ? null : values[index]]);
@@ -38,10 +39,8 @@ export function displayPropertyPatch(view: ViewSettings, scope: DisplayNamespace
 export function mergeQueryAggregateValue(raw: string | null, next: NonNullable<ViewSettings["aggregates"]>): string | null | undefined {
   const segments = raw?.split(";") ?? [];
   const parse = (segment: string): [string, "count" | "sum" | "avg"] | null => {
-    const text = segment.trim();
-    if (text.toLowerCase() === "count") return ["", "count"];
-    const match = /^([^=]*)=(count|sum|avg)$/i.exec(text);
-    return match ? [match[1].trim(), match[2].toLowerCase() as "count" | "sum" | "avg"] : null;
+    const decoded = decodeAggregateSegment(segment, "query");
+    return decoded ? [segment.slice(decoded.keyStart, decoded.keyEnd), decoded.fn.toLowerCase() as "count" | "sum" | "avg"] : null;
   };
   const parsed = segments.map(parse);
   const owned = parsed.filter((entry): entry is NonNullable<typeof entry> => entry !== null);
@@ -51,15 +50,13 @@ export function mergeQueryAggregateValue(raw: string | null, next: NonNullable<V
   for (let i = 0; i < segments.length; i++) {
     if (parsed[i]) {
       if (taken < next.length) {
-        const [field, fn] = next[taken];
-        out.push(field ? `${field}=${fn}` : fn);
+        out.push(encodeQueryAggregate(next[taken]));
       }
       taken++;
     } else if (segments[i].trim()) out.push(segments[i]);
   }
   for (; taken < next.length; taken++) {
-    const [field, fn] = next[taken];
-    out.push(field ? `${field}=${fn}` : fn);
+    out.push(encodeQueryAggregate(next[taken]));
   }
   return out.length ? out.join(";") : null;
 }

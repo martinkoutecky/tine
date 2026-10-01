@@ -22,6 +22,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Sheet date footers skip impossible calendar dates, and typed cells and formulas preserve years below 100 (UI-OG-DUPD3-DATE-FOOTER, REG-OG-DUPD3-CALENDAR).
+
 - REG-OG-DUPF05-UNICODE-IDENTITY: Page-name lookup and query grouping use the native Unicode whitespace policy in the frontend too, so U+0085 and BOM no longer produce different identities or accepted grouping fields.
 - Annotation editing and PDF targets respect parsed properties, including empty results, and ignore metadata inside code (UI-OG-DUPD1-D08).
 - Outline insertion no longer treats literal `id::` examples as live block identities; merge identity recovery also uses accepted properties (REG-OG-DUPD1-D09).

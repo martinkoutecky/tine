@@ -1,10 +1,19 @@
 import type { FieldId } from "./fields";
 import type { SortDir } from "../editor/queryIr";
+import { isSheetBuiltinField, SCHEMA_PROP_TYPES } from "./config";
+export { SCHEMA_PROP_TYPES };
 
 export type SortState = { col: number; dir: 1 | -1 } | null;
 export type SortKey = { kind: "number"; value: number; text: string } | { kind: "text"; text: string };
-export type SchemaMenuType = "text" | "number" | "date" | "datetime" | "checkbox" | "list" | "ref";
-export const SCHEMA_PROP_TYPES: SchemaMenuType[] = ["text", "number", "date", "datetime", "checkbox", "list", "ref"];
+export type SchemaMenuType = typeof SCHEMA_PROP_TYPES[number];
+export const QUERY_SORT_BUILTINS = ["priority", "page", "scheduled", "deadline"] as const;
+
+/** Whether a nonempty query field fits its stored semicolon/equal-delimited
+ * token grammar. O(field bytes); no trimming or route-size policy. Callers apply
+ * their own bounds and builtin/property/formula identity rules separately. */
+export function queryFieldEncodable(value: string): boolean {
+  return value.length > 0 && !/[=;\0\r\n]/.test(value);
+}
 
 /** Keep live column widths fixed while a drag or selection changes cells.
  * O(columns); null means the browser has not measured a usable grid yet. */
@@ -29,17 +38,17 @@ export function compareSortKeys(a: SortKey, b: SortKey): number {
 /** Query sort property spelling for a table field. Null means this field can
  * only be sorted locally because the query engine cannot persist its order. */
 export function querySortFieldName(field: FieldId | "title"): string | null {
-  if (["priority", "page", "scheduled", "deadline"].includes(field)) return field;
+  if ((QUERY_SORT_BUILTINS as readonly string[]).includes(field)) return field;
   if (field.startsWith("prop:")) {
     const name = field.slice(5);
-    return name && !/[;=\0\r\n]/.test(name) ? name : null;
+    return queryFieldEncodable(name) ? name : null;
   }
   return null;
 }
 
 /** Interpret a saved query column token as a sheet field. O(1), pure. */
 export function queryColumnFieldId(name: string): FieldId {
-  return (["state", "priority", "scheduled", "deadline", "tags", "page"].includes(name)
+  return (isSheetBuiltinField(name)
     ? name : `prop:${name}`) as FieldId;
 }
 
@@ -48,8 +57,8 @@ export function queryColumnFieldId(name: string): FieldId {
 export function queryColumnName(field: FieldId): string | null {
   if (!field.startsWith("prop:")) return field.startsWith("formula:") ? null : field;
   const name = field.slice(5);
-  return name && !/[=;\0\r\n]/.test(name) &&
-    !["state", "priority", "scheduled", "deadline", "tags", "page"].includes(name) ? name : null;
+  return queryFieldEncodable(name) &&
+    !isSheetBuiltinField(name) ? name : null;
 }
 
 /** Reorder all visible query fields, or refuse if any cannot be written as a

@@ -2,6 +2,8 @@
 // session. This module does not parse a query or persist graph content.
 import type { FriendlyPageMatchScope, ViewSettings, ViewKind } from "./queryIr";
 import { canonicalGroupField } from "./queryViewProperties";
+import { queryFieldEncodable } from "../sheet/tablePresentation";
+import { isQueryAggregateFn } from "../sheet/aggregate";
 
 export type QueryDisplayDraft = Omit<ViewSettings, "view">;
 
@@ -21,7 +23,7 @@ export function normalizeFriendlyPageMatchScope(value: unknown): FriendlyPageMat
 
 const validField = (value: unknown, allowEmpty = false): value is string =>
   typeof value === "string" && value.length <= QUERY_DISPLAY_MAX_FIELD && (allowEmpty || value.length > 0)
-  && value.trim() === value && !/[=;\0\r\n]/.test(value);
+  && value.trim() === value && (allowEmpty && value === "" || queryFieldEncodable(value));
 
 /** Validate a device-local query display draft. Returns fresh arrays or null;
  * no query text is parsed here. O(number of fields), bounded at 64 entries. */
@@ -41,7 +43,7 @@ export function normalizeQueryDisplayDraft(value: unknown): QueryDisplayDraft | 
   }
   if (source.aggregates !== undefined) {
     if (!tuples(source.aggregates) || !source.aggregates.every(([field, fn]) =>
-      validField(field, fn === "count") && ["count", "sum", "avg"].includes(fn))) return null;
+      validField(field, fn === "count") && isQueryAggregateFn(fn))) return null;
     draft.aggregates = source.aggregates.map(([field, fn]) => [field, fn as "count" | "sum" | "avg"]);
   }
   if (source.group_by !== undefined) {
