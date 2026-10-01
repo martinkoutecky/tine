@@ -499,7 +499,7 @@ await withApp(2, false, async (browser) => {
 
   // The 960px state above proves both persisted sidebars simultaneously. Give
   // the split+560px PDF neighbor physically meaningful room for its separate
-  // structural assertion; keeping every optional surface open inside 960px
+  // layout assertion; keeping every optional surface open inside 960px
   // would test an impossible sum of fixed minimum widths, not drawer parity.
   await clickToolbar(browser, "Toggle sidebar");
   await browser.setWindowSize(1600, 900);
@@ -522,8 +522,8 @@ await withApp(2, false, async (browser) => {
   await pdfLink.click();
   await browser.$(".pdf-pane").waitForExist({ timeout: 10_000 });
   const pdf = await snapshot(browser);
-  const pdfParent = await browser.execute(() => document.querySelector(".pdf-pane")?.parentElement?.classList.contains("drawer-workspace") ?? false);
-  assert(pdfParent && pdf.pdf.x >= pdf.workspace.x - 1 && pdf.pdf.right <= pdf.workspace.right + 1
+  const pdfInWorkspace = await browser.execute(() => !!document.querySelector(".pdf-pane")?.closest(".drawer-workspace"));
+  assert(pdfInWorkspace && pdf.pdf.x >= pdf.workspace.x - 1 && pdf.pdf.right <= pdf.workspace.right + 1
     && Math.abs(pdf.right.x - rightBeforeNeighbors.x) <= 1,
   "persistent sidebar restructuring displaced the PDF neighbor", pdf);
   proof.artifacts.regular = path.join(ARTIFACT, "regular-wide-split-pdf.png");
@@ -531,7 +531,7 @@ await withApp(2, false, async (browser) => {
   // window. Use the WebDriver window capture here so the 1600px visual receipt
   // includes both 340px split panes, the PDF, and the persistent sidebar.
   await browser.saveScreenshot(proof.artifacts.regular);
-  proof.regularWidth = { closed: regularClosed, simultaneous: regularBoth, split, pdf, pdfParent };
+  proof.regularWidth = { closed: regularClosed, simultaneous: regularBoth, split, pdf, pdfInWorkspace };
 });
 
 proof.finishedAt = new Date().toISOString();

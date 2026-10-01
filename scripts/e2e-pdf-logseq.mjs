@@ -16,6 +16,7 @@ import {
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
 import { APP_ID } from "./lib/app-identity.mjs";
+import { openPageByName } from "./lib/e2e-navigation.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -467,6 +468,20 @@ async function nativeClickSelector(selector, id, text) {
   await nativeClickAt(target.point, id);
 }
 
+// Reader tools remain available through the overflow menu in narrow panes.
+// Follow that visible user path without forcing a particular toolbar layout.
+async function nativeReaderTool(selector, label, id) {
+  const visible = await browser.execute((wanted) => {
+    const element = document.querySelector(wanted);
+    const rect = element?.getBoundingClientRect();
+    return !!rect && rect.width > 0 && rect.height > 0;
+  }, selector);
+  if (visible) return nativeClickSelector(selector, id);
+  await nativeClickSelector('button[title="More settings"]', `${id}-settings`);
+  await browser.$(".pdf-settings-menu").waitForExist({ timeout: 5_000 });
+  await nativeClickSelector(".pdf-settings-overflow button", id, label);
+}
+
 async function nativeClickIndexed(selector, index, id) {
   const point = await browser.execute((wanted, wantedIndex) => {
     const element = document.querySelectorAll(wanted)[wantedIndex];
@@ -484,39 +499,10 @@ async function typeKeys(text) {
 }
 
 async function routeToPage(name) {
-  const current = await browser.$("h1.page-title").getText().catch(() => "");
-  if (current.trim() === name) return;
-  await nativeClickSelector('button[title^="Search (Ctrl+K)"]', `route-${name.replaceAll(/\W+/g, "-")}`);
-  const input = await browser.$(".switcher-input");
-  await input.waitForExist({ timeout: 5000 });
-  await typeKeys(name);
-  await browser.waitUntil(() => browser.execute((wanted) => {
-    const active = document.querySelector(".switcher-row.active .switcher-name");
-    if (active?.textContent?.trim() === wanted) return true;
-    return [...document.querySelectorAll(".switcher-row:not(.block-result) .switcher-name")]
-      .some((node) => node.textContent?.trim() === wanted);
-  }, name), {
-    timeout: 10_000,
-    timeoutMsg: `switcher did not expose routed page ${name}`,
-  });
-  const exactActive = await browser.execute((wanted) =>
-    document.querySelector(".switcher-row.active .switcher-name")?.textContent?.trim() === wanted, name);
-  if (!exactActive) {
-    const point = await browser.execute((wanted) => {
-      const nameElement = [...document.querySelectorAll(".switcher-row:not(.block-result) .switcher-name")]
-        .find((node) => node.textContent?.trim() === wanted);
-      const rect = nameElement?.closest(".switcher-row")?.getBoundingClientRect();
-      return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
-    }, name);
-    if (!point) throw new Error(`exact switcher result disappeared for ${name}`);
-    await nativeClickAt(point, `route-result-${name.replaceAll(/\W+/g, "-")}`);
-  } else {
-    await browser.keys(["Enter"]);
-  }
-  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === name, {
-    timeout: 10_000,
-    timeoutMsg: `named page ${name} did not become the active route`,
-  });
+  // Fixture authoring belongs to the notes pane. A reader close can leave its
+  // pane focused on another tab; activate notes before the shared navigator.
+  await browser.$("main").click();
+  await openPageByName(browser, name, { entry: "button" });
 }
 
 function sha256(file) {
@@ -664,18 +650,29 @@ async function chooseGtkFile(source) {
 }
 
 async function closePdfWithNativePointer(id) {
+  const filename = await browser.execute(() => document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename"));
+  if (!filename) throw new Error(`no PDF reader to close: ${id}`);
   await nativeClickSelector('button[title="Close PDF"]', id);
-  await browser.$(".pdf-viewer").waitForExist({ reverse: true, timeout: 10_000 });
+  // Closing a reader tab may reveal another PDF tab; the resource we closed
+  // must disappear, without requiring every other reader to be closed too.
+  await browser.waitUntil(() => browser.execute((closed) =>
+    [...document.querySelectorAll(".pdf-viewer")].every((viewer) => viewer.getAttribute("data-pdf-filename") !== closed), filename), {
+    timeout: 10_000, timeoutMsg: `closing PDF did not remove ${filename}`,
+  });
 }
 
 async function nativeClickPdfLink(filename, label, id) {
   const point = await browser.execute((wanted, wantedLabel) => {
     const link = [...document.querySelectorAll(".page-blocks .pdf-link")]
       .find((candidate) => candidate.outerHTML.includes(wanted) || candidate.textContent?.includes(wantedLabel));
-    const rect = link?.getBoundingClientRect();
-    return rect && rect.width > 0 && rect.height > 0
-      ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-      : null;
+    // A wrapped inline link's union rectangle includes non-link whitespace.
+    // Choose an actual fragment that receives the pointer, not that union.
+    return [...(link?.getClientRects() ?? [])].map((rect) => ({
+      x: rect.left + rect.width / 2, y: rect.top + rect.height / 2,
+    })).find((point) => {
+      const hit = document.elementFromPoint(point.x, point.y);
+      return hit && (hit === link || link.contains(hit));
+    }) ?? null;
   }, filename, label);
   if (!point) {
     const links = await browser.execute(() => [...document.querySelectorAll(".page-blocks .pdf-link")]
@@ -858,7 +855,7 @@ async function proveNativeUploadsThemesAndHighlights() {
   // The real fixture contains an explicit page-reference parent and a nested
   // named destination. Expansion and both navigation kinds are pointer actions;
   // the DOM only observes their visible result.
-  await nativeClickSelector('button[title="Outline"]', "pdf-outline-open");
+  await nativeReaderTool('button[title="Outline"]', "Outline", "pdf-outline-open");
   try {
     await browser.waitUntil(() => browser.execute(() =>
       document.querySelector(".pdf-outline-panel")?.textContent?.includes("Explicit Page One")), {
@@ -895,7 +892,7 @@ async function proveNativeUploadsThemesAndHighlights() {
   });
   await browser.keys(["Escape"]);
   await browser.$(".pdf-outline-panel").waitForExist({ reverse: true, timeout: 5_000 });
-  await nativeClickSelector('button[title="Outline"]', "pdf-outline-reopen");
+  await nativeReaderTool('button[title="Outline"]', "Outline", "pdf-outline-reopen");
   await browser.$(".pdf-outline-panel").waitForExist({ timeout: 5_000 });
   await nativeClickSelector(".pdf-scroll", "pdf-outline-outside-dismiss");
   await browser.$(".pdf-outline-panel").waitForExist({ reverse: true, timeout: 5_000 });
@@ -944,21 +941,45 @@ async function proveNativeUploadsThemesAndHighlights() {
   );
 
   // Select the deterministic line with an actual pointer drag across the live
-  // PDF.js text layer. No Range/selection event is synthesized in this proof.
+  // PDF.js text layer. Ranges only measure glyph geometry; the browser selection
+  // itself is produced by the native drag.
   await browser.waitUntil(() => browser.execute((expectedText) =>
     [...document.querySelectorAll(".textLayer span")].some((span) => span.textContent?.trim() === expectedText), HIGHLIGHT_TEXT), {
     timeout: 10_000,
     timeoutMsg: "deterministic PDF text was not exposed for literal pointer selection",
   });
-  const selectionTarget = await browser.execute((expectedText) => {
-    const span = [...document.querySelectorAll(".textLayer span")]
-      .find((candidate) => candidate.textContent?.trim() === expectedText);
-    const rect = span?.getBoundingClientRect();
-    return rect && rect.width > 20 && rect.height > 5
-      ? { start: { x: rect.left + 1, y: rect.top + rect.height / 2 }, end: { x: rect.right - 1, y: rect.top + rect.height / 2 } }
-      : null;
-  }, HIGHLIGHT_TEXT);
-  if (!selectionTarget) throw new Error("deterministic PDF text has no usable native-drag geometry");
+  // Wait for the resized split-pane text layer to settle, and verify that
+  // integer native coordinates resolve to the first and last text offsets.
+  let selectionTarget;
+  let previousGeometry;
+  let stableGeometry = 0;
+  await browser.waitUntil(async () => {
+    const measured = await browser.execute((expectedText) => {
+      const span = [...document.querySelectorAll(".textLayer span")]
+        .find((candidate) => candidate.textContent?.trim() === expectedText);
+      if (!span?.firstChild) return null;
+      const glyphs = document.createRange();
+      glyphs.selectNodeContents(span);
+      const rect = glyphs.getBoundingClientRect();
+      const y = Math.round(rect.top + rect.height / 2);
+      const endpoint = (edge, offset) => {
+        for (let delta = -3; delta <= 3; delta++) {
+          const x = Math.round(edge) + delta;
+          const caret = document.caretRangeFromPoint(x, y);
+          if (caret?.startContainer === span.firstChild && caret.startOffset === offset) return { x, y };
+        }
+        return null;
+      };
+      const start = endpoint(rect.left, 0);
+      const end = endpoint(rect.right, span.firstChild.textContent.length);
+      return start && end ? { start, end } : null;
+    }, HIGHLIGHT_TEXT);
+    const geometry = JSON.stringify(measured);
+    stableGeometry = measured && geometry === previousGeometry ? stableGeometry + 1 : 0;
+    previousGeometry = geometry;
+    selectionTarget = measured;
+    return stableGeometry >= 2;
+  }, { timeout: 10_000, interval: 100, timeoutMsg: "PDF glyph endpoints did not settle for native selection" });
   await nativePointerDrag(selectionTarget.start, selectionTarget.end, "pdf-text-highlight-selection");
   await browser.$(".pdf-color-menu").waitForExist({ timeout: 5_000 });
   const selected = await browser.execute(() => {
@@ -1007,13 +1028,16 @@ async function proveNativeUploadsThemesAndHighlights() {
   }
   const bounding = ednBounding(textEntry);
   const rect = selected.rects[0];
+  // The toolbar percentage is rounded for display. The fixture is 612pt wide;
+  // use its rendered scale when checking durable PDF-space coordinates.
+  const pageScale = selected.pageWidth / 612;
   const expectedGeometry = {
-    x1: (rect.left - selected.pageLeft) / selected.zoom,
-    y1: (rect.top - selected.pageTop) / selected.zoom,
-    x2: (rect.right - selected.pageLeft) / selected.zoom,
-    y2: (rect.bottom - selected.pageTop) / selected.zoom,
-    width: selected.pageWidth / selected.zoom,
-    height: selected.pageHeight / selected.zoom,
+    x1: (rect.left - selected.pageLeft) / pageScale,
+    y1: (rect.top - selected.pageTop) / pageScale,
+    x2: (rect.right - selected.pageLeft) / pageScale,
+    y2: (rect.bottom - selected.pageTop) / pageScale,
+    width: selected.pageWidth / pageScale,
+    height: selected.pageHeight / pageScale,
   };
   for (const key of Object.keys(expectedGeometry)) assertNear(bounding[key], expectedGeometry[key], `text highlight ${key}`);
   await browser.waitUntil(() => browser.execute((id) => !!document.querySelector(`.pdf-hl[data-highlight-id="${id}"]`), textHighlightId), {
@@ -1045,7 +1069,7 @@ async function proveNativeUploadsThemesAndHighlights() {
   // implementation threshold.
   let areaHighlightId;
   if (process.platform !== "darwin") {
-    await nativeClickSelector('button[title^="Area highlight"]', "pdf-toolbar-area-enable");
+    await nativeReaderTool('button[title^="Area highlight"]', "Area highlight", "pdf-toolbar-area-enable");
     const toolbarEnabled = await browser.execute(() =>
       document.querySelector('button[title^="Area highlight"]')?.classList.contains("active") ?? false);
     if (!toolbarEnabled) throw new Error("real toolbar Area button did not become active");
@@ -1197,7 +1221,7 @@ try {
   // `logseq-sample.pdf` deliberately has no outline dictionary. Open the real
   // reader's outline popover by pointer and observe its visible empty state;
   // this is not a component mock or a synthetic outline result.
-  await nativeClickSelector('button[title="Outline"]', "pdf-no-outline-open");
+  await nativeReaderTool('button[title="Outline"]', "Outline", "pdf-no-outline-open");
   await browser.waitUntil(() => browser.execute(() =>
     document.querySelector(".pdf-outline-empty")?.textContent?.trim() === "No outlines"), {
     timeout: 10_000,
@@ -1366,10 +1390,12 @@ try {
   if (!existingActions.includes("Copy ref") || !existingActions.includes("Linked references")) {
     throw new Error(`existing PDF highlight menu omitted reference actions: ${JSON.stringify(existingActions)}`);
   }
+  // This existing DOM-event probe targets the pointer handler; WebKitDriver
+  // W3C mouse actions do not synthesize pointerdown.
   await browser.execute(() => {
     const action = [...document.querySelectorAll(".pdf-hl-action")]
       .find((element) => element.textContent?.trim() === "Copy ref");
-    action?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+    action?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window, pointerType: "mouse", button: 0 }));
   });
   await browser.waitUntil(() => fs.readFileSync(hlsPage, "utf8").includes(`:id: ${SAMPLE_ID}`), {
     timeout: 10_000,
@@ -1392,7 +1418,7 @@ try {
   await browser.execute(() => {
     const action = [...document.querySelectorAll(".pdf-hl-action")]
       .find((element) => element.textContent?.trim() === "Linked references");
-    action?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+    action?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window, pointerType: "mouse", button: 0 }));
   });
   await browser.waitUntil(() => browser.execute((highlightId) => {
     const block = document.querySelector(`.ls-block[data-block-ref="${highlightId}"]`);
@@ -1401,7 +1427,10 @@ try {
     timeout: 10_000,
     timeoutMsg: "Linked references did not open the annotation block with its ordinary referrers visible",
   });
-  await browser.$('button[title="Go back"]').click();
+  // Notes can open in a new companion tab with no back-history. Activate that
+  // notes surface and return to Journals while preserving the open reader.
+  await browser.$("main:has(.block-references)").click();
+  await browser.$('button[title="Journals"]').click();
   await browser.waitUntil(() => browser.execute(() =>
     document.querySelectorAll(".pdf-link").length >= 2 &&
     document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-sample.pdf"), {
@@ -1548,7 +1577,7 @@ try {
   await browser.$(".pdf-color-menu").waitForExist({ timeout: 5000 });
   await browser.execute(() => {
     document.querySelector(".pdf-color-swatch")
-      ?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+      ?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, view: window, pointerType: "mouse", button: 0 }));
   });
   await browser.waitUntil(() => {
     const written = fs.readFileSync(sidecar, "utf8");

@@ -366,13 +366,34 @@ async function exerciseNativeFormTabTraversal(aliasValue) {
     throw new Error(`native Shift+Tab did not return to Aliases; active=${JSON.stringify(await activePagePropertyControl())}`);
   }
 
-  for (const expected of ["Tags", "Display title", "Icon", "Public", "Done"]) {
+  // Every user-editable property and the add-row participate in native form
+  // traversal. Derive the controls from this panel rather than assuming that
+  // the five presets are its entire contents (GH #164).
+  const tabState = () => browser.execute(() => {
+    const panel = document.querySelector(".page-props-panel");
+    const controls = [...panel.querySelectorAll("input, button")]
+      .filter((control) => !control.disabled && control.tabIndex >= 0);
+    return {
+      active: controls.indexOf(document.activeElement),
+      done: controls.findIndex((control) => control.classList.contains("pp-done")),
+      labels: controls.map((control) => control.getAttribute("title")
+        || control.closest(".pp-field")?.querySelector(".pp-label")?.textContent?.trim()
+        || control.textContent?.trim()),
+    };
+  });
+  const initial = await tabState();
+  if (initial.active !== 0 || initial.done !== initial.labels.length - 1) {
+    throw new Error(`property form did not expose Aliases through Done: ${JSON.stringify(initial)}`);
+  }
+  for (let expected = 1; expected <= initial.done; expected++) {
     await nativeTab();
-    if (await activePagePropertyControl() !== expected) {
-      throw new Error(`native Tab focus order expected ${expected}; active=${JSON.stringify(await activePagePropertyControl())}`);
+    const state = await tabState();
+    if (state.active !== expected) {
+      throw new Error(`native Tab did not reach property control ${initial.labels[expected]}: ${JSON.stringify(state)}`);
     }
   }
-  await browser.$(".pp-done").click();
+  // Done owns native focus after traversal; activate it from the keyboard.
+  await browser.keys(["Enter"]);
   await browser.$(".page-props-panel").waitForExist({ reverse: true, timeout: 5_000 });
 }
 

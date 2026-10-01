@@ -167,7 +167,7 @@ try {
         idx: closest ? blocks.indexOf(closest) : -1,
         editingIdx: editingBlock ? blocks.indexOf(editingBlock) : -1,
         aeTag: ae ? ae.tagName : "null",
-        textSel: String(window.getSelection() || "").slice(0, 40),
+        textSel: isEd ? ae.value.slice(ae.selectionStart, ae.selectionEnd) : String(window.getSelection() || "").slice(0, 40),
         selBlocks: document.querySelectorAll(".block-main.selected").length,
         crfp: (window.__crfpLog || []).slice(-1)[0] || null,
       };
@@ -262,14 +262,17 @@ try {
     await sleep(600);
   };
 
-  console.log("\n=== DRAG 1: within block 0, 'second' → 'here' (text selection, no edit) ===");
+  console.log("\n=== DRAG 1: within block 0, 'second' → 'here' (text selection) ===");
   const d1a = await charPoint(0, "second", 0);
   const d1b = await charPoint(0, "here", 3);
   console.log("from", JSON.stringify(d1a), "to", JSON.stringify(d1b));
   requirePoint(d1a, "drag-1 start"); requirePoint(d1b, "drag-1 end");
   await realDrag(d1a.x, d1a.y, d1b.x, d1b.y);
   const dragText = await probe("in-block drag");
-  if (dragText.isEditor || dragText.textSel.length < 3 || dragText.selBlocks !== 0) throw new Error("in-block drag did not remain a text selection");
+  // Mousedown may enter the editor (master GH #368). Observe the selected
+  // text at either surface rather than requiring the rendered DOM to survive.
+  const expectedSelection = raw0.slice(raw0.indexOf("second"), raw0.indexOf("here") + 3);
+  if (dragText.textSel !== expectedSelection || dragText.selBlocks !== 0) throw new Error("in-block drag did not preserve the intended text selection");
   await browser.keys(["Escape"]); await sleep(300);
   await browser.execute(() => window.getSelection()?.removeAllRanges());
 

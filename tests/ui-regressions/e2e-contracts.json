@@ -65,9 +65,9 @@
       "stability": "stable"
     },
     "scripts/e2e-clickcaret-repro.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "A click maps to the intended source caret, including after trailing links and inside inline code.", "blocking": true }],
-      "acceptableVariations": ["Layout and coordinates may differ, but mapping a click to the intended source caret is blocking."],
-      "nonRequirements": ["Exact text rasterization, font metrics, or pointer coordinate values."],
+      "contracts": [{ "class": "core-operation", "userOutcome": "A click maps to the intended source caret, including after trailing links and inside inline code; an in-block drag selects the intended text, while a cross-block drag selects blocks.", "blocking": true }],
+      "acceptableVariations": ["Layout and coordinates may differ, and mousedown may enter the editor before a drag; source caret mapping and the resulting text or block selection remain blocking."],
+      "nonRequirements": ["Exact text rasterization, font metrics, or pointer coordinate values.", "Keeping rendered content mounted during a text-selection drag."],
       "stability": "stable"
     },
     "scripts/e2e-empty-query-workspace.mjs": {
@@ -113,8 +113,8 @@
         { "class": "stateful-ux", "userOutcome": "On compact viewports, sidebars behave as modal overlays with safe dismissal.", "blocking": true },
         { "class": "stateful-ux", "userOutcome": "On roomy viewports, sidebars remain persistent rather than becoming modal overlays.", "blocking": true }
       ],
-      "acceptableVariations": ["Breakpoint and geometry may evolve, but modal overlay behavior on compact viewports and persistent sidebar behavior on roomy viewports are blocking."],
-      "nonRequirements": ["Exact breakpoint pixel value, drawer width, overlay opacity, or transition duration."],
+      "acceptableVariations": ["Breakpoint and geometry may evolve, but modal overlay behavior on compact viewports and persistent sidebar behavior on roomy viewports are blocking.", "A PDF may be a routed split-pane tab while remaining contained beside the persistent sidebar."],
+      "nonRequirements": ["Exact breakpoint pixel value, drawer width, overlay opacity, or transition duration.", "The PDF being an immediate child of the workspace element."],
       "stability": "stable"
     },
     "scripts/e2e-multigraph.mjs": {
@@ -158,8 +158,8 @@
     },
     "scripts/e2e-page-properties.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "Page property actions preserve literal header structure through edit, guarded save, reload, and keyboard traversal.", "blocking": true }],
-      "acceptableVariations": ["Panel layout and native form-control styling may evolve."],
-      "nonRequirements": ["Exact section spacing, control dimensions, or debounce timing."],
+      "acceptableVariations": ["Panel layout and native form-control styling may evolve.", "Custom property and add-property controls may participate in native Tab traversal before Done; Done can be activated by keyboard."],
+      "nonRequirements": ["Exact section spacing, control dimensions, or debounce timing.", "A fixed five-preset-only Tab sequence."],
       "stability": "stable"
     },
     "scripts/e2e-page-trailing-block.mjs": {
@@ -173,8 +173,8 @@
         { "class": "core-operation", "userOutcome": "PDF highlights, links, annotations, outline destinations, and restored view state interoperate with Logseq data.", "blocking": true },
         { "class": "exact-safety-interoperability", "userOutcome": "PDF asset switches and target navigation isolate reader state without crashes or runaway resource use.", "blocking": true, "authority": "Tine PDF interoperability and reader resource-safety contract" }
       ],
-      "acceptableVariations": ["Reader layout, coordinate normalization, theme presentation, and annotation menu placement may evolve while the persisted interoperability outcomes remain intact."],
-      "nonRequirements": ["Exact drag threshold.", "Exact theme palette/RGB.", "Exact CSS filter/DOM strategy."],
+      "acceptableVariations": ["Reader layout, coordinate normalization, theme presentation, and annotation menu placement may evolve while the persisted interoperability outcomes remain intact.", "Reader tools may move from the toolbar into a visible overflow menu in narrow panes.", "Highlight references may open in a companion notes tab; returning to Journals need not use Back history.", "Closing one PDF resource may reveal a different retained PDF tab."],
+      "nonRequirements": ["Exact drag threshold.", "Exact theme palette/RGB.", "Exact CSS filter/DOM strategy.", "Outline and Area being direct toolbar buttons at every pane width.", "A newly opened notes tab inheriting journal back-history.", "Closing one reader leaving no other PDF viewer mounted."],
       "stability": "stable"
     },
     "scripts/e2e-pdf-ownership.mjs": {
