@@ -492,7 +492,6 @@ mod multi_window_tests {
     }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Dispatch a desktop command before GUI initialization. A returned exit code
 /// means the command already printed its outcome and no app should start.
 #[cfg(desktop)]
@@ -500,6 +499,7 @@ pub fn cli_dispatch() -> Option<i32> {
     cli::dispatch()
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(target_os = "linux")]
     init_xlib_threads();
