@@ -23,7 +23,7 @@ import type { Inline, MacroInline, TimestampInline, EmailValue, Block as AstBloc
 import type { PageKind } from "../types";
 import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
-import { sanitizeRawHtml, rawHtmlLocalImages } from "./htmlSanitize";
+import { rawHtmlPresentation } from "./htmlSanitize";
 import { allowLocalFileImages } from "../localFileSettings";
 import { resolvedTarget } from "../pageIndex";
 import { pageIcon } from "../pageIconBatch";
@@ -570,22 +570,7 @@ function renderIframe(src: string, width?: string, height?: string, spanAttrs?: 
 // by the Rust export) and rendered LIVE. Handlers/`style`/`<script>` are stripped,
 // so `innerHTML` is XSS-safe here. See ADR 0019.
 export function renderRawHtml(text: string, spanAttrs?: SpanDomAttrs): JSX.Element {
-  const m = /<iframe\b([^>]*)>/i.exec(text);
-  if (m) {
-    const attrs = m[1];
-    const src = /src\s*=\s*["']([^"']+)["']/i.exec(attrs)?.[1];
-    if (src && /^https?:\/\//i.test(src)) {
-      const attrWidth = /width\s*=\s*["']?(\d+px|\d+%|\d+)["']?/i.exec(attrs)?.[1];
-      const attrHeight = /height\s*=\s*["']?(\d+px|\d+%|\d+)["']?/i.exec(attrs)?.[1];
-      const style = !attrWidth || !attrHeight ? /style\s*=\s*(["'])(.*?)\1/i.exec(attrs)?.[2] : undefined;
-      const styleWidth = style ? /(?:^|;)\s*width\s*:\s*(\d+px|\d+%)(?=\s*(?:;|$))/i.exec(style)?.[1] : undefined;
-      const styleHeight = style ? /(?:^|;)\s*height\s*:\s*(\d+px|\d+%)(?=\s*(?:;|$))/i.exec(style)?.[1] : undefined;
-      const width = attrWidth ?? styleWidth;
-      const height = attrHeight ?? styleHeight;
-      return renderIframe(src, width, height, spanAttrs);
-    }
-  }
-  return renderSanitizedHtml(text, spanAttrs);
+  return <RawHtmlContent text={text} spanAttrs={spanAttrs} allowIframe />;
 }
 
 /** The sanitizer-only HTML insertion path. Unlike `renderRawHtml`, this helper
@@ -598,13 +583,13 @@ export function renderSanitizedHtml(text: string, spanAttrs?: SpanDomAttrs): JSX
 // (Settings → "Load local-file images") — swaps a blob URL into any `<img>` whose
 // `src` was a local path (the sanitizer strips those, so we re-attach them by
 // document-order match to the scanned paths). Off by default; see ADR 0019.
-function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
-  const clean = createMemo(() => sanitizeRawHtml(props.text));
+function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs; allowIframe?: boolean }): JSX.Element {
+  const presentation = createMemo(() => rawHtmlPresentation(props.text, props.allowIframe));
   let host: HTMLSpanElement | undefined;
   createEffect(() => {
-    clean(); // re-run if the sanitized markup changes
+    const shown = presentation(); // one projection for HTML, iframe and local resources
     if (!host || !allowLocalFileImages()) return;
-    const locals = rawHtmlLocalImages(props.text);
+    const locals = shown.localImages;
     if (!locals.some(Boolean)) return;
     let active = true;
     const releases: (() => void)[] = [];
@@ -624,7 +609,9 @@ function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs }): JSX.
       releases.forEach((release) => release());
     });
   });
-  return <span ref={host} class="raw-html" innerHTML={clean()} {...(props.spanAttrs ?? {})} />;
+  return <Show when={presentation().iframe} fallback={<span ref={host} class="raw-html" innerHTML={presentation().html} {...(props.spanAttrs ?? {})} />}>
+    {(frame) => renderIframe(frame().src, frame().width, frame().height, props.spanAttrs)}
+  </Show>;
 }
 
 function renderEmail(text: EmailValue, spanAttrs?: SpanDomAttrs): JSX.Element {
