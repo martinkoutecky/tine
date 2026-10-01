@@ -76,7 +76,7 @@ fn save_preparation_parses_old_document_once() {
         .split("fn prepare_page_content(")
         .nth(1)
         .unwrap()
-        .split("/// Canonical Markdown page-header")
+        .split("/// Properties that describe the block they sit on")
         .next()
         .unwrap();
     assert!(!preparation.contains("doc::parse"), "I-25/I-12: parse old source once through parse_doc and pass the Document to every validator; exemplar model/layout_retention.rs");
