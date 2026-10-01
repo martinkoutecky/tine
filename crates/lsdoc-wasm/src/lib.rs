@@ -7,6 +7,23 @@
 
 use wasm_bindgen::prelude::*;
 
+#[path = "../../tine-core/src/page_identity.rs"]
+mod page_identity;
+#[path = "../../tine-core/src/query/group_field.rs"]
+mod group_field;
+
+/// Native page-name key: O(name bytes), no I/O; Rust trim/lowercase/slashes/NFC.
+#[wasm_bindgen]
+pub fn page_identity_key(name: &str) -> String {
+    page_identity::page_key(name)
+}
+
+/// Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
+#[wasm_bindgen]
+pub fn canonical_group_field(value: &str) -> Option<String> {
+    group_field::canonical_group_token(value).map(str::to_owned)
+}
+
 #[path = "../../tine-core/src/page_filename.rs"]
 mod page_filename;
 

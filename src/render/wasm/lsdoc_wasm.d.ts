@@ -2,6 +2,11 @@
 /* eslint-disable */
 
 /**
+ * Native group-field grammar: O(value bytes), no I/O; invalid tokens return null.
+ */
+export function canonical_group_field(value: string): string | undefined;
+
+/**
  * Decode a Logseq page stem in legacy or triple-lowbar (legacy = false) format.
  * O(stem bytes), no I/O; malformed percent escapes are preserved.
  */
@@ -59,6 +64,11 @@ export function nested_reference_names(content: string): string[];
  * O(preamble bytes); no I/O.
  */
 export function page_header_json(raw: string): string;
+
+/**
+ * Native page-name key: O(name bytes), no I/O; Rust trim/lowercase/slashes/NFC.
+ */
+export function page_identity_key(name: string): string;
 
 /**
  * Whole-preamble property ownership, with parser-owned literals excluded.
@@ -167,6 +177,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly canonical_group_field: (a: number, b: number) => [number, number];
     readonly decode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly edit_block_regions_json: (a: number, b: number, c: number, d: any, e: any) => [number, number, number, number];
     readonly encode_page_name: (a: number, b: number, c: number) => [number, number];
@@ -180,6 +191,7 @@ export interface InitOutput {
     readonly mime_from_path: (a: number, b: number) => [number, number];
     readonly nested_reference_names: (a: number, b: number) => [number, number];
     readonly page_header_json: (a: number, b: number) => [number, number];
+    readonly page_identity_key: (a: number, b: number) => [number, number];
     readonly page_regions_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];

@@ -18,6 +18,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+unicode-normalization = "0.1"
 tine-search = { path = "../tine-search" }
 # Keep this tag IN SYNC with crates/tine-core/Cargo.toml's lsdoc pin.
 lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.7" }

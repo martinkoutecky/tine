@@ -2,25 +2,11 @@
 //! word]]`), and `((block-uuid))`. Used for the backlink index and queries.
 //! UTF-8 safe (advances by char boundaries).
 
-use unicode_normalization::UnicodeNormalization;
-
 use crate::config::FileNameFormat;
 
-/// The ONE page-name identity key: trimmed + **Unicode** lowercase + NFC (the
-/// OG/Logseq fold). Use this — never a bare
-/// `to_ascii_lowercase`/`eq_ignore_ascii_case` on a
-/// page name — so the ref/backlink index and the file/cache resolution agree on
-/// identity (a non-ASCII name like `Über` must resolve the same everywhere). Display
-/// uses the original casing.
-pub fn page_key(name: &str) -> String {
-    // Preserve Tine's historical surrounding-whitespace tolerance. Otherwise
-    // this is OG page-name-sanity-lc: lowercase, remove one slash at each
-    // boundary, then NFC (never NFKC or accent folding).
-    let lowered = name.trim().to_lowercase();
-    let without_leading = lowered.strip_prefix('/').unwrap_or(&lowered);
-    let without_boundaries = without_leading.strip_suffix('/').unwrap_or(without_leading);
-    without_boundaries.nfc().collect()
-}
+#[path = "page_identity.rs"]
+mod page_identity;
+pub use page_identity::page_key;
 
 /// Comparison form for page identity. NFC composition requires allocation; this
 /// deliberately delegates to the canonical key so cache scans cannot drift.
