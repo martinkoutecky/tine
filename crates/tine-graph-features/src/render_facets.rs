@@ -100,53 +100,15 @@ fn own_ordered(b: &DocBlock) -> bool {
     b.property("logseq.order-list-type").as_deref() == Some("number")
 }
 
-/// `1 → a`, `2 → b`, `27 → aa` (`toLetters`).
-fn letters(mut n: u32) -> String {
-    let mut s = Vec::new();
-    while n > 0 {
-        s.insert(0, (b'a' + ((n - 1) % 26) as u8) as char);
-        n = (n - 1) / 26;
-    }
-    s.into_iter().collect()
-}
-
-/// `1 → i`, `4 → iv`, … (`toRoman`).
-fn roman(mut n: u32) -> String {
-    const MAP: [(u32, &str); 13] = [
-        (1000, "m"),
-        (900, "cm"),
-        (500, "d"),
-        (400, "cd"),
-        (100, "c"),
-        (90, "xc"),
-        (50, "l"),
-        (40, "xl"),
-        (10, "x"),
-        (9, "ix"),
-        (5, "v"),
-        (4, "iv"),
-        (1, "i"),
-    ];
-    let mut s = String::new();
-    for (v, sym) in MAP {
-        while n >= v {
-            s.push_str(sym);
-            n -= v;
-        }
-    }
-    s
-}
-
 impl Ordinal {
     /// `"1."`, `"a."`, `"i."` … for an own-numbered block, else `None`. The
     /// glyph cycles number → letter → roman with the ancestor depth (mod 3).
     pub(super) fn marker(self) -> Option<String> {
         let i = self.index?;
-        Some(match self.parents % 3 {
-            0 => format!("{i}."),
-            1 => format!("{}.", letters(i)),
-            _ => format!("{}.", roman(i)),
-        })
+        Some(format!(
+            "{}.",
+            tine_core::ordinal::glyph(i, self.parents as u32)
+        ))
     }
 
     /// The ordinals of `b`'s children, in order.
@@ -178,10 +140,10 @@ mod tests {
 
     #[test]
     fn glyphs_follow_the_apps_toletters_and_toroman() {
-        assert_eq!(letters(1), "a");
-        assert_eq!(letters(26), "z");
-        assert_eq!(letters(27), "aa");
-        assert_eq!(roman(4), "iv");
-        assert_eq!(roman(1994), "mcmxciv");
+        assert_eq!(tine_core::ordinal::letters(1), "a");
+        assert_eq!(tine_core::ordinal::letters(26), "z");
+        assert_eq!(tine_core::ordinal::letters(27), "aa");
+        assert_eq!(tine_core::ordinal::roman(4), "iv");
+        assert_eq!(tine_core::ordinal::roman(1994), "mcmxciv");
     }
 }

@@ -1,3 +1,5 @@
+import type { PageDto } from "../../types";
+import { ordered_list_glyph } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock } from "../../render/parse";
 import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type ReadonlyFeedPage } from "../model";
@@ -96,9 +98,13 @@ function pagePropertyParts(page: ReadonlyFeedPage, exclude: string | null): Prop
 /** Every page-property line of this loaded page as `[key, value]`, in file
  *  order with duplicates — exactly what the page header renders (Page.tsx calls
  *  this with `exclude` = a first root it shows as a block). Grammar:
- *  editor/properties.ts `pagePropertyEntries`. Unloaded page → []. Reactive
- *  (reads the store). Cost O(pre-block + first-root bytes). */
-export function pageHeaderProperties(page: ReadonlyFeedPage, exclude: string | null = null): [string, string][] {
+ *  editor/properties.ts `pagePropertyEntries`. Reactive for loaded pages (reads
+ *  the store). A DTO preamble reads only that preamble; it
+ *  never consults a similarly named loaded page. Cost O(source bytes). */
+export function pageHeaderProperties(page: ReadonlyFeedPage | Pick<PageDto, "pre_block" | "format">, exclude: string | null = null): [string, string][] {
+  if ("pre_block" in page) {
+    return pagePropertyEntries(page.pre_block, page.format ?? "md").map((e) => [e.key, e.value]);
+  }
   return pagePropertyParts(page, exclude).flatMap((part) =>
     pagePropertyEntries(part.text, page.format).map((e): [string, string] => [e.key, e.value]));
 }
@@ -333,25 +339,6 @@ export function stopOwnNumberedListOnEmptyEnter(id: string, visibleText: string)
   if (!node || visibleText.trim() !== "" || !isOrdered(id) || isOrdered(node.parent)) return false;
   return removeOwnNumberedList(id);
 }
-function toLetters(n: number): string {
-  let s = "";
-  while (n > 0) {
-    const r = (n - 1) % 26;
-    s = String.fromCharCode(97 + r) + s;
-    n = Math.floor((n - 1) / 26);
-  }
-  return s || "a";
-}
-function toRoman(n: number): string {
-  const map: [number, string][] = [
-    [1000, "m"], [900, "cm"], [500, "d"], [400, "cd"], [100, "c"], [90, "xc"],
-    [50, "l"], [40, "xl"], [10, "x"], [9, "ix"], [5, "v"], [4, "iv"], [1, "i"],
-  ];
-  let s = "";
-  for (const [v, sym] of map) while (n >= v) { s += sym; n -= v; }
-  return s || "i";
-}
-
 /** The ordered-list label for a block whose `logseq.order-list-type` is `number`
  *  (else null) — the block's OWN bullet, like OG. The index counts this block
  *  plus the run of consecutive ordered siblings immediately before it; the glyph
@@ -371,8 +358,7 @@ export function orderedListMarker(id: string, ownProperties?: readonly (readonly
   }
   let depth = 0;
   for (let p = node.parent; isOrdered(p); p = doc.byId[p!]?.parent ?? null) depth++;
-  const delta = depth % 3;
-  return delta === 0 ? String(idx) : delta === 1 ? toLetters(idx) : toRoman(idx);
+  return ordered_list_glyph(idx, depth);
 }
 
 /** Tick/untick a checkbox on one line of an in-block `+ [ ]` markdown list,

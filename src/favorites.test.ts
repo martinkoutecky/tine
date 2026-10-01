@@ -111,6 +111,19 @@ describe("favorites arrangement page", () => {
     expect(shape(disk.get("Favorites 2")!).text).toBe("- [[A]]\n- New group\n");
   });
 
+  it.each([
+    ["md", "```md\ntine/favorites:: true\n```"],
+    ["org", "#+BEGIN_SRC\n#+tine/favorites: true\n#+END_SRC"],
+  ] as const)("a %s code example cannot claim a user's Favorites page", async (format, pre_block) => {
+    disk.set("Favorites", { pre_block, blocks: [b("my notes")], rev: 1, format });
+    toggleFavorite("A");
+    addFavoriteGroup("Work");
+    await settle();
+    expect(config.page).toBe("Favorites 2");
+    expect(shape(disk.get("Favorites")!)).toEqual({ pre: pre_block, text: "- my notes\n" });
+    expect(shape(disk.get("Favorites 2")!).text).toBe("- [[A]]\n- Work\n");
+  });
+
   it("opens with config.edn membership over the page, writing nothing", async () => {
     disk.set("Favs", { pre_block: "tine/favorites:: true", blocks: [b("Work", [b("[[A]]"), b("[[Gone]]", [b("[[C]]")])])], rev: 3 });
     seedFavorites(["A", "C", "New"], "Favs");
