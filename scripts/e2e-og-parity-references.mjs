@@ -453,7 +453,9 @@ try {
     A: await slashSentinel("A", "Priority A", ["Priority A"]),
     priority: await slashSentinel("priority", "Priority A", ["Priority A", "Priority B", "Priority C"]),
     kanban: await slashSentinel("kanban", "Board", ["Board"]),
-    query: await slashSentinel("query", "Query", ["Query", "Query (visual builder)"]),
+    // The single Query command opens the sheet (master 2617ff194); a
+    // separate visual-builder alias is not part of reference authoring.
+    query: await slashSentinel("query", "Query", ["Query"]),
   };
   await clearActiveEditor(browser);
   await browser.keys(["Escape"]);
@@ -673,8 +675,13 @@ try {
     throw new Error(`committed page reference did not survive reload: ${JSON.stringify(receipt.observations.reload)}`);
   }
   await sleep(300);
-  await browser.saveScreenshot(`${ARTIFACTS}/rendered.png`);
   fs.writeFileSync(`${ARTIFACTS}/receipt.json`, `${JSON.stringify(receipt, null, 2)}\n`);
+  // The rendered text and exact committed bytes above are the reload proof.
+  // WebKitGTK can time out capturing this restarted split-window session;
+  // retain the receipt and the earlier popup image even if that artifact fails.
+  await browser.saveScreenshot(`${ARTIFACTS}/rendered.png`).catch((error) => {
+    console.warn(`Reload screenshot unavailable after successful outcome proof: ${error.message}`);
+  });
 } finally {
   try { await browser?.deleteSession(); } catch {}
   killDriverTree();

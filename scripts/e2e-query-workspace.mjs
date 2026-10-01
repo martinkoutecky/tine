@@ -103,6 +103,13 @@ async function withApp(index, fn) {
     await browser.$(".query-workspace, .ls-block, .page-title").waitForExist({ timeout: 20_000 });
     await fn(browser);
     await sleep(750);
+  } catch (error) {
+    if (browser) {
+      await browser.saveScreenshot(path.join(ARTIFACTS, `failure-${index}.png`)).catch(() => {});
+      const state = await browser.execute(() => ({ text: document.body.innerText })).catch(() => null);
+      fs.writeFileSync(path.join(ARTIFACTS, `failure-state-${index}.json`), `${JSON.stringify(state, null, 2)}\n`);
+    }
+    throw error;
   } finally {
     try { await browser?.deleteSession(); } catch {}
     try { process.kill(-td.pid, "SIGKILL"); } catch {}
@@ -713,14 +720,17 @@ await withApp(2, async (browser) => {
     const excerpt = source?.querySelector(".reference-excerpt-text")?.textContent ?? "";
     return {
       groupCount: groups.length,
-      mentions: source?.querySelector(".reference-mention-count")?.textContent?.trim(),
-      jumps: source?.querySelectorAll(".reference-occurrence-jump").length,
-      marks: source?.querySelectorAll("mark").length,
+      // GH #200: the highlighted mention is its own jump control. A numbered
+      // row is only needed for occurrences outside the excerpt's windows.
+      markText: [...(source?.querySelectorAll(".reference-excerpt-mark") ?? [])]
+        .map((mark) => mark.textContent?.trim()),
+      marksAreControls: [...(source?.querySelectorAll(".reference-excerpt-mark") ?? [])]
+        .every((mark) => mark instanceof HTMLButtonElement),
       bounded: excerpt.length < expectedRaw.length,
     };
   }, unlinkedRaw);
-  if (unlinkedProof.groupCount < 2 || unlinkedProof.mentions !== "2 mentions"
-    || unlinkedProof.jumps !== 2 || unlinkedProof.marks !== 2 || !unlinkedProof.bounded) {
+  if (unlinkedProof.groupCount < 2 || !unlinkedProof.marksAreControls || !unlinkedProof.bounded
+    || JSON.stringify(unlinkedProof.markText) !== JSON.stringify(["Query parity", "Query parity"])) {
     throw new Error(`unlinked reference evidence is incomplete: ${JSON.stringify(unlinkedProof)}`);
   }
 
@@ -744,12 +754,12 @@ await withApp(2, async (browser) => {
   const jumped = await browser.execute(() => {
     const source = [...document.querySelectorAll(".unlinked-references .reference-group")]
       .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Unlinked source");
-    const jump = source?.querySelectorAll(".reference-occurrence-jump")[1];
+    const jump = source?.querySelectorAll(".reference-excerpt-mark")[1];
     if (!(jump instanceof HTMLButtonElement)) return false;
     jump.click();
     return true;
   });
-  if (!jumped) throw new Error("second unlinked occurrence control is missing");
+  if (!jumped) throw new Error("the second unlinked mention does not open its source");
   await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Unlinked source", {
     timeout: 10_000, timeoutMsg: "occurrence jump did not open its source page",
   });
@@ -762,8 +772,9 @@ await withApp(2, async (browser) => {
       : null;
   });
   const expectedOffset = unlinkedRaw.lastIndexOf("Query parity");
-  if (!caret || caret.value !== unlinkedRaw || caret.start !== expectedOffset || caret.end !== expectedOffset) {
-    throw new Error(`exact occurrence jump landed at the wrong caret: ${JSON.stringify({ caret, expectedOffset })}`);
+  const expectedEnd = expectedOffset + "Query parity".length;
+  if (!caret || caret.value !== unlinkedRaw || caret.start !== expectedOffset || caret.end !== expectedEnd) {
+    throw new Error(`exact occurrence jump did not select the mention: ${JSON.stringify({ caret, expectedOffset, expectedEnd })}`);
   }
 });
 

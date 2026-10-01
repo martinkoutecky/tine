@@ -98,6 +98,14 @@ const queryText = (browser, index) => browser.execute((i) => {
 }, index);
 
 async function waitForQuery(browser, index, predicate, what) {
+  // Query results hydrate when approached. Observing an offscreen group's
+  // reserved-height shell does not prove whether its answer rendered.
+  await browser.waitUntil(() => browser.execute((i) => {
+    const block = document.querySelectorAll(".page-blocks .query-block")[i];
+    if (!block) return false;
+    block.scrollIntoView({ block: "center" });
+    return true;
+  }, index), { timeout: 10_000, interval: 100, timeoutMsg: `query block ${index} did not mount` });
   let last = null;
   await browser.waitUntil(async () => {
     last = await queryText(browser, index);

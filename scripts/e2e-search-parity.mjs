@@ -298,6 +298,9 @@ try {
     && row.excerpt.includes(NONCANONICAL_BLOCK_QUERY)),
   "noncanonical block result did not settle");
   await browser.keys(["ArrowDown"]);
+  await waitFor(browser, (state) => state.rows.some((row) => row.active && row.kind === "block"
+    && row.excerpt.includes(NONCANONICAL_BLOCK_QUERY)),
+  "ArrowDown did not select the noncanonical block result");
   await browser.keys(["Shift", "Enter"]);
   const duplicateBlockSurface = `[data-sidebar-surface="sidebar:block:${NONCANONICAL_BLOCK_ID}"]`;
   await browser.$(`${duplicateBlockSurface} .rs-item-body [data-block-ref="${NONCANONICAL_BLOCK_ID}"]`).waitForExist({ timeout: 10_000 });
@@ -410,18 +413,17 @@ try {
   receipt.observations.unicodeBlock = unicodeBlock;
   await closeSwitcher(browser);
 
-  // 5c. Canonical equivalence is not accent folding. Wait for an ordinary
-  // backend page hit as the settlement witness, then prove the accent-bearing
-  // block is absent and Create remains available (no false exact page match).
+  // 5c. Search folds accents by default; page identity remains narrower.
+  // Require the complete source grapheme in the highlight as well as the hit,
+  // so an earlier debounced result for a partial query cannot satisfy this wait.
   await openSwitcher(browser, ["Control", "k"], "Jump to page, search, or run a command…");
   await typeKeys(browser, "cafe");
-  const accentNegative = await waitFor(browser, (state) => state.rows.some((row) => row.kind === "page" && row.name === "Cafe Plain Control")
+  const accentFold = await waitFor(browser, (state) => state.rows.some((row) => row.kind === "page" && row.name === "Cafe Plain Control")
+    && state.rows.some((row) => row.kind === "block" && row.excerpt.includes(DECOMPOSED_BLOCK)
+      && row.marks.includes("Cafe\u0301"))
     && state.rows.some((row) => row.kind === "new"),
-  "ASCII negative control did not reach a settled backend result");
-  if (accentNegative.rows.some((row) => row.kind === "block" && row.excerpt.includes(DECOMPOSED_BLOCK))) {
-    throw new Error(`ASCII cafe accent-folded into the decomposed block: ${JSON.stringify(accentNegative)}`);
-  }
-  receipt.observations.accentNegative = accentNegative;
+  "ASCII query did not accent-fold block search while preserving Create");
+  receipt.observations.accentFold = accentFold;
   await closeSwitcher(browser);
 
   // 4. A route without a single page uses the ordinary global provider set.
@@ -444,7 +446,19 @@ try {
   await closeSwitcher(browser);
 
   fs.writeFileSync(path.join(ARTIFACTS, "receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
-  console.log("PASS: literal search gestures preserve exact storage owners, routes, scope blocks, and canonical Unicode without accent folding");
+  console.log("PASS: literal search gestures preserve exact storage owners, routes, scoped blocks, canonical Unicode, and default accent folding");
+} catch (error) {
+  if (browser) {
+    await browser.saveScreenshot(path.join(ARTIFACTS, "failure.png")).catch(() => {});
+    const state = await browser.execute(() => ({
+      text: document.body.innerText,
+      sidebars: [...document.querySelectorAll("[data-sidebar-surface]")].map((node) => ({
+        surface: node.getAttribute("data-sidebar-surface"), text: node.textContent,
+      })),
+    })).catch(() => null);
+    fs.writeFileSync(path.join(ARTIFACTS, "failure-state.json"), `${JSON.stringify(state, null, 2)}\n`);
+  }
+  throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try {
