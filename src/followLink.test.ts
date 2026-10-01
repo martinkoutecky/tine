@@ -4,7 +4,7 @@ import * as router from "./router";
 import * as ui from "./ui";
 import { backend } from "./backend";
 
-const read = (text: string, caret: number) => () => ({ text, caret });
+const read = (text: string, caret: number, format: "md" | "org" = "md") => () => ({ text, caret, format });
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -80,5 +80,13 @@ describe("OG-DUPD1 caret dispatch", () => {
     expect(openPage).not.toHaveBeenCalled();
     expect(followLinkUnderCaret({ read: read("#foo,", 2) })).toBe(true);
     expect(openPage).toHaveBeenCalledWith("foo");
+  });
+
+  it("uses the editing page's format: Org code is literal, the same text in Markdown is a link", () => {
+    const openPage = vi.spyOn(router, "openPage").mockImplementation(() => {});
+    expect(followLinkUnderCaret({ read: read("~[[Hidden]]~", 4, "org") })).toBe(false);
+    expect(openPage).not.toHaveBeenCalled();
+    expect(followLinkUnderCaret({ read: read("~[[Hidden]]~", 4, "md") })).toBe(true);
+    expect(openPage).toHaveBeenCalledTimes(1);
   });
 });

@@ -9,6 +9,9 @@
 // found, and how to read the caret out of the live editor.
 
 import { nearestLink, type NearestLink } from "./editor/nearestLink";
+import { node as docNode, pageByName } from "./document";
+import { editingId } from "./editorController";
+import type { Format } from "./render/ast";
 import { openPage, openPageAtBlock } from "./router";
 import { openPageInSidebar, openBlockInSidebar } from "./ui";
 import { pushToast } from "./toasts";
@@ -16,17 +19,24 @@ import { backend } from "./backend";
 import { blockRefTarget, resolveBlockBatched } from "./resolveBatch";
 import { graphOwner, ownedWhen, readOwned } from "./owned";
 
-/** The focused block editor's text and caret, or null when not editing. */
-function caretContext(): { text: string; caret: number } | null {
+type CaretContext = { text: string; caret: number; format: Format };
+
+/** The focused block editor's text, caret and source format, or null when not
+ *  editing. The format is the editing block's page format: Org and Markdown
+ *  disagree on what is literal (e.g. `~[[x]]~` is Org code). */
+function caretContext(): CaretContext | null {
   if (typeof document === "undefined") return null;
   const active = document.activeElement;
   if (!(active instanceof HTMLTextAreaElement)) return null;
-  return { text: active.value, caret: active.selectionStart ?? 0 };
+  const id = editingId();
+  const node = id ? docNode(id) : undefined;
+  const format: Format = node && pageByName(node.page)?.format === "org" ? "org" : "md";
+  return { text: active.value, caret: active.selectionStart ?? 0, format };
 }
 
 export interface FollowLinkDeps {
-  /** Source of the editor text and caret; defaults to the focused textarea. */
-  read?(): { text: string; caret: number } | null;
+  /** Source of the editor text, caret and format; defaults to the focused textarea. */
+  read?(): CaretContext | null;
 }
 
 /** `mod+o`: follow the link nearest the caret in the block being edited.
@@ -39,7 +49,7 @@ export interface FollowLinkDeps {
 export function followLinkUnderCaret(deps: FollowLinkDeps = {}): boolean {
   const context = (deps.read ?? caretContext)();
   if (!context) return false;
-  const link = nearestLink(context.text, context.caret, { includeUrls: true });
+  const link = nearestLink(context.text, context.caret, { includeUrls: true, format: context.format });
   if (!link) return false;
   return dispatch(link, "here");
 }
@@ -50,7 +60,7 @@ export function followLinkUnderCaret(deps: FollowLinkDeps = {}): boolean {
 export function openLinkUnderCaretInSidebar(deps: FollowLinkDeps = {}): boolean {
   const context = (deps.read ?? caretContext)();
   if (!context) return false;
-  const link = nearestLink(context.text, context.caret);
+  const link = nearestLink(context.text, context.caret, { format: context.format });
   if (!link) return false;
   return dispatch(link, "sidebar");
 }

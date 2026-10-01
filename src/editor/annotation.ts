@@ -8,7 +8,7 @@ import type { BlockDto, Format } from "../types";
 import { facetsOf } from "../render/facets";
 
 /** True for a PDF highlight (annotation) block. */
-export function isAnnotationBlock(raw: string, format: Format = "md"): boolean {
+export function isAnnotationBlock(raw: string, format: Format): boolean {
   return annotationProperty(facetsOf(raw, format).properties) !== undefined;
 }
 

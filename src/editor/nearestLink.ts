@@ -37,7 +37,7 @@ const candidatesByAst = new WeakMap<Block[], NearestLink[]>();
  * Cost O(block bytes × links) cold when nested spans revisit source prefixes;
  * warm selection is O(accepted links) after the parser-cache lookup, allocating
  * no candidates. Parser failures throw. Candidates share the bounded AST cache. */
-export function nearestLink(text: string, caret: number, options: { includeUrls?: boolean; format?: Format } = {}): NearestLink | null {
+export function nearestLink(text: string, caret: number, options: { includeUrls?: boolean; format: Format }): NearestLink | null {
   const blocks = parseBlock(text, options.format === "org");
   let candidates = candidatesByAst.get(blocks);
   if (!candidates) {

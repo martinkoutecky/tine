@@ -5,7 +5,7 @@ import { nearestLink } from "./nearestLink";
 // these cases encode OG's actual rule, including the parts that are surprising.
 describe("nearestLink", () => {
   const at = (text: string, caret: number, includeUrls = false) =>
-    nearestLink(text, caret, { includeUrls });
+    nearestLink(text, caret, { includeUrls, format: "md" });
 
   it("finds a page ref the caret is inside", () => {
     const text = "see [[Some Page]] for more";
@@ -69,17 +69,17 @@ describe("nearestLink", () => {
 
 describe("parser-owned caret candidates", () => {
   it("ignores inline and fenced code", () => {
-    expect(nearestLink("`[[Hidden]]`", 4)).toBeNull();
-    expect(nearestLink("```\n[[Hidden]] #hidden\n```", 9)).toBeNull();
+    expect(nearestLink("`[[Hidden]]`", 4, { format: "md" })).toBeNull();
+    expect(nearestLink("```\n[[Hidden]] #hidden\n```", 9, { format: "md" })).toBeNull();
   });
   it("uses the accepted punctuation boundary", () => {
-    expect(nearestLink("#foo,", 2)).toMatchObject({ value: "foo", start: 0, end: 4 });
-    expect(nearestLink("#foo;bar #foo=bar", 2)).toMatchObject({ value: "foo;bar" });
+    expect(nearestLink("#foo,", 2, { format: "md" })).toMatchObject({ value: "foo", start: 0, end: 4 });
+    expect(nearestLink("#foo;bar #foo=bar", 2, { format: "md" })).toMatchObject({ value: "foo;bar" });
   });
 });
 
 it("maps Unicode source coordinates and reads accepted property values", () => {
   const raw = "é😀 see [[Page]]";
-  expect(nearestLink(raw, 10)).toMatchObject({ start: raw.indexOf("[["), end: raw.length, value: "Page" });
-  expect(nearestLink("body\ncustom:: [[Property Page]]", 15)).toMatchObject({ value: "Property Page" });
+  expect(nearestLink(raw, 10, { format: "md" })).toMatchObject({ start: raw.indexOf("[["), end: raw.length, value: "Page" });
+  expect(nearestLink("body\ncustom:: [[Property Page]]", 15, { format: "md" })).toMatchObject({ value: "Property Page" });
 });
