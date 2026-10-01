@@ -18,3 +18,10 @@ it("I-12: page keys and canonical group tokens have one native owner, shared wit
   expect(read("crates/tine-core/src/refs.rs")).toContain('pub use page_identity::page_key;');
   expect(read("crates/tine-core/src/query/view.rs")).toContain('group_field::canonical_group_token(value).map(Field::new)');
 });
+
+it("I-4: session restore waits for the WASM parser that owns page identity and group fields", () => {
+  const main = readFileSync("src/main.tsx", "utf8");
+  expect(main, "restoreSession parses saved query views through synchronous WASM; start it only after initParser settles (src/main.tsx)")
+    .toMatch(/parserSettled\.then\(\(\) => Promise\.race\(\[restoreSession\(\)/);
+  expect(main.match(/restoreSession\(\)/g)?.length).toBe(1);
+});

@@ -90,12 +90,14 @@ const publishedSnapshotReady = isPublishedExport()
     })
   : Promise.resolve();
 // Init the in-browser wasm parser before first paint so blocks render
-// synchronously (no IPC, no fallback flash). Runs concurrently with the (capped)
-// session restore; a parser-init failure is caught so it can't block startup —
-// the legacy fallback renderer still covers that case during the transition.
+// synchronously (no IPC, no fallback flash). A parser-init failure is caught so
+// it can't block startup. Session restore starts only after init settles:
+// restoring parses saved query views through the synchronous WASM page-identity
+// and group-field owners (OG-DUPF05), which must not run before init.
+const parserSettled = initParser().catch(() => console.error("lsdoc-wasm init failed"));
 void Promise.all([
-  initParser().catch(() => console.error("lsdoc-wasm init failed")),
-  isPublishedExport() ? Promise.resolve() : Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))]),
+  parserSettled,
+  isPublishedExport() ? Promise.resolve() : parserSettled.then(() => Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))])),
   communityExtensionsReady,
   publishedSnapshotReady,
 ]).then(mount, () => { if (!isPublishedExport()) mount(); else console.error("published app startup failed"); });
