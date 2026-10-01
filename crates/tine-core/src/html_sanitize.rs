@@ -3,6 +3,9 @@
 //! Inventories live in `fixtures/html-sanitize-policy.json` (I-12). The browser
 //! adapter uses global attributes; native export retains tag-scoped attributes,
 //! explicit schemes and link rel. Shared safety outcomes are fixture-tested.
+//! Media tags (`audio`/`video`/`source`) follow OG 6e7afa8eb's raw-HTML DOMPurify path
+//! (src/main/frontend/security.cljs:5-11, components/block.cljs:3258-3261); keep the set
+//! bounded to media, never iframe/object/embed. `autoplay` stays absent.
 
 use ammonia::Builder;
 use serde::Deserialize;
