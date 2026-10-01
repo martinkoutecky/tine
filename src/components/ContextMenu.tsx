@@ -1,3 +1,4 @@
+import { boardGroupField as groupFieldForToken, formulaReferenceName } from "../sheet/boardColumns";
 import { reportUiFailure } from "../uiFailure";
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openBlockProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
@@ -529,11 +530,7 @@ function SheetMenu(props: {
     props.close();
   };
   const boardField = () => (props.groupBy && isFieldId(props.groupBy) ? props.groupBy : null);
-  const boardGroupField = (): FieldId => {
-    const raw = props.groupBy || "state";
-    const normalized = raw.startsWith("formula.") ? `formula:${raw.slice("formula.".length)}` : raw;
-    return isFieldId(normalized) ? normalized : "state";
-  };
+  const boardGroupField = () => groupFieldForToken(props.groupBy);
   const noGrouping = () => props.rowSource === "query" && props.groupBy === "";
   const doGroupBy = (field: FieldId | "") => {
     setBoardGroupBy(props.ownerId, field);
@@ -667,11 +664,7 @@ function SheetMenu(props: {
   );
 }
 
-function formulaReferenceName(field: FieldId): string | null {
-  if (field.startsWith("formula:")) return null;
-  if (field.startsWith("prop:")) return field.slice(5);
-  return field;
-}
+
 
 // Right-click menu for an INLINE block ref `((uuid))` — acts on the referenced
 // (target) block: open it in the sidebar, jump to it, or copy a ref/embed. (OG's

@@ -23,6 +23,13 @@ export function boardGroupField(token: string | null | undefined): FieldId {
   return isFieldId(normalized) ? normalized : "state";
 }
 
+/** Formula-editor reference name for a non-formula field; formulas cannot
+ * reference formula fields. O(token length), no row lookup or formula evaluation. */
+export function formulaReferenceName(field: FieldId): string | null {
+  if (isFormulaField(field)) return null;
+  return field.startsWith("prop:") ? field.slice(5) : field;
+}
+
 function enumValuesFor(schema: readonly FieldSpec[], field: FieldId): readonly string[] | null {
   const spec = schema.find((s) => s.field === field);
   return spec && typeof spec.type === "object" && "enum" in spec.type ? spec.type.enum : null;

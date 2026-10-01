@@ -1,5 +1,5 @@
-import { Show, createSignal, onCleanup, type JSX } from "solid-js";
-import { observeNear, renderedBlocks, unobserveNear } from "../lazyObserve";
+import { Show, type JSX } from "solid-js";
+import { createNearBlockMount } from "../createNearBlockMount";
 import { visibleBody } from "../render/block";
 
 /** Bound standalone query/embed mounting to the near-viewport budget shared by
@@ -10,21 +10,10 @@ export function DeferredStandaloneMacro(props: {
   raw: string;
   children: JSX.Element;
 }): JSX.Element {
-  const [near, setNear] = createSignal(renderedBlocks.has(props.blockId));
-  let deferredEl: Element | undefined;
-  const observe = (el: Element) => {
-    deferredEl = el;
-    observeNear(el, () => {
-      renderedBlocks.add(props.blockId);
-      setNear(true);
-    });
-  };
-  onCleanup(() => {
-    if (deferredEl) unobserveNear(deferredEl);
-  });
+  const observe = createNearBlockMount(props, "current");
   return (
     <Show
-      when={near()}
+      when={observe.near()}
       fallback={<span ref={observe} class="ast-fallback ast-deferred">{visibleBody(props.raw).join("\n")}</span>}
     >
       {props.children}

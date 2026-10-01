@@ -115,6 +115,24 @@ export function findTextOccurrences(text: string, query: string, removeAccents: 
   return out;
 }
 
+/** One find walk for DTO nodes and live ids; lookup is borrowed and missing live
+ * ids are skipped. O(searched nodes + rendered text), sharing the existing text cache. */
+function appendOutlineMatches<T>(
+  blocks: readonly T[], lookup: (block: T) => { id: string; raw: string; children: readonly T[] } | undefined,
+  query: string, format: Format, removeAccents: boolean, out: InPageFindMatch[],
+): void {
+  for (const block of blocks) {
+    const node = lookup(block);
+    if (!node) continue;
+    const text = cachedRenderedBlockText(node.id, node.raw, format);
+    findTextOccurrences(text, query, removeAccents).forEach((m, ordinalInBlock) => {
+      out.push({ blockId: node.id, ordinalInBlock, start: m.start, end: m.end });
+    });
+    appendOutlineMatches(node.children, lookup, query, format, removeAccents, out);
+  }
+}
+const dtoFindNode = (node: InPageFindBlock) => node;
+
 export function collectInPageFindMatches(
   blocks: readonly InPageFindBlock[],
   query: string,
@@ -124,16 +142,7 @@ export function collectInPageFindMatches(
   const q = query.trim();
   if (!q) return [];
   const out: InPageFindMatch[] = [];
-  const walk = (bs: readonly InPageFindBlock[]) => {
-    for (const b of bs) {
-      const text = cachedRenderedBlockText(b.id, b.raw, format);
-      findTextOccurrences(text, q, removeAccents).forEach((m, ordinalInBlock) => {
-        out.push({ blockId: b.id, ordinalInBlock, start: m.start, end: m.end });
-      });
-      walk(b.children);
-    }
-  };
-  walk(blocks);
+  appendOutlineMatches(blocks, dtoFindNode, q, format, removeAccents, out);
   return out;
 }
 
@@ -143,18 +152,7 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
   const removeAccents = searchRemoveAccents();
   state.surfaceRevision();
   const out: InPageFindMatch[] = [];
-  const walk = (ids: readonly string[], format: Format) => {
-    for (const id of ids) {
-      const n = docNode(id);
-      if (!n) continue;
-      const text = cachedRenderedBlockText(id, n.raw, format);
-      findTextOccurrences(text, q, removeAccents).forEach((m, ordinalInBlock) => {
-        out.push({ blockId: id, ordinalInBlock, start: m.start, end: m.end });
-      });
-      walk(n.children, format);
-    }
-  };
-  for (const p of pagesForInPageFind()) walk(p.roots, p.format);
+  for (const p of pagesForInPageFind()) appendOutlineMatches(p.roots, docNode, q, p.format, removeAccents, out);
   const pane = currentFindPaneElement();
   if (pane) {
     for (const element of pane.querySelectorAll<HTMLElement>("[data-inpage-find-surface]")) {

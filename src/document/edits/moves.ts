@@ -72,11 +72,7 @@ export async function moveBlock(
       newArr.splice(Math.max(0, Math.min(idx, newArr.length)), 0, id);
       // Reassign the moved subtree to the target page.
       if (newPage !== oldPage) {
-        const reassign = (bid: string) => {
-          s.byId[bid].page = newPage;
-          s.byId[bid].children.forEach(reassign);
-        };
-        reassign(id);
+        reassignPage(s, id, newPage);
       }
     })
   );
@@ -220,11 +216,7 @@ export async function moveBlocksRelative(
       state.byId[id].raw = movedRaw.get(id)!;
     }
     destination.splice(targetIndex + (position === "after" ? 1 : 0), 0, ...plan.roots);
-    const reassign = (id: string) => {
-      state.byId[id].page = plan.destinationPage;
-      for (const child of state.byId[id].children) reassign(child);
-    };
-    for (const id of plan.roots) reassign(id);
+    for (const id of plan.roots) reassignPage(state, id, plan.destinationPage);
   }));
   if (crossSources.length) {
     void persistTogether(pages, ["move-blocks", "save-block"], crossSources.map((source) => [source, plan.destinationPage] as [string, string]));

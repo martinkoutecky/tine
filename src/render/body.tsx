@@ -1,7 +1,7 @@
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
 
-import { For, Show, createContext, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
+import { For, Show, createContext, createMemo, createResource, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { InlineText, renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
 import { EmojiText } from "./emoji";
@@ -15,7 +15,7 @@ import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "./block";
 import { TableV2, tableV2Options, type TableV2Options } from "./tableV2";
 import { isQuarantined, parserReady } from "./parse";
 import { parseBody, stripPlanningLines } from "./facets";
-import { observeNear, unobserveNear, renderedBlocks } from "../lazyObserve";
+import { createNearBlockMount } from "../createNearBlockMount";
 import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
 import { readOr } from "../resourceRead";
 
@@ -462,22 +462,10 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
   // AST→DOM build until the block is near the viewport. Render-once-keep: once a
   // block has rendered (latched by id in `renderedBlocks`) it renders eagerly
   // forever — no second placeholder↔real transition, so zero scroll-height churn.
-  const id = props.blockId;
-  const [near, setNear] = createSignal(id == null || renderedBlocks.has(id));
-  let deferredEl: Element | undefined;
-  const observe = (el: Element) => {
-    deferredEl = el;
-    observeNear(el, () => {
-      if (id != null) renderedBlocks.add(id);
-      setNear(true);
-    });
-  };
-  onCleanup(() => {
-    if (deferredEl) unobserveNear(deferredEl);
-  });
+  const observe = createNearBlockMount(props);
   return (
     <Show
-      when={near()}
+      when={observe.near()}
       fallback={
         <span
           class="ast-fallback ast-deferred"

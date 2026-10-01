@@ -44,7 +44,7 @@ pub(crate) fn read_text(store: &Store, id: &FileId) -> io::Result<(String, FileR
 }
 
 pub(crate) fn format(id: &FileId) -> Format {
-    Format::from_path(std::path::Path::new(id.as_str()))
+    Format::from_path(id.as_str().as_ref())
 }
 
 pub(crate) fn parse(raw: &str, fmt: Format) -> Document {

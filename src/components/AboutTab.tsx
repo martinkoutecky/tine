@@ -2,11 +2,11 @@
 import { createSignal, onMount, Show, type JSX } from "solid-js";
 import { APP_PRODUCT_NAME } from "../appIdentity";
 import { writeClipboardTextStrict } from "../clipboard";
-import { backend, isTauri } from "../backend";
+import { isTauri } from "../backend";
 import { platformKind } from "../platform";
 import { checkForUpdateNow, openReleasesPage } from "../update";
 import { checkForUpdatesAutomatically, setCheckForUpdatesAutomatically, initUpdateSettings } from "../updateSettings";
-import { reportUiFailure } from "../uiFailure";
+import { openExternal } from "./primitives";
 
 const WEBSITE = "https://tine.page";
 const REPO = "https://github.com/martinkoutecky/tine";
@@ -14,9 +14,7 @@ const ISSUES = "https://github.com/martinkoutecky/tine/issues";
 const CHANGELOG = "https://github.com/martinkoutecky/tine/blob/HEAD/CHANGELOG.md";
 const KOFI = "https://ko-fi.com/martinkoutecky";
 
-function openExternal(url: string) {
-  void backend().openExternal(url).catch((error) => reportUiFailure("external-link", error));
-}
+
 
 // Build-time constants (vite.config.ts). __GIT_COMMIT__ is "" outside a git
 // checkout — the commit row is hidden then.

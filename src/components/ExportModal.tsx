@@ -1,3 +1,4 @@
+import { optionsUpdater } from "./primitives";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { graphOwner, readOwned, type Owner } from "../owned";
 import { exportModal, closeExportModal, typographyMode, type ExportRequest } from "../ui";
@@ -406,11 +407,7 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   const [warmRev, setWarmRev] = createSignal(0);
   const [warming, setWarming] = createSignal(false);
   const warmedMacros = new Map<string, WarmedMacro>();
-  const update = (patch: Partial<ExportOptions>) => {
-    const next = { ...opts(), ...patch };
-    setOpts(next);
-    saveOptions(next);
-  };
+  const update = optionsUpdater(opts, setOpts, saveOptions);
 
   // Build the node forest once (the selection is fixed while the modal is open);
   // the preview recomputes from it as options change. Rendered mode applies the

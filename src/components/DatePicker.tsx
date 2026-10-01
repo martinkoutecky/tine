@@ -1,3 +1,4 @@
+import { stepMonth } from "./primitives";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { datePicker, closeDatePicker, firstDayOfWeek, type DatePickerTarget } from "../ui";
 import { readSchedule, setSchedule } from "../document";
@@ -93,10 +94,7 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
     return cells;
   });
 
-  const step = (delta: number) => {
-    const total = view().y * 12 + view().m + delta;
-    setView({ y: Math.floor(total / 12), m: ((total % 12) + 12) % 12 });
-  };
+  const step = (delta: number) => setView(stepMonth(view(), delta));
   const writePickedDate = (y: number, m: number, d: number) => {
     if (!bound()) return;
     const picked = fieldDate(y, m, d);
