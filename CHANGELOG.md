@@ -14,6 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Published block previews copy only the requested nodes, avoiding full-subtree allocation while keeping snapshot metadata independent (REG-OG-DUPF03-PREVIEW).
+
 - Property readers and sheet field rename now use accepted parser properties and source spans, including Unicode keys and literal-code protection (REG-OG-P12-PROPERTY-SPANS).
 - Page aliases and titles ignore metadata-looking source-block contents (REG-OG-P12-PREAMBLE-LITERALS).
 - Page-reference candidates share native target classification, exclude unlabeled local assets, and include nested links; Org filename candidates retain their existing selection policy (REG-OG-P12-REFERENCE-TARGETS).
