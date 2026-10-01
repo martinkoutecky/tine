@@ -708,7 +708,10 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     return previous + 1;
   }, 0);
   onCleanup(() => { alive = false; });
-  createEffect(on(() => props.route.id, (workspace) => {
+  // Route objects are replaced on source and Display edits. Own cancellation
+  // by the stable workspace identity so those edits cannot close its new run.
+  const workspaceIdentity = createMemo(() => props.route.id);
+  createEffect(on(workspaceIdentity, (workspace) => {
     const binding = captureBinding();
     const identity = bindingIdentity();
     const owner = ownedWhen(() => bindingIdentity() === identity);

@@ -134,8 +134,8 @@
     },
     "scripts/e2e-og-parity-references.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "Slash page and tag references can be authored, selected, rendered, and persisted through the real editor.", "blocking": true }],
-      "acceptableVariations": ["Completion ranking and popup layout may evolve while explicit reference authoring remains intact."],
-      "nonRequirements": ["Exact popup dimensions, suggestion order for unrelated items, or DOM structure."],
+      "acceptableVariations": ["Completion ranking and popup layout may evolve while explicit reference authoring remains intact; Query may use one command opening the visual sheet."],
+      "nonRequirements": ["Exact popup dimensions, suggestion order for unrelated items, DOM structure, or successful capture of a supplemental reload screenshot after the text and disk assertions pass."],
       "stability": "stable"
     },
     "scripts/e2e-og-published-guide.mjs": {
@@ -194,10 +194,10 @@
     },
     "scripts/e2e-plugin-revocation.mjs": {
       "contracts": [
-        { "class": "exact-safety-interoperability", "userOutcome": "A persisted enabled plugin activates under a verified non-revoking cache, while a verified cached revocation atomically migrates the signed cache, prevents every guest contribution, durably disables the installed version, and keeps it disabled after later cache unavailability.", "blocking": true, "authority": "Tine signed plugin launch-revocation and cache-atomicity contract" }
+        { "class": "exact-safety-interoperability", "userOutcome": "A persisted enabled plugin activates under a verified non-revoking cache, while a verified cached revocation retains its exact signed envelope, prevents every guest contribution, durably disables the installed version, and keeps it disabled after later cache unavailability.", "blocking": true, "authority": "Tine signed plugin launch-revocation and cache-atomicity contract" }
       ],
       "acceptableVariations": ["The reserved signed fixture may use a host-owned command or thread-lines block-decoration contribution, provided the positive control makes activation observable.", "Catalogue wording and settings-row presentation may vary while the native envelope, disable bit, and non-execution outcomes remain exact."],
-      "nonRequirements": ["Exact styling, worker implementation details, or live-request timing before the abort deadline."],
+      "nonRequirements": ["Exact styling, worker implementation details, or live-request timing before the abort deadline. Retired split-cache migration is not required (master 4b752120f; D-1)."],
       "stability": "stable"
     },
     "scripts/e2e-plugin-graph-ownership.mjs": {
@@ -222,7 +222,7 @@
     },
     "scripts/e2e-query-workspace.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "Graph search, query workspaces, references, evidence, filters, and materialization preserve their visible query state.", "blocking": true }],
-      "acceptableVariations": ["Result presentation and pane layout may evolve while membership, predicates, evidence, and safe materialization remain correct."],
+      "acceptableVariations": ["Result presentation and pane layout may evolve while membership, predicates, evidence, and safe materialization remain correct; a highlighted unlinked mention may itself open and select the exact source occurrence without a redundant numbered jump row."],
       "nonRequirements": ["Exact row heights, result-card DOM structure, or tab animation."],
       "stability": "stable"
     },
@@ -231,7 +231,7 @@
         { "class": "stateful-ux", "userOutcome": "A query block rests as one sentence and answers with blocks or, for a page-level filter, pages; a query the engine cannot read shows what it did not understand instead of an empty result, and an empty result explains which condition emptied it.", "blocking": true },
         { "class": "core-operation", "userOutcome": "A query created with /query and saved from the sheet's query text lands in the page file as an ordinary query block without touching the other query blocks, and reopens with the same answers after a restart.", "blocking": true }
       ],
-      "acceptableVariations": ["The sentence wording, the macro name the engine prints (query or tine-query) and the why-empty table layout may evolve while the query and its answers stay the same."],
+      "acceptableVariations": ["The sentence wording, the macro name the engine prints (query or tine-query) and the why-empty table layout may evolve while the query and its answers stay the same; offscreen result groups may hydrate when scrolled into view."],
       "nonRequirements": ["Sheet geometry, animation, or the order of rows inside the why-empty table."],
       "stability": "burn-in"
     },
@@ -259,7 +259,7 @@
       "stability": "stable"
     },
     "scripts/e2e-search-parity.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Ctrl-K search preserves canonical Unicode matching, current-page scope, evidence, Shift-Enter sidebar opening, and the selected physical owner for same-name page and block results.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "Ctrl-K search preserves canonical Unicode matching and default accent folding, current-page scope, evidence, Shift-Enter sidebar opening, and the selected physical owner for same-name page and block results; search folding does not broaden exact page identity.", "blocking": true }],
       "acceptableVariations": ["Search result layout and ranking among equally valid matches may evolve."],
       "nonRequirements": ["Exact result-row geometry, highlight palette, or animation."],
       "stability": "stable"

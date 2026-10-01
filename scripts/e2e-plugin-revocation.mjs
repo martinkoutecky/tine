@@ -10,6 +10,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { APP_ID } from "./lib/app-identity.mjs";
+import { openPageByName } from "./lib/e2e-navigation.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
@@ -85,8 +86,9 @@ function seedEnabledSettings(indexJson, signature) {
     known_graphs: [{ name: "graph", path: GRAPH }],
     last_graph_path: GRAPH,
     plugin_states: { [manifest.id]: { version: manifest.version, enabled: true } },
-    "plugin-registry-index": indexJson,
-    "plugin-registry-signature": signature,
+    // Current master/og ignore the retired split cache (master 4b752120f,
+    // D-1). Seed the exact current signed envelope, never a verifier bypass.
+    plugin_registry_cache: { schemaVersion: 1, indexJson, signature },
   }, null, 2)}\n`);
 }
 
@@ -161,6 +163,9 @@ async function withAppSession(label, check) {
       },
     });
     await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
+    // Thread lines decorate parents with ordinary outline children, not the
+    // leaf journal link. Observe the same eligible parent in every session.
+    await openPageByName(browser, "Plugin Revocation");
     await check(browser);
   } finally {
     try { await browser?.deleteSession(); } catch {}
@@ -207,12 +212,12 @@ try {
   }
   const envelope = persisted.plugin_registry_cache;
   if (envelope?.schemaVersion !== 1 || envelope.indexJson !== revokedIndexJson || envelope.signature !== revokedSignature) {
-    throw new Error(`legacy revocation pair did not migrate to one exact signed envelope: ${JSON.stringify(envelope)}`);
+    throw new Error(`cached revocation did not retain the exact signed envelope: ${JSON.stringify(envelope)}`);
   }
   if (Object.hasOwn(persisted, "plugin-registry-index") || Object.hasOwn(persisted, "plugin-registry-signature")) {
-    throw new Error("legacy split registry keys survived successful atomic migration");
+    throw new Error("startup introduced retired split registry keys");
   }
-  console.log(`PASS: ${manifest.id}@${manifest.version} stayed absent, migrated atomically, and persisted disabled when revoked`);
+  console.log(`PASS: ${manifest.id}@${manifest.version} stayed absent, retained its signed envelope, and persisted disabled when revoked`);
 
   // Later cache loss must not resurrect the already revoked package: durable
   // native enablement is an independent restart safety boundary.

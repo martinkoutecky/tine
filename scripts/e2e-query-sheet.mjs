@@ -79,6 +79,8 @@ async function withApp(index, fn) {
     try {
       await fn(browser);
     } catch (error) {
+      const state = await browser.execute(() => ({ text: document.body.innerText })).catch(() => null);
+      fs.writeFileSync(`${ARTIFACTS}/failure-state-${index}.json`, `${JSON.stringify(state, null, 2)}\n`);
       try { await browser.saveScreenshot(`${ARTIFACTS}/failure-${index}.png`); } catch {}
       throw error;
     }
@@ -98,6 +100,14 @@ const queryText = (browser, index) => browser.execute((i) => {
 }, index);
 
 async function waitForQuery(browser, index, predicate, what) {
+  // Query results hydrate when approached. Observing an offscreen group's
+  // reserved-height shell does not prove whether its answer rendered.
+  await browser.waitUntil(() => browser.execute((i) => {
+    const block = document.querySelectorAll(".page-blocks .query-block")[i];
+    if (!block) return false;
+    block.scrollIntoView({ block: "center" });
+    return true;
+  }, index), { timeout: 10_000, interval: 100, timeoutMsg: `query block ${index} did not mount` });
   let last = null;
   await browser.waitUntil(async () => {
     last = await queryText(browser, index);
@@ -152,6 +162,9 @@ await withApp(0, async (browser) => {
   });
   const editor = await browser.$(".page-blocks textarea");
   await editor.waitForExist({ timeout: 10_000 });
+  // The sheet anchors below this sentence. Leave room for its controls after
+  // the preceding probes have scrolled through the query answers.
+  await editor.scrollIntoView({ block: "start", inline: "nearest" });
   await editor.addValue("/query");
   await browser.waitUntil(() => browser.execute(() =>
     [...document.querySelectorAll(".autocomplete-item, .ac-item, [role='option']")]
