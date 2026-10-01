@@ -977,6 +977,16 @@ mod tests {
     }
 
     #[test]
+    fn storage_admission_is_distinct_from_manifest_syntax() {
+        // Native path admission is not the frontend manifest schema: retain the
+        // existing storage policy while packageIdentity.ts owns manifest syntax.
+        assert!(safe_component("dev.tine.demo-", true));
+        assert!(!safe_version("1.2.3-."));
+        assert!(!safe_version("1.2.3-beta."));
+        assert!(safe_version("1.2.3-beta.1"));
+    }
+
+    #[test]
     fn manifest_identity_rejects_untrusted_paths_and_oversized_input() {
         let good = r#"{"id":"dev.tine.example","version":"0.1.0"}"#;
         assert_eq!(

@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- **Raw HTML resources (UI-OG-DUPBL2-D29):** local images and sandboxed iframes use actual DOM attributes, so image text in comments and `data-src` lookalikes cannot select the wrong resource.
 - Uppercase `.ORG` files retain Org format in conflict diffs, PDF annotations and page rename/merge (REG-OG-DUPAL2-F12).
 - Keep code examples in a user’s Favorites page from being adopted as favorites arrangement metadata (UI-OG-DUPBL1-FAVORITES-LITERAL-MARKER).
 - Preserve code literals during text, HTML and OPML export cleanup; recognize standalone embeds from parsed content; preserve early journal years and advance timed repeaters (REG-OG-DUPD2-D15–D19).

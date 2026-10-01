@@ -9,6 +9,7 @@ import type { Block, Inline } from "./ast";
 import { backend } from "../backend";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { clearAssetBlobCache } from "../assetCache";
+import { initLocalFileSettings } from "../localFileSettings";
 
 // A few render paths reach back into the wasm parser (e.g. a properties block
 // renders each value via InlineText → parseBlock). Node supports WebAssembly +
@@ -325,6 +326,30 @@ describe("renderInlines", () => {
     const h = html(() => renderInlines([{ k: "hiccup", v: source }], undefined, true, false, format));
     expect(h).toContain(source);
     expect(h).not.toContain("<span>unterminated</span>");
+  });
+
+  it("D29: local image loading reads only the resource of the surviving image", async () => {
+    const preference = vi.spyOn(backend(), "getAppBool").mockResolvedValue(true);
+    const read = vi.spyOn(backend(), "readLocalImage").mockResolvedValue(new Uint8Array());
+    await initLocalFileSettings();
+    const host = document.createElement("div");
+    const dispose = render(() => renderInlines([{ k: "inline_html", text: '<!-- <img src="/tmp/phantom.png"> --><img src="https://example.test/web.png"><img title=">" src="/tmp/real.png">' }]), host);
+    try {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      expect(read).toHaveBeenCalledWith("/tmp/real.png");
+      expect(host.querySelectorAll("img")).toHaveLength(2);
+      expect(host.querySelector("img")!.getAttribute("src")).toBe("https://example.test/web.png");
+    } finally {
+      dispose();
+      preference.mockResolvedValue(false);
+      await initLocalFileSettings();
+    }
+  });
+
+  it("D29: embeds the iframe's src rather than a data-src lookalike", () => {
+    const { wrap, dispose } = mountedIframeWrap('<iframe data-src="https://example.test/other" src="https://example.test/real"></iframe>');
+    try { expect(wrap.querySelector("iframe")!.getAttribute("src")).toBe("https://example.test/real"); }
+    finally { dispose(); }
   });
 
   it("uses iframe width and height from attrs or style", () => {

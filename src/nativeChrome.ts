@@ -1,3 +1,4 @@
+import { browserPlatform } from "./browserPlatform";
 // Window-chrome preferences (device-local, persisted in tine-settings.json via the
 // generic app_bool backend so native startup can read them before a WebView exists).
 //
@@ -50,8 +51,9 @@ function detectPlatformKind(): PlatformKind {
   const injected = typeof globalThis !== "undefined" ? globalThis.__TINE_PLATFORM__ : undefined;
   if (injected === "android" || injected === "ios" || injected === "desktop") return injected;
   const ua = typeof navigator !== "undefined" ? (navigator.userAgent ?? "") : "";
-  if (/Android/i.test(ua)) return "android";
-  if (/iPhone|iPad|iPod/i.test(ua)) return "ios";
+  const hints = browserPlatform(ua);
+  if (hints.android) return "android";
+  if (hints.ios) return "ios";
   return "desktop";
 }
 
@@ -78,7 +80,7 @@ export function installPlatformAttribute(): void {
 export const isMac: boolean =
   platformKind === "desktop" &&
   typeof navigator !== "undefined" &&
-  (/Mac/i.test(navigator.platform ?? "") || /Mac OS X|Macintosh/i.test(navigator.userAgent ?? ""));
+  browserPlatform(navigator.userAgent ?? "", navigator.platform ?? "").macDesktop;
 
 /** Tablet-or-larger: the shorter viewport edge has room for two documents
  *  side by side. iPad mini portrait is 744pt across; every iPhone in either

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
 import { localImagePath, rawHtmlLocalImages } from "./htmlSanitize";
 
@@ -40,4 +41,9 @@ describe("rawHtmlLocalImages — aligns 1:1 with <img> document order", () => {
     expect(rawHtmlLocalImages("<img src='/a/b.png'>")).toEqual(["/a/b.png"]);
     expect(rawHtmlLocalImages("<img src=/a/b.png>")).toEqual(["/a/b.png"]);
   });
+});
+
+it("D29: comments and quoted attribute delimiters cannot redirect local images", () => {
+  expect(rawHtmlLocalImages('<!-- <img src="/tmp/phantom.png"> --><img src="https://example.test/real.png">')).toEqual([null]);
+  expect(rawHtmlLocalImages('<img title=">" src="/tmp/real.png">')).toEqual(["/tmp/real.png"]);
 });

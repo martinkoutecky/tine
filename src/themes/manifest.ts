@@ -1,3 +1,4 @@
+import { isPackageId, isPackageVersion } from "../packageIdentity";
 import { schemaGuards } from "../schemaGuards";
 export const THEME_API_VERSION = "0.2" as const;
 export const SUPPORTED_THEME_API_VERSIONS = ["0.1", THEME_API_VERSION] as const;
@@ -71,8 +72,6 @@ export class ThemeManifestError extends Error {
   }
 }
 
-const ID_RE = /^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])?$/;
-const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/;
 const COLOR_RE = /^(?:#[0-9A-Fa-f]{3,8}|transparent|(?:rgb|rgba|hsl|hsla)\([0-9.,%+\- /]+\))$/;
 
 const { record, knownKeys, text } = schemaGuards(ThemeManifestError, {
@@ -164,9 +163,9 @@ export function parseThemeManifest(value: unknown): ThemeManifest {
     throw new ThemeManifestError("presentation requires theme API 0.2");
   }
   const id = text(obj.id, "id", 64);
-  if (!ID_RE.test(id) || !id.includes(".")) throw new ThemeManifestError("id must be a lowercase dotted identifier");
+  if (!isPackageId(id)) throw new ThemeManifestError("id must be a lowercase dotted identifier");
   const version = text(obj.version, "version", 64);
-  if (!VERSION_RE.test(version)) throw new ThemeManifestError("version must be SemVer");
+  if (!isPackageVersion(version)) throw new ThemeManifestError("version must be SemVer");
   const modesObj = record(obj.modes, "modes");
   knownKeys(modesObj, "modes", ["light", "dark"]);
   if (modesObj.light === undefined && modesObj.dark === undefined) throw new ThemeManifestError("modes must include light or dark");
