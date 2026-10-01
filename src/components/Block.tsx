@@ -118,7 +118,7 @@ import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
 import { caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
-import { isAnnotationBlock } from "../editor/annotation";
+import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
 import {
@@ -587,7 +587,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
 
   // Parsed editor facts travel with the committed buffer; hidden bytes survive.
-  const isAnnot = () => isAnnotationBlock(node().raw);
+  const isAnnot = () => annotationInfo(propertySession.facets(node().raw, pageFmt()).properties) !== null;
   const hideFn = () => (isAnnot() ? hideAll : sheetCell ? isSheetCellHidden : isBuiltinHidden);
   const editorParts = createMemo(() => propertySession.split(node().raw, hideFn(), pageFmt()));
   const editorValue = () => editorParts().visible;
@@ -2703,7 +2703,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const next = nextVisible(props.id, structuralScope);
       if (next) {
         const nextRaw = docNode(next)?.raw ?? "";
-        if (isAnnotationBlock(nextRaw) || calcSource(nextRaw) !== null) return;
+        if (isAnnotationBlock(nextRaw, pageFmt()) || calcSource(nextRaw) !== null) return;
         commit(raw);
         if (mergeWithNext(props.id, structuralScope, editSurface())) {
           e.preventDefault();

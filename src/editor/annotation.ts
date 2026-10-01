@@ -3,12 +3,21 @@
 // the highlight text and clicking the swatch jumps to the PDF. Detection + the
 // bits the renderer needs, kept out of Block.tsx.
 
-import { loadedPage } from "../document";
-import type { BlockDto } from "../types";
+import { readPageProperty, pageHeaderProperties } from "../document";
+import type { BlockDto, Format } from "../types";
+import { facetsOf } from "../render/facets";
 
 /** True for a PDF highlight (annotation) block. */
-export function isAnnotationBlock(raw: string): boolean {
-  return /^\s*ls-type::\s*annotation\s*$/m.test(raw);
+export function isAnnotationBlock(raw: string, format: Format): boolean {
+  return annotationProperty(facetsOf(raw, format).properties) !== undefined;
+}
+
+function annotationProperty(properties: [string, string][]): [string, string] | undefined {
+  for (let i = 0; i < properties.length; i++) {
+    const pair = properties[i];
+    if (pair[0] === "ls-type" && pair[1] === "annotation") return pair;
+  }
+  return undefined;
 }
 
 /** Highlight colour + 1-based PDF page from a block's parsed properties; null if
@@ -16,35 +25,31 @@ export function isAnnotationBlock(raw: string): boolean {
 export function annotationInfo(
   properties: [string, string][]
 ): { color: string; hlPage: number } | null {
-  if (!properties.some(([k, v]) => k === "ls-type" && v === "annotation")) return null;
+  if (!annotationProperty(properties)) return null;
   const color = properties.find(([k]) => k === "hl-color")?.[1] ?? "yellow";
   const parsedPage = Number(properties.find(([k]) => k === "hl-page")?.[1] ?? "1");
   const hlPage = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
   return { color, hlPage };
 }
 
-/** Annotation metadata from a backend block DTO. Real backends provide parsed
- * properties; the raw fallback also covers old/mock DTOs without those facets. */
-export function annotationInfoForBlock(block: Pick<BlockDto, "raw" | "properties">): {
-  color: string;
-  hlPage: number;
+/** Parsed DTO properties, including an empty result, are authoritative. Missing
+ * facets use the same cached parser as live blocks (O(properties) warm). */
+export function annotationInfoForBlock(block: Pick<BlockDto, "raw" | "properties">, format: Format = "md"): {
+  color: string; hlPage: number;
 } | null {
-  const parsed = annotationInfo(block.properties ?? []);
-  if (parsed) return parsed;
-  if (!isAnnotationBlock(block.raw)) return null;
-  const color = /^\s*hl-color::\s*(.*?)\s*$/m.exec(block.raw)?.[1] || "yellow";
-  const parsedPage = Number(/^\s*hl-page::\s*(.*?)\s*$/m.exec(block.raw)?.[1] ?? "1");
-  const hlPage = Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.floor(parsedPage) : 1;
-  return { color, hlPage };
+  return annotationInfo(block.properties ?? facetsOf(block.raw, format).properties);
 }
 
 /** Resolve a page pre-block's PDF path to the asset basename. Logseq writes
  * `file-path::` in Markdown and `#+FILE-PATH:` in Org; both values extend to
  * end-of-line so filenames containing spaces remain usable. */
-export function pdfFileFromPreBlock(preBlock: string | null | undefined): string | null {
-  const source = preBlock ?? "";
-  const path = /^\s*file-path::\s*(.*?)\s*$/mi.exec(source)?.[1]
-    ?? /^\s*#\+file-path:\s*(.*?)\s*$/mi.exec(source)?.[1];
+export function pdfFileFromPreBlock(preBlock: string | null | undefined, format: Format = "md"): string | null {
+  const properties = pageHeaderProperties({ name: "", kind: "page", title: "",
+    preBlock: preBlock ?? null, roots: [], format, readOnly: true, guide: false });
+  return pdfBasename(properties.find(([key]) => key === "file-path")?.[1]);
+}
+
+function pdfBasename(path: string | null | undefined): string | null {
   if (!path) return null;
   return path.split(/[\\/]/).pop() || null;
 }
@@ -52,6 +57,5 @@ export function pdfFileFromPreBlock(preBlock: string | null | undefined): string
 /** Resolve the PDF filename for an annotation block from its owning hls__ page's
  *  `file-path::` property. */
 export function pdfFileForPage(pageName: string): string | null {
-  const p = loadedPage(pageName);
-  return pdfFileFromPreBlock(p?.preBlock);
+  return pdfBasename(readPageProperty(pageName, "file-path"));
 }

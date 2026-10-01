@@ -4,7 +4,7 @@ import * as router from "./router";
 import * as ui from "./ui";
 import { backend } from "./backend";
 
-const read = (text: string, caret: number) => () => ({ text, caret });
+const read = (text: string, caret: number, format: "md" | "org" = "md") => () => ({ text, caret, format });
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -70,5 +70,23 @@ describe("follow a block ref at the caret", () => {
     expect(followLinkUnderCaret({ read: read(`x ((${uuid}))`, 3) })).toBe(true);
     await vi.waitFor(() => expect(openAt).toHaveBeenCalled());
     expect(openAt).toHaveBeenCalledWith({ name: "Owner", pageKind: "page", block: uuid });
+  });
+});
+
+describe("OG-DUPD1 caret dispatch", () => {
+  it("does not navigate from code and strips tag punctuation before routing", () => {
+    const openPage = vi.spyOn(router, "openPage").mockImplementation(() => {});
+    expect(followLinkUnderCaret({ read: read("`[[Hidden]]`", 4) })).toBe(false);
+    expect(openPage).not.toHaveBeenCalled();
+    expect(followLinkUnderCaret({ read: read("#foo,", 2) })).toBe(true);
+    expect(openPage).toHaveBeenCalledWith("foo");
+  });
+
+  it("uses the editing page's format: Org code is literal, the same text in Markdown is a link", () => {
+    const openPage = vi.spyOn(router, "openPage").mockImplementation(() => {});
+    expect(followLinkUnderCaret({ read: read("~[[Hidden]]~", 4, "org") })).toBe(false);
+    expect(openPage).not.toHaveBeenCalled();
+    expect(followLinkUnderCaret({ read: read("~[[Hidden]]~", 4, "md") })).toBe(true);
+    expect(openPage).toHaveBeenCalledTimes(1);
   });
 });

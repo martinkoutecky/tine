@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { setDoc } from "../document/model";
-import { annotationInfoForBlock, pdfFileForPage, pdfFileFromPreBlock } from "./annotation";
+import { annotationInfoForBlock, pdfFileForPage, pdfFileFromPreBlock, isAnnotationBlock } from "./annotation";
 
 // pdfFileForPage reduces an hls__ page's `file-path::` to a basename. A graph
 // edited on Windows can carry backslash paths, so the split must handle BOTH
@@ -8,7 +8,7 @@ import { annotationInfoForBlock, pdfFileForPage, pdfFileFromPreBlock } from "./a
 describe("pdfFileForPage", () => {
   afterEach(() => setDoc("pages", []));
   const seed = (preBlock: string) =>
-    setDoc("pages", [{ name: "hls__book", preBlock, roots: [], format: "markdown" } as any]);
+    setDoc("pages", [{ name: "hls__book", preBlock, roots: [], format: preBlock.startsWith("#+") ? "org" : "md" } as any]);
 
   it("basenames a forward-slash relative path", () => {
     seed("file-path:: ../assets/book_123.pdf");
@@ -59,4 +59,24 @@ describe("annotation block metadata", () => {
     expect(annotationInfoForBlock({ raw: "ordinary block" })).toBeNull();
     expect(pdfFileFromPreBlock("file-path::   ")).toBeNull();
   });
+});
+
+// OG-DUPD1 D08: an empty parsed result is authoritative.
+describe("parser-owned annotation classification", () => {
+  it("does not promote literal or rejected metadata", () => {
+    for (const raw of ["```\nls-type:: annotation\nhl-page:: 42\n```", "ls-type::annotation"]) {
+      expect(annotationInfoForBlock({ raw, properties: [] })).toBeNull();
+      expect(annotationInfoForBlock({ raw })).toBeNull();
+    }
+  });
+  it("does not find a PDF path inside a literal preamble", () => {
+    expect(pdfFileFromPreBlock("```\nfile-path:: ../assets/hidden.pdf\n```")).toBeNull();
+  });
+});
+
+it("recognizes accepted Org annotation drawers and excludes source directives", () => {
+  const raw = "highlight\n:PROPERTIES:\n:ls-type: annotation\n:hl-page: 42\n:END:";
+  expect(isAnnotationBlock(raw, "org")).toBe(true);
+  expect(annotationInfoForBlock({ raw }, "org")).toEqual({ color: "yellow", hlPage: 42 });
+  expect(pdfFileFromPreBlock("#+BEGIN_SRC\n#+FILE-PATH: hidden.pdf\n#+END_SRC", "org")).toBeNull();
 });

@@ -65,10 +65,10 @@ export function deleteRenderedTextSelection(): boolean {
   if (!node || !blockWritable(id)) return false;
   // Annotation and calc blocks have non-plain rendered views; never splice them
   // through reconstructed text state (same rule as editor merge/delete paths).
-  if (isAnnotationBlock(node.raw) || calcSource(node.raw) !== null) return false;
   const page = pageByName(node.page);
   if (!page) return false;
   const fmt = page.format === "org" ? "org" : "md";
+  if (isAnnotationBlock(node.raw, fmt) || calcSource(node.raw) !== null) return false;
 
   const start = editorOffsetFromRenderedRange(
     wrapper,

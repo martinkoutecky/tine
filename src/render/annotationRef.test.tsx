@@ -83,6 +83,23 @@ describe("PDF annotation block references (GH #61)", () => {
     }
   });
 
+  it("renders a reference to literal annotation text as an ordinary block", async () => {
+    const id = "61a00000-0000-0000-0000-000000000009";
+    vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([{
+      page: "plain", kind: "page", blocks: [{ id, raw: "```\nls-type:: annotation\nhl-page:: 42\n```", collapsed: false, children: [], properties: [] }],
+    }]);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <AstBody raw={`See ((${id}))`} />, host);
+    try {
+      await settle();
+      const ref = host.querySelector(".block-ref");
+      expect(ref).toBeTruthy();
+      expect(ref!.getAttribute("title")).toContain("Click to go to the block");
+      expect(ref!.getAttribute("title")).not.toContain("PDF");
+    } finally { dispose(); }
+  });
+
   it("keeps the current location when a direct link reopens the same PDF", () => {
     const first = openPdf("assets/paper.pdf", "Paper", 7)!;
     paneRouter(layoutPaneIds().find((id) => paneRouter(id).route().kind === "pdf")!).updateActivePdfViewState({ page: 7 });
@@ -101,7 +118,7 @@ describe("PDF annotation block references (GH #61)", () => {
       name: "hls__book",
       preBlock: "file-path:: ../assets/A_Book.pdf",
       roots: [],
-      format: "markdown",
+      format: "md",
     } as any]);
     const host = document.createElement("div");
     document.body.appendChild(host);

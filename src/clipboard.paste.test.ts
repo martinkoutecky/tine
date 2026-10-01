@@ -114,6 +114,12 @@ describe("clipboard payload insertion and identity validation", () => {
     const raws = roots("Target").slice(1).map((id) => doc.byId[id].raw);
     expect(raws).toEqual(["duplicate", `new\nid:: ${ID2}`]);
   });
+  it("keeps an inserted authored id when only literal code mentions it", () => {
+    seed([page("Target", [block(HOST, `host\n\`\`\`\nid:: ${ID1}\n\`\`\``)])]);
+    insertOutlineAfter(HOST, [{ raw: `new\nid:: ${ID1}`, children: [] }]);
+    const added = roots("Target").slice(1).map((id) => doc.byId[id].raw);
+    expect(added).toEqual([`new\nid:: ${ID1}`]);
+  });
   it("checks off-screen IDs before ordinary outline insertion", async () => {
     seed([page("Target", [block(HOST, "host")])]);
     vi.mocked(backend().resolveBlocks).mockResolvedValueOnce([
