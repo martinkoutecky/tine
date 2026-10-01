@@ -335,6 +335,13 @@ await withApp(0, async (browser) => {
     }
   }
   await (await presentationButton(browser, "Search")).click();
+  // Presentation changes start a new search. Wait for the current result body
+  // before measuring rows, rather than treating its pending empty shell as an
+  // overflow failure.
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelectorAll(".query-workspace .query-result-row").length === 2), {
+    timeout: 10_000, interval: 100, timeoutMsg: "Search presentation did not restore both block results",
+  });
   const wrapProof = await browser.execute(() => {
     const workspace = document.querySelector(".query-workspace")?.getBoundingClientRect();
     return [...document.querySelectorAll(".query-result-row")].map((row) => {
