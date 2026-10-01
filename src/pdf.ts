@@ -43,9 +43,21 @@ export function areaHighlightPosition(page: number, bounding: Rect): Highlight["
   return { page, bounding, rects: [] };
 }
 
+// Filename-only identity is graph-independent. This closure owns at most 128
+// answers, including empty keys; repeated highlights reuse one native read.
+const readAssetKey = (() => {
+  const keys = new Map<string, string>();
+  return (filename: string): string => {
+    if (keys.has(filename)) return keys.get(filename)!;
+    const key = pdf_asset_key(filename, true);
+    if (keys.size >= 128) keys.delete(keys.keys().next().value!);
+    keys.set(filename, key);
+    return key;
+  };
+})();
 /** Live preview identity; sanitization is owned by the native pdf_key door. */
 export function assetKey(filename: string): string {
-  return pdf_asset_key(filename, true);
+  return readAssetKey(filename);
 }
 
 export function hlsPageName(filename: string): string {

@@ -16,4 +16,11 @@ describe("OG-DUPBL1 one answerer", () => {
     expect(source("crates/tine-core/src/pdf.rs")).not.toContain("fn sanitize_filename");
     expect(source("crates/lsdoc-wasm/src/lib.rs")).toContain('tine-core/src/pdf_key.rs');
   });
+  it("I-4/I-12: favorites arrangement metadata uses the document page-property door", () => {
+    expect(source("src/favorites.ts")).toContain("pageHeaderProperties(disk)");
+    expect(source("src/favorites.ts")).toContain('await import("./document")');
+    expect(source("src/favorites.ts")).not.toContain("pagePropertyEntries");
+    expect(source("src/favorites.ts")).not.toContain("IS_ARRANGEMENT_PAGE");
+  });
+
 });

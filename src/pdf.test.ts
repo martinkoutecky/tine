@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import * as wasm from "./render/wasm/lsdoc_wasm.js";
+import { describe, expect, it, vi } from "vitest";
 import { areaHighlightPosition, assetKey, hlsPageName, rectInPageSpace, rectWithSourceSpace } from "./pdf";
 
 // These MUST match the Rust asset_key tests (crates/tine-core/src/pdf.rs) so the
@@ -68,4 +69,18 @@ describe("PDF highlight coordinate interoperability", () => {
       rects: [],
     });
   });
+});
+
+it("highlights sharing a filename reuse the native identity, including empty keys", () => {
+  const read = vi.spyOn(wasm, "pdf_asset_key");
+  try {
+    for (let i = 0; i < 100; i++) {
+      expect(assetKey("cost-probe-Paper.pdf")).toBe("cost-probe-Paper");
+      expect(assetKey("NUL.cache-probe.pdf")).toBe("");
+    }
+    expect(read).toHaveBeenCalledTimes(2);
+    for (let i = 0; i < 128; i++) assetKey(`bounded-Paper-${i}.pdf`);
+    expect(assetKey("cost-probe-Paper.pdf")).toBe("cost-probe-Paper");
+    expect(read).toHaveBeenCalledTimes(131);
+  } finally { read.mockRestore(); }
 });

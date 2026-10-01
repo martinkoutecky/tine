@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- Keep code examples in a user’s Favorites page from being adopted as favorites arrangement metadata (UI-OG-DUPBL1-FAVORITES-LITERAL-MARKER).
 - Preserve code literals during text, HTML and OPML export cleanup; recognize standalone embeds from parsed content; preserve early journal years and advance timed repeaters (REG-OG-DUPD2-D15–D19).
 
 ### Added

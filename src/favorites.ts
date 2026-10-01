@@ -63,7 +63,7 @@ function pageDoor(): FavoritesPageDoor {
 }
 const diskLayout = (page: PageDto) =>
   layoutFromBlocks(pageDoor().favoritesArrangementBlocks(page.blocks, page.format ?? "md"));
-const IS_ARRANGEMENT_PAGE = /^(?:tine\/favorites::\s*true|#\+tine\/favorites:\s*true)\s*$/im;
+
 
 /** THE favorites identity: kind, then the alias-resolved name folded like
  *  core `refs::page_key`. Membership, arrangement and deletion all use it. */
@@ -225,7 +225,14 @@ async function writeArrangementPage(next: FavLayout, text: string): Promise<stri
     const read = await readOwned(owner, backend().getPage(name, "page"));
     if (read.kind === "stale") throw new Error("graph changed before the Favorites page write");
     const disk = read.value;
-    if (disk && !arrangementPage && !IS_ARRANGEMENT_PAGE.test(disk.pre_block ?? "")) continue;
+    if (disk && !arrangementPage) {
+      // Deferred document door avoids favorites -> document -> ui -> favorites
+      // initialization. Read the DTO preamble through the page-property owner.
+      const { pageHeaderProperties } = await import("./document");
+      if (!owner()) throw new Error("graph changed before the Favorites marker read");
+      if (!pageHeaderProperties(disk).some(([key, value]) =>
+        key.toLowerCase() === FAVORITES_PAGE_PROPERTY && value.trim().toLowerCase() === "true")) continue;
+    }
     if (disk && !arrangementPage) {
       // An arrangement page config never recorded: the only copy of an
       // interrupted edit. Adopt it (this change rolls back) rather than write over it.

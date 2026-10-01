@@ -1,3 +1,4 @@
+import type { PageDto } from "../../types";
 import { ordered_list_glyph } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock } from "../../render/parse";
@@ -97,9 +98,13 @@ function pagePropertyParts(page: ReadonlyFeedPage, exclude: string | null): Prop
 /** Every page-property line of this loaded page as `[key, value]`, in file
  *  order with duplicates — exactly what the page header renders (Page.tsx calls
  *  this with `exclude` = a first root it shows as a block). Grammar:
- *  editor/properties.ts `pagePropertyEntries`. Unloaded page → []. Reactive
- *  (reads the store). Cost O(pre-block + first-root bytes). */
-export function pageHeaderProperties(page: ReadonlyFeedPage, exclude: string | null = null): [string, string][] {
+ *  editor/properties.ts `pagePropertyEntries`. Reactive for loaded pages (reads
+ *  the store). A DTO preamble reads only that preamble; it
+ *  never consults a similarly named loaded page. Cost O(source bytes). */
+export function pageHeaderProperties(page: ReadonlyFeedPage | Pick<PageDto, "pre_block" | "format">, exclude: string | null = null): [string, string][] {
+  if ("pre_block" in page) {
+    return pagePropertyEntries(page.pre_block, page.format ?? "md").map((e) => [e.key, e.value]);
+  }
   return pagePropertyParts(page, exclude).flatMap((part) =>
     pagePropertyEntries(part.text, page.format).map((e): [string, string] => [e.key, e.value]));
 }

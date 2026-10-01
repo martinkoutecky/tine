@@ -1,3 +1,4 @@
+import { pageHeaderProperties } from "..";
 // og 14 Q5 follow-up: one answerer for "this page's properties" (Reader B
 // blocker B1 + G3 follow-up) and case-insensitive block property removal (G3
 // required neighbor). The panel lists what the page renders, and the writer
@@ -119,4 +120,11 @@ describe("block property Remove/replace is case-insensitive (G3 required neighbo
     setBlockProperty("O-0", "owner", null);
     expect(blockProperty("O-0", "owner")).toBeNull();
   });
+});
+
+it("un-loaded page DTO metadata reads its own preamble, excluding Markdown and Org code", () => {
+  expect(pageHeaderProperties({ pre_block: "tine/favorites:: true", format: "md" })).toEqual([["tine/favorites", "true"]]);
+  expect(pageHeaderProperties({ pre_block: "```md\ntine/favorites:: true\n```", format: "md" })).toEqual([]);
+  expect(pageHeaderProperties({ pre_block: "#+tine/favorites: true", format: "org" })).toEqual([["tine/favorites", "true"]]);
+  expect(pageHeaderProperties({ pre_block: "#+BEGIN_SRC\n#+tine/favorites: true\n#+END_SRC", format: "org" })).toEqual([]);
 });
