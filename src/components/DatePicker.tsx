@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, 
 import { datePicker, closeDatePicker, firstDayOfWeek, type DatePickerTarget } from "../ui";
 import { readSchedule, setSchedule } from "../document";
 import { fieldLabel, readField, writeFieldVisibly, type FieldId } from "../sheet/fields";
-import { parseIsoDateLike } from "../sheet/typed";
+import { daysInCalendarMonth, parseIsoDateLike, utcCalendarMillis } from "../sheet/typed";
 import { registerTransientLayer } from "../transientLayers";
 import { refuseStaleWrite } from "../binding";
 
@@ -92,8 +92,9 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
   const grid = createMemo(() => {
     const { y, m } = view();
     // Leading blanks measured from the configured first day of week.
-    const first = (new Date(y, m, 1).getDay() - startOfWeek() + 7) % 7;
-    const days = new Date(y, m + 1, 0).getDate();
+    // Shared calendar answerer: `new Date(y, …)` maps years 0–99 to 1900–1999.
+    const first = (new Date(utcCalendarMillis(y, m, 1)).getUTCDay() - startOfWeek() + 7) % 7;
+    const days = daysInCalendarMonth(y, m);
     const cells: (number | null)[] = [];
     for (let i = 0; i < first; i++) cells.push(null);
     for (let d = 1; d <= days; d++) cells.push(d);
