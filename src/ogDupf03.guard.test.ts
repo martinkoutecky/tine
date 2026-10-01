@@ -15,3 +15,10 @@ it("I-12: published previews use previewProjection.ts before cloning", () => {
   expect(preview).toContain('previewDtoSubtree(found.block, maxNodes, "owned")');
   expect(preview).not.toMatch(/structuredClone|const copy|const count/);
 });
+
+it("I-12: the demo mock previews through previewProjection.ts; imitate publishedBackend.ts", () => {
+  const source = readFileSync("src/mock.ts", "utf8");
+  const preview = source.slice(source.indexOf("    async previewBlock("), source.indexOf("    async readAsset("));
+  expect(preview).toContain('previewDtoSubtree(group.blocks[0], maxNodes, "borrowed")');
+  expect(preview).not.toMatch(/const copy|const count/);
+});

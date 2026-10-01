@@ -8,6 +8,7 @@ import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockC
 import { mockQueryCommands } from "./mockQuery";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, DraftRecord, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
+import { previewDtoSubtree } from "./previewProjection";
 import { hlsPageName } from "./pdf";
 import { lazyHeaderFacets, leadingMarker } from "./markers";
 import { fuzzyScore } from "./editor/autocomplete";
@@ -1329,22 +1330,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         }
       }
       if (!group) return null;
-      let emitted = 0;
-      let truncated = 0;
-      const count = (blocks: BlockDto[]): number => blocks.reduce((n, b) => n + 1 + count(b.children), 0);
-      const copy = (blocks: BlockDto[]): BlockDto[] => {
-        const out: BlockDto[] = [];
-        for (const block of blocks) {
-          if (emitted >= Math.max(1, maxNodes)) {
-            truncated += count([block]);
-            continue;
-          }
-          emitted++;
-          out.push({ ...block, children: copy(block.children) });
-        }
-        return out;
-      };
-      return { group: { ...group, blocks: copy(group.blocks) }, truncated };
+      const { blocks, truncated } = previewDtoSubtree(group.blocks[0], maxNodes, "borrowed");
+      return { group: { ...group, blocks }, truncated };
     },
     async readAsset(name: string, maxBytes?: number): Promise<Uint8Array> {
       void maxBytes;
