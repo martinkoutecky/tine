@@ -156,6 +156,16 @@ await withApp(0, async (browser) => {
   if (disk() !== INITIAL) throw new Error(`reading queries wrote the page:\n${disk()}`);
 
   // 5. Create a query: /query opens the sheet; the text pane saves it.
+  // The sheet anchors near the viewport bottom, where the sticky first-run
+  // Guide toast sits; dismiss sticky toasts as a user would before using it.
+  await browser.execute(() => {
+    for (const close of document.querySelectorAll(".toast-sticky .toast-close")) {
+      if (close instanceof HTMLElement) close.click();
+    }
+  });
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".toast-sticky")), {
+    timeout: 5_000, interval: 100, timeoutMsg: "sticky toasts did not dismiss",
+  });
   await browser.execute(() => {
     const target = document.querySelector(".page-trailing-block-target");
     if (target instanceof HTMLElement) target.click();
@@ -181,6 +191,7 @@ await withApp(0, async (browser) => {
   await browser.waitUntil(chooserOpen, { timeout: 10_000, interval: 100, timeoutMsg: "/query did not open the field chooser" });
   await browser.keys(["Escape"]);
   await browser.waitUntil(async () => !(await chooserOpen()), { timeout: 10_000, interval: 100, timeoutMsg: "Escape did not close the field chooser" });
+  await pane.scrollIntoView({ block: "center", inline: "nearest" });
   await pane.waitForClickable({ timeout: 10_000 });
   await browser.execute(() => {
     const input = document.querySelector(".qs-sheet .query-text-pane-input");
