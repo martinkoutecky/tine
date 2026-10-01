@@ -72,3 +72,13 @@ describe("follow a block ref at the caret", () => {
     expect(openAt).toHaveBeenCalledWith({ name: "Owner", pageKind: "page", block: uuid });
   });
 });
+
+describe("OG-DUPD1 caret dispatch", () => {
+  it("does not navigate from code and strips tag punctuation before routing", () => {
+    const openPage = vi.spyOn(router, "openPage").mockImplementation(() => {});
+    expect(followLinkUnderCaret({ read: read("`[[Hidden]]`", 4) })).toBe(false);
+    expect(openPage).not.toHaveBeenCalled();
+    expect(followLinkUnderCaret({ read: read("#foo,", 2) })).toBe(true);
+    expect(openPage).toHaveBeenCalledWith("foo");
+  });
+});

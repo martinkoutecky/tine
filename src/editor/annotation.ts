@@ -13,7 +13,11 @@ export function isAnnotationBlock(raw: string, format: Format = "md"): boolean {
 }
 
 function annotationProperty(properties: [string, string][]): [string, string] | undefined {
-  return properties.find(([key, value]) => key === "ls-type" && value === "annotation");
+  for (let i = 0; i < properties.length; i++) {
+    const pair = properties[i];
+    if (pair[0] === "ls-type" && pair[1] === "annotation") return pair;
+  }
+  return undefined;
 }
 
 /** Highlight colour + 1-based PDF page from a block's parsed properties; null if

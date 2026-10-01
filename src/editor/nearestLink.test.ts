@@ -66,3 +66,20 @@ describe("nearestLink", () => {
     expect(at(text, 8)).toMatchObject({ start: 4, end: 17 });
   });
 });
+
+describe("parser-owned caret candidates", () => {
+  it("ignores inline and fenced code", () => {
+    expect(nearestLink("`[[Hidden]]`", 4)).toBeNull();
+    expect(nearestLink("```\n[[Hidden]] #hidden\n```", 9)).toBeNull();
+  });
+  it("uses the accepted punctuation boundary", () => {
+    expect(nearestLink("#foo,", 2)).toMatchObject({ value: "foo", start: 0, end: 4 });
+    expect(nearestLink("#foo;bar #foo=bar", 2)).toMatchObject({ value: "foo;bar" });
+  });
+});
+
+it("maps Unicode source coordinates and reads accepted property values", () => {
+  const raw = "é😀 see [[Page]]";
+  expect(nearestLink(raw, 10)).toMatchObject({ start: raw.indexOf("[["), end: raw.length, value: "Page" });
+  expect(nearestLink("body\ncustom:: [[Property Page]]", 15)).toMatchObject({ value: "Property Page" });
+});

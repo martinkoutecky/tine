@@ -78,6 +78,10 @@ export function loadedPage(name: string): ReadonlyFeedPage | undefined { return 
 export function feedNames(): readonly string[] { return doc.feed; }
 export function isLoaded(name?: string): boolean { return name === undefined ? doc.loaded : !!pageByName(name); }
 
+// Retain claims with each live node, beyond the bounded render AST cache. A
+// second paste over >8k loaded blocks must not reparse the entire working set.
+const identityClaimsByNode = new WeakMap<Node, { raw: string; format: Format; ids: readonly string[] }>();
+
 /** Which of `incomingIds` collide with a live identity in the loaded document
  *  (a runtime key or parser-accepted reserved id, case-insensitive)? ONE pass over the loaded
  *  document however many candidates are asked about — the per-id predicate this
@@ -89,8 +93,14 @@ export function loadedIdentityCollisions(incomingIds: readonly string[]): Set<st
   const loaded = new Set<string>();
   for (const [key, node] of Object.entries(doc.byId)) {
     if (node) loaded.add(key.toLowerCase());
-    if (node) for (const identity of acceptedBlockIdentityClaims(node.raw, formatForPage(node.page))) {
-      loaded.add(identity.toLowerCase());
+    if (node) {
+      const format = formatForPage(node.page);
+      let claims = identityClaimsByNode.get(node);
+      if (!claims || claims.raw !== node.raw || claims.format !== format) {
+        claims = { raw: node.raw, format, ids: acceptedBlockIdentityClaims(node.raw, format) };
+        identityClaimsByNode.set(node, claims);
+      }
+      for (const identity of claims.ids) loaded.add(identity.toLowerCase());
     }
   }
   for (const id of incomingIds) if (loaded.has(id.toLowerCase())) collisions.add(id);
