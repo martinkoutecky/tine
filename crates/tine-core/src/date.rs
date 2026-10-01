@@ -85,6 +85,7 @@ impl JournalDate {
     /// Today's date in the device's local civil calendar.  Journal membership,
     /// relative queries, and their date-keyed caches must all agree on this
     /// boundary; UTC epoch days split those user-facing meanings near midnight.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn today() -> JournalDate {
         use chrono::{Datelike, Local};
         let now = Local::now();
@@ -100,6 +101,7 @@ impl JournalDate {
     /// The frontend corrects its own wall clock by this (GH #607): a WebView's
     /// bundled ICU can carry older zone rules than the OS, and the two sides then
     /// disagree about the calendar day near midnight.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn local_utc_offset_now() -> (i32, i64) {
         let now = chrono::Local::now();
         (now.offset().local_minus_utc() / 60, now.timestamp_millis())

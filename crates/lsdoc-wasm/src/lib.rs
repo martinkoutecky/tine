@@ -250,9 +250,10 @@ pub fn parse_block_bundle_json(raw: &str, is_org: bool) -> String {
     let blocks = lsdoc_block_parse::parse_block(raw, is_org);
     let regions = block_regions::from_blocks(raw, is_org, &blocks);
     format!(
-        "{{\"blocks\":{},\"regions\":{}}}",
+        "{{\"blocks\":{},\"regions\":{},\"sole_macro\":{}}}",
         lsdoc::blocks_to_json(&blocks).unwrap(),
-        serde_json::to_string(&regions).unwrap()
+        serde_json::to_string(&regions).unwrap(),
+        serde_json::to_string(&standalone_macro::sole_macro(&blocks)).unwrap()
     )
 }
 #[wasm_bindgen]
@@ -472,3 +473,40 @@ pub fn is_query_macro_name(name: &str) -> bool {
 pub fn query_macro_is_tql(name: &str) -> bool {
     macro_extent::FormFamily::for_macro_name(name) == macro_extent::FormFamily::Tql
 }
+
+#[path = "../../tine-core/src/date.rs"]
+mod date;
+
+thread_local! {
+    static DATE_FORMATS: std::cell::RefCell<Vec<(String, date::Format)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn with_date_format<T>(pattern: &str, f: impl FnOnce(&date::Format) -> T) -> T {
+    DATE_FORMATS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some((_, format)) = cache.iter().find(|(key, _)| key == pattern) {
+            return f(format);
+        }
+        if cache.len() == 16 { cache.remove(0); }
+        cache.push((pattern.to_owned(), date::Format::compile(pattern)));
+        f(&cache.last().unwrap().1)
+    })
+}
+
+/// Native calendar format grammar, cached (16 patterns). O(title + pattern) on
+/// cold compile, O(title) warm; null means invalid. No clock, graph or I/O.
+#[wasm_bindgen]
+pub fn parse_journal_format_json(text: &str, pattern: &str) -> String {
+    with_date_format(pattern, |format| {
+        serde_json::to_string(&format.parse(text).map(|d| serde_json::json!({"y":d.year,"m":d.month,"d":d.day}))).unwrap()
+    })
+}
+
+/// Native date formatter over explicit civil parts; same bounded format cache.
+#[wasm_bindgen]
+pub fn format_journal_date(year: i32, month: u32, day: u32, pattern: &str) -> String {
+    with_date_format(pattern, |format| format.format(date::JournalDate { year, month, day }))
+}
+
+#[path = "../../tine-core/src/standalone_macro.rs"]
+mod standalone_macro;

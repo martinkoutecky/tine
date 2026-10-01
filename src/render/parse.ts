@@ -16,7 +16,7 @@
 import { createSignal } from "solid-js";
 import init, { parse_block_bundle_json, edit_block_regions_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
-import type { Block } from "./ast";
+import type { Block, MacroInline } from "./ast";
 
 // `ready` is a Solid signal so components (AstBody) reactively render once the
 // parser is loaded. In the normal flow init is awaited before mount, so it's
@@ -117,6 +117,7 @@ export interface BlockRegions {
 /** An accepted identity value carried with the exact editor buffer that owns
  * it. Coordinates are deliberately absent: inserting hidden rows moves spans. */
 export interface BlockIdentityFacts { raw: string; format: "md" | "org"; value: string | null }
+const soleMacroCache = new WeakMap<Block[], MacroInline | null>();
 const regionCache = new WeakMap<Block[], BlockRegions>();
 
 
@@ -188,7 +189,8 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
       return quarantine(key, text);
     }
   }
-  const bundle = JSON.parse(json) as { blocks: Block[]; regions: BlockRegions };
+  const bundle = JSON.parse(json) as { blocks: Block[]; regions: BlockRegions; sole_macro: MacroInline | null };
+  soleMacroCache.set(bundle.blocks, bundle.sole_macro);
   regionCache.set(bundle.blocks, bundle.regions);
   return remember(key, bundle.blocks);
 }
@@ -205,4 +207,10 @@ export function editBlock(raw: string, format: "md" | "org", request: object): s
   const regions = blockRegions(raw, format);
   if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
   return edit_block_regions_json(raw, format === "org", regions, request);
+}
+
+/** Sole visible macro from the native AST policy (standalone_macro::sole_macro).
+ * O(1) on a warm block; cold parsing is O(block bytes), with no second parse. */
+export function soleBlockMacro(raw: string, format: "md" | "org" = "md"): MacroInline | null {
+  return soleMacroCache.get(parseBlock(raw, format === "org")) ?? null;
 }

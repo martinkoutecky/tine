@@ -15,7 +15,9 @@ import { annotationInfo } from "../editor/annotation";
 import { AnnotationBody } from "./AnnotationBody";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { blockBackgroundColor } from "../blockColors";
-import { queryMacroExtents, singleQueryMacroExtent, type MacroExtent } from "../editor/queryMacro";
+import { queryMacroExtent, type MacroExtent } from "../editor/queryMacro";
+import { soleBlockMacro } from "../render/parse";
+import { isQueryMacroName } from "../editor/queryMacro";
 import { beginEditGesture, renderedClickOffset } from "./blockGestures";
 import { CalGlyph, ClockBadge, toggleBlockMarkerLabel, toggleBlockCheckbox } from "./blockParts";
 
@@ -23,13 +25,14 @@ import { CalGlyph, ClockBadge, toggleBlockMarkerLabel, toggleBlockCheckbox } fro
 // properties. Extracted from Block.tsx (og-F) with no behaviour change.
 
 // Detect a block whose entire body is a single {{query}}/{{tine-query}}/{{embed}} macro.
-export function detectMacro(raw: string): { kind: "query" | "embed"; inner: string; sourceExtent?: MacroExtent } | null {
-  // The visible body: property lines stripped so `{{query}}\nid:: …` still matches.
-  const text = raw.split("\n").filter((l) => !isPropertyLine(l)).join("\n").trim();
-  const [q, ...rest] = queryMacroExtents(text); // shared reader: a second macro or a `}}` in a string never merges
-  if (q && !rest.length && q.start === 0 && q.end === text.length) return { kind: "query", inner: `${q.name} ${q.argument}`, sourceExtent: singleQueryMacroExtent(raw, q) };
-  const m = /^\{\{(embed)\b([\s\S]*)\}\}$/.exec(text);
-  return m ? { kind: "embed", inner: `${m[1]}${m[2]}` } : null;
+export function detectMacro(raw: string, format: "md" | "org" = "md"): { kind: "query" | "embed"; inner: string; sourceExtent?: MacroExtent } | null {
+  const macro = soleBlockMacro(raw, format);
+  if (!macro) return null;
+  if (isQueryMacroName(macro.name)) {
+    const sourceExtent = queryMacroExtent(raw) ?? undefined;
+    return sourceExtent ? { kind: "query", inner: `${sourceExtent.name} ${sourceExtent.argument}`, sourceExtent } : null;
+  }
+  return macro.name === "embed" ? {kind:"embed", inner:`${macro.name} ${macro.args.join(", ")}`} : null;
 }
 
 // `Block` already keeps the node, page format, header facets, heading level and

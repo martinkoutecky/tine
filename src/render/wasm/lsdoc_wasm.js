@@ -90,6 +90,29 @@ export function encode_page_name(name, legacy) {
 }
 
 /**
+ * Native date formatter over explicit civil parts; same bounded format cache.
+ * @param {number} year
+ * @param {number} month
+ * @param {number} day
+ * @param {string} pattern
+ * @returns {string}
+ */
+export function format_journal_date(year, month, day, pattern) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.format_journal_date(year, month, day, ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Accepted marker/priority of one block with their byte spans (`block_regions::header_tokens`).
  * O(block bytes); no regions walk.
  * @param {string} raw
@@ -399,6 +422,30 @@ export function parse_document_json(text, is_org) {
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Native calendar format grammar, cached (16 patterns). O(title + pattern) on
+ * cold compile, O(title) warm; null means invalid. No clock, graph or I/O.
+ * @param {string} text
+ * @param {string} pattern
+ * @returns {string}
+ */
+export function parse_journal_format_json(text, pattern) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_journal_format_json(ptr0, len0, ptr1, len1);
+        deferred3_0 = ret[0];
+        deferred3_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
 }
 

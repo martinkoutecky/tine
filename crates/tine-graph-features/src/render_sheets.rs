@@ -19,15 +19,15 @@
 //! `MAX_TOTAL_CELLS` cells of data are accepted (I-22).
 
 use super::{
-    ast_plain_text, body_blocks, decorate, esc, esc_attr, has_class, md_opts, publish_page_allowed,
-    render_block, render_facets, tag_attr, unescape, Ctx, PageAnchors, PrintOpts, RenderGraph,
+    ast_plain_text, body_blocks, decorate, esc, esc_attr, md_opts, publish_page_allowed,
+    render_block, render_facets, Ctx, PageAnchors, PrintOpts, RenderGraph,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::cell::Cell as Budget;
 use std::collections::{HashMap, HashSet};
 use tine_core::doc::DocBlock;
-use tine_core::lsdoc::ast::Block;
+use tine_core::lsdoc::ast::Inline;
 use tine_core::model::BlockDto;
 use tine_core::query::ir::{ViewKind, ViewSettings};
 use tine_core::query::macro_text::{is_query_macro_name, query_macro_extent};
@@ -380,17 +380,12 @@ pub(super) fn sole_query_macro(block: &DocBlock) -> Option<(String, String)> {
     if !is_candidate(block) {
         return None;
     }
-    let blocks: Vec<Block> = body_blocks(block.raw());
-    let html = tine_core::lsdoc::render_html(&blocks, &md_opts());
-    let inner = html.trim().strip_prefix("<span ")?;
-    let close = inner.find('>')?;
-    let tag = &inner[..close];
-    if !has_class(tag, "macro") || inner[close + 1..].trim() != "</span>" {
+    let blocks = body_blocks(block.raw());
+    let Inline::Macro { name, .. } = tine_core::standalone_macro::sole_macro(&blocks)? else {
         return None;
-    }
-    let name = tag_attr(tag, "data-macro").map(unescape)?;
-    is_query_macro_name(&name).then_some(())?;
-    Some((name, query_macro_extent(block.raw())?.argument))
+    };
+    is_query_macro_name(name).then_some(())?;
+    Some((name.clone(), query_macro_extent(block.raw())?.argument))
 }
 
 /// FNV-1a of a query sheet's identity: the owner's subtree, the macro and each
