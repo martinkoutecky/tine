@@ -46,8 +46,24 @@ async function screenshot() {
         }
       } else if (process.platform === 'win32') {
         await external('powershell', ['-NoProfile', '-Command', `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $r=[System.Windows.Forms.SystemInformation]::VirtualScreen; $b=New-Object System.Drawing.Bitmap($r.Width,$r.Height); $g=[System.Drawing.Graphics]::FromImage($b); $g.CopyFromScreen($r.Left,$r.Top,0,0,$r.Size); $b.Save('${path.join(out, 'desktop.png').replaceAll("'", "''")}'); $g.Dispose(); $b.Dispose()`]);
+        const titles = JSON.parse(await readFile(path.join(out, 'screenshots.ready'), 'utf8').catch(() => '[]'));
+        for (const [name, title] of [['main', titles.find(w => w.label === 'main')?.title], ['popup', 'Tine Spike Popup']]) {
+          if (!title) continue;
+          await external('powershell', ['-NoProfile', '-Command', `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $w=New-Object -ComObject WScript.Shell; if (-not $w.AppActivate('${title.replaceAll("'", "''")}')) { throw 'window focus failed' }; Start-Sleep -Milliseconds 500; $r=[System.Windows.Forms.SystemInformation]::VirtualScreen; $b=New-Object System.Drawing.Bitmap($r.Width,$r.Height); $g=[System.Drawing.Graphics]::FromImage($b); $g.CopyFromScreen($r.Left,$r.Top,0,0,$r.Size); $b.Save('${path.join(out, `${name}.png`).replaceAll("'", "''")}'); $g.Dispose(); $b.Dispose()`]);
+        }
       } else {
         await external('screencapture', ['-x', path.join(out, 'desktop.png')]);
+        const info = await external('swift', ['-e', `import CoreGraphics; import Foundation
+let windows = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as! [[String: Any]]
+let own = windows.filter { ($0[kCGWindowOwnerPID as String] as? Int) == ${child.pid} && ($0[kCGWindowLayer as String] as? Int) == 0 }
+let data = try! JSONSerialization.data(withJSONObject: own)
+print(String(data: data, encoding: .utf8)!)`]);
+        await writeFile(path.join(out, 'native-windows.json'), info);
+        for (const window of JSON.parse(info)) {
+          const name = window.kCGWindowName === 'Tine Spike Popup' ? 'popup' : 'main';
+          if (window.kCGWindowName === 'Quick Capture') continue;
+          await external('screencapture', ['-x', '-l', String(window.kCGWindowNumber), path.join(out, `${name}.png`)]);
+        }
       }
       await writeFile(path.join(out, 'screenshot.json'), JSON.stringify({ status: 'pass', detail: 'External OS capture; desktop includes both windows. Inspect image for actual decorations and parity.' }, null, 2));
     } catch (e) {

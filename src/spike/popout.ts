@@ -160,7 +160,7 @@ export async function runSpike() {
       return assert(prevented && texts(document).includes(before), { popupUndoShortcut: prevented, mainEditReverted: true, before });
     });
     await native("screenshots");
-    await sleep(8000); // external runner captures the two native windows
+    await until(async () => { try { await native("screenshot-result"); return true; } catch { return false; } }, 45000); // wait for actual external capture
     await check("C9", async () => {
       const capture = await native<Check>("screenshot-result");
       const windows = await native<Array<{ label: string; decorated: boolean }>>("windows");

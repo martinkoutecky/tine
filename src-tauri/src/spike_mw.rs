@@ -14,7 +14,9 @@ pub fn create_main(app: &tauri::App) -> tauri::Result<()> {
         .iter()
         .find(|w| w.label == "main")
         .unwrap();
-    eprintln!("SPIKE create_main from_config");
+    if std::env::var_os("TINE_SPIKE_MW").is_some() {
+        eprintln!("SPIKE create_main from_config");
+    }
     let builder = WebviewWindowBuilder::from_config(app, config)?;
     #[cfg(desktop)]
     let builder = {
@@ -62,9 +64,13 @@ pub fn create_main(app: &tauri::App) -> tauri::Result<()> {
     } else {
         builder
     };
-    eprintln!("SPIKE create_main build");
+    if std::env::var_os("TINE_SPIKE_MW").is_some() {
+        eprintln!("SPIKE create_main build");
+    }
     let main = builder.build()?;
-    eprintln!("SPIKE create_main built");
+    if std::env::var_os("TINE_SPIKE_MW").is_some() {
+        eprintln!("SPIKE create_main built");
+    }
     #[cfg(target_os = "linux")]
     if std::env::var_os("TINE_SPIKE_MW").is_some() {
         main.with_webview(|view| {
