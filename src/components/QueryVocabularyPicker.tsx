@@ -5,7 +5,8 @@ import type { Anchor, RegistryRow } from "../editor/queryIr";
 import type { BuilderLeafKind } from "../editor/queryBuilder";
 import { Listbox, type ListboxBody, type ListboxOption } from "./QueryListbox";
 import { effectiveTypeOf, registryRowFor } from "../editor/queryPropertyType";
-import { queryColumnName, querySortFieldName } from "../sheet/tablePresentation";
+import { QUERY_SORT_BUILTINS, queryColumnName, queryFieldEncodable, querySortFieldName } from "../sheet/tablePresentation";
+import { SHEET_BUILTIN_FIELDS } from "../sheet/config";
 
 export type VocabularyChoice =
   | { kind: "builtin"; leaf: BuilderLeafKind }
@@ -96,8 +97,7 @@ export function displayFieldEntries(input: { slot: DisplaySlot; rowKind: "page" 
     });
   };
   const builtins = rowKind === "page" ? ["name", "kind", "day"]
-    : slot === "sort" ? ["priority", "page", "scheduled", "deadline"]
-      : ["state", "priority", "scheduled", "deadline", "tags", "page"];
+    : slot === "sort" ? QUERY_SORT_BUILTINS : SHEET_BUILTIN_FIELDS;
   if (slot !== "aggregate") for (const field of builtins) {
     if (rowKind === "page" && slot === "column" && field === "name") continue;
     add(rowKind === "page" && slot === "group" ? `prop:${field}` : field,
@@ -105,7 +105,7 @@ export function displayFieldEntries(input: { slot: DisplaySlot; rowKind: "page" 
   }
   for (const row of rows ?? []) {
     const key = row.normalized_name;
-    if (/[=;\0\r\n]/.test(key)) continue;
+    if (key && !queryFieldEncodable(key)) continue;
     if (rowKind === "page" && row.count_pages === 0) continue;
     if (slot === "column" && queryColumnName(`prop:${key}`) === null) continue;
     if (slot === "sort" && querySortFieldName(`prop:${key}`) === null) continue;
@@ -113,7 +113,7 @@ export function displayFieldEntries(input: { slot: DisplaySlot; rowKind: "page" 
       unit === "pages" ? row.count_pages : row.count_blocks + row.count_pages);
   }
   if (rowKind === "block" && slot === "group") for (const name of input.formulas ?? [])
-    if (name && !/[=;\0\r\n]/.test(name)) add(`formula:${name}`, name);
+    if (queryFieldEncodable(name)) add(`formula:${name}`, name);
   return out;
 }
 

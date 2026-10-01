@@ -22,6 +22,14 @@ describe("D18 sheet calendar and scalar policies", () => {
       formulaAst: () => null,
       now: new Date(0),
     })).toEqual({ kind: "text", value: "0099-01-01" });
+    const nextYear = parseFormula('d + "1y"');
+    expect(nextYear.ok).toBe(true);
+    if (!nextYear.ok) return;
+    expect(evaluate(nextYear.ast, {
+      field: () => parseDateValue("0000-02-29") ?? nullValue(),
+      formulaAst: () => null,
+      now: new Date(0),
+    })).toEqual({ kind: "date", value: { y: 1, m: 1, d: 28, time: null }, source: "0001-02-28" });
   });
 
   it("keeps stable's numeric-prefix aggregate policy distinct from decimal cells", () => {

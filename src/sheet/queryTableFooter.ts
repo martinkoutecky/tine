@@ -2,6 +2,7 @@ import type { QueryFooterCell } from "../components/SheetAggregateFooter";
 import { querySummary, type QueryAggFn } from "../editor/queryAggregate";
 import type { QueryStatistics, ViewSettings } from "../editor/queryIr";
 import type { FieldId } from "./fields";
+import { queryFieldEncodable } from "./tablePresentation";
 
 /** The current authored view and its guarded Display writer, plus complete
  * statistics and the executed view they belong to. An absent statistics
@@ -23,7 +24,7 @@ export function queryTableFooter(control: QueryDisplayControl | undefined, field
   if (!control || !field.startsWith("prop:")) return undefined;
   const key = field.slice(5);
   // The existing query aggregate property grammar cannot carry these keys.
-  if (!key || key !== key.trim() || /[=;\0\r\n]/.test(key)) return undefined;
+  if (key !== key.trim() || !queryFieldEncodable(key)) return undefined;
   const fn = (): QueryAggFn | null =>
     (control.statisticsView?.aggregates ?? control.view.aggregates ?? []).find(([k]) => k === key)?.[1] ?? null;
   return {

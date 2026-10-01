@@ -1,12 +1,11 @@
-import { isAggregateFn } from "./aggregate";
-import { parseFields, sheetConfig, type FieldSpec } from "./config";
+import { decodeAggregateSegment } from "./aggregate";
+import { isSheetBuiltinField, parseFields, sheetConfig, visitFieldSchema, type FieldSpec } from "./config";
 import { astToExpr, decodeFormulaExpr, encodeFormulaExpr, formulaNameValid, parseFormula, type Ast } from "./formula";
 import { blockRegions } from "../render/parse";
 import type { Format } from "../render/ast";
 
 const PROPERTY_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 const FORMULA_LITERAL_NAMES = new Set(["true", "false", "null"]);
-const BUILTIN_FIELDS = new Set(["state", "priority", "scheduled", "deadline", "tags", "page"]);
 const PARTICIPATING_KEYS = new Set(["tine.fields", "tine.filter", "tine.group-by", "tine.col-aggregates"]);
 const FORMULA_PREFIX = "tine.formula.";
 
@@ -152,15 +151,10 @@ export function rewriteSchemaValueLosslessly(
   const segments = value.split(";");
   const matches: { index: number; start: number; end: number }[] = [];
   const variants: string[] = [];
-  segments.forEach((segment, index) => {
-    const eq = segment.indexOf("=");
-    if (eq < 0) return;
-    const left = segment.slice(0, eq);
-    const name = left.trim();
+  visitFieldSchema(segments, (_segment, index, name, start) => {
     if (name.toLowerCase() !== oldName.toLowerCase()) return;
     variants.push(name);
     if (name === oldName) {
-      const start = left.indexOf(name);
       matches.push({ index, start, end: start + name.length });
     }
   });
@@ -254,25 +248,6 @@ function replaceTrimmedValue(original: string, value: string): string {
   return original.slice(0, start) + value + original.slice(end);
 }
 
-interface AggregateSegmentShape {
-  lead: string;
-  key: string;
-  mid: string;
-  fn: string;
-  trail: string;
-}
-
-/** The query grammar's own extra function word. Never widens `AggregateFn`. */
-const QUERY_ONLY_AGGREGATE_FNS = new Set(["avg"]);
-
-function aggregateSegmentShape(segment: string): AggregateSegmentShape | null {
-  const match = /^(\s*)([^=;\s][^=;]*?)(\s*=\s*)([A-Za-z-]+)(\s*)$/.exec(segment);
-  if (!match) return null;
-  const fn = match[4].toLowerCase();
-  if (!isAggregateFn(fn) && !QUERY_ONLY_AGGREGATE_FNS.has(fn)) return null;
-  return { lead: match[1], key: match[2], mid: match[3], fn: match[4], trail: match[5] };
-}
-
 /** Whether an UNRECOGNIZED segment is nevertheless about the field being
  *  renamed. Preserving such a segment verbatim would leave a dangling reference
  *  to a name that no longer exists, and this helper cannot tell where the key
@@ -281,28 +256,10 @@ function mentionsRenamedField(segment: string, oldName: string): boolean {
   return segment.toLowerCase().includes(`prop:${oldName.toLowerCase()}`);
 }
 
-/** **Rename one field inside `tine.col-aggregates`, losing nothing else** (P5A).
- *
- *  What changed from the first version, and why:
- *
- *   * a segment with no `=` used to fail the whole rename. A bare `count` is
- *     the query grammar's whole-result count, so a perfectly ordinary query
- *     configuration made renaming a sheet field impossible;
- *   * a repeated key used to fail. A query's aggregates are an ordered LIST —
- *     `prop:cost=sum;prop:cost=avg` asks for two footers on one column — so
- *     duplicates are retained, in order, and both get renamed;
- *   * `key=avg` used to fail, because `avg` is not in the sheet vocabulary. It
- *     is recognized here without being added to that vocabulary;
- *   * unrecognized segments used to fail. They are preserved verbatim unless
- *     they mention the field being renamed, which is the one case where
- *     preserving them would leave a dangling reference.
- *
- *  The refusals that REMAIN are the ones that make a rename genuinely
- *  ambiguous: an unparseable segment that names the old field, and a key that
- *  differs from `prop:<oldName>` only by case.
- *
- *  Only an EXACT `prop:<oldName>` key is renamed — bare query keys and
- *  `formula:` keys are outside the sheet's rename ownership and are left alone. */
+/** Rename exact prop:<oldName> keys in the stored aggregate union, O(value
+ * bytes), without dropping repeated keys, bare count or unsupported segments.
+ * Refuse ambiguous casing or unreadable segments mentioning the renamed field;
+ * all other bytes and segment order survive unchanged. */
 export function rewriteAggregateValue(
   value: string,
   oldName: string,
@@ -315,43 +272,31 @@ export function rewriteAggregateValue(
   for (let i = 0; i < before.length; i += 1) {
     const segment = before[i];
     if (!segment.trim()) continue;
-    const shape = aggregateSegmentShape(segment);
+    const shape = decodeAggregateSegment(segment, "rename");
     if (!shape) {
       if (mentionsRenamedField(segment, oldName)) {
         return { ok: false, error: "The column aggregate configuration is malformed or ambiguous." };
       }
       continue;
     }
-    const key = shape.key.trim();
+    const key = segment.slice(shape.keyStart, shape.keyEnd);
     if (key === oldKey) {
-      const keyStart = segment.indexOf(shape.key) + shape.key.indexOf(key);
-      after[i] = segment.slice(0, keyStart) + newKey + segment.slice(keyStart + key.length);
+      after[i] = segment.slice(0, shape.keyStart) + newKey + segment.slice(shape.keyEnd);
     } else if (key.toLowerCase() === oldKey.toLowerCase()) {
       return { ok: false, error: "The column aggregate configuration has ambiguous field casing." };
     }
   }
-  // **The preservation proof is an ORDERED SEGMENT COMPARISON.** It used to be
-  // `sheetConfig(...).colAggregates.size`, which is a `Map` keyed on the
-  // aggregate key — the very shape that collapses repeated keys and drops bare
-  // and unrecognized segments. Comparing its size therefore proved nothing
-  // about exactly the segments this rename touches. Every segment must survive
-  // in place, byte for byte, with one permitted difference: the key that was
-  // exactly `prop:<oldName>` is now exactly `prop:<newName>`.
+  // Prove ordered segment preservation; a Map would collapse repeated keys
+  // and discard bare count or unknown segments.
   if (before.length !== after.length) {
     return { ok: false, error: "The column aggregate configuration could not be preserved." };
   }
   for (let i = 0; i < before.length; i += 1) {
     if (before[i] === after[i]) continue;
-    const b = aggregateSegmentShape(before[i]);
-    const a = aggregateSegmentShape(after[i]);
+    const b = decodeAggregateSegment(before[i], "rename");
     const intended = b !== null
-      && a !== null
-      && b.lead === a.lead
-      && b.mid === a.mid
-      && b.fn === a.fn
-      && b.trail === a.trail
-      && b.key.trim() === oldKey
-      && a.key.trim() === newKey;
+      && before[i].slice(b.keyStart, b.keyEnd) === oldKey
+      && after[i] === before[i].slice(0, b.keyStart) + newKey + before[i].slice(b.keyEnd);
     if (!intended) {
       return { ok: false, error: "The column aggregate configuration could not be preserved." };
     }
@@ -429,7 +374,7 @@ export function planSheetFieldRename(input: PlanSheetFieldRenameInput): SheetFie
   }
   if (FORMULA_LITERAL_NAMES.has(newName)) return fail(`${newName} is reserved by the formula language.`);
   if (newName === oldName) return fail("Enter a different field name.");
-  if (BUILTIN_FIELDS.has(newName.toLowerCase())) return fail(`${newName} is a built-in field name.`);
+  if (isSheetBuiltinField(newName.toLowerCase())) return fail(`${newName} is a built-in field name.`);
   if (input.rows.some((row) => row.page !== input.owner.page)) {
     return fail("All direct rows must belong to the table owner's page.");
   }
@@ -451,15 +396,11 @@ export function planSheetFieldRename(input: PlanSheetFieldRenameInput): SheetFie
     const name = spec.field.startsWith("prop:") ? spec.field.slice(5) : spec.field;
     if (name.toLowerCase() === newName.toLowerCase()) return fail(`A declared field already uses ${newName}.`);
   }
-  for (const segment of fieldsOccurrence.value.split(";")) {
-    const eq = segment.indexOf("=");
-    if (eq < 0) continue;
-    const name = segment.slice(0, eq).trim();
-    if (name === oldName) continue;
-    if (name.toLowerCase() === newName.toLowerCase()) {
-      return fail(`The field schema already contains ${newName}, including in an unrecognized segment.`);
-    }
-  }
+  let schemaCollision = false;
+  visitFieldSchema(fieldsOccurrence.value, (_segment, _index, name) => {
+    if (name !== oldName && name.toLowerCase() === newName.toLowerCase()) schemaCollision = true;
+  });
+  if (schemaCollision) return fail(`The field schema already contains ${newName}, including in an unrecognized segment.`);
 
   const rowOccurrences = new Map<string, PropertyOccurrence[]>();
   for (const row of input.rows) {

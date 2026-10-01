@@ -31,6 +31,10 @@ function validIsoDay(y: number, m: number, d: number): boolean {
   return m >= 1 && m <= 12 && d >= 1 && d <= daysInCalendarMonth(y, m - 1);
 }
 
+function decimalPair(text: string, at: number): number {
+  return (text.charCodeAt(at) - 48) * 10 + text.charCodeAt(at + 1) - 48;
+}
+
 // The ONE recognizer of the sheet ISO date grammar (`yyyy-mm-dd`, optional
 // ` HH:MM`/`THH:MM` tail) — DatePicker, typed cells, and field writes all
 // read through here; a second regex of this shape elsewhere is a bug.
@@ -60,5 +64,7 @@ export function isoDatePrefix(text: string): string | null {
   const m = /^<?(\d{4}-\d{2}-\d{2})/.exec(text);
   if (!m) return null;
   const iso = m[1];
-  return validIsoDay(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)), Number(iso.slice(8, 10))) ? iso : null;
+  // The grammar has already admitted digits. Read parts without allocating
+  // three substrings for every aggregate cell.
+  return validIsoDay(decimalPair(iso, 0) * 100 + decimalPair(iso, 2), decimalPair(iso, 5), decimalPair(iso, 8)) ? iso : null;
 }
