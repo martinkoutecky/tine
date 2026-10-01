@@ -111,3 +111,63 @@ fn w5_org_union_keeps_the_copys_pre_block_lines() {
     assert!(out.contains("#+filetags: :x:"), "{out}");
     assert!(out.contains("note from there"), "{out}");
 }
+
+// OG-P12B (D06, I-12): the page preamble is read through the parser's regions,
+// so a property-looking line inside a literal container is code, not a page
+// property, and a container is one atomic unit.
+#[test]
+fn p12b_property_shaped_fence_content_is_not_a_clashing_property() {
+    // `icon:: 🎉` sits inside the copy's fence. As a property it would clash
+    // with mine's `icon:: 🙂` and refuse the merge; as code it is just kept.
+    let (result, out) = resolve_union(
+        "md",
+        "icon:: 🙂\n\n- block\n",
+        "icon:: 🙂\n```\nicon:: 🎉\n```\n\n- block\n",
+    );
+    result.unwrap();
+    assert!(out.contains("```\nicon:: 🎉\n```"), "{out}");
+    assert_eq!(out.matches("icon:: 🙂").count(), 1, "{out}");
+}
+
+#[test]
+fn p12b_different_containers_are_kept_whole_mine_first_and_identical_ones_dedupe() {
+    let (result, out) = resolve_union(
+        "md",
+        "tags:: x\n```\nmine line\nshared\n```\n\n- block\n",
+        "tags:: x\n```\ntheirs line\nshared\n```\n```\nmine line\nshared\n```\n\n- block\n",
+    );
+    result.unwrap();
+    let (mine_at, theirs_at) = (
+        out.find("```\nmine line\nshared\n```").expect(&out),
+        out.find("```\ntheirs line\nshared\n```").expect(&out),
+    );
+    assert!(mine_at < theirs_at, "mine's container first: {out}");
+    // Never line-merged: the shared line is not de-duplicated across containers,
+    // and mine's identical container is not repeated.
+    assert_eq!(out.matches("shared").count(), 2, "{out}");
+    assert_eq!(out.matches("mine line").count(), 1, "{out}");
+}
+
+#[test]
+fn p12b_org_directive_inside_src_is_code_not_a_clashing_property() {
+    let (result, out) = resolve_union(
+        "org",
+        "#+alias: Real\n\n* block\n",
+        "#+alias: Real\n#+BEGIN_SRC text\n#+alias: Ghost\n#+END_SRC\n\n* block\n",
+    );
+    result.unwrap();
+    assert!(
+        out.contains("#+BEGIN_SRC text\n#+alias: Ghost\n#+END_SRC"),
+        "{out}"
+    );
+    assert_eq!(out.matches("#+alias: Real").count(), 1, "{out}");
+}
+
+#[test]
+fn p12b_a_real_clash_outside_a_container_still_refuses() {
+    let winner = "icon:: 🙂\n```\nx\n```\n\n- block\n";
+    let (result, out) = resolve_union("md", winner, "icon:: 🎉\n```\nx\n```\n\n- block\n");
+    let error = result.expect_err("an un-keepable property value still refuses");
+    assert!(error.to_string().contains("icon"), "{error}");
+    assert_eq!(out, winner);
+}
