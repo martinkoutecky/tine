@@ -1,6 +1,7 @@
 import { type PageKind, type Format } from "../types";
 import { createStore, produce } from "solid-js/store";
 import { createRoot, createMemo } from "solid-js";
+import { acceptedBlockIdentityClaims } from "../blockIdentity";
 import { graphMeta } from "../graphSession";
 import { sheetConfigFromRaw } from "../sheet/config";
 
@@ -77,14 +78,8 @@ export function loadedPage(name: string): ReadonlyFeedPage | undefined { return 
 export function feedNames(): readonly string[] { return doc.feed; }
 export function isLoaded(name?: string): boolean { return name === undefined ? doc.loaded : !!pageByName(name); }
 
-// A Markdown `id::` line or an Org `:id:` property line. setRaw updates a loaded
-// node's raw synchronously without re-keying `byId` by a newly typed/pasted id, so
-// a raw id line counts as live ownership (the final paste/redo checks must fail
-// closed in that window). No Org drawer is required: any matching raw line counts.
-const RAW_BLOCK_ID_PROPERTY_RE = /(?:^|\r?\n)[ \t]*(?:id[ \t]*::|:id:)[ \t]*([^\r\n]*?)[ \t]*(?=\r?\n|$)/gi;
-
 /** Which of `incomingIds` collide with a live identity in the loaded document
- *  (a `byId` key or a raw id property, case-insensitive)? ONE pass over the loaded
+ *  (a runtime key or parser-accepted reserved id, case-insensitive)? ONE pass over the loaded
  *  document however many candidates are asked about — the per-id predicate this
  *  replaces re-scanned every key and raw for each candidate (master 8c495c1ce).
  *  This is the only answer to "is this id live?". */
@@ -94,11 +89,8 @@ export function loadedIdentityCollisions(incomingIds: readonly string[]): Set<st
   const loaded = new Set<string>();
   for (const [key, node] of Object.entries(doc.byId)) {
     if (node) loaded.add(key.toLowerCase());
-    RAW_BLOCK_ID_PROPERTY_RE.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while (node && (match = RAW_BLOCK_ID_PROPERTY_RE.exec(node.raw)) !== null) {
-      const identity = match[1].trim();
-      if (identity) loaded.add(identity.toLowerCase());
+    if (node) for (const identity of acceptedBlockIdentityClaims(node.raw, formatForPage(node.page))) {
+      loaded.add(identity.toLowerCase());
     }
   }
   for (const id of incomingIds) if (loaded.has(id.toLowerCase())) collisions.add(id);

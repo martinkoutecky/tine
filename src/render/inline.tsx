@@ -1361,7 +1361,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const fmt = () => liveTarget() ? formatForBlock(props.id) : formatForPage(grp()?.page);
   const annotation = () => {
     const block = grp()?.blocks[0];
-    return block ? annotationInfoForBlock(block) : null;
+    return block ? annotationInfoForBlock(block, fmt()) : null;
   };
   // Summary resolution stays shallow and graph-lifetime cached. Fetch the
   // descendant tree only after the hover dwell, through a backend operation
@@ -1423,7 +1423,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
               .then((result) => {
                 if (result.kind === "stale") return;
                 const page = result.value;
-                const file = pdfFileFromPreBlock(page?.pre_block);
+                const file = pdfFileFromPreBlock(page?.pre_block, page?.format);
                 if (file) openPdf(file, file, ann.hlPage, props.id);
                 else pushToast("Couldn't find the PDF for this highlight", "error");
               })

@@ -1,3 +1,4 @@
+import { blockRegions } from "../../render/parse";
 import { blockWritable, pageWritable, rawWithInheritedOrderListType, isOrdered, rawWithOrderListType, rawWithCollapsed, writeCollapsed } from "./properties";
 import { doc, docHasBlockIdentity, formatForBlock, setDoc, freshId, formatForPage, pageByName } from "../model";
 
@@ -404,10 +405,11 @@ function absorbInto(survivor: string, absorbed: string, editingSurface: string |
   // ((id)) references to the absorbed block would orphan on merge. Match the id
   // line in the block's on-disk syntax (md `id:: x` vs org drawer `:id: x`).
   let hidden = keepSplit.hidden;
-  const idPresent = fmt === "org" ? /(?:^|\n):id:\s/i : /(?:^|\n)id:: /i;
-  const idLine = fmt === "org" ? /(?:^|\n)(:id:\s*\S+)/i : /(?:^|\n)(id:: \S+)/i;
-  const survivorHasId = idPresent.test(keepSplit.hidden);
-  const absorbedId = idLine.exec(goneSplit.hidden)?.[1];
+  const survivorHasId = existingBlockId(doc.byId[survivor].raw, fmt) !== null;
+  const absorbedProperty = blockRegions(node.raw, fmt).id;
+  const absorbedId = absorbedProperty
+    ? new TextDecoder().decode(new TextEncoder().encode(node.raw).subarray(...absorbedProperty.line)).trim()
+    : null;
   if (!survivorHasId && absorbedId) {
     hidden = hidden ? `${hidden}\n${absorbedId}` : absorbedId;
   }
