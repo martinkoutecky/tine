@@ -150,34 +150,13 @@ pub enum QueryGrouping {
     Unset,
 }
 
-/// The six sheet builtins a canonical grouping `FieldId` can name.
-const GROUP_BUILTINS: [&str; 6] = ["state", "priority", "scheduled", "deadline", "tags", "page"];
+#[path = "group_field.rs"]
+mod group_field;
+use group_field::{group_token_serializable, GROUP_BUILTINS};
 
-/// A token that could survive a property line at all. `;` is legal in a
-/// grouping value (it is a single field, not a list) but a NUL or a line break
-/// is not: it would not read back.
-fn group_token_serializable(token: &str) -> bool {
-    !token.contains(|c| matches!(c, '\0' | '\r' | '\n'))
-}
-
-/// The **new** key's grammar: exactly a builtin, or `prop:`/`formula:` with a
-/// nonempty suffix, after trimming. Anything else — including the empty value —
-/// is an explicit no-grouping statement rather than a value to guess at.
+/// Canonical grouping field, using the shared borrowed grammar (O(value bytes)).
 pub fn canonical_group_field(value: &str) -> Option<Field> {
-    let token = value.trim();
-    if token.is_empty() || !group_token_serializable(token) {
-        return None;
-    }
-    if GROUP_BUILTINS.contains(&token) {
-        return Some(Field::new(token));
-    }
-    if let Some(rest) = token.strip_prefix("prop:") {
-        return (!rest.is_empty()).then(|| Field::new(token));
-    }
-    if let Some(rest) = token.strip_prefix("formula:") {
-        return (!rest.is_empty()).then(|| Field::new(token));
-    }
-    None
+    group_field::canonical_group_token(value).map(Field::new)
 }
 
 /// The **legacy** token's meaning, captured at the view the note is CURRENTLY

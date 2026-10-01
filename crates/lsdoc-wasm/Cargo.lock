@@ -84,6 +84,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tine-search",
+ "unicode-normalization",
  "wasm-bindgen",
 ]
 

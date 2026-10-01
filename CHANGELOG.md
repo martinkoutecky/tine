@@ -19,6 +19,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- REG-OG-DUPF05-UNICODE-IDENTITY: Page-name lookup and query grouping use the native Unicode whitespace policy in the frontend too, so U+0085 and BOM no longer produce different identities or accepted grouping fields.
+
 - REG-OG-P12B-CONFLICT-PREAMBLE: Merging a conflict copy's page preamble no longer treats property-looking lines inside code blocks as page properties, and keeps differing code blocks whole instead of merging them line by line.
 - REG-OG-P12B-MARKERS: Task markers and priorities share one parser-derived span for reading and writing, and the demo graph reads them once the parser is ready.
 - Published block previews copy only the requested nodes, avoiding full-subtree allocation while keeping snapshot metadata independent (REG-OG-DUPF03-PREVIEW).

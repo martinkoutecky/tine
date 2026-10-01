@@ -1,22 +1,14 @@
+import { canonical_group_field } from "../render/wasm/lsdoc_wasm.js";
 // Query display facts are read by query_parse in tine-core and written here
 // through src/document. This module only encodes the same property grammar.
 import type { ViewSettings } from "./queryIr";
 export { normalizeQueryDisplayDraft, queryDisplaySettings } from "./queryDisplayDraft";
 export type DisplayNamespace = "legacy" | "page" | "block";
 
-/** The sheet builtins a column or grouping token may name bare; any other bare
- * name is an ordinary property. Mirrors `sheet_field_for_column` and `view.rs`. */
-export const QUERY_COLUMN_BUILTINS: ReadonlySet<string> = new Set(["state", "priority", "scheduled", "deadline", "tags", "page"]);
-
-/** The canonical `tine.group-field` grammar (mirror of `view.rs::canonical_group_field`):
- * a builtin, or `prop:`/`formula:` with a nonempty suffix, after trimming. Anything
- * else, the empty value included, is not a field this build can read back. */
+/** Native canonical grouping grammar via synchronous WASM (O(value bytes)).
+ * Parser initialization is required; invalid tokens return null. */
 export function canonicalGroupField(value: string): string | null {
-  const token = value.trim();
-  if (!token || /[\0\r\n]/.test(token)) return null;
-  if (QUERY_COLUMN_BUILTINS.has(token)) return token;
-  for (const prefix of ["prop:", "formula:"]) if (token.startsWith(prefix)) return token.length > prefix.length ? token : null;
-  return null;
+  return canonical_group_field(value) ?? null;
 }
 const keys = ["view", "sort", "group-field", "sample", "columns", "col-aggregates"] as const;
 

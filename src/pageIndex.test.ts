@@ -20,6 +20,7 @@ const page = (name: string): PageEntry => ({
 });
 
 async function load() {
+  await (await import("./render/parse")).initParser();
   const ui = await import("./graphSession");
   const index = await import("./pageIndex");
   const pages = await import("./pages");
@@ -98,6 +99,20 @@ describe("page index: the one frontend name answerer", () => {
     await vi.waitFor(() => expect(navigationName("CAFE\u{301}")).toBe("Café"));
     expect(navigationName(" ΟΣ ")).toBe("Owner");
     expect(navigationName("/café/")).toBe("Café");
+  });
+
+  it("resolves Unicode-trimmed file and alias names with native inventory keys", async () => {
+    backendMock.pageInventory.mockResolvedValue(inventory(1,
+      entry("Café", { kind: "existing", id: "pages/Café.md", others: [] }, "café"),
+      entry("Shortcut", { kind: "alias", owners: ["pages/Café.md"] }, "shortcut"),
+      entry("\uFEFFFoo\uFEFF", { kind: "existing", id: "pages/BOM.md", others: [] }, "\uFEFFfoo\uFEFF"),
+    ));
+    const { installPageIndex, navigationName, resolvedTarget } = await load();
+    installPageIndex();
+    await vi.waitFor(() => expect(navigationName("\u0085/CAFÉ/\u0085")).toBe("Café"));
+    expect(navigationName("\u0085Shortcut\u0085")).toBe("Café");
+    expect(resolvedTarget("\uFEFFFoo\uFEFF")).toEqual({ kind: "existing", id: "pages/BOM.md", others: [] });
+    expect(resolvedTarget("Foo")).toBeUndefined();
   });
 
   // Ported from graph.test "discards an older same-epoch page-inventory response".
