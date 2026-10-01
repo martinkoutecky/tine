@@ -1,3 +1,4 @@
+import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
@@ -10,9 +11,8 @@ import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { ReferenceExcerptBlocks } from "./ReferenceEvidence";
 import { ReferenceExportChooser } from "./ReferenceExportChooser";
 import type { RefGroup } from "../types";
-import { pageIdentityKey } from "../pageIdentity";
 import { mergeReferenceGroups } from "../referenceGroups";
-import { collapsedGroupsFor, sectionOverride, setCollapsedGroupsFor, setSectionOverride } from "../referenceSectionState";
+import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { readOr } from "../resourceRead";
 
 type BoundedEvidence = NonNullable<RefGroup["evidence"]>[number] & {
@@ -42,18 +42,11 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
   };
   const [loadError, setLoadError] = createSignal<ReferenceLoadError | null>(null);
   const [exportChooserOpen, setExportChooserOpen] = createSignal(false);
-  const [collapsedGroups, setCollapsedGroupsSignal] = createSignal<Set<string>>(collapsedGroupsFor("unlinked", props.name));
-  const setCollapsedGroups = (update: Set<string> | ((current: Set<string>) => Set<string>)) => {
-    setCollapsedGroupsSignal((current) => {
-      const next = typeof update === "function" ? update(current) : update;
-      setCollapsedGroupsFor("unlinked", props.name, next);
-      return next;
-    });
-  };
+  const { groupCollapsed, setGroupCollapsed, setAll, reload: reloadGroupCollapse } = createReferenceGroupCollapse("unlinked", () => props.name);
   createEffect(() => {
     const page = props.name;
+    reloadGroupCollapse();
     setOpenSignal(sectionOverride("unlinked", page) ?? false);
-    setCollapsedGroupsSignal(collapsedGroupsFor("unlinked", page));
   });
   const [groupsResource] = createResource(
     () => props.name,
@@ -69,24 +62,11 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
       }
     }
   );
-  // `createReferenceFetcher` already routes a failure to `loadError` (rendered
-  // below), so this covers the read itself rather than replacing that channel.
+  // The resource loader reports failures through loadError; readOr covers reads.
   const groups = () => readOr(groupsResource, undefined, "unlinked references");
   const mergedGroups = createMemo(() => mergeReferenceGroups(groups() ?? []));
   const count = () => mergedGroups().reduce((a, g) => a + g.blocks.length, 0);
-  const groupKey = (group: RefGroup) => pageIdentityKey(group.page);
-  const groupCollapsed = (group: RefGroup) => collapsedGroups().has(groupKey(group));
-  const setGroupCollapsed = (group: RefGroup, value: boolean) => {
-    setCollapsedGroups((current) => {
-      const next = new Set(current);
-      if (value) next.add(groupKey(group));
-      else next.delete(groupKey(group));
-      return next;
-    });
-  };
-  const setAllGroups = (value: boolean) => {
-    setCollapsedGroups(value ? new Set<string>(mergedGroups().map(groupKey)) : new Set<string>());
-  };
+  const setAllGroups = (value: boolean) => setAll(mergedGroups(), value);
   const occurrenceLimit = createMemo(() => {
     let shown = 0;
     let total = 0;

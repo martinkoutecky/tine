@@ -6,6 +6,9 @@ import { doc, setDoc } from "../document/model";
 import { initParser } from "../render/parse";
 import {
   cellSel,
+  cellIsSelected,
+  cellIsInRange,
+  cellIsInLegacyRange,
   colSeamSel,
   extendCellSelectionTo,
   handleCellSelectionKey,
@@ -361,4 +364,20 @@ describe("cell selection state", () => {
       focus: { row: 1, col: 1 },
     });
   });
+});
+
+it("preserves legacy focus versus strict table range surface policies", () => {
+  setCellSel({ gridId: "g", row: 1, col: 2 });
+  expect(cellIsSelected("g", 1, 2, "surface")).toBe(true);
+  expect(cellIsInLegacyRange("g", 1, 2, "surface")).toBe(false);
+  expect(cellIsInRange("g", 1, 2, "surface")).toBe(false);
+  setCellSel({ kind: "range", gridId: "g", anchor: { row: 3, col: 4 }, focus: { row: 1, col: 2 } });
+  expect(cellIsSelected("g", 1, 2, "surface")).toBe(true);
+  expect(cellIsSelected("g", 3, 4, "surface")).toBe(false);
+  expect(cellIsInLegacyRange("g", 2, 3, "surface")).toBe(true);
+  expect(cellIsInLegacyRange("g", 4, 3, "surface")).toBe(false);
+  expect(cellIsInRange("g", 2, 3, "surface")).toBe(false);
+  setCellSel({ kind: "range", gridId: "g", surfaceId: "surface", anchor: { row: 3, col: 4 }, focus: { row: 1, col: 2 } });
+  expect(cellIsInRange("g", 2, 3, "surface")).toBe(true);
+  expect(cellIsInLegacyRange("g", 2, 3, "other")).toBe(false);
 });

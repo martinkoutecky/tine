@@ -1,3 +1,5 @@
+import { sheetClickOffset, sheetCellMenu } from "../sheet/interactions";
+import { cellIsSelected, cellIsInLegacyRange } from "../sheet/selection";
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { blockPageReadOnly, childIds, depthOf, formatForBlock, node as docNode } from "../document";
 import { AstBody } from "../render/body";
@@ -34,11 +36,10 @@ import {
   sheetGridIdFromEventTarget,
 } from "../sheet/pointerSelection";
 import { setColumnWidth } from "../sheet/mutations";
-import { editorOffsetFromRenderedRange } from "../render/spans";
 import { isSheetCellHidden, splitProps } from "../editor/properties";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { editingId, editingOwner, startEditing } from "../editorController";
-import { openSheetCellContextMenu, openSheetContextMenu } from "../ui";
+import { openSheetContextMenu } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
 import { Editor, SurfaceContext } from "./Block";
 import { SheetTable } from "./SheetTable";
@@ -704,29 +705,11 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 }
 
 function sameSelectedCell(gridId: string, surfaceId: string, cell: MatrixCell): boolean {
-  const sel = cellSel();
-  if (!sel || sel.gridId !== gridId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
-  if (sel.kind === "cell") return sel.row === cell.row && sel.col === cell.col;
-  if (sel.kind === "range") return sel.focus.row === cell.row && sel.focus.col === cell.col;
-  return false;
+  return cellIsSelected(gridId, cell.row, cell.col, surfaceId);
 }
 
 function inSelectedRange(gridId: string, surfaceId: string, cell: MatrixCell): boolean {
-  const sel = cellSel();
-  if (!sel || sel.kind !== "range" || sel.gridId !== gridId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
-  const top = Math.min(sel.anchor.row, sel.focus.row);
-  const bottom = Math.max(sel.anchor.row, sel.focus.row);
-  const left = Math.min(sel.anchor.col, sel.focus.col);
-  const right = Math.max(sel.anchor.col, sel.focus.col);
-  return cell.row >= top && cell.row <= bottom && cell.col >= left && cell.col <= right;
-}
-
-function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw: string): number | null {
-  if (!contentRef) return null;
-  const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
-  const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
-  if (!range) return null;
-  return editorOffsetFromRenderedRange(contentRef, range, raw, isSheetCellHidden);
+  return cellIsInLegacyRange(gridId, cell.row, cell.col, surfaceId);
 }
 
 function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixCell; header: boolean; depth: number; freezeColumns: () => void }): JSX.Element {
@@ -746,7 +729,7 @@ function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixC
     const blockId = props.cell.blockId;
     if (!blockId) return;
     const node = docNode(blockId);
-    const offset = node ? clickOffset(e, contentRef, node.raw) : null;
+    const offset = node ? sheetClickOffset(e, contentRef, node.raw, isSheetCellHidden) : null;
     startCellEditing(sel(), offset ?? undefined);
   };
   const removeCtx = () => ({
@@ -757,19 +740,12 @@ function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixC
   const openCellMenu = (e: MouseEvent) => {
     const blockId = props.cell.blockId;
     if (!blockId) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setCellSel(sel());
-    openSheetCellContextMenu(e.clientX, e.clientY, blockId, removeCtx());
+    sheetCellMenu(e, () => setCellSel(sel()), blockId, removeCtx());
   };
   const openCellMenuFromHandle = (e: MouseEvent) => {
     const blockId = props.cell.blockId;
     if (!blockId) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setCellSel(sel());
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    openSheetCellContextMenu(rect.right, rect.bottom + 2, blockId, removeCtx());
+    sheetCellMenu(e, () => setCellSel(sel()), blockId, removeCtx(), true);
   };
 
   return (
@@ -860,7 +836,7 @@ function SheetBlock(props: {
     if (!n) return;
     const fallback = splitProps(n.raw, isSheetCellHidden).visible.length;
     setCellSel(props.cell);
-    startEditing(props.id, clickOffset(e, contentRef, n.raw) ?? fallback, cellOwner(props.cell));
+    startEditing(props.id, sheetClickOffset(e, contentRef, n.raw, isSheetCellHidden) ?? fallback, cellOwner(props.cell));
   };
 
   return (

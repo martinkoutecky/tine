@@ -1,3 +1,5 @@
+import { displayLimitThrough, sheetCellMenu } from "../sheet/interactions";
+import { cellIsSelected } from "../sheet/selection";
 import { clearOnBindingInvalidated } from "../binding";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { observeNear, unobserveNear } from "../lazyObserve";
@@ -40,7 +42,7 @@ import { fieldIdsForRecords, recordFacets } from "../sheet/tableFields";
 import { createFormulaFilterMemo, formulaRowKey, liveFormulaRowNode, type FormulaEvalRow } from "../sheet/formulaEval";
 import { setBoardGroupBy } from "../sheet/mutations";
 import { graphEpoch } from "../graphSession";
-import { openDatePicker, openSheetCellContextMenu, openSheetContextMenu, workflow } from "../ui";
+import { openDatePicker, openSheetContextMenu, workflow } from "../ui";
 import { pushToast } from "../toasts";
 import { blockBackgroundColor } from "../blockColors";
 import type { RefGroup } from "../types";
@@ -253,8 +255,8 @@ export function SheetBoard(props: {
     return columns().map((column) => ({ ...column, rows: column.rows.filter((row) => ids.has(formulaRowKey(row))) }));
   });
   const ensureDisplayedThrough = (row: number) => {
-    if (row < 0 || row < displayedRows().length) return;
-    setRenderLimit(Math.min(rows().length, Math.ceil((row + 1) / SHEET_RENDER_PAGE) * SHEET_RENDER_PAGE));
+    const limit = displayLimitThrough(row, displayedRows().length, rows().length, SHEET_RENDER_PAGE);
+    if (limit !== null) setRenderLimit(limit);
   };
   createEffect(() => {
     const sel = cellSel();
@@ -294,13 +296,7 @@ export function SheetBoard(props: {
   });
   const formulaEntries = () => [...formulas().entries()];
 
-  const selected = (col: number, row: number) => {
-    const sel = cellSel();
-    if (!sel || sel.gridId !== props.ownerId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
-    if (sel.kind === "cell") return sel.col === col && sel.row === row;
-    if (sel.kind === "range") return sel.focus.col === col && sel.focus.row === row;
-    return false;
-  };
+  const selected = (col: number, row: number) => cellIsSelected(props.ownerId, row, col, surfaceId);
 
   const noteQueryMove = (row: RowRecord) => {
     if (props.rowSource !== "query") return;
@@ -816,18 +812,11 @@ function BoardCard(props: {
   };
   const openCellMenu = (e: MouseEvent) => {
     if (!liveFormulaRowNode(props.row)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    select();
-    openSheetCellContextMenu(e.clientX, e.clientY, props.row.id);
+    sheetCellMenu(e, select, props.row.id, undefined);
   };
   const openCellMenuFromHandle = (e: MouseEvent) => {
     if (!liveFormulaRowNode(props.row)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    select();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    openSheetCellContextMenu(rect.right, rect.bottom + 2, props.row.id);
+    sheetCellMenu(e, select, props.row.id, undefined, true);
   };
 
   return (
