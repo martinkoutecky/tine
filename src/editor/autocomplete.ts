@@ -8,6 +8,7 @@ import { QUERY_MACRO_SCAFFOLD, QUERY_MACRO_SCAFFOLD_CARET } from "./queryMacroNa
 import { searchFold } from "./searchFold";
 import { pageIdentityKey } from "../pageIdentity";
 import { isEditablePropertyKey } from "./properties";
+import { codeFences, lineStartsInFence } from "./fences";
 
 export type TriggerKind =
   | "page"
@@ -85,25 +86,6 @@ export interface Trigger {
 /** Existing canonical property identity, re-exported for editor authoring. */
 export const propertyKeyFold = propertyKeyNorm;
 
-/** True when the current line starts inside a preceding Markdown fence. A
- * fence-looking line inside code is content/closing syntax, never an opening
- * language declaration. */
-function insideFenceBefore(raw: string, lineStart: number): boolean {
-  let open: { char: "`" | "~"; len: number } | null = null;
-  for (const line of raw.slice(0, lineStart).split("\n")) {
-    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    if (!match) continue;
-    const fence = match[1];
-    const char = fence[0] as "`" | "~";
-    if (!open) {
-      open = { char, len: fence.length };
-    } else if (char === open.char && fence.length >= open.len && match[2].trim() === "") {
-      open = null;
-    }
-  }
-  return open !== null;
-}
-
 /** Detect an active completion trigger immediately before `caret`. */
 export function detectTrigger(
   raw: string,
@@ -124,7 +106,7 @@ export function detectTrigger(
   // merely moving into an existing `key:: value` line must not pop a menu.
   // OG parity: handler/editor.cljs:1907-1924 (name trigger) and :2211-2226
   // (chosen key immediately transitions to value search), checkout 6e7afa8eb.
-  if (!insideFenceBefore(raw, lineStart)) {
+  const propertyTrigger = ((): Trigger | null => {
     if (propertyValueKey) {
       const delimiter = before.indexOf("::");
       if (delimiter > 0) {
@@ -185,15 +167,21 @@ export function detectTrigger(
         end: caret + 2,
       };
     }
-  }
+    return null;
+  })();
+  // Code is literal: no property completion inside a fence. The parse behind that answer runs only
+  // when a property trigger is actually pending, never for ordinary typing.
+  if (propertyTrigger && !lineStartsInFence(raw, lineStart)) return propertyTrigger;
 
   // Opening Markdown fence language. Do not pop a menu for a bare fence typed
   // by hand (Enter keeps its established behavior); one language character is
   // enough. The /Code block command explicitly opens the empty picker instead.
-  const fence = /^( {0,3})(`{3,}|~{3,})([\w+#.-]+)$/.exec(before);
-  if (fence && !insideFenceBefore(raw, lineStart)) {
-    const start = lineStart + fence[1].length + fence[2].length;
-    return { kind: "code-language", query: fence[3], start, end: caret };
+  // The opener is the parser's: a container (or the fence being typed) that opens on this line.
+  // The one-character test only skips the parse for lines that cannot hold a fence delimiter.
+  if (before.includes("`") || before.includes("~")) {
+    const opener = codeFences(raw).find((f) => lineStart <= f.start && f.start - lineStart <= 3 && f.delimEnd <= caret && caret < f.openEnd);
+    const language = opener ? raw.slice(opener.delimEnd, caret) : "";
+    if (opener && /^[\w+#.-]+$/.test(language)) return { kind: "code-language", query: language, start: opener.delimEnd, end: caret };
   }
 
   // [[page and ((block — an opener with no closer since (the line has no

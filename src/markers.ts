@@ -14,8 +14,10 @@
 // Backend mirror: `crates/tine-core/src/doc.rs` `MARKERS` (cross-language, so it
 // can't share this literal — `markers.test.ts` guards the two sets against drift).
 //
-// Order is prefix-safe for the recognizer's alternation: the longer of any
-// prefix pair comes first (WAITING before WAIT).
+// Order is prefix-safe for substring pre-filtering only (WAITING before WAIT).
+import { blockRegions, parserReady } from "./render/parse";
+import { utf8ToUtf16Cursor } from "./render/utf16Cursor";
+
 export const MARKERS = [
   "TODO",
   "DOING",
@@ -49,39 +51,54 @@ export interface LeadingMarkerMatch {
   end: number;
 }
 
-/** One leading-whitespace character before the marker. Mirrors the trim the
- *  one-block lsdoc boundary applies (`crates/lsdoc-block-parse.rs::prepare` =
- *  Rust `trim_start`: Unicode whitespace — newlines and NBSP included), plus
- *  lsdoc's own parser spaces SUB (0x1A) and FF that it additionally skips when
- *  looking for the marker. Checking `end === raw.length` on the skipped prefix
- *  is what makes a bare `TODO` followed by more lines NOT a marker. */
-function isMarkerLeadWhitespace(ch: string): boolean {
-  return /\s/.test(ch) || ch === "\x1a";
+/** A header token the parser accepted: its text and UTF-16 span in the block raw. */
+export interface HeaderToken {
+  text: string;
+  start: number;
+  end: number;
 }
 
 /**
- * The ONE leading task-marker recognizer (DUP-7). Byte-equivalent to what the
- * lsdoc boundary projects for a block raw (verified against the vendored lsdoc
- * wasm v0.5.5): skip leading whitespace, then the marker must be followed by a
- * literal ASCII space — or be the entire rest of the input (lsdoc `marker_eof`).
- *
- * Consequences, all intentional and probe-verified:
- *  - `TODO\tx` is NOT a task (lsdoc requires a literal space after the marker);
- *  - `  TODO x`, `\tTODO x`, `\nTODO x` ARE tasks (the boundary trim skips them);
- *  - a bare `TODO` is a task ONLY with nothing after it — `TODO\nbody` (and
- *    even `TODO\n`) is not, but `TODO ` / `TODO \nbody` (space, empty title) is;
- *  - the match is case-sensitive and prefix-safe (`TODOLIST`, `TODO:`, `WAIT`
- *    vs `WAITING` are never misread).
+ * The ONE accepted marker / priority answer for readers and writers (I-12): lsdoc's header facts
+ * (`blockRegions(raw).header`, marker and priority spans located inside the accepted header only),
+ * converted to UTF-16. Whatever whitespace the parser skips before the marker (U+0085 yes, U+FEFF
+ * no), the literal-space rule after it, and `[#X]` placement come from the parser, not from here.
+ * `MARKERS` below stays the vocabulary; nothing in the editor re-derives where a marker sits.
+ * The substring test is only a cheap pre-filter that cannot reject any parser-accepted marker, so
+ * ordinary blocks never reach the parser. Before the parser is ready there is no answer (null).
  */
+export function headerTokens(raw: string): { marker: HeaderToken | null; priority: HeaderToken | null } {
+  const none = { marker: null, priority: null };
+  if (!parserReady() || (!MARKERS.some((m) => raw.includes(m)) && !raw.includes("[#"))) return none;
+  const { header } = blockRegions(raw, "md");
+  const toUtf16 = utf8ToUtf16Cursor(raw);
+  const token = (text: string | null, range: [number, number] | null): HeaderToken | null =>
+    text !== null && range ? { text, start: toUtf16(range[0]), end: toUtf16(range[1]) } : null;
+  return { marker: token(header.marker, header.marker_range), priority: token(header.priority, header.priority_range) };
+}
+
+/** Defines `marker`/`priority` on `block` as accessors that read {@link headerTokens} on first access
+ *  once the parser is ready (a read before that is undefined and not remembered). For the demo mock,
+ *  which builds its blocks at import, before the wasm parser exists. */
+export function lazyHeaderFacets<T extends { raw: string }>(block: T): T {
+  let facets: { marker?: string; priority?: string } | undefined;
+  const read = () => {
+    if (!facets && parserReady()) {
+      const { marker, priority } = headerTokens(block.raw);
+      facets = { marker: marker?.text, priority: priority?.text };
+    }
+    return facets ?? {};
+  };
+  return Object.defineProperties(block, {
+    marker: { get: () => read().marker, enumerable: true, configurable: true },
+    priority: { get: () => read().priority, enumerable: true, configurable: true },
+  });
+}
+
+/** The leading task marker the parser accepted, with its UTF-16 span, or null. */
 export function matchLeadingMarker(raw: string): LeadingMarkerMatch | null {
-  let start = 0;
-  while (start < raw.length && isMarkerLeadWhitespace(raw[start])) start++;
-  for (const marker of MARKERS) {
-    if (!raw.startsWith(marker, start)) continue;
-    const end = start + marker.length;
-    if (end === raw.length || raw[end] === " ") return { marker, start, end };
-  }
-  return null;
+  const marker = headerTokens(raw).marker;
+  return marker ? { marker: marker.text, start: marker.start, end: marker.end } : null;
 }
 
 /** The recognized leading marker's name, or null. */

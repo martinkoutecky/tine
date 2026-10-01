@@ -112,11 +112,11 @@ import {
   caretOffsetOnLastRow,
   textareaCaretLeft,
 } from "../editor/caretRows";
-import { splitProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
+import { splitProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
-import { caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
+import { caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
 import { isAnnotationBlock } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";

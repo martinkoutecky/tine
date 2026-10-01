@@ -92,8 +92,18 @@ export type ByteRange = [number, number];
 export interface RegionProperty {
   key: string; value: string; line: ByteRange; key_range: ByteRange; value_range: ByteRange; region: number; primary: boolean;
 }
+/** A block-level literal container lsdoc accepted; offsets are UTF-8 bytes. `close_start` begins the
+ * container's last non-blank line (its closer); `delim_end` ends the opener's delimiter token. */
+export interface RegionLiteralBlock {
+  kind: "src" | "example" | "other"; lang: string; range: ByteRange; open_end: number; close_start: number; delim_end: number;
+}
+/** The editor-state policy for a fence still being typed (named policy in `block_regions.rs`). */
+export interface RegionOpenFence { lang: string; start: number; open_end: number; delim_end: number }
 export interface BlockRegions {
-  header: { marker: string | null; priority: string | null; heading: number | null };
+  header: {
+    marker: string | null; priority: string | null; heading: number | null;
+    marker_range: ByteRange | null; priority_range: ByteRange | null;
+  };
   literals: ByteRange[];
   property_regions: ByteRange[];
   properties: RegionProperty[];
@@ -101,6 +111,8 @@ export interface BlockRegions {
   drawers: { name: string; range: ByteRange; close: number; clocks: ByteRange[] }[];
   id: RegionProperty | null;
   quarantined: boolean;
+  literal_blocks: RegionLiteralBlock[];
+  open_fence: RegionOpenFence | null;
 }
 /** An accepted identity value carried with the exact editor buffer that owns
  * it. Coordinates are deliberately absent: inserting hidden rows moves spans. */
@@ -117,9 +129,9 @@ function remember(key: string, blocks: Block[]): Block[] {
 function quarantine(key: string, text: string): Block[] {
   const blocks: Block[] = [{ kind: "paragraph", inline: [{ k: "plain", text }] }];
   quarantined.add(blocks);
-  regionCache.set(blocks, { header: { marker: null, priority: null, heading: null },
+  regionCache.set(blocks, { header: { marker: null, priority: null, heading: null, marker_range: null, priority_range: null },
     literals: [[0, new TextEncoder().encode(text).length]], property_regions: [], properties: [],
-    planning: [], drawers: [], id: null, quarantined: true });
+    planning: [], drawers: [], id: null, quarantined: true, literal_blocks: [], open_fence: null });
   return remember(key, blocks);
 }
 

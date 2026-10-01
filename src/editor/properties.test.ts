@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { caretInFence } from "./fences";
 import {
-  caretInFence,
   multilineExitTrim,
   isSheetCellHidden,
   joinProps,
@@ -10,7 +10,6 @@ import {
   isBuiltinHidden,
   rawOffsetToVisibleOffset,
   isPageHeaderPropertiesOnly,
-  parsePageHeaderPropertyLine,
   splitPagePreamble,
   pagePartsWithProperty,
   pagePropertyEntries,
@@ -20,14 +19,24 @@ import {
 
 describe("canonical Markdown page-header grammar (GH #163)", () => {
   it("accepts Unicode/plugin keys and preserves internal blank separators", () => {
-    expect(parsePageHeaderPropertyLine("klíč:: hodnota")).toEqual({ key: "klíč", value: " hodnota" });
-    expect(parsePageHeaderPropertyLine("e\u0301/plugin.key::value")).toEqual({ key: "e\u0301/plugin.key", value: "value" });
+    expect(pagePropertyEntries("klíč:: hodnota", "md")).toEqual([{ key: "klíč", value: "hodnota", line: 0 }]);
+    expect(pagePropertyEntries("e\u0301/plugin.key:: value", "md").map((e) => e.key)).toEqual(["e\u0301/plugin.key"]);
     expect(isPageHeaderPropertiesOnly("alias:: book\n\nklíč:: hodnota")).toBe(true);
     expect(splitPagePreamble("alias:: book\n\nklíč:: hodnota\n\nIntro")).toEqual({
       properties: "alias:: book\n\nklíč:: hodnota",
       content: "Intro",
       remainder: "\n\nIntro",
     });
+  });
+
+  // Martin 2026-10-01: the page header follows the parser. lsdoc accepts a nonempty value only after
+  // `:: `, so `key::value` (once pinned here for `e\u0301/plugin.key`) is not a header property, as
+  // in block lines since OG-P12. An empty `key::` is accepted.
+  it("follows the parser for the separating space (no-space key::value is prose)", () => {
+    expect(pagePropertyEntries("e\u0301/plugin.key::value", "md")).toEqual([]);
+    expect(isPageHeaderPropertiesOnly("alias:: x\nplugin::value")).toBe(false);
+    expect(splitPagePreamble("plugin::value\nalias:: x").properties).toBeNull();
+    expect(pagePropertyEntries("empty::\nalias:: x", "md").map((e) => [e.key, e.value])).toEqual([["empty", ""], ["alias", "x"]]);
   });
 
   it("rejects leading whitespace, headings, prose, fences and trailing blanks", () => {
@@ -154,7 +163,9 @@ describe("caretInFence", () => {
 
   it("hides properties accepted after mldoc's shorter backtick close", () => {
     const raw = "````text\nalpha\n```\nid:: literal-code\n````\nid:: real-id";
-    expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(true);
+    // The parser's literal ends at the shorter close (Martin 2026-10-01: fences
+    // follow mldoc, not CommonMark), so the property after it is not code.
+    expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(false);
     const { visible, hidden } = splitProps(raw, isBuiltinHidden);
     // mldoc 1.5.9 emits two Property_Drawer nodes after the shorter Src close.
     expect(visible).toBe("````text\nalpha\n```\n````");
@@ -163,7 +174,7 @@ describe("caretInFence", () => {
 
   it("hides properties accepted after mldoc's shorter tilde close", () => {
     const raw = "~~~~text\n~~~\ncollapsed:: literal-code\n~~~~\ncollapsed:: true";
-    expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(true);
+    expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(false);
     const { visible, hidden } = splitProps(raw, isBuiltinHidden);
     // mldoc 1.5.9 emits both collapsed properties outside Src.
     expect(visible).toBe("~~~~text\n~~~\n~~~~");
