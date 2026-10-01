@@ -14,9 +14,9 @@
 // initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_bundle_json, edit_block_regions_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
-import type { Block, MacroInline } from "./ast";
+import type { Block, MacroInline, Inline } from "./ast";
 
 // `ready` is a Solid signal so components (AstBody) reactively render once the
 // parser is loaded. In the normal flow init is awaited before mount, so it's
@@ -216,4 +216,17 @@ export function soleBlockMacro(raw: string, format: "md" | "org" = "md"): MacroI
   // Positive classification still belongs entirely to the native AST policy.
   if (!parserReady() || !raw.includes("{{")) return null;
   return soleMacroCache.get(parseBlock(raw, format === "org")) ?? null;
+}
+
+const propertyInlineCache = new WeakMap<RegionProperty, Inline[]>();
+/** Inline syntax of one accepted property value, using lsdoc's bounded inline
+ * door. O(value bytes) cold, O(1) warm; coordinates start at the value's byte 0.
+ * Refusal throws, preserving source rather than dropping unreadable content. */
+export function propertyValueInline(property: RegionProperty, format: "md" | "org"): Inline[] {
+  const cached = propertyInlineCache.get(property);
+  if (cached) return cached;
+  const inline = JSON.parse(parse_inline_json(property.value, format === "org")) as Inline[] | null;
+  if (!inline) throw new Error("Inline export refused: property value is too deep");
+  propertyInlineCache.set(property, inline);
+  return inline;
 }

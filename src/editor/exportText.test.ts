@@ -121,3 +121,8 @@ it("D16 source export preserves syntax inside parser literals", () => {
     expect(text).not.toContain("#real");
   }
 });
+
+it("source cleanup also visits metadata values as inline syntax, preserving their literals", () => {
+  expect(exportOutline([{raw:"body\ntags:: [[Page]] #real `[[literal]] #tag **code**`",children:[]}], opt({indent:"no-indent",stripLinks:true,removeTags:true,removeEmphasis:true})))
+    .toBe("body\ntags:: Page `[[literal]] #tag **code**`");
+});

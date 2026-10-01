@@ -426,6 +426,28 @@ export function parse_document_json(text, is_org) {
 }
 
 /**
+ * Inline-only parsing for property values: bounded by the same shared native
+ * tree admission. O(value bytes); null refuses excessive depth, no I/O.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+export function parse_inline_json(raw, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_inline_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Native calendar format grammar, cached (16 patterns). O(title + pattern) on
  * cold compile, O(title) warm; null means invalid. No clock, graph or I/O.
  * @param {string} text

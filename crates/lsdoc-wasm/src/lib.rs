@@ -510,3 +510,10 @@ pub fn format_journal_date(year: i32, month: u32, day: u32, pattern: &str) -> St
 
 #[path = "../../tine-core/src/standalone_macro.rs"]
 mod standalone_macro;
+
+/// Inline-only parsing for property values: bounded by the same shared native
+/// tree admission. O(value bytes); null refuses excessive depth, no I/O.
+#[wasm_bindgen]
+pub fn parse_inline_json(raw: &str, is_org: bool) -> String {
+    serde_json::to_string(&lsdoc_block_parse::parse_inline_bounded(raw, if is_org { "org" } else { "md" })).unwrap()
+}

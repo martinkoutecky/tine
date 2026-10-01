@@ -1,4 +1,4 @@
-import { editBlock, parseBlock } from "../render/parse";
+import { editBlock, parseBlock, blockRegions, propertyValueInline } from "../render/parse";
 import type { Format } from "../render/ast";
 import type { ExportNode, MaxDepth } from "./exportText";
 
@@ -22,16 +22,16 @@ export function cleanInline(text: string, format: Format, options: MarkupExportO
   if (!html && !options.removeTags && !options.stripLinks && !options.removeEmphasis) return text;
   const patches: { start: number; end: number; text: string; tag?: boolean }[] = [];
   const lead = new TextEncoder().encode(text.slice(0, text.length - text.trimStart().length)).length;
-  const range = (span: readonly number[]) => ({start:span[0] - 2 + lead, end:span[1] - 2 + lead});
+  const range = (span: readonly number[], base = lead - 2) => ({start:span[0] + base, end:span[1] + base});
   const escaped = (s: string) => html ? escapeXmlText(s) : s;
-  const visit = (node: unknown): void => {
-    if (Array.isArray(node)) { node.forEach(visit); return; }
+  const visit = (node: unknown, base = lead - 2): void => {
+    if (Array.isArray(node)) { node.forEach(child => visit(child, base)); return; }
     if (!node || typeof node !== "object") return;
     const n = node as { k?: string; kind?: string; span?: number[]; children?: unknown[]; emph?: string; url?: {type: string; v?: string}; label?: unknown[] };
     // These accepted nodes own their complete literal contents.
     if (["code", "verbatim", "latex", "inline_html"].includes(n.k ?? "") || ["src", "example", "raw_html", "properties"].includes(n.kind ?? "")) return;
     if (n.span && n.k) {
-      const r = range(n.span);
+      const r = range(n.span, base);
       if (r.start === undefined || r.end === undefined) return;
       if (n.k === "tag" && options.removeTags) {
         patches.push({...r, text:"", tag:true}); return;
@@ -45,14 +45,17 @@ export function cleanInline(text: string, format: Format, options: MarkupExportO
         const last = children?.[children.length - 1]?.span;
         if (first && last) {
           const tag = ({Bold:"strong", Italic:"em", Underline:"u", Strike_through:"del", Highlight:"mark"} as Record<string,string>)[n.emph!];
-          patches.push({start:r.start, end:range(first).start, text:html && !options.removeEmphasis ? `<${tag}>` : ""});
-          patches.push({start:range(last).end, end:r.end, text:html && !options.removeEmphasis ? `</${tag}>` : ""});
+          patches.push({start:r.start, end:range(first, base).start, text:html && !options.removeEmphasis ? `<${tag}>` : ""});
+          patches.push({start:range(last, base).end, end:r.end, text:html && !options.removeEmphasis ? `</${tag}>` : ""});
         }
       }
     }
-    for (const [key, value] of Object.entries(node)) if (key !== "span" && key !== "span_map") visit(value);
+    for (const [key, value] of Object.entries(node)) if (key !== "span" && key !== "span_map") visit(value, base);
   };
   visit(parseBlock(text, format === "org"));
+  for (const property of blockRegions(text, format).properties) {
+    visit(propertyValueInline(property, format), property.value_range[0]);
+  }
   patches.sort((a,b) => a.start - b.start || a.end - b.end);
   // Convert sorted byte coordinates in one forward pass; no per-character map
   // and no repeated encoding/decoding for individual spans.
@@ -98,11 +101,6 @@ export function escapeXmlAttribute(text: string): string {
     .replace(/'/g, "&apos;")
     .replace(/\t/g, "&#9;")
     .replace(/\r\n?|\n/g, "&#10;");
-}
-
-/** HTML serialization shares the accepted-span cleanup policy. */
-export function renderHtmlInline(text: string, format: Format, removeMarkers: boolean): string {
-  return cleanInline(text, format, {stripLinks:false, removeTags:false, removeEmphasis:removeMarkers}, true);
 }
 
 export function nodeHtml(node: ExportNode, options: MarkupExportOptions): string {

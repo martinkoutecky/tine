@@ -5,7 +5,9 @@ import { format_journal_date, parse_journal_format_json } from "./render/wasm/ls
  * read the graph's active display format set by `setJournalTitleFormat`;
  * `formatJournal` and `parseJournalWith` take an explicit format. All operations
  * are independent of graph size and write no files. Parsing returns null for
- * unrecognized/invalid titles; a configured format defaults to "MMM do, yyyy". */
+ * unrecognized/invalid titles; a configured format defaults to "MMM do, yyyy".
+ * Await initParser() before formatting/parsing, as app boot does. Parser init
+ * failures propagate; there is no alternate date grammar. */
 
 const DEFAULT_TITLE_FORMAT = "MMM do, yyyy";
 let titleFormat = DEFAULT_TITLE_FORMAT;
@@ -119,7 +121,7 @@ export function currentDayKey(): number {
   return dayKey();
 }
 
-export type JournalDateParts = { y: number; m: number; d: number };
+export type JournalDateParts = { readonly y: number; readonly m: number; readonly d: number };
 
 /// Set the active journal title format (from `GraphMeta.journal_page_title_format`).
 export function setJournalTitleFormat(fmt: string | undefined | null): void {
@@ -148,13 +150,16 @@ export function journalTitle(d: Date): string {
 /// the token subset Logseq uses). Mirrors the Rust `Format::parse` so a
 /// `[[journal title]]` link can be routed to the journal page rather than opened
 /// as an empty regular page. Returns the date iff the whole string is valid.
-const parsedTitles = new Map<string, JournalDateParts | null>();
+// Fixed-capacity pure cache: no graph state, no per-lookup key allocation.
+const parsedTitles: ({fmt:string; input:string; parts:JournalDateParts|null} | undefined)[] = Array(64);
+let parsedTitleSlot = 0;
 export function parseJournalWith(s: string, fmt: string): JournalDateParts | null {
-  const key = JSON.stringify([fmt,s]);
-  if (parsedTitles.has(key)) return parsedTitles.get(key)!;
+  const cached = parsedTitles.find(entry => entry?.fmt === fmt && entry.input === s);
+  if (cached) return cached.parts;
   const parts = JSON.parse(parse_journal_format_json(s, fmt)) as JournalDateParts | null;
-  if (parsedTitles.size === 64) parsedTitles.delete(parsedTitles.keys().next().value!);
-  parsedTitles.set(key,parts);
+  if (parts) Object.freeze(parts);
+  parsedTitles[parsedTitleSlot] = {fmt, input:s, parts};
+  parsedTitleSlot = (parsedTitleSlot + 1) % parsedTitles.length;
   return parts;
 }
 

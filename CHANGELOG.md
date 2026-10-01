@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+- Preserve code literals during text, HTML and OPML export cleanup; recognize standalone embeds from parsed content; preserve early journal years and advance timed repeaters (REG-OG-DUPD2-D15–D19).
+
 ### Added
 
 - Settings → About: **Check for updates automatically** can disable startup update checks and notifications on this device; manual checks remain available (GH #618).

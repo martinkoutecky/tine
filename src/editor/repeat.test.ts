@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { hasRepeater, rollRepeat, cycleMarkerSmart, toggleTaskDone, markerLabelClickable, toggleMarkerLabel } from "./repeat";
 
 describe("repeaters", () => {
@@ -88,4 +88,20 @@ it("D19 completing a timed task advances its date and preserves the time", () =>
     expect(toggleTaskDone("TODO task\nSCHEDULED: <2026-09-30 Wed 09:00 +1w>", "todo", format))
       .toBe("TODO task\nSCHEDULED: <2026-10-07 Wed 09:00 +1w>");
   }
+});
+
+it("D19 timed repetition shares all supported modes, both planning kinds and literal exclusions", () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date(2026,8,30,12));
+  try {
+    for (const format of ["md","org"] as const) for (const kind of ["SCHEDULED","DEADLINE"]) {
+      for (const [cookie, next] of [["+1w","2026-10-07 Wed"],[".+1w","2026-10-07 Wed"],["++1w","2026-10-07 Wed"]]) {
+        const raw = `TODO résumé\r\n${kind}: <2026-09-30 Wed 9:05 ${cookie}>\r\nbody`;
+        expect(toggleTaskDone(raw,"todo",format)).toBe(`TODO résumé\r\n${kind}: <${next} 09:05 ${cookie}>\r\nbody`);
+      }
+    }
+    expect(toggleTaskDone("TODO zero\nSCHEDULED: <2026-09-30 Wed +0d>","todo","md"))
+      .toBe("TODO zero\nSCHEDULED: <2026-09-30 Wed +0d>");
+    expect(toggleTaskDone("TODO hour\nSCHEDULED: <2026-09-30 Wed +1h>","todo","md"))
+      .toBe("DONE hour\nSCHEDULED: <2026-09-30 Wed +1h>");
+  } finally { vi.useRealTimers(); }
 });

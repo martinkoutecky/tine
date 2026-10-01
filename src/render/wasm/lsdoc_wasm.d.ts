@@ -102,6 +102,12 @@ export function parse_block_json(raw: string, is_org: boolean): string;
 export function parse_document_json(text: string, is_org: boolean): string;
 
 /**
+ * Inline-only parsing for property values: bounded by the same shared native
+ * tree admission. O(value bytes); null refuses excessive depth, no I/O.
+ */
+export function parse_inline_json(raw: string, is_org: boolean): string;
+
+/**
  * Native calendar format grammar, cached (16 patterns). O(title + pattern) on
  * cold compile, O(title) warm; null means invalid. No clock, graph or I/O.
  */
@@ -208,6 +214,7 @@ export interface InitOutput {
     readonly parse_block_bundle_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
+    readonly parse_inline_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_journal_format_json: (a: number, b: number, c: number, d: number) => [number, number];
     readonly property_line_json: (a: number, b: number) => [number, number];
     readonly query_edn_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
