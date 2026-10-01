@@ -4077,42 +4077,6 @@ impl Graph {
     }
 }
 
-/// Canonical Markdown page-header property grammar mirrored from
-/// `src/editor/properties.ts`. It is deliberately narrower than OG's historical
-/// "first line contains `:: `" serializer heuristic, so ordinary prose/fences
-/// can never be promoted accidentally.
-fn page_header_property_line(line: &str) -> Option<(&str, &str)> {
-    static KEY: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let (key, value) = line.split_once("::")?;
-    if key.is_empty() || key.starts_with('#') {
-        return None;
-    }
-    let valid = KEY
-        .get_or_init(|| regex::Regex::new(r"^[\p{L}\p{M}\p{N}_./-]+$").unwrap())
-        .is_match(key);
-    valid.then_some((key, value))
-}
-
-fn page_header_properties_only(raw: &str) -> bool {
-    if raw.is_empty() || raw.starts_with('\n') || raw.ends_with('\n') {
-        return false;
-    }
-    let mut saw_property = false;
-    for line in raw.split('\n') {
-        if line.is_empty() {
-            if !saw_property {
-                return false;
-            }
-            continue;
-        }
-        if page_header_property_line(line).is_none() {
-            return false;
-        }
-        saw_property = true;
-    }
-    saw_property
-}
-
 /// Properties that describe the block they sit on, never a page. A first
 /// bullet carrying one is an outline block even when it has no text yet: an
 /// empty numbered-list item is `logseq.order-list-type:: number` and nothing
@@ -4135,12 +4099,11 @@ fn first_root_is_promotable_page_header(doc: &Document) -> bool {
         return false;
     };
     first.children.is_empty()
-        && page_header_properties_only(first.raw())
-        && !first.raw().split('\n').any(|line| {
-            page_header_property_line(line).is_some_and(|(key, _)| {
+        && tine_core::block_regions::page_header_only(first.raw()).is_some_and(|header| {
+            !header.entries.iter().any(|entry| {
                 BLOCK_SCOPED_PROPERTY_KEYS
                     .iter()
-                    .any(|scoped| key.eq_ignore_ascii_case(scoped))
+                    .any(|scoped| entry.key.eq_ignore_ascii_case(scoped))
             })
         })
 }
@@ -8094,9 +8057,10 @@ mod tests {
 
     #[test]
     fn page_header_authoring_is_bounded_and_preserves_existing_preambles() {
-        assert!(page_header_properties_only(
-            "alias:: book\n\ne\u{301}/plugin.key::value"
-        ));
+        assert!(tine_core::block_regions::page_header_only(
+            "alias:: book\n\ne\u{301}/plugin.key:: value"
+        )
+        .is_some());
         for invalid in [
             " alias:: x",
             "#alias:: x",
@@ -8104,9 +8068,12 @@ mod tests {
             "alias:: x\nprose",
             "```\nalias:: x\n```",
             "alias:: x\n",
+            // I-12 (Martin 2026-10-01): no-space `key::value` is prose to the parser.
+            "alias:: book\n\ne\u{301}/plugin.key::value",
+            "klic::value",
         ] {
             assert!(
-                !page_header_properties_only(invalid),
+                tine_core::block_regions::page_header_only(invalid).is_none(),
                 "accepted {invalid:?}"
             );
         }

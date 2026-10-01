@@ -230,6 +230,75 @@
         "pre_block": null,
         "title": "I12_9"
       }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "alias:: book\n\nplugin.key::value"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-10",
+            "raw": "alias:: book\n\nplugin.key::value"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_10",
+        "pre_block": null,
+        "title": "I12_10"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "title:: A\n```\nx:: y\n```"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-11",
+            "raw": "title:: A\n```\nx:: y\n```"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_11",
+        "pre_block": null,
+        "title": "I12_11"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "klic::value"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-12",
+            "raw": "klic::value"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_12",
+        "pre_block": null,
+        "title": "I12_12"
+      }
     }
   ]
 }
