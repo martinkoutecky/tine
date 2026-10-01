@@ -7,6 +7,7 @@
 //! Malformed, ambiguous duplicate-key, oversized or excessive-depth EDN refuses
 //! with `None`; callers retain the original source and surface a typed refusal.
 //! Cost O(source bytes), bounded to 1 MiB / 128 levels. No I/O or graph state.
+//! `inspect_begin_query` supplies the live/export BEGIN_QUERY payload decision.
 //! Scalar decoding and string writing use `edn`, the existing EDN value owner.
 
 use crate::edn::{self, Edn};
@@ -331,4 +332,88 @@ pub fn split_trailing_map(source: &str) -> (String, String) {
         );
     }
     unchanged()
+}
+
+/// BEGIN_QUERY payload inspection shared by live wasm and native export.
+/// Reads only accepted direct EDN map entries; preserves query/input spelling,
+/// decodes titles with the EDN owner and returns the live refusal reason.
+/// O(payload bytes), with `read`'s size/depth bounds; no graph access or I/O.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BeginQueryMatch {
+    Supported {
+        query: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+    },
+    Unsupported {
+        reason: &'static str,
+    },
+}
+
+pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
+    use BeginQueryMatch::{Supported, Unsupported};
+    let source = payload.trim();
+    let Some(form) = read(source).filter(|form| form.kind == Kind::Map) else {
+        return Unsupported {
+            reason: "malformed EDN query map",
+        };
+    };
+    let mut title = None;
+    let mut query = None;
+    let mut inputs = None;
+    for pair in form.children.chunks_exact(2) {
+        let value = &source[pair[1].span.clone()];
+        match &source[pair[0].span.clone()] {
+            ":query" => {
+                if query.is_some() {
+                    return Unsupported {
+                        reason: "duplicate :query entry",
+                    };
+                }
+                query = Some(value);
+            }
+            ":inputs" => {
+                if inputs.is_some() || pair[1].kind != Kind::Vector {
+                    return Unsupported {
+                        reason: "expected :inputs to be a vector",
+                    };
+                }
+                inputs = Some(value);
+            }
+            ":title" => {
+                if title.is_some() || pair[1].kind != Kind::String {
+                    return Unsupported {
+                        reason: "expected :title to be a string",
+                    };
+                }
+                if let Some(Edn::Str(text)) = edn::parse_strict(value) {
+                    title = Some(text);
+                }
+            }
+            _ => (),
+        }
+    }
+    // Retain the live inspector's advanced-vector admission (JS word boundary).
+    let keyword = |text: &str, key: &str| {
+        text.match_indices(key).any(|(at, _)| {
+            text.as_bytes()
+                .get(at + key.len())
+                .is_none_or(|c| !c.is_ascii_alphanumeric() && *c != b'_')
+        })
+    };
+    let Some(query) =
+        query.filter(|q| q.starts_with('[') && keyword(q, ":find") && keyword(q, ":where"))
+    else {
+        return Unsupported {
+            reason: "expected an advanced :query vector",
+        };
+    };
+    Supported {
+        query: match inputs {
+            Some(inputs) => format!("{query} :inputs {inputs}"),
+            None => query.into(),
+        },
+        title,
+    }
 }

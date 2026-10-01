@@ -656,3 +656,27 @@ describe("identity-tagged redo", () => {
     expect(doc.byId.other.raw).toBe("old");
   });
 });
+
+
+describe("OG-P11B literal outline insertion", () => {
+  it.each([
+    "#+BEGIN_SRC js\n- literal\n\n  id:: literal\n#+END_SRC",
+    "  #+BEGIN_EXAMPLE\n- literal\n\n  kept spaces\n  #+END_EXAMPLE",
+    "```text\n- literal\n\n```",
+    "~~~~text\n- literal\n\n~~~~",
+  ])("inserts a parser-owned literal intact: %s", (source) => {
+    seed([page("Target", [block(HOST, "host")])]);
+    insertOutlineAfter(HOST, parseOutline(source));
+    const inserted = roots("Target").slice(1);
+    expect(inserted.map(id => doc.byId[id].raw)).toEqual([source]);
+    expect(inserted.map(id => doc.byId[id].children)).toEqual([[]]);
+  });
+  it("keeps a bullet's literal continuation and following ordered item", () => {
+    seed([page("Target", [block(HOST, "host")])]);
+    const literal = "  ```js\n  - literal\n\n    kept spaces\n  ```";
+    insertOutlineAfter(HOST, parseOutline(`- parent\n${literal}\n2) second`));
+    const inserted = roots("Target").slice(1);
+    expect(inserted.map(id => doc.byId[id].raw)).toEqual([`parent\n${literal}`, "second"]);
+    expect(inserted.map(id => doc.byId[id].children)).toEqual([[], []]);
+  });
+});

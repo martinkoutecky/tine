@@ -939,178 +939,6 @@ fn whole_begin_query_payload(raw: &str) -> Option<&str> {
     Some(&raw[payload_start..newline_start])
 }
 
-fn skip_edn_trivia(source: &str, mut from: usize) -> usize {
-    while from < source.len() {
-        let c = source[from..].chars().next().expect("in bounds");
-        if c.is_whitespace() || c == ',' {
-            from += c.len_utf8();
-        } else if c == ';' {
-            from += 1;
-            while from < source.len() && !matches!(source.as_bytes()[from], b'\n' | b'\r') {
-                from += 1;
-            }
-        } else {
-            break;
-        }
-    }
-    from
-}
-
-fn edn_string_end(source: &str, from: usize) -> Option<usize> {
-    let mut at = from + 1;
-    while at < source.len() {
-        let c = source[at..].chars().next()?;
-        if c == '\\' {
-            at += 1;
-            let escaped = source.get(at..)?.chars().next()?;
-            at += escaped.len_utf8();
-        } else if c == '"' {
-            return Some(at + 1);
-        } else {
-            at += c.len_utf8();
-        }
-    }
-    None
-}
-
-fn edn_balanced_end(source: &str, from: usize) -> Option<usize> {
-    fn closer(c: char) -> Option<char> {
-        match c {
-            '(' => Some(')'),
-            '[' => Some(']'),
-            '{' => Some('}'),
-            _ => None,
-        }
-    }
-
-    let first = source.get(from..)?.chars().next()?;
-    let mut stack = vec![closer(first)?];
-    let mut at = from + first.len_utf8();
-    while at < source.len() {
-        let c = source[at..].chars().next()?;
-        if c == '"' {
-            at = edn_string_end(source, at)?;
-            continue;
-        }
-        if c == ';' {
-            while at < source.len() && !matches!(source.as_bytes()[at], b'\n' | b'\r') {
-                at += 1;
-            }
-            continue;
-        }
-        if let Some(close) = closer(c) {
-            stack.push(close);
-        } else if matches!(c, ')' | ']' | '}') {
-            if stack.pop() != Some(c) {
-                return None;
-            }
-            if stack.is_empty() {
-                return Some(at + c.len_utf8());
-            }
-        }
-        at += c.len_utf8();
-    }
-    None
-}
-
-fn edn_token_end(source: &str, mut from: usize) -> usize {
-    while from < source.len() {
-        let c = source[from..].chars().next().expect("in bounds");
-        if c.is_whitespace() || c == ',' || matches!(c, '(' | ')' | '[' | ']' | '{' | '}') {
-            break;
-        }
-        from += c.len_utf8();
-    }
-    from
-}
-
-fn edn_value_end(source: &str, from: usize) -> Option<usize> {
-    match source.get(from..)?.chars().next()? {
-        '"' => edn_string_end(source, from),
-        '(' | '[' | '{' => edn_balanced_end(source, from),
-        _ => {
-            let end = edn_token_end(source, from);
-            (end > from).then_some(end)
-        }
-    }
-}
-
-fn unquote_begin_query_title(inner: &str) -> String {
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.peek().copied() {
-                Some('\n' | '\r') | None => out.push(c),
-                Some(_) => out.push(chars.next().expect("peeked character")),
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-fn has_edn_keyword(source: &str, keyword: &str) -> bool {
-    source.match_indices(keyword).any(|(start, _)| {
-        source[start + keyword.len()..]
-            .chars()
-            .next()
-            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'))
-    })
-}
-
-fn parse_begin_query_map(payload: &str) -> Option<BeginQuery> {
-    let source = payload.trim();
-    if !source.starts_with('{') {
-        return None;
-    }
-    let map_end = edn_balanced_end(source, 0)?;
-    if skip_edn_trivia(source, map_end) != source.len() {
-        return None;
-    }
-
-    let mut title = None;
-    let mut query = None;
-    let mut at = 1;
-    while at < map_end - 1 {
-        at = skip_edn_trivia(source, at);
-        if at >= map_end - 1 {
-            break;
-        }
-        if source.as_bytes()[at] != b':' {
-            return None;
-        }
-        let key_end = edn_token_end(source, at);
-        let key = &source[at..key_end];
-        at = skip_edn_trivia(source, key_end);
-        let value_end = edn_value_end(source, at)?;
-        if value_end > map_end - 1 {
-            return None;
-        }
-        let value = &source[at..value_end];
-        match key {
-            ":query" if query.is_none() => query = Some(value.to_string()),
-            ":query" => return None,
-            ":title" if title.is_none() && value.starts_with('"') => {
-                title = Some(unquote_begin_query_title(&value[1..value.len() - 1]));
-            }
-            ":title" => return None,
-            _ => {}
-        }
-        at = value_end;
-    }
-
-    let query = query?;
-    if !query.starts_with('[')
-        || !has_edn_keyword(&query, ":find")
-        || !has_edn_keyword(&query, ":where")
-    {
-        return None;
-    }
-    Some(BeginQuery { title, query })
-}
-
 /// Inspect raw authored text and use the parsed AST only as a confirmation that
 /// the whole container is the one custom/query node the frontend would dispatch.
 /// EDN is always sliced from `raw`; rendered/flattened AST text is never rebuilt.
@@ -1127,9 +955,13 @@ fn inspect_begin_query(raw: &str, blocks: &[Block]) -> Option<BeginQueryInspecti
     if !matches!(body, [Block::Custom { name, .. }] if name.eq_ignore_ascii_case("query")) {
         return Some(BeginQueryInspection::Unsupported);
     }
-    Some(match parse_begin_query_map(payload) {
-        Some(query) => BeginQueryInspection::Supported(query),
-        None => BeginQueryInspection::Unsupported,
+    Some(match tine_core::query_edn::inspect_begin_query(payload) {
+        tine_core::query_edn::BeginQueryMatch::Supported { title, query } => {
+            BeginQueryInspection::Supported(BeginQuery { title, query })
+        }
+        tine_core::query_edn::BeginQueryMatch::Unsupported { .. } => {
+            BeginQueryInspection::Unsupported
+        }
     })
 }
 

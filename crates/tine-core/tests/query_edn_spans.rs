@@ -86,3 +86,43 @@ fn native_macro_printer_refuses_unreadable_options() {
     assert_eq!(error.kind, DiagnosticKind::Syntax);
     assert!(error.message.contains("unreadable EDN"));
 }
+
+#[test]
+fn begin_query_inspector_preserves_live_payload_semantics() {
+    use query_edn::BeginQueryMatch::{Supported, Unsupported};
+    let query = "[:find (pull ?b [*]) :where (task ?b \"TODO\")]";
+    let payload = format!(
+        r#"{{#_ :discarded :title "Line\nTwo\t\u03bb" :query {query} :inputs [:current-page]}}"#
+    );
+    assert_eq!(
+        query_edn::inspect_begin_query(&payload),
+        Supported {
+            query: format!("{query} :inputs [:current-page]"),
+            title: Some("Line\nTwo\tλ".into()),
+        }
+    );
+    for (entry, reason) in [
+        (":inputs nope", "expected :inputs to be a vector"),
+        (":inputs [] :inputs []", "expected :inputs to be a vector"),
+        (":title 1", "expected :title to be a string"),
+        (
+            ":title \"one\" :title \"two\"",
+            "expected :title to be a string",
+        ),
+        (":query []", "duplicate :query entry"),
+    ] {
+        assert_eq!(
+            query_edn::inspect_begin_query(&format!("{{:query {query} {entry}}}")),
+            Unsupported { reason }
+        );
+    }
+    assert_eq!(
+        query_edn::inspect_begin_query(&format!(
+            r#"{{#_ [:title "hidden"] :nested {{:title "nested"}} :query {query}}}"#
+        )),
+        Supported {
+            query: query.into(),
+            title: None
+        }
+    );
+}

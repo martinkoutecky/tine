@@ -377,6 +377,7 @@ mod query_edn;
 #[wasm_bindgen]
 pub fn query_edn_json(source: &str, operation: &str, value: &str) -> String {
     match operation {
+        "begin_query" => serde_json::to_string(&query_edn::inspect_begin_query(source)).unwrap(),
         "options" => serde_json::to_string(&query_edn::options(source)).unwrap(),
         "title" => serde_json::to_string(&query_edn::edit_title(source, value)).unwrap(),
         "read" => serde_json::to_string(&query_edn::read(source)).unwrap(),
