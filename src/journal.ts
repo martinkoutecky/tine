@@ -148,24 +148,35 @@ export function journalTitle(d: Date): string {
 /// the token subset Logseq uses). Mirrors the Rust `Format::parse` so a
 /// `[[journal title]]` link can be routed to the journal page rather than opened
 /// as an empty regular page. Returns the date iff the whole string is valid.
+const parsedTitles = new Map<string, JournalDateParts | null>();
 export function parseJournalWith(s: string, fmt: string): JournalDateParts | null {
-  return JSON.parse(parse_journal_format_json(s, fmt));
+  const key = JSON.stringify([fmt,s]);
+  if (parsedTitles.has(key)) return parsedTitles.get(key)!;
+  const parts = JSON.parse(parse_journal_format_json(s, fmt)) as JournalDateParts | null;
+  if (parsedTitles.size === 64) parsedTitles.delete(parsedTitles.keys().next().value!);
+  parsedTitles.set(key,parts);
+  return parts;
 }
 
 /// Whether `name` is a journal date in the graph's title format (or a common
 /// default) — so a `[[name]]` link / quick-switch pick opens the journal, not an
 /// empty page. Mirrors the backend's `safe-journal-title-formatters` leniency.
 export function isJournalTitle(name: string): boolean {
-  return parseJournalTitle(name) !== null;
+  return journalParts(name) !== null;
 }
 
 /** Parse a journal title as a local Date from the active format, default title
  * format, ISO or underscore date. Returns null on invalid/unrecognized input.
  * O(title length), independent of graph size; never reads a page. */
-export function parseJournalTitle(name: string): Date | null {
+function journalParts(name: string): JournalDateParts | null {
   for (const fmt of [titleFormat, DEFAULT_TITLE_FORMAT, "yyyy-MM-dd", "yyyy_MM_dd"]) {
     const parts = parseJournalWith(name.trim(), fmt);
-    if (parts) return localCalendarDate(parts.y, parts.m - 1, parts.d);
+    if (parts) return parts;
   }
   return null;
+}
+
+export function parseJournalTitle(name: string): Date | null {
+  const parts = journalParts(name);
+  return parts ? localCalendarDate(parts.y, parts.m - 1, parts.d) : null;
 }

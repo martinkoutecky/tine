@@ -212,5 +212,8 @@ export function editBlock(raw: string, format: "md" | "org", request: object): s
 /** Sole visible macro from the native AST policy (standalone_macro::sole_macro).
  * O(1) on a warm block; cold parsing is O(block bytes), with no second parse. */
 export function soleBlockMacro(raw: string, format: "md" | "org" = "md"): MacroInline | null {
+  // Candidate admission only: without an opening token there cannot be a macro.
+  // Positive classification still belongs entirely to the native AST policy.
+  if (!parserReady() || !raw.includes("{{")) return null;
   return soleMacroCache.get(parseBlock(raw, format === "org")) ?? null;
 }

@@ -112,3 +112,12 @@ describe("exportOutline", () => {
     ).toBe("first\nsecond");
   });
 });
+
+it("D16 source export preserves syntax inside parser literals", () => {
+  for (const raw of ["`[[literal]] #tag **bold**` [[Page]] #real **bold**", "```\n[[literal]] #tag **bold**\n```\n[[Page]] #real **bold**"]) {
+    const text = exportOutline([{raw, children: []}], opt({indent:"no-indent", stripLinks:true, removeTags:true, removeEmphasis:true}));
+    expect(text).toContain("[[literal]] #tag **bold**");
+    expect(text).not.toContain("[[Page]]");
+    expect(text).not.toContain("#real");
+  }
+});

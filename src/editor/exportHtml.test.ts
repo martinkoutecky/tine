@@ -56,3 +56,12 @@ it("keeps fenced property-shaped literals during HTML export (OG-B-FRONT pending
     stripLinks: false, removeEmphasis: false, removeTags: false,
   })).toContain("id:: literal");
 });
+
+it("D16 HTML and OPML preserve literal syntax while cleaning real markup", () => {
+  const raw = "`[[literal]] #tag **code**` [[Page]] #real **bold**";
+  const opts = {stripLinks:true, removeTags:true, removeEmphasis:false};
+  const html = exportHtml([{raw, children: []}], opts);
+  expect(html).toContain("[[literal]] #tag **code**");
+  expect(html).toContain("<strong>bold</strong>");
+  expect(html).not.toContain("#real");
+});

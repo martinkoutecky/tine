@@ -82,3 +82,10 @@ describe("repeaters", () => {
     expect(markerLabelClickable("DONE")).toBe(false);
   });
 });
+
+it("D19 completing a timed task advances its date and preserves the time", () => {
+  for (const format of ["md", "org"] as const) {
+    expect(toggleTaskDone("TODO task\nSCHEDULED: <2026-09-30 Wed 09:00 +1w>", "todo", format))
+      .toBe("TODO task\nSCHEDULED: <2026-10-07 Wed 09:00 +1w>");
+  }
+});

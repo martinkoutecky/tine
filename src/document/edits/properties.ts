@@ -1,5 +1,5 @@
+import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock } from "../../render/parse";
-import { utf8ByteToUtf16Offset } from "../../render/spans";
 import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { pushUndo } from "../history";
@@ -441,7 +441,6 @@ export function setHeading(id: string, state: HeadingState) {
   markDirty(node.page, "save-block");
 }
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
 /** Read a block's SCHEDULED/DEADLINE date as {y,m,d} (m 0-based), or null. */
@@ -464,10 +463,7 @@ export function readSchedule(
   const kind = which === "scheduled" ? "Scheduled" : "Deadline";
   const p = blockRegions(node.raw, formatForBlock(id)).planning.find(p => p.kind === kind);
   if (!p) return null;
-  // Date token splitting is confined to this parser-accepted timestamp.
-  const ts = node.raw.slice(utf8ByteToUtf16Offset(node.raw,p.timestamp[0]), utf8ByteToUtf16Offset(node.raw,p.timestamp[1]));
-  const m = /<(\d{4})-(\d{2})-(\d{2})(?:\s+[A-Za-z]+)?(?:\s+(\d{1,2}:\d{2}))?(?:\s+((?:\.\+|\+\+|\+)\d+[dwmy]))?/.exec(ts);
-  return m ? {y:+m[1],m:+m[2]-1,d:+m[3],time:m[4] ? normalizeHHmm(m[4]) : null,repeater:m[5] ?? null} : null;
+  return scheduleParts(p.date);
 }
 
 /** Set or clear a block's SCHEDULED/DEADLINE org-timestamp (line 2, like OG).
@@ -487,9 +483,8 @@ export function setSchedule(
   const whichKind = which === "scheduled" ? "Scheduled" : "Deadline";
   let value: string | null = null;
   if (date) {
-    const wd = WEEKDAYS[new Date(date.y,date.m,date.d).getDay()];
     const hhmm = time ? normalizeHHmm(time) : null;
-    value = `<${date.y}-${pad2(date.m+1)}-${pad2(date.d)} ${wd}${hhmm ? ` ${hhmm}` : ""}${repeater ? ` ${repeater}` : ""}>`;
+    value = planningTimestamp({...date, time:hhmm, repeater});
   }
   let raw: string;
   try { raw = editBlock(node.raw, formatForBlock(id), {kind:"planning",which:whichKind,value}); }
