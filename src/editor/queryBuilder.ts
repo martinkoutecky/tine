@@ -1,3 +1,4 @@
+import { isLeafLike } from "./queryIr";
 // The visual builder's model — **over the IR, not over text** (SPEC §7.1, §7.4).
 
 import { MARKERS as TASK_MARKERS } from "../markers";
@@ -1014,18 +1015,6 @@ function propertyTestPhrase(test: PropertyLeafTest): PhraseSegment[] {
   const label = propertyOperatorLabel(test.id);
   if (!test.values.length) return [named(test.key), words(` ${label}`)];
   return [named(test.key), words(` ${label} `), chip(test.values.join(" ~ "))];
-}
-
-/** Whether a node is a single condition rather than a group — the unit that
-*  renders as ONE row, and the unit a `not`/`off` wrapper can decorate without
-*  costing a level of indentation. */
-function isLeafLike(filter: Filter): boolean {
-  return (
-    filter.kind === "leaf" ||
-    filter.kind === "raw" ||
-    filter.kind === "true" ||
-    filter.kind === "false"
-  );
 }
 
 /** Whether the filter places no condition: true or an empty and. An empty or

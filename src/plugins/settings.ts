@@ -1,3 +1,4 @@
+import { schemaGuards } from "../schemaGuards";
 export type PluginSettingValue = string | number | boolean;
 export type PluginSettings = Record<string, PluginSettingValue>;
 
@@ -48,25 +49,11 @@ export class PluginSettingsError extends Error {
 const KEY_RE = /^[a-z][a-z0-9._-]{0,79}$/;
 const CHOICE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 
-function record(value: unknown, where: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new PluginSettingsError(`${where} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function knownKeys(obj: Record<string, unknown>, where: string, allowed: readonly string[]) {
-  const known = new Set(allowed);
-  const unknown = Object.keys(obj).find((key) => !known.has(key));
-  if (unknown) throw new PluginSettingsError(`${where} contains unknown field ${unknown}`);
-}
-
-function text(value: unknown, where: string, max: number): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > max || /[\u0000-\u001f]/.test(value)) {
-    throw new PluginSettingsError(`${where} must be plain text of at most ${max} characters`);
-  }
-  return value;
-}
+const { record, knownKeys, text } = schemaGuards(PluginSettingsError, {
+  object: (where) => `${where} must be an object`,
+  string: (where, max) => `${where} must be plain text of at most ${max} characters`,
+  plainText: true,
+});
 
 function finite(value: unknown, where: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {

@@ -1,0 +1,112 @@
+{
+  "tags": [
+    "b",
+    "strong",
+    "i",
+    "em",
+    "u",
+    "ins",
+    "del",
+    "s",
+    "strike",
+    "sub",
+    "sup",
+    "mark",
+    "kbd",
+    "abbr",
+    "small",
+    "code",
+    "cite",
+    "q",
+    "span",
+    "br",
+    "p",
+    "div",
+    "blockquote",
+    "details",
+    "summary",
+    "a",
+    "img",
+    "audio",
+    "video",
+    "source"
+  ],
+  "browser": {
+    "attributes": [
+      "class",
+      "title",
+      "href",
+      "src",
+      "alt",
+      "width",
+      "height",
+      "open",
+      "controls",
+      "loop",
+      "muted",
+      "preload",
+      "poster",
+      "type"
+    ],
+    "deniedResourceSchemes": [
+      "javascript"
+    ]
+  },
+  "native": {
+    "genericAttributes": [
+      "class",
+      "title"
+    ],
+    "tagAttributes": {
+      "a": [
+        "href"
+      ],
+      "img": [
+        "src",
+        "alt",
+        "width",
+        "height"
+      ],
+      "audio": [
+        "src",
+        "controls",
+        "loop",
+        "muted",
+        "preload"
+      ],
+      "video": [
+        "src",
+        "controls",
+        "loop",
+        "muted",
+        "preload",
+        "poster",
+        "width",
+        "height"
+      ],
+      "source": [
+        "src",
+        "type"
+      ],
+      "details": [
+        "open"
+      ]
+    },
+    "urlSchemes": [
+      "https",
+      "http",
+      "mailto",
+      "tel",
+      "data"
+    ],
+    "linkRel": "noopener noreferrer",
+    "denyDataAttributes": [
+      "poster"
+    ],
+    "denyDataTagAttributes": {
+      "a": [
+        "href"
+      ]
+    }
+  }
+}

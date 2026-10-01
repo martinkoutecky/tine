@@ -1,3 +1,4 @@
+import { schemaGuards } from "../schemaGuards";
 export const THEME_API_VERSION = "0.2" as const;
 export const SUPPORTED_THEME_API_VERSIONS = ["0.1", THEME_API_VERSION] as const;
 
@@ -74,23 +75,11 @@ const ID_RE = /^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])?$/;
 const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/;
 const COLOR_RE = /^(?:#[0-9A-Fa-f]{3,8}|transparent|(?:rgb|rgba|hsl|hsla)\([0-9.,%+\- /]+\))$/;
 
-function record(value: unknown, where: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new ThemeManifestError(`${where} must be an object`);
-  return value as Record<string, unknown>;
-}
-
-function knownKeys(obj: Record<string, unknown>, where: string, allowed: readonly string[]) {
-  const known = new Set(allowed);
-  const unknown = Object.keys(obj).find((key) => !known.has(key));
-  if (unknown) throw new ThemeManifestError(`${where} contains unknown field ${unknown}`);
-}
-
-function text(value: unknown, where: string, max: number): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > max || /[\u0000-\u001f]/.test(value)) {
-    throw new ThemeManifestError(`${where} must be bounded plain text`);
-  }
-  return value;
-}
+const { record, knownKeys, text } = schemaGuards(ThemeManifestError, {
+  object: (where) => `${where} must be an object`,
+  string: (where, _max) => `${where} must be bounded plain text`,
+  plainText: true,
+});
 
 function httpsUrl(value: unknown, where: string): string {
   const url = text(value, where, 500);

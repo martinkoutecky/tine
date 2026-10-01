@@ -1,3 +1,4 @@
+import policy from "../../fixtures/html-sanitize-policy.json";
 import DOMPurify from "dompurify";
 
 // The raw-HTML render policy — the single allowlist that both render surfaces
@@ -7,10 +8,10 @@ import DOMPurify from "dompurify";
 // the source bytes VERBATIM (byte-parity with mldoc — mldoc doesn't sanitize
 // either). Sanitizing is a *render-layer* safety decision, so it lives at each
 // render boundary, NOT in the parser. Tine has two such boundaries in two
-// languages, so this list is MIRRORED in crates/tine-core/src/html_sanitize.rs
-// (ammonia, for the static-HTML export). fixtures/html-sanitize-cases.json
-// contract-tests that the two agree. Keep them in lockstep — if you add a tag
-// or attribute here, add it there and add a fixture.
+// languages. fixtures/html-sanitize-policy.json owns the inventories; the
+// browser uses global attributes, native export uses tag-scoped attributes and
+// explicit URL schemes/rel. These engine policies intentionally remain distinct.
+// fixtures/html-sanitize-cases.json checks their common safety outcomes.
 //
 // Threat model: notes aren't self-authored (Syncthing sync, import, paste,
 // shared graphs), and in Tauri an injected `onerror=`/`<script>` can call Tine's
@@ -28,12 +29,7 @@ import DOMPurify from "dompurify";
  *  Deliberately excludes `<iframe>`, `<script>`, `<object>`, `<embed>`, forms,
  *  and anything executable. (The app renders a sandboxed-https `<iframe>` via a
  *  SEPARATE path in `renderRawHtml`, layered above this allowlist.) */
-export const RAW_HTML_TAGS = [
-  "b", "strong", "i", "em", "u", "ins", "del", "s", "strike", "sub", "sup",
-  "mark", "kbd", "abbr", "small", "code", "cite", "q", "span", "br",
-  "p", "div", "blockquote", "details", "summary", "a", "img",
-  "audio", "video", "source",
-];
+export const RAW_HTML_TAGS = policy.tags;
 
 /** Attributes that survive, across all allowed tags. Note the absence of
  *  `style` (positioning/tracking), `autoplay`, and any `on*` handler.
@@ -42,10 +38,7 @@ export const RAW_HTML_TAGS = [
  *  `poster` is the video placeholder; `type` lets `<source>` advertise its
  *  codec. `width`/`height` were already admitted for images and also bound the
  *  video box. URL-bearing `src`/`poster` receive the scheme guard below. */
-export const RAW_HTML_ATTRS = [
-  "class", "title", "href", "src", "alt", "width", "height", "open",
-  "controls", "loop", "muted", "preload", "poster", "type",
-];
+export const RAW_HTML_ATTRS = policy.browser.attributes;
 
 /** Defense-in-depth on top of DOMPurify: reject `javascript:` in `src`/`poster`
  *  even under control-character-obfuscated spellings. `data:` is deliberately
@@ -56,7 +49,7 @@ export const RAW_HTML_ATTRS = [
 function hasDeniedResourceScheme(value: string): boolean {
   const compact = value.replace(/[\u0000-\u0020]/g, "");
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(compact)?.[1]?.toLowerCase();
-  return scheme === "javascript";
+  return scheme !== undefined && policy.browser.deniedResourceSchemes.includes(scheme);
 }
 
 // --- Local-file `<img>` support (opt-in; see localFileSettings + ADR 0019) ---

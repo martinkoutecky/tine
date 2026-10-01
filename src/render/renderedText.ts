@@ -1,3 +1,4 @@
+import { urlDest } from "./urlDest";
 // Rendered-text flattening of a block body — what the block LOOKS like as plain
 // text (typographic glyphs, entity unicode, no markup markers), for the
 // Copy/Export modal's "Rendered" mode. Driven by the ONE lsdoc parse (never a
@@ -14,7 +15,7 @@ import { parseBlock } from "./parse";
 import { createExpansionGate, MACRO_EXPANSION_LIMIT_LABEL, MAX_MACRO_EXPANSION_DEPTH } from "./expansionBudget";
 import { typographic } from "./typography";
 import { isRenderHiddenProp } from "./block";
-import type { Block, Format, Inline, ListItem, TimestampInline, TimestampPoint, Url } from "./ast";
+import type { Block, Format, Inline, ListItem, TimestampInline, TimestampPoint } from "./ast";
 
 /** The `<…>`(active) / `[…]`(inactive) display text of a timestamp inline —
  *  shared with the renderer (render/inline.tsx) so there is one formatter. */
@@ -63,19 +64,6 @@ export interface RenderedTextResolvedLeaf {
 // Resolved block refs and macros share one gate: depth cap plus the per-tree
 // expansion budget of the DOM renderer (expansionBudget.ts, I-22).
 const resolveGate = createExpansionGate();
-
-function urlDest(url: Url): string {
-  switch (url.type) {
-    case "page_ref":
-    case "block_ref":
-    case "search":
-    case "file":
-    case "embed_data":
-      return url.v;
-    case "complex":
-      return url.protocol && url.link != null ? `${url.protocol}://${url.link}` : url.link ?? "";
-  }
-}
 
 function macroLiteral(name: string, args: string[]): string {
   return args.length ? `{{${name} ${args.join(", ")}}}` : `{{${name}}}`;

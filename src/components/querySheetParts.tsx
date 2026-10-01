@@ -1,3 +1,4 @@
+import { isLeafLike } from "../editor/queryIr";
 // The query sheet's parts: the resting sentence, the node model, the row
 // controls, value editors, the anchor line and the add-condition flow (SPEC
 // §7.2-§7.5). Split from `QuerySheet.tsx` along its seams (I-24).
@@ -126,16 +127,7 @@ export function registerVisiblePopover(open: () => boolean, layer: TransientLaye
 
 // The resting sentence (§7.2)
 
-/** A single condition rather than a group — the unit that renders as ONE row,
-*  and the unit a `not`/`off` wrapper decorates without costing a level. */
-export function isLeafLike(filter: Filter): boolean {
-  return (
-    filter.kind === "leaf" ||
-    filter.kind === "raw" ||
-    filter.kind === "true" ||
-    filter.kind === "false"
-  );
-}
+export { isLeafLike } from "../editor/queryIr";
 
 /** Where a retained leaf sits, and whether an `Off` encloses it. */
 export interface RawLeafSite {
