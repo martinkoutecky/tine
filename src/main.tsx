@@ -78,7 +78,7 @@ const mount = () => {
   // only when Solid is ready to synchronously install the real application.
   root.replaceChildren();
   render(() => <App />, root);
-  if (isTauri()) void import("./spike/popout").then(({ runSpike }) => runSpike());
+  if ((window as Window & { __TINE_SPIKE_MW__?: boolean }).__TINE_SPIKE_MW__) void import("./spike/popout").then(({ runSpike }) => runSpike());
   void revealMainWindowAfterStableFrame().catch((error) =>
     console.error("failed to reveal the main window")
   );

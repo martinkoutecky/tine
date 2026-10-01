@@ -2,6 +2,11 @@
 use tauri::{Manager, WebviewWindowBuilder};
 
 pub fn create_main(app: &tauri::App) -> tauri::Result<()> {
+    if std::env::var_os("TINE_SPIKE_MW").is_some() {
+        if let Some(graph) = std::env::var_os("TINE_SPIKE_GRAPH") {
+            std::env::set_var("TINE_GRAPH", graph);
+        }
+    }
     let config = app
         .config()
         .app
@@ -40,7 +45,9 @@ pub fn create_main(app: &tauri::App) -> tauri::Result<()> {
         })
     };
     let builder = if std::env::var_os("TINE_SPIKE_MW").is_some() {
-        builder.position(0.0, 50.0)
+        builder
+            .position(0.0, 50.0)
+            .initialization_script("globalThis.__TINE_SPIKE_MW__ = true;")
     } else {
         builder
     };

@@ -89,7 +89,11 @@ function key(realm: Realm, editor: HTMLTextAreaElement, name: string, extra = {}
 
 export async function runSpike() {
   let config: { graph: string; oskeys: boolean };
-  try { config = await native("config"); } catch { return; } // env absent: no spike behavior
+  try { config = await native("config"); } catch (error) {
+    const result = Object.fromEntries(["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "R"].map(id => [id, { status: "error", detail: String(error) }]));
+    await native("finish", result);
+    return;
+  }
   const result: Record<string, Check> = {};
   const check = async (id: string, fn: () => Promise<unknown>) => {
     try { result[id] = { status: "pass", detail: await fn() }; }

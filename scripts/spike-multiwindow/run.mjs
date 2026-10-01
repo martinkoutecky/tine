@@ -10,7 +10,7 @@ const graph = path.join(out, 'graph');
 await mkdir(out, { recursive: true });
 await cp(path.join(root, 'scripts/spike-multiwindow/fixture'), graph, { recursive: true });
 for (const dir of ['data', 'config', 'cache', 'state']) await mkdir(path.join(out, dir), { recursive: true });
-const env = { ...process.env, TINE_SPIKE_MW: out, TINE_SPIKE_GRAPH: graph, TINE_GRAPH: graph,
+const env = { ...process.env, TINE_SPIKE_MW: out, TINE_SPIKE_GRAPH: graph,
   TINE_SPIKE_MW_OSKEYS: '1', TINE_GPU: '0', XDG_DATA_HOME: path.join(out, 'data'),
   XDG_CONFIG_HOME: path.join(out, 'config'), XDG_CACHE_HOME: path.join(out, 'cache'), XDG_STATE_HOME: path.join(out, 'state') };
 const app = path.resolve(process.env.TINE_APP || path.join(root, 'target/debug', process.platform === 'win32' ? 'tine.exe' : 'tine'));
