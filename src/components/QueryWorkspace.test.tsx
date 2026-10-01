@@ -572,6 +572,30 @@ describe("QueryWorkspace", () => {
     else expect(deps.closeSearchWorkspace).toHaveBeenCalledWith(route.id, generation);
   });
 
+  it.each(["source", "presentation", "display"])("keeps the workspace search alive after a reactive %s edit (I-20/I-21)", async (edit) => {
+    const first: QueryRoute = { kind: "query", id: "live-search", sourceKind: "search", source: "alpha", presentation: "search" };
+    const [active, setActive] = createSignal(first);
+    const deps = { ...workspaceDeps(), closeSearchWorkspace: vi.fn(async () => {}) };
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={active()} router={routerMock(first)} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(root.querySelector(".query-workspace-status")?.textContent).toContain("2 results"));
+      const previousReads = vi.mocked(deps.runGraphSearch).mock.calls.length;
+      setActive({ ...first, ...(edit === "source" ? { source: "beta" }
+        : edit === "presentation" ? { presentation: "table" as const }
+          : { blockDisplay: { sort: [["content", "desc"]] as [string, "desc"][] } }) });
+      await waitFor(() => expect(vi.mocked(deps.runGraphSearch).mock.calls.length).toBeGreaterThan(previousReads));
+      await waitFor(() => expect(root.querySelector(".query-workspace-status")?.textContent).toContain("2 results"));
+      expect(deps.closeSearchWorkspace, "I-21: same workspace edits must not release its search lane; imitate QueryWorkspace's identity memo").not.toHaveBeenCalled();
+      if (edit === "presentation") expect(root.querySelector(".query-results-table")?.textContent).toContain("Alpha notes");
+      setActive({ ...active(), id: "next-search" });
+      await waitFor(() => expect(deps.closeSearchWorkspace).toHaveBeenCalledTimes(1));
+      expect(deps.closeSearchWorkspace).toHaveBeenLastCalledWith(first.id, backend().graphBindingGeneration());
+    } finally { dispose(); }
+    expect(deps.closeSearchWorkspace).toHaveBeenCalledTimes(2);
+    expect(deps.closeSearchWorkspace).toHaveBeenLastCalledWith("next-search", backend().graphBindingGeneration());
+  });
+
   it("keeps empty workspaces local, neutral, and query-free", async () => {
     const route: QueryRoute = { kind: "query", id: "query-empty", sourceKind: "search", source: "", presentation: "search" };
     const deps = workspaceDeps();

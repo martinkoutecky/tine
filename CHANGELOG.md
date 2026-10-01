@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+- UI-OG-E2EB-WORKSPACE-LIFETIME: Editing a query workspace's source, presentation or Display keeps its live answers; replacing the route object no longer closes the active workspace's search.
+
 ## [0.7.0-beta.1] - 2026-09-30
 
 ### Changed

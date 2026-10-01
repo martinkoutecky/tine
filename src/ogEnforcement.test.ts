@@ -62,3 +62,10 @@ it("I-4/I-12: edit only addressed content; imitate queryBuilder.ts edit and remo
   expect(source("favorites.ts"), "Preserve disk preambles; imitate favorites.ts writeArrangementPage (I-4)").toContain("disk?.pre_block ?? markerFor(format)");
   expect(source("sheet/restructure.ts"), "Keep group content unless represented; imitate restructure.ts flatten (I-4)").toContain("if (!group.retain) deleteBlock(group.id)");
 });
+
+it("I-21: workspace resource ownership observes identity, not route replacement", () => {
+  const source = readFileSync(path.join(root, "src/components/QueryWorkspace.tsx"), "utf8");
+  const rule = "I-21: only workspace identity changes release the search; imitate QueryWorkspace's identity memo";
+  expect(source, rule).toContain("const workspaceIdentity = createMemo(() => props.route.id);");
+  expect(source, rule).toContain("createEffect(on(workspaceIdentity,");
+});
