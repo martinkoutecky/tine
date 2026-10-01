@@ -1,3 +1,4 @@
+import { browserPlatform } from "./browserPlatform";
 // "A newer Tine is available" check — best-effort, once per launch.
 //
 // Notifier: ask the Tauri updater plugin what the beta channel offers (NEVER
@@ -74,7 +75,7 @@ async function updateMode(): Promise<UpdateMode> {
   } catch {
     return "unavailable";
   }
-  return /\bMac/i.test(typeof navigator !== "undefined" ? navigator.userAgent : "")
+  return browserPlatform(typeof navigator !== "undefined" ? navigator.userAgent : "").manualDesktopUpdate
     ? "manual"
     : "self";
 }

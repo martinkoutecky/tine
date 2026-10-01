@@ -1,3 +1,4 @@
+import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
 // bindings; users override them via config.edn `:shortcuts {:cmd "binding"}`
 // (delivered in GraphMeta.shortcuts). "mod" = Ctrl (Cmd on macOS). Bindings may
@@ -133,8 +134,7 @@ interface CommandDef {
   global?: boolean;
 }
 
-const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
-
+const isMac = typeof navigator !== "undefined" && browserPlatform("", navigator.platform).macKeyboard;
 function focusPaneByNumber(n: number) {
   if (!layoutHasMultiplePanes()) return;
   const pane = readingOrderPanes(layoutRoot())[n - 1];
