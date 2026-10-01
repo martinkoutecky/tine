@@ -21,6 +21,8 @@ is the 23rd asset. Stable filenames stay unchanged. Product whitespace becomes
 Staging translates source names once and updates zsync Filename/URL headers while
 preserving checksum payload and signed bundle bytes. `release-workflow-inputs.mjs`
 provides workflow filenames and the AppImage update pattern from that layout.
+Linux release runners install `faketime` for the blocking journal-rollover journey;
+an absent clock shim is a failed proof, not a reason to skip that journey.
 
 Beta assembly and publication use only `/releases/download/beta/` updater URLs,
 and `publish=false` performs no remote mutation. No versioned tag or stable

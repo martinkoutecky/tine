@@ -40,6 +40,8 @@ const flatpakMetadataWorkflow = fs.readFileSync(
   path.join(process.cwd(), ".github/workflows/flatpak-metadata.yml"),
   "utf8"
 );
+assert.match(releaseWorkflow, /name: Install Linux dependencies[\s\S]*?apt-get install[\s\S]*?\bfaketime\b/,
+  "release Linux must install faketime for the blocking journal-rollover clock journey");
 const preflight = fs.readFileSync(path.join(process.cwd(), "scripts/check-release-preflight.mjs"), "utf8");
 const e2eRunner = fs.readFileSync(path.join(process.cwd(), "scripts/run-e2e.mjs"), "utf8");
 const receiptHelper = fs.readFileSync(path.join(process.cwd(), "scripts/build-e2e-receipt.mjs"), "utf8");
