@@ -548,7 +548,7 @@ fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, t
 
 /// Project only parser-owned page properties into native block syntax. Keeping
 /// the whole Org drawer preserves parser ownership for reference evidence.
-fn page_property_raw(pre: &str, is_org: bool) -> String {
+pub(crate) fn page_property_raw(pre: &str, is_org: bool) -> String {
     let entries = page_property_lines(pre, is_org);
     if entries.is_empty() {
         return String::new();
@@ -635,15 +635,15 @@ pub(crate) fn document_explicit_reference_names(entry: &PageEntry, doc: &Documen
 fn block_reference_evidence(
     block: &DocBlock,
     canonical: &str,
-    names_norm: &[String],
+    names: &tine_core::reference_evidence::ReferenceNeedles<'_>,
     kind: ReferenceKind,
     config: &tine_core::config::Config,
 ) -> Option<ReferenceBlockEvidence> {
-    let result = tine_core::reference_evidence::occurrences_of_kind_bounded(
+    let result = tine_core::reference_evidence::occurrences_of_kind_prepared(
         block.raw(),
         block.projection().reference_source(),
         canonical,
-        names_norm,
+        names,
         kind,
         config,
     );
@@ -657,14 +657,14 @@ fn block_reference_evidence(
 
 fn block_has_reference(
     block: &DocBlock,
-    names_norm: &[String],
+    names: &tine_core::reference_evidence::ReferenceNeedles<'_>,
     kind: ReferenceKind,
     config: &tine_core::config::Config,
 ) -> bool {
-    tine_core::reference_evidence::has_occurrence_kind(
+    tine_core::reference_evidence::has_occurrence_prepared(
         block.raw(),
         block.projection().reference_source(),
-        names_norm,
+        names,
         kind,
         config,
     )
@@ -702,14 +702,17 @@ fn collect_reference_occurrences_bounded(
     let config = graph.config();
     let exclude = refs::ReferenceSourceExclusions::new(self_page, config.favorites_page.as_deref());
     let mut budget = ConstructionBudget::new(max_rows, max_bytes);
+    // Folded once per query, shared by every block (GH #623, I-25).
+    let needles = tine_core::reference_evidence::ReferenceNeedles::new(names_norm);
     let candidate_pages = graph.reference_candidate_pages(names_norm, kind);
     let groups = {
         let pages = candidate_pages.pages.as_slice();
         let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
         let mut by_name = std::collections::HashMap::<String, usize>::new();
-        let mut sources = pages.iter().collect::<Vec<_>>();
-        sources.sort_by(|(a, _), (b, _)| a.path.cmp(&b.path));
-        for (entry, doc) in sources {
+        let mut sources = (0..pages.len()).collect::<Vec<_>>();
+        sources.sort_by(|&a, &b| pages[a].0.path.cmp(&pages[b].0.path));
+        for page in sources {
+            let (entry, doc) = &pages[page];
             if exclude.excludes_name(&entry.name) {
                 continue;
             }
@@ -718,14 +721,15 @@ fn collect_reference_occurrences_bounded(
             if let Some(mut block) = doc
                 .pre_block
                 .as_deref()
+                .filter(|_| candidate_pages.admits(page, 0))
                 .and_then(|pre| page_property_block(entry, pre))
             {
                 if budget.closed() {
-                    if block_has_reference(&block, names_norm, kind, config) {
+                    if block_has_reference(&block, &needles, kind, config) {
                         budget.deny_match();
                     }
                 } else if let Some(hit) =
-                    block_reference_evidence(&block, canonical, names_norm, kind, config)
+                    block_reference_evidence(&block, canonical, &needles, kind, config)
                 {
                     let mut dto = block_to_shallow_dto(&block);
                     dto.page_property = true;
@@ -741,15 +745,20 @@ fn collect_reference_occurrences_bounded(
             let mut path = Vec::new();
             let mut found: Vec<(BlockDto, ReferenceBlockEvidence)> = Vec::new();
             let construction_closed = std::cell::Cell::new(budget.closed());
+            // Pre-order ordinal of the block being classified (0 is the page
+            // properties), the key into the page's block signatures.
+            let ordinal = std::cell::Cell::new(0usize);
             collect_reference_matches(
                 &doc.roots,
                 &mut path,
                 &mut |block, _| {
-                    if construction_closed.get() {
-                        block_has_reference(block, names_norm, kind, config).then_some(None)
+                    ordinal.set(ordinal.get() + 1);
+                    if !candidate_pages.admits(page, ordinal.get()) {
+                        None
+                    } else if construction_closed.get() {
+                        block_has_reference(block, &needles, kind, config).then_some(None)
                     } else {
-                        block_reference_evidence(block, canonical, names_norm, kind, config)
-                            .map(Some)
+                        block_reference_evidence(block, canonical, &needles, kind, config).map(Some)
                     }
                 },
                 &mut |block, ancestors, hit| {
@@ -1190,12 +1199,13 @@ pub(crate) fn page_affects_backlinks(
     // is conservative for disabled/excluded property pages (it may evict an
     // unaffected cache entry, but cannot retain a stale one).
     let config = tine_core::config::Config::default();
+    let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
         page_property_block(entry, pre).is_some_and(|block| {
             block_reference_evidence(
                 &block,
                 &canonical,
-                &names_norm,
+                &needles,
                 ReferenceKind::Explicit,
                 &config,
             )
@@ -1207,14 +1217,8 @@ pub(crate) fn page_affects_backlinks(
     let mut hit = false;
     walk(&doc.roots, &mut |b| {
         if !hit
-            && block_reference_evidence(
-                b,
-                &canonical,
-                &names_norm,
-                ReferenceKind::Explicit,
-                &config,
-            )
-            .is_some()
+            && block_reference_evidence(b, &canonical, &needles, ReferenceKind::Explicit, &config)
+                .is_some()
         {
             hit = true;
         }
@@ -1235,16 +1239,11 @@ pub(crate) fn page_affects_unlinked(
     let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
     widen_for_journal_day(&mut names_norm, journal, target);
     let config = tine_core::config::Config::default();
+    let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
         page_property_block(entry, pre).is_some_and(|block| {
-            block_reference_evidence(
-                &block,
-                &canonical,
-                &names_norm,
-                ReferenceKind::Plain,
-                &config,
-            )
-            .is_some()
+            block_reference_evidence(&block, &canonical, &needles, ReferenceKind::Plain, &config)
+                .is_some()
         })
     }) {
         return true;
@@ -1252,7 +1251,7 @@ pub(crate) fn page_affects_unlinked(
     let mut hit = false;
     walk(&doc.roots, &mut |b| {
         if !hit
-            && block_reference_evidence(b, &canonical, &names_norm, ReferenceKind::Plain, &config)
+            && block_reference_evidence(b, &canonical, &needles, ReferenceKind::Plain, &config)
                 .is_some()
         {
             hit = true;
