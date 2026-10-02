@@ -11,7 +11,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Probe: state as shipped, then try ON
+      - name: Probe state as shipped then try ON
         shell: pwsh
         run: |
           . ./.github/scripts/defender.ps1
@@ -30,7 +30,7 @@ jobs:
           workspaces: ". -> target"
       - name: Build the A/B bench (release)
         run: cargo build --release -p tine-store --features test-faults --example defender_ab
-      - name: Fetch Ellis's shape export (public attachment on GH #623) and generate the graph
+      - name: Fetch the shape export and generate the graph
         env:
           PYTHONUTF8: "1"
         shell: pwsh
