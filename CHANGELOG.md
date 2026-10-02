@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- Queries answer like Logseq (Discussions #617/#619, issue #624): `(priority [A])`, `(task [TODO])` and `(page-tags [x])` accept Logseq's vector form; a plain text search also finds text that sits in a property line; sibling matches under one parent show that parent's breadcrumb once and sit together; the query builder's pages/blocks choice now sticks (REG-OG-Q617B-VECTOR-FORMS, -PROPERTY-LINE-TEXT, -GROUP-BY-PARENT, -BUILDER-ANCHOR).
 - Simple queries such as `(property type [[Person]])` now find pages whose properties are in the page header, as Logseq does: the page-property block takes part in `property`, `page`, `between`, page-reference and boolean queries and appears as a read-only page-property row (REG-OG-Q617-PREBLOCK-QUERY, Discussion #617).
 - **Raw HTML resources (UI-OG-DUPBL2-D29):** local images and sandboxed iframes use actual DOM attributes, so image text in comments and `data-src` lookalikes cannot select the wrong resource.
 - Uppercase `.ORG` files retain Org format in conflict diffs, PDF annotations and page rename/merge (REG-OG-DUPAL2-F12).

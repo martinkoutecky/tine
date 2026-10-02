@@ -663,12 +663,20 @@ fn og_form(query: &Query) -> Option<String> {
     // `@page` is OG's `blocks?` rule reading false — the anchor is implied by
     // the heads, so a page-anchored filter is printable exactly when every one
     // of its leaves is a page-row head.
-    match filter {
+    let form = match filter {
         Filter::True => Some(String::new()),
         Filter::And { items } if items.is_empty() => Some(String::new()),
         Filter::And { items } if items.len() == 1 => og_clause(&items[0], query.anchor),
         other => og_clause(other, query.anchor),
-    }
+    }?;
+    // The OG dialect carries no anchor of its own: OG's `blocks?` rule infers it
+    // from the form (`query_dsl.cljs:build-query`). A form that would read back
+    // under the OTHER anchor is not expressible in OG -- the builder's
+    // "Find: blocks" on an empty query printed `{{query }}`, which reads back as
+    // pages, so the choice vanished (#615/#619). Such a query is saved in the
+    // anchor-carrying `{{tine-query}}` dialect instead.
+    let (reread, _) = super::og::parse_og(&form, crate::date::JournalDate::today());
+    (reread.anchor == query.anchor).then_some(form)
 }
 
 fn og_clause(filter: &Filter, anchor: Anchor) -> Option<String> {

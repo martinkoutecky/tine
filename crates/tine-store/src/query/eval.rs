@@ -749,7 +749,19 @@ fn eval_content(op: CmpOp, value: &Value, block: &DocBlock, ctx: &EvalCtx) -> bo
             .any(|item| item.as_text().is_some_and(|text| body == fold(text)))
     };
     match op {
-        CmpOp::Like => folded().is_some_and(|pattern| ctx.cache.like(body, &pattern)),
+        // OG's bare-string search is `:block-content` over the block's RAW
+        // content (`query_dsl.cljs:build-block-content`, `rules.cljc:114` `block-content`; CONTENT
+        // includes the `key:: value` property lines), so a substring that
+        // only occurs in a property line must hit. Tine's body is the visible
+        // text (SPEC), so the property lines are tried as extra haystacks,
+        // one `key:: value` line each (a pattern never spans two lines).
+        CmpOp::Like => folded().is_some_and(|pattern| {
+            ctx.cache.like(body, &pattern)
+                || projection
+                    .properties
+                    .iter()
+                    .any(|(k, v)| ctx.cache.like(&fold(&format!("{k}:: {v}")), &pattern))
+        }),
         CmpOp::StartsWith => folded().is_some_and(|prefix| body.starts_with(&prefix)),
         CmpOp::Eq => folded().is_some_and(|text| body == text),
         CmpOp::NotEq => folded().is_some_and(|text| body != text),

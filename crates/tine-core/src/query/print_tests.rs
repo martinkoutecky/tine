@@ -981,3 +981,31 @@ fn a_page_reference_operand_prints_into_a_macro_the_parser_reads_back() {
         "{persisted}"
     );
 }
+
+/// #615 / #619: the builder's "Find: blocks" on an empty query. The OG dialect
+/// prints `{{query }}`, which OG's `blocks?` rule reads back as PAGES, so the
+/// choice vanished. An anchor the OG form cannot carry is not OG-expressible
+/// (it is saved as `{{tine-query}}`, which does carry it).
+#[test]
+fn an_anchor_the_og_form_would_lose_is_not_og_expressible() {
+    let view = ViewSettings::default();
+    let blocks = tql("@block");
+    assert_eq!(blocks.anchor, Anchor::Block);
+    assert!(
+        !og_expressible(&blocks, &view),
+        "empty block-anchored query reads back as pages in OG"
+    );
+    let tine = query_print(&blocks, &view, PrintDialect::TqlMacro, false).unwrap();
+    let (reread, _) =
+        parse_query_text(&tine, crate::query::QueryDialect::Tql, JournalDate::today());
+    assert_eq!(reread.anchor, Anchor::Block, "{tine:?}");
+    // The empty PAGE query and every ordinary form stay OG-expressible.
+    assert!(og_expressible(&tql("@page"), &view));
+    let todo = parse_query_text(
+        "(task TODO)",
+        crate::query::QueryDialect::Og,
+        JournalDate::today(),
+    )
+    .0;
+    assert!(og_expressible(&todo, &view));
+}

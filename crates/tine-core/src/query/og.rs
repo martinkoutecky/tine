@@ -451,6 +451,41 @@ impl<'a> OgParse<'a> {
         out
     }
 
+    /// OG `build-task` / `build-priority` / `build-page-tags`
+    /// (`query_dsl.cljs:279-320`): `(if (coll? (first (rest e))) (first (rest e))
+    /// (rest e))`. A leading Clojure vector `[A B]` supplies the whole list and
+    /// everything after it is ignored; otherwise the names are variadic. The
+    /// tokenizer sees a vector as plain words, so rejoin them up to the word
+    /// holding the closing `]`. Commas are whitespace to Clojure's reader.
+    fn vector_or_names(&mut self) -> Vec<String> {
+        let opens =
+            matches!(self.peek(), Some(Tok::Word(w)) if w.starts_with('[') && !w.starts_with("[["));
+        if !opens {
+            return self.names();
+        }
+        let mut raw = String::new();
+        while let Some(Tok::Word(w)) = self.peek() {
+            let w = w.clone();
+            self.pos += 1;
+            raw.push_str(&w);
+            raw.push(' ');
+            if w.contains(']') {
+                break;
+            }
+        }
+        // Whatever follows the vector is ignored by OG; consume it so the form
+        // still closes cleanly.
+        let _ = self.names();
+        let inner = raw.trim();
+        let inner = inner.strip_prefix('[').unwrap_or(inner);
+        let inner = inner.split(']').next().unwrap_or(inner);
+        inner
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .filter(|t| !t.is_empty())
+            .map(|t| t.trim_matches('"').to_string())
+            .collect()
+    }
+
     /// Skip to just past the `)` closing the form that opened at depth 0 here.
     fn skip_to_close(&mut self) {
         let mut depth = 1usize;
@@ -544,7 +579,7 @@ impl<'a> OgParse<'a> {
             "not" => Filter::not(self.expr(depth + 1)?),
             "task" | "todo" => {
                 self.blocks = true;
-                let markers = self.names();
+                let markers = self.vector_or_names();
                 // OG drops `(task)` with no markers; Tine's shipped behaviour
                 // reads it as "any open task" and the corpus depends on it.
                 let markers = if markers.is_empty() {
@@ -561,7 +596,7 @@ impl<'a> OgParse<'a> {
             }
             "priority" => {
                 self.blocks = true;
-                let levels = self.names();
+                let levels = self.vector_or_names();
                 let levels = if levels.is_empty() {
                     vec!["A".to_string(), "B".to_string(), "C".to_string()]
                 } else {
@@ -603,7 +638,7 @@ impl<'a> OgParse<'a> {
                 property_leaf(key, value)
             }),
             "page-tags" | "tags" => {
-                let tags = self.names();
+                let tags = self.vector_or_names();
                 through_page(Filter::rel(
                     Rel::Props,
                     Quant::Any,
