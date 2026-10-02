@@ -1655,6 +1655,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_refused_external_assets_watch_never_demotes_the_graph_watch() {
+        judged_despite_os_refusals(refused_assets_attempt);
+    }
+
+    #[cfg(unix)]
+    fn refused_assets_attempt() -> bool {
         let root = std::fs::canonicalize(temp_root("refused-assets")).unwrap();
         let external = std::fs::canonicalize(temp_root("refused-assets-real")).unwrap();
         fs::write(external.join("pic.png"), b"first").unwrap();
@@ -1684,6 +1689,14 @@ mod tests {
                 .iter()
                 .any(|(id, _, _)| id.as_str() == "pages/Live.md")
         });
+        if os_refused(&statuses.lock().unwrap()) {
+            REFUSED_ROOTS
+                .lock()
+                .unwrap()
+                .retain(|refused| refused != &external);
+            store.close();
+            return false;
+        }
         let batch = change.watch.unwrap();
         assert!(
             !batch.poll && batch.first_event_at.is_some(),
@@ -1710,12 +1723,41 @@ mod tests {
                 .iter()
                 .any(|(id, _, _)| id.as_str() == "assets/pic.png")
         });
+        if os_refused(&statuses.lock().unwrap()) {
+            store.close();
+            return false;
+        }
         assert!(
             statuses.lock().unwrap().is_empty(),
             "a secondary refusal raised a graph-level status: {:?}",
             statuses.lock().unwrap()
         );
         store.close();
+        true
+    }
+
+    /// The OS itself refusing inotify is not the refusal these tests inject.
+    /// It happens when the per-user instance limit (128 by default) is spent:
+    /// every `WatchMode::Notify` store in a parallel suite, plus other test
+    /// processes on the machine, holds one. Seen as "Too many open files" on
+    /// the graph watch. A run that saw one cannot judge its property (the
+    /// graph watch it relies on was never live), so it is rerun; a property
+    /// failure, the injected refusal leaking, still fails at once.
+    fn os_refused(statuses: &[Option<String>]) -> bool {
+        statuses
+            .iter()
+            .flatten()
+            .any(|message| message != "watch refused by test")
+    }
+
+    fn judged_despite_os_refusals(attempt: fn() -> bool) {
+        for _ in 0..5 {
+            if attempt() {
+                return;
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+        panic!("the OS refused inotify on every attempt: the property was never judged");
     }
 
     /// I-9: the OS refusing live notifications degrades to polling, is
@@ -1724,6 +1766,10 @@ mod tests {
     /// limit reached by a second large graph, or a network mount.
     #[test]
     fn a_refused_watch_polls_reports_and_recovers() {
+        judged_despite_os_refusals(refused_watch_attempt);
+    }
+
+    fn refused_watch_attempt() -> bool {
         // The store watches the canonical root; on Windows the temp dir is an
         // 8.3 short path, so the refusal hook must be keyed by the canonical one.
         let root = crate::Store::canonical_root(&temp_root("refused")).unwrap();
@@ -1775,6 +1821,10 @@ mod tests {
         while statuses.lock().unwrap().len() < 2 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
+        if os_refused(&statuses.lock().unwrap()) {
+            store.close();
+            return false;
+        }
         assert_eq!(statuses.lock().unwrap()[1], None, "restored");
         std::thread::sleep(Duration::from_millis(150));
         fs::write(root.join("pages/Live.md"), "- seen live\n").unwrap();
@@ -1784,11 +1834,16 @@ mod tests {
                 .iter()
                 .any(|(id, _, _)| id.as_str() == "pages/Live.md")
         });
+        if os_refused(&statuses.lock().unwrap()) {
+            store.close();
+            return false;
+        }
         let batch = change.watch.unwrap();
         assert!(!batch.poll && batch.first_event_at.is_some());
         store.close();
         drop(store);
         fs::remove_dir_all(root).unwrap();
+        true
     }
 
     /// GH #623 (Windows diagnostics, 12,920 files): a full diff opened every
