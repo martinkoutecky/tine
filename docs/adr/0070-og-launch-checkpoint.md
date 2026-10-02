@@ -4,28 +4,35 @@
   Martin set the persisted memos and the write cadence on the same day.
 - **Date:** 2026-10-02
 - **Unit cost:** no per-edit write. Each checkpoint rewrites the whole dump,
-  memos and lazily built indexes included (`FORMAT` 2):
-  - g13k (13,000 pages): 115.5 MiB raw (121,127,469 B), 19.6 MiB on disk
-    (20,544,371 B), written in 742 ms;
-  - the anonymized real graph (1,075 pages): 4.5 MiB raw (4,744,714 B),
-    1.07 MiB on disk (1,124,326 B), written in 35 ms.
+  memos and lazily built indexes included (`FORMAT` 3):
+  - g13k (13,000 pages): 121.2 MiB raw (127,075,709 B), 20.7 MiB on disk
+    (21,705,612 B), written in 773 ms;
+  - Ellis's graph: 96.1 MiB raw (100,738,102 B), 29.4 MiB on disk
+    (30,864,978 B), written in 693 ms;
+  - the anonymized real graph (1,075 pages): 4.7 MiB raw (4,940,055 B),
+    1.09 MiB on disk (1,142,584 B), written in 35 ms.
 
-  These are release builds, median of 3, measured by
-  `crates/tine-store/examples/checkpoint_launch_bench.rs` after one Ctrl-K
-  search and one backlinks read, so the memos and indexes hold what a short
-  session builds. FORMAT 1, which wrote no memos, was 20,452,145 B and
-  1,109,631 B for the same state (+0.5% and +1.3%). Byte counts are identical
-  across runs. Each checkpoint writes 1 file (plus its temporary sibling,
-  renamed over it). Transport bytes are 0, because the checkpoint is never
-  synced.
+  These are release builds measured by
+  `crates/tine-store/examples/checkpoint_launch_bench.rs` after Ctrl-K, one
+  full-text search and one backlinks read, so the memos and indexes hold what
+  a short session builds. Byte counts are identical across runs and were
+  measured on FORMAT 3. The write times are the median of 3 on the FORMAT 2
+  build of the same body (FORMAT 3 changed only the header); the FORMAT 3
+  rerun ran at load average 70 and its timings are not usable. Warm Ready on
+  that build: g13k 998 ms, Ellis 753 ms, anonymized 48 ms. FORMAT 1, which
+  wrote no memos, was 20,452,145 B and 1,109,631 B for g13k and the
+  anonymized graph. Each checkpoint writes 1 file (plus its temporary
+  sibling, renamed over it). Transport bytes are 0, because the checkpoint is
+  never synced. Removing a graph from the known-graphs list deletes its
+  checkpoint.
 
   **Frequency bound** (Martin, 2026-10-02): a checkpoint is due 60 s after the
   last dirtying publication (`IDLE`), but never sooner than 5 min after the
   previous write (`MIN_INTERVAL`); continuous editing still gets one within
   10 min of the change (`MAX_AGE`). That is at most 12 writes an hour: about
-  247 MB/hour on g13k and 13.5 MB/hour on the anonymized graph in the worst
-  case (bursts of edits each followed by a minute's pause). Continuous editing
-  gives 6 an hour. The one exception is a store that launched cold (no
+  260 MB/hour on g13k, 370 MB/hour on Ellis's graph and 13.7 MB/hour on
+  the anonymized graph in the worst case (bursts of edits each followed by a
+  minute's pause). Continuous editing gives 6 an hour. The one exception is a store that launched cold (no
   checkpoint loaded): its first checkpoint is due 5 s after its last
   publication (`FIRST_IDLE`), so the next launch is warm; that is one extra
   write per cold launch. A launch with no external changes writes nothing.
