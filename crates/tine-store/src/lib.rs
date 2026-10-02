@@ -87,6 +87,7 @@ mod atomic_file;
 #[cfg(feature = "test-faults")]
 pub mod cost_counters;
 pub mod directory_durability;
+mod launch_diag;
 mod no_replace;
 #[cfg(test)]
 mod no_replace_tests;

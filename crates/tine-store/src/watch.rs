@@ -12,6 +12,9 @@ use std::time::{Duration, Instant, SystemTime};
 use notify::Watcher;
 
 use crate::asset_watch::{AssetObserver, AssetPending, AssetScope};
+use crate::launch_diag::{
+    micros, CollectTimes, DiffStats, DiffTrigger, FileFacts, FillStats, TimedIter,
+};
 use crate::model::{Graph, SyncFileResult};
 use crate::store::{
     journal_ids_from_entries, ChangeFeed, ChangeKind, ConfigState, Day, FileId, FileRev, LoadError,
@@ -168,6 +171,7 @@ fn collect_dir(
     config: &tine_core::Config,
     files: &mut HashMap<PathBuf, Stamp>,
     unreadable: &mut HashMap<PathBuf, String>,
+    times: &mut CollectTimes,
 ) {
     let mut stack = vec![dir.to_path_buf()];
     while let Some(directory) = stack.pop() {
@@ -179,7 +183,7 @@ fn collect_dir(
                 continue;
             }
         };
-        for entry in entries {
+        for entry in TimedIter::new(entries, &mut times.listing) {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
@@ -197,7 +201,11 @@ fn collect_dir(
             };
             if crate::model::graph_text_watch_relevant(root, &path, config) {
                 if kind.is_file() {
-                    if let Some(value) = stamp_metadata(&path) {
+                    let began = Instant::now();
+                    let value = stamp_metadata(&path);
+                    times.stat += began.elapsed();
+                    times.files += 1;
+                    if let Some(value) = value {
                         files.insert(path, value);
                     }
                 }
@@ -217,13 +225,25 @@ fn collect_dir(
 fn collect_with_errors(
     dirs: &[PathBuf; 1],
     config: &tine_core::Config,
-) -> (HashMap<PathBuf, Stamp>, HashMap<PathBuf, String>) {
+) -> (
+    HashMap<PathBuf, Stamp>,
+    HashMap<PathBuf, String>,
+    CollectTimes,
+) {
     let mut files = HashMap::new();
     let mut unreadable = HashMap::new();
+    let mut times = CollectTimes::default();
     for dir in dirs {
-        collect_dir(&dirs[0], dir, config, &mut files, &mut unreadable);
+        collect_dir(
+            &dirs[0],
+            dir,
+            config,
+            &mut files,
+            &mut unreadable,
+            &mut times,
+        );
     }
-    (files, unreadable)
+    (files, unreadable, times)
 }
 
 fn collect(dirs: &[PathBuf; 1], config: &tine_core::Config) -> HashMap<PathBuf, Stamp> {
@@ -491,18 +511,58 @@ impl Core {
                 .any(|dir| path.starts_with(dir))
     }
 
+    /// Hashes every unchanged snapshot entry for the baseline (one stat plus
+    /// one read per file). Read and stat time are summed separately so a slow
+    /// disk or a scanning antivirus shows as read time, not as parse time.
     pub(crate) fn fill_revs(&self) {
+        let began = Instant::now();
+        let (mut stat, mut read) = (Duration::ZERO, Duration::ZERO);
+        let (mut files, mut bytes) = (0u64, 0u64);
         for (path, value) in self.snapshot.lock().unwrap().iter_mut() {
-            if let Some(now) = stamp_metadata(path) {
+            let started = Instant::now();
+            let current = stamp_metadata(path);
+            stat += started.elapsed();
+            if let Some(now) = current {
                 if now.modified == value.modified
                     && now.len == value.len
                     && now.identity == value.identity
                     && now.changed == value.changed
                 {
+                    let started = Instant::now();
                     value.rev = FileRev::from_file(path).ok();
+                    read += started.elapsed();
+                    files += 1;
+                    bytes += now.len;
                 }
             }
         }
+        self.graph.diag.fill_revs(FillStats {
+            wall_us: micros(began.elapsed()),
+            stat_us: micros(stat),
+            read_us: micros(read),
+            files,
+            bytes,
+        });
+    }
+
+    /// File lengths and name facts from the baseline: the shape statistics
+    /// need no extra file reads. Numbers only; no path leaves this function.
+    pub(crate) fn file_facts(&self) -> FileFacts {
+        let snapshot = self.snapshot.lock().unwrap();
+        let mut facts = FileFacts {
+            lens: Vec::with_capacity(snapshot.len()),
+            ..FileFacts::default()
+        };
+        for (path, value) in snapshot.iter() {
+            facts.lens.push(value.len);
+            facts.conflict_named += u64::from(tine_core::model::path_is_sync_conflict(path));
+            let stem_nfc = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_none_or(unicode_normalization::is_nfc);
+            facts.non_nfc_named += u64::from(!stem_nfc);
+        }
+        facts
     }
     fn file_id(&self, path: &Path) -> Option<FileId> {
         if let Ok(rel) = path.strip_prefix(&self.graph.assets_path()) {
@@ -525,9 +585,10 @@ impl Core {
         paths: Option<&HashSet<PathBuf>>,
         include_config: bool,
         scan_semantics: bool,
+        trigger: DiffTrigger,
     ) -> Result<(), LoadError> {
         let _writer = self.writer.lock().unwrap();
-        self.reconcile_locked(paths, include_config, scan_semantics)
+        self.reconcile_locked(paths, include_config, scan_semantics, trigger)
     }
 
     /// One watcher cycle; its publication carries `batch` for latency receipts.
@@ -538,7 +599,12 @@ impl Core {
         batch: WatchBatch,
     ) -> Result<(), LoadError> {
         let _writer = self.writer.lock().unwrap();
-        self.reconcile_inner(paths, include_config, false, Some(batch))
+        let trigger = if batch.poll {
+            DiffTrigger::Poll
+        } else {
+            DiffTrigger::WatchEvent
+        };
+        self.reconcile_inner(paths, include_config, false, Some(batch), trigger)
     }
 
     /// One asset-lane cycle: metadata-only, publishes `Origin::External`
@@ -568,16 +634,40 @@ impl Core {
         paths: Option<&HashSet<PathBuf>>,
         include_config: bool,
         scan_semantics: bool,
+        trigger: DiffTrigger,
     ) -> Result<(), LoadError> {
-        self.reconcile_inner(paths, include_config, scan_semantics, None)
+        self.reconcile_inner(paths, include_config, scan_semantics, None, trigger)
     }
 
+    /// Times the cycle and records it when it was a full stat diff (a config
+    /// change widens a path-scoped cycle into one, so that is known only
+    /// after the body ran). Instants only: nothing is allocated per file.
     fn reconcile_inner(
         &self,
         paths: Option<&HashSet<PathBuf>>,
         include_config: bool,
         scan_semantics: bool,
         batch: Option<WatchBatch>,
+        trigger: DiffTrigger,
+    ) -> Result<(), LoadError> {
+        let began = Instant::now();
+        let mut walk = CollectTimes::default();
+        let result = self.reconcile_walk(paths, include_config, scan_semantics, batch, &mut walk);
+        if walk.full {
+            self.graph
+                .diag
+                .diff(DiffStats::new(trigger, began.elapsed(), &walk));
+        }
+        result
+    }
+
+    fn reconcile_walk(
+        &self,
+        paths: Option<&HashSet<PathBuf>>,
+        include_config: bool,
+        scan_semantics: bool,
+        batch: Option<WatchBatch>,
+        walk: &mut CollectTimes,
     ) -> Result<(), LoadError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(LoadError::Closed);
@@ -654,7 +744,9 @@ impl Core {
                 Some(self.unreadable_dirs.lock().unwrap().clone()),
             )
         } else {
-            let (files, errors) = collect_with_errors(&dirs, &self.graph.current_config());
+            let (files, errors, times) = collect_with_errors(&dirs, &self.graph.current_config());
+            *walk = times;
+            walk.full = true;
             (files, Some(errors))
         };
         #[cfg(test)]
@@ -797,6 +889,7 @@ impl Core {
             false
         };
         drop(snapshot);
+        walk.changed = files.len() as u64;
         if !files.is_empty() || config_changed || unreadable_changed {
             self.changes.publish_watched(
                 Origin::External,
@@ -918,7 +1011,9 @@ impl WatchHandle {
         let dirs = [graph.root.clone()];
         // The asset baseline is captured before any OS watch exists.
         let asset_scope = AssetScope::new(&graph);
-        let snapshot = collect(&dirs, &graph.current_config());
+        let baseline_began = Instant::now();
+        let (snapshot, _, baseline_walk) = collect_with_errors(&dirs, &graph.current_config());
+        graph.diag.baseline(baseline_walk, baseline_began.elapsed());
         let config_stamp = stamp(&graph.root.join("logseq/config.edn"));
         let core = Arc::new(Core {
             graph,
@@ -987,7 +1082,9 @@ impl WatchHandle {
                     });
                 }
                 let _writer = self.core.writer.lock().unwrap();
-                let result = self.core.reconcile_locked(None, true, true);
+                let result = self
+                    .core
+                    .reconcile_locked(None, true, true, DiffTrigger::Recovery);
                 #[cfg(test)]
                 crate::store::pause_at_hook(&self.core.recovery_reconcile_pause);
                 if let Err(error) = result {
@@ -1012,7 +1109,7 @@ impl WatchHandle {
             LoadStatus::Ready => drop(status),
             LoadStatus::Loading => unreachable!(),
         }
-        let result = self.core.reconcile(None, true, true);
+        let result = self.core.reconcile(None, true, true, DiffTrigger::Rescan);
         if result.is_ok() {
             self.core.observe_assets(&HashSet::new(), true);
         }
@@ -1034,7 +1131,9 @@ impl WatchHandle {
 
     pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {
         if !paths.is_empty() {
-            let _ = self.core.reconcile_locked(Some(paths), true, false);
+            let _ = self
+                .core
+                .reconcile_locked(Some(paths), true, false, DiffTrigger::WatchEvent);
             let mut snapshot = self.core.snapshot.lock().unwrap();
             for path in paths {
                 if !self.core.tracks_in_snapshot(path) {
@@ -1234,7 +1333,7 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
                 // A recreated root, or a watch installed after polling, can
                 // already contain files (or a config.edn) it never reported.
                 // Reconcile once, config included.
-                let _ = core.reconcile(None, true, false);
+                let _ = core.reconcile(None, true, false, DiffTrigger::WatchInstall);
             }
         }
         let external_assets = core
@@ -1737,7 +1836,8 @@ mod tests {
             .graph
             .fail_sync_read_once
             .store(true, Ordering::Release);
-        core.reconcile_locked(None, true, true).unwrap();
+        core.reconcile_locked(None, true, true, DiffTrigger::Test)
+            .unwrap();
         assert!(store
             .whole_graph()
             .unwrap()
@@ -1750,7 +1850,8 @@ mod tests {
             .unreadable_pages()
             .iter()
             .any(|(id, _)| id.as_str() == "pages/A.md"));
-        core.reconcile_locked(None, true, true).unwrap();
+        core.reconcile_locked(None, true, true, DiffTrigger::Test)
+            .unwrap();
         assert!(store
             .whole_graph()
             .unwrap()
@@ -1769,7 +1870,8 @@ mod tests {
         fs::write(&path, "- changed again\n").unwrap();
         core.force_mismatched_rev_once
             .store(true, Ordering::Release);
-        core.reconcile_locked(None, true, true).unwrap();
+        core.reconcile_locked(None, true, true, DiffTrigger::Test)
+            .unwrap();
         assert!(subscription.try_recv().unwrap().is_none());
         assert!(store
             .whole_graph()
@@ -1780,7 +1882,8 @@ mod tests {
             .any(|page| {
                 page.name == "A" && page.document.roots[0].raw().contains("new content")
             }));
-        core.reconcile_locked(None, true, true).unwrap();
+        core.reconcile_locked(None, true, true, DiffTrigger::Test)
+            .unwrap();
         let change = subscription
             .try_recv()
             .unwrap()

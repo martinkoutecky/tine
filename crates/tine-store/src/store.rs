@@ -314,6 +314,7 @@ struct Snapshot {
 }
 
 mod answer_changes;
+mod diagnostics;
 mod snapshot;
 
 impl ChangeFeed {
@@ -992,6 +993,7 @@ impl Store {
             Arc::clone(&config_state),
             Arc::clone(&journal_ids),
         ));
+        graph.diag.open_done();
         let watch = crate::watch::WatchHandle::start(
             Arc::clone(&graph),
             Arc::clone(&writer),
@@ -1030,6 +1032,7 @@ impl Store {
                 }
                 if matches!(completed, Ok(true)) {
                     if matches!(*worker_load.status.lock().unwrap(), LoadStatus::Loading) {
+                        let publish_began = std::time::Instant::now();
                         worker_changes.publish_with(
                             Origin::External,
                             Vec::new(),
@@ -1037,9 +1040,11 @@ impl Store {
                             Vec::new(),
                             || *worker_load.status.lock().unwrap() = LoadStatus::Ready,
                         );
+                        worker_graph.diag.ready(publish_began);
                         let _ = worker_watch_wake.send(());
                     }
                 } else {
+                    worker_graph.diag.load_stopped();
                     let mut status = worker_load.status.lock().unwrap();
                     if matches!(*status, LoadStatus::Loading) {
                         *status = LoadStatus::Failed("background graph load stopped".into());

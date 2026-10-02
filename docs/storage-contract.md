@@ -81,8 +81,8 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::apply::InvalidTarget` | 1 | A generated unique candidate is no longer a valid target after a concurrent change; refuse that candidate. |
 | `transaction.rs::apply::RepeatedFile` | 1 | A unique candidate collides with another step after planning; refuse rather than overwrite. |
 | `transaction.rs::apply::Undecodable` | 2 | Imported bytes fail UTF-8 validation after staging; remove the stage and keep the original. |
-| `transaction.rs::commit::Closed` | 1 | A graph is closed while a queued save waits; refuse its old binding. |
-| `transaction.rs::commit::RepeatedFile` | 1 | A multi-step action names one file twice; refuse before any write. |
+| `transaction.rs::commit_timed::Closed` | 1 | A graph is closed while a queued save waits; refuse its old binding. |
+| `transaction.rs::commit_timed::RepeatedFile` | 1 | A multi-step action names one file twice; refuse before any write. |
 | `transaction.rs::rewrite::Undecodable` | 1 | Sync makes a referrer invalid UTF-8 before rename rewrite; keep that file and refuse the rename. |
 | `transaction.rs::rewrite_move::Undecodable` | 2 | Sync leaves a title-owned move source or its rewritten bytes invalid UTF-8; refuse the rename before moving the file or publishing a new title. |
 | `transaction.rs::rewrite::ReadOnly` | 1 | An Org referrer is not round-trip editable; keep its bytes instead of rewriting it. |

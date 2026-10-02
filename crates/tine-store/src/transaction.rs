@@ -1542,7 +1542,20 @@ impl<'a> Transaction<'a> {
     /// Prior page bytes stay in memory through commit, so undo can require
     /// O(changed bytes) memory and extra file reads/writes. A clean undo publishes
     /// no change and leaves the graph revision unchanged.
-    pub fn commit(mut self) -> TxOutcome {
+    pub fn commit(self) -> TxOutcome {
+        let store = self.store;
+        let mut timing = crate::launch_diag::SaveTiming::start(self.steps.len());
+        let outcome = self.commit_timed(&mut timing);
+        store
+            .graph
+            .diag
+            .save(timing, matches!(outcome, TxOutcome::Committed { .. }));
+        outcome
+    }
+
+    /// The body of `commit`; `timing` splits the wait for reference
+    /// publication and for the writer lock from the work itself.
+    fn commit_timed(mut self, timing: &mut crate::launch_diag::SaveTiming) -> TxOutcome {
         // OG-RULES Rule 8: a raw step that touches a page file runs in a
         // transaction that declared its edit kind (`save_page` asserts its own).
         // A missing kind is a caller bug, not an in-scope storage threat, so it
@@ -1568,7 +1581,9 @@ impl<'a> Transaction<'a> {
             }
         }
         self.await_reference_publication();
+        timing.publication_waited();
         let _writer = self.store.writer.lock().unwrap();
+        timing.writer_acquired();
         let rev = || self.store.changes.rev();
         if self.store.is_closed() {
             return TxOutcome::NotCommitted {

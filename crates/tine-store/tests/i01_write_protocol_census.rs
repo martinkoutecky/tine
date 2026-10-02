@@ -149,7 +149,7 @@ fn every_content_mutation_has_a_reviewed_owner() {
             "remove_trash_entry_counted",
         ),
         ("crates/tine-store/src/transaction.rs", "apply"),
-        ("crates/tine-store/src/transaction.rs", "commit"),
+        ("crates/tine-store/src/transaction.rs", "commit_timed"),
         ("src-tauri/src/backup.rs", "cleanup_partial_backups"),
         ("src-tauri/src/backup.rs", "drop"),
         ("src-tauri/src/backup.rs", "prune_backups"),

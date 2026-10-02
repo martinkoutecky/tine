@@ -11,6 +11,7 @@ mod page_icons;
 mod page_identity;
 mod page_parse;
 mod parse_depth;
+pub(crate) mod shape_stats;
 pub(crate) use page_identity::configured_hidden;
 #[cfg(test)]
 use page_identity::effective_page_name;
@@ -290,6 +291,8 @@ pub(crate) struct Graph {
     // `Arc<Document>` so a cache snapshot or a save's scoped-invalidation copy is
     // an O(1) refcount bump, not a deep clone of the whole page (see cache_upsert).
     cache: RwLock<Option<Arc<Pages>>>,
+    /// Launch/diff/save timings and load-pass accounting behind `Store::diagnostics`.
+    pub(crate) diag: crate::launch_diag::DiagRecorder,
     #[cfg(test)]
     pub(crate) cache_publish_pause: std::sync::Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
@@ -2146,6 +2149,7 @@ impl Graph {
             live_config: RwLock::new(None),
             live_journal_format: RwLock::new(None),
             cache: RwLock::new(None),
+            diag: crate::launch_diag::DiagRecorder::new(),
             #[cfg(test)]
             cache_publish_pause: std::sync::Mutex::new(None),
             #[cfg(test)]
@@ -2920,6 +2924,7 @@ impl Graph {
         use std::sync::atomic::Ordering;
         let _bl = self.build_lock.lock().unwrap();
         if self.cache.read().unwrap().is_none() {
+            let build_began = std::time::Instant::now();
             loop {
                 let gen0 = self.cache_gen.load(Ordering::Acquire);
                 let built = self.load_all_pages();
@@ -2931,6 +2936,7 @@ impl Graph {
                     break;
                 }
             }
+            self.diag.on_demand_build(build_began.elapsed());
         }
         drop(_bl);
         let snapshot = {
@@ -2967,7 +2973,14 @@ impl Graph {
         let gen0 = self.cache_gen.load(Ordering::Acquire);
         #[cfg(test)]
         self.warm_passes.fetch_add(1, Ordering::Relaxed);
+        // Phase timings for `Store::diagnostics`: local accumulators, one
+        // recorder call per pass (see `launch_diag`).
+        use crate::launch_diag as diag;
+        let began = std::time::Instant::now();
+        let mut pass = diag::PassStats::default();
         let entries = self.list_pages();
+        pass.listing_us = diag::micros(began.elapsed());
+        pass.entries = entries.len() as u64;
         let mut built = PageCacheBuild::with_capacity(entries.len());
         // Record each file's mtime BEFORE reading it, so a re-stat before install
         // catches any external edit that landed during the paced parse (external
@@ -2976,20 +2989,39 @@ impl Graph {
             Vec::with_capacity(entries.len());
         for (i, e) in entries.into_iter().enumerate() {
             if cancelled() {
-                return false;
+                return pass.finish(&self.diag, began, diag::OUTCOME_CANCELLED, false);
             }
+            let phase = std::time::Instant::now();
             let mtime = fs::metadata(&e.path)
                 .and_then(|metadata| metadata.modified().map(|time| (time, metadata.len())))
                 .ok();
+            pass.stat_us += diag::micros(phase.elapsed());
+            pass.stat_files += 1;
             let path = e.path.clone();
-            let indexed = match read_parse_input(&e.path) {
-                Ok(content) => built.collect(isolate_page_parse(e, |entry| {
-                    Some(parse_page_content(entry, &content))
-                })),
-                Err(error) => built.collect(Err(PageParseFailure::Unreadable(
-                    e.rel_path_str().to_owned(),
-                    error.to_string(),
-                ))),
+            let phase = std::time::Instant::now();
+            let read = read_parse_input(&e.path);
+            pass.read_us += diag::micros(phase.elapsed());
+            let indexed = match read {
+                Ok(content) => {
+                    pass.read_files += 1;
+                    pass.read_bytes += content.len() as u64;
+                    pass.crlf_files +=
+                        u64::from(line_endings::convention(Some(&content)) == "\r\n");
+                    let phase = std::time::Instant::now();
+                    let indexed = built.collect(isolate_page_parse(e, |entry| {
+                        Some(parse_page_content(entry, &content))
+                    }));
+                    pass.parse_us += diag::micros(phase.elapsed());
+                    pass.parsed_files += 1;
+                    indexed
+                }
+                Err(error) => {
+                    pass.read_failed += 1;
+                    built.collect(Err(PageParseFailure::Unreadable(
+                        e.rel_path_str().to_owned(),
+                        error.to_string(),
+                    )))
+                }
             };
             if indexed {
                 mtimes.push((path, mtime));
@@ -3000,34 +3032,47 @@ impl Graph {
             }
             if i % 24 == 23 {
                 if self.cache.read().unwrap().is_some() {
-                    return true; // a query built the cache while we parsed
+                    // a query built the cache while we parsed
+                    return pass.finish(&self.diag, began, diag::OUTCOME_CACHE_ALREADY_BUILT, true);
                 }
+                let phase = std::time::Instant::now();
                 std::thread::sleep(std::time::Duration::from_millis(2));
+                pass.pace_us += diag::micros(phase.elapsed());
             }
         }
         // If any built file changed during the paced parse, our snapshot may be
         // stale and the watcher might not yet baseline-track it — discard and let
         // the next on-demand build read fresh. (A false positive just rebuilds.)
-        if mtimes.iter().any(|(p, m)| {
+        let phase = std::time::Instant::now();
+        let changed = mtimes.iter().any(|(p, m)| {
             fs::metadata(p)
                 .and_then(|metadata| metadata.modified().map(|time| (time, metadata.len())))
                 .ok()
                 != *m
-        }) {
-            return false;
+        });
+        pass.recheck_us = diag::micros(phase.elapsed());
+        if changed {
+            return pass.finish(&self.diag, began, diag::OUTCOME_FILE_CHANGED, false);
         }
         if cancelled() {
-            return false;
+            return pass.finish(&self.diag, began, diag::OUTCOME_CANCELLED, false);
         }
         // Install only if nobody else built it and no Tine save/remove raced our
         // reads (its cache mutation would have no-op'd against the None cache, so
         // its disk write must be folded in by a rebuild — defer to the next
         // on-demand build rather than install a stale snapshot).
+        let phase = std::time::Instant::now();
         let _bl = self.build_lock.lock().unwrap();
-        self.install_built(built, gen0);
+        let installed = self.install_built(built, gen0);
+        pass.install_us = diag::micros(phase.elapsed());
         #[cfg(test)]
         crate::store::pause_at_hook(&self.warm_after_install_pause);
-        !cancelled()
+        let outcome = if installed {
+            diag::OUTCOME_INSTALLED
+        } else {
+            diag::OUTCOME_INSTALL_DECLINED
+        };
+        pass.finish(&self.diag, began, outcome, !cancelled())
     }
 
     /// Discard the cache; it rebuilds on the next whole-graph query. Use when an

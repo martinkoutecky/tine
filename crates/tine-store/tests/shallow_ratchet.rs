@@ -173,7 +173,11 @@ fn public_items(src: &Path) -> BTreeSet<String> {
             .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
         collect(&m.ident.to_string(), &parsed.items, &mut out);
     }
-    for child in ["store/save_failure.rs", "store/page_identity.rs"] {
+    for child in [
+        "store/save_failure.rs",
+        "store/page_identity.rs",
+        "store/diagnostics.rs",
+    ] {
         let file = src.join(child);
         let parsed = syn::parse_file(&std::fs::read_to_string(&file).unwrap())
             .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
@@ -276,7 +280,9 @@ fn arrival_numeric_budgets() {
         .count();
     // The 37th operation is Transaction::expect: a read-only guard needed by
     // dependent asset cleanup without a synthetic sidecar write.
-    assert!(operations <= 37, "tine-store Rule 1: Store + Transaction has {operations} public methods, budget 37; imitate crates/tine-store/SURFACE.txt");
+    // The 38th operation is Store::diagnostics: the statistics-only launch and
+    // graph-shape snapshot behind Settings > Help & diagnostics (GH #623).
+    assert!(operations <= 38, "tine-store Rule 1: Store + Transaction has {operations} public methods, budget 38; imitate crates/tine-store/SURFACE.txt");
     assert!(questions <= 25, "tine-store Rule 4: WholeGraph has {questions} public methods, budget 25; imitate crates/tine-store/SURFACE.txt");
     assert!(
         types <= 55,
