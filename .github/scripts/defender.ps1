@@ -83,15 +83,17 @@ function Show-DefenderProof([string]$Label = '') {
   # Behavioural proof: EICAR must be blocked/removed by real-time protection (written from
   # pieces so this script file is not itself flagged). Harmless 68-byte test string.
   $eicar = 'X5O!P%@AP[4\PZX54(P^)7CC)7}$' + 'EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'
-  $f = Join-Path $env:TEMP "eicar-probe.txt"
+  $f = Join-Path $env:USERPROFILE "eicar-probe.txt"
   Remove-Item $f -Force -ErrorAction SilentlyContinue
-  try { [IO.File]::WriteAllText($f, $eicar) } catch { Write-Host "EICAR write blocked: $($_.Exception.Message)" }
-  Start-Sleep -Seconds 4
-  $present = Test-Path $f
-  $readable = $false
-  if ($present) { try { $null = [IO.File]::ReadAllText($f); $readable = $true } catch { Write-Host "EICAR read blocked: $($_.Exception.Message)" } }
-  Write-Host "EICAR probe: fileStillPresent=$present readable=$readable  (ON expected: absent or unreadable)"
+  $blocked = $false; $waited = 0
+  try { [IO.File]::WriteAllText($f, $eicar) } catch { Write-Host "EICAR write blocked: $($_.Exception.Message)"; $blocked = $true }
+  while (-not $blocked -and $waited -lt 90) {
+    Start-Sleep -Seconds 3; $waited += 3
+    if (-not (Test-Path $f)) { $blocked = $true; break }
+    try { $null = [IO.File]::ReadAllText($f) } catch { Write-Host "EICAR read blocked: $($_.Exception.Message)"; $blocked = $true }
+  }
+  Write-Host "EICAR probe: blocked=$blocked after ${waited}s  (ON expected: blocked)"
   Remove-Item $f -Force -ErrorAction SilentlyContinue
-  $o['EicarBlocked'] = (-not $present) -or (-not $readable)
+  $o['EicarBlocked'] = $blocked
   return $o
 }
