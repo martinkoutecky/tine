@@ -84,8 +84,25 @@ pub(crate) struct Stamp {
 
 pub(crate) type RestoreBaseline = HashMap<PathBuf, Stamp>;
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only: how many stamps this thread took by PATH (a per-file
+    /// `symlink_metadata`, which on Windows opens the file). A full diff
+    /// reads stamps from the directory listing instead (GH #623).
+    static STAMPS_BY_PATH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub(crate) fn stamp_metadata(path: &Path) -> Option<Stamp> {
-    let metadata = fs::symlink_metadata(path).ok()?;
+    #[cfg(test)]
+    STAMPS_BY_PATH.with(|count| count.set(count.get() + 1));
+    stamp_from_metadata(&fs::symlink_metadata(path).ok()?)
+}
+
+/// The one stamp producer per platform. `metadata` must not follow symlinks:
+/// `fs::symlink_metadata(path)` and `DirEntry::metadata()` both qualify. On
+/// Windows the latter comes from the directory listing (FindNextFileW), so
+/// stamping a walk's entries opens no file (GH #623; spec §1 stamp, Q8).
+pub(crate) fn stamp_from_metadata(metadata: &fs::Metadata) -> Option<Stamp> {
     if !metadata.file_type().is_file() {
         return None;
     }
@@ -204,7 +221,11 @@ fn collect_dir(
             if crate::model::graph_text_watch_relevant(root, &path, config) {
                 if kind.is_file() {
                     let began = Instant::now();
-                    let value = stamp_metadata(&path);
+                    // From the listing's own metadata: no per-file open.
+                    let value = entry
+                        .metadata()
+                        .ok()
+                        .and_then(|metadata| stamp_from_metadata(&metadata));
                     times.stat += began.elapsed();
                     times.files += 1;
                     if let Some(value) = value {
@@ -1766,6 +1787,38 @@ mod tests {
         assert!(!batch.poll && batch.first_event_at.is_some());
         store.close();
         drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// GH #623 (Windows diagnostics, 12,920 files): a full diff opened every
+    /// file just to stamp it (1.2-1.5 s per focus return). The walk already
+    /// holds each entry's metadata from the directory listing, so an
+    /// unchanged graph takes no per-path stamp at all, and the stamps it
+    /// takes are the same ones the per-path producer would.
+    #[test]
+    fn a_full_diff_stamps_from_the_listing_and_opens_no_unchanged_file() {
+        let root = temp_root("listing-stamps");
+        fs::create_dir_all(root.join("pages/ns")).unwrap();
+        for n in 0..40 {
+            fs::write(root.join(format!("pages/P{n}.md")), format!("- page {n}\n")).unwrap();
+        }
+        fs::write(root.join("pages/ns/Deep.md"), "- deep\n").unwrap();
+        let config = tine_core::Config::default();
+        STAMPS_BY_PATH.with(|count| count.set(0));
+        let files = collect(&[root.clone()], &config);
+        assert_eq!(files.len(), 41);
+        assert_eq!(
+            STAMPS_BY_PATH.with(|count| count.get()),
+            0,
+            "a full diff stamped files by path instead of from the directory listing"
+        );
+        for (path, value) in &files {
+            let by_path = stamp_metadata(path).unwrap();
+            assert_eq!(
+                *value, by_path,
+                "listing stamp differs from the per-path stamp for {path:?}"
+            );
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
