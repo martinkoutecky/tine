@@ -159,6 +159,12 @@ fn every_content_mutation_has_a_reviewed_owner() {
         ("src-tauri/src/backup.rs", "write_payload"),
         // Thumbnail cache cleanup is outside graph/private-durable state.
         ("src-tauri/src/commands.rs", "import_native_capture"),
+        // Deletes a forgotten graph's launch checkpoint (ADR 0070), a
+        // disposable cache in app data, never graph content. Crash matrix: a
+        // crash or failed remove leaves the old file; re-adding that graph
+        // validates it like any checkpoint (header, config key, stamps) and
+        // rebuilds on any mismatch.
+        ("src-tauri/src/graph.rs", "forget_launch_checkpoint"),
         ("src-tauri/src/device_io.rs", "atomic_write"),
         ("src-tauri/src/device_io.rs", "atomic_write_new"),
     ]

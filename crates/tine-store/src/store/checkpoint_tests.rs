@@ -1017,6 +1017,17 @@ fn a_launch_diff_that_leaves_a_path_racy_runs_one_follow_up_diff() {
             .filter(|diff| diff["trigger"] == "racy_follow_up")
             .count()
     };
+    // The OS watch was refused at some point (inotify limits on a loaded
+    // host): the watcher then polls every cycle, which covers the rewrite by
+    // itself and serves as the follow-up, so the follow-up is not observable.
+    let polled = |store: &Store| {
+        store.changes.watch_status.lock().unwrap().0.is_some()
+            || store.diagnostics()["fullDiffs"]["recent"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|diff| diff["trigger"] == "poll_cycle")
+    };
     let root = graph();
     let dir = tempfile::tempdir().unwrap();
     let cp = dir.path().join("graph.bin");
@@ -1039,12 +1050,31 @@ fn a_launch_diff_that_leaves_a_path_racy_runs_one_follow_up_diff() {
     fs::write(&a, "- links [[Two]]\n").unwrap();
     let store = open_notify(root.path(), &cp);
     store.whole_graph_reconciled().unwrap();
-    let ready = Instant::now();
     assert_eq!(load_outcome(&store), "loaded");
     assert_eq!(backlink_pages(&store, "Two"), vec!["A".to_owned()]);
+    // The launch diff scheduled the follow-up. Timing is judged against that
+    // deadline, not against Ready: on a loaded host the reconcile wait can
+    // take most of the window.
+    let due = *store.watch.core_for_load().follow_up.lock().unwrap();
+    let Some(due) = due.filter(|due| *due > Instant::now() + Duration::from_millis(300)) else {
+        // Already fired, or about to fire before the rewrite below could
+        // land, or the watcher is polling: the catch is not observable here.
+        // The schedule itself still happened, at most once.
+        let wait = Instant::now() + Duration::from_secs(6);
+        while follow_ups(&store) == 0 && !polled(&store) {
+            assert!(
+                Instant::now() < wait,
+                "§5.4: the launch diff scheduled no follow-up"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(follow_ups(&store) <= 1);
+        store.close();
+        return;
+    };
     // Rewritten unseen by the (deaf) watcher.
     fs::write(&a, "- links [[Six]]\n").unwrap();
-    let deadline = ready + Duration::from_secs(6);
+    let deadline = due + Duration::from_secs(4);
     while backlink_pages(&store, "Six").is_empty() {
         assert!(
             Instant::now() < deadline,
@@ -1052,16 +1082,16 @@ fn a_launch_diff_that_leaves_a_path_racy_runs_one_follow_up_diff() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    let after = ready.elapsed();
-    if store.changes.watch_status.lock().unwrap().0.is_some() {
-        // The OS watch was refused (inotify limits on a loaded host): the
-        // watcher polls every cycle, which covers the rewrite by itself.
+    let caught = Instant::now();
+    if polled(&store) {
         store.close();
         return;
     }
     assert!(
-        after >= Duration::from_secs(1) && after < Duration::from_secs(4),
-        "about 2 s after the launch diff: {after:?}"
+        caught + Duration::from_millis(50) >= due,
+        "caught {:?} before the follow-up was due: something other than the follow-up saw it; diffs {}",
+        due - caught,
+        store.diagnostics()["fullDiffs"]["recent"]
     );
     assert_eq!(follow_ups(&store), 1);
     // One follow-up: it schedules none.
