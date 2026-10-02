@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Launch: Tine reopens a graph from a checkpoint of its last state in app data, then checks every file's date and size and rereads only what changed before the graph is ready; the checkpoint includes remembered query and backlinks answers, and is written about a minute after editing pauses (at most every 5 minutes), or 5 seconds after a launch that had none (GH #623).
 - REG-OG-P12B-PAGE-HEADER: A Markdown page header is now exactly the leading properties the parser accepts, so a no-space `key::value` line is page text rather than a property, in the editor, page promotion on save and alias lookup alike.
 - REG-OG-P12B-FENCES: Fence-aware editing (property and language autocomplete, code-body editing, calc blocks, hidden metadata) follows Logseq's parser instead of CommonMark: any fence run closes a fence, whatever its length.
 

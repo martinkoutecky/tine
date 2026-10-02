@@ -94,9 +94,9 @@ pub struct BlockProjection {
     /// policy. `None` when identical to the visible text.
     visible_lower: Option<Box<str>>,
     /// Lazy accent-sensitive fold, populated only when that graph policy is used;
-    /// the inner `None` means identical to the visible text. Not checkpointed:
-    /// it is lazy, and a loaded projection builds it on first use.
-    #[serde(skip)]
+    /// the inner `None` means identical to the visible text. Checkpointed in
+    /// whatever state it is in (built or not), like every lazy answer.
+    #[serde(with = "once_cell_as_option")]
     visible_literal: std::sync::OnceLock<Option<Box<str>>>,
     /// Byte ranges of `raw` eligible for plain-text (unlinked) reference matching.
     plain_ranges: Vec<std::ops::Range<usize>>,
@@ -1465,6 +1465,30 @@ mod projection_tests {
             plain.visible_text().contains("foo:: bar"),
             "org key:: stays visible"
         );
+    }
+}
+
+/// A `OnceLock` in the launch-checkpoint form: its value when built, else
+/// `None`; a `None` loads back unbuilt.
+mod once_cell_as_option {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::OnceLock;
+
+    pub(super) fn serialize<T: Serialize, S: Serializer>(
+        cell: &OnceLock<T>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        cell.get().serialize(s)
+    }
+
+    pub(super) fn deserialize<'de, T: Deserialize<'de>, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<OnceLock<T>, D::Error> {
+        let cell = OnceLock::new();
+        if let Some(value) = Option::<T>::deserialize(d)? {
+            let _ = cell.set(value);
+        }
+        Ok(cell)
     }
 }
 

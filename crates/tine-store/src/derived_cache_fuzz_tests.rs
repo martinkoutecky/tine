@@ -320,10 +320,13 @@ fn external_edit(r: &mut Rng, root: &std::path::Path, extra: &mut Vec<String>) {
 }
 
 /// ADR 0070 item 5(a): the same differential through a launch checkpoint.
-/// Each cycle edits through the save path, writes the checkpoint, closes,
+/// Each cycle edits through the save path, warms every memo and lazy index
+/// (they are persisted: Martin, 2026-10-02), writes the checkpoint, closes,
 /// edits files while closed, and reopens from the checkpoint; once Ready the
-/// served state must equal a fresh full build of the same files.
-fn run_checkpoint_seed(seed: u64) {
+/// served state, answered from the carried memos, must equal a fresh full
+/// build of the same files. Returns how many reloads still held warm memos
+/// after the launch diff (so the differential is not vacuously cold).
+fn run_checkpoint_seed(seed: u64) -> usize {
     let mut r = Rng(seed);
     let root = mk(&format!("cp{seed}"));
     for (i, p) in PAGES.iter().enumerate() {
@@ -341,6 +344,7 @@ fn run_checkpoint_seed(seed: u64) {
     let checkpoint = root.with_extension("checkpoint.bin");
     let _ = std::fs::remove_file(&checkpoint);
     let mut extra = Vec::new();
+    let mut warm_reloads = 0;
     for cycle in 0..6 {
         let store = Store::open(
             &root,
@@ -361,6 +365,10 @@ fn run_checkpoint_seed(seed: u64) {
             outcome, expected,
             "seed {seed} cycle {cycle}: checkpoint load"
         );
+        let (_, _, _, derived, queries) = reconciled.graph.warm_parts();
+        if cycle > 0 && derived + queries > 0 {
+            warm_reloads += 1;
+        }
         let fresh = Store::open(&root, Default::default()).unwrap().0;
         let fresh_view = fresh.whole_graph().unwrap();
         let (live_fp, fresh_fp) = (
@@ -403,23 +411,43 @@ fn run_checkpoint_seed(seed: u64) {
                 other => panic!("seed {seed} cycle {cycle}: save failed: {other:?}"),
             }
         }
+        fingerprint(&store.whole_graph_reconciled().unwrap().graph);
         let written = store.write_checkpoint_now();
         assert!(
             matches!(written, Some(crate::CheckpointWrite::Written { .. })),
             "seed {seed} cycle {cycle}: checkpoint not written: {written:?}"
         );
         store.close();
-        for _ in 0..1 + r.below(4) {
-            external_edit(&mut r, &root, &mut extra);
+        if cycle % 2 == 1 {
+            // A text-only edit keeps the page's aliases, so the in-memory
+            // carry rules keep the unaffected memos across the launch diff.
+            let name = PAGES[r.below(PAGES.len())];
+            let path = root.join("pages").join(format!("{name}.md"));
+            let mut text = std::fs::read_to_string(&path).unwrap();
+            text.push_str(&format!(
+                "- {}\n",
+                gen_block(&mut r).raw.replace('\n', "\n  ")
+            ));
+            std::fs::write(&path, text).unwrap();
+        } else {
+            for _ in 0..1 + r.below(4) {
+                external_edit(&mut r, &root, &mut extra);
+            }
         }
     }
     let _ = std::fs::remove_file(&checkpoint);
     let _ = std::fs::remove_dir_all(&root);
+    warm_reloads
 }
 
 #[test]
 fn a_reloaded_checkpoint_matches_a_fresh_build_after_closed_edits() {
+    let mut warm_reloads = 0;
     for seed in [1u64, 2, 3, 0xC0FFEE, 0xDEADBEEF] {
-        run_checkpoint_seed(seed);
+        warm_reloads += run_checkpoint_seed(seed);
     }
+    assert!(
+        warm_reloads > 0,
+        "no reload carried warm memos through its launch diff"
+    );
 }

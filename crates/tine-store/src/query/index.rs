@@ -2,8 +2,9 @@
 //! once per query) and the property registry the typed comparisons and TQL
 //! diagnostics read (SPEC §6.2).
 //!
-//! Nothing here is persisted (Unit cost: none on disk; memory O(pages with a
-//! preamble) plus one registry row per property key). A snapshot builds its
+//! Persisted only inside the launch checkpoint, as part of the generation it
+//! belongs to (ADR 0070, `index_checkpoint.rs`); memory O(pages with a
+//! preamble) plus one registry row per property key. A snapshot builds its
 //! index lazily on the first query, off the UI thread (every query command runs
 //! in `spawn_blocking`). A snapshot published after an edit inherits the
 //! previous index as a SEED plus the changed paths; the first query of the new
@@ -31,6 +32,9 @@ use tine_core::query::registry::{
     build_registry, is_internal_key, patch_registry, OwnerRow, OwnerType, PageMeta, Registry,
     DECLARED_TYPE_KEY,
 };
+
+#[path = "index_checkpoint.rs"]
+pub(crate) mod checkpoint;
 
 /// A seed carries at most this many changed paths; beyond it the next index
 /// is built from scratch, which costs no more than patching that many pages.

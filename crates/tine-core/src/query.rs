@@ -173,7 +173,7 @@ pub fn query_nesting_within_limit(source: &str) -> bool {
 /// when the source was refused before parsing (`ignored` then holds
 /// `"query-too-large"` or `"query-nesting-too-deep"`).
 #[deny(missing_docs)]
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AdvancedResult {
     /// Matched source-page groups.
     pub groups: Vec<RefGroup>,

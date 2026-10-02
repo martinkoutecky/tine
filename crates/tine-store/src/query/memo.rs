@@ -13,7 +13,8 @@
 //! additions/removals and alias changes never reach here: the snapshot drops
 //! all memos for them (`ReadSnapshot::carry_memos_from`).
 //!
-//! Nothing is persisted (Unit cost: none on disk); memory is bounded at 64
+//! Persisted only inside the launch checkpoint (ADR 0070,
+//! `memo_checkpoint.rs`), as part of the generation it belongs to; memory is bounded at 64
 //! entries / 64 MiB, and an entry over 16 MiB is returned but not retained.
 //! Charging covers the complete answer (including statistics/diagnostics/report),
 //! plan/filter/registry, compiled-program reservations, contributor sets and keys.
@@ -33,6 +34,8 @@ use tine_core::query::AdvancedResult;
 use super::exec::Plan;
 use super::index::PageFacts;
 
+#[path = "memo_checkpoint.rs"]
+pub(crate) mod checkpoint;
 #[path = "retained.rs"]
 pub(super) mod retained;
 
