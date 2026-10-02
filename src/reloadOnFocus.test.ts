@@ -14,14 +14,15 @@ type Api = ReturnType<typeof backend>;
 let complete: ((sequence: number) => void) | null = null;
 let sequence: number;
 let rescans: number;
+let rebuilds: Array<boolean | undefined>;
 let round = 0;
 
 beforeEach(() => {
-  sequence = 100 * ++round; rescans = 0; setToasts([]);
+  sequence = 100 * ++round; rescans = 0; rebuilds = []; setToasts([]);
   resetFocusRescanThrottle();
   const api = backend() as Api;
   api.onGraphRescanComplete = async (cb) => { complete = cb; return () => {}; };
-  api.rescanGraphNow = async () => { rescans++; return ++sequence; };
+  api.rescanGraphNow = async (rebuild) => { rescans++; rebuilds.push(rebuild); return ++sequence; };
 });
 afterEach(() => {
   const api = backend() as Api;
@@ -142,6 +143,20 @@ describe("reload on focus", () => {
     const finished = await settings;
     expect(finished).not.toBeNull();
     expect(finished!).toBeGreaterThanOrEqual(before);
+  });
+
+  // The Settings button is a forced rebuild (ignores stamps); the focus return
+  // stays the cheap stat diff and never asks for one.
+  it("only the Settings rescan asks for the forced rebuild", async () => {
+    const focus = refreshOnReturnToWindow(Date.now());
+    await vi.waitFor(() => expect(rescans).toBe(1));
+    complete!(sequence);
+    await focus;
+    const settings = rescanGraphNowFromSettings();
+    await vi.waitFor(() => expect(rescans).toBe(2));
+    complete!(sequence);
+    await settings;
+    expect(rebuilds.map(Boolean)).toEqual([false, true]);
   });
 
   it("a Settings rescan waits for one in flight and then runs its own", async () => {

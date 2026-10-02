@@ -2798,7 +2798,7 @@ impl Graph {
     /// Install a freshly-built whole-graph snapshot atomically: the parsed pages
     /// into the cache, their on-disk revs into `disk_revs`. Cache set BEFORE
     /// disk_revs so a reader never observes a fresh rev paired with a stale cache.
-    fn install_built(&self, built: PageCacheBuild, expected_gen: u64) -> bool {
+    fn install_built(&self, built: PageCacheBuild, expected_gen: u64, replace: bool) -> bool {
         let PageCacheBuild {
             pages: built,
             failures,
@@ -2837,7 +2837,7 @@ impl Graph {
         // Publish cache + revs atomically under the cache lock (cache → disk_revs
         // order), so no reader observes a fresh rev paired with a stale cache.
         let mut guard = self.cache.write().unwrap();
-        if guard.is_some()
+        if (guard.is_some() && !replace)
             || self.cache_gen.load(std::sync::atomic::Ordering::Acquire) != expected_gen
         {
             return false;
@@ -2853,6 +2853,13 @@ impl Graph {
         );
         *self.cache_index.write().unwrap() = Some(index);
         *self.disk_revs.write().unwrap() = revs;
+        if replace {
+            // A replaced cache is new content under the old generation: the
+            // generation-keyed page list, name index and block index must
+            // rebuild against it. Bumped after the content, as everywhere.
+            self.cache_gen
+                .fetch_add(1, std::sync::atomic::Ordering::Release);
+        }
         drop(guard);
         true
     }
@@ -2887,7 +2894,7 @@ impl Graph {
                 // because the cache was still None), its disk write is already
                 // done — rebuild so we don't install a stale snapshot. We hold
                 // build_lock, so no other builder competes.
-                if self.install_built(built, gen0) {
+                if self.install_built(built, gen0, false) {
                     break;
                 }
             }
@@ -2911,11 +2918,29 @@ impl Graph {
     }
 
     fn warm_page_cache_cancellable(&self, cancelled: &(impl Fn() -> bool + Sync)) -> bool {
+        self.warm_page_cache_inner(cancelled, false)
+    }
+
+    /// The Settings "Rescan graph" build: the cold-launch build over every
+    /// file, replacing a cache that already exists. Returns true only when
+    /// the fresh snapshot was installed; false means cancelled, a file moved
+    /// during the parse, or a save raced it, and the caller retries.
+    pub(crate) fn rebuild_cache_cancellable(&self, cancelled: impl Fn() -> bool + Sync) -> bool {
+        self.warm_page_cache_inner(&cancelled, true)
+    }
+
+    /// One whole-graph build pass. `replace` is the forced rebuild: the page
+    /// listing is re-read from disk, an existing cache does not end the pass,
+    /// and the install replaces it. Without it this is the launch warm-up.
+    fn warm_page_cache_inner(&self, cancelled: &(impl Fn() -> bool + Sync), replace: bool) -> bool {
         use std::sync::atomic::Ordering;
         if cancelled() {
             return false;
         }
-        if self.cache.read().unwrap().is_some() {
+        if replace {
+            *self.page_list_cache.write().unwrap() = None;
+            *self.find_entry_cache.write().unwrap() = None;
+        } else if self.cache.read().unwrap().is_some() {
             return true; // already built (e.g. by a query) — nothing to warm
         }
         // Build WITHOUT holding build_lock during the parse, so an on-demand
@@ -2987,14 +3012,14 @@ impl Graph {
             #[cfg(test)]
             crate::store::pause_at_hook(&self.warm_after_first_page_pause);
         }
-        let still_wanted = || !cancelled() && self.cache.read().unwrap().is_none();
+        let still_wanted = || !cancelled() && (replace || self.cache.read().unwrap().is_none());
         let parallel_began = std::time::Instant::now();
         let Some(parsed_chunks) =
             parse_pages_parallel(entries.collect(), &still_wanted, &parse_one)
         else {
             // Either a query built the cache while we parsed, or we were cancelled.
             clock.fold(&mut pass, parallel_began.elapsed(), 0);
-            let built_meanwhile = self.cache.read().unwrap().is_some();
+            let built_meanwhile = !replace && self.cache.read().unwrap().is_some();
             let outcome = if built_meanwhile {
                 diag::OUTCOME_CACHE_ALREADY_BUILT
             } else {
@@ -3031,7 +3056,7 @@ impl Graph {
         // on-demand build rather than install a stale snapshot).
         let phase = std::time::Instant::now();
         let _bl = self.build_lock.lock().unwrap();
-        let installed = self.install_built(built, gen0);
+        let installed = self.install_built(built, gen0, replace);
         pass.install_us = diag::micros(phase.elapsed());
         #[cfg(test)]
         crate::store::pause_at_hook(&self.warm_after_install_pause);
@@ -3040,7 +3065,12 @@ impl Graph {
         } else {
             diag::OUTCOME_INSTALL_DECLINED
         };
-        pass.finish(&self.diag, began, outcome, !cancelled())
+        pass.finish(
+            &self.diag,
+            began,
+            outcome,
+            if replace { installed } else { !cancelled() },
+        )
     }
 
     /// Discard the cache; it rebuilds on the next whole-graph query. Use when an
