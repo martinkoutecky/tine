@@ -221,7 +221,13 @@ pub(crate) fn list_known_graphs(app: tauri::AppHandle) -> Vec<KnownGraph> {
 
 #[tauri::command]
 pub(crate) fn forget_known_graph(path: String, app: tauri::AppHandle) -> Result<(), String> {
-    update_settings(&app, |json| forget_graph_json(json, &path))
+    update_settings(&app, |json| forget_graph_json(json, &path))?;
+    // Best-effort, after the removal itself; never fails it (ADR 0070).
+    crate::graph::forget_launch_checkpoint(
+        crate::graph::checkpoint_app_data(&app).as_deref(),
+        &path,
+    );
+    Ok(())
 }
 
 /// Reveal a remembered graph root in the desktop file manager. Only paths

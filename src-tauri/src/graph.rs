@@ -236,6 +236,16 @@ pub(crate) fn launch_checkpoint_path(app_data: &Path, root: &Path) -> std::path:
         .join(format!("{stem}.bin"))
 }
 
+/// Removing a graph from Tine deletes its launch checkpoint (ADR 0070).
+/// Best-effort: the checkpoint is a disposable cache, so a failure (already
+/// gone, a disk error) is ignored and never fails the removal; nothing in the
+/// graph is touched.
+pub(crate) fn forget_launch_checkpoint(app_data: Option<&Path>, root: &str) {
+    if let Some(app_data) = app_data {
+        let _ = std::fs::remove_file(launch_checkpoint_path(app_data, Path::new(root)));
+    }
+}
+
 #[derive(serde::Serialize)]
 pub(crate) struct GraphAccessInspection {
     graph_root: String,
@@ -867,5 +877,34 @@ mod tests {
                 .contains("current_app_data_dir().map(|dir| dir.join(\"launch-checkpoints\")"),
             "the dirs-based checkpoint dir is gone"
         );
+    }
+
+    /// ADR 0070, item 5 (2026-10-02): removing a graph deletes its
+    /// checkpoint, best-effort.
+    #[test]
+    fn forgetting_a_graph_deletes_its_checkpoint_best_effort() {
+        let app_data = scratch("forget-checkpoint");
+        let root = "/graphs/notes";
+        let path = launch_checkpoint_path(&app_data, Path::new(root));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"TINECKPT").unwrap();
+        let other = launch_checkpoint_path(&app_data, Path::new("/graphs/other"));
+        std::fs::write(&other, b"TINECKPT").unwrap();
+        forget_launch_checkpoint(Some(&app_data), root);
+        assert!(!path.exists(), "the removed graph's checkpoint is deleted");
+        assert!(other.exists(), "another graph's checkpoint is kept");
+        // Already gone, or no app-data dir: nothing to do, nothing fails.
+        forget_launch_checkpoint(Some(&app_data), root);
+        forget_launch_checkpoint(None, root);
+        let settings = include_str!("settings.rs");
+        let command = &settings[settings
+            .find("pub(crate) fn forget_known_graph")
+            .expect("the removal command")..];
+        let command = &command[..command.find("\n}\n").unwrap()];
+        assert!(
+            command.contains("forget_launch_checkpoint("),
+            "forget_known_graph deletes the graph's launch checkpoint"
+        );
+        let _ = std::fs::remove_dir_all(app_data);
     }
 }

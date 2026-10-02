@@ -216,4 +216,6 @@ the full build:
   diff holds. A page opened after the checkpoint is served therefore waits for
   Ready.
 - **Disk use.** About 20 MB of app data for a 13k-page graph. Removing a graph
-  from Tine does not delete its checkpoint.
+  from Tine (`forget_known_graph`) deletes its checkpoint, best-effort: a
+  failure is ignored and never fails the removal
+  (`graph::forget_launch_checkpoint`).
