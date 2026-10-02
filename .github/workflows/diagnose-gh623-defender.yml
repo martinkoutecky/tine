@@ -31,6 +31,8 @@ jobs:
       - name: Build the A/B bench (release)
         run: cargo build --release -p tine-store --features test-faults --example defender_ab
       - name: Fetch Ellis's shape export (public attachment on GH #623) and generate the graph
+        env:
+          PYTHONUTF8: "1"
         shell: pwsh
         run: |
           $d = ".github/scripts/ellis-shape"
