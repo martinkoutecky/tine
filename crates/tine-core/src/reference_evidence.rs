@@ -9,6 +9,7 @@ use crate::model::{ReferenceKind, ReferenceOccurrence, ReferenceSpan};
 use crate::refs;
 use lsdoc::ast::{Block, Inline, ListItem, Span, Url};
 use std::ops::Range;
+use unicode_normalization::char::canonical_combining_class;
 use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -656,6 +657,36 @@ fn overlaps(range: &Range<usize>, other: &Range<usize>) -> bool {
     range.start < other.end && other.start < range.end
 }
 
+/// The first character of `nfd(needle)` when it is a starter (combining class
+/// 0), else `None` (no start-character pre-rejection is sound then).
+fn needle_base_starter(needle: &str) -> Option<char> {
+    let base = needle.chars().next()?.nfd().next()?;
+    (canonical_combining_class(base) == 0).then_some(base)
+}
+
+/// Necessary condition for a match to start at a source character `first`: a
+/// match requires `nfc(lower(span)) == needle`, hence
+/// `nfd(lower(span)) == nfd(needle)`. Canonical reordering never moves a
+/// starter, so when the first character of `nfd(lower(first))` is a starter it
+/// is also the first character of `nfd(lower(span))` and must equal the
+/// needle's base. A non-starter there (an orphan combining mark) keeps the
+/// candidate, so only provably impossible starts are skipped and the accepted
+/// matches are exactly those of the unfiltered scan. Allocation-free: this is
+/// the per-character cost of every unlinked-references scan (GH #623).
+fn match_may_start_with(first: char, needle_base: Option<char>) -> bool {
+    let Some(base) = needle_base else {
+        return true;
+    };
+    if first.is_ascii() {
+        // ASCII has no decompositions and lowercases within ASCII.
+        return first.to_ascii_lowercase() == base;
+    }
+    match first.to_lowercase().nfd().next() {
+        Some(starter) => canonical_combining_class(starter) != 0 || starter == base,
+        None => true,
+    }
+}
+
 /// Visit source-order matches with memory bounded by the target name, not the
 /// number or size of matches in the block.
 fn visit_plain_matches(
@@ -676,17 +707,11 @@ fn visit_plain_matches(
         .chars()
         .next_back()
         .is_some_and(|ch| ch.is_alphanumeric());
-    let ascii_first = needle
-        .chars()
-        .next()
-        .filter(char::is_ascii)
-        .map(|ch| (ch.to_ascii_lowercase(), ch.to_ascii_uppercase()));
+    let needle_base = needle_base_starter(&needle);
     for (offset, grapheme) in source.grapheme_indices(true) {
         let first = grapheme.chars().next().expect("nonempty grapheme");
-        if let Some((lower, upper)) = ascii_first {
-            if first.is_ascii() && first != lower && first != upper {
-                continue;
-            }
+        if !match_may_start_with(first, needle_base) {
+            continue;
         }
         let start = range.start + offset;
         let mut end = start;
@@ -966,6 +991,190 @@ pub fn slow_occurrences(
 
 #[cfg(test)]
 mod tests {
+
+    // GH #623: the start-character pre-rejection must not change which spans
+    // match. `reference_visit_plain_matches` is the matcher as it was before the
+    // pre-rejection (verbatim); every (text, needle) pair over an alphabet of
+    // the awkward cases (case pairs, composed/decomposed accents, final sigma,
+    // dotted I, sharp s, Hangul jamo, orphan combining marks, CJK, ZWJ emoji)
+    // must give the identical match list.
+    fn reference_visit_plain_matches(
+        raw: &str,
+        range: &Range<usize>,
+        needle: &str,
+        mut visit: impl FnMut(Range<usize>) -> bool,
+    ) {
+        let Some(source) = raw.get(range.clone()) else {
+            return;
+        };
+        if needle.is_empty() {
+            return;
+        }
+        let needle: String = needle.to_lowercase().nfc().collect();
+        let first_requires_boundary = needle.chars().next().is_some_and(|ch| ch.is_alphanumeric());
+        let last_requires_boundary = needle
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_alphanumeric());
+        let ascii_first = needle
+            .chars()
+            .next()
+            .filter(char::is_ascii)
+            .map(|ch| (ch.to_ascii_lowercase(), ch.to_ascii_uppercase()));
+        for (offset, grapheme) in source.grapheme_indices(true) {
+            let first = grapheme.chars().next().expect("nonempty grapheme");
+            if let Some((lower, upper)) = ascii_first {
+                if first.is_ascii() && first != lower && first != upper {
+                    continue;
+                }
+            }
+            let start = range.start + offset;
+            let mut end = start;
+            let mut candidate_raw = String::new();
+            let mut matched = false;
+            let mut boundaries = source[offset..]
+                .grapheme_indices(true)
+                .map(|(offset, grapheme)| start + offset + grapheme.len());
+            let mut boundary = boundaries.next().expect("nonempty suffix");
+            for (relative, ch) in source[offset..].char_indices() {
+                candidate_raw.push(ch);
+                end = start + relative + ch.len_utf8();
+                if end > boundary {
+                    boundary = boundaries.next().expect("next grapheme");
+                }
+                let candidate: String = candidate_raw.to_lowercase().nfc().collect();
+                if candidate == needle && end == boundary {
+                    matched = true;
+                    break;
+                }
+                // Accept only at a grapheme edge (I-4), while rejecting incompatible
+                // prefixes early without allocating an arbitrarily long grapheme.
+                let without_last = candidate
+                    .char_indices()
+                    .next_back()
+                    .map_or("", |(index, _)| &candidate[..index]);
+                if !needle.starts_with(&candidate) && !needle.starts_with(without_last) {
+                    break;
+                }
+            }
+            if !matched {
+                continue;
+            }
+            let before = raw
+                .get(..start)
+                .and_then(|prefix| prefix.chars().next_back());
+            let after = raw.get(end..).and_then(|suffix| suffix.chars().next());
+            // Exact OG edge semantics: only adjacent ASCII alphanumerics exclude
+            // an unlinked match. `_` and continuous CJK are valid boundaries.
+            if og_prefix_allows(raw, start)
+                && (!first_requires_boundary || !is_og_edge_alphanumeric(before))
+                && (!last_requires_boundary || !is_og_edge_alphanumeric(after))
+                && !visit(start..end)
+            {
+                return;
+            }
+        }
+    }
+
+    #[test]
+    fn start_character_prerejection_matches_exactly_what_the_unfiltered_scan_matches() {
+        const ALPHABET: &[&str] = &[
+            "a",
+            "A",
+            "e",
+            "E",
+            "r",
+            "R",
+            "i",
+            "I",
+            "s",
+            "S",
+            "k",
+            "K",
+            "\u{212A}",
+            "\u{e9}",
+            "\u{c9}",
+            "e\u{301}",
+            "E\u{301}",
+            "\u{159}",
+            "r\u{30c}",
+            "\u{158}",
+            "\u{3a3}",
+            "\u{3c3}",
+            "\u{3c2}",
+            "\u{130}",
+            "i\u{307}",
+            "\u{df}",
+            "\u{1e9e}",
+            "ss",
+            "\u{1100}",
+            "\u{1161}",
+            "\u{11a8}",
+            "\u{ac00}",
+            "\u{301}",
+            "\u{30a}",
+            "\u{4e2d}",
+            "\u{6587}",
+            "\u{1f468}\u{200d}\u{1f469}",
+            "\u{f8}",
+            "\u{d8}",
+            "o\u{338}",
+            "\u{c5}",
+            "A\u{30a}",
+            "\u{212b}",
+            " ",
+            "-",
+            "_",
+            "1",
+            "/",
+        ];
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let build = |next: &mut dyn FnMut() -> u64, max: u64| -> String {
+            (0..=next() % max)
+                .map(|_| ALPHABET[(next() % ALPHABET.len() as u64) as usize])
+                .collect()
+        };
+        let collect =
+            |matcher: &dyn Fn(&str, &Range<usize>, &str, &mut dyn FnMut(Range<usize>) -> bool),
+             raw: &str,
+             needle: &str| {
+                let mut found = Vec::new();
+                matcher(raw, &(0..raw.len()), needle, &mut |range| {
+                    found.push(range);
+                    true
+                });
+                found
+            };
+        let mut matched_any = 0usize;
+        for _ in 0..40_000 {
+            let raw = build(&mut next, 14);
+            let needle = build(&mut next, 3);
+            let new = collect(
+                &|raw, range, needle, visit| visit_plain_matches(raw, range, needle, visit),
+                &raw,
+                &needle,
+            );
+            let old = collect(
+                &|raw, range, needle, visit| {
+                    reference_visit_plain_matches(raw, range, needle, visit)
+                },
+                &raw,
+                &needle,
+            );
+            assert_eq!(new, old, "raw={raw:?} needle={needle:?}");
+            matched_any += usize::from(!old.is_empty());
+        }
+        assert!(
+            matched_any > 500,
+            "the alphabet must actually produce matches: {matched_any}"
+        );
+    }
     use super::*;
 
     fn evidence(raw: &str, names: &[&str]) -> Vec<ReferenceOccurrence> {

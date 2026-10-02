@@ -11,14 +11,16 @@
 //  2. `rescanGraphNow()` asks the BACKEND watcher for one full stat diff.
 //     What it finds is emitted as ordinary `graph-changed` events, so the
 //     reload disposition and the deferred replay apply as for a live event.
-// Until the rescan's events are applied, the freshness barrier holds new
-// edits. Throttled: a focus is a gesture users make constantly, and a rescan
-// costs one stat per graph-text file. Coalesced: a focus during a rescan of the
-// same graph joins it.
+// Typing is never blocked by observation (SPEC-storage §6.1, K22): while the
+// rescan runs the editor stays live, and a stale-base save is refused by the
+// base-revision guard and becomes a conflict, never a silent overwrite. A
+// rescan slower than 120 ms only says so (`refreshingFromDisk`). Throttled: a
+// focus is a gesture users make constantly, and a rescan costs one stat per
+// graph-text file. Coalesced: a focus during a rescan of the same graph joins it.
+import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import { captureBinding, stillBound, type Binding } from "./binding";
 import { applyGraphChangesBulk, replayDeferredExternalReloads } from "./document";
-import { beginFreshnessBarrier, endFreshnessBarrier, installFreshnessInputGate } from "./freshnessBarrier";
 import { ownedWhen, readOwnedResource, type Owned } from "./owned";
 import { isPublishedExport } from "./publishedBackend";
 import { pushToast } from "./toasts";
@@ -28,6 +30,24 @@ import { graphTransitioning } from "./ui";
  *  window is answered by the in-memory replay alone. */
 export const FOCUS_RESCAN_THROTTLE_MS = 1500;
 const COMPLETION_TIMEOUT_MS = 30_000;
+/** A rescan that takes longer than this says what it is doing. */
+const REFRESH_NOTICE_DELAY_MS = 120;
+
+/** True while a rescan has been running longer than the notice delay. A status
+ *  line only: nothing waits on it and no input is held. */
+const [refreshingFromDisk, setRefreshingFromDisk] = createSignal(false);
+export { refreshingFromDisk };
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function beginRefreshNotice(): void {
+  noticeTimer ??= setTimeout(() => { noticeTimer = null; setRefreshingFromDisk(true); }, REFRESH_NOTICE_DELAY_MS);
+}
+
+function endRefreshNotice(): void {
+  if (noticeTimer !== null) clearTimeout(noticeTimer);
+  noticeTimer = null;
+  setRefreshingFromDisk(false);
+}
 
 let lastRescan = 0;
 /** When the last rescan (focus or Settings) completed and its events were applied. */
@@ -116,7 +136,7 @@ export function refreshOnReturnToWindow(now = Date.now(), force = false, rebuild
   lastRescan = now;
   const binding = stateBinding!;
   const current = () => { if (!stillBound(binding)) throw new StaleFocusRefresh(); };
-  beginFreshnessBarrier();
+  beginRefreshNotice();
   let refresh!: Promise<void>;
   refresh = (async () => {
     try {
@@ -136,10 +156,10 @@ export function refreshOnReturnToWindow(now = Date.now(), force = false, rebuild
       // A refusal because the graph was switched or restored meanwhile is the
       // stale case too: the new binding's load read the disk itself.
       if (error instanceof StaleFocusRefresh || !stillBound(binding)) return;
-      // The watcher stays primary; a failed fallback must release the gate.
+      // The watcher stays primary; a failed fallback must clear the notice.
       pushToast(`Tine couldn't finish checking for external changes. Editing is available, but reopen the page before relying on it being current. (${String(error)})`, "error");
     } finally {
-      endFreshnessBarrier();
+      endRefreshNotice();
       releaseActive(refresh);
     }
   })();
@@ -149,7 +169,7 @@ export function refreshOnReturnToWindow(now = Date.now(), force = false, rebuild
 
 /** Settings → Help & diagnostics "Rescan graph": a forced full rebuild on demand
  *  (every file re-read and re-parsed, ignoring stamps; the focus-return rescan
- *  stays the cheap stat diff), unthrottled but through the same barrier-holding
+ *  stays the cheap stat diff), unthrottled but through the same
  *  path as a focus rescan, so its changes are applied before it reports.
  *  Answers when it finished (ms since the epoch), or `null` when no rescan ran (no graph loaded, published export)
  *  or it failed (the failure is already toasted by the shared path). */
@@ -166,7 +186,6 @@ let installed = false;
 export function installReloadOnFocus(): void {
   if (installed || typeof window === "undefined" || isPublishedExport()) return;
   installed = true;
-  installFreshnessInputGate();
   window.addEventListener("focus", () => void refreshOnReturnToWindow());
   document.addEventListener("visibilitychange", () => { if (!document.hidden) void refreshOnReturnToWindow(); });
 }

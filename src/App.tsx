@@ -17,9 +17,8 @@ import { Toasts, Lightbox } from "./components/Toasts";
 import { AudioOverlay } from "./components/AudioOverlay";
 import { CalendarJump } from "./components/CalendarJump";
 import { ConflictBar } from "./components/ConflictBar";
-import { installReloadOnFocus, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
+import { installReloadOnFocus, refreshingFromDisk, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
 import { subscribeAssetChanges } from "./assetRefresh";
-import { freshnessVisible } from "./freshnessBarrier";
 import { initConflictPolicy } from "./conflictPolicy";
 import { RightSidebar } from "./components/RightSidebar";
 import { HelpPopup } from "./components/HelpShortcuts";
@@ -1238,8 +1237,8 @@ export function App(): JSX.Element {
           </div>
         </header>
         <ConflictBar />
-        <Show when={freshnessVisible()}>
-          <div class="focus-freshness-barrier" role="status" aria-live="polite">Refreshing changes from disk…</div>
+        <Show when={refreshingFromDisk()}>
+          <div class="focus-refresh-status" role="status" aria-live="polite">Refreshing changes from disk…</div>
         </Show>
         <InPageFind />
         </DrawerBackground>
