@@ -82,6 +82,11 @@ impl Core {
             DiffTrigger::Launch,
             Some(&mut deferred),
         )?;
+        // §5.4: a path it left racy is settled by one follow-up full diff
+        // about 2 s later (`super::RACY_FOLLOW_UP`), run by the watcher.
+        if !self.racy.lock().unwrap().is_empty() {
+            *self.follow_up.lock().unwrap() = Some(Instant::now() + super::RACY_FOLLOW_UP);
+        }
         Ok(deferred)
     }
 

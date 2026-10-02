@@ -983,3 +983,96 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
         }
     }
 }
+
+/// Storage spec §5.4 (Martin, 2026-10-02, item 6): a launch diff that leaves
+/// a path racy runs one follow-up full diff about 2 s later. Scenario: a file
+/// edited just before launch is rewritten where no notification reaches the
+/// watcher (a sync service writing to a network or FUSE mount); only that
+/// follow-up sees it.
+#[test]
+fn a_launch_diff_that_leaves_a_path_racy_runs_one_follow_up_diff() {
+    let open_notify = |root: &Path, cp: &Path| {
+        let store = Store::open(
+            root,
+            OpenOptions {
+                watch: WatchMode::Notify,
+                launch_checkpoint: Some(cp.to_path_buf()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
+        store
+            .watch
+            .core_for_load()
+            .deaf
+            .store(true, Ordering::Release);
+        store
+    };
+    let follow_ups = |store: &Store| {
+        store.diagnostics()["fullDiffs"]["recent"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|diff| diff["trigger"] == "racy_follow_up")
+            .count()
+    };
+    let root = graph();
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    write_checkpoint(root.path(), &cp);
+
+    // Control: nothing racy at launch, nothing scheduled.
+    let quiet = open_notify(root.path(), &cp);
+    quiet.whole_graph_reconciled().unwrap();
+    assert!(quiet
+        .watch
+        .core_for_load()
+        .follow_up
+        .lock()
+        .unwrap()
+        .is_none());
+    quiet.close();
+
+    // Edited while closed, just now: reread at launch, and racy.
+    let a = root.path().join("pages/A.md");
+    fs::write(&a, "- links [[Two]]\n").unwrap();
+    let store = open_notify(root.path(), &cp);
+    store.whole_graph_reconciled().unwrap();
+    let ready = Instant::now();
+    assert_eq!(load_outcome(&store), "loaded");
+    assert_eq!(backlink_pages(&store, "Two"), vec!["A".to_owned()]);
+    // Rewritten unseen by the (deaf) watcher.
+    fs::write(&a, "- links [[Six]]\n").unwrap();
+    let deadline = ready + Duration::from_secs(6);
+    while backlink_pages(&store, "Six").is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "§5.4: no follow-up diff saw the unreported rewrite"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let after = ready.elapsed();
+    if store.changes.watch_status.lock().unwrap().0.is_some() {
+        // The OS watch was refused (inotify limits on a loaded host): the
+        // watcher polls every cycle, which covers the rewrite by itself.
+        store.close();
+        return;
+    }
+    assert!(
+        after >= Duration::from_secs(1) && after < Duration::from_secs(4),
+        "about 2 s after the launch diff: {after:?}"
+    );
+    assert_eq!(follow_ups(&store), 1);
+    // One follow-up: it schedules none.
+    std::thread::sleep(crate::watch::RACY_FOLLOW_UP);
+    assert!(store
+        .watch
+        .core_for_load()
+        .follow_up
+        .lock()
+        .unwrap()
+        .is_none());
+    assert_eq!(follow_ups(&store), 1);
+    store.close();
+}

@@ -136,6 +136,12 @@ index.
   is installed and served with readiness Loading. The launch diff then runs
   against the stored stamps and rereads every changed, new, missing or racy
   path. Ready follows when that diff completes.
+  A launch diff (warm or cold) that leaves a path racy schedules one follow-up
+  full diff about 2 s later (`watch::RACY_FOLLOW_UP`, storage spec §5.4), run
+  by the watcher, which settles it; the follow-up schedules none. It is what
+  sees a rewrite no notification reported (a sync service writing to a
+  network or FUSE mount):
+  `checkpoint_tests::a_launch_diff_that_leaves_a_path_racy_runs_one_follow_up_diff`.
 - **Stale window:** page opens read the disk and take their base revision from
   it, so no save is based on checkpoint state. Graph-wide destructive operations
   wait for Ready in one of two ways:

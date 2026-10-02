@@ -435,6 +435,9 @@ pub(crate) struct Core {
     /// Baseline paths whose stamp was racy when observed (storage spec
     /// §5.4): a full diff rereads them even when the stamp is unchanged.
     racy: Mutex<HashSet<PathBuf>>,
+    /// When a launch diff left racy paths, the one follow-up full diff due
+    /// about 2 s later (§5.4; `Core::launch_diff`).
+    pub(crate) follow_up: Mutex<Option<Instant>>,
     config_stamp: Mutex<Option<Stamp>>,
     unreadable_dirs: Mutex<HashMap<PathBuf, String>>,
     closed: AtomicBool,
@@ -451,6 +454,10 @@ pub(crate) struct Core {
     /// Event-driven batches that took the full stat diff (GH #623 tests).
     #[cfg(test)]
     pub(crate) event_full_diffs: std::sync::atomic::AtomicUsize,
+    /// Drop every OS notification: a watch that installs but never reports
+    /// (a network or FUSE mount a sync service writes to).
+    #[cfg(test)]
+    pub(crate) deaf: AtomicBool,
 }
 
 impl Core {
@@ -545,6 +552,33 @@ impl Core {
 
     fn ready(&self) -> bool {
         matches!(*self.load.status.lock().unwrap(), LoadStatus::Ready)
+    }
+
+    /// How long the watcher may sleep: `idle`, or less when the racy
+    /// follow-up is due sooner.
+    fn follow_up_wait(&self, idle: Duration) -> Duration {
+        match *self.follow_up.lock().unwrap() {
+            Some(at) => at.saturating_duration_since(Instant::now()).min(idle),
+            None => idle,
+        }
+    }
+
+    /// Run the racy follow-up full diff once it is due (§5.4). Scenario: a
+    /// file written inside the racy window at launch, then rewritten where no
+    /// notification reaches the watcher (a sync service writing to a network
+    /// or FUSE mount, an external-editor race within the timestamp granule).
+    fn follow_up_if_due(&self) {
+        if !self.ready() {
+            return;
+        }
+        {
+            let mut due = self.follow_up.lock().unwrap();
+            if due.is_none_or(|at| at > Instant::now()) {
+                return;
+            }
+            *due = None;
+        }
+        let _ = self.reconcile(None, true, false, DiffTrigger::RacyFollowUp);
     }
 
     fn reconcile(
@@ -1080,6 +1114,7 @@ impl WatchHandle {
             assets: AssetObserver::new(asset_scope),
             snapshot: Mutex::new(snapshot),
             racy: Mutex::new(HashSet::new()),
+            follow_up: Mutex::new(None),
             config_stamp: Mutex::new(config_stamp),
             unreadable_dirs: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
@@ -1095,6 +1130,8 @@ impl WatchHandle {
             force_mismatched_rev_once: AtomicBool::new(false),
             #[cfg(test)]
             event_full_diffs: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            deaf: AtomicBool::new(false),
         });
         let mode = Arc::new(Mutex::new(watch));
         let (wake, rx) = mpsc::channel();
@@ -1292,6 +1329,15 @@ fn watch_external_assets(
     }
 }
 
+/// The watcher's idle cycle: poll interval, and the longest a notify-mode
+/// watcher sleeps before re-checking its watch and external assets.
+const CYCLE: Duration = Duration::from_secs(3);
+
+/// Storage spec §5.4: a launch diff that left racy paths runs one follow-up
+/// full diff this long after it, by when every stamp it saw is outside the
+/// racy window and the follow-up settles it.
+pub(crate) const RACY_FOLLOW_UP: Duration = RACY_WINDOW.saturating_add(Duration::from_millis(100));
+
 fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Receiver<()>) {
     let pending = Arc::new(Mutex::new(Pending::default()));
     let mut watcher: Option<notify::RecommendedWatcher> = None;
@@ -1349,9 +1395,10 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
             _ => false,
         };
         if watcher.is_some() {
-            match rx.recv_timeout(Duration::from_secs(3)) {
+            match rx.recv_timeout(core.follow_up_wait(CYCLE)) {
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
+                    core.follow_up_if_due();
                     if assets_polled && core.ready() {
                         core.observe_assets(&HashSet::new(), true);
                     }
@@ -1365,6 +1412,12 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
                 break;
             }
             if !core.ready() {
+                continue;
+            }
+            core.follow_up_if_due();
+            #[cfg(test)]
+            if core.deaf.load(Ordering::Acquire) {
+                *pending.lock().unwrap() = Pending::default();
                 continue;
             }
             let (paths, full, config, first_event_at, assets) = {
@@ -1399,8 +1452,10 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
         } else {
             // Poll mode has no event paths: every cycle re-checks the config
             // (one stat and one hash of a small file beside the full stat scan).
-            let _ = rx.recv_timeout(Duration::from_secs(3));
+            let _ = rx.recv_timeout(core.follow_up_wait(CYCLE));
             if core.ready() && !core.closed.load(Ordering::Acquire) {
+                // This cycle's full diff is the racy follow-up (§5.4).
+                core.follow_up.lock().unwrap().take();
                 let batch = WatchBatch {
                     first_event_at: None,
                     reconcile_started: Instant::now(),

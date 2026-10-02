@@ -196,6 +196,9 @@ pub(crate) enum DiffTrigger {
     /// The launch diff: the full stat diff against the load pass's own
     /// observations (or a restored checkpoint's), before Ready.
     Launch,
+    /// The one follow-up about 2 s after a launch diff that left racy paths
+    /// (storage spec §5.4).
+    RacyFollowUp,
     /// Test-only direct reconcile.
     #[cfg(test)]
     Test,
@@ -211,6 +214,7 @@ impl DiffTrigger {
             Self::WatchEvent => "watch_rescan_event",
             Self::Poll => "poll_cycle",
             Self::Launch => "launch_diff",
+            Self::RacyFollowUp => "racy_follow_up",
             #[cfg(test)]
             Self::Test => "test",
         }
