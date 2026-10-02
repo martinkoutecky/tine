@@ -579,7 +579,8 @@ export interface Backend {
   onGraphChangedBulk?(cb: (bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }) => void): Promise<() => void>;
   onGraphWatchStatus?(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void): Promise<() => void>;
   onGraphRescanComplete?(cb: (sequence: number) => void): Promise<() => void>;
-  rescanGraphNow?(): Promise<number>;
+  /** `rebuild` (Settings only) ignores every stamp and re-parses every file. */
+  rescanGraphNow?(rebuild?: boolean): Promise<number>;
   /** Subscribe to graph assets changed by an outside actor (editor, Syncthing,
    *  another window): cache observation only, never page or config state. */
   onAssetChanged(cb: (batch: AssetChangedBatch) => void): Promise<() => void>;
@@ -1313,7 +1314,7 @@ class TauriBackend implements Backend {
     return () => { a(); b(); };
   }
   onGraphRescanComplete(cb: (sequence: number) => void) { return this.on("graph-rescan-complete", cb); }
-  rescanGraphNow() { return this.call<number>("rescan_graph_now"); }
+  rescanGraphNow(rebuild?: boolean) { return this.call<number>("rescan_graph_now", rebuild ? { rebuild: true } : undefined); }
   onAssetChanged(cb: (batch: AssetChangedBatch) => void) { return this.on("asset-changed", cb); }
   onGraphConfigChanged(cb: (change: GraphConfigChange) => void) { return this.on("graph-config-changed", cb); }
   getBackupKeep() {

@@ -11,6 +11,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use notify::Watcher;
 
+mod rebuild;
+
 use crate::asset_watch::{AssetObserver, AssetPending, AssetScope};
 use crate::launch_diag::{
     micros, CollectTimes, DiffStats, DiffTrigger, FileFacts, FillStats, TimedIter,
@@ -672,7 +674,16 @@ impl Core {
     ) -> Result<(), LoadError> {
         let began = Instant::now();
         let mut walk = CollectTimes::default();
-        let result = self.reconcile_walk(paths, include_config, scan_semantics, batch, &mut walk);
+        // A rebuild ignores the stamp shortcut: every file is hashed.
+        let force = matches!(trigger, DiffTrigger::Rebuild);
+        let result = self.reconcile_walk(
+            paths,
+            include_config,
+            scan_semantics,
+            batch,
+            force,
+            &mut walk,
+        );
         if walk.full {
             self.graph
                 .diag
@@ -687,6 +698,7 @@ impl Core {
         include_config: bool,
         scan_semantics: bool,
         batch: Option<WatchBatch>,
+        force: bool,
         walk: &mut CollectTimes,
     ) -> Result<(), LoadError> {
         if self.closed.load(Ordering::Acquire) {
@@ -804,7 +816,8 @@ impl Core {
             }
             if paths.is_none() {
                 if let (Some(old), Some(new)) = (before, now.get_mut(&path)) {
-                    let same = old.modified == new.modified
+                    let same = !force
+                        && old.modified == new.modified
                         && old.len == new.len
                         && (scan_semantics
                             || (old.identity == new.identity && old.changed == new.changed));

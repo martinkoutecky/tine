@@ -282,7 +282,9 @@ fn arrival_numeric_budgets() {
     // dependent asset cleanup without a synthetic sidecar write.
     // The 38th operation is Store::diagnostics: the statistics-only launch and
     // graph-shape snapshot behind Settings > Help & diagnostics (GH #623).
-    assert!(operations <= 38, "tine-store Rule 1: Store + Transaction has {operations} public methods, budget 38; imitate crates/tine-store/SURFACE.txt");
+    // The 39th operation is Store::rebuild_graph: the forced full rebuild behind
+    // the Settings "Rescan graph" button, which ignores every stamp (GH #623).
+    assert!(operations <= 39, "tine-store Rule 1: Store + Transaction has {operations} public methods, budget 39; imitate crates/tine-store/SURFACE.txt");
     assert!(questions <= 25, "tine-store Rule 4: WholeGraph has {questions} public methods, budget 25; imitate crates/tine-store/SURFACE.txt");
     assert!(
         types <= 55,

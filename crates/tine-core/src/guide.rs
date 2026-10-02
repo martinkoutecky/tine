@@ -543,6 +543,8 @@ mod rename_guide_tests {
             "numbers only: never a page name, any text, or a hash of either",
             "## Rescan the graph on demand",
             "choose **Rescan graph**",
+            "reads and parses every file of the open graph again from disk",
+            "quick check Tine does whenever you return to the window",
             "**Last rescan finished at**",
         ] {
             assert!(

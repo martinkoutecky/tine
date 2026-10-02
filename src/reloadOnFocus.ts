@@ -99,7 +99,7 @@ function releaseActive(refresh: Promise<void>): void {
 }
 
 /** Exported for tests; `installReloadOnFocus` wires it to focus/visibility. */
-export function refreshOnReturnToWindow(now = Date.now(), force = false): Promise<void> {
+export function refreshOnReturnToWindow(now = Date.now(), force = false, rebuild = false): Promise<void> {
   // A published export is an immutable snapshot with no watcher behind it.
   if (isPublishedExport()) return Promise.resolve();
   replayDeferredExternalReloads();
@@ -109,7 +109,7 @@ export function refreshOnReturnToWindow(now = Date.now(), force = false): Promis
     // A forced (Settings) rescan must itself start after the click, so it waits
     // for a rescan already in flight and runs its own.
     if (!force && !changed && stillBound(active.binding)) return active.refresh;
-    return active.refresh.then(() => refreshOnReturnToWindow(now, force));
+    return active.refresh.then(() => refreshOnReturnToWindow(now, force, rebuild));
   }
   const api = backend();
   if (!api.rescanGraphNow || !api.onGraphRescanComplete || (!force && now - lastRescan < FOCUS_RESCAN_THROTTLE_MS)) return Promise.resolve();
@@ -122,7 +122,7 @@ export function refreshOnReturnToWindow(now = Date.now(), force = false): Promis
     try {
       await ensureCompletionListener((cb) => api.onGraphRescanComplete!(cb));
       current();
-      const sequence = await api.rescanGraphNow!();
+      const sequence = await api.rescanGraphNow!(rebuild);
       current();
       await waitForCompletion(sequence);
       while (applications.size) {
@@ -147,14 +147,15 @@ export function refreshOnReturnToWindow(now = Date.now(), force = false): Promis
   return refresh;
 }
 
-/** Settings → Help & diagnostics "Rescan graph": one full stat diff on demand,
- *  unthrottled but through the same barrier-holding path as a focus rescan, so
- *  its changes are applied before it reports. Answers when it finished (ms since
- *  the epoch), or `null` when no rescan ran (no graph loaded, published export)
+/** Settings → Help & diagnostics "Rescan graph": a forced full rebuild on demand
+ *  (every file re-read and re-parsed, ignoring stamps; the focus-return rescan
+ *  stays the cheap stat diff), unthrottled but through the same barrier-holding
+ *  path as a focus rescan, so its changes are applied before it reports.
+ *  Answers when it finished (ms since the epoch), or `null` when no rescan ran (no graph loaded, published export)
  *  or it failed (the failure is already toasted by the shared path). */
 export async function rescanGraphNowFromSettings(): Promise<number | null> {
   const before = finishedCount;
-  await refreshOnReturnToWindow(Date.now(), true);
+  await refreshOnReturnToWindow(Date.now(), true, true);
   return finishedCount !== before ? lastFinishedAt : null;
 }
 

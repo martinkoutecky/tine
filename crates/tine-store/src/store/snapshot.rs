@@ -39,6 +39,7 @@ impl Snapshot {
         old: Option<&Snapshot>,
         files: &[(FileId, ChangeKind, Option<FileRev>)],
         config_changed: bool,
+        rebuild: bool,
         rev: GraphRev,
     ) -> Self {
         // The publication caller holds the store writer lock. A load worker
@@ -73,11 +74,14 @@ impl Snapshot {
                 Some((*kind, entry))
             })
             .collect();
-        let name_set_changed = config_changed || old.is_none() || !changed_names.is_empty();
+        // `rebuild` (the Settings "Rescan graph") recomputes every derived answer
+        // from the cache instead of carrying the previous generation's.
+        let name_set_changed =
+            config_changed || rebuild || old.is_none() || !changed_names.is_empty();
         let mut name_by_path = old
             .map(|old| Arc::clone(&old.name_by_path))
             .unwrap_or_default();
-        let (list, claimants) = if config_changed || old.is_none() {
+        let (list, claimants) = if config_changed || rebuild || old.is_none() {
             let (list, claimants) = graph.snapshot_name_index();
             name_by_path = Arc::new(
                 claimants
@@ -170,8 +174,8 @@ impl Snapshot {
             })
             .map(|(id, _, _)| id.as_str().to_owned())
             .collect();
-        let evaluator = if let Some(old) =
-            old.filter(|old| old.cache_generation == cache_generation && !config_changed)
+        let evaluator = if let Some(old) = old
+            .filter(|old| old.cache_generation == cache_generation && !config_changed && !rebuild)
         {
             Arc::clone(&old.graph)
         } else {
@@ -179,7 +183,7 @@ impl Snapshot {
                 graph,
                 (*config.config).clone(),
                 Arc::clone(&list),
-                old.filter(|_| !config_changed)
+                old.filter(|_| !config_changed && !rebuild)
                     .map(|old| old.graph.as_ref()),
                 &changed_paths,
             );

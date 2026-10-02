@@ -51,8 +51,9 @@ export function DiagnosticsTab(): JSX.Element {
     }
   };
 
-  // One full stat diff of the open graph on demand (the same path as the
-  // rescan on return to the window, without its throttle). Shows when it ended.
+  // A forced full rebuild of the open graph on demand: every file re-read and
+  // re-parsed, ignoring stamps (the rescan on return to the window stays the
+  // cheap stat diff). Shows when it ended.
   const rescanGraph = async () => {
     setRescanning(true);
     try {
@@ -140,7 +141,7 @@ export function DiagnosticsTab(): JSX.Element {
         <span class="settings-hint" role="status">
           <Show
             when={rescanFinished()}
-            fallback="Checks every file in the open graph for changes made outside Tine."
+            fallback="Re-reads every file in the open graph and rebuilds Tine's view of it."
           >
             {(finished) => `Last rescan finished at ${new Date(finished()).toLocaleTimeString()}.`}
           </Show>

@@ -364,7 +364,15 @@ impl ChangeFeed {
 
     #[cfg(test)]
     fn initialize(&self) {
-        let snapshot = Snapshot::capture(&self.graph, &self.config, None, &[], false, GraphRev(0));
+        let snapshot = Snapshot::capture(
+            &self.graph,
+            &self.config,
+            None,
+            &[],
+            false,
+            false,
+            GraphRev(0),
+        );
         *self.snapshot.write().unwrap() = Some(Arc::new(snapshot));
     }
 
@@ -400,10 +408,48 @@ impl ChangeFeed {
         before_notify: impl FnOnce(),
         watch: Option<WatchBatch>,
     ) -> GraphRev {
+        self.publish_inner(
+            origin,
+            files,
+            config_changed,
+            pages,
+            before_notify,
+            watch,
+            false,
+        )
+    }
+
+    /// Publish after a forced rebuild (`WatchHandle::rebuild_all`): the new
+    /// snapshot recomputes the name index and the read evaluator from the
+    /// rebuilt cache instead of carrying the previous generation's.
+    pub(crate) fn publish_rebuilt(&self, files: Vec<(FileId, ChangeKind, Option<FileRev>)>) {
+        self.publish_inner(
+            Origin::External,
+            files,
+            false,
+            Vec::new(),
+            || {},
+            None,
+            true,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn publish_inner(
+        &self,
+        origin: Origin,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        config_changed: bool,
+        pages: Vec<(FileId, PageKind, String)>,
+        before_notify: impl FnOnce(),
+        watch: Option<WatchBatch>,
+        rebuild: bool,
+    ) -> GraphRev {
         let old = self.snapshot.read().unwrap().clone();
         let journals_dir = self.graph.current_config().journals_dir.clone();
         if old.is_none()
             || config_changed
+            || rebuild
             || files.iter().any(|(id, kind, _)| {
                 id.as_str().starts_with(&format!("{journals_dir}/"))
                     && matches!(kind, ChangeKind::Created | ChangeKind::Removed)
@@ -419,6 +465,7 @@ impl ChangeFeed {
             old.as_deref(),
             &files,
             config_changed,
+            rebuild,
             rev,
         ));
         #[cfg(test)]
@@ -1178,6 +1225,27 @@ impl Store {
     /// published: a subscriber that has received it has received them all.
     pub fn scan_refresh(&self) -> Result<GraphRev, LoadError> {
         self.watch.scan_refresh()?;
+        Ok(self.changes.rev())
+    }
+
+    /// Forced full rebuild: the Settings "Rescan graph" button. Where
+    /// [`Self::scan_refresh`] trusts a file whose modification time, length
+    /// and identity are unchanged, this ignores every stamp, revision and
+    /// cache: it hashes every graph file (publishing the ones whose bytes
+    /// differ from the recorded revision as ordinary external changes), then
+    /// re-reads and re-parses every file through the cold-launch build and
+    /// replaces the page cache, the name index and the read evaluator with
+    /// the result. Assets are metadata-only by contract and are compared as
+    /// usual. Cost O(graph bytes) twice (hash, then parse) plus the cold-launch
+    /// parse; it runs on the caller's thread, so call it from a worker. An
+    /// open editor keeps its base revision, so a save made over a file this
+    /// rebuild found changed is refused like any other stale save.
+    ///
+    /// Returns the change-feed revision through which its changes are
+    /// published, like `scan_refresh`. A graph whose load failed is retried
+    /// exactly as `scan_refresh` retries it, which is already a cold build.
+    pub fn rebuild_graph(&self) -> Result<GraphRev, LoadError> {
+        self.watch.rebuild_all()?;
         Ok(self.changes.rev())
     }
 

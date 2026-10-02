@@ -286,20 +286,31 @@ impl RescanCursor {
     }
 }
 
-/// Run one full stat diff for the calling window's graph (the same scan
-/// `Store::scan_refresh` documents: one stat per graph-text file plus the
-/// bytes of changed files) and answer the sequence number its
-/// `graph-rescan-complete` event will carry. The scan runs on the blocking
-/// pool; a failed scan still completes, and the watcher stays primary.
+/// Run one rescan for the calling window's graph and answer the sequence
+/// number its `graph-rescan-complete` event will carry. By default it is the
+/// full stat diff `Store::scan_refresh` documents (one stat per graph-text
+/// file plus the bytes of changed files), which the focus return uses; with
+/// `rebuild` (Settings "Rescan graph") it is `Store::rebuild_graph`, which
+/// ignores every stamp and re-reads and re-parses every file. The scan runs
+/// on the blocking pool; a failed scan still completes, and the watcher stays
+/// primary.
 #[tauri::command]
-pub(crate) async fn rescan_graph_now(state: crate::state::GraphContext<'_>) -> Result<u64, String> {
+pub(crate) async fn rescan_graph_now(
+    state: crate::state::GraphContext<'_>,
+    rebuild: Option<bool>,
+) -> Result<u64, String> {
     let slot = crate::state::slot_for_context(&state)?;
     let app = state.window.app_handle().clone();
     let label = state.window.label().to_owned();
     let sequence = RESCAN_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
     tauri::async_runtime::spawn_blocking(move || {
         // A failed scan published nothing to wait for: it completes at once.
-        let Ok(target) = slot.store.scan_refresh() else {
+        let scanned = if rebuild.unwrap_or(false) {
+            slot.store.rebuild_graph()
+        } else {
+            slot.store.scan_refresh()
+        };
+        let Ok(target) = scanned else {
             crate::debug::diag("watcher-focus-rescan-failed");
             return emit_rescan_complete(&app, &label, sequence);
         };

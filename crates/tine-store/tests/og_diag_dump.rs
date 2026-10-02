@@ -89,6 +89,7 @@ fn the_dump_never_names_the_graph() {
         "install_declined",
         "cancelled",
         "rescan_command",
+        "rebuild_command",
         "load_recovery",
         "watch_install",
         "watch_rescan_event",
@@ -165,6 +166,17 @@ fn rescan_and_saves_are_recorded() {
         .clone();
     assert_eq!(last["trigger"], "rescan_command");
     assert!(n(&last["files"]) >= 5);
+
+    // The Settings button is the forced rebuild and says so in the report.
+    store.rebuild_graph().unwrap();
+    let rebuilt = store.diagnostics()["fullDiffs"]["recent"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(rebuilt["trigger"], "rebuild_command");
+    assert!(n(&rebuilt["files"]) >= 5);
 
     let id = PageId::from("pages/Hub.md");
     let mut read = store.page(&id).unwrap();
