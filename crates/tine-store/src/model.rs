@@ -9054,17 +9054,19 @@ mod tests {
         assert_eq!(count("[:find (pull ?b [*]) :where (deadline ?b)]"), 1);
         // (journal) restricts to blocks on journal pages.
         assert_eq!(count("[:find (pull ?b [*]) :where (journal ?b)]"), 2);
-        // (page "Name") pins to one page.
-        assert_eq!(count(r#"[:find (pull ?b [*]) :where (page ?b "Proj")]"#), 1);
+        // (page "Name") pins to one page: its header property block (OG's
+        // `:block/pre-block?` block, GH #617) and the one bullet, so 2 blocks.
+        assert_eq!(count(r#"[:find (pull ?b [*]) :where (page ?b "Proj")]"#), 2);
         // (namespace "Proj") matches pages under the namespace.
         assert_eq!(
             count(r#"[:find (pull ?b [*]) :where (namespace ?b "Proj")]"#),
             1
         );
-        // (page-tags "work") matches the tags:: page-property.
+        // (page-tags "work") matches the tags:: page-property: every block of
+        // the tagged page, header property block included (GH #617).
         assert_eq!(
             count(r#"[:find (pull ?b [*]) :where (page-tags ?b "work")]"#),
-            1
+            2
         );
         // (between scheduled …) is now field-aware, not hardwired to journal-day.
         assert_eq!(

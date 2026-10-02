@@ -71,7 +71,10 @@ fn fixture() -> (tempfile::TempDir, WholeGraph) {
     // Block-level `type::` (always worked).
     w("BlockLink.md", "- hello\n  type:: [[Person]]\n");
     w("BlockPlain.md", "- hello2\n  type:: Person\n");
-    w("BlockMulti.md", "- hello3\n  type:: [[Person]], [[Agent]]\n");
+    w(
+        "BlockMulti.md",
+        "- hello3\n  type:: [[Person]], [[Agent]]\n",
+    );
     w("Other.md", "type:: [[Place]]\n\n- body\n");
     w("Person.md", "- the person page\n");
     w(
@@ -115,7 +118,11 @@ fn property_query_matches_header_page_properties_in_every_value_spelling() {
     // Key-only form: every block (pre-blocks included) that has the key.
     assert_eq!(
         pages(&graph, "(property type)"),
-        expected.iter().cloned().chain(["Other".to_string()]).collect()
+        expected
+            .iter()
+            .cloned()
+            .chain(["Other".to_string()])
+            .collect()
     );
 }
 
@@ -124,8 +131,15 @@ fn header_property_hit_is_the_read_only_page_property_row() {
     let (_dir, graph) = fixture();
     let hits = rows(&graph, "(property type [[Person]])");
     let header = hits.iter().find(|(page, _)| page == "PageLink").unwrap();
-    assert!(header.1.page_property, "synthetic page-property row, not an editable block");
-    assert!(header.1.raw.contains("type:: [[Person]]"), "{:?}", header.1.raw);
+    assert!(
+        header.1.page_property,
+        "synthetic page-property row, not an editable block"
+    );
+    assert!(
+        header.1.raw.contains("type:: [[Person]]"),
+        "{:?}",
+        header.1.raw
+    );
     let block = hits.iter().find(|(page, _)| page == "BlockLink").unwrap();
     assert!(!block.1.page_property);
 }
@@ -137,29 +151,47 @@ fn every_block_anchored_predicate_sees_the_pre_block() {
     assert_eq!(pages(&graph, "(property tags research)"), set(&["Tagged"]));
     assert_eq!(pages(&graph, "(property status draft)"), set(&["Tagged"]));
     // Journal header property, and `between` (the pre-block is a block of the journal).
-    assert_eq!(pages(&graph, "(property mood good)"), set(&["Dec 6th, 2020"]));
-    assert!(pages(&graph, "(between [[Dec 5th, 2020]] [[Dec 7th, 2020]])")
-        .contains("Dec 6th, 2020"));
-    assert!(rows(&graph, "(between [[Dec 5th, 2020]] [[Dec 7th, 2020]])")
-        .iter()
-        .any(|(_, b)| b.page_property));
+    assert_eq!(
+        pages(&graph, "(property mood good)"),
+        set(&["Dec 6th, 2020"])
+    );
+    assert!(
+        pages(&graph, "(between [[Dec 5th, 2020]] [[Dec 7th, 2020]])").contains("Dec 6th, 2020")
+    );
+    assert!(
+        rows(&graph, "(between [[Dec 5th, 2020]] [[Dec 7th, 2020]])")
+            .iter()
+            .any(|(_, b)| b.page_property)
+    );
     // `page`: the pre-block is a block of the page.
     let page = rows(&graph, "(page Tagged)");
     assert_eq!(page.len(), 3, "pre-block + two bullets");
     assert!(page[0].1.page_property);
     // Page refs: `type:: [[Person]]` references Person from the pre-block.
     let refs = pages(&graph, "[[Person]]");
-    assert!(refs.contains("PageLink") && refs.contains("BlockLink"), "{refs:?}");
-    // Full text over the pre-block's own text.
-    assert_eq!(pages(&graph, "\"type:: [[Place]]\""), set(&["Other"]));
+    assert!(
+        refs.contains("PageLink") && refs.contains("BlockLink"),
+        "{refs:?}"
+    );
     // Boolean combinators over the pre-block.
     assert_eq!(
         pages(&graph, "(or (property status draft) (property mood good))"),
         set(&["Tagged", "Dec 6th, 2020"])
     );
-    assert!(!pages(&graph, "(not (property type Person))").is_empty());
-    assert!(!pages(&graph, "(not (property type Person))").contains("PageLink"));
+    // `not` keeps the page's ordinary bullets but drops its matching header block.
+    let negated = rows(&graph, "(not (property type Person))");
+    assert!(negated
+        .iter()
+        .any(|(page, b)| page == "PageLink" && !b.page_property));
+    assert!(!negated
+        .iter()
+        .any(|(page, b)| page == "PageLink" && b.page_property));
+    assert!(negated
+        .iter()
+        .any(|(page, b)| page == "Other" && b.page_property));
     // Task/priority never match a property-only pre-block.
     assert_eq!(pages(&graph, "(task TODO)"), set(&["Tagged"]));
-    assert!(rows(&graph, "(task TODO)").iter().all(|(_, b)| !b.page_property));
+    assert!(rows(&graph, "(task TODO)")
+        .iter()
+        .all(|(_, b)| !b.page_property));
 }

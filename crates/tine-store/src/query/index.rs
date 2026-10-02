@@ -83,6 +83,14 @@ pub(crate) struct PageFacts {
     /// de-duplicated: the page-level half of `:block/path-refs`, which is what
     /// lets a page-ref query skip a page without walking it.
     refs: Box<[String]>,
+    /// The page's header-style property block as a block-anchored query row
+    /// (OG's `:block/pre-block?` block, which every block predicate sees):
+    /// built once per page generation, never per query. `None` when the page
+    /// has no header properties. Unit cost: one `DocBlock` of the page's
+    /// header property text (O(header bytes), the same text the backlink
+    /// path projects per query) per facts derivation, i.e. per page edit
+    /// that reaches the query index; zero extra work per query.
+    page_property_block: Option<DocBlock>,
 }
 
 impl PageFacts {
@@ -119,6 +127,13 @@ impl PageFacts {
             }
         }
         let mut refs = Vec::new();
+        let page_property_block = doc
+            .pre_block
+            .as_deref()
+            .and_then(|pre| super::page_property_block(entry, pre));
+        if let Some(block) = &page_property_block {
+            refs.extend(block.projection().refs_norm.iter().cloned());
+        }
         blocks(&doc.roots, &mut note, &mut refs);
         refs.sort_unstable();
         refs.dedup();
@@ -131,6 +146,7 @@ impl PageFacts {
                 .collect(),
             declares: declares.then(|| tine_core::refs::page_key(&entry.name)),
             refs: refs.into_boxed_slice(),
+            page_property_block,
         }
     }
 
@@ -152,6 +168,12 @@ impl PageFacts {
     /// The page's own `key:: value` properties, in source order and spelling.
     pub(crate) fn properties(&self) -> &[(String, String)] {
         &self.properties
+    }
+
+    /// The header page-property block, the synthetic first block of the page
+    /// for block-anchored queries (see the field).
+    pub(crate) fn page_property_block(&self) -> Option<&DocBlock> {
+        self.page_property_block.as_ref()
     }
 
     /// The page's own tags (the preamble's `tags::` values).

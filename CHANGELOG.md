@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- Simple queries such as `(property type [[Person]])` now find pages whose properties are in the page header, as Logseq does: the page-property block takes part in `property`, `page`, `between`, page-reference and boolean queries and appears as a read-only page-property row (REG-OG-Q617-PREBLOCK-QUERY, Discussion #617).
 - **Raw HTML resources (UI-OG-DUPBL2-D29):** local images and sandboxed iframes use actual DOM attributes, so image text in comments and `data-src` lookalikes cannot select the wrong resource.
 - Uppercase `.ORG` files retain Org format in conflict diffs, PDF annotations and page rename/merge (REG-OG-DUPAL2-F12).
 - Keep code examples in a user’s Favorites page from being adopted as favorites arrangement metadata (UI-OG-DUPBL1-FAVORITES-LITERAL-MARKER).

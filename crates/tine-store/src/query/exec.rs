@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use tine_core::date::JournalDate;
 use tine_core::doc::{property_key_norm, DocBlock, Document};
-use tine_core::model::{PageEntry, PageKind, RefGroup};
+use tine_core::model::{BlockDto, PageEntry, PageKind, RefGroup};
 use tine_core::query::atom::ParseConfig;
 use tine_core::query::ir::{
     Anchor, Attr, Bounds, CmpOp, ExecutionContext, ExplainEmptyResult, Filter, Leaf, PageRow,
@@ -49,6 +49,11 @@ use crate::model::GraphRead;
 /// filter, its compiled patterns and the registry snapshot it coerces by.
 pub(crate) struct Plan {
     anchor: Anchor,
+    /// Whether the header page-property block is one of the page's block rows:
+    /// true for a query that is block-anchored as written (OG's block
+    /// queries). A `@page` query the legacy bridge lists block-wise answers
+    /// with the page's outline blocks, as before.
+    page_property_rows: bool,
     filter: Filter,
     compiled: CompiledLeaves,
     track: bool,
@@ -87,6 +92,7 @@ impl Plan {
         let registry = filter.has_props_leaf().then(registry);
         Plan {
             anchor,
+            page_property_rows: query.anchor == Anchor::Block,
             compiled: CompiledLeaves::for_query(&filter, remove_accents),
             track: eval::uses_path_refs(&filter),
             filter,
@@ -126,18 +132,38 @@ impl Plan {
 
     /// The block rows of one page: every matching block whose immediate parent
     /// did not match (OG `tree/filter-top-level-blocks`), in document order.
-    fn block_hits<'a>(&self, ctx: &EvalCtx, doc: &'a Document, out: &mut Vec<&'a DocBlock>) {
+    /// The header page-property block comes first: OG stores it as the page's
+    /// first block (`:block/pre-block? true`, `:block/properties` of the page
+    /// header), so `property`, `page`, `between`, page-ref and full-text
+    /// predicates match it like any block (query_dsl.cljs `build-property`;
+    /// rules.cljc `:property`, `:page`, `:between`), and it never has a
+    /// parent or children to suppress.
+    fn block_hits<'a>(
+        &self,
+        ctx: &EvalCtx,
+        doc: &'a Document,
+        facts: &PageFacts,
+        out: &mut Vec<Hit<'a>>,
+    ) {
+        if let Some(block) = facts
+            .page_property_block()
+            .filter(|_| self.page_property_rows)
+        {
+            if eval::eval_block(&self.filter, block, &PathRefCounts::new(), ctx) {
+                out.push(Hit::PageProperty);
+            }
+        }
         struct Roots<'a, 'o, 'c> {
             filter: &'c Filter,
             ctx: &'c EvalCtx<'c>,
             matched: Vec<bool>,
-            out: &'o mut Vec<&'a DocBlock>,
+            out: &'o mut Vec<Hit<'a>>,
         }
         impl<'a> PathRefVisitor<'a, DocBlock> for Roots<'a, '_, '_> {
             fn enter(&mut self, block: &'a DocBlock, ancestors: &PathRefCounts) {
                 let hit = eval::eval_block(self.filter, block, ancestors, self.ctx);
                 if hit && !self.matched.last().copied().unwrap_or(false) {
-                    self.out.push(block);
+                    self.out.push(Hit::Block(block));
                 }
                 self.matched.push(hit);
             }
@@ -183,7 +209,7 @@ impl Plan {
             Anchor::Page => eval::eval_page(&self.filter, &ctx),
             Anchor::Block => {
                 let mut hits = Vec::new();
-                self.block_hits(&ctx, doc, &mut hits);
+                self.block_hits(&ctx, doc, facts, &mut hits);
                 !hits.is_empty()
             }
         }
@@ -195,6 +221,40 @@ impl Plan {
         self.anchor == Anchor::Block
             && required_refs(&self.filter).is_some_and(|names| !facts.may_reference(entry, &names))
     }
+}
+
+/// One block row of a page: a block of its document, or the page's header
+/// property block, which lives in the page's facts (`PageFacts::
+/// page_property_block`) rather than in `Document::roots`.
+#[derive(Clone, Copy)]
+enum Hit<'a> {
+    PageProperty,
+    Block(&'a DocBlock),
+}
+
+impl<'a> Hit<'a> {
+    /// `facts` must be those of the page that produced the hit.
+    fn block<'f>(&self, facts: &'f PageFacts) -> &'f DocBlock
+    where
+        'a: 'f,
+    {
+        match self {
+            Hit::Block(block) => block,
+            Hit::PageProperty => facts
+                .page_property_block()
+                .expect("a PageProperty hit comes from facts that carry the block"),
+        }
+    }
+}
+
+/// The wire row for one hit; the header property block is a read-only
+/// synthetic row (`BlockDto::page_property`), exactly as in backlinks.
+fn row_dto(facts: &PageFacts, block: &DocBlock) -> BlockDto {
+    let mut dto = result_dto(block);
+    dto.page_property = facts
+        .page_property_block()
+        .is_some_and(|header| std::ptr::eq(header, block));
+    dto
 }
 
 /// Page refs one of which every matching block's path-refs closure must
@@ -454,7 +514,7 @@ pub(crate) fn execute(
         let atoms = EvalCache::default();
         match plan.anchor {
             Anchor::Block => {
-                let mut groups: Vec<(&PageEntry, Arc<PageFacts>, Vec<&DocBlock>)> = Vec::new();
+                let mut groups: Vec<(&PageEntry, Arc<PageFacts>, Vec<Hit>)> = Vec::new();
                 for (entry, doc) in pages {
                     let facts = index.facts(entry, doc);
                     if plan.skips(entry, &facts) {
@@ -464,6 +524,7 @@ pub(crate) fn execute(
                     plan.block_hits(
                         &plan.ctx(entry, doc, &facts, config, &atoms),
                         doc,
+                        &facts,
                         &mut hits,
                     );
                     if !hits.is_empty() {
@@ -474,7 +535,9 @@ pub(crate) fn execute(
                 let mut rows: Vec<(usize, &DocBlock)> = groups
                     .iter()
                     .enumerate()
-                    .flat_map(|(at, (_, _, hits))| hits.iter().map(move |block| (at, *block)))
+                    .flat_map(|(at, (_, facts, hits))| {
+                        hits.iter().map(move |hit| (at, hit.block(facts)))
+                    })
                     .collect();
                 result.matched_total = Some(rows.len());
                 let sorted = !view.sort.is_empty();
@@ -531,6 +594,7 @@ pub(crate) fn execute(
                 let mut last: Option<usize> = None;
                 for (at, block) in rows {
                     let entry = groups[at].0;
+                    let facts = &groups[at].1;
                     if !budget.admit_estimated(&entry.name, shallow_dto_estimated_bytes(block, &[]))
                     {
                         continue;
@@ -546,12 +610,12 @@ pub(crate) fn execute(
                         out.last_mut()
                             .expect("group")
                             .blocks
-                            .push(result_dto(block));
+                            .push(row_dto(facts, block));
                     } else {
                         out.push(RefGroup {
                             page: entry.name.clone(),
                             kind: entry.kind,
-                            blocks: vec![result_dto(block)],
+                            blocks: vec![row_dto(facts, block)],
                             evidence: Vec::new(),
                         });
                     }
@@ -685,7 +749,7 @@ fn count(graph: &impl GraphRead, index: &QueryIndex, plan: &Plan) -> usize {
                 Anchor::Page => count += usize::from(eval::eval_page(&plan.filter, &ctx)),
                 Anchor::Block => {
                     hits.clear();
-                    plan.block_hits(&ctx, doc, &mut hits);
+                    plan.block_hits(&ctx, doc, &facts, &mut hits);
                     count += hits.len();
                 }
             }
