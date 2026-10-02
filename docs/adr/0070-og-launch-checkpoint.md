@@ -148,10 +148,22 @@ the full build:
   as possible). A backlinks read answered before the checkpoint is answered
   from the loaded memo after a warm launch: 42.4 ms → 0.1 ms on g13k, 1.8 ms →
   0.0 ms on the anonymized graph (FORMAT 1 vs 2, median of 3). A read nobody
-  asked before the checkpoint costs what it costs cold. The first Ctrl-K
-  search is unchanged (110 ms vs 116 ms on g13k, within the noise of a loaded
-  machine): block search uses the find-entry cache, which is not part of the
-  generation and is not written. Warm Ready did not move measurably
+  asked before the checkpoint costs what it costs cold.
+- **Ctrl-K has no cache outside the generation.** An earlier revision of this
+  ADR said block search used the find-entry cache; that was wrong. The Quick
+  Switcher's search (`Store::search`, `run_graph_search`) reads only the
+  published generation: page names through the page list, the alias and
+  referenced-name indexes and the query index, block text through each
+  block's projection (visible and folded text). The projection is written
+  with its block, and the lazily built indexes are written since `FORMAT` 2,
+  so a Ctrl-K asked before the checkpoint is warm after the launch: first
+  Ctrl-K after a cold launch 344 ms (g13k), 377 ms (Ellis), 13.5 ms
+  (anonymized); after a warm launch 127 ms, 94 ms, 7.8 ms, equal to a repeat
+  of the same search in a running app (124 ms, 89 ms, 7.7 ms), which is the
+  scan itself. The find-entry cache resolves a page name to its file for page
+  opens; it is graph-level and not written. A lazy index built by a read does
+  not dirty the generation, so a session that only reads writes no new
+  checkpoint and its first Ctrl-K warms nothing for the next launch. Warm Ready did not move measurably
   (1028 ms vs 1063 ms on g13k; load 935 ms vs 970 ms).
   `checkpoint_tests::a_warm_checkpoint_loads_warm_and_answers_as_a_fresh_build`
   and the reload differential in `derived_cache_fuzz_tests` check that loaded

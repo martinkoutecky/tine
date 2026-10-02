@@ -4,16 +4,17 @@
 //! `cold` opens with no checkpoint; `write` opens, reaches Ready and writes the
 //! checkpoint; `warm` opens from it. Prints one JSON line: open → first page
 //! read (`page()` returns) and open → Ready in ms, checkpoint diagnostics and
-//! VmRSS after Ready, then the first Ctrl-K block search (`find_blocks`, the
-//! `search` command's call) and the first backlinks of two pages after Ready.
-//! `write` runs the search and the first page's backlinks before writing, so
+//! VmRSS after Ready, then the first Ctrl-K search (`search`, the Quick
+//! Switcher's `run_graph_search` call), the first `((` block search
+//! (`find_blocks`) and the first backlinks of two pages after Ready.
+//! `write` runs the searches and the first page's backlinks before writing, so
 //! a checkpoint that keeps memos and lazy indexes carries them; the second
 //! page's backlinks stay unasked. Run it on a COPY of a graph.
 
 use std::path::{Path, PathBuf};
 use std::sync::{atomic::AtomicBool, Arc};
 use std::time::Instant;
-use tine_store::{Cancel, OpenOptions, PageId, Store, WholeGraph};
+use tine_store::{Cancel, OpenOptions, PageId, SearchRequest, Store, WholeGraph};
 
 /// A generic Ctrl-K needle; only hit counts are printed, never content.
 const SEARCH: &str = "the";
@@ -22,8 +23,33 @@ fn ms(since: Instant) -> f64 {
     since.elapsed().as_secs_f64() * 1e3
 }
 
-/// The first search and both backlinks reads, timed one by one.
+/// The Quick Switcher's Ctrl-K call (`run_graph_search`: page names and
+/// block text, 100 + 100 hits), as the app issues it.
+fn ctrl_k(view: &WholeGraph) -> usize {
+    let request = SearchRequest {
+        text: SEARCH.to_owned(),
+        within: None,
+        page_limit: 100,
+        block_limit: 100,
+        explain: false,
+        page_match_scope: None,
+        page_view: None,
+        block_view: None,
+    };
+    view.search(&request, &Cancel(Arc::new(AtomicBool::new(false))))
+        .map(|execution| execution.hits.len())
+        .unwrap_or(0)
+}
+
+/// The first Ctrl-K search (then the same search again, the in-memory floor),
+/// the first `((` block search, and both backlinks reads, timed one by one.
 fn timed_reads(view: &WholeGraph, first: &str, second: &str) -> serde_json::Value {
+    let began = Instant::now();
+    let ctrl_k_hits = ctrl_k(view);
+    let ctrl_k_ms = ms(began);
+    let began = Instant::now();
+    ctrl_k(view);
+    let ctrl_k_again_ms = ms(began);
     let began = Instant::now();
     let hits = view
         .find_blocks(SEARCH, 100, &Cancel(Arc::new(AtomicBool::new(false))))
@@ -37,6 +63,7 @@ fn timed_reads(view: &WholeGraph, first: &str, second: &str) -> serde_json::Valu
     let second_groups = view.backlinks(second).map(|g| g.len()).unwrap_or(0);
     let second_ms = ms(began);
     serde_json::json!({
+        "ctrlKMs": ctrl_k_ms, "ctrlKAgainMs": ctrl_k_again_ms, "ctrlKHits": ctrl_k_hits,
         "searchMs": search_ms, "searchGroups": hits,
         "backlinksMs": first_ms, "backlinksGroups": first_groups,
         "otherBacklinksMs": second_ms, "otherBacklinksGroups": second_groups,
