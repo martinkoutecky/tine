@@ -345,7 +345,7 @@ fn rewrite_body(cp: &Path, root: &Path, edit: impl FnOnce(&mut Body<PagesOut>)) 
     let bytes = fs::read(cp).unwrap();
     let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
     let header: Header = postcard::from_bytes(&bytes[16..16 + len]).unwrap();
-    let body = decode(&bytes, &header.root, header.config_rev.as_ref()).unwrap();
+    let body = decode(&bytes, &header.root, &header.config_key).unwrap();
     let mut body = Body {
         graph: body
             .graph
@@ -358,7 +358,7 @@ fn rewrite_body(cp: &Path, root: &Path, edit: impl FnOnce(&mut Body<PagesOut>)) 
     edit(&mut body);
     fs::write(
         cp,
-        encode(&header.root, header.config_rev, &body).unwrap().0,
+        encode(&header.root, header.config_key, &body).unwrap().0,
     )
     .unwrap();
 }
@@ -518,7 +518,7 @@ fn a_racy_stamp_persists_and_forces_a_reread_after_reload() {
     let bytes = fs::read(&cp).unwrap();
     let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
     let header: Header = postcard::from_bytes(&bytes[16..16 + len]).unwrap();
-    let body = decode(&bytes, &header.root, header.config_rev.as_ref()).unwrap();
+    let body = decode(&bytes, &header.root, &header.config_key).unwrap();
     assert!(
         body.racy.contains(&path),
         "storage spec §5.4: the racy flag is persisted"
@@ -770,10 +770,216 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (2, GOLDEN),
+        (3, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
 const GOLDEN: &str = "78da24bee273a949e108a4388012c5566e10afbb0447940a4b00c571113ff090";
+
+/// ADR 0070 (Martin, 2026-10-02: config by meaning, not bytes): a config
+/// edited while Tine was closed falls the launch back to the initial build
+/// when it moves a setting the build reads, and keeps the checkpoint
+/// otherwise; either way the reconciled graph answers as a fresh build under
+/// the new config.
+#[test]
+fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
+    use tine_core::config::Config;
+    const BASE: &str = ":preferred-format :markdown";
+    // (field, the edited config's entries, keyed)
+    let cases: [(&str, String, bool); 30] = [
+        (
+            "journals_dir",
+            format!("{BASE} :journals-directory \"days\""),
+            true,
+        ),
+        (
+            "pages_dir",
+            format!("{BASE} :pages-directory \"notes\""),
+            true,
+        ),
+        ("hidden", format!("{BASE} :hidden [\"pages/C.org\"]"), true),
+        (
+            "hidden_parse_failed_closed",
+            format!("{BASE} :hidden [\"open"),
+            true,
+        ),
+        (
+            "block_hidden_properties",
+            format!("{BASE} :block-hidden-properties #{{:icon}}"),
+            true,
+        ),
+        (
+            "separated_by_commas",
+            format!("{BASE} :property/separated-by-commas #{{:icon}}"),
+            true,
+        ),
+        (
+            "ignored_page_references_keywords",
+            format!("{BASE} :ignored-page-references-keywords #{{:tags}}"),
+            true,
+        ),
+        (
+            "property_pages_enabled",
+            format!("{BASE} :property-pages/enabled? false"),
+            true,
+        ),
+        (
+            "property_pages_excludelist",
+            format!("{BASE} :property-pages/excludelist #{{:icon}}"),
+            true,
+        ),
+        (
+            "favorites_page",
+            format!("{BASE} :tine/favorites-page \"A\""),
+            true,
+        ),
+        (
+            "journal_file_name_format",
+            format!("{BASE} :journal/file-name-format \"yyyy-MM-dd\""),
+            true,
+        ),
+        (
+            "journal_page_title_format",
+            format!("{BASE} :journal/page-title-format \"yyyy-MM-dd\""),
+            true,
+        ),
+        (
+            "preferred_format",
+            ":preferred-format :org".to_owned(),
+            true,
+        ),
+        (
+            "file_name_format",
+            format!("{BASE} :file/name-format :triple-lowbar"),
+            true,
+        ),
+        (
+            "enable_search_remove_accents",
+            format!("{BASE} :feature/enable-search-remove-accents? false"),
+            true,
+        ),
+        (
+            "preferred_workflow",
+            format!("{BASE} :preferred-workflow :todo"),
+            false,
+        ),
+        (
+            "shortcuts",
+            format!("{BASE} :shortcuts {{:editor/new-block \"alt+enter\"}}"),
+            false,
+        ),
+        (
+            "all_pages_public",
+            format!("{BASE} :publishing/all-pages-public? true"),
+            false,
+        ),
+        ("start_of_week", format!("{BASE} :start-of-week 1"), false),
+        (
+            "linked_references_collapsed_threshold",
+            format!("{BASE} :ref/linked-references-collapsed-threshold 5"),
+            false,
+        ),
+        (
+            "default_journal_template",
+            format!("{BASE} :default-templates {{:journals \"Daily\"}}"),
+            false,
+        ),
+        (
+            "default_home",
+            format!("{BASE} :default-home {{:page \"A\"}}"),
+            false,
+        ),
+        ("favorites", format!("{BASE} :favorites [\"A\"]"), false),
+        (
+            "macros",
+            format!("{BASE} :macros {{\"m\" \"[[A]] $1\"}}"),
+            false,
+        ),
+        (
+            "enable_timetracking",
+            format!("{BASE} :feature/enable-timetracking? false"),
+            false,
+        ),
+        (
+            "show_brackets",
+            format!("{BASE} :ui/show-brackets? false"),
+            false,
+        ),
+        (
+            "doc_mode_enter_for_new_block",
+            format!("{BASE} :shortcut/doc-mode-enter-for-new-block? true"),
+            false,
+        ),
+        (
+            "logical_outdenting",
+            format!("{BASE} :editor/logical-outdenting? true"),
+            false,
+        ),
+        (
+            "logbook",
+            format!("{BASE} :logbook/settings {{:enabled-in-all-blocks true}}"),
+            false,
+        ),
+        (
+            "guide_announced",
+            format!("{BASE} :tine/guide-announced? true"),
+            false,
+        ),
+    ];
+    let base = Config::parse(&format!("{{{BASE}}}"));
+    for (field, entries, keyed) in cases {
+        let edn = format!("{{{entries}}}\n");
+        let edited = Config::parse(&edn);
+        assert_ne!(
+            format!("{base:?}"),
+            format!("{edited:?}"),
+            "{field}: the edit moves the setting"
+        );
+        assert_eq!(
+            config_key(&base) != config_key(&edited),
+            keyed,
+            "{field}: classified in config_key"
+        );
+        // Cold checkpoint: the whole generation, byte for byte; warm one:
+        // the persisted memos and lazy indexes answer as a fresh build.
+        for warm_first in [false, true] {
+            let root = graph();
+            let dir = tempfile::tempdir().unwrap();
+            let cp = dir.path().join("graph.bin");
+            let written = open_cp(root.path(), &cp);
+            written.whole_graph_reconciled().unwrap();
+            if warm_first {
+                warm(&written);
+            }
+            assert!(matches!(
+                written.write_checkpoint_now(),
+                Some(CheckpointWrite::Written { .. })
+            ));
+            written.close();
+            let path = root.path().join("logseq/config.edn");
+            fs::write(&path, &edn).unwrap();
+            set_mtime(&path, old());
+
+            let store = open_cp(root.path(), &cp);
+            store.whole_graph_reconciled().unwrap();
+            let fresh = Store::open(root.path(), Default::default()).unwrap().0;
+            assert_eq!(
+                load_outcome(&store),
+                if keyed { "config" } else { "loaded" },
+                "{field}: keyed settings rebuild, others keep the checkpoint"
+            );
+            if !warm_first {
+                assert!(
+                    captured(&store) == captured(&fresh),
+                    "{field}: a config edit while closed plus reconcile equals a fresh build"
+                );
+            }
+            assert_eq!(uuids(&store), uuids(&fresh), "{field}");
+            assert_eq!(answers(&store), answers(&fresh), "{field}");
+            fresh.close();
+            store.close();
+        }
+    }
+}

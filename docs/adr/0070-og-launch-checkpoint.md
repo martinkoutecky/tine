@@ -47,7 +47,7 @@ index.
 - **Format:** magic `TINECKPT` and `FORMAT` (u32), then a postcard header:
   - the lsdoc tag;
   - the canonical graph root;
-  - the config revision;
+  - the config key (below);
   - the raw and payload lengths;
   - the payload SHA-256.
 
@@ -72,6 +72,35 @@ index.
 
   `FORMAT` covers parser, config and index semantics, not the app version. A
   golden image test fails on any change to the body encoding.
+- **Config key** (Martin, 2026-10-02: config by meaning, not bytes;
+  `FORMAT` 3): the SHA-256 of exactly the config fields the build and index
+  path reads, by parsed value (`checkpoint::config_key`): `journals_dir`,
+  `pages_dir`, `hidden`, `hidden_parse_failed_closed`,
+  `block_hidden_properties`, `separated_by_commas`,
+  `ignored_page_references_keywords`, `property_pages_enabled`,
+  `property_pages_excludelist`, `favorites_page`,
+  `journal_file_name_format`, `journal_page_title_format`,
+  `preferred_format`, `file_name_format` and
+  `enable_search_remove_accents`. A config edited while Tine was closed falls
+  back to the full build only when it moves one of these; an edit to any other
+  setting (UI, workflow, shortcuts, macros, favorites, logbook) keeps the
+  checkpoint. The key is computed from the config the store opened with, which
+  is the revision the launch diff compares the config file against, so a
+  checkpoint loaded under it reconciles as one built under it. Completeness is
+  enforced, not asserted: `config_key` destructures `Config` without `..`, so a
+  new field does not compile until classified, and
+  `checkpoint_config_key_tests::the_config_key_is_exactly_what_the_build_reads`
+  parses tine-store and every tine-core function given a `Config` (with the
+  `Config` methods they call) and fails when a field bound `_` is read there
+  or a keyed field is read nowhere. The one exemption,
+  `GraphMeta::from_config` (display settings returned by `Store::open`), is
+  pinned by `graph_meta_stays_out_of_the_generation`.
+  `checkpoint_tests::a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads`
+  edits each of the 30 fields while closed and checks the outcome and that the
+  reconciled graph equals a fresh build under the new config (byte for byte
+  from a cold checkpoint, by answers from a warm one). Boundary: a value the
+  app derives from config and passes in a request is part of that request,
+  not of the generation.
 - **Write:** one publisher thread per store (`tine-checkpoint`, registered in
   `tests/i21_owners.rs`). A publication that changes the generation marks it
   dirty. The thread waits for `IDLE` of quiet and `MIN_INTERVAL` since its
@@ -90,7 +119,7 @@ index.
   2. header;
   3. parser tag;
   4. root;
-  5. config revision;
+  5. config key;
   6. lengths;
   7. checksum;
   8. decode.
@@ -130,7 +159,7 @@ the full build:
 | Length or checksum | Torn or interrupted write, crash or power loss mid-write, disk error |
 | Magic, format or parser tag | Another Tine build's checkpoint, after an upgrade or downgrade |
 | Root | A moved or restored graph whose id collides |
-| Config revision | `config.edn` edited while Tine was closed, by an external editor or a sync delivery |
+| Config key | `config.edn` edited while Tine was closed in a setting the build reads, by an external editor or a sync delivery |
 | Racy stamp | An external-editor race within the timestamp granule |
 
 ## Consequences

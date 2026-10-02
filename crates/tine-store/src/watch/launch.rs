@@ -116,12 +116,9 @@ impl Core {
     }
 
     /// The baseline a launch checkpoint stores (ADR 0070): every graph-text
-    /// stamp, sorted, the racy set, and the revision of the config bytes the
-    /// graph's live config was taken from. Caller holds the writer, so no
+    /// stamp, sorted, and the racy set. Caller holds the writer, so no
     /// reconcile moves them while they are cloned.
-    pub(crate) fn checkpoint_observations(
-        &self,
-    ) -> (Vec<(PathBuf, Stamp)>, Vec<PathBuf>, Option<FileRev>) {
+    pub(crate) fn checkpoint_observations(&self) -> (Vec<(PathBuf, Stamp)>, Vec<PathBuf>) {
         let mut stamps: Vec<(PathBuf, Stamp)> = self
             .snapshot
             .lock()
@@ -131,16 +128,7 @@ impl Core {
             .collect();
         stamps.sort_by(|a, b| a.0.cmp(&b.0));
         let racy: Vec<PathBuf> = self.racy.lock().unwrap().iter().cloned().collect();
-        (stamps, racy, self.config_rev())
-    }
-
-    /// Revision of the config bytes last taken in (`None`: no config file).
-    pub(crate) fn config_rev(&self) -> Option<FileRev> {
-        self.config_stamp
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|value| value.rev.clone())
+        (stamps, racy)
     }
 }
 

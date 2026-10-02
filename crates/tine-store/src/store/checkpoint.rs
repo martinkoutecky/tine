@@ -7,8 +7,10 @@
 //!
 //! File: `MAGIC`, `FORMAT` (u32 LE), header length (u32 LE), postcard
 //! [`Header`], then the zstd frame of the postcard [`Body`]. The header pins
-//! the parser, the canonical root, the revision of the config bytes the
-//! generation was parsed under, and the payload's length and SHA-256.
+//! the parser, the canonical root, the key of the config the generation was
+//! built under ([`config_key`]: the settings the build and index path reads,
+//! by value, so an edit to any other setting keeps the checkpoint), and the
+//! payload's length and SHA-256.
 //!
 //! Writing: after a dirtying publication, once the graph has been idle for
 //! [`IDLE`] and the last write is [`MIN_INTERVAL`] old, or once the change has
@@ -33,7 +35,7 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// Bump whenever anything a checkpoint holds changes meaning or shape: a
 /// serialized type, the parser's output, an index's semantics.
 /// `checkpoint_tests::the_golden_body_is_pinned_to_format` fails on any such change.
-pub(crate) const FORMAT: u32 = 2;
+pub(crate) const FORMAT: u32 = 3;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.7";
@@ -55,7 +57,7 @@ const MAX_RAW: u64 = 4 << 30;
 struct Header {
     parser: String,
     root: PathBuf,
-    config_rev: Option<FileRev>,
+    config_key: [u8; 32],
     raw_len: u64,
     payload_len: u64,
     payload_sha256: [u8; 32],
@@ -127,11 +129,112 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
 
+/// The key of the config a generation was built under: exactly the settings
+/// the build and index path reads (parsing, page identity and the file set,
+/// journals, search folding, reference exclusions, property pages), by value.
+/// A config edited while Tine was closed falls the launch back to the
+/// initial build only when it moves one of these; an edit to any other
+/// setting (UI, shortcuts, macros, favorites) keeps the checkpoint, because
+/// nothing it holds was derived from that setting.
+///
+/// The pattern names every field (no `..`), so a new `Config` field does not
+/// compile until it is classified here, and
+/// `checkpoint_tests::the_config_key_is_exactly_what_the_build_reads` scans
+/// tine-store and every tine-core function that receives a `Config`: a field
+/// read there that is bound `_` below fails it, as does a keyed field no
+/// longer read.
+pub(crate) fn config_key(config: &tine_core::config::Config) -> [u8; 32] {
+    let tine_core::config::Config {
+        journals_dir,
+        pages_dir,
+        hidden,
+        hidden_parse_failed_closed,
+        block_hidden_properties,
+        separated_by_commas,
+        ignored_page_references_keywords,
+        property_pages_enabled,
+        property_pages_excludelist,
+        favorites_page,
+        journal_file_name_format,
+        journal_page_title_format,
+        preferred_format,
+        file_name_format,
+        enable_search_remove_accents,
+        // Read only by the app and by display metadata (`GraphMeta`), which
+        // the generation does not hold.
+        preferred_workflow: _,
+        shortcuts: _,
+        all_pages_public: _,
+        start_of_week: _,
+        linked_references_collapsed_threshold: _,
+        default_journal_template: _,
+        default_home: _,
+        favorites: _,
+        macros: _,
+        enable_timetracking: _,
+        show_brackets: _,
+        doc_mode_enter_for_new_block: _,
+        logical_outdenting: _,
+        logbook: _,
+        guide_announced: _,
+    } = config;
+    let fields: [(&str, String); 15] = [
+        ("journals_dir", format!("{journals_dir:?}")),
+        ("pages_dir", format!("{pages_dir:?}")),
+        ("hidden", format!("{hidden:?}")),
+        (
+            "hidden_parse_failed_closed",
+            format!("{hidden_parse_failed_closed:?}"),
+        ),
+        (
+            "block_hidden_properties",
+            format!("{block_hidden_properties:?}"),
+        ),
+        ("separated_by_commas", format!("{separated_by_commas:?}")),
+        (
+            "ignored_page_references_keywords",
+            format!("{ignored_page_references_keywords:?}"),
+        ),
+        (
+            "property_pages_enabled",
+            format!("{property_pages_enabled:?}"),
+        ),
+        (
+            "property_pages_excludelist",
+            format!("{property_pages_excludelist:?}"),
+        ),
+        ("favorites_page", format!("{favorites_page:?}")),
+        (
+            "journal_file_name_format",
+            format!("{journal_file_name_format:?}"),
+        ),
+        (
+            "journal_page_title_format",
+            format!("{journal_page_title_format:?}"),
+        ),
+        ("preferred_format", format!("{preferred_format:?}")),
+        ("file_name_format", format!("{file_name_format:?}")),
+        (
+            "enable_search_remove_accents",
+            format!("{enable_search_remove_accents:?}"),
+        ),
+    ];
+    let mut hash = Sha256::new();
+    for (name, value) in fields {
+        // Length-prefixed, so no two field lists encode alike.
+        for part in [name.as_bytes(), value.as_bytes()] {
+            hash.update((part.len() as u64).to_le_bytes());
+            hash.update(part);
+        }
+    }
+    hash.finalize().into()
+}
+
 /// Encode a captured body. Postcard streams into the zstd encoder, so the raw
 /// body is never held in memory; its length is counted as it passes.
 fn encode(
     root: &Path,
-    config_rev: Option<FileRev>,
+    config_key: [u8; 32],
     body: &Body<PagesOut>,
 ) -> Result<(Vec<u8>, u64), String> {
     struct Counting<W>(W, u64);
@@ -153,7 +256,7 @@ fn encode(
     let header = Header {
         parser: PARSER.to_owned(),
         root: root.to_path_buf(),
-        config_rev,
+        config_key,
         raw_len,
         payload_len: payload.len() as u64,
         payload_sha256: sha256(&payload),
@@ -169,16 +272,13 @@ fn encode(
 }
 
 /// Validate and decode a checkpoint file's bytes for `root` under the config
-/// revision `config_rev`. Every check names what it defends: a torn or
+/// key `config_key`. Every check names what it defends: a torn or
 /// truncated write (crash, power loss: length, checksum), a disk error (a
 /// flipped byte: checksum, decode), another Tine build (format, parser), a
 /// moved or different graph (root), or a config edited while Tine was closed
-/// (config: the generation was parsed under other settings).
-fn decode(
-    bytes: &[u8],
-    root: &Path,
-    config_rev: Option<&FileRev>,
-) -> Result<Body<PagesIn>, Fallback> {
+/// in a setting the build reads (config: the generation was built under other
+/// settings).
+fn decode(bytes: &[u8], root: &Path, config_key: &[u8; 32]) -> Result<Body<PagesIn>, Fallback> {
     // Probed with `get`: a truncated file (torn write) is a fallback, never
     // a panic.
     let word = |at: usize| {
@@ -202,7 +302,7 @@ fn decode(
     if header.root != root {
         return Err(Fallback::Root);
     }
-    if header.config_rev.as_ref() != config_rev {
+    if &header.config_key != config_key {
         return Err(Fallback::Config);
     }
     if payload.len() as u64 != header.payload_len || header.raw_len > MAX_RAW {
@@ -227,11 +327,7 @@ pub(crate) struct Loaded {
 
 /// Read and validate the checkpoint at `path` (one read of one file). No lock
 /// is held; nothing is installed.
-pub(crate) fn load(
-    path: &Path,
-    root: &Path,
-    config_rev: Option<&FileRev>,
-) -> Result<Loaded, Fallback> {
+pub(crate) fn load(path: &Path, root: &Path, config_key: &[u8; 32]) -> Result<Loaded, Fallback> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -239,7 +335,7 @@ pub(crate) fn load(
         }
         Err(_) => return Err(Fallback::Unreadable),
     };
-    let body = decode(&bytes, root, config_rev)?;
+    let body = decode(&bytes, root, config_key)?;
     Ok(Loaded {
         body,
         file_bytes: bytes.len() as u64,
@@ -474,7 +570,11 @@ pub(crate) fn launch_from(
     wake: &std::sync::mpsc::Sender<()>,
 ) -> bool {
     let began = Instant::now();
-    let loaded = match self::load(path, &graph.root, watch.config_rev().as_ref()) {
+    // The config this store opened with: the launch diff compares the config
+    // file against the same revision, so a checkpoint loaded under it is
+    // reconciled as if it had been built under it.
+    let key = config_key(&changes.config.read().unwrap().config);
+    let loaded = match self::load(path, &graph.root, &key) {
         Ok(loaded) => loaded,
         Err(reason) => {
             graph
@@ -606,7 +706,7 @@ impl Publisher {
         let _ = spawned;
     }
 
-    fn capture(&self) -> Result<(Body<PagesOut>, Option<FileRev>), &'static str> {
+    fn capture(&self) -> Result<(Body<PagesOut>, [u8; 32]), &'static str> {
         let _writer = self.writer.lock().unwrap();
         if !matches!(*self.load.status.lock().unwrap(), LoadStatus::Ready) {
             return Err("loading");
@@ -628,7 +728,16 @@ impl Publisher {
                     NotCaptured::Unpublished => "unpublished",
                     NotCaptured::Unreadable => "unreadable",
                 })?;
-        let (stamps, mut racy, config_rev) = self.watch.checkpoint_observations();
+        // The config the cached generation was built under. A live reload
+        // swaps the graph's config and drops the cache under the writer
+        // before its publication, so a published generation and the
+        // published config agree; if they do not (an external config edit
+        // mid-reload), nothing is written this time.
+        let key = config_key(&self.graph.current_config());
+        if config_key(&snapshot.config.config) != key {
+            return Err("config");
+        }
+        let (stamps, mut racy) = self.watch.checkpoint_observations();
         // A page whose recorded stamp does not vouch for the bytes its cached
         // document was parsed from (an own write raced its watcher echo) is
         // stored racy, so the launch diff rereads it.
@@ -648,16 +757,16 @@ impl Publisher {
                 stamps,
                 racy,
             },
-            config_rev,
+            key,
         ))
     }
 
     fn write_once(&self) -> CheckpointWrite {
-        let (body, config_rev) = match self.capture() {
+        let (body, config_key) = match self.capture() {
             Ok(captured) => captured,
             Err(reason) => return CheckpointWrite::Skipped(reason),
         };
-        let (bytes, raw_bytes) = match encode(&self.graph.root, config_rev, &body) {
+        let (bytes, raw_bytes) = match encode(&self.graph.root, config_key, &body) {
             Ok(encoded) => encoded,
             Err(error) => return CheckpointWrite::Failed(error),
         };
@@ -687,3 +796,7 @@ impl Publisher {
 #[cfg(test)]
 #[path = "checkpoint_tests.rs"]
 mod checkpoint_tests;
+
+#[cfg(test)]
+#[path = "checkpoint_config_key_tests.rs"]
+mod checkpoint_config_key_tests;
