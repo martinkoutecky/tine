@@ -572,11 +572,15 @@ pub(crate) fn launch_listing_walk(graph: &Graph) -> LaunchListing {
         return (entries, tracked_only, Vec::new(), stamps);
     }
     let errors = walk_graph_text_files(root, root, &config, |path, eligible, entry| {
-        if let Some(stamp) = entry
-            .metadata()
-            .ok()
-            .and_then(|metadata| crate::watch::stamp_from_metadata(&metadata))
-        {
+        // A file whose entry cannot be statted (disk error, or a file removed
+        // mid-listing by a sync delivery) gets no stamp: the baseline then
+        // lacks it, so the watcher's next diff re-reads it. Unknown is never
+        // recorded as unchanged.
+        let stamp = match entry.metadata() {
+            Ok(metadata) => crate::watch::stamp_from_metadata(&metadata),
+            Err(_) => None,
+        };
+        if let Some(stamp) = stamp {
             stamps.insert(path.clone(), (stamp, std::time::SystemTime::now()));
         }
         if !eligible {
