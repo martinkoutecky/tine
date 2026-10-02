@@ -3,7 +3,7 @@
 name: diagnose-gh623
 on:
   push:
-    branches: [diagnose/gh623-test-build-3]
+    branches: [diagnose/gh623-test-build-5]
   workflow_dispatch:
 permissions:
   contents: read
@@ -22,7 +22,7 @@ jobs:
           workspaces: ". -> target"
       - run: npm ci
       - name: Watcher + checkpoint tests on real Windows
-        run: "cargo test -p tine-store --lib -- watch:: checkpoint --nocapture"
+        run: "cargo test -p tine-store --lib -- watch:: checkpoint reference_evidence --nocapture"
       - name: Mark the test version (sorts above 0.7.0-beta.1, below beta.2)
         shell: bash
         run: |
