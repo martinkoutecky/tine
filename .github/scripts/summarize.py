@@ -26,6 +26,10 @@ M = [
  ("cold scan_refresh #3 ms", "cold", lambda d: d["scanRefreshMs"][2]),
  ("cold full-diff statMs (diag)", "cold", lambda d: [x for x in d["diagFullDiffs"]["recent"] if x["trigger"] != "launch_diff"][-1]["statMs"]),
  ("cold checkpoint write ms", "cold", lambda d: d["checkpointWrite"]["ms"]),
+ ("cold2 (rescanned files) readyMs", "cold2", lambda d: d["readyMs"]),
+ ("cold2 load read ms", "cold2", lambda d: d["diagLoadPass"]["read"]["ms"]),
+ ("cold2 load wall ms", "cold2", lambda d: d["diagLoadPass"]["wallMs"]),
+ ("cold2 diag.publishMs", "cold2", lambda d: d["diagPublishMs"]),
  ("warm firstPageMs", "warm", lambda d: d["firstPageMs"]),
  ("warm readyMs", "warm", lambda d: d["readyMs"]),
  ("warm get_page largest ms", "warm", lambda d: d["pageLargestMs"]),
@@ -37,17 +41,27 @@ M = [
  ("prims read-all FIRST touch ms", "prims", lambda d: d["prims"]["readFirstMs"]),
  ("prims read-all second touch ms", "prims", lambda d: d["prims"]["readSecondMs"]),
 ]
-phases = ["OFF1", "ON", "OFF2"]
-out = ["| metric (median of 3, ms) | OFF1 | ON | OFF2 | ON / mean(OFF) | raw ON |", "|---|---:|---:|---:|---:|---|"]
+phases = ["OFF1", "ON1", "OFF2", "ON2"]
+out = ["| metric (median of 3, ms) | OFF1 | ON1 | OFF2 | ON2 | ON / OFF | raw ON1 | raw ON2 |", "|---|---:|---:|---:|---:|---:|---|---|"]
 for name, mode, g in M:
     meds = [med(p, mode, g) for p in phases]
     f = lambda m: "n/a" if m[0] is None else f"{m[0]:.1f}"
     offs = [m[0] for m in (meds[0], meds[2]) if m[0] is not None]
+    ons = [m[0] for m in (meds[1], meds[3]) if m[0] is not None]
     ratio = "n/a"
-    if meds[1][0] is not None and offs and statistics.mean(offs) > 0:
-        ratio = f"{meds[1][0] / statistics.mean(offs):.2f}x"
-    out.append(f"| {name} | {f(meds[0])} | {f(meds[1])} | {f(meds[2])} | {ratio} | {', '.join(f'{x:.0f}' for x in meds[1][1])} |")
+    if ons and offs and statistics.mean(offs) > 0:
+        ratio = f"{statistics.mean(ons) / statistics.mean(offs):.2f}x"
+    raw = lambda m: ', '.join(f'{x:.0f}' for x in m[1])
+    out.append(f"| {name} | {f(meds[0])} | {f(meds[1])} | {f(meds[2])} | {f(meds[3])} | {ratio} | {raw(meds[1])} | {raw(meds[3])} |")
 print("\n".join(out))
+print()
+print("| MsMpEng CPU ms during run (median) | OFF1 | ON1 | OFF2 | ON2 |\n|---|---:|---:|---:|---:|")
+for mode in ("cold","cold2","warm","prims"):
+    cells=[]
+    for p in phases:
+        v=[r["msMpEngCpuMs"] for r in rows if r.get("phase")==p and r.get("mode")==mode and "msMpEngCpuMs" in r]
+        cells.append(f"{statistics.median(v):.0f}" if v else "n/a")
+    print(f"| {mode} | " + " | ".join(cells) + " |")
 print()
 for r in rows:
     if r.get("mode") == "proof":
