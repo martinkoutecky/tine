@@ -26,7 +26,7 @@ jobs:
       - name: Mark the test version (sorts above 0.7.0-beta.1, below beta.2)
         shell: bash
         run: |
-          node -e "const f='src-tauri/tauri.conf.json';const fs=require('fs');const c=JSON.parse(fs.readFileSync(f));c.version='0.7.0-beta.1-gh623c';fs.writeFileSync(f,JSON.stringify(c,null,2)+'\n')"
+          node -e "const f='src-tauri/tauri.conf.json';const fs=require('fs');const c=JSON.parse(fs.readFileSync(f));c.version='0.7.0-beta.1-gh623d';fs.writeFileSync(f,JSON.stringify(c,null,2)+'\n')"
       - run: npm run build
       - name: Build the portable exe
         run: cargo build --release -p tine --features custom-protocol
@@ -34,9 +34,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force out | Out-Null
-          Copy-Item target/release/tine.exe "out/Tine Beta 0.7.0-beta.1-gh623c.exe"
+          Copy-Item target/release/tine.exe "out/Tine Beta 0.7.0-beta.1-gh623d.exe"
       - uses: actions/upload-artifact@v4
         with:
-          name: tine-beta-gh623c-test-windows-x64
+          name: tine-beta-gh623d-test-windows-x64
           path: out/
           retention-days: 30
