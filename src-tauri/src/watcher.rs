@@ -644,6 +644,7 @@ mod tests {
             tine_store::OpenOptions {
                 approved_external_assets: None,
                 watch: WatchMode::Poll,
+                launch_checkpoint: None,
             },
         )
         .unwrap()
@@ -713,6 +714,7 @@ mod tests {
             tine_store::OpenOptions {
                 approved_external_assets: None,
                 watch: WatchMode::Poll,
+                launch_checkpoint: None,
             },
         )
         .unwrap()
@@ -792,6 +794,7 @@ mod tests {
             tine_store::OpenOptions {
                 approved_external_assets: None,
                 watch: WatchMode::Poll,
+                launch_checkpoint: None,
             },
         )
         .unwrap()
@@ -858,6 +861,7 @@ mod tests {
             tine_store::OpenOptions {
                 approved_external_assets: None,
                 watch: WatchMode::Poll,
+                launch_checkpoint: None,
             },
         )
         .unwrap()
@@ -927,6 +931,7 @@ mod tests {
             tine_store::OpenOptions {
                 approved_external_assets: None,
                 watch: WatchMode::Notify,
+                launch_checkpoint: None,
             },
         )
         .unwrap()

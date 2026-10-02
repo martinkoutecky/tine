@@ -38,6 +38,7 @@ fn open(root: &Path, mode: WatchMode, approved: Option<PathBuf>) -> (Store, Subs
         OpenOptions {
             approved_external_assets: approved,
             watch: mode,
+            launch_checkpoint: None,
         },
     )
     .unwrap()

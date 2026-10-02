@@ -5,7 +5,7 @@ use super::*;
 /// by snapshot publication and the query fallback. Each normalized name owns a
 /// persistent ordered claimant tree, so removing its winner costs O(log D),
 /// where D is its duplicates, without scanning unrelated pages (I-12/I-25).
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RealPageNames {
     claimants: crate::model::persistent::Map<
         String,

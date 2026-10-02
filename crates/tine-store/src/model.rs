@@ -3,6 +3,8 @@
 //! runtime UUIDs are deterministic structural locators; persisted `id::`
 //! values remain separate external reference identities.
 
+mod checkpoint_state;
+pub(crate) use checkpoint_state::{GraphState, NotCaptured, PagesIn, PagesOut};
 mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
@@ -1281,9 +1283,11 @@ fn reference_signature(doc: &Document) -> ReferenceTokenSignature {
     signature
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct SnapshotReferenceCandidateIndex {
     signatures: SharedMap<usize, Arc<ReferenceTokenSignature>>,
+    // The cache's own `Pages::positions`; a loaded checkpoint re-shares it.
+    #[serde(skip)]
     positions: Arc<SharedMap<String, usize>>,
     page_count: usize,
     complete: bool,
@@ -1465,7 +1469,7 @@ impl SnapshotBlockIndex {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct SnapshotPageDerivedIndex {
     shards: Vec<Arc<SharedMap<PathBuf, Vec<String>>>>,
 }
@@ -1528,7 +1532,7 @@ impl SnapshotPageDerivedIndex {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct SnapshotExplicitIndex {
     shards: Vec<Arc<SharedMap<String, Arc<SharedMap<PathBuf, ()>>>>>,
 }

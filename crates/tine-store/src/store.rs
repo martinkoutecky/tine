@@ -114,6 +114,8 @@ pub(crate) struct LoadState {
     closed: AtomicBool,
     pub(crate) status: Mutex<LoadStatus>,
     pub(crate) ready: Condvar,
+    /// A launch checkpoint is served while still Loading (ADR 0070).
+    pub(crate) serving: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -131,6 +133,7 @@ impl LoadState {
             closed: AtomicBool::new(false),
             status: Mutex::new(status),
             ready: Condvar::new(),
+            serving: AtomicBool::new(false),
         }
     }
 }
@@ -142,6 +145,9 @@ pub struct OpenOptions {
     pub approved_external_assets: Option<PathBuf>,
     /// Initial file observation mode.
     pub watch: WatchMode,
+    /// The app-data file holding this graph's launch checkpoint (ADR 0070);
+    /// `None` keeps none. Never under the graph root.
+    pub launch_checkpoint: Option<PathBuf>,
 }
 
 /// How the store observes graph files after opening.
@@ -283,6 +289,8 @@ pub(crate) struct ChangeFeed {
     /// Why live notifications are refused right now (`None` while watching or
     /// polling by choice), and the subscriber told when that changes.
     watch_status: Mutex<(Option<String>, Option<StatusObserver>)>,
+    /// The launch checkpoint publisher, when this store keeps one.
+    pub(crate) checkpoint: std::sync::OnceLock<Arc<checkpoint::Signal>>,
     #[cfg(test)]
     pub(crate) snapshot_publish_pause: Mutex<Option<TestPause>>,
 }
@@ -314,6 +322,7 @@ struct Snapshot {
 }
 
 mod answer_changes;
+pub(crate) mod checkpoint;
 mod diagnostics;
 mod snapshot;
 
@@ -357,6 +366,7 @@ impl ChangeFeed {
             journal_ids,
             snapshot: RwLock::new(None),
             watch_status: Mutex::new((None, None)),
+            checkpoint: std::sync::OnceLock::new(),
             #[cfg(test)]
             snapshot_publish_pause: Mutex::new(None),
         }
@@ -446,6 +456,9 @@ impl ChangeFeed {
         rebuild: bool,
     ) -> GraphRev {
         let old = self.snapshot.read().unwrap().clone();
+        if old.is_none() || config_changed || rebuild || !files.is_empty() {
+            self.checkpoint.get().inspect(|signal| signal.published());
+        }
         let journals_dir = self.graph.current_config().journals_dir.clone();
         if old.is_none()
             || config_changed
@@ -994,10 +1007,15 @@ impl Store {
     /// publication has no file tuples; reconciliation may publish observed
     /// differences separately. Use the recovered view to refresh graph-wide answers.
     /// Unsafe layouts, unapproved external targets, and I/O return [`OpenError`].
+    /// With [`OpenOptions::launch_checkpoint`] (ADR 0070,
+    /// `store/checkpoint.rs`), a valid checkpoint is served at once while the
+    /// launch diff reconciles, and a background publisher replaces it after
+    /// edits.
     pub fn open(
         root: &Path,
         opts: OpenOptions,
     ) -> Result<(Self, tine_core::model::GraphMeta, ConfigState), OpenError> {
+        let checkpoint = opts.launch_checkpoint.clone();
         let root = Self::canonical_root(root)?;
         let graph =
             Graph::open_checked_with_assets_inner(&root, opts.approved_external_assets.as_deref())
@@ -1058,6 +1076,9 @@ impl Store {
         let worker_changes = Arc::clone(&changes);
         let worker_watch = watch.core_for_load();
         let worker_watch_wake = watch.wake_for_load();
+        if let Some(path) = &checkpoint {
+            checkpoint::Publisher::start(path, &graph, &writer, &load, &changes, &watch);
+        }
         std::thread::Builder::new()
             .name("tine-graph-load".into())
             .stack_size(8 * 1024 * 1024)
@@ -1067,6 +1088,17 @@ impl Store {
                     && !worker_load.cancelled.load(Ordering::Acquire)
                 {
                     std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                let parts = (
+                    &worker_graph,
+                    &*worker_load,
+                    &*worker_writer,
+                    &*worker_changes,
+                );
+                if checkpoint.as_deref().is_some_and(|path| {
+                    checkpoint::launch_from(path, parts, &worker_watch, &worker_watch_wake)
+                }) {
+                    return;
                 }
                 let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| loop {
                     let completed = worker_graph
@@ -1175,6 +1207,10 @@ impl Store {
     /// Stop observation, wait for an in-flight writer, end the subscription,
     /// release load waiters, and refuse later I/O. Idempotent; no timeout.
     pub fn close(&self) {
+        self.changes
+            .checkpoint
+            .get()
+            .inspect(|signal| signal.stop());
         self.watch.stop();
         let _writer = self.writer.lock().unwrap();
         self.load.closed.store(true, Ordering::Release);
@@ -1273,6 +1309,10 @@ impl Store {
     /// exactly as `scan_refresh` retries it, which is already a cold build.
     pub fn rebuild_graph(&self) -> Result<GraphRev, LoadError> {
         self.watch.rebuild_all()?;
+        self.changes
+            .checkpoint
+            .get()
+            .inspect(|signal| signal.request());
         Ok(self.changes.rev())
     }
 
@@ -1934,9 +1974,27 @@ impl Store {
     /// its publication; the background worker then uses that cache rather
     /// than restarting the pass. The save can wait for that O(P + B) build.
     /// No partial graph generation is available after failure.
+    /// A launch checkpoint (ADR 0070) is served before Ready, while the launch
+    /// diff reconciles edits made while closed; an operation acting on the
+    /// whole graph's answers waits for Ready first (`scan_refresh` does;
+    /// inside the crate, `whole_graph_reconciled`).
     pub fn whole_graph(&self) -> Result<WholeGraph, LoadError> {
+        self.whole_graph_when(true)
+    }
+
+    /// [`Self::whole_graph`] that never serves the launch checkpoint before
+    /// the launch diff: graph-wide destructive operations (delete, rename,
+    /// merge, orphan cleanup) wait for it, since an external edit made while
+    /// Tine was closed may have added a reference the checkpoint lacks.
+    pub(crate) fn whole_graph_reconciled(&self) -> Result<WholeGraph, LoadError> {
+        self.whole_graph_when(false)
+    }
+
+    fn whole_graph_when(&self, serve_loaded: bool) -> Result<WholeGraph, LoadError> {
         let mut status = self.load.status.lock().unwrap();
-        while matches!(*status, LoadStatus::Loading) {
+        while matches!(*status, LoadStatus::Loading)
+            && !(serve_loaded && self.load.serving.load(Ordering::Acquire))
+        {
             status = self.load.ready.wait(status).unwrap();
         }
         match &*status {
@@ -1946,8 +2004,7 @@ impl Store {
                     reason: reason.clone(),
                 })
             }
-            LoadStatus::Ready => {}
-            LoadStatus::Loading => unreachable!(),
+            LoadStatus::Ready | LoadStatus::Loading => {}
         }
         let snapshot = self
             .changes

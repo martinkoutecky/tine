@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use super::{collect_with_errors, Core};
+use super::{collect_with_errors, Core, Stamp};
 use crate::launch_diag::DiffTrigger;
 use crate::store::{ChangeKind, FileId, FileRev, LoadError};
 
@@ -113,5 +113,40 @@ impl Core {
             deferred.files.push((id.clone(), change, Some(rev)));
             deferred.pages.push((id, kind, name));
         }
+    }
+
+    /// The baseline a launch checkpoint stores (ADR 0070): every graph-text
+    /// stamp, sorted, the racy set, and the revision of the config bytes the
+    /// graph's live config was taken from. Caller holds the writer, so no
+    /// reconcile moves them while they are cloned.
+    pub(crate) fn checkpoint_observations(
+        &self,
+    ) -> (Vec<(PathBuf, Stamp)>, Vec<PathBuf>, Option<FileRev>) {
+        let mut stamps: Vec<(PathBuf, Stamp)> = self
+            .snapshot
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(path, value)| (path.clone(), value.clone()))
+            .collect();
+        stamps.sort_by(|a, b| a.0.cmp(&b.0));
+        let racy: Vec<PathBuf> = self.racy.lock().unwrap().iter().cloned().collect();
+        (stamps, racy, self.config_rev())
+    }
+
+    /// Revision of the config bytes last taken in (`None`: no config file).
+    pub(crate) fn config_rev(&self) -> Option<FileRev> {
+        self.config_stamp
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|value| value.rev.clone())
+    }
+}
+
+impl Stamp {
+    /// Revision of the bytes read after this observation, if they were read.
+    pub(crate) fn rev(&self) -> Option<&FileRev> {
+        self.rev.as_ref()
     }
 }

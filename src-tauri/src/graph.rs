@@ -198,10 +198,24 @@ fn open_graph_for_load(
         OpenOptions {
             approved_external_assets: approved_assets.map(Path::to_path_buf),
             watch,
+            launch_checkpoint: launch_checkpoint_path(Path::new(root)),
         },
     )
     .map_err(|error| open_error_text(error, true))?;
     Ok(LoadedGraph { store, meta })
+}
+
+/// The graph's launch checkpoint (ADR 0070): one file in app data, never
+/// under the graph root, keyed like the session and drafts files. Unit tests
+/// keep none, so they never touch the developer's app data.
+fn launch_checkpoint_path(root: &Path) -> Option<std::path::PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    let id = crate::settings::session_id(root);
+    let stem = id.strip_suffix(".json").unwrap_or(&id);
+    crate::app_identity::current_app_data_dir()
+        .map(|dir| dir.join("launch-checkpoints").join(format!("{stem}.bin")))
 }
 
 #[derive(serde::Serialize)]

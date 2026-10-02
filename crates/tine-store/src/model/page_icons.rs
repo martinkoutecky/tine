@@ -4,7 +4,7 @@ use super::*;
 /// persistent per-name trees. Publication changes only the edited page's rows;
 /// requested names resolve from these captured trees, including ordered alias
 /// inheritance. No graph walk is moved to the query path (I-12/I-25).
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct IconIndex {
     real: SharedMap<String, SharedMap<usize, ()>>,
     icons: SharedMap<String, SharedMap<usize, String>>,

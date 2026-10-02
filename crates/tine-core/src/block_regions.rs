@@ -97,7 +97,7 @@ pub fn nested_reference_names(content: &str) -> Vec<String> {
     out
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Range(pub usize, pub usize);
 impl Range {
     pub fn slice<'a>(&self, raw: &'a str) -> &'a str {
@@ -107,7 +107,7 @@ impl Range {
         self.0 <= at && at < self.1
     }
 }
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Header {
     pub marker: Option<String>,
     pub priority: Option<String>,
@@ -147,9 +147,10 @@ impl Header {
 /// `range` is the whole container including any trailing blank lines lsdoc
 /// folded in; `open_end` ends its first (opener) line and `close_start` begins
 /// its last non-blank (closer) line. Line arithmetic only, never fence syntax.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LiteralBlock {
-    pub kind: &'static str,
+    #[serde(with = "literal_kind")]
+    pub kind: StaticStr,
     pub lang: String,
     pub range: Range,
     pub open_end: usize,
@@ -164,7 +165,7 @@ pub struct LiteralBlock {
 /// line outside every accepted literal as an open fence running to the end of
 /// the text. It is the only fence-shaped recognition outside the parser and is
 /// computed only here (guarded by `src/ogP11Parser.guard.test.ts`, I-12).
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OpenFence {
     pub lang: String,
     pub start: usize,
@@ -235,7 +236,11 @@ fn open_fence(raw: &str, literals: &[Range]) -> Option<OpenFence> {
     }
     None
 }
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// A property line lsdoc accepted. The JSON wire form (the editor's region
+/// answer, `page_regions_json`) omits `directive` and `applicable`; the binary
+/// launch-checkpoint form (a non-human-readable serializer) keeps every field,
+/// because a positional format cannot skip a field it later deserializes.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Property {
     pub key: String,
     pub value: String,
@@ -244,26 +249,44 @@ pub struct Property {
     pub value_range: Range,
     pub region: usize,
     pub primary: bool,
-    #[serde(skip_serializing)]
     pub directive: bool,
-    #[serde(skip_serializing)]
     pub applicable: bool,
 }
-#[derive(Debug, Clone, PartialEq, Serialize)]
+impl Serialize for Property {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let wire = s.is_human_readable();
+        let mut out = s.serialize_struct("Property", if wire { 7 } else { 9 })?;
+        out.serialize_field("key", &self.key)?;
+        out.serialize_field("value", &self.value)?;
+        out.serialize_field("line", &self.line)?;
+        out.serialize_field("key_range", &self.key_range)?;
+        out.serialize_field("value_range", &self.value_range)?;
+        out.serialize_field("region", &self.region)?;
+        out.serialize_field("primary", &self.primary)?;
+        if !wire {
+            out.serialize_field("directive", &self.directive)?;
+            out.serialize_field("applicable", &self.applicable)?;
+        }
+        out.end()
+    }
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Planning {
     pub kind: String,
     pub line: Range,
     pub timestamp: Range,
+    #[serde(with = "json_value")]
     pub date: serde_json::Value,
 }
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Drawer {
     pub name: String,
     pub range: Range,
     pub close: usize,
     pub clocks: Vec<Range>,
 }
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct BlockRegions {
     pub header: Header,
     pub literals: Vec<Range>,
@@ -1300,4 +1323,52 @@ impl BlockRegions {
 /// Parse and edit one block. Use `BlockRegions::apply` when its AST is cached.
 pub fn edit(raw: &str, org: bool, request: Edit) -> Result<String, String> {
     parse(raw, org).apply(raw, org, request)
+}
+
+/// A `&'static str` field; an alias so serde does not infer a `'de: 'static`
+/// borrow for it.
+pub type StaticStr = &'static str;
+
+/// `LiteralBlock::kind` over serde: the kinds are a closed set, so a
+/// deserialized kind maps back to its static spelling and an unknown one is an
+/// error (a launch checkpoint holding it is not loaded; never a leak).
+pub mod literal_kind {
+    use serde::{Deserialize, Deserializer, Serializer};
+    /// Every kind `LiteralBlock::new` is called with.
+    pub const KINDS: &[&str] = &["src", "example", "other"];
+    pub fn serialize<S: Serializer>(value: &&'static str, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(value)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<&'static str, D::Error> {
+        let value = String::deserialize(d)?;
+        KINDS
+            .iter()
+            .copied()
+            .find(|kind| *kind == value)
+            .ok_or_else(|| serde::de::Error::custom("unknown literal kind"))
+    }
+}
+
+/// A `serde_json::Value` field: itself for a human-readable serializer (the
+/// JSON wire form is unchanged), its JSON text for a binary one, which cannot
+/// carry a self-describing value.
+pub mod json_value {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    pub fn serialize<S: Serializer>(value: &serde_json::Value, s: S) -> Result<S::Ok, S::Error> {
+        if s.is_human_readable() {
+            value.serialize(s)
+        } else {
+            serde_json::to_string(value)
+                .map_err(serde::ser::Error::custom)?
+                .serialize(s)
+        }
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<serde_json::Value, D::Error> {
+        if d.is_human_readable() {
+            serde_json::Value::deserialize(d)
+        } else {
+            let text = String::deserialize(d)?;
+            serde_json::from_str(&text).map_err(serde::de::Error::custom)
+        }
+    }
 }

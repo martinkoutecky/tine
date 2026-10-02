@@ -86,7 +86,7 @@ const OG_HIDDEN_BUILT_IN_PROPERTIES: &[&str] = &[
 
 /// One parser-recognized page reference and its source span.
 #[deny(missing_docs)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProjectedPageRef {
     /// Reference target spelling.
     pub name: String,
@@ -94,7 +94,35 @@ pub struct ProjectedPageRef {
     /// `ReferenceSpan` values convert these offsets to UTF-16 code units.
     pub range: Range<usize>,
     /// Parser rule that recognized this reference.
-    pub rule: &'static str,
+    #[serde(with = "reference_rule")]
+    pub rule: crate::block_regions::StaticStr,
+}
+
+/// `ProjectedPageRef::rule` over serde (the launch checkpoint): the rules are a
+/// closed set, so a deserialized rule maps back to its static spelling and an
+/// unknown one is an error. `rules_are_a_closed_set` pins the list.
+pub mod reference_rule {
+    use serde::{Deserialize, Deserializer, Serializer};
+    /// Every rule this module's `push_explicit*` callers name.
+    pub const RULES: &[&str] = &[
+        "explicit_link",
+        "explicit_nested_link",
+        "explicit_tag",
+        "explicit_embed",
+        "explicit_property_key",
+        "implicit_linkable_property",
+    ];
+    pub fn serialize<S: Serializer>(value: &&'static str, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(value)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<&'static str, D::Error> {
+        let value = String::deserialize(d)?;
+        RULES
+            .iter()
+            .copied()
+            .find(|rule| *rule == value)
+            .ok_or_else(|| serde::de::Error::custom("unknown reference rule"))
+    }
 }
 
 /// Borrowed view of the reference spans retained with a block projection.
@@ -114,7 +142,7 @@ pub struct ReferenceSource<'a> {
 /// Reference spans produced by one projection build, owned. A block stores
 /// them split (see [`ReferenceSource`]); this form is the build result.
 #[deny(missing_docs)]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ReferenceSourceProjection {
     /// Explicit page references recognized by the parser.
     pub explicit: Vec<ProjectedPageRef>,

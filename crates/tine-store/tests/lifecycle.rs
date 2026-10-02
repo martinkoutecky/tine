@@ -35,6 +35,7 @@ fn compare_checked_open(root: &Path, approved: Option<&Path>, expected_error: Op
         OpenOptions {
             approved_external_assets: approved.map(Path::to_path_buf),
             watch: Default::default(),
+            launch_checkpoint: None,
         },
     )
     .map(|(store, _, _)| {

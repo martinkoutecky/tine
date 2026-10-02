@@ -4,7 +4,8 @@
 
 use crate::model::ReadSnapshot;
 use crate::store::{
-    PageId, SaveBase, SaveOutcome, Store, RESULT_BRIDGE_MAX_BYTES, RESULT_BRIDGE_MAX_ROWS,
+    OpenOptions, PageId, SaveBase, SaveOutcome, Store, RESULT_BRIDGE_MAX_BYTES,
+    RESULT_BRIDGE_MAX_ROWS,
 };
 use std::sync::Arc;
 use tine_core::{BlockDto, RefGroup};
@@ -268,5 +269,157 @@ fn run_seed(seed: u64) {
 fn derived_cache_matches_fresh_under_random_edits() {
     for seed in [1u64, 2, 3, 4, 5, 0xC0FFEE, 0xDEADBEEF] {
         run_seed(seed);
+    }
+}
+
+/// One random external edit made while the store is closed: rewrite (sometimes
+/// with the old mtime restored, so only size/ctime/the racy rule can catch
+/// it), create, or remove a page file.
+fn external_edit(r: &mut Rng, root: &std::path::Path, extra: &mut Vec<String>) {
+    let pages = root.join("pages");
+    match r.below(4) {
+        0 | 1 => {
+            let name = PAGES[r.below(PAGES.len())];
+            let path = pages.join(format!("{name}.md"));
+            let before = std::fs::metadata(&path)
+                .ok()
+                .and_then(|m| m.modified().ok());
+            let mut s = String::new();
+            let page_idx = r.below(PAGES.len());
+            if let Some(pre) = gen_pre(r, page_idx) {
+                s.push_str(&pre);
+                s.push_str("\n\n");
+            }
+            for _ in 0..1 + r.below(3) {
+                s.push_str(&format!("- {}\n", gen_block(r).raw.replace('\n', "\n  ")));
+            }
+            std::fs::write(&path, s).unwrap();
+            if let (Some(when), 0) = (before, r.below(2)) {
+                let file = std::fs::File::options().write(true).open(&path).unwrap();
+                file.set_modified(when).unwrap();
+            }
+        }
+        2 => {
+            let name = format!("Q{}", r.next() % 1000);
+            let text = format!("- {}\n", gen_block(r).raw.replace('\n', "\n  "));
+            std::fs::write(pages.join(format!("{name}.md")), text).unwrap();
+            extra.push(name);
+        }
+        _ => {
+            if let Some(name) = (!extra.is_empty()).then(|| extra.remove(r.below(extra.len()))) {
+                let _ = std::fs::remove_file(pages.join(format!("{name}.md")));
+            } else {
+                // Keep PAGES present; remove-and-recreate with new content.
+                let name = PAGES[r.below(PAGES.len())];
+                let path = pages.join(format!("{name}.md"));
+                std::fs::remove_file(&path).unwrap();
+                std::fs::write(&path, format!("- {}\n", gen_block(r).raw)).unwrap();
+            }
+        }
+    }
+}
+
+/// ADR 0070 item 5(a): the same differential through a launch checkpoint.
+/// Each cycle edits through the save path, writes the checkpoint, closes,
+/// edits files while closed, and reopens from the checkpoint; once Ready the
+/// served state must equal a fresh full build of the same files.
+fn run_checkpoint_seed(seed: u64) {
+    let mut r = Rng(seed);
+    let root = mk(&format!("cp{seed}"));
+    for (i, p) in PAGES.iter().enumerate() {
+        let mut s = String::new();
+        if let Some(pre) = gen_pre(&mut r, i) {
+            s.push_str(&pre);
+            s.push_str("\n\n");
+        }
+        s.push_str(&format!(
+            "- {}\n",
+            gen_block(&mut r).raw.replace('\n', "\n  ")
+        ));
+        std::fs::write(root.join("pages").join(format!("{p}.md")), s).unwrap();
+    }
+    let checkpoint = root.with_extension("checkpoint.bin");
+    let _ = std::fs::remove_file(&checkpoint);
+    let mut extra = Vec::new();
+    for cycle in 0..6 {
+        let store = Store::open(
+            &root,
+            OpenOptions {
+                launch_checkpoint: Some(checkpoint.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0;
+        let reconciled = store.whole_graph_reconciled().unwrap();
+        let outcome = store.diagnostics()["checkpoint"]["load"]["outcome"]
+            .as_str()
+            .unwrap_or("none")
+            .to_owned();
+        let expected = if cycle == 0 { "missing" } else { "loaded" };
+        assert_eq!(
+            outcome, expected,
+            "seed {seed} cycle {cycle}: checkpoint load"
+        );
+        let fresh = Store::open(&root, Default::default()).unwrap().0;
+        let fresh_view = fresh.whole_graph().unwrap();
+        let (live_fp, fresh_fp) = (
+            fingerprint(&reconciled.graph),
+            fingerprint(&fresh_view.graph),
+        );
+        if live_fp != fresh_fp {
+            let diff = live_fp
+                .lines()
+                .zip(fresh_fp.lines())
+                .find(|(a, b)| a != b)
+                .map(|(a, b)| format!("\n  RELOADED: {a}\n  FRESH   : {b}"))
+                .unwrap_or_default();
+            panic!(
+                "seed {seed} cycle {cycle}: reloaded checkpoint diverged from a fresh build{diff}"
+            );
+        }
+        drop((fresh_view, reconciled));
+        fresh.close();
+        for _ in 0..10 {
+            let name = PAGES[r.below(PAGES.len())];
+            let id = PageId::from(format!("pages/{name}.md"));
+            let read = store.page(&id).unwrap();
+            let mut dto = read.doc;
+            match r.below(3) {
+                0 => dto.blocks = (0..1 + r.below(3)).map(|_| gen_block(&mut r)).collect(),
+                1 => dto.blocks.push(gen_block(&mut r)),
+                _ => {
+                    let page_idx = r.below(PAGES.len());
+                    dto.pre_block = gen_pre(&mut r, page_idx);
+                }
+            }
+            match store.save(
+                crate::EditKind::ReplacePage,
+                &id,
+                SaveBase::Existing(read.rev),
+                &dto,
+            ) {
+                SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_) => {}
+                other => panic!("seed {seed} cycle {cycle}: save failed: {other:?}"),
+            }
+        }
+        let written = store.write_checkpoint_now();
+        assert!(
+            matches!(written, Some(crate::CheckpointWrite::Written { .. })),
+            "seed {seed} cycle {cycle}: checkpoint not written: {written:?}"
+        );
+        store.close();
+        for _ in 0..1 + r.below(4) {
+            external_edit(&mut r, &root, &mut extra);
+        }
+    }
+    let _ = std::fs::remove_file(&checkpoint);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_reloaded_checkpoint_matches_a_fresh_build_after_closed_edits() {
+    for seed in [1u64, 2, 3, 0xC0FFEE, 0xDEADBEEF] {
+        run_checkpoint_seed(seed);
     }
 }

@@ -12,7 +12,7 @@ impl Transaction<'_> {
                 }
             )
         }) {
-            let _ = self.store.whole_graph();
+            let _ = self.store.whole_graph_reconciled();
         }
     }
     pub(super) fn config_write_failure(&self) -> Option<TxOutcome> {
@@ -48,6 +48,11 @@ impl Transaction<'_> {
         let Some(name) = file.as_str().strip_prefix("assets/") else {
             return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
         };
+        // Never the launch checkpoint before its diff (ADR 0070): an edit
+        // made while Tine was closed may reference this asset. Under the
+        // writer a served-but-unreconciled state cannot be observed, since
+        // `checkpoint::launch_from` holds the writer from serving until
+        // Ready, so the plain view here is the reconciled one.
         let view = self.store.whole_graph().map_err(|error| {
             Why::Failed(
                 io::Error::other(format!("asset reference inventory unavailable: {error:?}"))

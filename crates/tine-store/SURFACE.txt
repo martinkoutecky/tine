@@ -30,6 +30,7 @@ field store::ConfigState.assets_directory_name
 field store::GraphAccessInspection.external_assets
 field store::GraphAccessInspection.root
 field store::OpenOptions.approved_external_assets
+field store::OpenOptions.launch_checkpoint
 field store::OpenOptions.watch
 field store::Change.files
 field store::Change.graph_rev

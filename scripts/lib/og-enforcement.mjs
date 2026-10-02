@@ -80,8 +80,9 @@ export const PERSISTED_FORMATS = Object.freeze([
   "concord-base-ledger",
   "draft-store-json",
   "backup-graph-text-copy",
+  "launch-checkpoint",
 ]);
-export const PINNED_FORMAT_COUNT = 27;
+export const PINNED_FORMAT_COUNT = 28;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({

@@ -211,3 +211,80 @@ fn rescan_and_saves_are_recorded() {
     assert_eq!(last["committed"], true);
     assert!(last["writerWaitMs"].is_number() && last["totalMs"].is_number());
 }
+
+/// ADR 0070: the checkpoint section is numbers and closed tokens too, after a
+/// write and a launch served from the checkpoint.
+#[test]
+fn the_checkpoint_section_is_closed_tokens_only() {
+    let (dir, store) = fixture();
+    let cp_dir = tempfile::tempdir().unwrap();
+    let cp = cp_dir.path().join("graph.bin");
+    store.close();
+    let open = || {
+        Store::open(
+            dir.path(),
+            tine_store::OpenOptions {
+                launch_checkpoint: Some(cp.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .0
+    };
+    let first = open();
+    first.scan_refresh().unwrap();
+    assert!(matches!(
+        first.write_checkpoint_now(),
+        Some(tine_store::CheckpointWrite::Written { .. })
+    ));
+    let written = first.diagnostics()["checkpoint"].clone();
+    assert_eq!(written["last"]["outcome"], "written");
+    assert!(n(&written["last"]["fileBytes"]) > 0);
+    first.close();
+    let second = open();
+    second.scan_refresh().unwrap();
+    let section = second.diagnostics()["checkpoint"].clone();
+    assert_eq!(section["load"]["outcome"], "loaded");
+    assert!(n(&section["load"]["bytes"]) > 0);
+    let text = format!("{written}{section}");
+    for planted in [SECRET_NAME, SECRET_BODY, &dir.path().to_string_lossy()] {
+        assert!(
+            !text.contains(planted),
+            "I-5: checkpoint diagnostics leaked {planted:?}: {text}"
+        );
+    }
+    fn strings(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::String(text) => out.push(text.clone()),
+            Value::Array(items) => items.iter().for_each(|item| strings(item, out)),
+            Value::Object(map) => map.values().for_each(|item| strings(item, out)),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    strings(&written, &mut found);
+    strings(&section, &mut found);
+    let closed = [
+        "loaded",
+        "missing",
+        "unreadable",
+        "format",
+        "parser",
+        "root",
+        "config",
+        "length",
+        "checksum",
+        "decode",
+        "raced",
+        "written",
+        "failed",
+        "loading",
+        "unpublished",
+    ];
+    for text in found {
+        assert!(
+            closed.contains(&text.as_str()),
+            "unexpected checkpoint string {text:?}"
+        );
+    }
+}

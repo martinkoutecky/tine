@@ -103,6 +103,20 @@ fn shared_answers_have_one_definition() {
                     .unwrap(),
             );
         }
+        if file.ends_with("store/src/watch.rs") {
+            // The watcher is split into child modules (the restore baseline
+            // walks asset sidecars in `watch/restore.rs`). Keep the file-kind
+            // checks over the whole watcher, every child module included.
+            let mut children: Vec<_> = fs::read_dir(root.join("crates/tine-store/src/watch"))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+                .collect();
+            children.sort();
+            for child in children {
+                source.push_str(&fs::read_to_string(child).unwrap());
+            }
+        }
         assert_clean(file, &source);
     }
     let owner = fs::read_to_string(root.join("crates/tine-store/src/file_kind.rs")).unwrap();

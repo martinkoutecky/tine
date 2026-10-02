@@ -20,6 +20,13 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         "load worker checks cancellation per page",
     ),
     (
+        "crates/tine-store/src/store/checkpoint.rs",
+        ".spawn(move ||",
+        1,
+        "Store::close stops the checkpoint Signal",
+        "detached; a write in flight finishes or dies with the process, and the atomic replace keeps the previous checkpoint",
+    ),
+    (
         "crates/tine-store/src/watch.rs",
         "thread::spawn(",
         1,

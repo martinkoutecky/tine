@@ -317,6 +317,10 @@ struct State {
     builds: u64,
     build_last_us: u64,
     build_total_us: u64,
+    checkpoint_load: Option<(&'static str, u64, u64)>,
+    serving_us: Option<u64>,
+    checkpoint_writes: u64,
+    checkpoint_last: Option<(&'static str, u64, u64, u64)>,
 }
 
 /// Recorder owned by the `Graph`; one per opened store.
@@ -424,6 +428,31 @@ impl DiagRecorder {
         state.build_total_us += micros(wall);
     }
 
+    /// The launch tried the checkpoint: closed outcome token (`loaded` or a
+    /// fallback reason), wall time to read and validate it, file bytes.
+    pub(crate) fn checkpoint_load(&self, outcome: &'static str, wall: Duration, bytes: u64) {
+        self.state().checkpoint_load = Some((outcome, micros(wall), bytes));
+    }
+
+    /// A loaded checkpoint is being served (status still Loading).
+    pub(crate) fn serving(&self) {
+        self.state().serving_us = Some(self.since_launch());
+    }
+
+    /// One checkpoint attempt: closed outcome token, wall time, raw body
+    /// bytes and file bytes (zero unless written).
+    pub(crate) fn checkpoint_write(
+        &self,
+        outcome: &'static str,
+        wall: Duration,
+        raw: u64,
+        file: u64,
+    ) {
+        let mut state = self.state();
+        state.checkpoint_writes += 1;
+        state.checkpoint_last = Some((outcome, micros(wall), raw, file));
+    }
+
     /// CRLF-file count of the last installed load pass (`None` before one).
     pub(crate) fn crlf_at_last_load(&self) -> Option<u64> {
         self.state().crlf_at_last_load
@@ -465,6 +494,21 @@ impl DiagRecorder {
                 })),
                 "publishMs": state.publish_us.map(ms),
                 "readyMs": state.ready_us.map(ms),
+            },
+            "checkpoint": {
+                "load": state.checkpoint_load.map(|(outcome, wall, bytes)| json!({
+                    "outcome": outcome,
+                    "wallMs": ms(wall),
+                    "bytes": bytes,
+                })),
+                "servingMs": state.serving_us.map(ms),
+                "writes": state.checkpoint_writes,
+                "last": state.checkpoint_last.map(|(outcome, wall, raw, file)| json!({
+                    "outcome": outcome,
+                    "wallMs": ms(wall),
+                    "rawBytes": raw,
+                    "fileBytes": file,
+                })),
             },
             "onDemandBuilds": {
                 "count": state.builds,

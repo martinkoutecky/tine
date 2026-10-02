@@ -246,6 +246,7 @@ fn a_repaired_hidden_value_restores_the_graph_text() {
         OpenOptions {
             approved_external_assets: None,
             watch: tine_store::WatchMode::Poll,
+            launch_checkpoint: None,
         },
     )
     .unwrap()

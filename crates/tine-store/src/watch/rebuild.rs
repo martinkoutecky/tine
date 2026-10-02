@@ -132,6 +132,7 @@ mod tests {
             OpenOptions {
                 approved_external_assets: None,
                 watch: WatchMode::Poll,
+                launch_checkpoint: None,
             },
         )
         .unwrap()

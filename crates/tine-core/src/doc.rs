@@ -81,10 +81,11 @@ pub struct DocBlock {
 // `DocBlock::visible_folded`; the fields are private so no caller can re-implement the
 // fallback. Unrelated to behaviour: every accessor returns what the eager form returned.
 #[deny(missing_docs)]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BlockProjection {
     /// Parser-owned raw byte regions from the same cached single-block AST.
     /// Sparse edit data stays out of the inline block; empty regions are shared.
+    #[serde(deserialize_with = "deserialize_shared_regions")]
     pub regions: std::sync::Arc<crate::block_regions::BlockRegions>,
     /// Visible (non-property) text, original case — `raw` minus the byte ranges lsdoc
     /// recognized as `Properties` blocks. `None` when identical to `raw`.
@@ -93,7 +94,9 @@ pub struct BlockProjection {
     /// policy. `None` when identical to the visible text.
     visible_lower: Option<Box<str>>,
     /// Lazy accent-sensitive fold, populated only when that graph policy is used;
-    /// the inner `None` means identical to the visible text.
+    /// the inner `None` means identical to the visible text. Not checkpointed:
+    /// it is lazy, and a loaded projection builds it on first use.
+    #[serde(skip)]
     visible_literal: std::sync::OnceLock<Option<Box<str>>>,
     /// Byte ranges of `raw` eligible for plain-text (unlinked) reference matching.
     plain_ranges: Vec<std::ops::Range<usize>>,
@@ -103,7 +106,7 @@ pub struct BlockProjection {
 
 /// The facets of a [`BlockProjection`] that most blocks do not have (g13k: 80% of blocks
 /// have none of them), kept behind one pointer so an ordinary block does not pay for them.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct ProjectionExtra {
     refs_norm: Vec<String>,
     refs_page: Vec<String>,
@@ -1462,5 +1465,69 @@ mod projection_tests {
             plain.visible_text().contains("foo:: bar"),
             "org key:: stays visible"
         );
+    }
+}
+
+fn deserialize_shared_regions<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<std::sync::Arc<crate::block_regions::BlockRegions>, D::Error> {
+    Ok(shared_regions(
+        crate::block_regions::BlockRegions::deserialize(d)?,
+    ))
+}
+
+/// A block forest in the launch-checkpoint form (storage spec §7.6): each
+/// block's raw text, format flag, memoized projection (when built) and
+/// children. Runtime uuids are not stored; the loader reassigns them with
+/// `projection::assign_doc_runtime_ids`, as a parse does. The serde wire form of
+/// [`DocBlock`] cannot be used: it skips the uuid and the projection.
+pub struct CheckpointBlocks<'a>(pub &'a [DocBlock]);
+
+struct CheckpointBlockRef<'a>(&'a DocBlock);
+
+impl Serialize for CheckpointBlocks<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(self.0.iter().map(CheckpointBlockRef))
+    }
+}
+
+impl Serialize for CheckpointBlockRef<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeTuple;
+        let mut out = s.serialize_tuple(4)?;
+        out.serialize_element(&self.0.raw)?;
+        out.serialize_element(&self.0.is_org)?;
+        out.serialize_element(&self.0.proj.get())?;
+        out.serialize_element(&CheckpointBlocks(&self.0.children))?;
+        out.end()
+    }
+}
+
+/// Owned counterpart of [`CheckpointBlocks`]' elements.
+#[derive(Deserialize)]
+pub struct CheckpointBlock(String, bool, Option<BlockProjection>, Vec<CheckpointBlock>);
+
+impl CheckpointBlock {
+    /// The block, with an empty runtime uuid (assign one before use).
+    pub fn into_block(self) -> DocBlock {
+        let CheckpointBlock(raw, is_org, projection, children) = self;
+        let proj = std::sync::OnceLock::new();
+        if let Some(projection) = projection {
+            let _ = proj.set(projection);
+        }
+        DocBlock {
+            raw,
+            children: children.into_iter().map(Self::into_block).collect(),
+            uuid: String::new(),
+            is_org,
+            proj,
+        }
+    }
+}
+
+impl DocBlock {
+    /// Whether this block's projection memo is populated.
+    pub fn projection_is_built(&self) -> bool {
+        self.proj.get().is_some()
     }
 }

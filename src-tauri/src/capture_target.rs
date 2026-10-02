@@ -117,6 +117,7 @@ pub(crate) fn resolve(
         OpenOptions {
             approved_external_assets: approved_assets(&root),
             watch: WatchMode::Poll,
+            launch_checkpoint: None,
         },
     )
     .map_err(|error| error.to_string())?;

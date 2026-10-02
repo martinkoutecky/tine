@@ -1113,6 +1113,7 @@ mod tests {
             tine_store::OpenOptions {
                 approved_external_assets: Some(first.clone()),
                 watch: Default::default(),
+                launch_checkpoint: None,
             },
         )
         .unwrap();

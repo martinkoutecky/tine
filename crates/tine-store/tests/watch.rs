@@ -38,6 +38,7 @@ impl Fixture {
             OpenOptions {
                 approved_external_assets: None,
                 watch: mode,
+                launch_checkpoint: None,
             },
         )
         .unwrap()
@@ -473,6 +474,7 @@ fn subscribe_then_view_preserves_startup_and_later_changes() {
         OpenOptions {
             approved_external_assets: None,
             watch: WatchMode::Poll,
+            launch_checkpoint: None,
         },
     )
     .unwrap()
@@ -535,6 +537,7 @@ fn notify_with_one_missing_directory_falls_back_to_polling() {
         OpenOptions {
             approved_external_assets: None,
             watch: WatchMode::Notify,
+            launch_checkpoint: None,
         },
     )
     .unwrap()
@@ -618,6 +621,7 @@ fn external_changes_during_initial_load_publish_after_ready() {
         OpenOptions {
             approved_external_assets: None,
             watch: WatchMode::Notify,
+            launch_checkpoint: None,
         },
     )
     .unwrap()

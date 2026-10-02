@@ -29,6 +29,7 @@ fn open(root: &Path, mode: WatchMode) -> (Store, Subscription) {
         OpenOptions {
             approved_external_assets: None,
             watch: mode,
+            launch_checkpoint: None,
         },
     )
     .unwrap()

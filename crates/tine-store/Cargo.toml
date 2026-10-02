@@ -20,6 +20,9 @@ same-file = "1.0.6"
 unicode-normalization = "0.1"
 unicode-segmentation = "1"
 notify = "6"
+# Launch checkpoint (storage spec §7.6): postcard body, zstd frame.
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+zstd = { version = "0.13", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem"] }
@@ -34,3 +37,7 @@ tine-core = { path = "../tine-core", features = ["test-counters"] }
 # Fault injection for tests/transaction.rs runs in the ordinary workspace test gate.
 tine-store = { path = ".", features = ["test-faults"] }
 pretty_assertions = "1"
+
+[[example]]
+name = "checkpoint_launch_bench"
+required-features = ["test-faults"]

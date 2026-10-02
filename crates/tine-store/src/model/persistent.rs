@@ -293,6 +293,27 @@ impl<K: Ord, V> FromIterator<(K, V)> for Map<K, V> {
     }
 }
 
+/// The launch checkpoint (storage spec §7.6) stores a map as its ordered
+/// (key, value) sequence and rebuilds it with the O(N) sorted bulk build.
+impl<K: serde::Serialize + Ord, V: serde::Serialize> serde::Serialize for Map<K, V> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        // Postcard needs the length up front; the tree iterator cannot say it.
+        let mut seq = s.serialize_seq(Some(self.len()))?;
+        for entry in self.iter() {
+            seq.serialize_element(&entry)?;
+        }
+        seq.end()
+    }
+}
+impl<'de, K: serde::Deserialize<'de> + Ord, V: serde::Deserialize<'de>> serde::Deserialize<'de>
+    for Map<K, V>
+{
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(Vec::<(K, V)>::deserialize(d)?.into_iter().collect())
+    }
+}
+
 use super::{Document, PageEntry};
 type Page = (PageEntry, Arc<Document>);
 /// Stable slots retain the original iteration order through deletion. New
@@ -337,6 +358,24 @@ impl Pages {
             Arc::make_mut(&mut self.positions).remove(page.0.rel_path_str());
         }
         self.rows.remove(&slot);
+    }
+}
+impl Pages {
+    /// The next free slot (the checkpoint keeps slots stable across a reload).
+    pub(crate) fn next_slot(&self) -> usize {
+        self.next
+    }
+    /// Pages at their recorded slots, as a launch checkpoint stored them.
+    pub(crate) fn from_slots(rows: Vec<(usize, Page)>, next: usize) -> Self {
+        Self {
+            positions: Arc::new(
+                rows.iter()
+                    .map(|(slot, p)| (p.0.rel_path_str().to_owned(), *slot))
+                    .collect(),
+            ),
+            rows: rows.into_iter().collect(),
+            next,
+        }
     }
 }
 impl From<Vec<Page>> for Pages {
@@ -432,6 +471,34 @@ impl EntryList {
             self.projected
                 .get_or_init(|| Arc::new(self.iter().cloned().collect())),
         )
+    }
+}
+/// An `EntryList`'s fields, as the launch checkpoint stores them (entry
+/// paths are rebuilt from their graph-relative identity on load).
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct EntryListParts {
+    pub(crate) rows: Map<usize, PageEntry>,
+    pub(crate) paths: Map<std::path::PathBuf, usize>,
+    pub(crate) days: Map<i64, usize>,
+    pub(crate) next: usize,
+}
+impl EntryList {
+    pub(crate) fn to_parts(&self) -> EntryListParts {
+        EntryListParts {
+            rows: self.rows.clone(),
+            paths: self.paths.clone(),
+            days: self.days.clone(),
+            next: self.next,
+        }
+    }
+    pub(crate) fn from_parts(parts: EntryListParts) -> Self {
+        Self {
+            rows: parts.rows,
+            paths: parts.paths,
+            days: parts.days,
+            next: parts.next,
+            projected: std::sync::OnceLock::new(),
+        }
     }
 }
 impl From<&[PageEntry]> for EntryList {

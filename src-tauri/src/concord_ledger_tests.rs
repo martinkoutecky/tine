@@ -40,6 +40,7 @@ fn open_slot(dir: &Path, app_data: PathBuf) -> (Arc<GraphSlot>, tine_store::Subs
         OpenOptions {
             approved_external_assets: None,
             watch: WatchMode::Poll,
+            launch_checkpoint: None,
         },
     )
     .unwrap()

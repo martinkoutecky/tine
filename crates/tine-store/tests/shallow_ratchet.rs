@@ -467,6 +467,10 @@ fn public_paths_are_only_inputs_and_handoffs() {
             "user-approved external target input",
         ),
         (
+            "store::OpenOptions.launch_checkpoint",
+            "host-chosen app-data file location (OS hand-off)",
+        ),
+        (
             "store::OpenError::NotAFolder",
             "failed user root path to user",
         ),

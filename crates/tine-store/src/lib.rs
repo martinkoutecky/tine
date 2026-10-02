@@ -113,6 +113,8 @@ pub use publish::{
     PublishReceipt, SiteWriter,
 };
 pub use restore::{RestoreFailed, RestoreFile, RestoreReport};
+#[cfg(any(test, feature = "test-faults"))]
+pub use store::checkpoint::CheckpointWrite;
 pub use store::{
     Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, FacetPolicy, FileEntry, FileId,
     FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry, IrAnswer,
