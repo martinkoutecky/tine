@@ -22,7 +22,7 @@ jobs:
           workspaces: ". -> target"
       - run: npm ci
       - name: Watcher tests on real Windows (ReadDirectoryChangesW)
-        run: cargo test -p tine-store --lib -- watch:: --nocapture
+        run: "cargo test -p tine-store --lib -- watch:: --nocapture"
       - name: Mark the test version (sorts above 0.7.0-beta.1, below beta.2)
         shell: bash
         run: |
