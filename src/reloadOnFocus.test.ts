@@ -1,11 +1,10 @@
 // Family 10 reload on focus (master d56219d73, b3d64addee39): returning to the
-// window asks the backend for one full stat diff, holds new edits until that
-// rescan's events are applied, coalesces and throttles, and never strands the
-// editor when the fallback fails.
+// window asks the backend for one full stat diff and waits for its events to be
+// applied, coalesces and throttles, and never blocks typing while it runs (K22,
+// SPEC-storage §6.1: the save guard, not an input barrier, protects stale bytes).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { deferEditorStartUntilFresh, freshnessPending } from "./freshnessBarrier";
-import { refreshOnReturnToWindow, rescanGraphNowFromSettings, resetFocusRescanThrottle, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
+import { refreshingFromDisk, refreshOnReturnToWindow, rescanGraphNowFromSettings, resetFocusRescanThrottle, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
 import { setToasts, toasts } from "./toasts";
 import { setGraphTransitioning } from "./ui";
 
@@ -31,21 +30,29 @@ afterEach(() => {
 });
 
 describe("reload on focus", () => {
-  it("rescans once, holds new edits until the rescan's events are applied, then releases them", async () => {
+  it("rescans once and finishes only after the rescan's events are applied", async () => {
     const refresh = refreshOnReturnToWindow(10_000);
-    expect(freshnessPending()).toBe(true);
-    const started = vi.fn();
-    expect(deferEditorStartUntilFresh(started)).toBe(true);
+    let done = false;
+    void refresh.then(() => { done = true; });
     await vi.waitFor(() => expect(rescans).toBe(1));
     let applied!: () => void;
     trackGraphChangeApplication(new Promise<void>((resolve) => { applied = resolve; }));
     complete!(sequence);
-    await Promise.resolve();
-    expect(freshnessPending()).toBe(true); // the change is still being applied
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(done).toBe(false); // the change is still being applied
     applied();
     await refresh;
-    expect(freshnessPending()).toBe(false);
-    expect(started).toHaveBeenCalledTimes(1);
+    expect(done).toBe(true);
+  });
+
+  it("a rescan slower than the notice delay says so, and clears the status when it ends", async () => {
+    const refresh = refreshOnReturnToWindow(16_000);
+    await vi.waitFor(() => expect(rescans).toBe(1));
+    expect(refreshingFromDisk()).toBe(false); // a fast rescan never flashes a notice
+    await vi.waitFor(() => expect(refreshingFromDisk()).toBe(true));
+    complete!(sequence);
+    await refresh;
+    expect(refreshingFromDisk()).toBe(false);
   });
 
   it("coalesces a focus during a rescan and throttles a quick second return", async () => {
@@ -62,10 +69,10 @@ describe("reload on focus", () => {
     await later;
   });
 
-  it("a failed rescan says so and releases the editor", async () => {
+  it("a failed rescan says so and clears the status", async () => {
     (backend() as Api).rescanGraphNow = async () => { throw new Error("scan refused"); };
     await refreshOnReturnToWindow(40_000);
-    expect(freshnessPending()).toBe(false);
+    expect(refreshingFromDisk()).toBe(false);
     expect(toasts().map((t) => t.kind)).toEqual(["error"]);
     expect(toasts()[0].message).toContain("scan refused");
   });
@@ -98,7 +105,7 @@ describe("reload on focus", () => {
       await refreshOnReturnToWindow(50_000);
       expect(rescans).toBe(0);
       expect(toasts()).toEqual([]);
-      expect(freshnessPending()).toBe(false);
+      expect(refreshingFromDisk()).toBe(false);
     } finally { unbound.mockRestore(); }
   });
 
@@ -124,7 +131,7 @@ describe("reload on focus", () => {
       await refreshOnReturnToWindow(80_000);
       expect(rescans).toBe(1);
       expect(toasts()).toEqual([]);
-      expect(freshnessPending()).toBe(false);
+      expect(refreshingFromDisk()).toBe(false);
     } finally { spy.mockRestore(); }
   });
 

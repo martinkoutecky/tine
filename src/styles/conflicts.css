@@ -398,8 +398,8 @@
   padding: 6px 14px 0;
 }
 
-/* Family 10: a focus rescan slower than 120 ms says what the wait is. */
-.focus-freshness-barrier {
+/* A focus rescan slower than 120 ms says what it is doing; it holds no input. */
+.focus-refresh-status {
   position: fixed;
   left: 50%;
   bottom: 1rem;

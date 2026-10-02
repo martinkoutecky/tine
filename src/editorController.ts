@@ -1,5 +1,4 @@
 import { captureEditorScrollAnchor } from "./editor/scrollAnchor";
-import { deferEditorStartUntilFresh } from "./freshnessBarrier";
 import { batch, createSignal } from "solid-js";
 import { renderedBlocks } from "./lazyObserve";
 import { notifyClearOutlineSelection, notifyEditingStarted } from "./modeHooks";
@@ -208,8 +207,6 @@ export function startEditing(
   surface: string | null = null,
   preserveHistoryRestore = false,
 ) {
-  // A focus rescan is installing what changed on disk (reloadOnFocus.ts).
-  if (deferEditorStartUntilFresh(() => startEditing(id, offset, owner, surface, preserveHistoryRestore))) return;
   if (!preserveHistoryRestore) setPendingHistoryEditorRestore(null);
   notifyEditingStarted(id, owner);
   // Latch the block so that when editing ends its body renders eagerly (no
