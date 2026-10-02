@@ -21,6 +21,7 @@ static QUERY_FACTS_COPIES: AtomicU64 = AtomicU64::new(0);
 static QUERY_FACTS_DERIVED: AtomicU64 = AtomicU64::new(0);
 static QUERY_CARRY_BLOCK_PROBES: AtomicU64 = AtomicU64::new(0);
 static QUERY_REGISTRY_PAGES_READ: AtomicU64 = AtomicU64::new(0);
+static HASH_READS: AtomicU64 = AtomicU64::new(0);
 
 /// Primitive counts since the last reset. The fixture uses one process per case.
 #[derive(Clone, Copy, Debug, Default)]
@@ -68,6 +69,9 @@ pub struct Counts {
     /// Page documents walked for property rows while building or patching a
     /// query registry.
     pub query_registry_pages_read: u64,
+    /// Whole graph-text files read only to hash their bytes
+    /// (`FileRev::from_file`; `logseq/config.edn` is not counted).
+    pub hash_reads: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -94,6 +98,7 @@ pub fn reset() {
         &QUERY_FACTS_DERIVED,
         &QUERY_CARRY_BLOCK_PROBES,
         &QUERY_REGISTRY_PAGES_READ,
+        &HASH_READS,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -123,6 +128,7 @@ pub fn snapshot() -> Counts {
         query_facts_derived: QUERY_FACTS_DERIVED.load(Ordering::Relaxed),
         query_carry_block_probes: QUERY_CARRY_BLOCK_PROBES.load(Ordering::Relaxed),
         query_registry_pages_read: QUERY_REGISTRY_PAGES_READ.load(Ordering::Relaxed),
+        hash_reads: HASH_READS.load(Ordering::Relaxed),
     }
 }
 
@@ -184,4 +190,7 @@ pub(crate) fn query_carry_block_probe() {
 }
 pub(crate) fn query_registry_pages_read() {
     QUERY_REGISTRY_PAGES_READ.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn hash_read() {
+    HASH_READS.fetch_add(1, Ordering::Relaxed);
 }

@@ -193,6 +193,9 @@ pub(crate) enum DiffTrigger {
     WatchEvent,
     /// Poll mode cycle (no OS watch).
     Poll,
+    /// The launch diff: the full stat diff against the load pass's own
+    /// observations (or a restored checkpoint's), before Ready.
+    Launch,
     /// Test-only direct reconcile.
     #[cfg(test)]
     Test,
@@ -207,6 +210,7 @@ impl DiffTrigger {
             Self::WatchInstall => "watch_install",
             Self::WatchEvent => "watch_rescan_event",
             Self::Poll => "poll_cycle",
+            Self::Launch => "launch_diff",
             #[cfg(test)]
             Self::Test => "test",
         }

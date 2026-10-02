@@ -838,6 +838,7 @@ impl Store {
             Arc::clone(&journal_ids),
             Arc::clone(&config_state),
             WatchMode::Notify,
+            crate::watch::Baseline::Walk,
         );
         Self {
             config_state,
@@ -1049,6 +1050,7 @@ impl Store {
             Arc::clone(&journal_ids),
             Arc::clone(&config_state),
             opts.watch,
+            crate::watch::Baseline::FromLoad,
         );
         let worker_graph = Arc::clone(&graph);
         let worker_load = Arc::clone(&load);
@@ -1074,17 +1076,42 @@ impl Store {
                     }
                 }));
                 let _writer = worker_writer.lock().unwrap();
+                let mut found = crate::watch::Deferred::default();
                 if matches!(completed, Ok(true)) {
-                    worker_watch.fill_revs();
+                    // GH #623 / storage spec §5.1: the baseline is what the
+                    // load pass observed, then one full stat diff catches
+                    // every file that changed since its stamp was taken.
+                    let written = match worker_graph.take_launch_observations() {
+                        Some(mut observed) => {
+                            let written = std::mem::take(&mut observed.announce);
+                            worker_watch.install_launch_baseline(observed);
+                            written
+                        }
+                        None => {
+                            worker_watch.install_walked_baseline();
+                            Vec::new()
+                        }
+                    };
+                    match worker_watch.launch_diff() {
+                        Ok(mut deferred) => {
+                            worker_watch.announce_written_since_open(written, &mut deferred);
+                            found = deferred;
+                        }
+                        // The root vanished or the store closed: the graph
+                        // still opens on what was read; the next watcher
+                        // cycle or rescan reconciles (an external-editor or
+                        // sync race, not a reason to refuse the graph).
+                        Err(_) => {}
+                    }
                 }
                 if matches!(completed, Ok(true)) {
                     if matches!(*worker_load.status.lock().unwrap(), LoadStatus::Loading) {
                         let publish_began = std::time::Instant::now();
                         worker_changes.publish_with(
                             Origin::External,
-                            Vec::new(),
-                            false,
-                            Vec::new(),
+                            found.files,
+                            found.config_changed,
+                            found.pages,
                             || *worker_load.status.lock().unwrap() = LoadStatus::Ready,
                         );
                         worker_graph.diag.ready(publish_began);
@@ -2093,6 +2120,10 @@ impl FileRev {
 
     pub(crate) fn from_file(path: &std::path::Path) -> std::io::Result<Self> {
         let mut file = File::open(path)?;
+        #[cfg(feature = "test-faults")]
+        if crate::file_kind::is_graph_text_path(path) {
+            crate::cost_counters::hash_read();
+        }
         let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
         let mut buf = [0u8; 64 * 1024];
         loop {

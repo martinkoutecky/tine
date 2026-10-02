@@ -94,6 +94,7 @@ fn the_dump_never_names_the_graph() {
         "watch_install",
         "watch_rescan_event",
         "poll_cycle",
+        "launch_diff",
     ];
     for text in found {
         assert!(
@@ -135,7 +136,22 @@ fn launch_phases_separate_reading_from_parsing() {
     assert_eq!(launch["status"], "ready");
     assert!(launch["readyMs"].as_f64().is_some(), "ready time recorded");
     assert!(launch["openMs"].as_f64().is_some(), "open time recorded");
-    assert!(launch["baselineWalk"]["files"].as_u64().unwrap() >= 5);
+    // GH #623: the watcher baseline comes from the load pass's own stamps and
+    // revisions, so neither the open-time baseline walk nor the fill_revs hash
+    // pass runs (each is reported only when its fallback does), and the launch
+    // diff stats every file once before Ready.
+    assert!(
+        launch["baselineWalk"].is_null(),
+        "no baseline walk: {launch}"
+    );
+    assert!(launch["fillRevs"].is_null(), "no fill_revs pass: {launch}");
+    let launch_diff = dump["fullDiffs"]["recent"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diff| diff["trigger"] == "launch_diff")
+        .expect("the launch diff is recorded");
+    assert!(n(&launch_diff["files"]) >= 5);
     let passes = launch["loadPasses"].as_array().unwrap();
     let pass = passes
         .iter()
@@ -148,7 +164,6 @@ fn launch_phases_separate_reading_from_parsing() {
     // worker count ride beside them so the sums are interpretable.
     assert!(pass["parallel"]["wallMs"].is_number());
     assert!(n(&pass["parallel"]["workers"]) >= 1);
-    assert!(n(&launch["fillRevs"]["files"]) >= 5);
 }
 
 #[test]

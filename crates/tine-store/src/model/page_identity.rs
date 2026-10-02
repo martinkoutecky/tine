@@ -87,7 +87,19 @@ impl Graph {
     ) {
         let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
         let format = self.current_journal_format();
-        let entries = list_graph_pages(self);
+        // The build that produced this generation already listed and named
+        // every file from its own reads (GH #623: one read per file); a
+        // later generation walks again.
+        let launch = self
+            .launch_listing
+            .write()
+            .unwrap()
+            .take()
+            .filter(|(listed_gen, _)| *listed_gen == gen);
+        let entries = match launch {
+            Some((_, entries)) => Arc::unwrap_or_clone(entries),
+            None => list_graph_pages(self),
+        };
         let claimants = page_claimants(self, &entries);
         *self.find_entry_cache.write().unwrap() = Some((
             gen,
@@ -533,11 +545,76 @@ pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Ve
     entries
 }
 
-fn walk_graph_page_files(
+/// The launch load pass's listing (GH #623, storage spec §5.1 step 1): the
+/// same walk and the same identities as [`list_graph_pages`], except that an
+/// ordinary page is named by its file stem here, because the load pass reads
+/// its whole file next and takes the effective name from those bytes
+/// (`tine_core::model::page_title_from_preamble` over the whole text answers
+/// as `effective_page_name` does over the preamble). Opens no file. Also
+/// returns the watch-relevant files that are not graph text (sync conflict
+/// copies), which the watcher baseline tracks by stamp only, and the walk's
+/// directory errors.
+pub(crate) fn launch_listing_walk(
+    graph: &Graph,
+) -> (Vec<PageEntry>, Vec<PathBuf>, Vec<(PathBuf, io::Error)>) {
+    #[cfg(test)]
+    super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));
+    let mut entries = Vec::new();
+    let mut tracked_only = Vec::new();
+    let root = &graph.root;
+    let format = graph.current_journal_format();
+    let name_format = graph.current_config().file_name_format;
+    let journals = graph.journals_path();
+    let config = graph.current_config();
+    if !graph_text_directory_scannable(root, root, &config) {
+        return (entries, tracked_only, Vec::new());
+    }
+    let errors = walk_graph_text_files(root, root, &config, |path, eligible| {
+        if !eligible {
+            tracked_only.push(path);
+            return;
+        }
+        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            return;
+        };
+        let (name, kind, date_key) = if path.starts_with(&journals) {
+            match format.parse(stem) {
+                Some(date) => (
+                    format.title(date),
+                    PageKind::Journal,
+                    Some(date.ordinal_key()),
+                ),
+                None => (stem.to_owned(), PageKind::Journal, None),
+            }
+        } else {
+            (decode_page_name(stem, name_format), PageKind::Page, None)
+        };
+        entries.push(PageEntry {
+            name,
+            kind,
+            date_key,
+            rel_path: Some(graph.rel_path(&path).into()),
+            path,
+        });
+    });
+    (entries, tracked_only, errors)
+}
+
+/// An ordinary page's effective name from its whole text: the `title::`
+/// property when the preamble has one, else its decoded file stem. The same
+/// answer [`effective_page_name`] reads from the preamble alone.
+pub(crate) fn effective_page_name_from_text(path: &Path, stem_name: &str, content: &str) -> String {
+    tine_core::model::page_title_from_preamble(content, Format::from_path(path))
+        .unwrap_or_else(|| stem_name.to_owned())
+}
+
+/// [`walk_graph_page_files`] over every watch-relevant file, saying whether
+/// each is graph text (`graph_text_eligible`) or tracked only (a conflict copy).
+fn walk_graph_text_files(
     root: &Path,
     start: &Path,
     config: &Config,
-    mut visit: impl FnMut(PathBuf),
+    mut visit: impl FnMut(PathBuf, bool),
 ) -> Vec<(PathBuf, io::Error)> {
     let mut errors = Vec::new();
     let mut pending = vec![start.to_path_buf()];
@@ -568,12 +645,26 @@ fn walk_graph_page_files(
                     continue;
                 }
             };
-            if kind.is_file() && graph_text_eligible(root, &path, config) {
-                visit(path);
+            if kind.is_file() && graph_text_watch_relevant(root, &path, config) {
+                let eligible = graph_text_eligible(root, &path, config);
+                visit(path, eligible);
             } else if kind.is_dir() && graph_text_directory_scannable(root, &path, config) {
                 pending.push(path);
             }
         }
     }
     errors
+}
+
+fn walk_graph_page_files(
+    root: &Path,
+    start: &Path,
+    config: &Config,
+    mut visit: impl FnMut(PathBuf),
+) -> Vec<(PathBuf, io::Error)> {
+    walk_graph_text_files(root, start, config, |path, eligible| {
+        if eligible {
+            visit(path);
+        }
+    })
 }

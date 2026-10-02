@@ -339,6 +339,21 @@ pub(crate) struct Graph {
     /// preserves `find_entry`'s duplicate selection: date-stem file first, else
     /// first directory-walk match.
     find_entry_cache: RwLock<Option<(u64, FindEntryIndex)>>,
+    /// GH #623 / storage spec §5.1 step 1: what the launch load pass observed
+    /// (each file's stamp, taken before its one read, the revision of the bytes
+    /// it parsed, and whether the stamp was racy), for the watcher baseline.
+    /// Taken once by the load worker; `None` when the cache was built by
+    /// another path (an on-demand build), which falls back to a baseline walk.
+    launch_observations: std::sync::Mutex<Option<LaunchObservations>>,
+    /// The launch pass's complete, effective-name page listing (duplicate
+    /// journal days included), keyed by `cache_gen`: the first publication's
+    /// name index is built from it instead of re-walking the graph and
+    /// re-opening every page preamble.
+    launch_listing: RwLock<Option<(u64, Arc<Vec<PageEntry>>)>>,
+    /// When this graph was opened. A file the launch pass finds written since
+    /// then may already have been read by a client (`Store::page` works while
+    /// loading), so the Ready publication announces it (`LaunchObservations`).
+    opened_at: std::time::SystemTime,
     /// `path → content_rev` of the bytes Tine last wrote to each page file,
     /// recorded *before* the write lands on disk. The file watcher reads files
     /// outside the cache lock, so during the window between a save's atomic rename
@@ -1611,6 +1626,20 @@ pub(crate) struct ReferenceCandidatePages {
 }
 
 #[derive(Default)]
+/// The launch load pass's observations (storage spec §5.1 step 1, §5.4).
+pub(crate) struct LaunchObservations {
+    /// Stamp of every graph-text file the pass found, taken before its read;
+    /// files it did not read (a duplicate journal day, a sync conflict copy)
+    /// carry a stamp without a revision.
+    pub(crate) stamps: HashMap<PathBuf, crate::watch::Stamp>,
+    /// Paths whose stamp was racy when observed (§5.4).
+    pub(crate) racy: std::collections::HashSet<PathBuf>,
+    /// Files written since the graph was opened, which a client may have
+    /// read before the pass did: announced in the Ready publication as
+    /// `(path, created since open, page kind, effective name)`.
+    pub(crate) announce: Vec<(PathBuf, bool, PageKind, String)>,
+}
+
 struct PageCacheBuild {
     pages: Vec<ParsedPage>,
     failures: Vec<String>,
@@ -2167,6 +2196,9 @@ impl Graph {
             build_lock: std::sync::Mutex::new(()),
             page_list_cache: RwLock::new(None),
             find_entry_cache: RwLock::new(None),
+            launch_observations: std::sync::Mutex::new(None),
+            launch_listing: RwLock::new(None),
+            opened_at: std::time::SystemTime::now(),
             recent_writes: std::sync::Mutex::new(std::collections::HashMap::new()),
             disk_revs: RwLock::new(std::collections::HashMap::new()),
             page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -2798,7 +2830,13 @@ impl Graph {
     /// Install a freshly-built whole-graph snapshot atomically: the parsed pages
     /// into the cache, their on-disk revs into `disk_revs`. Cache set BEFORE
     /// disk_revs so a reader never observes a fresh rev paired with a stale cache.
-    fn install_built(&self, built: PageCacheBuild, expected_gen: u64, replace: bool) -> bool {
+    fn install_built(
+        &self,
+        built: PageCacheBuild,
+        expected_gen: u64,
+        replace: bool,
+        observed: Option<&HashMap<PathBuf, crate::watch::Stamp>>,
+    ) -> bool {
         let PageCacheBuild {
             pages: built,
             failures,
@@ -2823,13 +2861,18 @@ impl Graph {
             .into_iter()
             .map(|(e, d, _)| (e, Arc::new(d)))
             .collect();
+        // The launch pass observed every file's stamp before reading it; an
+        // on-demand build did not, and stats each page here.
         let mtimes = pages
             .iter()
             .filter_map(|(entry, _)| {
-                fs::metadata(&entry.path)
-                    .and_then(|meta| meta.modified())
-                    .ok()
-                    .map(|mtime| (entry.rel_path_str().to_owned(), mtime))
+                match observed {
+                    Some(observed) => observed.get(&entry.path).and_then(|stamp| stamp.modified()),
+                    None => fs::metadata(&entry.path)
+                        .and_then(|meta| meta.modified())
+                        .ok(),
+                }
+                .map(|mtime| (entry.rel_path_str().to_owned(), mtime))
             })
             .collect();
         let pages = Pages::from(pages);
@@ -2894,7 +2937,7 @@ impl Graph {
                 // because the cache was still None), its disk write is already
                 // done — rebuild so we don't install a stale snapshot. We hold
                 // build_lock, so no other builder competes.
-                if self.install_built(built, gen0, false) {
+                if self.install_built(built, gen0, false, None) {
                     break;
                 }
             }
@@ -2957,24 +3000,40 @@ impl Graph {
         use crate::launch_diag as diag;
         let began = std::time::Instant::now();
         let mut pass = diag::PassStats::default();
-        let entries = self.list_pages();
+        // GH #623 / storage spec §5.1 step 1: one read per file. The listing
+        // opens no file (an ordinary page's name comes from the bytes read
+        // below), each file's stamp is taken before its read, and the
+        // revision comes from the same bytes that are parsed. The watcher
+        // baseline is then installed from these observations
+        // (`LaunchObservations`) instead of a second hash pass.
+        let (listed, tracked_only, walk_errors) = page_identity::launch_listing_walk(self);
+        let journal_format = self.current_journal_format();
+        let name_format = self.current_config().file_name_format;
+        // Journal identity is the filename date, so the duplicate-day collapse
+        // needs no content; non-journal entries pass through it unchanged.
+        let entries = dedup_journal_days(listed.clone(), &journal_format, name_format);
         pass.listing_us = diag::micros(began.elapsed());
         pass.entries = entries.len() as u64;
         let mut built = PageCacheBuild::with_capacity(entries.len());
-        // Record each file's mtime BEFORE reading it, so a re-stat before install
-        // catches any external edit that landed during the parse (external
-        // writers don't bump cache_gen, so the gen check below can't see them).
-        let mut mtimes: Vec<(PathBuf, Option<(std::time::SystemTime, u64)>)> =
-            Vec::with_capacity(entries.len());
+        let mut stamps: HashMap<PathBuf, crate::watch::Stamp> =
+            HashMap::with_capacity(listed.len() + tracked_only.len());
+        let mut racy = std::collections::HashSet::new();
+        // Ordinary-page names and discovery failures, taken from the reads.
+        let mut names: HashMap<PathBuf, String> = HashMap::new();
+        let mut discovery: Vec<(crate::FileId, crate::IoError)> = Vec::new();
         // Per-file phase time accumulates across the worker threads (atomics, no
         // allocation): read/parse/stat are summed THREAD time, so with N workers
         // they can exceed the parallel wall time reported next to them.
         let clock = diag::PassClock::default();
-        let parse_one = |e: PageEntry| {
+        let announce_after = self
+            .opened_at
+            .checked_sub(crate::watch::RACY_WINDOW)
+            .unwrap_or(self.opened_at);
+        let mut announce = Vec::new();
+        let parse_one = |mut e: PageEntry| {
             let phase = std::time::Instant::now();
-            let mtime = fs::metadata(&e.path)
-                .and_then(|metadata| metadata.modified().map(|time| (time, metadata.len())))
-                .ok();
+            let stamp = crate::watch::stamp_metadata(&e.path);
+            let observed = std::time::SystemTime::now();
             clock.stat(phase.elapsed());
             let path = e.path.clone();
             let phase = std::time::Instant::now();
@@ -2984,8 +3043,14 @@ impl Graph {
                 Err(_) => None,
             };
             clock.read(phase.elapsed(), read_len);
+            let mut name_failure = None;
             let parsed = match read {
                 Ok(content) => {
+                    if e.kind == PageKind::Page {
+                        e.name = page_identity::effective_page_name_from_text(
+                            &e.path, &e.name, &content,
+                        );
+                    }
                     clock.crlf(line_endings::convention(Some(&content)) == "\r\n");
                     let phase = std::time::Instant::now();
                     let parsed =
@@ -2993,22 +3058,75 @@ impl Graph {
                     clock.parse(phase.elapsed());
                     parsed
                 }
-                Err(error) => Err(PageParseFailure::Unreadable(
-                    e.rel_path_str().to_owned(),
-                    error.to_string(),
-                )),
+                // Removed between the listing and the read (a sync delivery
+                // or external editor): not part of this graph state. The
+                // launch diff reconciles whatever is there now.
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(error) => {
+                    if e.kind == PageKind::Page {
+                        name_failure = Some(io::Error::new(error.kind(), error.to_string()));
+                    }
+                    Err(PageParseFailure::Unreadable(
+                        e.rel_path_str().to_owned(),
+                        error.to_string(),
+                    ))
+                }
             };
-            (path, mtime, parsed)
+            let racy = stamp.as_ref().is_some_and(|stamp| stamp.racy_at(observed));
+            // Written since open (with the racy window's slack for coarse
+            // timestamps): a client may have read the earlier bytes.
+            let since_open = stamp
+                .as_ref()
+                .and_then(|stamp| stamp.modified())
+                .is_some_and(|modified| modified >= announce_after)
+                .then(|| {
+                    fs::symlink_metadata(&path)
+                        .and_then(|meta| meta.created())
+                        .is_ok_and(|created| created >= self.opened_at)
+                });
+            (path, stamp, racy, (name_failure, since_open), parsed)
+        };
+        let mut take = |built: &mut PageCacheBuild,
+                        (path, stamp, is_racy, (name_failure, since_open), parsed): (
+            PathBuf,
+            Option<crate::watch::Stamp>,
+            bool,
+            (Option<io::Error>, Option<bool>),
+            PageParseResult,
+        )| {
+            if let Ok(Some((entry, _, rev))) = &parsed {
+                if entry.kind == PageKind::Page {
+                    names.insert(path.clone(), entry.name.clone());
+                }
+                if let Some(created) = since_open {
+                    announce.push((path.clone(), created, entry.kind, entry.name.clone()));
+                }
+                if let Some(stamp) = stamp {
+                    stamps.insert(
+                        path.clone(),
+                        stamp.with_rev(Some(crate::store::FileRev::from(rev.clone()))),
+                    );
+                    if is_racy {
+                        racy.insert(path.clone());
+                    }
+                }
+            } else if let Some(stamp) = stamp {
+                // Read failed or panicked: the watcher tracks the stamp
+                // without a revision, so its next look rereads the file.
+                stamps.insert(path.clone(), stamp);
+                racy.insert(path.clone());
+            }
+            if let Some(error) = name_failure {
+                discovery.push((crate::FileId::from(self.rel_path(&path)), error.into()));
+            }
+            built.collect(parsed);
         };
         let mut entries = entries.into_iter();
         if let Some(first) = entries.next() {
             if cancelled() {
                 return pass.finish(&self.diag, began, diag::OUTCOME_CANCELLED, false);
             }
-            let (path, mtime, parsed) = parse_one(first);
-            if built.collect(parsed) {
-                mtimes.push((path, mtime));
-            }
+            take(&mut built, parse_one(first));
             #[cfg(test)]
             crate::store::pause_at_hook(&self.warm_after_first_page_pause);
         }
@@ -3028,27 +3146,68 @@ impl Graph {
             return pass.finish(&self.diag, began, outcome, built_meanwhile && !cancelled());
         };
         clock.fold(&mut pass, parallel_began.elapsed(), parsed_chunks.len());
-        for (path, mtime, parsed) in parsed_chunks.into_iter().flatten() {
-            if built.collect(parsed) {
-                mtimes.push((path, mtime));
+        for parsed in parsed_chunks.into_iter().flatten() {
+            take(&mut built, parsed);
+        }
+        drop(take);
+        // Files the build does not read: duplicate-day journals the collapse
+        // set aside and sync conflict copies. The watcher tracks their stamps
+        // without a revision (§5.1); nothing parses them.
+        let phase = std::time::Instant::now();
+        for path in listed
+            .iter()
+            .map(|entry| &entry.path)
+            .chain(tracked_only.iter())
+        {
+            if !stamps.contains_key(path) && !names.contains_key(path) {
+                let observed = std::time::SystemTime::now();
+                if let Some(stamp) = crate::watch::stamp_metadata(path) {
+                    if stamp.racy_at(observed) {
+                        racy.insert(path.clone());
+                    }
+                    stamps.insert(path.clone(), stamp);
+                }
             }
         }
-        // If any built file changed during the parse, our snapshot may be
-        // stale and the watcher might not yet baseline-track it — discard and let
-        // the next on-demand build read fresh. (A false positive just rebuilds.)
-        let phase = std::time::Instant::now();
-        let changed = mtimes.iter().any(|(p, m)| {
-            fs::metadata(p)
-                .and_then(|metadata| metadata.modified().map(|time| (time, metadata.len())))
-                .ok()
-                != *m
-        });
-        pass.recheck_us = diag::micros(phase.elapsed());
-        if changed {
-            return pass.finish(&self.diag, began, diag::OUTCOME_FILE_CHANGED, false);
+        // The forced rebuild has no launch diff behind it: a file that changed
+        // during its parse discards the pass (a false positive just rebuilds).
+        // The launch pass instead hands its pre-read stamps to the watcher,
+        // whose launch diff reconciles any such file before Ready.
+        if replace {
+            let changed = built.pages.iter().any(|(entry, _, _)| {
+                crate::watch::stamp_metadata(&entry.path).map(|now| (now.modified(), now.len()))
+                    != stamps
+                        .get(&entry.path)
+                        .map(|then| (then.modified(), then.len()))
+            });
+            if changed {
+                pass.recheck_us = diag::micros(phase.elapsed());
+                return pass.finish(&self.diag, began, diag::OUTCOME_FILE_CHANGED, false);
+            }
         }
+        pass.recheck_us = diag::micros(phase.elapsed());
         if cancelled() {
             return pass.finish(&self.diag, began, diag::OUTCOME_CANCELLED, false);
+        }
+        // The named listing: what `list_graph_pages` answers, from the reads.
+        let named: Vec<PageEntry> = listed
+            .into_iter()
+            .map(|mut entry| {
+                if let Some(name) = names.get(&entry.path) {
+                    entry.name = name.clone();
+                }
+                entry
+            })
+            .collect();
+        {
+            let mut known = self.discovery_errors.write().unwrap();
+            known.clear();
+            known.extend(discovery);
+            known.extend(
+                walk_errors
+                    .into_iter()
+                    .map(|(path, error)| (crate::FileId::from(self.rel_path(&path)), error.into())),
+            );
         }
         // Install only if nobody else built it and no Tine save/remove raced our
         // reads (its cache mutation would have no-op'd against the None cache, so
@@ -3056,7 +3215,20 @@ impl Graph {
         // on-demand build rather than install a stale snapshot).
         let phase = std::time::Instant::now();
         let _bl = self.build_lock.lock().unwrap();
-        let installed = self.install_built(built, gen0, replace);
+        let installed = self.install_built(built, gen0, replace, Some(&stamps));
+        if installed {
+            let gen = self.cache_gen.load(Ordering::Acquire);
+            let deduped = dedup_journal_days(named.clone(), &journal_format, name_format);
+            *self.page_list_cache.write().unwrap() = Some((gen, Arc::new(deduped)));
+            *self.launch_listing.write().unwrap() = Some((gen, Arc::new(named)));
+            if !replace {
+                *self.launch_observations.lock().unwrap() = Some(LaunchObservations {
+                    stamps,
+                    racy,
+                    announce,
+                });
+            }
+        }
         pass.install_us = diag::micros(phase.elapsed());
         #[cfg(test)]
         crate::store::pause_at_hook(&self.warm_after_install_pause);
@@ -3071,6 +3243,13 @@ impl Graph {
             outcome,
             if replace { installed } else { !cancelled() },
         )
+    }
+
+    /// The launch pass's observations, once: the watcher installs its
+    /// baseline from them (storage spec §5.1 step 1). None when the cache was
+    /// built some other way (an on-demand build won the race).
+    pub(crate) fn take_launch_observations(&self) -> Option<LaunchObservations> {
+        self.launch_observations.lock().unwrap().take()
     }
 
     /// Discard the cache; it rebuilds on the next whole-graph query. Use when an

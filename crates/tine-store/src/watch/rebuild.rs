@@ -156,6 +156,15 @@ mod tests {
         let root = temp_root("rebuild-same-size");
         let path = root.join("pages/A.md");
         fs::write(&path, "- old one\n").unwrap();
+        // Outside the racy window (storage spec §5.4): a racy stamp is reread
+        // by every full diff, so the stat diff would catch a fresh file's
+        // rewrite. The accepted gap (R5) is the rewrite of a settled file.
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
         let store = open(&root);
         let subscription = store.subscribe();
         assert_eq!(cached_first_block(&store, "A"), "old one");

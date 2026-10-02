@@ -11,7 +11,12 @@ use std::time::{Duration, Instant, SystemTime};
 
 use notify::Watcher;
 
+mod launch;
+mod racy;
 mod rebuild;
+mod restore;
+
+pub(crate) use launch::{Baseline, Deferred};
 
 use crate::asset_watch::{AssetObserver, AssetPending, AssetScope};
 use crate::launch_diag::{
@@ -19,8 +24,8 @@ use crate::launch_diag::{
 };
 use crate::model::{Graph, SyncFileResult};
 use crate::store::{
-    journal_ids_from_entries, ChangeFeed, ChangeKind, ConfigState, Day, FileId, FileRev, LoadError,
-    LoadState, LoadStatus, Origin, PageId, WatchBatch, WatchMode,
+    ChangeFeed, ChangeKind, ConfigState, Day, FileId, FileRev, LoadError, LoadState, LoadStatus,
+    Origin, PageId, WatchBatch, WatchMode,
 };
 
 /// Boundary between "a burst of ordinary edits" and "an external revision"
@@ -73,7 +78,7 @@ fn event_is_tool_noise(event: &notify::Event, root: &Path) -> bool {
             .all(|path| path_is_tool_noise(root, path))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Stamp {
     modified: Option<SystemTime>,
     len: u64,
@@ -83,6 +88,41 @@ pub(crate) struct Stamp {
 }
 
 pub(crate) type RestoreBaseline = HashMap<PathBuf, Stamp>;
+
+/// Storage spec §5.4: a stamp whose mtime lies within this window of the
+/// moment it was observed is racy. A same-size write landing in the same
+/// timestamp granule (or delivered by a sync client that preserves mtimes)
+/// can leave the stamp unchanged, so the bytes are reread regardless.
+pub(crate) const RACY_WINDOW: Duration = Duration::from_secs(2);
+
+impl Stamp {
+    /// The file's modification time as observed.
+    pub(crate) fn modified(&self) -> Option<SystemTime> {
+        self.modified
+    }
+
+    /// The file's length as observed.
+    pub(crate) fn len(&self) -> u64 {
+        self.len
+    }
+
+    /// This observation with the revision of the bytes read after it.
+    pub(crate) fn with_rev(mut self, rev: Option<FileRev>) -> Self {
+        self.rev = rev;
+        self
+    }
+
+    /// §5.4: racy when observed at `observed` (judged at observation time;
+    /// a missing mtime is racy because nothing bounds it).
+    pub(crate) fn racy_at(&self, observed: SystemTime) -> bool {
+        match self.modified {
+            None => true,
+            Some(modified) => observed
+                .duration_since(modified)
+                .map_or(true, |age| age < RACY_WINDOW),
+        }
+    }
+}
 
 pub(crate) fn stamp_metadata(path: &Path) -> Option<Stamp> {
     let metadata = fs::symlink_metadata(path).ok()?;
@@ -256,38 +296,6 @@ fn collect_with_revs(dirs: &[PathBuf; 1], config: &tine_core::Config) -> HashMap
     let mut files = collect(dirs, config);
     for (path, value) in &mut files {
         value.rev = FileRev::from_file(path).ok();
-    }
-    files
-}
-
-fn collect_restore(core: &Core) -> RestoreBaseline {
-    let mut files = collect_with_revs(&core.dirs.read().unwrap(), &core.graph.current_config());
-    let mut stack = vec![core.graph.assets_path()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            if kind.is_dir() {
-                if path.file_name().and_then(|name| name.to_str()) == Some(".tine-restore-recovery")
-                {
-                    continue;
-                }
-                stack.push(path);
-            } else if kind.is_file() && crate::file_kind::is_asset_sidecar_path(&path) {
-                if let Some(value) = stamp(&path) {
-                    files.insert(path, value);
-                }
-            }
-        }
-    }
-    let config = core.graph.root.join("logseq/config.edn");
-    if let Some(value) = stamp(&config) {
-        files.insert(config, value);
     }
     files
 }
@@ -490,6 +498,9 @@ pub(crate) struct Core {
     dirs: RwLock<[PathBuf; 1]>,
     assets: AssetObserver,
     snapshot: Mutex<HashMap<PathBuf, Stamp>>,
+    /// Baseline paths whose stamp was racy when observed (storage spec
+    /// §5.4): a full diff rereads them even when the stamp is unchanged.
+    racy: Mutex<HashSet<PathBuf>>,
     config_stamp: Mutex<Option<Stamp>>,
     unreadable_dirs: Mutex<HashMap<PathBuf, String>>,
     closed: AtomicBool,
@@ -672,6 +683,18 @@ impl Core {
         batch: Option<WatchBatch>,
         trigger: DiffTrigger,
     ) -> Result<(), LoadError> {
+        self.reconcile_timed(paths, include_config, scan_semantics, batch, trigger, None)
+    }
+
+    fn reconcile_timed(
+        &self,
+        paths: Option<&HashSet<PathBuf>>,
+        include_config: bool,
+        scan_semantics: bool,
+        batch: Option<WatchBatch>,
+        trigger: DiffTrigger,
+        deferred: Option<&mut Deferred>,
+    ) -> Result<(), LoadError> {
         let began = Instant::now();
         let mut walk = CollectTimes::default();
         // A rebuild ignores the stamp shortcut: every file is hashed.
@@ -683,6 +706,7 @@ impl Core {
             batch,
             force,
             &mut walk,
+            deferred,
         );
         if walk.full {
             self.graph
@@ -700,7 +724,10 @@ impl Core {
         batch: Option<WatchBatch>,
         force: bool,
         walk: &mut CollectTimes,
+        deferred: Option<&mut Deferred>,
     ) -> Result<(), LoadError> {
+        // §5.4: observation time of this cycle's stamps, taken before any is.
+        let observed = SystemTime::now();
         if self.closed.load(Ordering::Acquire) {
             return Err(LoadError::Closed);
         }
@@ -807,6 +834,7 @@ impl Core {
             files.push(config_file);
         }
         let mut pages = Vec::new();
+        let mut racy = self.racy.lock().unwrap();
         for path in names {
             let before = snapshot.get(&path);
             if before.is_some() && !now.contains_key(&path) {
@@ -821,13 +849,41 @@ impl Core {
                         && old.len == new.len
                         && (scan_semantics
                             || (old.identity == new.identity && old.changed == new.changed));
-                    if same {
+                    if same && !racy.contains(&path) {
                         new.rev = old.rev.clone();
                         continue;
                     }
-                    new.rev = FileRev::from_file(&path).ok();
+                    let moved = racy::hash_settled(&path, new);
+                    if same && !moved {
+                        // §5.4: a racy stamp cannot vouch for the bytes, so
+                        // they were reread; it stops being racy once observed
+                        // outside the window.
+                        if !new.racy_at(observed) {
+                            racy.remove(&path);
+                        }
+                        // A baseline entry recorded without a revision (a
+                        // file the load pass did not read) only learns it.
+                        if old.rev.is_none() || old.rev == new.rev {
+                            if old.rev.is_none() && new.rev.is_none() {
+                                racy.insert(path.clone());
+                            }
+                            continue;
+                        }
+                    }
                 } else if let Some(new) = now.get_mut(&path) {
-                    new.rev = FileRev::from_file(&path).ok();
+                    racy::hash_settled(&path, new);
+                }
+            }
+            match now.get(&path) {
+                Some(value) if value.rev.is_some() && value.racy_at(observed) => {
+                    racy.insert(path.clone());
+                }
+                Some(value) if value.rev.is_some() => {
+                    racy.remove(&path);
+                }
+                Some(_) => {}
+                None => {
+                    racy.remove(&path);
                 }
             }
             let after = now.get(&path);
@@ -899,6 +955,7 @@ impl Core {
             files.push((id, kind, after.and_then(|value| value.rev.clone())));
         }
         if paths.is_none() {
+            racy.retain(|path| now.contains_key(path));
             *snapshot = now;
         } else {
             for path in paths.unwrap() {
@@ -921,9 +978,15 @@ impl Core {
         } else {
             false
         };
+        drop(racy);
         drop(snapshot);
         walk.changed = files.len() as u64;
-        if !files.is_empty() || config_changed || unreadable_changed {
+        if let Some(deferred) = deferred {
+            // The launch diff: its findings ride the Ready publication.
+            deferred.files.extend(files);
+            deferred.config_changed |= config_changed;
+            deferred.pages.extend(pages);
+        } else if !files.is_empty() || config_changed || unreadable_changed {
             self.changes.publish_watched(
                 Origin::External,
                 files,
@@ -968,13 +1031,25 @@ impl Core {
         #[cfg(test)]
         crate::store::pause_at_hook(&self.note_own_pause);
         let mut snapshot = self.snapshot.lock().unwrap();
+        let mut racy = self.racy.lock().unwrap();
         let mut raced = HashSet::new();
         for (id, expected) in files {
             let path = self.path_for_id(id);
             if id.as_str().starts_with("assets/") {
                 self.assets.note_own(&path);
             }
+            let observed = SystemTime::now();
             let current = stamp(&path);
+            // §5.4: an own write just landed, so its stamp is usually racy:
+            // a same-size external write in the same granule must not pass.
+            if current
+                .as_ref()
+                .is_some_and(|value| value.racy_at(observed))
+            {
+                racy.insert(path.clone());
+            } else {
+                racy.remove(&path);
+            }
             let tracked = self.tracks_in_snapshot(&path);
             if current.as_ref().and_then(|value| value.rev.as_ref()) != expected.as_ref() {
                 // Reconciliation must compare disk with the revision just
@@ -1040,13 +1115,25 @@ impl WatchHandle {
         journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
         config: Arc<RwLock<ConfigState>>,
         watch: WatchMode,
+        baseline: Baseline,
     ) -> Self {
         let dirs = [graph.root.clone()];
         // The asset baseline is captured before any OS watch exists.
         let asset_scope = AssetScope::new(&graph);
-        let baseline_began = Instant::now();
-        let (snapshot, _, baseline_walk) = collect_with_errors(&dirs, &graph.current_config());
-        graph.diag.baseline(baseline_walk, baseline_began.elapsed());
+        // A store opened by `Store::open` takes its graph-text baseline from
+        // the load pass (`Core::install_launch_baseline`), which stamps every
+        // file before reading it; nothing changes it before Ready because no
+        // diff runs while loading.
+        let snapshot = match baseline {
+            Baseline::Walk => {
+                let baseline_began = Instant::now();
+                let (snapshot, _, baseline_walk) =
+                    collect_with_errors(&dirs, &graph.current_config());
+                graph.diag.baseline(baseline_walk, baseline_began.elapsed());
+                snapshot
+            }
+            Baseline::FromLoad => HashMap::new(),
+        };
         let config_stamp = stamp(&graph.root.join("logseq/config.edn"));
         let core = Arc::new(Core {
             graph,
@@ -1058,6 +1145,7 @@ impl WatchHandle {
             dirs: RwLock::new(dirs),
             assets: AssetObserver::new(asset_scope),
             snapshot: Mutex::new(snapshot),
+            racy: Mutex::new(HashSet::new()),
             config_stamp: Mutex::new(config_stamp),
             unreadable_dirs: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
@@ -1175,63 +1263,6 @@ impl WatchHandle {
                     snapshot.remove(path);
                 }
             }
-        }
-    }
-
-    pub(crate) fn restore_baseline(&self) -> RestoreBaseline {
-        collect_restore(&self.core)
-    }
-
-    pub(crate) fn publish_restore(&self, before: &RestoreBaseline) -> crate::store::GraphRev {
-        let now = collect_restore(&self.core);
-        let mut paths: Vec<_> = before.keys().chain(now.keys()).cloned().collect();
-        paths.sort();
-        paths.dedup();
-        let mut files = Vec::new();
-        let mut config_changed = false;
-        for path in paths {
-            let old = before.get(&path);
-            let new = now.get(&path);
-            if old.and_then(|value| value.rev.as_ref()) == new.and_then(|value| value.rev.as_ref())
-            {
-                continue;
-            }
-            let kind = match (old, new) {
-                (None, Some(_)) => ChangeKind::Created,
-                (Some(_), None) => ChangeKind::Removed,
-                _ => ChangeKind::Modified,
-            };
-            if path == self.core.graph.root.join("logseq/config.edn") {
-                config_changed = true;
-                let _ = self.core.read_config(&path);
-                *self.core.config_stamp.lock().unwrap() = stamp(&path);
-            }
-            if let Some(id) = self.core.file_id(&path) {
-                if id.as_str().starts_with("assets/") {
-                    self.core.assets.note_own(&path);
-                }
-                files.push((id, kind, new.and_then(|value| value.rev.clone())));
-            }
-        }
-        *self.core.snapshot.lock().unwrap() = collect_with_revs(
-            &self.core.dirs.read().unwrap(),
-            &self.core.graph.current_config(),
-        );
-        if files.is_empty() && !config_changed {
-            self.core.changes.rev()
-        } else if matches!(
-            *self.core.load.status.lock().unwrap(),
-            LoadStatus::Failed(_)
-        ) {
-            *self.core.journal_ids.lock().unwrap() = journal_ids_from_entries(
-                &self.core.graph,
-                self.core.graph.list_pages_shared().as_ref(),
-            );
-            self.core.changes.rev()
-        } else {
-            self.core
-                .changes
-                .publish(Origin::Own, files, config_changed, Vec::new())
         }
     }
 
