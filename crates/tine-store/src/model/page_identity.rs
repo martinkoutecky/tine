@@ -552,24 +552,33 @@ pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Ve
 /// (`tine_core::model::page_title_from_preamble` over the whole text answers
 /// as `effective_page_name` does over the preamble). Opens no file. Also
 /// returns the watch-relevant files that are not graph text (sync conflict
-/// copies), which the watcher baseline tracks by stamp only, and the walk's
-/// directory errors.
-pub(crate) fn launch_listing_walk(
-    graph: &Graph,
-) -> (Vec<PageEntry>, Vec<PathBuf>, Vec<(PathBuf, io::Error)>) {
+/// copies), which the watcher baseline tracks by stamp only, the walk's
+/// directory errors, and every listed file's stamp from its directory entry
+/// (`DirEntry::metadata`: no file open on Windows) with the time it was taken,
+/// for the racy judgement. The listing precedes every read, so these stamps
+/// keep §5's stamp-before-read order.
+pub(crate) fn launch_listing_walk(graph: &Graph) -> LaunchListing {
     #[cfg(test)]
     super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));
     let mut entries = Vec::new();
     let mut tracked_only = Vec::new();
+    let mut stamps = HashMap::new();
     let root = &graph.root;
     let format = graph.current_journal_format();
     let name_format = graph.current_config().file_name_format;
     let journals = graph.journals_path();
     let config = graph.current_config();
     if !graph_text_directory_scannable(root, root, &config) {
-        return (entries, tracked_only, Vec::new());
+        return (entries, tracked_only, Vec::new(), stamps);
     }
-    let errors = walk_graph_text_files(root, root, &config, |path, eligible| {
+    let errors = walk_graph_text_files(root, root, &config, |path, eligible, entry| {
+        if let Some(stamp) = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| crate::watch::stamp_from_metadata(&metadata))
+        {
+            stamps.insert(path.clone(), (stamp, std::time::SystemTime::now()));
+        }
         if !eligible {
             tracked_only.push(path);
             return;
@@ -597,8 +606,17 @@ pub(crate) fn launch_listing_walk(
             path,
         });
     });
-    (entries, tracked_only, errors)
+    (entries, tracked_only, errors, stamps)
 }
+
+/// What [`launch_listing_walk`] returns: page entries, tracked-only files,
+/// directory errors, and each listed file's stamp with when it was taken.
+pub(crate) type LaunchListing = (
+    Vec<PageEntry>,
+    Vec<PathBuf>,
+    Vec<(PathBuf, io::Error)>,
+    HashMap<PathBuf, (crate::watch::Stamp, std::time::SystemTime)>,
+);
 
 /// An ordinary page's effective name from its whole text: the `title::`
 /// property when the preamble has one, else its decoded file stem. The same
@@ -614,7 +632,7 @@ fn walk_graph_text_files(
     root: &Path,
     start: &Path,
     config: &Config,
-    mut visit: impl FnMut(PathBuf, bool),
+    mut visit: impl FnMut(PathBuf, bool, &fs::DirEntry),
 ) -> Vec<(PathBuf, io::Error)> {
     let mut errors = Vec::new();
     let mut pending = vec![start.to_path_buf()];
@@ -647,7 +665,7 @@ fn walk_graph_text_files(
             };
             if kind.is_file() && graph_text_watch_relevant(root, &path, config) {
                 let eligible = graph_text_eligible(root, &path, config);
-                visit(path, eligible);
+                visit(path, eligible, &entry);
             } else if kind.is_dir() && graph_text_directory_scannable(root, &path, config) {
                 pending.push(path);
             }
@@ -662,7 +680,7 @@ fn walk_graph_page_files(
     config: &Config,
     mut visit: impl FnMut(PathBuf),
 ) -> Vec<(PathBuf, io::Error)> {
-    walk_graph_text_files(root, start, config, |path, eligible| {
+    walk_graph_text_files(root, start, config, |path, eligible, _| {
         if eligible {
             visit(path);
         }

@@ -50,6 +50,24 @@ fn graph_with(pages: usize) -> tempfile::TempDir {
     root
 }
 
+/// Counts of one Rescan (`rebuild_graph`) of an opened graph.
+fn rescan_counts(root: &std::path::Path) -> cost_counters::Counts {
+    let (store, _, _) = Store::open(
+        root,
+        OpenOptions {
+            watch: WatchMode::Poll,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    drop(store.whole_graph().unwrap());
+    cost_counters::reset();
+    store.rebuild_graph().unwrap();
+    let counts = cost_counters::snapshot();
+    store.close();
+    counts
+}
+
 /// File content reads of one cold launch to Ready, plus its watcher baseline.
 fn launch_reads(root: &std::path::Path) -> cost_counters::Counts {
     cost_counters::reset();
@@ -73,7 +91,7 @@ fn reads(counts: &cost_counters::Counts) -> u64 {
 }
 
 #[test]
-fn a_cold_launch_reads_each_graph_file_once() {
+fn a_cold_launch_reads_each_graph_file_once_and_stamps_it_from_the_listing() {
     // The config-only graph measures the fixed reads of config.edn itself.
     let empty = graph_with(0);
     let fixed = launch_reads(empty.path());
@@ -92,6 +110,36 @@ fn a_cold_launch_reads_each_graph_file_once() {
         counts.hash_reads,
         fixed.full_reads,
         fixed.preamble_reads,
+        fixed.hash_reads,
+    );
+    // Same launch (the counters are process-global, so one launch per case).
+    let stamps = counts.stamps_by_path.saturating_sub(fixed.stamps_by_path);
+    assert_eq!(
+        stamps, 0,
+        "GH #623 / spec §5.1: a cold load stamps each graph file from the directory \
+         listing (`DirEntry::metadata`, no file open on Windows), never by path; \
+         got {} by-path stamps ({} on a config-only graph); exemplar \
+         crates/tine-store/src/model/page_identity.rs launch_listing_walk",
+        counts.stamps_by_path, fixed.stamps_by_path,
+    );
+    // Rescan: step 1 hashes every file and checks, by path, that each hashed
+    // file settled (a stamp taken after the read; it opens the file anyway).
+    // Its full load (step 2) stamps from listings, including its after-parse
+    // change check, so it adds no by-path stamp of its own.
+    let fixed = rescan_counts(empty.path());
+    let counts = rescan_counts(graph.path());
+    let stamps = counts.stamps_by_path.saturating_sub(fixed.stamps_by_path);
+    let hashed = counts.hash_reads.saturating_sub(fixed.hash_reads);
+    assert_eq!(
+        (stamps, hashed),
+        (PAGES as u64, PAGES as u64),
+        "GH #623 / spec §5.1: Rescan's full load stamps graph files from directory \
+         listings; the only by-path stamps are step 1's settle checks, one per hashed \
+         file. Got {} by-path stamps for {} hashed files ({} / {} on a config-only graph); \
+         exemplar crates/tine-store/src/model/page_identity.rs launch_listing_walk",
+        counts.stamps_by_path,
+        counts.hash_reads,
+        fixed.stamps_by_path,
         fixed.hash_reads,
     );
 }

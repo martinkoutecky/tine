@@ -22,6 +22,7 @@ static QUERY_FACTS_DERIVED: AtomicU64 = AtomicU64::new(0);
 static QUERY_CARRY_BLOCK_PROBES: AtomicU64 = AtomicU64::new(0);
 static QUERY_REGISTRY_PAGES_READ: AtomicU64 = AtomicU64::new(0);
 static HASH_READS: AtomicU64 = AtomicU64::new(0);
+static STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 
 /// Primitive counts since the last reset. The fixture uses one process per case.
 #[derive(Clone, Copy, Debug, Default)]
@@ -72,6 +73,10 @@ pub struct Counts {
     /// Whole graph-text files read only to hash their bytes
     /// (`FileRev::from_file`; `logseq/config.edn` is not counted).
     pub hash_reads: u64,
+    /// Graph-text files (`.md`/`.org`) stamped by path
+    /// (`watch::stamp_metadata`, a per-file `symlink_metadata`, which opens
+    /// the file on Windows) rather than from a directory listing's entries.
+    pub stamps_by_path: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -99,6 +104,7 @@ pub fn reset() {
         &QUERY_CARRY_BLOCK_PROBES,
         &QUERY_REGISTRY_PAGES_READ,
         &HASH_READS,
+        &STAMPS_BY_PATH,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -129,9 +135,13 @@ pub fn snapshot() -> Counts {
         query_carry_block_probes: QUERY_CARRY_BLOCK_PROBES.load(Ordering::Relaxed),
         query_registry_pages_read: QUERY_REGISTRY_PAGES_READ.load(Ordering::Relaxed),
         hash_reads: HASH_READS.load(Ordering::Relaxed),
+        stamps_by_path: STAMPS_BY_PATH.load(Ordering::Relaxed),
     }
 }
 
+pub(crate) fn stamp_by_path() {
+    STAMPS_BY_PATH.fetch_add(1, Ordering::Relaxed);
+}
 pub(crate) fn readdir() {
     READDIR.fetch_add(1, Ordering::Relaxed);
 }

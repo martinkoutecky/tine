@@ -52,6 +52,10 @@ thread_local! {
 pub(crate) fn stamp_metadata(path: &Path) -> Option<Stamp> {
     #[cfg(test)]
     STAMPS_BY_PATH.with(|count| count.set(count.get() + 1));
+    #[cfg(feature = "test-faults")]
+    if crate::file_kind::is_graph_text_path(path) {
+        crate::cost_counters::stamp_by_path();
+    }
     stamp_from_metadata(&fs::symlink_metadata(path).ok()?)
 }
 

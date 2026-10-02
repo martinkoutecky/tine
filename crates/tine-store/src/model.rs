@@ -3010,7 +3010,8 @@ impl Graph {
         // revision comes from the same bytes that are parsed. The watcher
         // baseline is then installed from these observations
         // (`LaunchObservations`) instead of a second hash pass.
-        let (listed, tracked_only, walk_errors) = page_identity::launch_listing_walk(self);
+        let (listed, tracked_only, walk_errors, listing_stamps) =
+            page_identity::launch_listing_walk(self);
         let journal_format = self.current_journal_format();
         let name_format = self.current_config().file_name_format;
         // Journal identity is the filename date, so the duplicate-day collapse
@@ -3034,10 +3035,15 @@ impl Graph {
             .checked_sub(crate::watch::RACY_WINDOW)
             .unwrap_or(self.opened_at);
         let mut announce = Vec::new();
+        // Each file's stamp comes from its directory entry in the listing
+        // above (no per-file open on Windows), taken before its read.
+        let listing_stamp = |path: &Path| listing_stamps.get(path).cloned();
         let parse_one = |mut e: PageEntry| {
             let phase = std::time::Instant::now();
-            let stamp = crate::watch::stamp_metadata(&e.path);
-            let observed = std::time::SystemTime::now();
+            let (stamp, observed) = match listing_stamp(&e.path) {
+                Some((stamp, observed)) => (Some(stamp), observed),
+                None => (None, std::time::SystemTime::now()),
+            };
             clock.stat(phase.elapsed());
             let path = e.path.clone();
             let phase = std::time::Instant::now();
@@ -3164,8 +3170,7 @@ impl Graph {
             .chain(tracked_only.iter())
         {
             if !stamps.contains_key(path) && !names.contains_key(path) {
-                let observed = std::time::SystemTime::now();
-                if let Some(stamp) = crate::watch::stamp_metadata(path) {
+                if let Some((stamp, observed)) = listing_stamp(path) {
                     if stamp.racy_at(observed) {
                         racy.insert(path.clone());
                     }
@@ -3178,8 +3183,11 @@ impl Graph {
         // The launch pass instead hands its pre-read stamps to the watcher,
         // whose launch diff reconciles any such file before Ready.
         if replace {
+            // A second listing, not a stamp per file: no file open on Windows.
+            let (_, _, _, now) = page_identity::launch_listing_walk(self);
             let changed = built.pages.iter().any(|(entry, _, _)| {
-                crate::watch::stamp_metadata(&entry.path).map(|now| (now.modified(), now.len()))
+                now.get(&entry.path)
+                    .map(|(now, _)| (now.modified(), now.len()))
                     != stamps
                         .get(&entry.path)
                         .map(|then| (then.modified(), then.len()))
