@@ -362,12 +362,21 @@ fn edits_made_while_closed_are_reconciled_before_ready() {
     assert!(!paths.iter().any(|p| p == "pages/C.org"), "{paths:?}");
 }
 
+/// `rel` under `root` in the form the store records it: `Store::open`
+/// canonicalizes the root (on Windows a `\\?\` path, where `/` is not a
+/// separator), and the walk joins native components onto it.
+fn stored_path(root: &Path, rel: &str) -> PathBuf {
+    fs::canonicalize(root)
+        .unwrap()
+        .join(rel.replace('/', std::path::MAIN_SEPARATOR_STR))
+}
+
 /// Rewrite `rel` with same-size bytes and its old mtime, then make the
 /// checkpoint's stamp for it match the new file exactly (an unseen rewrite:
 /// a sync client preserving mtimes on a filesystem without ctime, or one
 /// landing within the timestamp granule). `racy` sets its stored racy flag.
 fn unseen_rewrite(root: &Path, cp: &Path, rel: &str, bytes: &str, racy: bool) {
-    let path = root.join(rel);
+    let path = stored_path(root, rel);
     let before = fs::metadata(&path).unwrap();
     assert_eq!(before.len() as usize, bytes.len());
     fs::write(&path, bytes).unwrap();
@@ -392,7 +401,7 @@ fn a_racy_stamp_persists_and_forces_a_reread_after_reload() {
     let dir = tempfile::tempdir().unwrap();
     let cp = dir.path().join("graph.bin");
     // A future mtime stays racy (§5.4) however long the test takes.
-    let path = root.path().join("pages/A.md");
+    let path = stored_path(root.path(), "pages/A.md");
     set_mtime(&path, SystemTime::now() + Duration::from_secs(3600));
     write_checkpoint(root.path(), &cp);
     let bytes = fs::read(&cp).unwrap();
