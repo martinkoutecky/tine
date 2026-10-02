@@ -16,6 +16,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 regex = "1"
 unicode-normalization = "0.1"
 unicode-segmentation = "1"
+memchr = "2"
 # TQL (`query::tql`) parses its filter grammar with sqlparser; pure Rust, no
 # SQLite. The version and `visitor` feature match master (0.62).
 sqlparser = { version = "0.62", features = ["visitor"] }

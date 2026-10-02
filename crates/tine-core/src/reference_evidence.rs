@@ -9,9 +9,11 @@ use crate::model::{ReferenceKind, ReferenceOccurrence, ReferenceSpan};
 use crate::refs;
 use lsdoc::ast::{Block, Inline, ListItem, Span, Url};
 use std::ops::Range;
-use unicode_normalization::char::canonical_combining_class;
-use unicode_normalization::UnicodeNormalization;
-use unicode_segmentation::UnicodeSegmentation;
+use std::sync::OnceLock;
+
+mod plain_match;
+mod signature;
+pub use signature::{BlockSignature, ReferenceFilter};
 
 pub const ENGINE_VERSION: &str = "reference-evidence/v1";
 const MAX_OCCURRENCES_PER_BLOCK: usize = 64;
@@ -634,9 +636,18 @@ pub fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSourceProj
 }
 
 fn byte_to_utf16(raw: &str, byte: usize) -> usize {
-    raw.get(..byte)
-        .map(|prefix| prefix.encode_utf16().count())
-        .unwrap_or_else(|| raw.encode_utf16().count())
+    utf16_len(raw.get(..byte).unwrap_or(raw))
+}
+
+/// UTF-16 length of `text`: one unit per scalar value, two for those outside
+/// the BMP (4 UTF-8 bytes). Counting lead bytes vectorizes where
+/// `encode_utf16().count()` decodes every character (GH #623: this runs twice
+/// per occurrence, over the block prefix).
+fn utf16_len(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let scalars = bytes.iter().filter(|&&b| (b & 0xC0) != 0x80).count();
+    let astral = bytes.iter().filter(|&&b| b >= 0xF0).count();
+    scalars + astral
 }
 
 fn is_og_edge_alphanumeric(ch: Option<char>) -> bool {
@@ -655,110 +666,6 @@ fn og_prefix_allows(raw: &str, start: usize) -> bool {
 
 fn overlaps(range: &Range<usize>, other: &Range<usize>) -> bool {
     range.start < other.end && other.start < range.end
-}
-
-/// The first character of `nfd(needle)` when it is a starter (combining class
-/// 0), else `None` (no start-character pre-rejection is sound then).
-fn needle_base_starter(needle: &str) -> Option<char> {
-    let base = needle.chars().next()?.nfd().next()?;
-    (canonical_combining_class(base) == 0).then_some(base)
-}
-
-/// Necessary condition for a match to start at a source character `first`: a
-/// match requires `nfc(lower(span)) == needle`, hence
-/// `nfd(lower(span)) == nfd(needle)`. Canonical reordering never moves a
-/// starter, so when the first character of `nfd(lower(first))` is a starter it
-/// is also the first character of `nfd(lower(span))` and must equal the
-/// needle's base. A non-starter there (an orphan combining mark) keeps the
-/// candidate, so only provably impossible starts are skipped and the accepted
-/// matches are exactly those of the unfiltered scan. Allocation-free: this is
-/// the per-character cost of every unlinked-references scan (GH #623).
-fn match_may_start_with(first: char, needle_base: Option<char>) -> bool {
-    let Some(base) = needle_base else {
-        return true;
-    };
-    if first.is_ascii() {
-        // ASCII has no decompositions and lowercases within ASCII.
-        return first.to_ascii_lowercase() == base;
-    }
-    match first.to_lowercase().nfd().next() {
-        Some(starter) => canonical_combining_class(starter) != 0 || starter == base,
-        None => true,
-    }
-}
-
-/// Visit source-order matches with memory bounded by the target name, not the
-/// number or size of matches in the block.
-fn visit_plain_matches(
-    raw: &str,
-    range: &Range<usize>,
-    needle: &str,
-    mut visit: impl FnMut(Range<usize>) -> bool,
-) {
-    let Some(source) = raw.get(range.clone()) else {
-        return;
-    };
-    if needle.is_empty() {
-        return;
-    }
-    let needle: String = needle.to_lowercase().nfc().collect();
-    let first_requires_boundary = needle.chars().next().is_some_and(|ch| ch.is_alphanumeric());
-    let last_requires_boundary = needle
-        .chars()
-        .next_back()
-        .is_some_and(|ch| ch.is_alphanumeric());
-    let needle_base = needle_base_starter(&needle);
-    for (offset, grapheme) in source.grapheme_indices(true) {
-        let first = grapheme.chars().next().expect("nonempty grapheme");
-        if !match_may_start_with(first, needle_base) {
-            continue;
-        }
-        let start = range.start + offset;
-        let mut end = start;
-        let mut candidate_raw = String::new();
-        let mut matched = false;
-        let mut boundaries = source[offset..]
-            .grapheme_indices(true)
-            .map(|(offset, grapheme)| start + offset + grapheme.len());
-        let mut boundary = boundaries.next().expect("nonempty suffix");
-        for (relative, ch) in source[offset..].char_indices() {
-            candidate_raw.push(ch);
-            end = start + relative + ch.len_utf8();
-            if end > boundary {
-                boundary = boundaries.next().expect("next grapheme");
-            }
-            let candidate: String = candidate_raw.to_lowercase().nfc().collect();
-            if candidate == needle && end == boundary {
-                matched = true;
-                break;
-            }
-            // Accept only at a grapheme edge (I-4), while rejecting incompatible
-            // prefixes early without allocating an arbitrarily long grapheme.
-            let without_last = candidate
-                .char_indices()
-                .next_back()
-                .map_or("", |(index, _)| &candidate[..index]);
-            if !needle.starts_with(&candidate) && !needle.starts_with(without_last) {
-                break;
-            }
-        }
-        if !matched {
-            continue;
-        }
-        let before = raw
-            .get(..start)
-            .and_then(|prefix| prefix.chars().next_back());
-        let after = raw.get(end..).and_then(|suffix| suffix.chars().next());
-        // Exact OG edge semantics: only adjacent ASCII alphanumerics exclude
-        // an unlinked match. `_` and continuous CJK are valid boundaries.
-        if og_prefix_allows(raw, start)
-            && (!first_requires_boundary || !is_og_edge_alphanumeric(before))
-            && (!last_requires_boundary || !is_og_edge_alphanumeric(after))
-            && !visit(start..end)
-        {
-            return;
-        }
-    }
 }
 
 fn push_unique_bounded(
@@ -823,6 +730,36 @@ fn projected_reference_matches(
         .any(|name| refs::same_page(name, &reference.name))
 }
 
+/// The page names of one query, with the plain-text matcher's per-name folding
+/// done once (lazily: explicit-kind callers never pay for it) instead of once
+/// per block (GH #623, I-25: no per-block work that depends only on the query).
+pub struct ReferenceNeedles<'a> {
+    names: &'a [String],
+    needles: OnceLock<Vec<Option<plain_match::Needle>>>,
+}
+
+impl<'a> ReferenceNeedles<'a> {
+    pub fn new(names: &'a [String]) -> Self {
+        Self {
+            names,
+            needles: OnceLock::new(),
+        }
+    }
+
+    pub fn names(&self) -> &'a [String] {
+        self.names
+    }
+
+    fn needles(&self) -> &[Option<plain_match::Needle>] {
+        self.needles.get_or_init(|| {
+            self.names
+                .iter()
+                .map(|name| plain_match::Needle::new(name))
+                .collect()
+        })
+    }
+}
+
 pub fn occurrences_of_kind_bounded(
     raw: &str,
     projection: ReferenceSource<'_>,
@@ -831,11 +768,31 @@ pub fn occurrences_of_kind_bounded(
     kind: ReferenceKind,
     config: &crate::config::Config,
 ) -> BoundedOccurrences {
-    let mut out = Vec::with_capacity(MAX_OCCURRENCES_PER_BLOCK.min(8));
+    occurrences_of_kind_prepared(
+        raw,
+        projection,
+        canonical,
+        &ReferenceNeedles::new(names_norm),
+        kind,
+        config,
+    )
+}
+
+/// `occurrences_of_kind_bounded` with the query's folded names shared across
+/// blocks.
+pub fn occurrences_of_kind_prepared(
+    raw: &str,
+    projection: ReferenceSource<'_>,
+    canonical: &str,
+    names: &ReferenceNeedles<'_>,
+    kind: ReferenceKind,
+    config: &crate::config::Config,
+) -> BoundedOccurrences {
+    let mut out = Vec::new();
     let mut total = 0usize;
     if kind == ReferenceKind::Explicit {
         for reference in projection.explicit {
-            if !projected_reference_matches(reference, names_norm, config) {
+            if !projected_reference_matches(reference, names.names, config) {
                 continue;
             }
             total = total.saturating_add(1);
@@ -860,9 +817,12 @@ pub fn occurrences_of_kind_bounded(
         };
     }
 
-    for name in names_norm {
+    for (name, needle) in names.names.iter().zip(names.needles()) {
+        let Some(needle) = needle else {
+            continue;
+        };
         for eligible in projection.plain_ranges {
-            visit_plain_matches(raw, eligible, name, |range| {
+            plain_match::visit_plain_matches(raw, eligible, needle, |range| {
                 if projection
                     .explicit
                     .iter()
@@ -916,16 +876,33 @@ pub fn has_occurrence_kind(
     kind: ReferenceKind,
     config: &crate::config::Config,
 ) -> bool {
+    has_occurrence_prepared(
+        raw,
+        projection,
+        &ReferenceNeedles::new(names_norm),
+        kind,
+        config,
+    )
+}
+
+/// `has_occurrence_kind` with the query's folded names shared across blocks.
+pub fn has_occurrence_prepared(
+    raw: &str,
+    projection: ReferenceSource<'_>,
+    names: &ReferenceNeedles<'_>,
+    kind: ReferenceKind,
+    config: &crate::config::Config,
+) -> bool {
     if kind == ReferenceKind::Explicit {
         return projection
             .explicit
             .iter()
-            .any(|reference| projected_reference_matches(reference, names_norm, config));
+            .any(|reference| projected_reference_matches(reference, names.names, config));
     }
-    for name in names_norm {
+    for needle in names.needles().iter().flatten() {
         for eligible in projection.plain_ranges {
             let mut found = false;
-            visit_plain_matches(raw, eligible, name, |range| {
+            plain_match::visit_plain_matches(raw, eligible, needle, |range| {
                 found = !projection
                     .explicit
                     .iter()
@@ -947,22 +924,27 @@ pub fn occurrences(
     names_norm: &[String],
     config: &crate::config::Config,
 ) -> Vec<ReferenceOccurrence> {
-    let mut out = occurrences_of_kind(
+    let names = ReferenceNeedles::new(names_norm);
+    let mut out = occurrences_of_kind_prepared(
         raw,
         projection,
         canonical,
-        names_norm,
+        &names,
         ReferenceKind::Explicit,
         config,
+    )
+    .occurrences;
+    out.extend(
+        occurrences_of_kind_prepared(
+            raw,
+            projection,
+            canonical,
+            &names,
+            ReferenceKind::Plain,
+            config,
+        )
+        .occurrences,
     );
-    out.extend(occurrences_of_kind(
-        raw,
-        projection,
-        canonical,
-        names_norm,
-        ReferenceKind::Plain,
-        config,
-    ));
     out.sort_by(|a, b| {
         a.span
             .start
@@ -992,190 +974,25 @@ pub fn slow_occurrences(
 #[cfg(test)]
 mod tests {
 
-    // GH #623: the start-character pre-rejection must not change which spans
-    // match. `reference_visit_plain_matches` is the matcher as it was before the
-    // pre-rejection (verbatim); every (text, needle) pair over an alphabet of
-    // the awkward cases (case pairs, composed/decomposed accents, final sigma,
-    // dotted I, sharp s, Hangul jamo, orphan combining marks, CJK, ZWJ emoji)
-    // must give the identical match list.
-    fn reference_visit_plain_matches(
-        raw: &str,
-        range: &Range<usize>,
-        needle: &str,
-        mut visit: impl FnMut(Range<usize>) -> bool,
-    ) {
-        let Some(source) = raw.get(range.clone()) else {
-            return;
-        };
-        if needle.is_empty() {
-            return;
-        }
-        let needle: String = needle.to_lowercase().nfc().collect();
-        let first_requires_boundary = needle.chars().next().is_some_and(|ch| ch.is_alphanumeric());
-        let last_requires_boundary = needle
-            .chars()
-            .next_back()
-            .is_some_and(|ch| ch.is_alphanumeric());
-        let ascii_first = needle
-            .chars()
-            .next()
-            .filter(char::is_ascii)
-            .map(|ch| (ch.to_ascii_lowercase(), ch.to_ascii_uppercase()));
-        for (offset, grapheme) in source.grapheme_indices(true) {
-            let first = grapheme.chars().next().expect("nonempty grapheme");
-            if let Some((lower, upper)) = ascii_first {
-                if first.is_ascii() && first != lower && first != upper {
-                    continue;
-                }
-            }
-            let start = range.start + offset;
-            let mut end = start;
-            let mut candidate_raw = String::new();
-            let mut matched = false;
-            let mut boundaries = source[offset..]
-                .grapheme_indices(true)
-                .map(|(offset, grapheme)| start + offset + grapheme.len());
-            let mut boundary = boundaries.next().expect("nonempty suffix");
-            for (relative, ch) in source[offset..].char_indices() {
-                candidate_raw.push(ch);
-                end = start + relative + ch.len_utf8();
-                if end > boundary {
-                    boundary = boundaries.next().expect("next grapheme");
-                }
-                let candidate: String = candidate_raw.to_lowercase().nfc().collect();
-                if candidate == needle && end == boundary {
-                    matched = true;
-                    break;
-                }
-                // Accept only at a grapheme edge (I-4), while rejecting incompatible
-                // prefixes early without allocating an arbitrarily long grapheme.
-                let without_last = candidate
-                    .char_indices()
-                    .next_back()
-                    .map_or("", |(index, _)| &candidate[..index]);
-                if !needle.starts_with(&candidate) && !needle.starts_with(without_last) {
-                    break;
-                }
-            }
-            if !matched {
-                continue;
-            }
-            let before = raw
-                .get(..start)
-                .and_then(|prefix| prefix.chars().next_back());
-            let after = raw.get(end..).and_then(|suffix| suffix.chars().next());
-            // Exact OG edge semantics: only adjacent ASCII alphanumerics exclude
-            // an unlinked match. `_` and continuous CJK are valid boundaries.
-            if og_prefix_allows(raw, start)
-                && (!first_requires_boundary || !is_og_edge_alphanumeric(before))
-                && (!last_requires_boundary || !is_og_edge_alphanumeric(after))
-                && !visit(start..end)
-            {
-                return;
-            }
-        }
-    }
+    use super::*;
 
     #[test]
-    fn start_character_prerejection_matches_exactly_what_the_unfiltered_scan_matches() {
-        const ALPHABET: &[&str] = &[
-            "a",
-            "A",
-            "e",
-            "E",
-            "r",
-            "R",
-            "i",
-            "I",
-            "s",
-            "S",
-            "k",
-            "K",
-            "\u{212A}",
-            "\u{e9}",
-            "\u{c9}",
-            "e\u{301}",
-            "E\u{301}",
-            "\u{159}",
-            "r\u{30c}",
-            "\u{158}",
-            "\u{3a3}",
-            "\u{3c3}",
-            "\u{3c2}",
-            "\u{130}",
-            "i\u{307}",
-            "\u{df}",
-            "\u{1e9e}",
-            "ss",
-            "\u{1100}",
-            "\u{1161}",
-            "\u{11a8}",
-            "\u{ac00}",
-            "\u{301}",
-            "\u{30a}",
-            "\u{4e2d}",
-            "\u{6587}",
-            "\u{1f468}\u{200d}\u{1f469}",
-            "\u{f8}",
-            "\u{d8}",
-            "o\u{338}",
-            "\u{c5}",
-            "A\u{30a}",
-            "\u{212b}",
-            " ",
-            "-",
-            "_",
-            "1",
-            "/",
-        ];
-        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
-        let mut next = move || {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            state
-        };
-        let build = |next: &mut dyn FnMut() -> u64, max: u64| -> String {
-            (0..=next() % max)
-                .map(|_| ALPHABET[(next() % ALPHABET.len() as u64) as usize])
-                .collect()
-        };
-        let collect =
-            |matcher: &dyn Fn(&str, &Range<usize>, &str, &mut dyn FnMut(Range<usize>) -> bool),
-             raw: &str,
-             needle: &str| {
-                let mut found = Vec::new();
-                matcher(raw, &(0..raw.len()), needle, &mut |range| {
-                    found.push(range);
-                    true
-                });
-                found
-            };
-        let mut matched_any = 0usize;
-        for _ in 0..40_000 {
-            let raw = build(&mut next, 14);
-            let needle = build(&mut next, 3);
-            let new = collect(
-                &|raw, range, needle, visit| visit_plain_matches(raw, range, needle, visit),
-                &raw,
-                &needle,
-            );
-            let old = collect(
-                &|raw, range, needle, visit| {
-                    reference_visit_plain_matches(raw, range, needle, visit)
-                },
-                &raw,
-                &needle,
-            );
-            assert_eq!(new, old, "raw={raw:?} needle={needle:?}");
-            matched_any += usize::from(!old.is_empty());
+    fn utf16_len_agrees_with_encode_utf16() {
+        for text in [
+            "",
+            "plain ascii",
+            "caf\u{e9} \u{4e2d}\u{6587}",
+            "astral \u{1f600}\u{10348} end",
+            "e\u{301}\u{1f1e8}\u{1f1ff}",
+        ] {
+            assert_eq!(utf16_len(text), text.encode_utf16().count(), "{text:?}");
+            for (cut, _) in text.char_indices() {
+                assert_eq!(byte_to_utf16(text, cut), text[..cut].encode_utf16().count());
+            }
         }
-        assert!(
-            matched_any > 500,
-            "the alphabet must actually produce matches: {matched_any}"
-        );
+        // A cut that is not a char boundary falls back to the whole text.
+        assert_eq!(byte_to_utf16("\u{e9}", 1), 1);
     }
-    use super::*;
 
     fn evidence(raw: &str, names: &[&str]) -> Vec<ReferenceOccurrence> {
         let parsed = crate::render::parse_projection(raw, false);

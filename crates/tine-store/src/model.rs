@@ -50,7 +50,7 @@ use tine_core::model::{
     sync_conflict_base, BlockDto, GraphMeta, JournalConflict, JournalFile, RefGroup, SyncConflict,
 };
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
-use unicode_normalization::UnicodeNormalization;
+use tine_core::reference_evidence::{BlockSignature, ReferenceFilter};
 
 /// Maximum source bytes admitted to a page/config/EDN parser or renderer.
 pub const PARSE_INPUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
@@ -984,60 +984,54 @@ impl GraphRead for ReadSnapshot {
         kind: ReferenceKind,
     ) -> ReferenceCandidatePages {
         let full_page_count = self.pages.len();
+        let full = || {
+            ReferenceCandidatePages::unfiltered(
+                self.pages.iter().cloned().collect(),
+                false,
+                full_page_count,
+            )
+        };
         let index = self.reference_candidate_index.read().unwrap();
         if !index.complete
             || index.generation != self.cache_generation
             || index.page_count != full_page_count
         {
-            return ReferenceCandidatePages {
-                pages: self.pages.iter().cloned().collect(),
-                indexed: false,
-                full_page_count,
-            };
+            return full();
         }
         if kind == ReferenceKind::Explicit {
             let candidates = self.explicit_index.candidates(names);
-            ReferenceCandidatePages {
-                pages: self
-                    .pages
+            ReferenceCandidatePages::unfiltered(
+                self.pages
                     .iter()
                     .filter(|(entry, _)| candidates.contains(&entry.path))
                     .cloned()
                     .collect(),
-                indexed: true,
+                true,
                 full_page_count,
-            }
+            )
         } else {
+            let filter = ReferenceFilter::new(names);
             let mut selected = Vec::new();
+            let mut signatures = Vec::new();
             for (position, (entry, doc)) in self.pages.slots() {
-                let Some(signature) = index.get(position) else {
-                    return ReferenceCandidatePages {
-                        pages: self.pages.iter().cloned().collect(),
-                        indexed: false,
-                        full_page_count,
-                    };
+                let Some(blocks) = index.get(position) else {
+                    return full();
                 };
-                let mut possible = false;
-                for name in names {
-                    match signature.may_contain_name(name) {
-                        Some(found) => possible |= found,
-                        None => {
-                            return ReferenceCandidatePages {
-                                pages: self.pages.iter().cloned().collect(),
-                                indexed: false,
-                                full_page_count,
-                            };
-                        }
-                    }
+                if filter
+                    .as_ref()
+                    .is_some_and(|filter| !blocks.iter().any(|block| filter.admits(block)))
+                {
+                    continue;
                 }
-                if possible {
-                    selected.push((entry.clone(), Arc::clone(doc)));
-                }
+                selected.push((entry.clone(), Arc::clone(doc)));
+                signatures.push(Arc::clone(blocks));
             }
             ReferenceCandidatePages {
                 pages: selected,
                 indexed: true,
                 full_page_count,
+                filter,
+                signatures,
             }
         }
     }
@@ -1183,80 +1177,6 @@ fn snapshot_page_by_rel<'a>(
         .filter(|(entry, _)| entry.rel_path_str() == rel)
 }
 
-const REFERENCE_SIGNATURE_WORDS: usize = 64; // 4096 bits = 512 bytes/page
-
-#[derive(Clone)]
-struct ReferenceTokenSignature([u64; REFERENCE_SIGNATURE_WORDS]);
-
-impl Default for ReferenceTokenSignature {
-    fn default() -> Self {
-        Self([0; REFERENCE_SIGNATURE_WORDS])
-    }
-}
-
-impl ReferenceTokenSignature {
-    fn token_hash(token: &[u8], seed: u64) -> usize {
-        let mut hash = seed;
-        for byte in token {
-            hash ^= u64::from(byte.to_ascii_lowercase());
-            hash = hash.wrapping_mul(0x100000001b3);
-        }
-        (hash as usize) & (REFERENCE_SIGNATURE_WORDS * 64 - 1)
-    }
-
-    fn insert_token(&mut self, token: &[u8]) {
-        for seed in [0xcbf29ce484222325, 0x9e3779b97f4a7c15] {
-            let bit = Self::token_hash(token, seed);
-            self.0[bit / 64] |= 1u64 << (bit % 64);
-        }
-    }
-
-    fn insert_text(&mut self, text: &str) {
-        // Exact plain-reference matching compares Unicode-lowercased, NFC text.
-        // Fold the source the same way before extracting ASCII tokens so a
-        // character such as the Kelvin sign (`K`) cannot match page `K` exactly
-        // while being absent from this no-false-negative prefilter.
-        let folded: String = text.to_lowercase().nfc().collect();
-        let bytes = folded.as_bytes();
-        let mut start = None;
-        for (index, byte) in bytes.iter().copied().enumerate() {
-            if byte.is_ascii_alphanumeric() {
-                if start.is_none() {
-                    start = Some(index);
-                }
-            } else if let Some(begin) = start.take() {
-                self.insert_token(&bytes[begin..index]);
-            }
-        }
-        if let Some(begin) = start {
-            self.insert_token(&bytes[begin..]);
-        }
-    }
-
-    /// `None` means tokenization is not provably safe, so callers must full-scan.
-    fn may_contain_name(&self, normalized_name: &str) -> Option<bool> {
-        if !normalized_name.is_ascii() {
-            return None;
-        }
-        let tokens = normalized_name
-            .as_bytes()
-            .split(|byte| !byte.is_ascii_alphanumeric())
-            .filter(|token| !token.is_empty())
-            .collect::<Vec<_>>();
-        if tokens.is_empty() {
-            return None;
-        }
-        Some(tokens.into_iter().all(|token| {
-            [0xcbf29ce484222325, 0x9e3779b97f4a7c15]
-                .into_iter()
-                .all(|seed| {
-                    let bit = Self::token_hash(token, seed);
-                    self.0[bit / 64] & (1u64 << (bit % 64)) != 0
-                })
-        }))
-    }
-}
-
 const SNAPSHOT_INDEX_SHARDS: usize = 64;
 
 fn snapshot_index_shard(bytes: &[u8]) -> usize {
@@ -1266,26 +1186,32 @@ fn snapshot_index_shard(bytes: &[u8]) -> usize {
         % SNAPSHOT_INDEX_SHARDS
 }
 
-fn reference_signature(doc: &Document) -> ReferenceTokenSignature {
-    fn add_blocks(signature: &mut ReferenceTokenSignature, blocks: &[DocBlock]) {
+/// One signature per block, in the order the reference walk visits them: slot 0
+/// is the page-property pseudo-block (as `query::page_property_block` projects
+/// it), then the blocks in pre-order.
+fn reference_signatures(entry: &PageEntry, doc: &Document) -> Arc<Vec<BlockSignature>> {
+    fn add_blocks(out: &mut Vec<BlockSignature>, blocks: &[DocBlock]) {
         for block in blocks {
             #[cfg(feature = "test-faults")]
             crate::cost_counters::signature_block_probe();
-            signature.insert_text(block.raw());
-            add_blocks(signature, &block.children);
+            out.push(BlockSignature::of_text(block.raw()));
+            add_blocks(out, &block.children);
         }
     }
-    let mut signature = ReferenceTokenSignature::default();
-    if let Some(pre) = doc.pre_block.as_deref() {
-        signature.insert_text(pre);
-    }
-    add_blocks(&mut signature, &doc.roots);
-    signature
+    let is_org = Format::from_path(&entry.path) == Format::Org;
+    let mut out = vec![doc
+        .pre_block
+        .as_deref()
+        .map(|pre| BlockSignature::of_text(&crate::query::page_property_raw(pre, is_org)))
+        .unwrap_or_default()];
+    add_blocks(&mut out, &doc.roots);
+    out.shrink_to_fit();
+    Arc::new(out)
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct SnapshotReferenceCandidateIndex {
-    signatures: SharedMap<usize, Arc<ReferenceTokenSignature>>,
+    signatures: SharedMap<usize, Arc<Vec<BlockSignature>>>,
     // The cache's own `Pages::positions`; a loaded checkpoint re-shares it.
     #[serde(skip)]
     positions: Arc<SharedMap<String, usize>>,
@@ -1309,8 +1235,8 @@ impl SnapshotReferenceCandidateIndex {
         snapshot_index_shard(path.to_string_lossy().as_bytes())
     }
 
-    fn get(&self, position: usize) -> Option<&ReferenceTokenSignature> {
-        self.signatures.get(&position).map(AsRef::as_ref)
+    fn get(&self, position: usize) -> Option<&Arc<Vec<BlockSignature>>> {
+        self.signatures.get(&position)
     }
 
     fn capture(
@@ -1331,9 +1257,10 @@ impl SnapshotReferenceCandidateIndex {
                     index.signatures.remove(&slot);
                 }
                 if let Some(&slot) = pages.positions.get(path) {
+                    let (entry, doc) = &pages[slot];
                     index
                         .signatures
-                        .insert(slot, Arc::new(reference_signature(&pages[slot].1)));
+                        .insert(slot, reference_signatures(entry, doc));
                 }
             }
             index.complete = index.signatures.len() == pages.len();
@@ -1346,7 +1273,7 @@ impl SnapshotReferenceCandidateIndex {
             index.generation = generation;
             index.signatures = pages
                 .slots()
-                .map(|(slot, (_, doc))| (slot, Arc::new(reference_signature(doc))))
+                .map(|(slot, (entry, doc))| (slot, reference_signatures(entry, doc)))
                 .collect();
             index.positions = Arc::clone(&pages.positions);
             index
@@ -1627,6 +1554,38 @@ pub(crate) struct ReferenceCandidatePages {
     pub indexed: bool,
     #[cfg_attr(not(test), allow(dead_code))]
     pub full_page_count: usize,
+    /// Plain-text queries only: the per-block prefilter, and (parallel to
+    /// `pages`) each page's block signatures. `None` means every block is a
+    /// candidate.
+    pub filter: Option<ReferenceFilter>,
+    pub signatures: Vec<Arc<Vec<BlockSignature>>>,
+}
+
+impl ReferenceCandidatePages {
+    fn unfiltered(
+        pages: Vec<(PageEntry, Arc<Document>)>,
+        indexed: bool,
+        full_page_count: usize,
+    ) -> Self {
+        Self {
+            pages,
+            indexed,
+            full_page_count,
+            filter: None,
+            signatures: Vec::new(),
+        }
+    }
+
+    /// Whether the block at `ordinal` of page `page` (0 = page properties,
+    /// then pre-order) may contain a match. Unknown slots are admitted.
+    pub(crate) fn admits(&self, page: usize, ordinal: usize) -> bool {
+        match (&self.filter, self.signatures.get(page)) {
+            (Some(filter), Some(blocks)) => blocks
+                .get(ordinal)
+                .map_or(true, |signature| filter.admits(signature)),
+            _ => true,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -5826,6 +5785,37 @@ mod tests {
     }
 
     #[test]
+    fn block_signature_pruning_changes_no_unlinked_or_backlink_result() {
+        // GH #623: nested, multi-script blocks whose pre-order ordinals the
+        // signature slots must line up with; the filtered answer must equal
+        // the answer of the full scan for ASCII, accented and CJK names.
+        let dir = scratch("reference-signature-results");
+        fs::write(dir.join("pages/Café.md"), "alias:: 咖啡\n\n- body\n").unwrap();
+        fs::write(dir.join("pages/Target.md"), "alias:: Alias\n\n- body\n").unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            "- plain target here\n  - nested CAFÉ and cafe\u{301} with 咖啡\n    - deeper [[Café]] link, Alias too\n  - unrelated\n- last: target\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Other.md"),
+            "title:: Other\n\n- 咖啡館 no match, 咖啡 match\n- Targets and retarget\n",
+        )
+        .unwrap();
+        let (store, _, _) =
+            crate::store::Store::open(&dir, crate::store::OpenOptions::default()).unwrap();
+        let snapshot = published_snapshot(&store);
+        for target in ["Target", "Café", "Alias", "咖啡"] {
+            assert_indexed_reference_results_equal_full_scan(&snapshot, target);
+        }
+        let unlinked = crate::query::unlinked_refs(snapshot.as_ref(), "Café");
+        assert!(
+            unlinked.iter().any(|group| group.page == "Source"),
+            "CAFÉ and the NFD spelling are unlinked mentions: {unlinked:?}"
+        );
+    }
+
+    #[test]
     fn reference_candidate_index_tracks_every_cache_seam_and_falls_back_safely() {
         let dir = scratch("reference-candidate-index");
         fs::write(
@@ -5851,13 +5841,18 @@ mod tests {
         let plain = snapshot.reference_candidate_pages(&names, ReferenceKind::Plain);
         assert!(plain.indexed);
         assert!(candidate_paths(&plain).contains(&"pages/Source.md".to_string()));
-        let unicode_fallback = snapshot
+        // Non-ASCII names are filtered too (GH #623): the block signatures key
+        // on the matcher's own folding, so "Café" prunes the unrelated pages.
+        let unicode = snapshot
             .reference_candidate_pages(&[tine_core::refs::page_key("Café")], ReferenceKind::Plain);
-        assert!(!unicode_fallback.indexed);
-        assert_eq!(
-            unicode_fallback.pages.len(),
-            unicode_fallback.full_page_count
-        );
+        assert!(unicode.indexed);
+        assert!(unicode.pages.len() < unicode.full_page_count);
+        // A name with no key at all (a lone combining mark) cannot be
+        // filtered: every page stays a candidate.
+        let unfilterable =
+            snapshot.reference_candidate_pages(&["\u{301}".to_string()], ReferenceKind::Plain);
+        assert!(unfilterable.indexed);
+        assert_eq!(unfilterable.pages.len(), unfilterable.full_page_count);
         assert_reference_candidates_equal_full_scan(
             snapshot.as_ref(),
             "Target",
@@ -6064,14 +6059,15 @@ mod tests {
         let names = vec![tine_core::refs::page_key("Needle")];
         let explicit = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
         let plain = snapshot.reference_candidate_pages(&names, ReferenceKind::Plain);
-        let estimated_bytes = snapshot
-            .reference_candidate_index
-            .read()
-            .unwrap()
-            .signatures
-            .len()
-            * (std::mem::size_of::<ReferenceTokenSignature>()
-                + std::mem::size_of::<Arc<ReferenceTokenSignature>>());
+        let estimated_bytes = {
+            let index = snapshot.reference_candidate_index.read().unwrap();
+            index.signatures.len() * std::mem::size_of::<Arc<Vec<BlockSignature>>>()
+                + index
+                    .signatures
+                    .iter()
+                    .map(|(_, blocks)| blocks.len() * std::mem::size_of::<BlockSignature>())
+                    .sum::<usize>()
+        };
         let indexed_backlinks = crate::query::backlinks(snapshot.as_ref(), "Needle");
         let indexed_unlinked = crate::query::unlinked_refs(snapshot.as_ref(), "Needle");
         snapshot.reference_candidate_index.write().unwrap().complete = false;

@@ -38,9 +38,9 @@ describe("OG-B-DOOR2 shared-answer boundaries", () => {
     expect(read("src/render/pageRefs.ts")).toContain("splitLinkableProperty(value)");
     expect(read("src/render/block.ts")).not.toContain(".split(/[,，]/)");
     expect(read("src/mock.ts")).not.toContain(".split(/[,，]/)");
-    const source = read("crates/tine-core/src/reference_evidence.rs");
+    const source = read("crates/tine-core/src/reference_evidence/plain_match.rs");
     expect(source, "I-4: imitate visit_plain_matches; never end a match inside a grapheme").toContain("end == boundary");
-    expect(source).toContain("source.grapheme_indices(true)");
+    expect(source).toContain(".grapheme_indices(true)");
     expect(source.match(/fn visit_plain_matches\(/g)).toHaveLength(1);
   });
 });

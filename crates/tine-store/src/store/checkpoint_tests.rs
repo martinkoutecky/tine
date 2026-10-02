@@ -770,13 +770,13 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (3, GOLDEN),
+        (5, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "78da24bee273a949e108a4388012c5566e10afbb0447940a4b00c571113ff090";
+const GOLDEN: &str = "68a2d0055b8a78e639c7853b7fbc03fda9789c8a1f0c85962a88bd3c0458ca31";
 
 /// ADR 0070 (Martin, 2026-10-02: config by meaning, not bytes): a config
 /// edited while Tine was closed falls the launch back to the initial build
