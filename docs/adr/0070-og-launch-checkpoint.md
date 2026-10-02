@@ -1,27 +1,34 @@
 # 0070. A dumb launch checkpoint serves the last published generation at launch
 
-- **Status:** Proposed. Martin decided the design on 2026-10-02 (SPEC-storage
-  §7.6). This implementation departs from it in one place: memos are not
-  persisted (see Consequences), so Martin accepts or amends it.
+- **Status:** Accepted (Martin, 2026-10-02). The design is SPEC-storage §7.6;
+  Martin set the persisted memos and the write cadence on the same day.
 - **Date:** 2026-10-02
-- **Unit cost:** no per-edit write. Each checkpoint rewrites the whole dump:
-  - g13k (13,000 pages): 114.2 MiB raw (119,783,567 B), 19.5 MiB on disk
-    (20,452,145 B), written in 780 ms;
-  - the anonymized real graph (1,075 pages): 4.4 MiB raw (4,606,396 B),
-    1.06 MiB on disk (1,109,631 B), written in 34 ms.
+- **Unit cost:** no per-edit write. Each checkpoint rewrites the whole dump,
+  memos and lazily built indexes included (`FORMAT` 2):
+  - g13k (13,000 pages): 115.5 MiB raw (121,127,469 B), 19.6 MiB on disk
+    (20,544,371 B), written in 742 ms;
+  - the anonymized real graph (1,075 pages): 4.5 MiB raw (4,744,714 B),
+    1.07 MiB on disk (1,124,326 B), written in 35 ms.
 
   These are release builds, median of 3, measured by
-  `crates/tine-store/examples/checkpoint_launch_bench.rs`; the byte counts are
-  identical across runs. Each checkpoint writes 1 file (plus its temporary
-  sibling, renamed over it). Transport bytes are 0, because the checkpoint is
-  never synced.
+  `crates/tine-store/examples/checkpoint_launch_bench.rs` after one Ctrl-K
+  search and one backlinks read, so the memos and indexes hold what a short
+  session builds. FORMAT 1, which wrote no memos, was 20,452,145 B and
+  1,109,631 B for the same state (+0.5% and +1.3%). Byte counts are identical
+  across runs. Each checkpoint writes 1 file (plus its temporary sibling,
+  renamed over it). Transport bytes are 0, because the checkpoint is never
+  synced.
 
-  **Frequency bound:** at most one checkpoint per 5 s idle period after a
-  dirtying publication, and at least one within 10 min under continuous
-  editing (`IDLE`, `MAX_AGE`). The worst case is edits spaced just over 5 s
-  apart, which makes every edit a whole-dump write: about 14.7 GB/hour on g13k
-  and 0.8 GB/hour on the anonymized graph. The typical case is one write per
-  pause in editing. A launch with no external changes writes nothing.
+  **Frequency bound** (Martin, 2026-10-02): a checkpoint is due 60 s after the
+  last dirtying publication (`IDLE`), but never sooner than 5 min after the
+  previous write (`MIN_INTERVAL`); continuous editing still gets one within
+  10 min of the change (`MAX_AGE`). That is at most 12 writes an hour: about
+  247 MB/hour on g13k and 13.5 MB/hour on the anonymized graph in the worst
+  case (bursts of edits each followed by a minute's pause). Continuous editing
+  gives 6 an hour. The one exception is a store that launched cold (no
+  checkpoint loaded): its first checkpoint is due 5 s after its last
+  publication (`FIRST_IDLE`), so the next launch is warm; that is one extra
+  write per cold launch. A launch with no external changes writes nothing.
 
 ## Context
 
@@ -50,14 +57,27 @@ index.
     observed mtimes and content revisions;
   - the claimants and name tables;
   - every path's stamp as recorded when its bytes were read;
-  - the racy set.
+  - the racy set;
+  - the generation's derived half, each part in whatever state it was in:
+    the lazily built block, referenced-name, alias and block-ref-count
+    indexes; the query index slot (built or seeded); and the memos (the
+    derived-result cache and the query memo).
+
+  Not written: the graph-level find-entry cache, which belongs to no
+  generation, and each query plan's compiled patterns, which are rebuilt from
+  its filter at load. After the launch diff, the loaded memos and indexes are
+  carried or dropped by exactly the rules a publication applies in memory
+  (`ReadSnapshot::capture`, `carry_memos_from`); loading adds no
+  invalidation rule.
 
   `FORMAT` covers parser, config and index semantics, not the app version. A
   golden image test fails on any change to the body encoding.
 - **Write:** one publisher thread per store (`tine-checkpoint`, registered in
   `tests/i21_owners.rs`). A publication that changes the generation marks it
-  dirty. The thread waits for `IDLE` of quiet or `MAX_AGE` of dirtiness. It
-  takes the writer briefly to capture the immutable published generation, then
+  dirty. The thread waits for `IDLE` of quiet and `MIN_INTERVAL` since its
+  last write, or for `MAX_AGE` of dirtiness (see the frequency bound). A store
+  that launched cold waits only `FIRST_IDLE` for its first write; loading a
+  checkpoint clears that (`Signal::loaded`). It takes the writer briefly to capture the immutable published generation, then
   encodes and writes off the writer and UI threads. The write uses
   `atomic_file::atomic_write_with_check`: temp, fsync, rename, directory sync.
   A generation that is not Ready, not yet published, or holds unreadable files
@@ -124,9 +144,18 @@ the full build:
   | Anonymized | cold | 136 ms | 7 ms | 28.5 MiB |
   | Anonymized | warm | 53 ms | 12 ms | 24.1 MiB |
 
-- **Memos are not persisted.** This is the departure from §7.6. Derived-result
-  memos start empty after a warm launch and refill on first use. Everything
-  else in the published generation is persisted.
+- **Memos are persisted** (Martin, 2026-10-02: reach the warm state as fast
+  as possible). A backlinks read answered before the checkpoint is answered
+  from the loaded memo after a warm launch: 42.4 ms → 0.1 ms on g13k, 1.8 ms →
+  0.0 ms on the anonymized graph (FORMAT 1 vs 2, median of 3). A read nobody
+  asked before the checkpoint costs what it costs cold. The first Ctrl-K
+  search is unchanged (110 ms vs 116 ms on g13k, within the noise of a loaded
+  machine): block search uses the find-entry cache, which is not part of the
+  generation and is not written. Warm Ready did not move measurably
+  (1028 ms vs 1063 ms on g13k; load 935 ms vs 970 ms).
+  `checkpoint_tests::a_warm_checkpoint_loads_warm_and_answers_as_a_fresh_build`
+  and the reload differential in `derived_cache_fuzz_tests` check that loaded
+  memos answer as a fresh build after closed edits.
 - **R5 is accepted.** A same-size rewrite that keeps the old mtime is not
   caught by the stat diff when the platform also reports an unchanged ctime and
   the stamp was outside the racy window. Examples are a sync client that

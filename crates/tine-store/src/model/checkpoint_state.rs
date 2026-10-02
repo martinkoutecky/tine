@@ -4,9 +4,14 @@
 //! the checkpoint file and installed back at launch without rebuilding any of
 //! it. The file format, the writer and the launch path live in
 //! `store/checkpoint.rs`. The dump is deliberately dumb: whatever the published
-//! generation holds is written and loaded whole; lazily built answers (block
-//! index, referenced names, query memos) are left cold, exactly as a cold build
-//! leaves them at Ready.
+//! generation holds is written and loaded whole, including its lazily built
+//! half ([`DerivedState`]: block index, referenced names, alias tables, the
+//! query index and both memos) in whatever state it is at capture: built
+//! parts are written, unbuilt parts stay unbuilt. A loaded generation is then
+//! carried across the launch diff by the same rules as any published one
+//! (`ReadSnapshot::capture`, `carry_memos_from`); nothing here decides
+//! validity. The graph-level `find_entry_cache` is not part of the published
+//! generation and is not written.
 use super::*;
 use persistent::EntryListParts;
 use tine_core::doc::{CheckpointBlock, CheckpointBlocks};
@@ -86,6 +91,7 @@ pub(crate) struct GraphState<P> {
     real_page_names: Arc<crate::query::RealPageNames>,
     icon_index: Option<Arc<page_icons::IconIndex>>,
     block_ref_counts: Option<Arc<SharedMap<String, usize>>>,
+    derived: DerivedState,
 }
 
 impl<P> GraphState<P> {
@@ -104,20 +110,30 @@ impl<P> GraphState<P> {
             real_page_names: self.real_page_names,
             icon_index: self.icon_index,
             block_ref_counts: self.block_ref_counts,
+            derived: self.derived,
         }
     }
 
-    /// The alias index with every entry in shard 0. Its shards are chosen by a
-    /// hash of the absolute page path, so a golden image over a temporary root
-    /// would otherwise move between runs (the loader's header root check keeps
-    /// real lookups consistent). Unix only, like the golden test.
+    /// The alias and referenced-name indexes with every entry in shard 0 and
+    /// name lists sorted. Shards are chosen by a hash of the absolute page
+    /// path, so a golden image over a temporary root would otherwise move
+    /// between runs (the loader's header root check keeps real lookups
+    /// consistent). Unix only, like the golden test.
     #[cfg(all(test, unix))]
     pub(crate) fn with_alias_shards_merged(mut self) -> Self {
-        if let Some(index) = self.alias_index.as_mut() {
+        let indexes = self
+            .alias_index
+            .iter_mut()
+            .chain(self.derived.referenced_name_index.iter_mut());
+        for index in indexes {
             let mut all = SharedMap::new();
             for shard in &index.shards {
                 for (path, names) in shard.iter() {
-                    all.insert(path.clone(), names.clone());
+                    // Name lists come from hash sets; their order carries no
+                    // meaning, and a golden image must not see it.
+                    let mut names = names.clone();
+                    names.sort();
+                    all.insert(path.clone(), names);
                 }
             }
             let count = index.shards.len();
@@ -125,6 +141,20 @@ impl<P> GraphState<P> {
                 .chain((1..count).map(|_| Arc::new(SharedMap::new())))
                 .collect();
         }
+        if let Some(names) = self.derived.referenced_names.as_mut() {
+            names.sort();
+        }
+        self
+    }
+
+    /// The same state with every memo filed under `day` (golden images must
+    /// not depend on the day the test runs).
+    #[cfg(test)]
+    pub(crate) fn at_day(mut self, day: i64) -> Self {
+        if let Some(cache) = self.derived.derived_cache.as_mut() {
+            cache.0.today = day;
+        }
+        self.derived.query_memo = self.derived.query_memo.map(|memo| memo.at_day(day));
         self
     }
 
@@ -202,6 +232,7 @@ impl Graph {
             real_page_names: Arc::clone(&read.real_page_names),
             icon_index: read.icon_index.get().cloned(),
             block_ref_counts: read.block_ref_counts.get().cloned(),
+            derived: DerivedState::of(read, &self.root),
         })
     }
 
@@ -237,6 +268,17 @@ impl Graph {
         let list = Arc::new(EntryList::from_parts(list));
         let mut reference = state.reference_candidate_index;
         reference.positions = Arc::clone(&pages.positions);
+        let derived = state.derived;
+        // Rows naming a missing owner cannot follow a passing checksum from
+        // this writer; were they ever read, the index is left unbuilt (the
+        // first block lookup builds it, as at a cold Ready), not refused.
+        let block_index = derived
+            .block_index
+            .and_then(|index| index.into_index(root).ok());
+        let query_index = crate::query::index::QueryIndexSlot::from_checkpoint(
+            derived.query_index,
+            &pages.positions,
+        );
         let index = build_page_cache_index(&pages);
         let mut guard = self.cache.write().unwrap();
         if guard.is_some() {
@@ -262,24 +304,280 @@ impl Graph {
             explicit_index: state.explicit_index,
             reference_candidate_index: RwLock::new(reference),
             cache_generation: state.cache_generation,
-            block_index: std::sync::OnceLock::new(),
+            block_index: cell(block_index),
             alias_index: cell(state.alias_index),
-            referenced_name_index: std::sync::OnceLock::new(),
+            referenced_name_index: cell(derived.referenced_name_index),
             real_page_names: state.real_page_names,
-            aliases: std::sync::OnceLock::new(),
-            alias_owner_paths_by_key: std::sync::OnceLock::new(),
-            referenced_names: std::sync::OnceLock::new(),
+            aliases: cell(derived.aliases),
+            alias_owner_paths_by_key: cell(derived.alias_owner_paths_by_key.map(Sorted::into_map)),
+            referenced_names: cell(derived.referenced_names),
             block_ref_counts: cell(state.block_ref_counts),
-            public_block_ref_counts: std::sync::OnceLock::new(),
+            public_block_ref_counts: cell(derived.public_block_ref_counts.map(|counts| counts.0)),
             icon_index: cell(state.icon_index),
-            memos: SnapshotMemos::default(),
-            query_index: Default::default(),
+            memos: SnapshotMemos {
+                derived_cache: RwLock::new(derived.derived_cache.map(|cache| cache.0)),
+                query: crate::query::memo::QueryMemo::from_checkpoint(derived.query_memo),
+            },
+            query_index,
             #[cfg(test)]
             block_full_builds: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
         Some((Arc::new(read), list))
+    }
+}
+
+/// The lazily built half of a published generation, as it stands at capture
+/// (`None`: not built in that generation). Capture clones `Arc`s and the small
+/// alias tables under the store writer; the encoding work (owner interning,
+/// key ordering, JSON for result DTOs) happens when it is serialized, off the
+/// writer.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct DerivedState {
+    block_index: Option<BlockIndexState>,
+    referenced_name_index: Option<SnapshotPageDerivedIndex>,
+    aliases: Option<Vec<(String, String, String)>>,
+    alias_owner_paths_by_key: Option<Sorted<Vec<String>>>,
+    referenced_names: Option<Vec<String>>,
+    public_block_ref_counts: Option<Sorted<usize>>,
+    derived_cache: Option<DerivedCacheState>,
+    query_memo: Option<crate::query::memo::checkpoint::MemoState>,
+    query_index: crate::query::index::checkpoint::SlotState,
+}
+
+impl DerivedState {
+    fn of(read: &ReadSnapshot, root: &Path) -> DerivedState {
+        DerivedState {
+            block_index: read.block_index.get().map(|index| BlockIndexState::Out {
+                index: index.clone(),
+                root: root.to_path_buf(),
+            }),
+            referenced_name_index: read.referenced_name_index.get().cloned(),
+            aliases: read.aliases.get().cloned(),
+            alias_owner_paths_by_key: read
+                .alias_owner_paths_by_key
+                .get()
+                .map(|map| Sorted(Arc::new(map.clone()))),
+            referenced_names: read.referenced_names.get().cloned(),
+            public_block_ref_counts: read.public_block_ref_counts.get().cloned().map(Sorted),
+            derived_cache: read
+                .memos
+                .derived_cache
+                .read()
+                .unwrap()
+                .clone()
+                .map(DerivedCacheState),
+            query_memo: read.memos.query.checkpoint_capture(),
+            query_index: read.query_index.checkpoint_capture(),
+        }
+    }
+}
+
+/// A string-keyed map written in key order.
+pub(crate) struct Sorted<V>(Arc<HashMap<String, V>>);
+
+impl<V: Clone> Sorted<V> {
+    fn into_map(self) -> HashMap<String, V> {
+        Arc::try_unwrap(self.0).unwrap_or_else(|shared| (*shared).clone())
+    }
+}
+
+impl<V: serde::Serialize> serde::Serialize for Sorted<V> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let mut rows: Vec<(&String, &V)> = self.0.iter().collect();
+        rows.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        rows.serialize(s)
+    }
+}
+
+impl<'de, V: serde::Deserialize<'de>> serde::Deserialize<'de> for Sorted<V> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let rows = Vec::<(String, V)>::deserialize(d)?;
+        Ok(Sorted(Arc::new(rows.into_iter().collect())))
+    }
+}
+
+/// The block-id index with each owning page written once (blocks refer to it
+/// by number) and its path relative to the graph root, so the image does not
+/// depend on where the graph lives; the loader re-joins it under its root.
+pub(crate) enum BlockIndexState {
+    /// A generation's index at capture.
+    Out {
+        index: SnapshotBlockIndex,
+        root: PathBuf,
+    },
+    /// The loaded rows, before their owners are joined under the root.
+    In(BlockIndexParts),
+}
+
+type BlockRows = Vec<(String, Option<u32>)>;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct BlockIndexParts {
+    owners: Vec<(PathBuf, String)>,
+    base: BlockRows,
+    overlay: BlockRows,
+}
+
+impl BlockIndexState {
+    /// The index under `root`: one shared owner per page, as a build makes.
+    /// O(blocks), the same order as decoding the rows.
+    fn into_index(self, root: &Path) -> Result<SnapshotBlockIndex, &'static str> {
+        let parts = match self {
+            BlockIndexState::Out { index, .. } => return Ok(index),
+            BlockIndexState::In(parts) => parts,
+        };
+        let owners: Vec<BlockOwner> = parts
+            .owners
+            .into_iter()
+            .map(|(path, name)| Arc::new((root.join(path), name)))
+            .collect();
+        let map = |rows: BlockRows| {
+            rows.into_iter()
+                .map(|(id, number)| match number {
+                    Some(n) => owners
+                        .get(n as usize)
+                        .map(|owner| (id, Some(Arc::clone(owner))))
+                        .ok_or("block index names a missing owner"),
+                    None => Ok((id, None)),
+                })
+                .collect::<Result<SharedMap<_, _>, _>>()
+                .map(Arc::new)
+        };
+        Ok(SnapshotBlockIndex {
+            base: map(parts.base)?,
+            overlay: map(parts.overlay)?,
+        })
+    }
+}
+
+impl serde::Serialize for BlockIndexState {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let (index, root) = match self {
+            BlockIndexState::Out { index, root } => (index, root),
+            BlockIndexState::In(parts) => return parts.serialize(s),
+        };
+        let mut owners = Vec::new();
+        let mut numbers: HashMap<*const (PathBuf, String), u32> = HashMap::new();
+        let mut rows = |map: &SharedMap<String, Option<BlockOwner>>| -> BlockRows {
+            map.iter()
+                .map(|(id, owner)| {
+                    let number = owner.as_ref().map(|owner| {
+                        *numbers.entry(Arc::as_ptr(owner)).or_insert_with(|| {
+                            let path = owner.0.strip_prefix(root).unwrap_or(&owner.0);
+                            owners.push((path.to_path_buf(), owner.1.clone()));
+                            (owners.len() - 1) as u32
+                        })
+                    });
+                    (id.clone(), number)
+                })
+                .collect()
+        };
+        let base = rows(&index.base);
+        let overlay = rows(&index.overlay);
+        BlockIndexParts {
+            owners,
+            base,
+            overlay,
+        }
+        .serialize(s)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for BlockIndexState {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        BlockIndexParts::deserialize(d).map(BlockIndexState::In)
+    }
+}
+
+/// The backlink/derived-result memo, results as JSON text (their serde form
+/// is JSON-shaped), written in key order.
+pub(crate) struct DerivedCacheState(DerivedCache);
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DerivedCacheParts {
+    gen: u64,
+    today: i64,
+    /// `(key, groups JSON, total, exceeded, bytes)`.
+    results: Vec<(String, String, usize, bool, usize)>,
+    lru: Vec<String>,
+    bytes: usize,
+}
+
+impl serde::Serialize for DerivedCacheState {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use crate::query::memo::checkpoint::to_json;
+        let cache = &self.0;
+        let mut keys: Vec<&String> = cache.results.keys().collect();
+        keys.sort_unstable();
+        let mut results = Vec::with_capacity(keys.len());
+        for key in keys {
+            let (groups, bytes) = &cache.results[key];
+            results.push((
+                key.clone(),
+                to_json(groups.groups.as_ref())?,
+                groups.total,
+                groups.exceeded,
+                *bytes,
+            ));
+        }
+        DerivedCacheParts {
+            gen: cache.gen,
+            today: cache.today,
+            results,
+            lru: cache.lru.iter().cloned().collect(),
+            bytes: cache.bytes,
+        }
+        .serialize(s)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DerivedCacheState {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use crate::query::memo::checkpoint::from_json;
+        let parts = DerivedCacheParts::deserialize(d)?;
+        let mut results = HashMap::with_capacity(parts.results.len());
+        for (key, groups, total, exceeded, bytes) in parts.results {
+            let groups = BoundedRefGroups {
+                groups: Arc::new(from_json(&groups)?),
+                total,
+                exceeded,
+            };
+            results.insert(key, (groups, bytes));
+        }
+        if parts.lru.iter().any(|key| !results.contains_key(key)) {
+            return Err(serde::de::Error::custom(
+                "derived memo order names a missing result",
+            ));
+        }
+        Ok(DerivedCacheState(DerivedCache {
+            gen: parts.gen,
+            today: parts.today,
+            results,
+            lru: parts.lru.into(),
+            bytes: parts.bytes,
+        }))
+    }
+}
+
+#[cfg(test)]
+impl ReadSnapshot {
+    /// Which lazily built parts this generation holds: (block index,
+    /// referenced-name index, query index, derived results, query answers).
+    pub(crate) fn warm_parts(&self) -> (bool, bool, bool, usize, usize) {
+        (
+            self.block_index.get().is_some(),
+            self.referenced_name_index.get().is_some(),
+            self.query_index.checkpoint_capture().is_built(),
+            self.memos
+                .derived_cache
+                .read()
+                .unwrap()
+                .as_ref()
+                .map_or(0, |cache| cache.results.len()),
+            self.memos.query.len(),
+        )
     }
 }
 

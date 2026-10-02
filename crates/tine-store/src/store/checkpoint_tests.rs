@@ -185,6 +185,117 @@ fn a_loaded_checkpoint_equals_a_fresh_build() {
     assert!(!backlink_pages(&loaded, "A").is_empty());
 }
 
+/// Build every lazily built part of the current generation (ADR 0070: the
+/// checkpoint writes them in whatever state they are in).
+fn warm(store: &Store) {
+    use crate::model::GraphRead;
+    let view = store.whole_graph_reconciled().unwrap();
+    let graph = &view.graph;
+    graph.block_page_hint("x");
+    graph.referenced_page_names();
+    graph.page_aliases_with_owners();
+    graph.alias_owner_paths("bee");
+    graph.query_index().registry(&graph.pages);
+    answers(store);
+}
+
+/// What the warm parts answer: backlinks (derived memo) and queries (query
+/// memo, query index), as page + first line.
+fn answers(store: &Store) -> Vec<String> {
+    let view = store.whole_graph_reconciled().unwrap();
+    let graph = &view.graph;
+    let show = |label: &str, groups: &[tine_core::RefGroup]| {
+        let rows: Vec<String> = groups
+            .iter()
+            .flat_map(|group| {
+                group.blocks.iter().map(move |block| {
+                    format!("{}:{}", group.page, block.raw.lines().next().unwrap_or(""))
+                })
+            })
+            .collect();
+        format!("{label} => {}", rows.join(" | "))
+    };
+    let mut out = Vec::new();
+    for name in ["A", "Bee", "B", "One", "t1"] {
+        let groups = graph.backlinks_bounded(name, RESULT_BRIDGE_MAX_ROWS, RESULT_BRIDGE_MAX_BYTES);
+        out.push(show(&format!("bl:{name}"), &groups.groups));
+    }
+    for query in [
+        "(task TODO)",
+        "[[A]]",
+        "(page-property alias Bee)",
+        "(priority A)",
+    ] {
+        let groups =
+            graph.run_query_bounded(query, RESULT_BRIDGE_MAX_ROWS, RESULT_BRIDGE_MAX_BYTES);
+        out.push(show(&format!("q:{query}"), &groups.groups));
+    }
+    out
+}
+
+/// ADR 0070 (Martin, 2026-10-02: memos are persisted): a warm generation
+/// round-trips byte for byte, loads warm, and answers as a fresh build; a
+/// file edited while closed invalidates through the ordinary carry rules.
+#[test]
+fn a_warm_checkpoint_loads_warm_and_answers_as_a_fresh_build() {
+    let root = graph();
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    let written = open_cp(root.path(), &cp);
+    warm(&written);
+    let before = captured(&written);
+    let warm_answers = answers(&written);
+    assert!(matches!(
+        written.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    written.close();
+
+    let loaded = open_cp(root.path(), &cp);
+    let (blocks, referenced, query_index, derived, queries) =
+        loaded.whole_graph_reconciled().unwrap().graph.warm_parts();
+    assert!(
+        blocks && referenced && query_index,
+        "lazy indexes load built"
+    );
+    assert!(
+        derived > 0 && queries > 0,
+        "memos load warm: {derived} {queries}"
+    );
+    assert_eq!(load_outcome(&loaded), "loaded");
+    let after = captured(&loaded);
+    assert!(
+        before == after,
+        "ADR 0070: a warm generation must round-trip through the checkpoint"
+    );
+    let fresh = Store::open(root.path(), Default::default()).unwrap().0;
+    assert_eq!(answers(&loaded), answers(&fresh));
+    assert_eq!(answers(&loaded), warm_answers);
+    fresh.close();
+    loaded.close();
+
+    // Closed edit: B stops linking A, C gains a TODO.
+    fs::write(
+        root.path().join("pages/B.md"),
+        "alias:: Bee\ntags:: t0\n\n- DONE see nothing #t1\n  - child ((x))\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("pages/C.org"),
+        "* TODO heading [[A]]\n** child\n",
+    )
+    .unwrap();
+    for rel in ["pages/B.md", "pages/C.org"] {
+        set_mtime(&root.path().join(rel), old());
+    }
+    let reloaded = open_cp(root.path(), &cp);
+    let edited = answers(&reloaded);
+    assert_eq!(load_outcome(&reloaded), "loaded");
+    let fresh = Store::open(root.path(), Default::default()).unwrap().0;
+    assert_ne!(edited, warm_answers, "the closed edit changes the answers");
+    assert_eq!(edited, answers(&fresh));
+}
+
 #[test]
 fn a_served_checkpoint_is_readable_before_ready_and_destructive_reads_wait() {
     let root = graph();
@@ -507,17 +618,78 @@ fn the_idle_publisher_writes_after_an_edit() {
     let cp = dir.path().join("graph.bin");
     let store = open_cp(root.path(), &cp);
     store.whole_graph_reconciled().unwrap();
-    let deadline = std::time::Instant::now() + IDLE * 4;
+    // A cold launch's first checkpoint is prompt (FIRST_IDLE), not IDLE.
+    let deadline = std::time::Instant::now() + FIRST_IDLE * 4;
     while !cp.exists() && std::time::Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
     assert!(
         cp.exists(),
-        "the first Ready publication is checkpointed after IDLE"
+        "the first Ready publication of a cold launch is checkpointed after FIRST_IDLE"
     );
     assert_eq!(
         store.diagnostics()["checkpoint"]["last"]["outcome"],
         "written"
+    );
+}
+
+#[test]
+fn the_cadence_is_idle_spaced_and_age_bounded() {
+    let t0 = Instant::now();
+    let at = |secs: u64| t0 + Duration::from_secs(secs);
+    let mut state = SignalState::default();
+    assert_eq!(state.wait(t0), None, "nothing dirty, nothing due");
+
+    // Cold launch: due FIRST_IDLE after the last publication.
+    state.dirty_since = Some(t0);
+    state.last_publication = Some(t0);
+    assert_eq!(state.wait(t0), Some(FIRST_IDLE));
+    assert_eq!(state.wait(at(5)), Some(Duration::ZERO));
+
+    // After a write at 5 s: an edit at 10 s waits IDLE, then the spacing.
+    state.first = false;
+    state.last_write = Some(at(5));
+    state.dirty_since = Some(at(10));
+    state.last_publication = Some(at(10));
+    assert_eq!(state.wait(at(10)), Some(Duration::from_secs(295)));
+    assert_eq!(state.wait(at(100)), Some(Duration::from_secs(205)));
+    assert_eq!(state.wait(at(305)), Some(Duration::ZERO));
+
+    // Long after the last write, quiet time alone decides.
+    state.last_publication = Some(at(1000));
+    state.dirty_since = Some(at(1000));
+    assert_eq!(state.wait(at(1000)), Some(IDLE));
+    assert_eq!(state.wait(at(1060)), Some(Duration::ZERO));
+
+    // Continuous editing: due MAX_AGE after the change, never sooner than
+    // MIN_INTERVAL after the last write.
+    state.last_write = Some(at(2000));
+    state.dirty_since = Some(at(2000));
+    state.last_publication = Some(at(2590));
+    assert_eq!(state.wait(at(2590)), Some(Duration::from_secs(10)));
+    state.last_publication = Some(at(2600));
+    assert_eq!(state.wait(at(2600)), Some(Duration::ZERO));
+}
+
+#[test]
+fn a_launch_served_from_a_checkpoint_keeps_the_ordinary_cadence() {
+    let root = graph();
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    let written = open_cp(root.path(), &cp);
+    written.whole_graph_reconciled().unwrap();
+    assert!(matches!(
+        written.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    written.close();
+    let store = open_cp(root.path(), &cp);
+    store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "loaded");
+    let signal = store.changes.checkpoint.get().expect("publisher running");
+    assert!(
+        !signal.state.lock().unwrap().first,
+        "only a cold launch writes its first checkpoint after FIRST_IDLE"
     );
 }
 
@@ -568,12 +740,18 @@ fn the_golden_body_is_pinned_to_format() {
     }
     let store = Store::open(&root, Default::default()).unwrap().0;
     store.whole_graph().unwrap();
+    // Warm: the image covers the lazily built half and both memos too.
+    warm(&store);
     let (mut body, _) = publisher(&store).capture().unwrap();
     // Machine-dependent: inode identity and ctime.
     body.stamps.clear();
     body.racy.clear();
     let body = Body {
-        graph: body.graph.without_generation().with_alias_shards_merged(),
+        graph: body
+            .graph
+            .without_generation()
+            .with_alias_shards_merged()
+            .at_day(0),
         ..body
     };
     let mut bytes = postcard::to_stdvec(&body).unwrap();
@@ -592,10 +770,10 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (1, GOLDEN),
+        (2, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "1720a02841b6848cba7ce895a57183c5d96053005f8f16f50333ebef7e3205aa";
+const GOLDEN: &str = "78da24bee273a949e108a4388012c5566e10afbb0447940a4b00c571113ff090";

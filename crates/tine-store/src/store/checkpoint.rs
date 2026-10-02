@@ -11,16 +11,18 @@
 //! generation was parsed under, and the payload's length and SHA-256.
 //!
 //! Writing: after a dirtying publication, once the graph has been idle for
-//! [`IDLE`] or the change has waited [`MAX_AGE`] (continuous editing cannot
-//! starve it). Capture takes the store writer only to clone `Arc`s and the
+//! [`IDLE`] and the last write is [`MIN_INTERVAL`] old, or once the change has
+//! waited [`MAX_AGE`] (continuous editing cannot starve it); a store that
+//! launched cold writes its first checkpoint [`FIRST_IDLE`] after the last
+//! publication instead, so the next launch is warm. Capture takes the store writer only to clone `Arc`s and the
 //! revision table; serialization, compression and the atomic replace
 //! (`atomic_write_with_check`: temp + fsync + rename + directory fsync) run on
 //! the `tine-checkpoint` thread. A write killed at any point leaves the
 //! previous checkpoint usable.
 //!
 //! Unit cost: no per-edit write. Per checkpoint, one file of the whole
-//! generation (measured in ADR 0070), at most one per `IDLE` after an edit and
-//! one per `MAX_AGE` under continuous editing; zero transport bytes.
+//! generation (measured in ADR 0070), at most one per `MIN_INTERVAL` (12 an
+//! hour) plus the first one after a cold build; zero transport bytes.
 use super::*;
 use crate::model::{GraphState, NotCaptured, PagesIn, PagesOut};
 use crate::watch::Stamp;
@@ -31,14 +33,21 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// Bump whenever anything a checkpoint holds changes meaning or shape: a
 /// serialized type, the parser's output, an index's semantics.
 /// `checkpoint_tests::the_golden_body_is_pinned_to_format` fails on any such change.
-pub(crate) const FORMAT: u32 = 1;
+pub(crate) const FORMAT: u32 = 2;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.7";
 /// Quiet time after the last dirtying publication before a checkpoint.
-pub(crate) const IDLE: Duration = Duration::from_secs(5);
+pub(crate) const IDLE: Duration = Duration::from_secs(60);
+/// Least time between two checkpoint writes (Martin, 2026-10-02): at most 12
+/// whole-generation writes an hour, however the edits are spaced.
+pub(crate) const MIN_INTERVAL: Duration = Duration::from_secs(300);
 /// Longest a published change waits for a checkpoint under continuous editing.
 pub(crate) const MAX_AGE: Duration = Duration::from_secs(600);
+/// Quiet time before the first checkpoint of a store that launched without
+/// loading one (a cold initial build): that write is what makes the next
+/// launch warm, so it is not held to `IDLE` or `MIN_INTERVAL`.
+pub(crate) const FIRST_IDLE: Duration = Duration::from_secs(5);
 /// A checkpoint whose raw body claims more is not loaded (damaged header).
 const MAX_RAW: u64 = 4 << 30;
 
@@ -303,14 +312,60 @@ impl ChangeFeed {
 
 /// The publisher's shared state: publications mark it dirty, and the
 /// checkpoint thread waits on it.
-#[derive(Default)]
 struct SignalState {
     dirty_since: Option<Instant>,
     last_publication: Option<Instant>,
+    /// When the last attempt that wrote (or failed to write) began.
+    last_write: Option<Instant>,
+    /// When the attempt in flight began.
+    attempt: Option<Instant>,
+    /// No checkpoint was loaded at launch and none has been written since:
+    /// the next one is due [`FIRST_IDLE`] after the last publication.
+    first: bool,
     requested: u64,
     done: u64,
     stop: bool,
     last: Option<CheckpointWrite>,
+}
+
+impl Default for SignalState {
+    fn default() -> Self {
+        SignalState {
+            dirty_since: None,
+            last_publication: None,
+            last_write: None,
+            attempt: None,
+            first: true,
+            requested: 0,
+            done: 0,
+            stop: false,
+            last: None,
+        }
+    }
+}
+
+impl SignalState {
+    /// How long until a dirty generation is due at `now` (`ZERO`: due), or
+    /// `None` when nothing is dirty. Due once the graph has been quiet for
+    /// `IDLE` and the last write is `MIN_INTERVAL` old, or once the change
+    /// has waited `MAX_AGE`; the first write after a cold build only waits
+    /// `FIRST_IDLE`. Since `dirty_since` is set no earlier than the start of
+    /// the last attempt, `MAX_AGE` (> `MIN_INTERVAL`) never shortens the
+    /// spacing.
+    fn wait(&self, now: Instant) -> Option<Duration> {
+        let (since, last) = (self.dirty_since?, self.last_publication?);
+        let (quiet, spacing) = if self.first {
+            (FIRST_IDLE, Duration::ZERO)
+        } else {
+            let spacing = self.last_write.map_or(Duration::ZERO, |at| {
+                MIN_INTERVAL.saturating_sub(now.saturating_duration_since(at))
+            });
+            (IDLE, spacing)
+        };
+        let idle = quiet.saturating_sub(now.saturating_duration_since(last));
+        let age = MAX_AGE.saturating_sub(now.saturating_duration_since(since));
+        Some(idle.max(spacing).min(age))
+    }
 }
 
 #[derive(Default)]
@@ -320,6 +375,12 @@ pub(crate) struct Signal {
 }
 
 impl Signal {
+    /// The launch served a loaded checkpoint: the next one follows the
+    /// ordinary cadence.
+    pub(crate) fn loaded(&self) {
+        self.state.lock().unwrap().first = false;
+    }
+
     /// A publication changed the graph's derived state.
     pub(crate) fn published(&self) {
         let now = Instant::now();
@@ -370,23 +431,13 @@ impl Signal {
             if state.stop {
                 return None;
             }
-            if state.requested > state.done {
+            let now = Instant::now();
+            let wait = state.wait(now);
+            if state.requested > state.done || wait.is_some_and(|wait| wait.is_zero()) {
                 state.dirty_since = None;
+                state.attempt = Some(now);
                 return Some(state.requested);
             }
-            let wait = match (state.dirty_since, state.last_publication) {
-                (Some(since), Some(last)) => {
-                    let idle = IDLE.saturating_sub(last.elapsed());
-                    let age = MAX_AGE.saturating_sub(since.elapsed());
-                    let wait = idle.min(age);
-                    if wait.is_zero() {
-                        state.dirty_since = None;
-                        return Some(state.requested);
-                    }
-                    Some(wait)
-                }
-                _ => None,
-            };
             state = match wait {
                 Some(wait) => self.wake.wait_timeout(state, wait).unwrap().0,
                 None => self.wake.wait(state).unwrap(),
@@ -402,6 +453,9 @@ impl Signal {
             let now = Instant::now();
             state.dirty_since.get_or_insert(now);
             state.last_publication = Some(now);
+        } else if !matches!(outcome, CheckpointWrite::Skipped(_)) {
+            state.last_write = state.attempt;
+            state.first = false;
         }
         state.done = state.done.max(ticket);
         state.last = Some(outcome);
@@ -441,6 +495,9 @@ pub(crate) fn launch_from(
         return false;
     };
     graph.diag.checkpoint_load("loaded", began.elapsed(), bytes);
+    if let Some(signal) = changes.checkpoint.get() {
+        signal.loaded();
+    }
     load.serving.store(true, Ordering::Release);
     load.ready.notify_all();
     graph.diag.serving();
@@ -475,7 +532,7 @@ pub(crate) fn launch_from(
 
 impl Store {
     /// Write the launch checkpoint now and wait for the outcome (tests and
-    /// diagnostics; the publisher otherwise writes after [`IDLE`]). `None`
+    /// diagnostics; the publisher otherwise writes on its cadence). `None`
     /// when this store keeps no checkpoint.
     #[cfg(any(test, feature = "test-faults"))]
     pub fn write_checkpoint_now(&self) -> Option<CheckpointWrite> {

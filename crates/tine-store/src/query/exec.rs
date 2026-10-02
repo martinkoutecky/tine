@@ -96,6 +96,54 @@ impl Plan {
         }
     }
 
+    /// The plan's data in launch-checkpoint form (ADR 0070): everything but
+    /// the compiled patterns, which are a function of the filter and policy.
+    pub(crate) fn checkpoint_parts(
+        &self,
+    ) -> (
+        Anchor,
+        &Filter,
+        bool,
+        JournalDate,
+        bool,
+        Option<&Arc<Registry>>,
+    ) {
+        let Plan {
+            anchor,
+            filter,
+            compiled: _,
+            track,
+            today,
+            remove_accents,
+            registry,
+        } = self;
+        let registry = registry.as_ref();
+        (*anchor, filter, *track, *today, *remove_accents, registry)
+    }
+
+    /// A plan restored from [`Self::checkpoint_parts`], its patterns compiled
+    /// exactly as [`Self::new`] compiles them.
+    pub(crate) fn from_checkpoint_parts(
+        (anchor, filter, track, today, remove_accents, registry): (
+            Anchor,
+            Filter,
+            bool,
+            JournalDate,
+            bool,
+            Option<Arc<Registry>>,
+        ),
+    ) -> Plan {
+        Plan {
+            anchor,
+            compiled: CompiledLeaves::for_query(&filter, remove_accents),
+            track,
+            filter,
+            today,
+            remove_accents,
+            registry,
+        }
+    }
+
     pub(crate) fn registry(&self) -> Option<&Arc<Registry>> {
         self.registry.as_ref()
     }

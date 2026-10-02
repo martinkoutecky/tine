@@ -4,11 +4,44 @@
 //! `cold` opens with no checkpoint; `write` opens, reaches Ready and writes the
 //! checkpoint; `warm` opens from it. Prints one JSON line: open → first page
 //! read (`page()` returns) and open → Ready in ms, checkpoint diagnostics and
-//! VmRSS after Ready. Run it on a COPY of a graph.
+//! VmRSS after Ready, then the first Ctrl-K block search (`find_blocks`, the
+//! `search` command's call) and the first backlinks of two pages after Ready.
+//! `write` runs the search and the first page's backlinks before writing, so
+//! a checkpoint that keeps memos and lazy indexes carries them; the second
+//! page's backlinks stay unasked. Run it on a COPY of a graph.
 
 use std::path::{Path, PathBuf};
+use std::sync::{atomic::AtomicBool, Arc};
 use std::time::Instant;
-use tine_store::{OpenOptions, PageId, Store};
+use tine_store::{Cancel, OpenOptions, PageId, Store, WholeGraph};
+
+/// A generic Ctrl-K needle; only hit counts are printed, never content.
+const SEARCH: &str = "the";
+
+fn ms(since: Instant) -> f64 {
+    since.elapsed().as_secs_f64() * 1e3
+}
+
+/// The first search and both backlinks reads, timed one by one.
+fn timed_reads(view: &WholeGraph, first: &str, second: &str) -> serde_json::Value {
+    let began = Instant::now();
+    let hits = view
+        .find_blocks(SEARCH, 100, &Cancel(Arc::new(AtomicBool::new(false))))
+        .map(|groups| groups.len())
+        .unwrap_or(0);
+    let search_ms = ms(began);
+    let began = Instant::now();
+    let first_groups = view.backlinks(first).map(|g| g.len()).unwrap_or(0);
+    let first_ms = ms(began);
+    let began = Instant::now();
+    let second_groups = view.backlinks(second).map(|g| g.len()).unwrap_or(0);
+    let second_ms = ms(began);
+    serde_json::json!({
+        "searchMs": search_ms, "searchGroups": hits,
+        "backlinksMs": first_ms, "backlinksGroups": first_groups,
+        "otherBacklinksMs": second_ms, "otherBacklinksGroups": second_groups,
+    })
+}
 
 fn rss_kib() -> u64 {
     std::fs::read_to_string("/proc/self/status")
@@ -22,15 +55,45 @@ fn rss_kib() -> u64 {
         .unwrap_or(0)
 }
 
-/// The first Markdown page by name, chosen before opening.
-fn first_page(root: &Path) -> PageId {
+/// The two most `[[linked]]` names that are page files, counted over the
+/// files before opening (a bench heuristic: the backlinks a user is likely to
+/// open first).
+fn most_linked(root: &Path) -> (String, String) {
+    let pages: std::collections::HashSet<String> = page_files(root)
+        .iter()
+        .map(|file| file.trim_end_matches(".md").to_lowercase())
+        .collect();
+    let mut counts = std::collections::HashMap::<String, usize>::new();
+    for dir in ["pages", "journals"] {
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let text = std::fs::read_to_string(entry.path()).unwrap_or_default();
+            for part in text.split("[[").skip(1) {
+                if let Some((name, _)) = part.split_once("]]") {
+                    *counts.entry(name.to_lowercase()).or_default() += 1;
+                }
+            }
+        }
+    }
+    let mut ranked: Vec<_> = counts
+        .into_iter()
+        .filter(|(name, _)| pages.contains(name))
+        .collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    (ranked[0].0.clone(), ranked[1].0.clone())
+}
+
+/// The Markdown page files by name, chosen before opening.
+fn page_files(root: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(root.join("pages"))
         .expect("pages directory")
         .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
         .filter(|name| name.ends_with(".md"))
         .collect();
     names.sort();
-    PageId::from(format!("pages/{}", names.first().expect("a page")))
+    names
 }
 
 fn main() {
@@ -39,7 +102,9 @@ fn main() {
         panic!("usage: checkpoint_launch_bench <cold|write|warm> <graph copy> <checkpoint>");
     };
     let root = Path::new(root);
-    let page = first_page(root);
+    let files = page_files(root);
+    let page = PageId::from(format!("pages/{}", files.first().expect("a page")));
+    let (first, second) = most_linked(root);
     let checkpoint = (mode != "cold").then(|| PathBuf::from(checkpoint));
     let began = Instant::now();
     let (store, _, _) = Store::open(
@@ -58,9 +123,13 @@ fn main() {
     let view = store.whole_graph().expect("ready");
     let ready_ms = began.elapsed().as_secs_f64() * 1e3;
     let pages = view.parsed_page_ids().len();
-    drop(view);
     let rss = rss_kib();
-    let write = (mode == "write").then(|| format!("{:?}", store.write_checkpoint_now()));
+    let reads = (mode != "write").then(|| timed_reads(&view, &first, &second));
+    let write = (mode == "write").then(|| {
+        timed_reads(&view, &first, &first);
+        format!("{:?}", store.write_checkpoint_now())
+    });
+    drop(view);
     let diag = store.diagnostics();
     println!(
         "{}",
@@ -70,6 +139,7 @@ fn main() {
             "firstPageMs": first_page_ms,
             "readyMs": ready_ms,
             "rssKiB": rss,
+            "reads": reads,
             "write": write,
             "checkpoint": diag["checkpoint"],
         })

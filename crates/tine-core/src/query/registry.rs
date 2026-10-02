@@ -189,6 +189,14 @@ impl Registry {
         registry
     }
 
+    /// [`Self::from_snapshot`] under the config it was built with: the launch
+    /// checkpoint's restore of a registry it captured whole (ADR 0070).
+    pub fn from_snapshot_under(snapshot: &RegistrySnapshot, config: &ParseConfig) -> Registry {
+        let mut registry = Registry::from_snapshot(snapshot);
+        registry.config = config.clone();
+        registry
+    }
+
     /// The wire snapshot `query_registry` returns (§7.1).
     pub fn snapshot(&self) -> RegistrySnapshot {
         RegistrySnapshot {
