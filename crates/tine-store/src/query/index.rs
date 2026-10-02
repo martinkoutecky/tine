@@ -111,10 +111,10 @@ impl PageFacts {
         ) {
             for block in roots {
                 let projection = block.projection();
-                for (ordinal, (key, value)) in projection.properties.iter().enumerate() {
+                for (ordinal, (key, value)) in projection.properties().iter().enumerate() {
                     note(&block.uuid, ordinal, key, value, false);
                 }
-                refs.extend(projection.refs_norm.iter().cloned());
+                refs.extend(projection.refs_norm().iter().cloned());
                 blocks(&block.children, note, refs);
             }
         }
@@ -617,7 +617,7 @@ fn owner_rows(
         push: &mut impl FnMut(OwnerType, String, usize, &str, &str),
     ) {
         for block in roots {
-            for (ordinal, (key, value)) in block.projection().properties.iter().enumerate() {
+            for (ordinal, (key, value)) in block.projection().properties().iter().enumerate() {
                 push(
                     OwnerType::Block,
                     format!("b:{page_id}#{}", block.uuid),

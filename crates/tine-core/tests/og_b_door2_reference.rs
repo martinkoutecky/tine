@@ -3,7 +3,7 @@ use tine_core::{doc::DocBlock, model::ReferenceKind, reference_evidence as evide
 #[test]
 fn plain_reference_clients_keep_nfd_graphemes_whole() {
     let block = DocBlock::new("Cafe\u{301} and Café");
-    let projection = &block.projection().reference_source;
+    let projection = block.projection().reference_source();
     let config = Config::default();
     let bare = vec!["cafe".into()];
     assert!(

@@ -317,7 +317,7 @@ fn collect_reverse_refs(
     for block in blocks {
         let anchor = anchors.get(block);
         let mut seen = HashSet::new();
-        for target in &block.projection().block_refs {
+        for target in block.projection().block_refs() {
             if !public_targets.contains_key(target) || !seen.insert(target.as_str()) {
                 continue;
             }

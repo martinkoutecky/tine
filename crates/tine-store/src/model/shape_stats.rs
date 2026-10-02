@@ -73,7 +73,7 @@ fn count_page(doc: &tine_core::doc::Document) -> PageCounts {
         counts.blocks += 1;
         counts.depth = counts.depth.max(depth);
         let projection = block.projection();
-        for reference in &projection.reference_source.explicit {
+        for reference in projection.reference_source().explicit {
             match reference.rule {
                 "explicit_link" | "explicit_nested_link" => counts.links += 1,
                 "explicit_tag" => counts.tags += 1,
@@ -81,8 +81,8 @@ fn count_page(doc: &tine_core::doc::Document) -> PageCounts {
                 _ => {}
             }
         }
-        counts.block_refs += projection.block_refs.len() as u64;
-        counts.properties += projection.properties.len() as u64;
+        counts.block_refs += projection.block_refs().len() as u64;
+        counts.properties += projection.properties().len() as u64;
         let raw = block.raw();
         if raw.contains("{{") {
             counts.queries += tine_core::query::macro_text::query_macro_extents(raw).len() as u64;
@@ -116,7 +116,7 @@ pub(crate) fn shape(pages: &Pages, facts: FileFacts, crlf_files: Option<u64>) ->
         props.push(counts.properties);
         let mut stack: Vec<&tine_core::doc::DocBlock> = doc.roots.iter().collect();
         while let Some(block) = stack.pop() {
-            for key in &block.projection().refs_norm {
+            for key in block.projection().refs_norm() {
                 let slot = referrers.entry(key.as_str()).or_insert((0, usize::MAX));
                 if slot.1 != index {
                     *slot = (slot.0 + 1, index);

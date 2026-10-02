@@ -22,11 +22,11 @@ fn reference_evidence_excludes_unlabeled_local_assets_and_keeps_nested_pages() {
         block.set_org(true);
         block
     };
-    assert!(asset.projection().reference_source.explicit.is_empty());
+    assert!(asset.projection().reference_source().explicit.is_empty());
     let nested = tine_core::doc::DocBlock::new("[[Outer [[Inner]]]]");
     let names: Vec<_> = nested
         .projection()
-        .reference_source
+        .reference_source()
         .explicit
         .iter()
         .map(|p| p.name.clone())
@@ -78,7 +78,7 @@ fn quick_switch_candidates_include_accepted_alias_and_tag_values() {
     let block = tine_core::doc::DocBlock::new("tags:: ProjectX， [[Linear IP]]\naliases:: LP Survey，Paper Notes\nstatus:: \"Private, Draft\"");
     let projection = block.projection();
     let names: Vec<_> = tine_core::reference_evidence::linkable_property_names(
-        &projection.reference_source,
+        projection.reference_source(),
         &projection.regions,
     )
     .collect();
@@ -90,7 +90,7 @@ fn quick_switch_candidates_include_accepted_alias_and_tag_values() {
     let projection = quoted.projection();
     assert_eq!(
         tine_core::reference_evidence::linkable_property_names(
-            &projection.reference_source,
+            projection.reference_source(),
             &projection.regions
         )
         .count(),

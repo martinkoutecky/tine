@@ -275,7 +275,7 @@ fn doc_children(block: &DocBlock) -> &[DocBlock] {
 }
 
 fn doc_refs(block: &DocBlock) -> &[String] {
-    &block.projection().refs_norm
+    &block.projection().refs_norm()
 }
 
 /// The ONE path-refs traversal over a document forest (tine-core
@@ -335,7 +335,7 @@ fn eval_block_leaf(
                 *op,
                 value,
                 planning_text(
-                    block.projection().scheduled.as_deref(),
+                    block.projection().scheduled().as_deref(),
                     block.raw(),
                     "SCHEDULED:",
                 ),
@@ -345,7 +345,7 @@ fn eval_block_leaf(
                 *op,
                 value,
                 planning_text(
-                    block.projection().deadline.as_deref(),
+                    block.projection().deadline().as_deref(),
                     block.raw(),
                     "DEADLINE:",
                 ),
@@ -357,10 +357,10 @@ fn eval_block_leaf(
         },
         Leaf::Rel { rel, quant, pred } => match rel {
             Rel::Refs => eval_refs(*quant, pred, block, ancestor_refs, ctx),
-            Rel::Tags => quantify(*quant, block.projection().tags.iter(), |tag| {
+            Rel::Tags => quantify(*quant, block.projection().tags().iter(), |tag| {
                 eval_name_element(pred, tag)
             }),
-            Rel::Props => eval_props(*quant, pred, &block.projection().properties, ctx),
+            Rel::Props => eval_props(*quant, pred, &block.projection().properties(), ctx),
             Rel::Children => quantify(*quant, block.children.iter(), |child| {
                 // A child is a fresh row: it keeps the anchor's ancestor context,
                 // matching the direct-children-only rule (A1).
@@ -480,7 +480,7 @@ fn eval_refs(
     ancestor_refs: &PathRefCounts,
     ctx: &EvalCtx,
 ) -> bool {
-    let own = &block.projection().refs_norm;
+    let own = &block.projection().refs_norm();
     if let Some(name) = single_ref_name(pred) {
         let hit = closure_contains(&ctx.page_key, own, ancestor_refs, &refs::normalize(name));
         return match quant {
@@ -732,8 +732,7 @@ fn compare_atom_text(op: CmpOp, value: &Value, key: &str, ctx: &EvalCtx) -> bool
 }
 
 fn eval_content(op: CmpOp, value: &Value, block: &DocBlock, ctx: &EvalCtx) -> bool {
-    let projection = block.projection();
-    let body = projection.visible_folded(ctx.remove_accents);
+    let body = block.visible_folded(ctx.remove_accents);
     let fold = |text: &str| {
         if ctx.remove_accents {
             canonical_fold(text)
@@ -759,13 +758,13 @@ fn eval_content(op: CmpOp, value: &Value, block: &DocBlock, ctx: &EvalCtx) -> bo
         CmpOp::Match => value.as_text().is_some_and(|text| {
             ctx.compiled
                 .match_program(text)
-                .is_some_and(|m| m.matches(body, &projection.visible))
+                .is_some_and(|m| m.matches(body, block.visible_text()))
         }),
         // An invalid (or over-limit) regex is retained but matches nothing.
         CmpOp::Regex => value.as_text().is_some_and(|text| {
             ctx.compiled
                 .regex(text)
-                .is_some_and(|r| r.is_match(&projection.visible))
+                .is_some_and(|r| r.is_match(block.visible_text()))
         }),
         _ => false,
     }

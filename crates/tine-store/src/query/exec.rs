@@ -364,15 +364,30 @@ pub(crate) fn block_sort_decor(
                 .map_or_else(|| "Z".to_string(), str::to_ascii_uppercase),
         ),
         "page" => SortDecor::Text(entry.name.to_lowercase()),
-        "deadline" => SortDecor::Text(projection.deadline.clone().unwrap_or_else(|| "~".into())),
-        "scheduled" => SortDecor::Text(projection.scheduled.clone().unwrap_or_else(|| "~".into())),
+        "deadline" => SortDecor::Text(
+            projection
+                .deadline()
+                .map_or_else(|| "~".to_string(), str::to_owned),
+        ),
+        "scheduled" => SortDecor::Text(
+            projection
+                .scheduled()
+                .map_or_else(|| "~".to_string(), str::to_owned),
+        ),
         _ => SortDecor::Text(lexical_property_sort_text(
             projection
-                .properties
+                .properties()
                 .iter()
                 .map(|(key, value)| (key.as_str(), value.as_str())),
             field,
-            || projection.visible.lines().next().unwrap_or("").to_string(),
+            || {
+                block
+                    .visible_text()
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            },
         )),
     }
 }
@@ -509,19 +524,23 @@ pub(crate) fn execute(
                     for (at, block) in &rows {
                         let (entry, _, _) = &groups[*at];
                         let projection = block.projection();
-                        let values = statistics_values(fold, &projection.properties);
+                        let values = statistics_values(fold, &projection.properties());
                         let keys = statistics_keys(
                             fold,
                             |field| match field {
-                                "tags" => Some(projection.tags.iter().cloned().map(Some).collect()),
+                                "tags" => {
+                                    Some(projection.tags().iter().cloned().map(Some).collect())
+                                }
                                 "page" | "name" => Some(vec![Some(entry.name.clone())]),
                                 "state" => Some(vec![block.marker().map(str::to_owned)]),
                                 "priority" => Some(vec![block.priority().map(str::to_owned)]),
-                                "scheduled" => Some(vec![projection.scheduled.clone()]),
-                                "deadline" => Some(vec![projection.deadline.clone()]),
+                                "scheduled" => {
+                                    Some(vec![projection.scheduled().map(str::to_owned)])
+                                }
+                                "deadline" => Some(vec![projection.deadline().map(str::to_owned)]),
                                 _ => None,
                             },
-                            &projection.properties,
+                            &projection.properties(),
                         );
                         fold.add(&values, keys)?;
                     }

@@ -216,17 +216,15 @@ pub(super) fn execute_pages(
                     if cancelled() {
                         return false;
                     }
-                    let projection = block.projection();
-                    let lower = projection.visible_folded(plan.remove_accents);
-                    if let Some(relevance) =
-                        block_relevance(plan, block_expr, &projection.visible, lower)
-                    {
+                    let visible = block.visible_text();
+                    let lower = block.visible_folded(plan.remove_accents);
+                    if let Some(relevance) = block_relevance(plan, block_expr, visible, lower) {
                         let key = entry.rel_path_str().to_owned();
                         let replace = content_by_path.get(&key).is_none_or(|(best, _)| {
                             relevance.cmp_quality(best) == Ordering::Greater
                         });
                         if replace {
-                            content_by_path.insert(key, (relevance, projection.visible.clone()));
+                            content_by_path.insert(key, (relevance, visible.to_owned()));
                         }
                     }
                     true

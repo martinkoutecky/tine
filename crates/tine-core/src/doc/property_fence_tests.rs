@@ -14,7 +14,7 @@ fn property_lines_skip_fenced_key_colons() {
     );
     assert_eq!(b.property("lang"), None);
     // The fenced property line stays visible (it's code); real props are dropped.
-    let vis = b.projection().visible_lower.clone();
+    let vis = b.visible_folded(true).to_owned();
     assert!(
         vis.contains("lang:: rust"),
         "fenced line searchable: {vis:?}"

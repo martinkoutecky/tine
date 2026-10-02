@@ -97,7 +97,22 @@ pub struct ProjectedPageRef {
     pub rule: &'static str,
 }
 
-/// Reference spans retained with a block projection for later queries.
+/// Borrowed view of the reference spans retained with a block projection.
+/// The stored form is split (sparse vectors live behind the projection's
+/// optional box); every reader works through this one view.
+#[deny(missing_docs)]
+#[derive(Debug, Clone, Copy)]
+pub struct ReferenceSource<'a> {
+    /// Explicit page references recognized by the parser.
+    pub explicit: &'a [ProjectedPageRef],
+    /// Byte ranges in the raw source eligible for plain-text matching.
+    pub plain_ranges: &'a [Range<usize>],
+    /// Structural source ranges excluded from plain-text matching.
+    pub withheld_ranges: &'a [Range<usize>],
+}
+
+/// Reference spans produced by one projection build, owned. A block stores
+/// them split (see [`ReferenceSource`]); this form is the build result.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Default)]
 pub struct ReferenceSourceProjection {
@@ -108,6 +123,17 @@ pub struct ReferenceSourceProjection {
     pub plain_ranges: Vec<Range<usize>>,
     /// Structural source ranges excluded from plain-text matching.
     pub withheld_ranges: Vec<Range<usize>>,
+}
+
+impl ReferenceSourceProjection {
+    /// Borrow this build result as a [`ReferenceSource`].
+    pub fn as_source(&self) -> ReferenceSource<'_> {
+        ReferenceSource {
+            explicit: &self.explicit,
+            plain_ranges: &self.plain_ranges,
+            withheld_ranges: &self.withheld_ranges,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -371,7 +397,7 @@ fn project_property_key(
 /// O(properties + references), zero parses or allocation; inputs must be the
 /// memoized regions and evidence of the same raw block.
 pub fn linkable_property_names<'a>(
-    projection: &'a ReferenceSourceProjection,
+    projection: ReferenceSource<'a>,
     regions: &'a crate::block_regions::BlockRegions,
 ) -> impl Iterator<Item = &'a str> {
     let mut properties = regions
@@ -746,7 +772,7 @@ fn projected_reference_matches(
 
 pub fn occurrences_of_kind_bounded(
     raw: &str,
-    projection: &ReferenceSourceProjection,
+    projection: ReferenceSource<'_>,
     canonical: &str,
     names_norm: &[String],
     kind: ReferenceKind,
@@ -755,7 +781,7 @@ pub fn occurrences_of_kind_bounded(
     let mut out = Vec::with_capacity(MAX_OCCURRENCES_PER_BLOCK.min(8));
     let mut total = 0usize;
     if kind == ReferenceKind::Explicit {
-        for reference in &projection.explicit {
+        for reference in projection.explicit {
             if !projected_reference_matches(reference, names_norm, config) {
                 continue;
             }
@@ -782,7 +808,7 @@ pub fn occurrences_of_kind_bounded(
     }
 
     for name in names_norm {
-        for eligible in &projection.plain_ranges {
+        for eligible in projection.plain_ranges {
             visit_plain_matches(raw, eligible, name, |range| {
                 if projection
                     .explicit
@@ -819,7 +845,7 @@ pub fn occurrences_of_kind_bounded(
 
 pub fn occurrences_of_kind(
     raw: &str,
-    projection: &ReferenceSourceProjection,
+    projection: ReferenceSource<'_>,
     canonical: &str,
     names_norm: &[String],
     kind: ReferenceKind,
@@ -832,7 +858,7 @@ pub fn occurrences_of_kind(
 /// It performs no occurrence/string construction and stops at the first hit.
 pub fn has_occurrence_kind(
     raw: &str,
-    projection: &ReferenceSourceProjection,
+    projection: ReferenceSource<'_>,
     names_norm: &[String],
     kind: ReferenceKind,
     config: &crate::config::Config,
@@ -844,7 +870,7 @@ pub fn has_occurrence_kind(
             .any(|reference| projected_reference_matches(reference, names_norm, config));
     }
     for name in names_norm {
-        for eligible in &projection.plain_ranges {
+        for eligible in projection.plain_ranges {
             let mut found = false;
             visit_plain_matches(raw, eligible, name, |range| {
                 found = !projection
@@ -863,7 +889,7 @@ pub fn has_occurrence_kind(
 
 pub fn occurrences(
     raw: &str,
-    projection: &ReferenceSourceProjection,
+    projection: ReferenceSource<'_>,
     canonical: &str,
     names_norm: &[String],
     config: &crate::config::Config,
@@ -907,7 +933,7 @@ pub fn slow_occurrences(
 ) -> Vec<ReferenceOccurrence> {
     let parsed = crate::render::parse_projection(raw, is_org);
     let source = project(raw, is_org, &parsed.blocks);
-    occurrences(raw, &source, canonical, names_norm, config)
+    occurrences(raw, source.as_source(), canonical, names_norm, config)
 }
 
 #[cfg(test)]
@@ -919,7 +945,7 @@ mod tests {
         let projected = project(raw, false, &parsed.blocks);
         occurrences(
             raw,
-            &projected,
+            projected.as_source(),
             "Target",
             &names
                 .iter()
@@ -1042,7 +1068,7 @@ mod tests {
         reset_occurrence_constructions();
         let got = occurrences_of_kind(
             &raw,
-            &projected,
+            projected.as_source(),
             "Target",
             &[refs::normalize("Target")],
             ReferenceKind::Plain,
@@ -1060,7 +1086,7 @@ mod tests {
         let projected = project(&raw, false, &parsed.blocks);
         let got = occurrences_of_kind_bounded(
             &raw,
-            &projected,
+            projected.as_source(),
             "Target",
             &[refs::normalize("Target")],
             ReferenceKind::Plain,

@@ -1116,14 +1116,14 @@ pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
     fn property_refs(seen: &mut HashMap<String, String>, block: &DocBlock) {
         let projection = block.projection();
         for name in tine_core::reference_evidence::linkable_property_names(
-            &projection.reference_source,
+            projection.reference_source(),
             &projection.regions,
         ) {
             add(seen, name.to_owned());
         }
     }
     fn visit(block: &DocBlock, seen: &mut HashMap<String, String>) {
-        for name in &block.projection().refs_page {
+        for name in block.projection().refs_page() {
             add(seen, name.clone());
         }
         property_refs(seen, block);
@@ -1657,9 +1657,9 @@ impl PageCacheBuild {
 pub(crate) fn document_block_ref_counts(doc: &Document) -> HashMap<String, usize> {
     fn walk(blocks: &[DocBlock], counts: &mut std::collections::HashMap<String, usize>) {
         for block in blocks {
-            // projection().block_refs is already de-duplicated per referrer block,
+            // projection().block_refs() is already de-duplicated per referrer block,
             // matching the badge's OG-compatible counting semantics.
-            for id in &block.projection().block_refs {
+            for id in block.projection().block_refs() {
                 *counts.entry(id.clone()).or_insert(0) += 1;
             }
             walk(&block.children, counts);

@@ -42,9 +42,8 @@ pub(super) fn execute_blocks(
                 }
                 let candidate_index = index;
                 index = index.saturating_add(1);
-                let projection = block.projection();
-                let visible = &projection.visible;
-                let lower = projection.visible_folded(plan.remove_accents);
+                let visible = block.visible_text();
+                let lower = block.visible_folded(plan.remove_accents);
                 if let Some(relevance) = block_relevance(plan, &branch.predicate, visible, lower) {
                     has_more |= heap.len() >= selection_limit;
                     let retain = heap.len() < selection_limit
@@ -119,11 +118,10 @@ pub(super) fn execute_blocks(
             winners
                 .into_iter()
                 .map(|winner| {
-                    let projection = winner.block.projection();
-                    let lower = projection.visible_folded(plan.remove_accents);
-                    let matched =
-                        eval_ranked_block_expr(plan, &branch.predicate, &projection.visible, lower)
-                            .expect("rank and evidence evaluators must agree");
+                    let visible = winner.block.visible_text();
+                    let lower = winner.block.visible_folded(plan.remove_accents);
+                    let matched = eval_ranked_block_expr(plan, &branch.predicate, visible, lower)
+                        .expect("rank and evidence evaluators must agree");
                     // Search hits are result identities, not independent copies
                     // of their entire descendant trees. The source page owns the
                     // hierarchy and live consumers hydrate it once per page.
@@ -134,7 +132,7 @@ pub(super) fn execute_blocks(
                         kind: winner.page.kind,
                         path: winner.page.rel_path.clone().unwrap(),
                         block: dto,
-                        display_text: projection.visible.clone(),
+                        display_text: visible.to_owned(),
                         evidence: matched.evidence,
                         score: winner.relevance.score(),
                         match_class: winner.relevance.match_class,

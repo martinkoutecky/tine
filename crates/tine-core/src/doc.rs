@@ -72,69 +72,107 @@ pub struct DocBlock {
 
 /// Parsed values derived from a block's current raw text.
 // Memoization avoids reparsing each block during whole-graph scans.
+//
+// Memory shape (GH #623): this slot is paid inline by every block, so it holds only what
+// every block has. Facets set on a minority of blocks live in one `Option<Box<..>>`, and
+// text that equals another stored text is not stored again: `visible` is `None` when it
+// equals the block's `raw`, `visible_lower` is `None` when it equals `visible`. Those
+// fallbacks need the block's `raw`, so the ONLY readers are `DocBlock::visible_text` and
+// `DocBlock::visible_folded`; the fields are private so no caller can re-implement the
+// fallback. Unrelated to behaviour: every accessor returns what the eager form returned.
 #[deny(missing_docs)]
 #[derive(Debug, Clone, Default)]
 pub struct BlockProjection {
     /// Parser-owned raw byte regions from the same cached single-block AST.
     /// Sparse edit data stays out of the inline block; empty regions are shared.
     pub regions: std::sync::Arc<crate::block_regions::BlockRegions>,
-    /// Visible (non-property) text, original case — the body the reader sees,
-    /// for breadcrumb labels / display. `raw` minus the byte ranges lsdoc
-    /// recognized as `Properties` blocks (see `visible_minus_properties`).
-    pub visible: String,
-    /// `visible` folded with accent-removing `canonical_fold`, independent of
-    /// graph policy. Accent-sensitive callers use [`Self::visible_folded`].
-    pub visible_lower: String,
-    /// Lazy accent-sensitive fold, populated only when that graph policy is used.
-    pub(crate) visible_literal: std::sync::OnceLock<String>,
-    /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
-    pub refs_norm: Vec<String>,
-    /// The SAME page references in lsdoc's original case — for `referenced_page_names`
-    /// (the virtual-page list behind `[[`/`#`/Ctrl-K autocomplete), which needs display
-    /// case.
-    // Keep this on the projection to reuse the parse across cache generations.
-    pub refs_page: Vec<String>,
-    /// Block references (`((uuid))` / `[l](((uuid)))` / `{{embed ((uuid))}}`),
-    /// UUID-gated — for the block-referrers / ref-count scans. From the same
-    /// lsdoc parse as `refs_norm`.
-    pub block_refs: Vec<String>,
-    /// Block-header task marker (`TODO`, `DOING`, …) off lsdoc's first node — the
-    /// ONE marker recognizer (no more `doc.rs`/`blockView`/lsdoc disagreement).
-    pub marker: Option<String>,
-    /// Block-header `[#A]` priority off lsdoc's first node — header-position only, so a
-    /// mid-text/inline-code `[#A]` is NOT a priority (the old `[#A]`-anywhere scanner
-    /// disagreed with the chip — audit C3).
-    pub priority: Option<String>,
-    /// ATX heading level (1..=6) when the block body is a heading, else `None`.
-    pub heading_level: Option<u8>,
-    /// `key:: value` block properties (md trailer / org `:PROPERTIES:` drawer) as
-    /// lsdoc projects them — the ONE property recognizer for the read path.
-    pub properties: Vec<(String, String)>,
-    /// SCHEDULED planning date text (the `<…>` content) when lsdoc emits
-    /// a real `Timestamp` for it — code/fence-robust by construction (a `SCHEDULED:`
-    /// inside inline code is NOT a Timestamp, so never badged). `None` otherwise.
-    pub scheduled: Option<String>,
-    /// DEADLINE planning date text, when present in parsed syntax.
-    pub deadline: Option<String>,
-    /// Inline `#tag` / org headline tags, first-seen and de-duplicated. Page refs
-    /// stay separate in `refs_page`; this is only the tag field.
-    pub tags: Vec<String>,
-    /// Parser-owned source byte spans used by linked and unlinked reference
-    /// surfaces. Browser-facing reference spans instead use UTF-16 offsets.
-    // Keep this on the memoized projection so reference queries avoid reparsing.
-    pub reference_source: crate::reference_evidence::ReferenceSourceProjection,
+    /// Visible (non-property) text, original case — `raw` minus the byte ranges lsdoc
+    /// recognized as `Properties` blocks. `None` when identical to `raw`.
+    visible: Option<Box<str>>,
+    /// `visible` folded with accent-removing `canonical_fold`, independent of graph
+    /// policy. `None` when identical to the visible text.
+    visible_lower: Option<Box<str>>,
+    /// Lazy accent-sensitive fold, populated only when that graph policy is used;
+    /// the inner `None` means identical to the visible text.
+    visible_literal: std::sync::OnceLock<Option<Box<str>>>,
+    /// Byte ranges of `raw` eligible for plain-text (unlinked) reference matching.
+    plain_ranges: Vec<std::ops::Range<usize>>,
+    /// Facets set on a minority of blocks; `None` when the block has none of them.
+    extra: Option<Box<ProjectionExtra>>,
+}
+
+/// The facets of a [`BlockProjection`] that most blocks do not have (g13k: 80% of blocks
+/// have none of them), kept behind one pointer so an ordinary block does not pay for them.
+#[derive(Debug, Clone, Default)]
+struct ProjectionExtra {
+    refs_norm: Vec<String>,
+    refs_page: Vec<String>,
+    block_refs: Vec<String>,
+    marker: Option<String>,
+    priority: Option<String>,
+    heading_level: Option<u8>,
+    properties: Vec<(String, String)>,
+    scheduled: Option<String>,
+    deadline: Option<String>,
+    tags: Vec<String>,
+    explicit: Vec<crate::reference_evidence::ProjectedPageRef>,
+    withheld_ranges: Vec<std::ops::Range<usize>>,
+}
+
+impl ProjectionExtra {
+    fn is_empty(&self) -> bool {
+        self.refs_norm.is_empty()
+            && self.refs_page.is_empty()
+            && self.block_refs.is_empty()
+            && self.marker.is_none()
+            && self.priority.is_none()
+            && self.heading_level.is_none()
+            && self.properties.is_empty()
+            && self.scheduled.is_none()
+            && self.deadline.is_none()
+            && self.tags.is_empty()
+            && self.explicit.is_empty()
+            && self.withheld_ranges.is_empty()
+    }
+
+    /// Exact-size buffers: the build grows these Vecs by doubling, and a
+    /// projection lives as long as its page (GH #623, ~98 MiB of slack on g13k).
+    fn shrink(&mut self) {
+        self.refs_norm.shrink_to_fit();
+        self.refs_page.shrink_to_fit();
+        self.block_refs.shrink_to_fit();
+        self.properties.shrink_to_fit();
+        self.tags.shrink_to_fit();
+        self.explicit.shrink_to_fit();
+        self.withheld_ranges.shrink_to_fit();
+    }
 }
 
 impl BlockProjection {
+    /// Visible text; `raw` must be the raw body this projection was built from.
+    fn visible_text<'a>(&'a self, raw: &'a str) -> &'a str {
+        self.visible.as_deref().unwrap_or(raw)
+    }
+
     /// Visible text folded for the graph's search policy. The accent-sensitive
     /// form is computed once per block body; both forms reset with the projection.
-    pub fn visible_folded(&self, remove_accents: bool) -> &str {
+    fn visible_folded<'a>(&'a self, raw: &'a str, remove_accents: bool) -> &'a str {
+        let visible = self.visible_text(raw);
         if remove_accents {
-            &self.visible_lower
+            self.visible_lower.as_deref().unwrap_or(visible)
         } else {
             self.visible_literal
-                .get_or_init(|| crate::search_query::literal_fold(&self.visible))
+                .get_or_init(|| {
+                    let folded = crate::search_query::literal_fold(visible);
+                    (folded != visible).then(|| folded.into_boxed_str())
+                })
+                .as_deref()
+                .unwrap_or(visible)
         }
+    }
+
+    fn extra(&self) -> Option<&ProjectionExtra> {
+        self.extra.as_deref()
     }
 
     /// Whether this block references page `name` under page-name normalization.
@@ -146,7 +184,80 @@ impl BlockProjection {
     /// target — for hot loops testing ONE target against every block, so the
     /// normalize is hoisted out of the per-block loop instead of repeated.
     pub fn refs_contains_norm(&self, normalized: &str) -> bool {
-        self.refs_norm.iter().any(|r| r == normalized)
+        self.refs_norm().iter().any(|r| r == normalized)
+    }
+
+    /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
+    pub fn refs_norm(&self) -> &[String] {
+        self.extra().map_or(&[], |e| &e.refs_norm)
+    }
+
+    /// The SAME page references in lsdoc's original case — for `referenced_page_names`
+    /// (the virtual-page list behind `[[`/`#`/Ctrl-K autocomplete), which needs display
+    /// case. Kept on the projection to reuse the parse across cache generations.
+    pub fn refs_page(&self) -> &[String] {
+        self.extra().map_or(&[], |e| &e.refs_page)
+    }
+
+    /// Block references (`((uuid))` / `[l](((uuid)))` / `{{embed ((uuid))}}`),
+    /// UUID-gated — for the block-referrers / ref-count scans. From the same
+    /// lsdoc parse as `refs_norm`.
+    pub fn block_refs(&self) -> &[String] {
+        self.extra().map_or(&[], |e| &e.block_refs)
+    }
+
+    /// Block-header task marker (`TODO`, `DOING`, …) off lsdoc's first node — the
+    /// ONE marker recognizer (no more `doc.rs`/`blockView`/lsdoc disagreement).
+    pub fn marker(&self) -> Option<&str> {
+        self.extra().and_then(|e| e.marker.as_deref())
+    }
+
+    /// Block-header `[#A]` priority off lsdoc's first node — header-position only, so a
+    /// mid-text/inline-code `[#A]` is NOT a priority (the old `[#A]`-anywhere scanner
+    /// disagreed with the chip — audit C3).
+    pub fn priority(&self) -> Option<&str> {
+        self.extra().and_then(|e| e.priority.as_deref())
+    }
+
+    /// ATX heading level (1..=6) when the block body is a heading, else `None`.
+    pub fn heading_level(&self) -> Option<u8> {
+        self.extra().and_then(|e| e.heading_level)
+    }
+
+    /// `key:: value` block properties (md trailer / org `:PROPERTIES:` drawer) as
+    /// lsdoc projects them — the ONE property recognizer for the read path.
+    pub fn properties(&self) -> &[(String, String)] {
+        self.extra().map_or(&[], |e| &e.properties)
+    }
+
+    /// SCHEDULED planning date text (the `<…>` content) when lsdoc emits
+    /// a real `Timestamp` for it — code/fence-robust by construction (a `SCHEDULED:`
+    /// inside inline code is NOT a Timestamp, so never badged). `None` otherwise.
+    pub fn scheduled(&self) -> Option<&str> {
+        self.extra().and_then(|e| e.scheduled.as_deref())
+    }
+
+    /// DEADLINE planning date text, when present in parsed syntax.
+    pub fn deadline(&self) -> Option<&str> {
+        self.extra().and_then(|e| e.deadline.as_deref())
+    }
+
+    /// Inline `#tag` / org headline tags, first-seen and de-duplicated. Page refs
+    /// stay separate in `refs_page`; this is only the tag field.
+    pub fn tags(&self) -> &[String] {
+        self.extra().map_or(&[], |e| &e.tags)
+    }
+
+    /// Parser-owned source byte spans used by linked and unlinked reference
+    /// surfaces. Browser-facing reference spans instead use UTF-16 offsets.
+    // Kept on the memoized projection so reference queries avoid reparsing.
+    pub fn reference_source(&self) -> crate::reference_evidence::ReferenceSource<'_> {
+        let extra = self.extra();
+        crate::reference_evidence::ReferenceSource {
+            explicit: extra.map_or(&[], |e| &e.explicit),
+            plain_ranges: &self.plain_ranges,
+            withheld_ranges: extra.map_or(&[], |e| &e.withheld_ranges),
+        }
     }
 }
 
@@ -238,11 +349,9 @@ impl DocBlock {
                 .collect();
             let reference_source =
                 crate::reference_evidence::project(&self.raw, self.is_org, &proj.blocks);
-            BlockProjection {
-                regions,
-                visible,
-                visible_lower,
-                visible_literal: std::sync::OnceLock::new(),
+            let mut plain_ranges = reference_source.plain_ranges;
+            plain_ranges.shrink_to_fit();
+            let mut extra = ProjectionExtra {
                 refs_norm,
                 refs_page,
                 block_refs: proj.refs.block,
@@ -253,7 +362,20 @@ impl DocBlock {
                 scheduled,
                 deadline,
                 tags,
-                reference_source,
+                explicit: reference_source.explicit,
+                withheld_ranges: reference_source.withheld_ranges,
+            };
+            extra.shrink();
+            let extra = (!extra.is_empty()).then(|| Box::new(extra));
+            let visible_lower = (visible_lower != visible).then(|| visible_lower.into_boxed_str());
+            let visible = (visible != self.raw).then(|| visible.into_boxed_str());
+            BlockProjection {
+                regions,
+                visible,
+                visible_lower,
+                visible_literal: std::sync::OnceLock::new(),
+                plain_ranges,
+                extra,
             }
         })
     }
@@ -261,13 +383,13 @@ impl DocBlock {
     /// `key:: value` block properties as lsdoc projects them (md trailer / org
     /// `:PROPERTIES:` drawer; fence-aware — a `key::` inside a code fence is content).
     pub fn properties(&self) -> Vec<(String, String)> {
-        self.projection().properties.clone()
+        self.projection().properties().to_vec()
     }
 
     pub fn property(&self, key: &str) -> Option<String> {
         let key = property_key_norm(key);
         self.projection()
-            .properties
+            .properties()
             .iter()
             .find(|(k, _)| property_key_norm(k) == key)
             .map(|(_, v)| v.clone())
@@ -279,39 +401,46 @@ impl DocBlock {
 
     /// The leading task marker, if any (`TODO`, `DOING`, ...), off lsdoc's first node.
     pub fn marker(&self) -> Option<&str> {
-        self.projection().marker.as_deref()
+        self.projection().marker()
     }
 
     /// The block-header `[#A]` priority (`"A"`/`"B"`/`"C"`), off lsdoc's first node —
     /// header position only (a mid-text `[#A]` is not a priority).
     pub fn priority(&self) -> Option<&str> {
-        self.projection().priority.as_deref()
+        self.projection().priority()
     }
 
     /// Heading level (1..=6) if the block body is an ATX heading, else `None`.
     pub fn heading_level(&self) -> Option<u8> {
-        self.projection().heading_level
+        self.projection().heading_level()
     }
 
     /// The block's *visible* text (original case): `raw` minus property/drawer
     /// ranges. The body a reader sees — for breadcrumb labels and sort keys.
     pub fn visible_text(&self) -> &str {
-        &self.projection().visible
+        self.projection().visible_text(&self.raw)
+    }
+
+    /// [`Self::visible_text`] folded for the graph's search policy:
+    /// accent-removing `canonical_fold` when `remove_accents`, else `literal_fold`.
+    /// The ONE reader of the folded text; each form is computed once per body.
+    pub fn visible_folded(&self, remove_accents: bool) -> &str {
+        self.projection().visible_folded(&self.raw, remove_accents)
     }
 
     /// SCHEDULED / DEADLINE planning date text, when lsdoc emits a real `Timestamp`
     /// (code/fence-robust). For the render badge + agenda.
     pub fn scheduled(&self) -> Option<&str> {
-        self.projection().scheduled.as_deref()
+        self.projection().scheduled()
     }
     pub fn deadline(&self) -> Option<&str> {
-        self.projection().deadline.as_deref()
+        self.projection().deadline()
     }
 
     /// Inline `#tag` / org headline tags off the same lsdoc projection as the
     /// other facets.
     pub fn tags(&self) -> Vec<String> {
-        self.projection().tags.clone()
+        self.projection().tags().to_vec()
     }
 }
 
@@ -1135,9 +1264,9 @@ mod projection_tests {
         let b = DocBlock::new("TODO ship [[Foo Bar]] and #tag\nid:: abc\nprop:: secret");
         let p = b.projection();
         // visible_lower == canonical_fold(visible_text(raw)): property lines dropped
-        assert_eq!(p.visible_lower, "todo ship [[foo bar]] and #tag");
+        assert_eq!(b.visible_folded(true), "todo ship [[foo bar]] and #tag");
         assert!(
-            !p.visible_lower.contains("secret"),
+            !b.visible_folded(true).contains("secret"),
             "property values excluded"
         );
         // refs_contains ≡ references_page (case-insensitive, normalized)
@@ -1145,8 +1274,11 @@ mod projection_tests {
         assert!(p.refs_contains("TAG"));
         assert!(!p.refs_contains("nope"));
         // memoized (stable across calls); a clone recomputes to an equal projection
-        assert_eq!(b.projection().visible_lower, p.visible_lower);
-        assert_eq!(b.clone().projection().refs_norm, p.refs_norm);
+        assert_eq!(
+            b.projection().visible_folded(&b.raw, true),
+            b.visible_folded(true)
+        );
+        assert_eq!(b.clone().projection().refs_norm(), p.refs_norm());
     }
 
     #[test]
@@ -1173,13 +1305,65 @@ mod projection_tests {
         assert_eq!(DocBlock::new("TODO task [#A] later").priority(), None); // not after marker
     }
 
+    /// GH #623: the fallback storage is invisible to readers. A plain block stores
+    /// neither visible text; a block with a property trailer stores `visible`; a block
+    /// whose fold differs (case/accents) stores `visible_lower`; each reads back the
+    /// text the eager form returned.
+    #[test]
+    fn visible_text_fallbacks_store_only_what_differs() {
+        let plain = DocBlock::new("plain lowercase text");
+        assert_eq!(plain.visible_text(), "plain lowercase text");
+        assert_eq!(plain.visible_folded(true), "plain lowercase text");
+        assert_eq!(plain.visible_folded(false), "plain lowercase text");
+        let p = plain.projection();
+        assert!(p.visible.is_none() && p.visible_lower.is_none());
+
+        let cased = DocBlock::new("Caf\u{e9} Ship");
+        assert_eq!(cased.visible_text(), "Caf\u{e9} Ship");
+        assert_eq!(cased.visible_folded(true), "cafe ship");
+        assert_eq!(cased.visible_folded(false), "caf\u{e9} ship");
+        let p = cased.projection();
+        assert!(p.visible.is_none() && p.visible_lower.is_some());
+
+        let props = DocBlock::new("Body Text\nid:: abc\nkey:: v");
+        assert_eq!(props.visible_text(), "Body Text");
+        assert_eq!(props.visible_folded(true), "body text");
+        assert!(props.projection().visible.is_some());
+
+        let mut edited = DocBlock::new("Caf\u{e9}");
+        assert_eq!(edited.visible_folded(true), "cafe");
+        edited.set_raw("plain");
+        assert_eq!(edited.visible_text(), "plain");
+        assert_eq!(edited.visible_folded(true), "plain");
+        assert!(edited.projection().visible_lower.is_none());
+    }
+
+    /// GH #623: an ordinary block (no refs, properties, planning, tags, marker) carries
+    /// no `extra` allocation, and the inline projection slot stays small. The bound
+    /// is the point: the slot is paid by every block of every open graph.
+    #[test]
+    fn ordinary_block_projection_stays_small() {
+        assert!(
+            std::mem::size_of::<BlockProjection>() <= 112,
+            "BlockProjection grew to {} B; every block pays this inline (GH #623). \
+             Put rarely-set facets in ProjectionExtra.",
+            std::mem::size_of::<BlockProjection>()
+        );
+        let plain = DocBlock::new("nothing special here");
+        assert!(plain.projection().extra.is_none());
+        let rich = DocBlock::new("TODO [[Page]] #tag\nkey:: v");
+        assert!(rich.projection().extra.is_some());
+        assert_eq!(rich.projection().refs_norm().len(), 2);
+        assert_eq!(rich.marker(), Some("TODO"));
+    }
+
     #[test]
     fn accent_sensitive_projection_cache_rebuilds_after_edit() {
         let mut block = DocBlock::new("café");
-        assert_eq!(block.projection().visible_folded(true), "cafe");
-        assert_eq!(block.projection().visible_folded(false), "café");
+        assert_eq!(block.visible_folded(true), "cafe");
+        assert_eq!(block.visible_folded(false), "café");
         block.set_raw("cafe");
-        assert_eq!(block.projection().visible_folded(false), "cafe");
+        assert_eq!(block.visible_folded(false), "cafe");
     }
 
     #[test]
@@ -1188,7 +1372,7 @@ mod projection_tests {
         // mapping (`span - 2 + lead`) must land on char boundaries, not split UTF-8.
         let b = DocBlock::new("Über café résumé\nid:: 123\nkey:: v");
         assert_eq!(b.visible_text(), "Über café résumé");
-        assert_eq!(b.projection().visible_lower, "uber cafe resume");
+        assert_eq!(b.visible_folded(true), "uber cafe resume");
         // leading whitespace in raw (lead > 0) still maps correctly.
         let b2 = DocBlock::new("  héllo\nid:: 9");
         assert_eq!(b2.visible_text().trim(), "héllo");

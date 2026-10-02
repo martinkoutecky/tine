@@ -1239,7 +1239,7 @@ mod tests {
                         return;
                     }
                     let projection = block.projection();
-                    if fuzzy_name_score(&projection.visible_lower, query).is_some() {
+                    if fuzzy_name_score(block.visible_folded(true), query).is_some() {
                         out.push((page.to_string(), block.raw().to_owned()));
                         *remaining -= 1;
                     }

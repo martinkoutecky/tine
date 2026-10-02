@@ -182,10 +182,10 @@ fn shallow_dto_estimated_bytes(block: &DocBlock, ancestors: &[&DocBlock]) -> usi
                 .map(|ancestor| crumb_line_estimated_bytes(ancestor))
                 .sum::<usize>(),
         )
-        .saturating_add(projection.tags.iter().map(String::len).sum::<usize>())
+        .saturating_add(projection.tags().iter().map(String::len).sum::<usize>())
         .saturating_add(
             projection
-                .properties
+                .properties()
                 .iter()
                 .map(|(key, value)| key.len().saturating_add(value.len()))
                 .sum::<usize>(),
@@ -602,7 +602,7 @@ pub(crate) fn document_explicit_reference_names(entry: &PageEntry, doc: &Documen
             names.extend(
                 block
                     .projection()
-                    .reference_source
+                    .reference_source()
                     .explicit
                     .iter()
                     .map(|reference| refs::page_key(&reference.name)),
@@ -620,7 +620,7 @@ pub(crate) fn document_explicit_reference_names(entry: &PageEntry, doc: &Documen
         names.extend(
             block
                 .projection()
-                .reference_source
+                .reference_source()
                 .explicit
                 .iter()
                 .map(|reference| refs::page_key(&reference.name)),
@@ -641,7 +641,7 @@ fn block_reference_evidence(
 ) -> Option<ReferenceBlockEvidence> {
     let result = tine_core::reference_evidence::occurrences_of_kind_bounded(
         block.raw(),
-        &block.projection().reference_source,
+        block.projection().reference_source(),
         canonical,
         names_norm,
         kind,
@@ -663,7 +663,7 @@ fn block_has_reference(
 ) -> bool {
     tine_core::reference_evidence::has_occurrence_kind(
         block.raw(),
-        &block.projection().reference_source,
+        block.projection().reference_source(),
         names_norm,
         kind,
         config,
@@ -914,16 +914,16 @@ fn backlink_filter_entry(
     ) {
         *truncated |= append_bounded_text(text, block.visible_text(), max_text);
         let projection = block.projection();
-        for name in &projection.refs_page {
+        for name in projection.refs_page() {
             add_facet(name);
         }
-        if let Some(marker) = projection.marker.as_deref() {
+        if let Some(marker) = projection.marker().as_deref() {
             add_facet(marker);
         }
         // OG treats tags::/alias:: property values as page references too. The
         // property boundary itself is parser-owned; only its comma-separated
         // semantic values are unwrapped here.
-        for (key, value) in &projection.properties {
+        for (key, value) in projection.properties() {
             if !(key.eq_ignore_ascii_case("tags")
                 || key.eq_ignore_ascii_case("alias")
                 || key.eq_ignore_ascii_case("aliases"))
@@ -1083,7 +1083,7 @@ pub(crate) fn block_referrers(graph: &impl GraphRead, uuid: &str) -> Vec<RefGrou
     }
     collect(
         graph,
-        |b| b.projection().block_refs.iter().any(|r| r == u),
+        |b| b.projection().block_refs().iter().any(|r| r == u),
         |_, _| None,
         None,
     )
@@ -1105,7 +1105,7 @@ pub(crate) fn block_referrers_bounded(
     }
     collect_bounded(
         graph,
-        |b| b.projection().block_refs.iter().any(|r| r == u),
+        |b| b.projection().block_refs().iter().any(|r| r == u),
         |_, _| None,
         None,
         max_rows,
@@ -1273,7 +1273,7 @@ pub(crate) fn page_affects_block_referrers(uuid: &str, doc: &Document) -> bool {
         if !hit
             && block
                 .projection()
-                .block_refs
+                .block_refs()
                 .iter()
                 .any(|reference| reference == uuid)
         {
