@@ -43,7 +43,14 @@ index.
 
 - **Where:** app data `launch-checkpoints/<graph-id>.bin`, keyed like the
   session and draft files (`settings::session_id`), never under the graph root.
-  Unit tests keep none.
+  The app-data directory is Tauri's `app_data_dir` (`graph::checkpoint_app_data`,
+  as `concord_ledger::attach` uses) on all five shipped targets: Linux,
+  Windows, macOS, iOS and Android, with no platform branch. The first revision
+  used the `dirs` crate, which has no Android arm (it resolves
+  `$HOME/.local/share`, outside the app sandbox), so mobile launches kept no
+  checkpoint. Checked with `cargo check -p tine -p tine-store` for
+  `aarch64-linux-android` and `aarch64-apple-ios` (fake C compiler and SDK
+  root; not run on a device). Unit tests keep none.
 - **Format:** magic `TINECKPT` and `FORMAT` (u32), then a postcard header:
   - the lsdoc tag;
   - the canonical graph root;

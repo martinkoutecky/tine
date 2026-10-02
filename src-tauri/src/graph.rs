@@ -143,12 +143,18 @@ impl StartupGraph {
         root: std::path::PathBuf,
         approved: Option<std::path::PathBuf>,
         watch: tine_store::WatchMode,
+        app_data: Option<std::path::PathBuf>,
     ) {
         let requested = root.clone();
         let worker = std::thread::Builder::new()
             .name("tine-startup-open".into())
             .spawn(move || {
-                open_graph_for_load(&requested.display().to_string(), approved.as_deref(), watch)
+                open_graph_for_load(
+                    &requested.display().to_string(),
+                    approved.as_deref(),
+                    watch,
+                    app_data.as_deref(),
+                )
             });
         match worker {
             Ok(worker) => *self.0.lock().unwrap() = Some((root, worker)),
@@ -182,6 +188,7 @@ pub(crate) fn prepare_startup_graph(app: &tauri::AppHandle) {
         root.clone(),
         approved_external_assets(app, &root),
         crate::watcher::watch_mode(app),
+        checkpoint_app_data(app),
     );
 }
 
@@ -192,30 +199,41 @@ fn open_graph_for_load(
     root: &str,
     approved_assets: Option<&Path>,
     watch: tine_store::WatchMode,
+    app_data: Option<&Path>,
 ) -> Result<LoadedGraph, String> {
     let (store, meta, _) = Store::open(
         Path::new(root),
         OpenOptions {
             approved_external_assets: approved_assets.map(Path::to_path_buf),
             watch,
-            launch_checkpoint: launch_checkpoint_path(Path::new(root)),
+            launch_checkpoint: app_data.map(|dir| launch_checkpoint_path(dir, Path::new(root))),
         },
     )
     .map_err(|error| open_error_text(error, true))?;
     Ok(LoadedGraph { store, meta })
 }
 
-/// The graph's launch checkpoint (ADR 0070): one file in app data, never
-/// under the graph root, keyed like the session and drafts files. Unit tests
-/// keep none, so they never touch the developer's app data.
-fn launch_checkpoint_path(root: &Path) -> Option<std::path::PathBuf> {
+/// The app-data directory launch checkpoints live under (ADR 0070): Tauri's
+/// `app_data_dir`, as `concord_ledger::attach` uses, on all five shipped
+/// targets (Linux, Windows, macOS, iOS, Android) with no platform branch.
+/// The `dirs` crate it replaces has no Android arm (it falls to `$HOME`) and
+/// is not the app sandbox on mobile. Unit tests keep no checkpoint, so they
+/// never touch the developer's app data.
+pub(crate) fn checkpoint_app_data(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     if cfg!(test) {
         return None;
     }
+    app.path().app_data_dir().ok()
+}
+
+/// The graph's launch checkpoint (ADR 0070): one file under `app_data`, never
+/// under the graph root, keyed like the session and drafts files.
+pub(crate) fn launch_checkpoint_path(app_data: &Path, root: &Path) -> std::path::PathBuf {
     let id = crate::settings::session_id(root);
     let stem = id.strip_suffix(".json").unwrap_or(&id);
-    crate::app_identity::current_app_data_dir()
-        .map(|dir| dir.join("launch-checkpoints").join(format!("{stem}.bin")))
+    app_data
+        .join("launch-checkpoints")
+        .join(format!("{stem}.bin"))
 }
 
 #[derive(serde::Serialize)]
@@ -342,6 +360,7 @@ pub(crate) fn load_graph_for_label(
             &root,
             approved_assets.as_deref(),
             crate::watcher::watch_mode(app),
+            checkpoint_app_data(app).as_deref(),
         ),
     }?;
     let slot = Arc::new(GraphSlot::new(store, root_key));
@@ -651,7 +670,7 @@ mod tests {
     fn background_startup_result_is_owned_once_and_open_errors_reach_load() {
         let dir = scratch("startup-owned-result");
         let startup = StartupGraph::default();
-        startup.begin(dir.clone(), None, Default::default());
+        startup.begin(dir.clone(), None, Default::default(), None);
         // Wait for completion before the webview requests its result: warming
         // starts at setup rather than at the first load command.
         while !startup.0.lock().unwrap().as_ref().unwrap().1.is_finished() {
@@ -665,12 +684,12 @@ mod tests {
         );
         drop(loaded);
         let missing = dir.join("missing");
-        startup.begin(missing.clone(), None, Default::default());
+        startup.begin(missing.clone(), None, Default::default(), None);
         assert!(
             startup.take(&missing).unwrap().is_err(),
             "I-22: open errors reach the load command, never setup"
         );
-        startup.begin(dir.clone(), None, Default::default());
+        startup.begin(dir.clone(), None, Default::default(), None);
         assert!(
             startup.take(&missing).is_none(),
             "a changed launch target cannot consume the old graph"
@@ -749,7 +768,8 @@ mod tests {
         let title_named = dir.join("journals").join("Thursday, 25-06-2026.org");
         std::fs::write(&title_named, "* original title-named journal\n").unwrap();
 
-        let loaded = open_graph_for_load(dir.to_str().unwrap(), None, Default::default()).unwrap();
+        let loaded =
+            open_graph_for_load(dir.to_str().unwrap(), None, Default::default(), None).unwrap();
 
         assert_eq!(
             std::fs::read_to_string(&title_named).unwrap(),
@@ -806,7 +826,7 @@ mod tests {
         let outside = scratch("layout-outside");
         std::fs::remove_dir(dir.join("pages")).unwrap();
         std::os::unix::fs::symlink(outside.join("pages"), dir.join("pages")).unwrap();
-        let new = open_graph_for_load(dir.to_str().unwrap(), None, Default::default())
+        let new = open_graph_for_load(dir.to_str().unwrap(), None, Default::default(), None)
             .err()
             .unwrap();
         assert_eq!(
@@ -815,5 +835,37 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(outside);
+    }
+
+    /// ADR 0070, item 4 (2026-10-02): the launch checkpoint lives in Tauri's
+    /// app-data dir on all five shipped targets. The `dirs` crate the first
+    /// revision used has no Android arm (it resolves `$HOME/.local/share`,
+    /// outside the app sandbox), so Android and iOS kept no checkpoint.
+    #[test]
+    fn launch_checkpoints_live_in_tauri_app_data_on_every_platform() {
+        let app_data = Path::new("/app-data");
+        let path = launch_checkpoint_path(app_data, Path::new("/graphs/notes"));
+        assert!(path.starts_with(app_data.join("launch-checkpoints")));
+        assert_eq!(path.extension().unwrap(), "bin");
+        let source = include_str!("graph.rs");
+        let production = &source[..source.find("#[cfg(test)]\nmod tests").unwrap()];
+        let start = production
+            .find("pub(crate) fn checkpoint_app_data")
+            .expect("the checkpoint dir comes from checkpoint_app_data (Tauri app_data_dir)");
+        let body = &production[start..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        assert!(
+            body.contains("app.path().app_data_dir()"),
+            "the checkpoint dir is Tauri's app_data_dir, as concord_ledger::attach uses"
+        );
+        assert!(
+            !body.contains("cfg(target_os") && !body.contains("dirs::"),
+            "no platform branch: one rule names Linux, Windows, macOS, iOS and Android"
+        );
+        assert!(
+            !production
+                .contains("current_app_data_dir().map(|dir| dir.join(\"launch-checkpoints\")"),
+            "the dirs-based checkpoint dir is gone"
+        );
     }
 }
