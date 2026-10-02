@@ -544,6 +544,7 @@ pub(crate) struct DiagnosticReport {
 
 fn build_diagnostic_report(
     graph_bindings: Option<usize>,
+    graphs: Vec<Value>,
     build_commit: String,
     build_time: String,
 ) -> DiagnosticReport {
@@ -578,6 +579,9 @@ fn build_diagnostic_report(
         "privacy": {
             "automaticUpload": false,
             "containsGraphContent": false,
+            // Counts, quantiles and durations of the open graphs (the `graphs`
+            // section): numbers only, never a name, text or hash of either (I-5).
+            "containsGraphStatistics": true,
             "containsPaths": false,
             "containsPageTitles": false,
             "containsQueriesOrUrls": false,
@@ -592,6 +596,7 @@ fn build_diagnostic_report(
             "graphStateUnavailable": graph_bindings.is_none(),
             "graphBindings": graph_bindings.unwrap_or(0),
         },
+        "graphs": graphs,
         "sessions": { "previous": previous, "current": events },
     });
     DiagnosticReport {
@@ -602,18 +607,44 @@ fn build_diagnostic_report(
     }
 }
 
+/// Launch timings and graph-shape statistics of every open graph (GH #623):
+/// reporters cannot share a graph, so the dump carries the numbers that
+/// diagnose its performance instead. Statistics only, built by
+/// `Store::diagnostics`. Runs on a blocking thread: the shape pass walks every
+/// parsed page and may pay a one-time projection parse.
+async fn collect_graph_diagnostics(app: &tauri::AppHandle) -> (Option<usize>, Vec<Value>) {
+    let slots = {
+        let state = tauri::Manager::state::<AppState>(app);
+        state.graphs.read().ok().map(|graphs| graphs.entries())
+    };
+    let Some(slots) = slots else {
+        return (None, Vec::new());
+    };
+    let bindings = slots.len();
+    let graphs = tauri::async_runtime::spawn_blocking(move || {
+        slots
+            .iter()
+            .map(|(_, slot)| slot.store.diagnostics())
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    (Some(bindings), graphs)
+}
+
 /// Build the report: app version, build commit/time (dropped unless they are a
 /// hex commit and an ISO timestamp), OS/arch, privacy flags, the number of open
-/// graph bindings, and every retained event of this run. O(retained bytes).
-/// Never fails; an unreadable graph registry is reported as a flag.
+/// graph bindings, per-graph launch timings and shape statistics, and every
+/// retained event of this run. Never fails; an unreadable graph registry is
+/// reported as a flag.
 #[tauri::command]
-pub(crate) fn diagnostic_report(
-    state: tauri::State<'_, AppState>,
+pub(crate) async fn diagnostic_report(
+    app: tauri::AppHandle,
     build_commit: String,
     build_time: String,
 ) -> DiagnosticReport {
-    let graph_bindings = state.graphs.read().ok().map(|graphs| graphs.len());
-    build_diagnostic_report(graph_bindings, build_commit, build_time)
+    let (graph_bindings, graphs) = collect_graph_diagnostics(&app).await;
+    build_diagnostic_report(graph_bindings, graphs, build_commit, build_time)
 }
 
 /// Save a freshly built report where the user chooses (desktop save dialog).
@@ -624,11 +655,8 @@ pub(crate) async fn save_diagnostic_report(
     build_commit: String,
     build_time: String,
 ) -> Result<bool, String> {
-    let graph_bindings = {
-        let state = tauri::Manager::state::<AppState>(&app);
-        state.graphs.read().ok().map(|graphs| graphs.len())
-    };
-    let report = build_diagnostic_report(graph_bindings, build_commit, build_time);
+    let (graph_bindings, graphs) = collect_graph_diagnostics(&app).await;
+    let report = build_diagnostic_report(graph_bindings, graphs, build_commit, build_time);
     #[cfg(desktop)]
     {
         use tauri_plugin_dialog::DialogExt as _;
@@ -710,7 +738,8 @@ mod tests {
             1,
             std::time::Duration::ZERO,
         );
-        let report = build_diagnostic_report(Some(1), "abcdef1".into(), "/home/x".into());
+        let report =
+            build_diagnostic_report(Some(1), Vec::new(), "abcdef1".into(), "/home/x".into());
         let parsed: Value = serde_json::from_str(&report.text).unwrap();
         let events = parsed["sessions"]["current"].as_array().unwrap();
         assert!(events.iter().any(|event| event["event"] == "ipc.command"
@@ -727,6 +756,22 @@ mod tests {
         assert_eq!(parsed["runtime"]["retainedAcrossRuns"], false);
         assert!(!report.text.contains("/home/"), "{}", report.text);
         assert!(!report.text.contains("secret"), "{}", report.text);
+    }
+
+    #[test]
+    fn the_report_carries_each_graphs_statistics_and_says_so() {
+        let graph = json!({ "launch": { "readyMs": 4200 }, "shape": { "pages": 1075 } });
+        let report =
+            build_diagnostic_report(Some(1), vec![graph.clone()], String::new(), String::new());
+        let parsed: Value = serde_json::from_str(&report.text).unwrap();
+        assert_eq!(parsed["graphs"], json!([graph]));
+        assert_eq!(parsed["privacy"]["containsGraphStatistics"], true);
+        // Statistics are not content: the other flags stay false.
+        assert_eq!(parsed["privacy"]["containsGraphContent"], false);
+        assert_eq!(parsed["privacy"]["containsPageTitles"], false);
+        let empty = build_diagnostic_report(None, Vec::new(), String::new(), String::new());
+        let parsed: Value = serde_json::from_str(&empty.text).unwrap();
+        assert_eq!(parsed["graphs"], json!([]));
     }
 
     #[test]
@@ -760,7 +805,7 @@ mod tests {
             event_to_emit_ms: Some(731_018),
         };
         record_watcher_batch(3, true, Some(&timing));
-        let report = build_diagnostic_report(Some(1), String::new(), String::new());
+        let report = build_diagnostic_report(Some(1), Vec::new(), String::new(), String::new());
         let report: Value = serde_json::from_str(&report.text).unwrap();
         let batch = report["sessions"]["current"]
             .as_array()
@@ -996,7 +1041,8 @@ mod tests {
         persist_init(PathBuf::from(dir));
         match std::env::var("TINE_FLIGHT_PROBE_MODE").unwrap().as_str() {
             "report" => {
-                let report = build_diagnostic_report(None, String::new(), String::new());
+                let report =
+                    build_diagnostic_report(None, Vec::new(), String::new(), String::new());
                 let compact: Value = serde_json::from_str(&report.text).unwrap();
                 println!("PROBE-REPORT {compact}");
                 mark_clean_shutdown();
