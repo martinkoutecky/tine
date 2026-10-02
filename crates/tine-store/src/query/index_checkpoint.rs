@@ -82,6 +82,12 @@ impl QueryIndexSlot {
             seed: Mutex::new(state.seed.map(|(base, changed)| (place(base), changed))),
         }
     }
+
+    /// Whether this generation's index is built (the checkpoint cadence's
+    /// `model::LazyMarks`; the seed arrives with a publication, not a read).
+    pub(crate) fn is_built(&self) -> bool {
+        self.built.get().is_some()
+    }
 }
 
 #[cfg(test)]

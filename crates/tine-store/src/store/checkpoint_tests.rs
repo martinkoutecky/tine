@@ -1106,3 +1106,85 @@ fn a_launch_diff_that_leaves_a_path_racy_runs_one_follow_up_diff() {
     assert_eq!(follow_ups(&store), 1);
     store.close();
 }
+
+/// ADR 0070 (Martin, 2026-10-02): a lazily built index or memo is a change.
+/// A read-only session that builds one makes a checkpoint due on the ordinary
+/// cadence, and the next launch serves it built; a session whose lazy state
+/// the checkpoint already holds writes nothing.
+#[test]
+fn a_read_only_session_that_builds_a_lazy_index_is_checkpointed() {
+    let signal = |store: &Store| Arc::clone(store.changes.checkpoint.get().expect("publisher"));
+    // Look every 20 ms instead of every LAZY_POLL.
+    let fast = |store: &Store| {
+        let signal = signal(store);
+        signal.state.lock().unwrap().poll = Duration::from_millis(20);
+        signal.wake.notify_all();
+    };
+    let dirty = |store: &Store| signal(store).state.lock().unwrap().dirty_since.is_some();
+    let root = graph();
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    // Cold build, checkpointed before anything lazy was built.
+    write_checkpoint(root.path(), &cp);
+
+    let session = open_cp(root.path(), &cp);
+    session.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&session), "loaded");
+    let (blocks, referenced, query_index, derived, queries) =
+        session.whole_graph_reconciled().unwrap().graph.warm_parts();
+    assert!(!(blocks || referenced || query_index) && derived == 0 && queries == 0);
+    fast(&session);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        !dirty(&session),
+        "a session that builds nothing writes nothing"
+    );
+
+    // Reads only: no edit, no publication.
+    warm(&session);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !dirty(&session) {
+        assert!(
+            Instant::now() < deadline,
+            "ADR 0070: a lazily built index or memo did not make a checkpoint due"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Due on the publication cadence: IDLE after the build was seen
+    // (`the_cadence_is_idle_spaced_and_age_bounded` covers the rest).
+    let wait = signal(&session)
+        .state
+        .lock()
+        .unwrap()
+        .wait(Instant::now())
+        .expect("due");
+    assert!(
+        wait <= IDLE && wait + Duration::from_secs(2) >= IDLE,
+        "{wait:?}"
+    );
+    // Take the due write now rather than waiting IDLE.
+    assert!(matches!(
+        session.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    assert!(!dirty(&session));
+    session.close();
+
+    let next = open_cp(root.path(), &cp);
+    next.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&next), "loaded");
+    let (blocks, referenced, query_index, derived, queries) =
+        next.whole_graph_reconciled().unwrap().graph.warm_parts();
+    assert!(
+        blocks && referenced && query_index && derived > 0 && queries > 0,
+        "the next launch serves the lazily built state without rebuilding it"
+    );
+    fast(&next);
+    warm(&next);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        !dirty(&next),
+        "lazy state the checkpoint already holds is not a change"
+    );
+    next.close();
+}

@@ -4,7 +4,7 @@
 //! values remain separate external reference identities.
 
 mod checkpoint_state;
-pub(crate) use checkpoint_state::{GraphState, NotCaptured, PagesIn, PagesOut};
+pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
 mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};

@@ -32,10 +32,21 @@
   10 min of the change (`MAX_AGE`). That is at most 12 writes an hour: about
   260 MB/hour on g13k, 370 MB/hour on Ellis's graph and 13.7 MB/hour on
   the anonymized graph in the worst case (bursts of edits each followed by a
-  minute's pause). Continuous editing gives 6 an hour. The one exception is a store that launched cold (no
-  checkpoint loaded): its first checkpoint is due 5 s after its last
+  minute's pause). Continuous editing gives 6 an hour. The one exception is
+  a store that launched cold (no checkpoint loaded): its first checkpoint is due 5 s after its last
   publication (`FIRST_IDLE`), so the next launch is warm; that is one extra
-  write per cold launch. A launch with no external changes writes nothing.
+  write per cold launch. A launch with no external changes writes nothing
+  unless the session builds lazy state the checkpoint lacks (below).
+
+  **Read-only sessions** (Martin, 2026-10-02): a lazily built index or memo
+  counts as a change on the same cadence. A session that only reads
+  typically writes one extra checkpoint, once its Ctrl-K, backlinks and
+  queries have built what the loaded checkpoint lacked; each later write
+  needs new lazy state (another index built, a memo that grew) and still
+  obeys `IDLE` and `MIN_INTERVAL`, so the 12-an-hour bound holds. A session
+  whose lazy state the checkpoint already holds writes nothing. The idle
+  publisher looks every `LAZY_POLL` (30 s): a few lock reads, no build, no
+  I/O.
 
 ## Context
 
@@ -116,8 +127,15 @@ index.
   app derives from config and passes in a request is part of that request,
   not of the generation.
 - **Write:** one publisher thread per store (`tine-checkpoint`, registered in
-  `tests/i21_owners.rs`). A publication that changes the generation marks it
-  dirty. The thread waits for `IDLE` of quiet and `MIN_INTERVAL` since its
+  `tests/i21_owners.rs`). Two things mark the generation dirty: a
+  publication that changes it, and lazily built state the last write or load
+  lacked (`LazyMarks`: one bit per lazily built slot the checkpoint writes,
+  plus each memo's entry and byte counts; the idle thread compares every
+  `LAZY_POLL`, and a write or a skip that waits for the next publication
+  records what it saw). `checkpoint_config_key_tests::lazy_marks_cover_every_lazy_slot_the_checkpoint_writes`
+  keeps the marks in step with what capture writes. A memo that churns back
+  to the same counts is missed, which costs a less warm launch, never a wrong
+  answer. The thread waits for `IDLE` of quiet and `MIN_INTERVAL` since its
   last write, or for `MAX_AGE` of dirtiness (see the frequency bound). A store
   that launched cold waits only `FIRST_IDLE` for its first write; loading a
   checkpoint clears that (`Signal::loaded`). It takes the writer briefly to capture the immutable published generation, then
@@ -210,9 +228,9 @@ the full build:
   (anonymized); after a warm launch 127 ms, 94 ms, 7.8 ms, equal to a repeat
   of the same search in a running app (124 ms, 89 ms, 7.7 ms), which is the
   scan itself. The find-entry cache resolves a page name to its file for page
-  opens; it is graph-level and not written. A lazy index built by a read does
-  not dirty the generation, so a session that only reads writes no new
-  checkpoint and its first Ctrl-K warms nothing for the next launch. Warm Ready did not move measurably
+  opens; it is graph-level and not written. A lazy index built by a read
+  makes a checkpoint due (see Read-only sessions above), so a session that
+  only reads still leaves its first Ctrl-K warm for the next launch. Warm Ready did not move measurably
   (1028 ms vs 1063 ms on g13k; load 935 ms vs 970 ms).
   `checkpoint_tests::a_warm_checkpoint_loads_warm_and_answers_as_a_fresh_build`
   and the reload differential in `derived_cache_fuzz_tests` check that loaded

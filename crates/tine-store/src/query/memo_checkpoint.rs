@@ -92,6 +92,17 @@ impl QueryMemo {
         self.inner.read().unwrap().clone().map(MemoState)
     }
 
+    /// Entries and retained bytes, for the checkpoint cadence
+    /// (`model::LazyMarks`): a change means the memo holds something the
+    /// last checkpoint may lack.
+    pub(crate) fn checkpoint_marks(&self) -> (usize, usize) {
+        self.inner
+            .read()
+            .unwrap()
+            .as_ref()
+            .map_or((0, 0), |memo| (memo.entries.len(), memo.bytes))
+    }
+
     /// The memo a loaded generation starts with.
     pub(crate) fn from_checkpoint(state: Option<MemoState>) -> QueryMemo {
         QueryMemo {

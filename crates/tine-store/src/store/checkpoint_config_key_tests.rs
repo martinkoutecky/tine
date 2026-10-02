@@ -387,3 +387,85 @@ fn graph_meta_stays_out_of_the_generation() {
     );
     assert_eq!(users.meta_calls, 0, "{RULE}: tine-store reads no GraphMeta");
 }
+
+/// The `read.<slot>` paths (`memos.<memo>` for the memos) a function body uses.
+fn read_slots(body: &syn::Block) -> BTreeSet<String> {
+    let text: String = body
+        .to_token_stream()
+        .to_string()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '.' {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect();
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let mut out = BTreeSet::new();
+    for at in 0..tokens.len().saturating_sub(2) {
+        // The `read` binding, not a `.read()` lock call.
+        if tokens[at] != "read" || tokens[at + 1] != "." || (at > 0 && tokens[at - 1] == ".") {
+            continue;
+        }
+        let slot = tokens[at + 2];
+        if slot == "memos" && tokens.get(at + 3) == Some(&".") {
+            out.insert(format!("memos.{}", tokens[at + 4]));
+        } else {
+            out.insert(slot.to_owned());
+        }
+    }
+    out
+}
+
+/// ADR 0070 (Martin, 2026-10-02): a lazily built index or memo counts as a
+/// change for the checkpoint cadence. `LazyMarks::of` must look at every
+/// lazily built slot the checkpoint writes, or a read-only session that builds
+/// it is never checkpointed.
+#[test]
+fn lazy_marks_cover_every_lazy_slot_the_checkpoint_writes() {
+    const RULE: &str = "ADR 0070: every lazily built slot `checkpoint_capture` or \
+        `DerivedState::of` writes is looked at by `LazyMarks::of` (exemplar: its \
+        `slots` array), so building it in a read-only session makes a checkpoint due";
+    // Built with the generation at publication, never by a read.
+    let eager: BTreeSet<String> = [
+        "pages",
+        "cache_generation",
+        "observed_mtimes",
+        "list",
+        "explicit_index",
+        "reference_candidate_index",
+        "real_page_names",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+    let file = parse(&crate_dir("src/model/checkpoint_state.rs"));
+    let (mut written, mut marked) = (BTreeSet::new(), BTreeSet::new());
+    for item in &file.items {
+        let syn::Item::Impl(block) = item else {
+            continue;
+        };
+        let owner = block.self_ty.to_token_stream().to_string();
+        for member in &block.items {
+            let syn::ImplItem::Fn(function) = member else {
+                continue;
+            };
+            match (owner.as_str(), function.sig.ident.to_string().as_str()) {
+                (_, "checkpoint_capture") | ("DerivedState", "of") => {
+                    written.extend(read_slots(&function.block))
+                }
+                ("LazyMarks", "of") => marked.extend(read_slots(&function.block)),
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        written.len() > eager.len(),
+        "{RULE}: found no captured slots"
+    );
+    let lazy: BTreeSet<String> = written.difference(&eager).cloned().collect();
+    assert!(!lazy.contains("unwrap"), "{RULE}: scanner read a lock call");
+    assert_eq!(lazy, marked, "{RULE}");
+}

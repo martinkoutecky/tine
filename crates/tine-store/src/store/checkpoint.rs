@@ -16,7 +16,11 @@
 //! [`IDLE`] and the last write is [`MIN_INTERVAL`] old, or once the change has
 //! waited [`MAX_AGE`] (continuous editing cannot starve it); a store that
 //! launched cold writes its first checkpoint [`FIRST_IDLE`] after the last
-//! publication instead, so the next launch is warm. Capture takes the store writer only to clone `Arc`s and the
+//! publication instead, so the next launch is warm. A lazily built index or
+//! memo counts as such a change (Martin, 2026-10-02): every [`LAZY_POLL`] the
+//! idle publisher compares the generation's [`LazyMarks`] with what was last
+//! written or loaded, so a read-only session that builds one is checkpointed
+//! on the same cadence. Capture takes the store writer only to clone `Arc`s and the
 //! revision table; serialization, compression and the atomic replace
 //! (`atomic_write_with_check`: temp + fsync + rename + directory fsync) run on
 //! the `tine-checkpoint` thread. A write killed at any point leaves the
@@ -26,7 +30,7 @@
 //! generation (measured in ADR 0070), at most one per `MIN_INTERVAL` (12 an
 //! hour) plus the first one after a cold build; zero transport bytes.
 use super::*;
-use crate::model::{GraphState, NotCaptured, PagesIn, PagesOut};
+use crate::model::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
 use crate::watch::Stamp;
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
@@ -50,6 +54,9 @@ pub(crate) const MAX_AGE: Duration = Duration::from_secs(600);
 /// loading one (a cold initial build): that write is what makes the next
 /// launch warm, so it is not held to `IDLE` or `MIN_INTERVAL`.
 pub(crate) const FIRST_IDLE: Duration = Duration::from_secs(5);
+/// How often the idle publisher looks for lazily built state the last
+/// checkpoint lacks ([`LazyMarks`]): a few lock reads, no build.
+pub(crate) const LAZY_POLL: Duration = Duration::from_secs(30);
 /// A checkpoint whose raw body claims more is not loaded (damaged header).
 const MAX_RAW: u64 = 4 << 30;
 
@@ -422,6 +429,10 @@ struct SignalState {
     done: u64,
     stop: bool,
     last: Option<CheckpointWrite>,
+    /// The lazily built state last written or loaded.
+    base: Option<LazyMarks>,
+    /// [`LAZY_POLL`]; tests shorten it.
+    poll: Duration,
 }
 
 impl Default for SignalState {
@@ -436,8 +447,19 @@ impl Default for SignalState {
             done: 0,
             stop: false,
             last: None,
+            base: None,
+            poll: LAZY_POLL,
         }
     }
+}
+
+/// What the publisher does next.
+enum Due {
+    /// Write; answers request tickets up to this one.
+    Write(u64),
+    /// Nothing is due: look for lazily built state.
+    Look,
+    Stop,
 }
 
 impl SignalState {
@@ -471,10 +493,27 @@ pub(crate) struct Signal {
 }
 
 impl Signal {
-    /// The launch served a loaded checkpoint: the next one follows the
-    /// ordinary cadence.
-    pub(crate) fn loaded(&self) {
-        self.state.lock().unwrap().first = false;
+    /// The launch served a loaded checkpoint holding `marks`: the next one
+    /// follows the ordinary cadence.
+    pub(crate) fn loaded(&self, marks: Option<LazyMarks>) {
+        let mut state = self.state.lock().unwrap();
+        state.first = false;
+        state.base = marks;
+    }
+
+    /// The generation holds `marks` of lazily built state: a change when it
+    /// grew since the last write or load, on the publication cadence.
+    fn looked(&self, marks: LazyMarks) {
+        let mut state = self.state.lock().unwrap();
+        match state.base {
+            Some(base) if marks.grew_since(&base) => {
+                let now = Instant::now();
+                state.dirty_since.get_or_insert(now);
+                state.last_publication = Some(now);
+            }
+            Some(_) => {}
+            None => state.base = Some(marks),
+        }
     }
 
     /// A publication changed the graph's derived state.
@@ -519,29 +558,37 @@ impl Signal {
         self.wake.notify_all();
     }
 
-    /// Wait until a checkpoint is due; `None` once stopped. Returns the
-    /// highest request ticket the coming attempt answers.
-    fn due(&self) -> Option<u64> {
+    /// Wait until a checkpoint is due, or `poll` has passed with nothing
+    /// due. A write answers request tickets up to the one returned.
+    fn due(&self) -> Due {
         let mut state = self.state.lock().unwrap();
         loop {
             if state.stop {
-                return None;
+                return Due::Stop;
             }
             let now = Instant::now();
             let wait = state.wait(now);
             if state.requested > state.done || wait.is_some_and(|wait| wait.is_zero()) {
                 state.dirty_since = None;
                 state.attempt = Some(now);
-                return Some(state.requested);
+                return Due::Write(state.requested);
             }
-            state = match wait {
-                Some(wait) => self.wake.wait_timeout(state, wait).unwrap().0,
-                None => self.wake.wait(state).unwrap(),
-            };
+            match wait {
+                Some(wait) => state = self.wake.wait_timeout(state, wait).unwrap().0,
+                None => {
+                    let poll = state.poll;
+                    let (woken, timeout) = self.wake.wait_timeout(state, poll).unwrap();
+                    state = woken;
+                    if timeout.timed_out() && !state.stop && state.wait(Instant::now()).is_none() {
+                        return Due::Look;
+                    }
+                }
+            }
         }
     }
 
-    fn finished(&self, ticket: u64, outcome: CheckpointWrite) {
+    /// `marks`: the lazily built state when the attempt began.
+    fn finished(&self, ticket: u64, outcome: CheckpointWrite, marks: Option<LazyMarks>) {
         let mut state = self.state.lock().unwrap();
         // A generation that could not be captured yet is retried after the
         // next idle period rather than dropped.
@@ -549,14 +596,29 @@ impl Signal {
             let now = Instant::now();
             state.dirty_since.get_or_insert(now);
             state.last_publication = Some(now);
-        } else if !matches!(outcome, CheckpointWrite::Skipped(_)) {
-            state.last_write = state.attempt;
-            state.first = false;
+        } else {
+            if !matches!(outcome, CheckpointWrite::Skipped(_)) {
+                state.last_write = state.attempt;
+                state.first = false;
+            }
+            // Written, or not writable until the next publication (config,
+            // unreadable, closed): lazy growth up to here is accounted for,
+            // so it cannot retrigger a write every poll. A failed write keeps
+            // the old base and is retried on the cadence.
+            if !matches!(outcome, CheckpointWrite::Failed(_)) {
+                state.base = marks.or(state.base);
+            }
         }
         state.done = state.done.max(ticket);
         state.last = Some(outcome);
         self.wake.notify_all();
     }
+}
+
+/// The lazily built state of the published generation, if one is published.
+fn lazy_marks(changes: &ChangeFeed) -> Option<LazyMarks> {
+    let snapshot = changes.snapshot.read().unwrap().clone()?;
+    Some(LazyMarks::of(&snapshot.graph))
 }
 
 /// Launch from the checkpoint at `path` (load worker, before any parse).
@@ -596,7 +658,7 @@ pub(crate) fn launch_from(
     };
     graph.diag.checkpoint_load("loaded", began.elapsed(), bytes);
     if let Some(signal) = changes.checkpoint.get() {
-        signal.loaded();
+        signal.loaded(lazy_marks(changes));
     }
     load.serving.store(true, Ordering::Release);
     load.ready.notify_all();
@@ -684,23 +746,32 @@ impl Publisher {
     pub(crate) fn spawn(self) {
         let spawned = std::thread::Builder::new()
             .name("tine-checkpoint".into())
-            .spawn(move || {
-                while let Some(ticket) = self.signal.due() {
-                    let began = Instant::now();
-                    let outcome = self.write_once();
-                    let (token, raw, file) = match &outcome {
-                        CheckpointWrite::Written {
-                            raw_bytes,
-                            file_bytes,
-                        } => ("written", *raw_bytes, *file_bytes),
-                        CheckpointWrite::Skipped(reason) => (*reason, 0, 0),
-                        CheckpointWrite::Failed(_) => ("failed", 0, 0),
-                    };
-                    self.graph
-                        .diag
-                        .checkpoint_write(token, began.elapsed(), raw, file);
-                    self.signal.finished(ticket, outcome);
-                }
+            .spawn(move || loop {
+                let ticket = match self.signal.due() {
+                    Due::Stop => break,
+                    Due::Look => {
+                        if let Some(marks) = lazy_marks(&self.changes) {
+                            self.signal.looked(marks);
+                        }
+                        continue;
+                    }
+                    Due::Write(ticket) => ticket,
+                };
+                let began = Instant::now();
+                let marks = lazy_marks(&self.changes);
+                let outcome = self.write_once();
+                let (token, raw, file) = match &outcome {
+                    CheckpointWrite::Written {
+                        raw_bytes,
+                        file_bytes,
+                    } => ("written", *raw_bytes, *file_bytes),
+                    CheckpointWrite::Skipped(reason) => (*reason, 0, 0),
+                    CheckpointWrite::Failed(_) => ("failed", 0, 0),
+                };
+                self.graph
+                    .diag
+                    .checkpoint_write(token, began.elapsed(), raw, file);
+                self.signal.finished(ticket, outcome, marks);
             });
         // No thread (resource exhaustion): launches stay cold. Not a refusal.
         let _ = spawned;

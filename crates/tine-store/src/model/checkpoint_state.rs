@@ -581,6 +581,63 @@ impl ReadSnapshot {
     }
 }
 
+/// What a generation has built lazily so far, for the checkpoint cadence
+/// (ADR 0070, Martin 2026-10-02: a lazily built index or memo counts as a
+/// change). One bit per lazily built slot the checkpoint writes, plus the two
+/// memos' entry and byte counts. Reading it takes no build and clones nothing.
+/// `checkpoint_config_key_tests::lazy_marks_cover_every_lazy_slot_the_checkpoint_writes`
+/// keeps it in step with [`DerivedState::of`] and `checkpoint_capture`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LazyMarks {
+    built: u16,
+    derived: (usize, usize),
+    query: (usize, usize),
+}
+
+impl LazyMarks {
+    pub(crate) fn of(read: &ReadSnapshot) -> LazyMarks {
+        let slots = [
+            read.block_index.get().is_some(),
+            read.alias_index.get().is_some(),
+            read.referenced_name_index.get().is_some(),
+            read.aliases.get().is_some(),
+            read.alias_owner_paths_by_key.get().is_some(),
+            read.referenced_names.get().is_some(),
+            read.block_ref_counts.get().is_some(),
+            read.public_block_ref_counts.get().is_some(),
+            read.icon_index.get().is_some(),
+            read.query_index.is_built(),
+        ];
+        let built = slots
+            .iter()
+            .enumerate()
+            .fold(0u16, |bits, (at, &set)| bits | (u16::from(set) << at));
+        let derived = read
+            .memos
+            .derived_cache
+            .read()
+            .unwrap()
+            .as_ref()
+            .map_or((0, 0), |cache| (cache.results.len(), cache.bytes));
+        LazyMarks {
+            built,
+            derived,
+            query: read.memos.query.checkpoint_marks(),
+        }
+    }
+
+    /// Whether this holds lazily built state that `base` (what was last
+    /// written or loaded) lacks: a slot built since, or a memo that changed
+    /// and is not empty. Only shrinking (a later generation starting cold) is
+    /// not new state. A memo that churned to the same entry and byte counts
+    /// is missed; that costs a less warm launch, never a wrong answer.
+    pub(crate) fn grew_since(&self, base: &LazyMarks) -> bool {
+        self.built & !base.built != 0
+            || (self.derived != base.derived && self.derived.0 > 0)
+            || (self.query != base.query && self.query.0 > 0)
+    }
+}
+
 fn cell<T>(value: Option<T>) -> std::sync::OnceLock<T> {
     let cell = std::sync::OnceLock::new();
     if let Some(value) = value {
