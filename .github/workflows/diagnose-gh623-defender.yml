@@ -1,0 +1,32 @@
+# THROWAWAY (GH #623): Defender off/on A/B on a hosted Windows runner. Never merged.
+name: diagnose-gh623-defender
+on:
+  workflow_dispatch:
+    inputs:
+      probe_only:
+        description: "only probe/enable Defender, skip build + bench"
+        type: boolean
+        default: true
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - name: State as shipped
+        shell: pwsh
+        run: |
+          Get-Service WinDefend, WdNisSvc, Sense -ErrorAction SilentlyContinue | Format-Table Name,Status,StartType
+          Get-MpComputerStatus | Format-List AMRunningMode,AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,OnAccessProtectionEnabled,AntispywareEnabled,IsTamperProtected,AMEngineVersion,AntivirusSignatureVersion,AntivirusSignatureLastUpdated
+          Get-MpPreference | Format-List DisableRealtimeMonitoring,DisableIOAVProtection,DisableBehaviorMonitoring,DisableScriptScanning,DisableArchiveScanning,DisableScanningNetworkFiles,DisableBlockAtFirstSeen,DisableIntrusionPreventionSystem,MAPSReporting,ExclusionPath,ExclusionProcess,ExclusionExtension
+          Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Advanced Threat Protection' -ErrorAction SilentlyContinue | Format-List
+          Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -ErrorAction SilentlyContinue | Format-List
+          Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection' -ErrorAction SilentlyContinue | Format-List
+          (Get-CimInstance Win32_OperatingSystem).Caption
+          Get-PSDrive -PSProvider FileSystem
+      - name: Try to turn Defender on
+        shell: pwsh
+        run: |
+          . ./.github/scripts/defender.ps1
+          Enable-DefenderForBench
+          Show-DefenderProof
