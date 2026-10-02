@@ -1824,7 +1824,7 @@ mod tests {
 
     /// GH #623, at the real watcher: a page save through the store is followed
     /// by no full stat diff of the graph.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn a_page_save_never_triggers_a_full_stat_diff() {
         let root = temp_root("own-save-no-full-diff");
