@@ -9,6 +9,7 @@ jobs:
   probe:
     runs-on: windows-latest
     steps:
+      - uses: actions/checkout@v4
       - name: State as shipped
         shell: pwsh
         run: |
