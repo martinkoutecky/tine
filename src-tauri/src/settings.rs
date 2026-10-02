@@ -1,6 +1,8 @@
 use crate::state::{slot_for_context, GraphContext};
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Manager;
 
 pub(crate) const NATIVE_FRAME_KEY: &str = "native_window_frame";
@@ -708,16 +710,60 @@ pub(crate) fn load_session(
 /// `data`: unique temp, file fsync, rename, then directory fsync. No bound graph
 /// or any I/O failure returns an error. A post-rename directory-sync error is
 /// also returned although the new file is already visible; its power-loss
-/// durability is uncertain. Synchronous; O(data bytes) and two syncs.
+/// durability is uncertain. O(data bytes) and two syncs, so the write runs on
+/// the blocking pool and the command future awaits it: this command fires after
+/// every navigation (debounced 150 ms) and the syncs took 2-3 s on a slow
+/// Windows disk, which as a synchronous command froze the main thread (GH #623,
+/// I-21). The durability contract is unchanged: the promise resolves only
+/// after both syncs (or reports the failure).
 #[tauri::command]
-pub(crate) fn save_session(
+pub(crate) async fn save_session(
     data: String,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     let path = session_path(&app, &slot.root_key).ok_or("no app-data dir")?;
-    atomic_write_session(&path, &data)
+    // Taken before the first await, in invocation order.
+    let ticket = SESSION_TICKET.fetch_add(1, Ordering::Relaxed);
+    tauri::async_runtime::spawn_blocking(move || {
+        ordered_session_write(&path, ticket, || atomic_write_session(&path, &data))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+static SESSION_TICKET: AtomicU64 = AtomicU64::new(1);
+type SessionGate = Arc<Mutex<u64>>;
+static SESSION_GATES: OnceLock<Mutex<HashMap<PathBuf, SessionGate>>> = OnceLock::new();
+
+/// Run `write` for one session file one writer at a time, and never let an
+/// older invocation overwrite a newer one that already published. The
+/// synchronous command was ordered by the main thread; two blocking-pool jobs
+/// are not, so an older save that lost the race to the lock reports success
+/// without writing (the newer bytes it would have replaced are already on
+/// disk, or the newer job reports its own failure).
+fn ordered_session_write(
+    path: &std::path::Path,
+    ticket: u64,
+    write: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let gate = SESSION_GATES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .entry(path.to_owned())
+        .or_default()
+        .clone();
+    let mut newest = gate.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if ticket < *newest {
+        return Ok(());
+    }
+    let outcome = write();
+    // A published-but-unsynced outcome is an error here yet the file is the
+    // newest bytes; an older ticket must still not replace it.
+    *newest = ticket;
+    outcome
 }
 
 fn atomic_write_session(path: &std::path::Path, data: &str) -> Result<(), String> {
@@ -744,6 +790,29 @@ fn atomic_write_session_with_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_older_session_save_never_replaces_a_newer_one() {
+        let path = std::path::Path::new("/ordered/session-a");
+        let written = std::cell::RefCell::new(Vec::new());
+        let save = |ticket: u64, bytes: &'static str| {
+            ordered_session_write(path, ticket, || {
+                written.borrow_mut().push(bytes);
+                Ok(())
+            })
+        };
+        save(10, "newer").unwrap();
+        save(9, "older").unwrap();
+        save(11, "newest").unwrap();
+        assert_eq!(*written.borrow(), ["newer", "newest"]);
+        // Another file has its own order.
+        ordered_session_write(std::path::Path::new("/ordered/session-b"), 1, || {
+            written.borrow_mut().push("other");
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(written.borrow().last(), Some(&"other"));
+    }
 
     #[test]
     fn master_notice_read_is_graph_keyed_and_rollback_preserves_all_bytes() {

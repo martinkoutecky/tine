@@ -100,6 +100,15 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         "caller awaits blocking result",
     ),
     (
+        "src-tauri/src/settings.rs",
+        "spawn_blocking(",
+        // GH #623: save_session's two fsyncs run on the blocking pool; the
+        // command future awaits and reaps the result before replying.
+        1,
+        "command future",
+        "caller awaits blocking result",
+    ),
+    (
         "src-tauri/src/commands/concord.rs",
         "spawn_blocking(",
         // +2 og-A: duplicate_journal_diff and resolve_duplicate_journal_day,
@@ -192,6 +201,7 @@ fn production_acquisitions_have_owners() {
         "src-tauri/src/commands.rs",
         "src-tauri/src/commands/concord.rs",
         "src-tauri/src/graph.rs",
+        "src-tauri/src/settings.rs",
         "src-tauri/src/state.rs",
         "src-tauri/src/watcher.rs",
         "src-tauri/src/device_io.rs",
