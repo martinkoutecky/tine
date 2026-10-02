@@ -143,6 +143,10 @@ fn launch_phases_separate_reading_from_parsing() {
     assert!(n(&pass["read"]["files"]) >= 5 && n(&pass["read"]["bytes"]) > 0);
     assert!(pass["read"]["ms"].is_number() && pass["parse"]["ms"].is_number());
     assert!(n(&pass["parse"]["files"]) >= 5);
+    // Read and parse are SUMMED worker-thread time; the parallel wall time and
+    // worker count ride beside them so the sums are interpretable.
+    assert!(pass["parallel"]["wallMs"].is_number());
+    assert!(n(&pass["parallel"]["workers"]) >= 1);
     assert!(n(&launch["fillRevs"]["files"]) >= 5);
 }
 

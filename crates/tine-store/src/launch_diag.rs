@@ -15,6 +15,7 @@
 
 use serde_json::{json, Value};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -82,8 +83,12 @@ pub(crate) struct PassStats {
     pub(crate) read_failed: u64,
     pub(crate) parse_us: u64,
     pub(crate) parsed_files: u64,
-    /// Deliberate pacing sleeps (2 ms per 24 pages), so they are not mistaken for I/O.
-    pub(crate) pace_us: u64,
+    /// Wall time of the parallel read+parse phase, and the worker shards it ran.
+    /// `stat_us`, `read_us` and `parse_us` are SUMMED THREAD time across those
+    /// workers (so they can exceed this wall time), which keeps reading
+    /// separable from parsing without a per-file allocation.
+    pub(crate) parallel_wall_us: u64,
+    pub(crate) workers: u64,
     pub(crate) recheck_us: u64,
     /// Index/snapshot build: derived indexes, mtime stat, publication under the cache lock.
     pub(crate) install_us: u64,
@@ -105,6 +110,64 @@ impl PassStats {
         self.wall_us = micros(began.elapsed());
         diag.pass(self);
         result
+    }
+}
+
+/// Per-file phase time of one load pass, shared by the parallel parse workers.
+/// Relaxed atomics: a handful of `fetch_add`s per file, no allocation.
+#[derive(Default)]
+pub(crate) struct PassClock {
+    stat_us: AtomicU64,
+    stat_files: AtomicU64,
+    read_us: AtomicU64,
+    read_files: AtomicU64,
+    read_bytes: AtomicU64,
+    read_failed: AtomicU64,
+    parse_us: AtomicU64,
+    parsed_files: AtomicU64,
+    crlf_files: AtomicU64,
+}
+
+impl PassClock {
+    pub(crate) fn stat(&self, elapsed: Duration) {
+        self.stat_us.fetch_add(micros(elapsed), Ordering::Relaxed);
+        self.stat_files.fetch_add(1, Ordering::Relaxed);
+    }
+    /// `bytes` is `None` when the read failed.
+    pub(crate) fn read(&self, elapsed: Duration, bytes: Option<usize>) {
+        self.read_us.fetch_add(micros(elapsed), Ordering::Relaxed);
+        match bytes {
+            Some(bytes) => {
+                self.read_files.fetch_add(1, Ordering::Relaxed);
+                self.read_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+            }
+            None => {
+                self.read_failed.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+    pub(crate) fn parse(&self, elapsed: Duration) {
+        self.parse_us.fetch_add(micros(elapsed), Ordering::Relaxed);
+        self.parsed_files.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn crlf(&self, is_crlf: bool) {
+        self.crlf_files
+            .fetch_add(u64::from(is_crlf), Ordering::Relaxed);
+    }
+    /// Move the totals into `pass` once the workers have joined.
+    pub(crate) fn fold(&self, pass: &mut PassStats, parallel_wall: Duration, workers: usize) {
+        let get = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
+        pass.stat_us = get(&self.stat_us);
+        pass.stat_files = get(&self.stat_files);
+        pass.read_us = get(&self.read_us);
+        pass.read_files = get(&self.read_files);
+        pass.read_bytes = get(&self.read_bytes);
+        pass.read_failed = get(&self.read_failed);
+        pass.parse_us = get(&self.parse_us);
+        pass.parsed_files = get(&self.parsed_files);
+        pass.crlf_files = get(&self.crlf_files);
+        pass.parallel_wall_us = micros(parallel_wall);
+        pass.workers = workers as u64;
     }
 }
 
@@ -440,7 +503,9 @@ fn pass_json(pass: &PassStats) -> Value {
             "failed": pass.read_failed,
         },
         "parse": { "ms": ms(pass.parse_us), "files": pass.parsed_files },
-        "paceMs": ms(pass.pace_us),
+        // stat/read/parse above are summed worker-thread time; this is the wall
+        // time of the parallel phase and the number of worker shards.
+        "parallel": { "wallMs": ms(pass.parallel_wall_us), "workers": pass.workers },
         "recheckMs": ms(pass.recheck_us),
         "installMs": ms(pass.install_us),
         "crlfFiles": pass.crlf_files,

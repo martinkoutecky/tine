@@ -7,14 +7,14 @@ use std::path::Path;
 const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
         "crates/tine-store/src/model.rs",
-        ".spawn(move || {",
+        ".spawn(move ||",
         1,
-        "Graph::with_pages snapshot build scope",
+        "parse_pages_parallel scope (on-demand build and background warm)",
         "std::thread::scope joins its child before return",
     ),
     (
         "crates/tine-store/src/store.rs",
-        ".spawn(move || {",
+        ".spawn(move ||",
         1,
         "Store slot close",
         "load worker checks cancellation per page",
@@ -56,7 +56,7 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     ),
     (
         "src-tauri/src/graph.rs",
-        ".spawn(move || {",
+        ".spawn(move ||",
         1,
         "StartupGraph's single launch-result slot",
         "load joins the worker once; unused results drop their Store and cancel its load worker",
@@ -113,7 +113,7 @@ fn counts(sources: &[(String, String)]) -> BTreeMap<(String, String), usize> {
         };
         for needle in [
             "thread::spawn(",
-            ".spawn(move || {",
+            ".spawn(move ||",
             "recommended_watcher(",
             "spawn_blocking(",
         ] {
