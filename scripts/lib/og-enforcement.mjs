@@ -91,6 +91,12 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   "src-tauri/src/drafts.rs": { sites: 1, approval: "og QUESTIONS Q6 2026-09-29; docs/adr/0061" },
   // Reuses atomic_write_new + no-replace move; replaces the two seed sites with one audited call.
   "src-tauri/src/device_io.rs": { sites: 1, approval: "og QUESTIONS Q7 2026-09-29; OG-R6 replaces two seed sites with one audited atomic_write_new call" },
+  // The one checkpoint write (temp + fsync + rename + directory sync).
+  "crates/tine-store/src/store/checkpoint.rs": { sites: 1, approval: "Martin 2026-10-02 (SPEC-storage §7.6); docs/adr/0070" },
+  // Not a new format: the graph-text rewrite of a moved page, made crash-durable
+  // by 3a40f0ca1 through the audited atomic_write_with_check, which this census
+  // did not see until it learned that name (2026-10-02).
+  "crates/tine-store/src/transaction.rs": { sites: 1, approval: "graph text via the audited save path; 3a40f0ca1 crash-durable rewritten moves" },
 });
 
 export function checkFormatCount(formats = PERSISTED_FORMATS) {
@@ -102,7 +108,7 @@ export function checkFormatCount(formats = PERSISTED_FORMATS) {
 // Catch new low-level writer sites, including a new format that has not yet
 // been entered in the census. Existing generic writers are audited by callers
 // in the census. Counts are per file, so moving a writer needs a census update.
-const writePattern = /(?:\b(?:fs|std::fs|tokio::fs)::(?:write|copy|rename)\s*\(|\b(?:File::create|io::copy|std::io::copy|atomic_write|atomic_write_new|write_payload|write_manifest|write_all)\s*\(|\.create_new\(true\)|\.writeFile\s*\(|\b(?:localStorage|sessionStorage)\.setItem\s*\()/g;
+const writePattern = /(?:\b(?:fs|std::fs|tokio::fs)::(?:write|copy|rename)\s*\(|\b(?:File::create|io::copy|std::io::copy|atomic_write|atomic_write_new|atomic_write_with_check|write_payload|write_manifest|write_all)\s*\(|\.create_new\(true\)|\.writeFile\s*\(|\b(?:localStorage|sessionStorage)\.setItem\s*\()/g;
 export function writerSiteCounts(source) {
   return [...productionSource(source).matchAll(writePattern)].length;
 }

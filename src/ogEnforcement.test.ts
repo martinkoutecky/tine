@@ -50,6 +50,8 @@ describe("og campaign enforcement", () => {
     expect(() => checkWriterSites({ "src-tauri/src/new.rs": 1 }, {})).toThrow(/Martin's approval/);
     expect(() => checkWriterSites({ "src-tauri/src/flight_store.rs": 4 }, {})).toThrow(/3 → 4 writer sites/);
     expect(writerSiteCounts("#[cfg(test)]\nmod tests {\n fs::write(foo, bar);\n}\nfs::write(path, bytes);\n")).toBe(1);
+    // The audited replace primitive is a writer site too (ADR 0070's checkpoint).
+    expect(writerSiteCounts("crate::atomic_file::atomic_write_with_check(&path, &bytes, || Ok(()));\n")).toBe(1);
   });
 });
 
