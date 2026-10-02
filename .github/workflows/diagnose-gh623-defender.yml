@@ -1,12 +1,8 @@
 # THROWAWAY (GH #623): Defender off/on A/B on a hosted Windows runner. Never merged.
 name: diagnose-gh623-defender
 on:
-  workflow_dispatch:
-    inputs:
-      probe_only:
-        description: "only probe/enable Defender, skip build + bench"
-        type: boolean
-        default: true
+  push:
+    branches: [diagnose/gh623-defender]
 permissions:
   contents: read
 jobs:
