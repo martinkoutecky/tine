@@ -127,7 +127,7 @@ describe("OG-P12 parser-owned properties, references and header spans", () => {
     const references = model.slice(model.indexOf("fn property_refs"), model.indexOf("pub(crate) enum Withdrawal"));
     expect(references).not.toContain("parse_property_line");
     expect(references).toContain("reference_evidence::linkable_property_names(");
-    expect(references).toContain("&projection.reference_source");
+    expect(references).toContain("projection.reference_source()");
   });
   it("recognizes planted second property and task grammars", () => {
     for (const source of ['const p = /^foo::/.test(raw)', 'const m = /^(TODO|DOING) /.exec(raw)', 'const p = raw.indexOf("::")', 'const m = raw.startsWith("TODO ")', 'const p = new RegExp(grammar)']) {
