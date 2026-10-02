@@ -290,45 +290,62 @@ fn atomic_temp(path: &Path) -> bool {
         && seq.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+/// The exact graph-text paths an event names, or `None` when it needs the
+/// full stat diff. The event kind is a hint (storage spec §5.3): every named
+/// graph-text path is reread, whether it now exists or not, so a missing path
+/// is reconciled as a removal. GH #623: Tine's own atomic save produced events
+/// this function refused (inotify `Access(Close(Write))` on the temp file;
+/// on Windows `Create(Any)`/`Modify(Any)` on a temp file already renamed away,
+/// `Remove(Any)` on the replaced page, `Modify(Any)` on its directory), so every
+/// save cost a full stat diff of the graph under the writer.
+/// Accepted gap: a removed DIRECTORY whose name ends in a graph-text extension
+/// (Windows reports it as `Remove(Any)`) is reconciled as one missing page; its
+/// children are noticed at the next full diff (focus return).
 fn incremental_paths(event: &notify::Event) -> Option<Vec<PathBuf>> {
-    use notify::event::{CreateKind, EventKind, ModifyKind, RemoveKind, RenameMode};
-    if !matches!(
-        event.kind,
-        EventKind::Create(CreateKind::File)
-            | EventKind::Create(CreateKind::Any)
-            | EventKind::Modify(ModifyKind::Data(_))
-            | EventKind::Modify(ModifyKind::Metadata(_))
-            | EventKind::Modify(ModifyKind::Any)
-            | EventKind::Modify(ModifyKind::Name(
-                RenameMode::From | RenameMode::To | RenameMode::Both
-            ))
-            | EventKind::Remove(RemoveKind::File)
-    ) || event.paths.is_empty()
-    {
+    use notify::event::{
+        AccessKind, AccessMode, CreateKind, EventKind, ModifyKind, RemoveKind, RenameMode,
+    };
+    match event.kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write))
+        | EventKind::Create(CreateKind::File | CreateKind::Any)
+        | EventKind::Modify(
+            ModifyKind::Data(_)
+            | ModifyKind::Metadata(_)
+            | ModifyKind::Any
+            | ModifyKind::Name(RenameMode::From | RenameMode::To | RenameMode::Both),
+        )
+        | EventKind::Remove(RemoveKind::File | RemoveKind::Any) => {}
+        // Opening or reading a file changes nothing.
+        EventKind::Access(_) => return Some(Vec::new()),
+        _ => return None,
+    }
+    if event.paths.is_empty() {
         return None;
     }
-    if event.paths.iter().any(|path| {
-        (!crate::file_kind::is_graph_text_path(path) || path.is_dir()) && !atomic_temp(path)
-    }) {
-        return None;
+    let mut paths = Vec::with_capacity(event.paths.len());
+    for path in &event.paths {
+        // Tine's own temp file: its content reaches the graph through the
+        // rename onto the page path, which is reported (and reread) itself.
+        if atomic_temp(path) {
+            continue;
+        }
+        if path.is_dir() {
+            // A directory's own timestamps or attributes. Entries created,
+            // removed or renamed inside it arrive as events of their own.
+            if matches!(
+                event.kind,
+                EventKind::Modify(ModifyKind::Any | ModifyKind::Metadata(_))
+            ) {
+                continue;
+            }
+            return None;
+        }
+        if !crate::file_kind::is_graph_text_path(path) {
+            return None;
+        }
+        paths.push(path.clone());
     }
-    // `Any` has no file-kind witness. A live metadata check distinguishes an
-    // exact Windows file event from a directory or removed subtree.
-    if matches!(
-        event.kind,
-        EventKind::Create(CreateKind::Any) | EventKind::Modify(ModifyKind::Any)
-    ) && event.paths.iter().any(|path| !path.is_file())
-    {
-        return None;
-    }
-    Some(
-        event
-            .paths
-            .iter()
-            .filter(|path| crate::file_kind::is_graph_text_path(path) && !path.is_dir())
-            .cloned()
-            .collect(),
-    )
+    Some(paths)
 }
 
 #[derive(Default)]
@@ -464,6 +481,9 @@ pub(crate) struct Core {
     pub(crate) after_collect_pause: Mutex<Option<crate::store::TestPause>>,
     #[cfg(test)]
     force_mismatched_rev_once: AtomicBool,
+    /// Event-driven batches that took the full stat diff (GH #623 tests).
+    #[cfg(test)]
+    pub(crate) event_full_diffs: std::sync::atomic::AtomicUsize,
 }
 
 impl Core {
@@ -943,6 +963,8 @@ impl WatchHandle {
             after_collect_pause: Mutex::new(None),
             #[cfg(test)]
             force_mismatched_rev_once: AtomicBool::new(false),
+            #[cfg(test)]
+            event_full_diffs: std::sync::atomic::AtomicUsize::new(0),
         });
         let mode = Arc::new(Mutex::new(watch));
         let (wake, rx) = mpsc::channel();
@@ -1275,6 +1297,10 @@ fn run(core: Arc<Core>, mode: Arc<Mutex<WatchMode>>, wake: Sender<()>, rx: Recei
                 (paths, full, config, first_event_at, pending.assets.drain())
             };
             // A rescan or unusable event may hide a config write: re-check it.
+            #[cfg(test)]
+            if full {
+                core.event_full_diffs.fetch_add(1, Ordering::Relaxed);
+            }
             if full || config || !paths.is_empty() {
                 let batch = WatchBatch {
                     first_event_at,
@@ -1693,20 +1719,162 @@ mod tests {
             assert_eq!(pending.paths, HashSet::from([text.clone()]));
             assert!(!pending.full);
         }
-        for path in [directory, pages.join("image.png")] {
-            let event = notify::Event {
-                kind: EventKind::Modify(ModifyKind::Any),
-                paths: vec![path],
-                attrs: Default::default(),
-            };
-            assert_eq!(incremental_paths(&event), None);
-        }
-        let removed = notify::Event {
-            kind: EventKind::Remove(RemoveKind::Any),
-            paths: vec![text],
+        // A directory's own timestamps (Windows reports the parent of every
+        // written file) need no rescan; a non-text file still does.
+        let event = notify::Event {
+            kind: EventKind::Modify(ModifyKind::Any),
+            paths: vec![directory.clone()],
             attrs: Default::default(),
         };
-        assert_eq!(incremental_paths(&removed), None);
+        assert_eq!(incremental_paths(&event), Some(Vec::new()));
+        let event = notify::Event {
+            kind: EventKind::Modify(ModifyKind::Any),
+            paths: vec![pages.join("image.png")],
+            attrs: Default::default(),
+        };
+        assert_eq!(incremental_paths(&event), None);
+        // A directory appearing still needs the full diff.
+        let event = notify::Event {
+            kind: EventKind::Create(CreateKind::Any),
+            paths: vec![directory],
+            attrs: Default::default(),
+        };
+        assert_eq!(incremental_paths(&event), None);
+        // Windows reports every removal as `Remove(Any)`; a text path is
+        // reread and found missing.
+        let removed = notify::Event {
+            kind: EventKind::Remove(RemoveKind::Any),
+            paths: vec![text.clone()],
+            attrs: Default::default(),
+        };
+        assert_eq!(incremental_paths(&removed), Some(vec![text]));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// GH #623: the events Tine's own atomic save produces (temp write, then
+    /// rename onto the page) name exactly the page; none forces the full stat
+    /// diff. Sequences per notify 6.1.1's inotify and ReadDirectoryChangesW
+    /// backends; the temp file is gone by the time the callback runs.
+    #[test]
+    fn an_own_atomic_save_event_sequence_stays_incremental() {
+        use notify::event::{
+            AccessKind, AccessMode, CreateKind, DataChange, EventKind, ModifyKind, RemoveKind,
+            RenameMode,
+        };
+        let root = temp_root("own-save-events");
+        let pages = root.join("pages");
+        fs::create_dir_all(&pages).unwrap();
+        let page = pages.join("Page.md");
+        fs::write(&page, "- saved\n").unwrap();
+        let temp = pages.join(".Page.md.4242.7.tmp");
+        let ev = |kind, paths: Vec<PathBuf>| notify::Event {
+            kind,
+            paths,
+            attrs: Default::default(),
+        };
+        let linux = vec![
+            ev(EventKind::Create(CreateKind::File), vec![temp.clone()]),
+            ev(
+                EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+                vec![temp.clone()],
+            ),
+            ev(
+                EventKind::Access(AccessKind::Close(AccessMode::Write)),
+                vec![temp.clone()],
+            ),
+            ev(
+                EventKind::Modify(ModifyKind::Name(RenameMode::From)),
+                vec![temp.clone()],
+            ),
+            ev(
+                EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+                vec![page.clone()],
+            ),
+            ev(
+                EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+                vec![temp.clone(), page.clone()],
+            ),
+        ];
+        let windows = vec![
+            ev(EventKind::Create(CreateKind::Any), vec![temp.clone()]),
+            ev(EventKind::Modify(ModifyKind::Any), vec![temp.clone()]),
+            ev(EventKind::Modify(ModifyKind::Any), vec![pages.clone()]),
+            ev(EventKind::Remove(RemoveKind::Any), vec![page.clone()]),
+            ev(
+                EventKind::Modify(ModifyKind::Name(RenameMode::From)),
+                vec![temp.clone()],
+            ),
+            ev(
+                EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+                vec![page.clone()],
+            ),
+            ev(EventKind::Modify(ModifyKind::Any), vec![page.clone()]),
+        ];
+        for (platform, events) in [("linux", linux), ("windows", windows)] {
+            let mut pending = Pending::default();
+            for event in events {
+                pending.add(Ok(event), &[root.clone()], &tine_core::Config::default());
+            }
+            let (paths, full, _) = pending.drain();
+            assert!(!full, "{platform}: an own save forced the full stat diff");
+            assert_eq!(paths, HashSet::from([page.clone()]), "{platform}");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// GH #623, at the real watcher: a page save through the store is followed
+    /// by no full stat diff of the graph.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_page_save_never_triggers_a_full_stat_diff() {
+        let root = temp_root("own-save-no-full-diff");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/A.md"), "- old\n").unwrap();
+        let store = Store::open(
+            &root,
+            OpenOptions {
+                approved_external_assets: None,
+                watch: WatchMode::Notify,
+            },
+        )
+        .unwrap()
+        .0;
+        store.whole_graph().unwrap();
+        std::thread::sleep(Duration::from_millis(400));
+        let core = store.watch.core_for_load();
+        let before = core.event_full_diffs.load(Ordering::Relaxed);
+        let id = crate::PageId::from("pages/A.md");
+        for round in 0..3 {
+            let read = store.page(&id).unwrap();
+            let mut doc = read.doc;
+            doc.blocks[0].raw = format!("edit {round}");
+            let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+            tx.save_page(
+                &[crate::EditKind::ReplacePage],
+                &id,
+                crate::SaveBase::Existing(read.rev),
+                &doc,
+            );
+            assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+            std::thread::sleep(Duration::from_millis(600));
+        }
+        assert_eq!(
+            core.event_full_diffs.load(Ordering::Relaxed) - before,
+            0,
+            "a save was followed by a full stat diff"
+        );
+        // A real external edit is still seen.
+        fs::write(root.join("pages/A.md"), "- external\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !store.page(&id).unwrap().doc.blocks[0]
+            .raw
+            .contains("external")
+        {
+            assert!(Instant::now() < deadline, "external edit never observed");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        store.close();
+        drop(store);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1630,12 +1630,6 @@ impl PageCacheBuild {
         }
     }
 
-    fn append(&mut self, mut other: Self) {
-        self.pages.append(&mut other.pages);
-        self.failures.append(&mut other.failures);
-        self.unreadable.append(&mut other.unreadable);
-    }
-
     fn collect(&mut self, parsed: PageParseResult) -> bool {
         match parsed {
             Ok(Some(page)) => {
@@ -2784,56 +2778,17 @@ impl Graph {
     /// Read+parse every page from disk (skipping unreadable files). Used to build
     /// the in-memory cache on first use — the on-demand `with_pages` build a user
     /// ACTIVELY WAITS ON when they navigate before the background warm finishes
-    /// (NOT the paced thermal `warm_cache`, which keeps its own serial loop).
+    /// (the background warm shares its parallel parse, `parse_pages_parallel`).
     ///
     fn load_all_pages(&self) -> PageCacheBuild {
         let entries = self.list_pages();
-        let entry_count = entries.len();
-        let workers = page_cache_worker_count();
-        // Small graphs (or a single core): serial — the parse is fast and thread
-        // spawn isn't worth it. Big graphs: split across `workers` threads.
-        if workers <= 1 || entries.len() < 64 {
-            let mut built = PageCacheBuild::with_capacity(entries.len());
-            for entry in entries {
-                built.collect(parse_page_entry_isolated(entry));
-            }
-            return built;
+        let mut built = PageCacheBuild::with_capacity(entries.len());
+        let shards = parse_pages_parallel(entries, &|| true, &parse_page_entry_isolated)
+            .expect("an unstoppable parse always finishes");
+        for parsed in shards.into_iter().flatten() {
+            built.collect(parsed);
         }
-        let per = (entries.len() + workers - 1) / workers;
-        // Drain into owned contiguous chunks (no clone of PageEntry).
-        let mut chunks: Vec<Vec<PageEntry>> = Vec::with_capacity(workers);
-        let mut it = entries.into_iter();
-        loop {
-            let chunk: Vec<PageEntry> = it.by_ref().take(per).collect();
-            if chunk.is_empty() {
-                break;
-            }
-            chunks.push(chunk);
-        }
-        std::thread::scope(|s| {
-            let handles: Vec<_> = chunks
-                .into_iter()
-                .map(|chunk| {
-                    s.spawn(move || {
-                        let mut built = PageCacheBuild::with_capacity(chunk.len());
-                        for entry in chunk {
-                            built.collect(parse_page_entry_isolated(entry));
-                        }
-                        built
-                    })
-                })
-                .collect();
-            let mut built = PageCacheBuild::with_capacity(entry_count);
-            for handle in handles {
-                match handle.join() {
-                    Ok(shard) => built.append(shard),
-                    Err(_) => tine_core::diag_line::diagnostic_line(
-                        "Tine search index worker panicked after per-page isolation; its shard was not indexed",
-                    ),
-                }
-            }
-            built
-        })
+        built
     }
 
     /// Install a freshly-built whole-graph snapshot atomically: the parsed pages
@@ -2942,14 +2897,14 @@ impl Graph {
 
     /// Build graph-open caches while allowing a revoked window binding to stop
     /// between files and derived-map phases. Returns false when cancelled.
-    pub(crate) fn warm_cache_cancellable(&self, cancelled: impl Fn() -> bool) -> bool {
+    pub(crate) fn warm_cache_cancellable(&self, cancelled: impl Fn() -> bool + Sync) -> bool {
         if !self.warm_page_cache_cancellable(&cancelled) || cancelled() {
             return false;
         }
         !cancelled()
     }
 
-    fn warm_page_cache_cancellable(&self, cancelled: &impl Fn() -> bool) -> bool {
+    fn warm_page_cache_cancellable(&self, cancelled: &(impl Fn() -> bool + Sync)) -> bool {
         use std::sync::atomic::Ordering;
         if cancelled() {
             return false;
@@ -2957,55 +2912,63 @@ impl Graph {
         if self.cache.read().unwrap().is_some() {
             return true; // already built (e.g. by a query) — nothing to warm
         }
-        // Build PACED and WITHOUT holding build_lock during the parse: on a
-        // thermally throttled laptop the warm would otherwise peg a core in one
-        // burst right after launch, competing with first scrolling/typing/the
-        // first agenda query. Parse into a LOCAL vec in small chunks with a brief
-        // yield between them, so the load is spread out and an on-demand
-        // `with_pages` (a user query) can still take build_lock and build fast
-        // without waiting on our sleeps. If it wins, we discard our work.
+        // Build WITHOUT holding build_lock during the parse, so an on-demand
+        // `with_pages` (a user query) can still take build_lock and build
+        // itself; if it wins, we discard our work. The parse is the on-demand
+        // build's parallel parse (`parse_pages_parallel`). GH #623: it used to be paced
+        // (one thread, 2 ms sleep every 24 files), which on a 13k-page graph
+        // spent ~1.2 s of a 2.65 s parse asleep, on every launch.
         let gen0 = self.cache_gen.load(Ordering::Acquire);
         #[cfg(test)]
         self.warm_passes.fetch_add(1, Ordering::Relaxed);
         let entries = self.list_pages();
         let mut built = PageCacheBuild::with_capacity(entries.len());
         // Record each file's mtime BEFORE reading it, so a re-stat before install
-        // catches any external edit that landed during the paced parse (external
+        // catches any external edit that landed during the parse (external
         // writers don't bump cache_gen, so the gen check below can't see them).
         let mut mtimes: Vec<(PathBuf, Option<(std::time::SystemTime, u64)>)> =
             Vec::with_capacity(entries.len());
-        for (i, e) in entries.into_iter().enumerate() {
-            if cancelled() {
-                return false;
-            }
+        let parse_one = |e: PageEntry| {
             let mtime = fs::metadata(&e.path)
                 .and_then(|metadata| metadata.modified().map(|time| (time, metadata.len())))
                 .ok();
             let path = e.path.clone();
-            let indexed = match read_parse_input(&e.path) {
-                Ok(content) => built.collect(isolate_page_parse(e, |entry| {
-                    Some(parse_page_content(entry, &content))
-                })),
-                Err(error) => built.collect(Err(PageParseFailure::Unreadable(
+            let parsed = match read_parse_input(&e.path) {
+                Ok(content) => {
+                    isolate_page_parse(e, |entry| Some(parse_page_content(entry, &content)))
+                }
+                Err(error) => Err(PageParseFailure::Unreadable(
                     e.rel_path_str().to_owned(),
                     error.to_string(),
-                ))),
+                )),
             };
-            if indexed {
+            (path, mtime, parsed)
+        };
+        let mut entries = entries.into_iter();
+        if let Some(first) = entries.next() {
+            if cancelled() {
+                return false;
+            }
+            let (path, mtime, parsed) = parse_one(first);
+            if built.collect(parsed) {
                 mtimes.push((path, mtime));
             }
             #[cfg(test)]
-            if i == 0 {
-                crate::store::pause_at_hook(&self.warm_after_first_page_pause);
-            }
-            if i % 24 == 23 {
-                if self.cache.read().unwrap().is_some() {
-                    return true; // a query built the cache while we parsed
-                }
-                std::thread::sleep(std::time::Duration::from_millis(2));
+            crate::store::pause_at_hook(&self.warm_after_first_page_pause);
+        }
+        let still_wanted = || !cancelled() && self.cache.read().unwrap().is_none();
+        let Some(parsed_chunks) =
+            parse_pages_parallel(entries.collect(), &still_wanted, &parse_one)
+        else {
+            // Either a query built the cache while we parsed, or we were cancelled.
+            return self.cache.read().unwrap().is_some() && !cancelled();
+        };
+        for (path, mtime, parsed) in parsed_chunks.into_iter().flatten() {
+            if built.collect(parsed) {
+                mtimes.push((path, mtime));
             }
         }
-        // If any built file changed during the paced parse, our snapshot may be
+        // If any built file changed during the parse, our snapshot may be
         // stale and the watcher might not yet baseline-track it — discard and let
         // the next on-demand build read fresh. (A false positive just rebuilds.)
         if mtimes.iter().any(|(p, m)| {
@@ -4221,6 +4184,70 @@ fn top_level_asset_name(name: &str) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Parse `entries` on up to `page_cache_worker_count()` scoped threads (serial
+/// for small graphs), returning per-shard results in entry order. Each shard
+/// checks `keep_going` every 24 entries; `None` means one of them saw it false.
+/// A shard whose thread panicked despite per-page isolation is omitted with a
+/// diagnostic line. The one parallel page parse: the on-demand build and the
+/// background warm both use it.
+fn parse_pages_parallel<T: Send>(
+    entries: Vec<PageEntry>,
+    keep_going: &(impl Fn() -> bool + Sync),
+    parse: &(impl Fn(PageEntry) -> T + Sync),
+) -> Option<Vec<Vec<T>>> {
+    let workers = page_cache_worker_count();
+    let per = if workers <= 1 || entries.len() < 64 {
+        entries.len().max(1)
+    } else {
+        entries.len().div_ceil(workers)
+    };
+    // Drain into owned contiguous chunks (no clone of PageEntry).
+    let mut chunks: Vec<Vec<PageEntry>> = Vec::with_capacity(workers);
+    let mut it = entries.into_iter().peekable();
+    while it.peek().is_some() {
+        chunks.push(it.by_ref().take(per).collect());
+    }
+    let stopped = std::sync::atomic::AtomicBool::new(false);
+    let run = |chunk: Vec<PageEntry>| {
+        let mut out = Vec::with_capacity(chunk.len());
+        for (i, entry) in chunk.into_iter().enumerate() {
+            if i % 24 == 0 && (stopped.load(std::sync::atomic::Ordering::Relaxed) || !keep_going())
+            {
+                stopped.store(true, std::sync::atomic::Ordering::Relaxed);
+                break;
+            }
+            out.push(parse(entry));
+        }
+        out
+    };
+    let shards: Vec<Vec<T>> = if chunks.len() <= 1 {
+        chunks.into_iter().map(run).collect()
+    } else {
+        std::thread::scope(|s| {
+            let handles: Vec<_> = chunks
+                .into_iter()
+                .map(|chunk| {
+                    let run = &run;
+                    s.spawn(move || run(chunk))
+                })
+                .collect();
+            handles
+                .into_iter()
+                .filter_map(|handle| match handle.join() {
+                    Ok(shard) => Some(shard),
+                    Err(_) => {
+                        tine_core::diag_line::diagnostic_line(
+                            "Tine search index worker panicked after per-page isolation; its shard was not indexed",
+                        );
+                        None
+                    }
+                })
+                .collect()
+        })
+    };
+    (!stopped.load(std::sync::atomic::Ordering::Relaxed)).then_some(shards)
 }
 
 fn page_cache_worker_count() -> usize {
