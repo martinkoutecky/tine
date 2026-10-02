@@ -1,0 +1,42 @@
+# THROWAWAY (GH #623): Windows test build for the reporter + Windows proof of the
+# own-save watcher fix. Lives only on branch diagnose/gh623-test-build-3; never merged.
+name: diagnose-gh623
+on:
+  push:
+    branches: [diagnose/gh623-test-build-3]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - name: Watcher + checkpoint tests on real Windows
+        run: "cargo test -p tine-store --lib -- watch:: checkpoint --nocapture"
+      - name: Mark the test version (sorts above 0.7.0-beta.1, below beta.2)
+        shell: bash
+        run: |
+          node -e "const f='src-tauri/tauri.conf.json';const fs=require('fs');const c=JSON.parse(fs.readFileSync(f));c.version='0.7.0-beta.1-gh623e';fs.writeFileSync(f,JSON.stringify(c,null,2)+'\n')"
+      - run: npm run build
+      - name: Build the portable exe
+        run: cargo build --release -p tine --features custom-protocol
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item target/release/tine.exe "out/Tine Beta 0.7.0-beta.1-gh623e.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tine-beta-gh623e-test-windows-x64
+          path: out/
+          retention-days: 30
