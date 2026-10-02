@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Settings → Help & diagnostics: the diagnostic report now carries launch timings (listing, file dates, reading vs parsing, index build, ready), recent full rescans and saves, and statistics-only graph-shape numbers (sizes and quantiles, never names or text), so a slow graph can be diagnosed without sharing it; **Rescan graph** runs one full check for outside changes and shows when it finished (GH #623).
 - Settings → About: **Check for updates automatically** can disable startup update checks and notifications on this device; manual checks remain available (GH #618).
 
 ### Changed

@@ -5,6 +5,14 @@
   margin: 1rem 0;
 }
 
+.diagnostics-rescan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 1rem;
+}
+
 .diagnostics-preview {
   display: grid;
   gap: 0.45rem;

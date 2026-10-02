@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
+import * as reload from "../reloadOnFocus";
 import { DIAGNOSTIC_PREVIEW_LIMIT, DiagnosticsTab, diagnosticReportPreview } from "./DiagnosticsTab";
 
 async function flush() {
@@ -86,6 +87,28 @@ describe("Help & diagnostics (GH #343)", () => {
     await flush();
     expect(save).toHaveBeenCalledTimes(2);
     expect(toast).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  // GH #623: the full stat diff on demand, with the time it finished.
+  it("rescans the graph on demand and shows when it finished", async () => {
+    const finished = new Date(2026, 9, 2, 13, 14, 15).getTime();
+    let release!: () => void;
+    const rescan = vi.spyOn(reload, "rescanGraphNowFromSettings").mockImplementation(
+      () => new Promise((resolve) => { release = () => resolve(finished); }),
+    );
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <DiagnosticsTab />, host);
+    expect(host.textContent).not.toContain("Last rescan finished");
+    button(host, "Rescan graph").click();
+    await flush();
+    expect(rescan).toHaveBeenCalledOnce();
+    expect(button(host, "Rescanning…").disabled).toBe(true);
+    release();
+    await flush();
+    expect(button(host, "Rescan graph").disabled).toBe(false);
+    expect(host.textContent).toContain(`Last rescan finished at ${new Date(finished).toLocaleTimeString()}.`);
     dispose();
   });
 });

@@ -48,7 +48,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "backups", label: "Always ask before applying an external change", description: "external edits disk reload keep mine conflict review" },
   { tab: "graph", label: "Graph", description: "folder export publish" },
   { tab: "graph", label: "Home page", description: "home start startup page" },
-  { tab: "diagnostics", label: "Help & diagnostics", description: "diagnostic report crash unclean exit save slow privacy help improve parser divergences anonymize" },
+  { tab: "diagnostics", label: "Help & diagnostics", description: "diagnostic report crash unclean exit save slow privacy help rescan graph timings statistics improve parser divergences anonymize" },
   { tab: "shortcuts", label: "Keyboard shortcuts", description: "key bindings commands remap" },
   { tab: "about", label: "About", description: "version licenses updates" },
 ];

@@ -533,6 +533,26 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn diagnostics_guide_explains_launch_timings_shape_statistics_and_rescan() {
+        // GH #623: the report carries launch timings and graph-shape statistics
+        // (numbers only), and Settings has a "Rescan graph" button.
+        let recovery = include_str!("templates/troubleshooting-recovery.md");
+        for outcome in [
+            "`graphs` section",
+            "a slow disk or antivirus scan shows up as read time rather than parse time",
+            "numbers only: never a page name, any text, or a hash of either",
+            "## Rescan the graph on demand",
+            "choose **Rescan graph**",
+            "**Last rescan finished at**",
+        ] {
+            assert!(
+                recovery.contains(outcome),
+                "troubleshooting onboarding must explain {outcome}"
+            );
+        }
+    }
+
+    #[test]
     fn parser_comparison_guide_says_intentional_differences_are_not_bugs() {
         // Master c0c2ff11b: a known intentional lsdoc difference is suppressed,
         // not offered as a reportable parser bug.

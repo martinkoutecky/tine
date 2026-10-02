@@ -30,6 +30,9 @@ export const FOCUS_RESCAN_THROTTLE_MS = 1500;
 const COMPLETION_TIMEOUT_MS = 30_000;
 
 let lastRescan = 0;
+/** When the last rescan (focus or Settings) completed and its events were applied. */
+let lastFinishedAt: number | null = null;
+let finishedCount = 0;
 let active: { refresh: Promise<void>; binding: Binding } | null = null;
 let stateBinding: Binding | null = null;
 let completed = 0;
@@ -96,18 +99,20 @@ function releaseActive(refresh: Promise<void>): void {
 }
 
 /** Exported for tests; `installReloadOnFocus` wires it to focus/visibility. */
-export function refreshOnReturnToWindow(now = Date.now()): Promise<void> {
+export function refreshOnReturnToWindow(now = Date.now(), force = false): Promise<void> {
   // A published export is an immutable snapshot with no watcher behind it.
   if (isPublishedExport()) return Promise.resolve();
   replayDeferredExternalReloads();
   if (!graphReadyForRescan()) return Promise.resolve();
   const changed = retireChangedBinding();
   if (active) {
-    if (!changed && stillBound(active.binding)) return active.refresh;
-    return active.refresh.then(() => refreshOnReturnToWindow(now));
+    // A forced (Settings) rescan must itself start after the click, so it waits
+    // for a rescan already in flight and runs its own.
+    if (!force && !changed && stillBound(active.binding)) return active.refresh;
+    return active.refresh.then(() => refreshOnReturnToWindow(now, force));
   }
   const api = backend();
-  if (!api.rescanGraphNow || !api.onGraphRescanComplete || now - lastRescan < FOCUS_RESCAN_THROTTLE_MS) return Promise.resolve();
+  if (!api.rescanGraphNow || !api.onGraphRescanComplete || (!force && now - lastRescan < FOCUS_RESCAN_THROTTLE_MS)) return Promise.resolve();
   lastRescan = now;
   const binding = stateBinding!;
   const current = () => { if (!stillBound(binding)) throw new StaleFocusRefresh(); };
@@ -125,6 +130,8 @@ export function refreshOnReturnToWindow(now = Date.now()): Promise<void> {
         current();
       }
       replayDeferredExternalReloads();
+      lastFinishedAt = Date.now();
+      finishedCount++;
     } catch (error) {
       // A refusal because the graph was switched or restored meanwhile is the
       // stale case too: the new binding's load read the disk itself.
@@ -140,8 +147,19 @@ export function refreshOnReturnToWindow(now = Date.now()): Promise<void> {
   return refresh;
 }
 
+/** Settings → Help & diagnostics "Rescan graph": one full stat diff on demand,
+ *  unthrottled but through the same barrier-holding path as a focus rescan, so
+ *  its changes are applied before it reports. Answers when it finished (ms since
+ *  the epoch), or `null` when no rescan ran (no graph loaded, published export)
+ *  or it failed (the failure is already toasted by the shared path). */
+export async function rescanGraphNowFromSettings(): Promise<number | null> {
+  const before = finishedCount;
+  await refreshOnReturnToWindow(Date.now(), true);
+  return finishedCount !== before ? lastFinishedAt : null;
+}
+
 /** Reset the time throttle only (tests). */
-export function resetFocusRescanThrottle(): void { lastRescan = 0; }
+export function resetFocusRescanThrottle(): void { lastRescan = 0; lastFinishedAt = null; finishedCount = 0; }
 
 let installed = false;
 export function installReloadOnFocus(): void {

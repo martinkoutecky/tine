@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { deferEditorStartUntilFresh, freshnessPending } from "./freshnessBarrier";
-import { refreshOnReturnToWindow, resetFocusRescanThrottle, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
+import { refreshOnReturnToWindow, rescanGraphNowFromSettings, resetFocusRescanThrottle, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
 import { setToasts, toasts } from "./toasts";
 import { setGraphTransitioning } from "./ui";
 
@@ -125,5 +125,39 @@ describe("reload on focus", () => {
       expect(toasts()).toEqual([]);
       expect(freshnessPending()).toBe(false);
     } finally { spy.mockRestore(); }
+  });
+
+  // GH #623: Settings > Help & diagnostics "Rescan graph" is one full stat diff
+  // on demand: not throttled, answers when it finished, and a rescan already in
+  // flight does not stand in for it.
+  it("a Settings rescan ignores the focus throttle and answers when it finished", async () => {
+    const focus = refreshOnReturnToWindow(Date.now());
+    await vi.waitFor(() => expect(rescans).toBe(1));
+    complete!(sequence);
+    await focus;
+    const before = Date.now();
+    const settings = rescanGraphNowFromSettings();
+    await vi.waitFor(() => expect(rescans).toBe(2)); // a focus return now would be throttled
+    complete!(sequence);
+    const finished = await settings;
+    expect(finished).not.toBeNull();
+    expect(finished!).toBeGreaterThanOrEqual(before);
+  });
+
+  it("a Settings rescan waits for one in flight and then runs its own", async () => {
+    const focus = refreshOnReturnToWindow(Date.now());
+    await vi.waitFor(() => expect(rescans).toBe(1));
+    const settings = rescanGraphNowFromSettings();
+    complete!(sequence);
+    await focus;
+    await vi.waitFor(() => expect(rescans).toBe(2));
+    complete!(sequence);
+    expect(await settings).not.toBeNull();
+  });
+
+  it("a Settings rescan that could not run says so with null, never a time", async () => {
+    delete (backend() as Api).rescanGraphNow;
+    expect(await rescanGraphNowFromSettings()).toBeNull();
+    expect(rescans).toBe(0);
   });
 });

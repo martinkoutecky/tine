@@ -9,6 +9,7 @@ import { writeClipboardText } from "../clipboard";
 import { dbg } from "../debug";
 import { isMobilePlatform } from "../nativeChrome";
 import { ownedWhen, readOwned, writeOwned } from "../owned";
+import { rescanGraphNowFromSettings } from "../reloadOnFocus";
 import { pushToast } from "../toasts";
 import { ErrorToastHistory } from "./ErrorToastHistory";
 import { GraphVerification } from "./GraphVerification";
@@ -32,6 +33,8 @@ export function diagnosticReportPreview(text: string): string {
 export function DiagnosticsTab(): JSX.Element {
   const [report, setReport] = createSignal<DiagnosticReport | null>(null);
   const [busy, setBusy] = createSignal(false);
+  const [rescanning, setRescanning] = createSignal(false);
+  const [rescanFinished, setRescanFinished] = createSignal<number | null>(null);
   let disposed = false;
   onCleanup(() => { disposed = true; });
 
@@ -45,6 +48,22 @@ export function DiagnosticsTab(): JSX.Element {
       pushToast("Could not create the diagnostic report.", "error");
     } finally {
       if (!disposed) setBusy(false);
+    }
+  };
+
+  // One full stat diff of the open graph on demand (the same path as the
+  // rescan on return to the window, without its throttle). Shows when it ended.
+  const rescanGraph = async () => {
+    setRescanning(true);
+    try {
+      const finished = await rescanGraphNowFromSettings();
+      if (!disposed) setRescanFinished(finished);
+      if (finished === null && !disposed) pushToast("No graph rescan ran. Open a graph first.", "info");
+    } catch (error) {
+      dbg(`graph rescan failed: ${String(error)}`);
+      pushToast("Could not rescan the graph.", "error");
+    } finally {
+      if (!disposed) setRescanning(false);
     }
   };
 
@@ -95,6 +114,11 @@ export function DiagnosticsTab(): JSX.Element {
         in your graph, and nothing is uploaded. You choose whether to copy or save a report and
         share it.
       </p>
+      <p class="settings-hint diagnostics-privacy">
+        A report also carries statistics about your graph, such as how long each step of opening
+        it took and the sizes of its pages, as numbers only. They never include a page name, any
+        text, or a hash of either.
+      </p>
       <div class="diagnostics-actions">
         <button type="button" class="primary" disabled={busy()} onClick={() => void createReport()}>
           {busy() ? "Creating…" : "Create diagnostic report"}
@@ -108,6 +132,19 @@ export function DiagnosticsTab(): JSX.Element {
         <button type="button" class="danger" onClick={() => void clearReport()}>
           Clear recorded events
         </button>
+      </div>
+      <div class="diagnostics-rescan">
+        <button type="button" disabled={rescanning()} onClick={() => void rescanGraph()}>
+          {rescanning() ? "Rescanning…" : "Rescan graph"}
+        </button>
+        <span class="settings-hint" role="status">
+          <Show
+            when={rescanFinished()}
+            fallback="Checks every file in the open graph for changes made outside Tine."
+          >
+            {(finished) => `Last rescan finished at ${new Date(finished()).toLocaleTimeString()}.`}
+          </Show>
+        </span>
       </div>
       <Show when={report()}>
         {(current) => (
