@@ -7,23 +7,60 @@ permissions:
   contents: read
 jobs:
   probe:
+    if: ${{ !contains(github.event.head_commit.message, '[bench]') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: State as shipped
-        shell: pwsh
-        run: |
-          Get-Service WinDefend, WdNisSvc, Sense -ErrorAction SilentlyContinue | Format-Table Name,Status,StartType
-          Get-MpComputerStatus | Format-List AMRunningMode,AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,OnAccessProtectionEnabled,AntispywareEnabled,IsTamperProtected,AMEngineVersion,AntivirusSignatureVersion,AntivirusSignatureLastUpdated
-          Get-MpPreference | Format-List DisableRealtimeMonitoring,DisableIOAVProtection,DisableBehaviorMonitoring,DisableScriptScanning,DisableArchiveScanning,DisableScanningNetworkFiles,DisableBlockAtFirstSeen,DisableIntrusionPreventionSystem,MAPSReporting,ExclusionPath,ExclusionProcess,ExclusionExtension
-          Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Advanced Threat Protection' -ErrorAction SilentlyContinue | Format-List
-          Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender' -ErrorAction SilentlyContinue | Format-List
-          Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection' -ErrorAction SilentlyContinue | Format-List
-          (Get-CimInstance Win32_OperatingSystem).Caption
-          Get-PSDrive -PSProvider FileSystem
-      - name: Try to turn Defender on
+      - name: Probe: state as shipped, then try ON
         shell: pwsh
         run: |
           . ./.github/scripts/defender.ps1
+          Show-DefenderProof 'as shipped' | Out-Null
           Enable-DefenderForBench
-          Show-DefenderProof
+          Show-DefenderProof 'ON' | Out-Null
+  bench:
+    if: ${{ contains(github.event.head_commit.message, '[bench]') }}
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Build the A/B bench (release)
+        run: cargo build --release -p tine-store --features test-faults --example defender_ab
+      - name: Fetch Ellis's shape export (public attachment on GH #623) and generate the graph
+        shell: pwsh
+        run: |
+          $d = ".github/scripts/ellis-shape"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          curl.exe -sSL -o ellis.zip https://github.com/user-attachments/files/32962824/graph-shape-export.zip
+          Expand-Archive ellis.zip -DestinationPath $d -Force
+          Get-ChildItem $d -Recurse | Select-Object FullName,Length
+          # the generator makes the 12,441 assets sparse files of up to ~26 GB apparent size; NTFS truncate
+          # allocates them for real, so cap each at 4 KiB (Tine only stats assets; the count is what matters)
+          $src = Get-Content .github/scripts/ellis-generate.py -Raw
+          $src = $src.Replace('f.truncate(sizes[k])', 'f.truncate(min(sizes[k], 4096))')
+          Set-Content -Path "$d/generate.py" -Value $src -Encoding utf8
+          # the generator reads the CSVs next to itself; they may sit in a subfolder of the zip
+          foreach ($n in 'nodes.csv','edges.csv','totals.txt') { $f = Get-ChildItem $d -Recurse -Filter $n | Select-Object -First 1; if ($f.DirectoryName -ne (Resolve-Path $d).Path) { Copy-Item $f.FullName $d } }
+          python "$d/generate.py" --out "$env:USERPROFILE\ellis\master"
+          Get-ChildItem "$env:USERPROFILE\ellis\master" | Format-Table Name
+      - name: A/B run
+        shell: pwsh
+        run: ./.github/scripts/run-ab.ps1 -Reps 3
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          python .github/scripts/summarize.py | Tee-Object -FilePath summary.md
+          Get-Content summary.md | Add-Content $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: defender-ab-results
+          path: |
+            results.jsonl
+            summary.md
+          retention-days: 30
