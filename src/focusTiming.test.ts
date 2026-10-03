@@ -12,9 +12,6 @@ it("times a page-load command always, and apart for ten seconds after a focus re
   expect(timingNamesForCommand("get_page", 2_000 + AFTER_FOCUS_WINDOW_MS + 1)).toEqual(["get_page"]);
 });
 
-it("never times a command outside the closed list, so no argument or free text can become a name", () => {
-  noteFocusReturn(0);
-  expect(timingNamesForCommand("save_pages", 1)).toEqual([]);
-  expect(timingNamesForCommand("My secret page", 1)).toEqual([]);
+it("names its phases from a closed list", () => {
   expect(FOCUS_PHASES.every((phase) => phase.startsWith("focus."))).toBe(true);
 });

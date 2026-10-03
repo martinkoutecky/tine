@@ -10,11 +10,6 @@
 // Unit cost: one fire-and-forget IPC of two numbers per timed command call
 // and five per focus rescan; no bytes are written to the graph.
 
-/** Commands timed on every call (and again, apart, right after a focus return). */
-export const TIMED_COMMANDS: ReadonlySet<string> = new Set([
-  "get_page", "get_page_by_path", "get_backlinks", "journal_feed_page", "page_inventory", "search",
-]);
-
 /** The phases of one focus rescan, in the order they happen. */
 export const FOCUS_PHASES = ["focus.ipc", "focus.wait", "focus.apply", "focus.total", "focus.banner"] as const;
 export type FocusPhase = (typeof FOCUS_PHASES)[number];
@@ -33,9 +28,10 @@ export function noteFocusReturn(now = performance.now()): void {
 /** Reset the clock (tests). */
 export function resetFocusClock(): void { lastFocusReturnAt = null; }
 
-/** The timing names one finished command call is counted under. */
+/** The timing names one finished call of a timed command is counted under. Which
+ *  commands are timed is a closed list in `src/backend.ts` (`TIMED_COMMANDS`):
+ *  the command layer is the one place that names commands. */
 export function timingNamesForCommand(command: string, now = performance.now()): string[] {
-  if (!TIMED_COMMANDS.has(command)) return [];
   const afterFocus = lastFocusReturnAt !== null && now - lastFocusReturnAt <= AFTER_FOCUS_WINDOW_MS;
   return afterFocus ? [command, `${command}.afterFocus`] : [command];
 }

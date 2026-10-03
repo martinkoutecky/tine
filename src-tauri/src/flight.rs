@@ -429,7 +429,8 @@ pub(crate) fn diagnostic_ipc_event(command: String, phase: String, elapsed_ms: u
 /// changes from disk" notice was visible), and the rest are page-load commands
 /// reported by the frontend, each also kept separately for calls made within
 /// ten seconds after a window focus return (`.afterFocus`). The frontend
-/// mirror is `src/focusTiming.ts`; a test keeps the two lists equal. Names
+/// mirror is `TIMED_COMMANDS` in `src/backend.ts` plus `FOCUS_PHASES` in
+/// `src/focusTiming.ts`; a test keeps the lists equal. Names
 /// are source literals: nothing a user typed can become one (I-5).
 pub(crate) const TIMING_NAMES: [&str; 19] = [
     "focus.apply",
@@ -939,13 +940,16 @@ mod tests {
     /// lists must stay equal, and a timed command must be a registered one.
     #[test]
     fn the_timing_names_equal_the_frontend_list() {
-        let frontend = include_str!("../../src/focusTiming.ts");
+        let frontend = concat!(
+            include_str!("../../src/focusTiming.ts"),
+            include_str!("../../src/backend.ts")
+        );
         for name in TIMING_NAMES {
             assert!(
                 frontend.contains(&format!("\"{name}\""))
                     || name.ends_with(".afterFocus")
                     || name.starts_with("rescan."),
-                "src/focusTiming.ts must list {name}"
+                "src/backend.ts (TIMED_COMMANDS) or src/focusTiming.ts (FOCUS_PHASES) must list {name}"
             );
             if let Some(command) = name.strip_suffix(".afterFocus") {
                 assert!(

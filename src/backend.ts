@@ -731,6 +731,12 @@ const DIAGNOSTIC_COMMANDS = new Set([
   "debug_info", "debug_log", "diagnostic_ipc_event", "diagnostic_frontend_event", "diagnostic_report", "clear_diagnostics",
   "save_diagnostic_report", "diagnostic_session_active", "diagnostic_timing_event",
 ]);
+/** GH #623: the page-load commands whose every call is timed (and, apart, the calls
+ *  made soon after a focus return). A closed list, so no argument or free text can
+ *  become a timing name (I-5); the Rust side registers the same names. */
+const TIMED_COMMANDS: ReadonlySet<string> = new Set([
+  "get_page", "get_page_by_path", "get_backlinks", "journal_feed_page", "page_inventory", "search",
+]);
 /** A command still running after this long is recorded as `slow`. */
 const SLOW_IPC_MS = 500;
 
@@ -793,6 +799,7 @@ class TauriBackend implements Backend {
   /** GH #623: count every call of a page-load command (not only slow ones),
    *  and apart those made soon after a focus return. Numbers only. */
   private reportCommandTiming(cmd: string, started: number) {
+    if (!TIMED_COMMANDS.has(cmd)) return;
     const names = timingNamesForCommand(cmd);
     for (const name of names) this.diagnosticTimingEvent(name, performance.now() - started);
   }
