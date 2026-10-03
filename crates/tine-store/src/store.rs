@@ -1506,6 +1506,8 @@ impl Store {
         max_bytes: Option<u64>,
     ) -> Result<(Vec<u8>, FileRev), StoreError> {
         let path = self.path_for_os_handoff(file, false)?;
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::store_read();
         let mut input = File::open(path).map_err(StoreError::from_io)?;
         let meta = input.metadata().map_err(StoreError::from_io)?;
         if !meta.is_file() {
@@ -1564,6 +1566,24 @@ impl Store {
             return Err(StoreError::InvalidTarget(file.as_str().to_owned()));
         }
         Ok((input, meta.len()))
+    }
+
+    /// Whether the page file `file` carried a VCS anchor line (`<<<<<<< ` or
+    /// `>>>>>>> ` at column 0) in the bytes the store last observed for it,
+    /// from state it already holds (the launch pass reads every file once and
+    /// the launch checkpoint carries the answer; saves and external changes
+    /// refresh it with the revision they record). `Some(false)` means reading
+    /// the file cannot find an anchor line; `Some(true)` means it may, so the
+    /// caller scans the bytes; `None` means the page is not in the page cache
+    /// (still loading, or never cached: shadow journals, sync copies,
+    /// unreadable or oversized files), so only a read can tell. Touches no
+    /// file. Cost O(1).
+    pub fn vcs_anchor_state(&self, file: &FileId) -> Option<bool> {
+        if self.is_closed() {
+            return None;
+        }
+        self.graph
+            .vcs_anchor_state(&self.graph.root.join(file.as_str()))
     }
 
     /// Recursively list regular files in one area, sorted by area-relative name.

@@ -65,6 +65,21 @@ pub fn vcs_conflict_markers(content: &str, format: Format) -> Vec<&'static str> 
     seen
 }
 
+/// Whether `bytes` contain a column-0 anchor marker line (`<<<<<<< ` or
+/// `>>>>>>> `): the byte prefilter of [`vcs_conflict_markers`], which only
+/// reports a file whose scan finds such a line. A file for which this is false
+/// can never be marker-bearing, so one pass over the bytes at load time (or at
+/// each save) answers "might this page carry markers" without a later read.
+/// A SUPERSET of marker-bearing files (an anchor inside a fence or an
+/// unreadable-as-UTF-8 file still answers true); never a subset. Cost O(bytes),
+/// vectorized substring search, no allocation.
+pub fn has_vcs_anchor(bytes: &[u8]) -> bool {
+    use memchr::memmem;
+    [&b"<<<<<<< "[..], &b">>>>>>> "[..]]
+        .into_iter()
+        .any(|needle| memmem::find_iter(bytes, needle).any(|at| at == 0 || bytes[at - 1] == b'\n'))
+}
+
 /// One recognized column-0 VCS merge-conflict marker line.
 ///
 /// Ordering inside a git/Fossil conflict region is

@@ -770,13 +770,58 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (5, GOLDEN),
+        (6, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "68a2d0055b8a78e639c7853b7fbc03fda9789c8a1f0c85962a88bd3c0458ca31";
+const GOLDEN: &str = "a951b951a1be78382c3772fff31adf79bb82ff6d4c5723b703e84cbbf560c8b3";
+
+/// GH #623 (FORMAT 6): which cached pages carried a VCS anchor line travels
+/// in the checkpoint, so a warm launch answers the conflict inventory with no
+/// file read; edits made while closed are reconciled by the launch diff.
+/// Unit cost: one `PathBuf` per anchor-carrying page (none in a clean graph),
+/// no per-edit write (the checkpoint is a whole-generation write on its
+/// existing cadence).
+#[test]
+fn the_anchor_flags_round_trip_and_follow_edits_made_while_closed() {
+    let root = graph();
+    let marked = "- a\n<<<<<<< HEAD\n- b\n>>>>>>> x\n";
+    fs::write(root.path().join("pages/Marked.md"), marked).unwrap();
+    set_mtime(&root.path().join("pages/Marked.md"), old());
+    let state =
+        |store: &Store, rel: &str| store.vcs_anchor_state(&crate::FileId::from(rel.to_owned()));
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    write_checkpoint(root.path(), &cp);
+
+    let loaded = open_cp(root.path(), &cp);
+    loaded.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&loaded), "loaded");
+    assert_eq!(state(&loaded, "pages/Marked.md"), Some(true));
+    assert_eq!(state(&loaded, "pages/A.md"), Some(false));
+    assert_eq!(state(&loaded, "pages/C.org"), Some(false));
+    assert_eq!(state(&loaded, "pages/Nope.md"), None, "uncached: unknown");
+    loaded.close();
+
+    // Closed edits: the marked page is resolved, a clean one gains an anchor.
+    fs::write(root.path().join("pages/Marked.md"), "- resolved\n").unwrap();
+    fs::write(
+        root.path().join("pages/A.md"),
+        ">>>>>>> x\n- links [[One]]\n",
+    )
+    .unwrap();
+    for rel in ["pages/Marked.md", "pages/A.md"] {
+        set_mtime(&root.path().join(rel), old());
+    }
+    let reloaded = open_cp(root.path(), &cp);
+    reloaded.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&reloaded), "loaded");
+    assert_eq!(state(&reloaded, "pages/Marked.md"), Some(false));
+    assert_eq!(state(&reloaded, "pages/A.md"), Some(true));
+    reloaded.close();
+}
 
 /// ADR 0070 (Martin, 2026-10-02: config by meaning, not bytes): a config
 /// edited while Tine was closed falls the launch back to the initial build

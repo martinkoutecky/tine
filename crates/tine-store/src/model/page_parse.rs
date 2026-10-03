@@ -32,8 +32,8 @@ pub(super) fn parse_page_entry_isolated(e: PageEntry) -> PageParseResult {
     isolate_page_parse(e, |entry| Some(parse_page_content(entry, &content)))
 }
 
-pub(super) fn parse_page_content(e: &PageEntry, content: &str) -> (Document, String) {
-    let rev = content_rev(content);
+pub(super) fn parse_page_content(e: &PageEntry, content: &str) -> (Document, DiskObs) {
+    let rev = DiskObs::of(content);
     let mut doc = parse_doc(&e.path, content);
     #[cfg(test)]
     if content.contains(TEST_PAGE_PARSE_PANIC_SENTINEL) {
@@ -54,7 +54,7 @@ fn shrink_blocks(blocks: &mut Vec<DocBlock>) {
 
 pub(super) fn isolate_page_parse(
     e: PageEntry,
-    parse: impl FnOnce(&PageEntry) -> Option<(Document, String)>,
+    parse: impl FnOnce(&PageEntry) -> Option<(Document, DiskObs)>,
 ) -> PageParseResult {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse(&e))) {
         Ok(Some((doc, rev))) => Ok(Some((e, doc, rev))),

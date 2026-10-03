@@ -84,6 +84,9 @@ pub(crate) struct GraphState<P> {
     observed_mtimes: Arc<SharedMap<String, std::time::SystemTime>>,
     failures: Vec<String>,
     disk_revs: Vec<(PathBuf, String)>,
+    /// The cached pages whose bytes carried a VCS anchor line (sorted; empty
+    /// for a graph with no conflict markers): see `Graph::vcs_anchored`.
+    vcs_anchored: Vec<PathBuf>,
     list: EntryListParts,
     explicit_index: SnapshotExplicitIndex,
     reference_candidate_index: SnapshotReferenceCandidateIndex,
@@ -103,6 +106,7 @@ impl<P> GraphState<P> {
             observed_mtimes: self.observed_mtimes,
             failures: self.failures,
             disk_revs: self.disk_revs,
+            vcs_anchored: self.vcs_anchored,
             list: self.list,
             explicit_index: self.explicit_index,
             reference_candidate_index: self.reference_candidate_index,
@@ -219,12 +223,16 @@ impl Graph {
             .map(|(path, rev)| (path.clone(), rev.clone()))
             .collect();
         disk_revs.sort();
+        let mut vcs_anchored: Vec<PathBuf> =
+            self.vcs_anchored.read().unwrap().iter().cloned().collect();
+        vcs_anchored.sort();
         Ok(GraphState {
             pages: PagesOut(Arc::clone(pages)),
             cache_generation: read.cache_generation,
             observed_mtimes: Arc::clone(&read.observed_mtimes),
             failures: self.page_index_failures.read().unwrap().clone(),
             disk_revs,
+            vcs_anchored,
             list: read.list.to_parts(),
             explicit_index: read.explicit_index.clone(),
             reference_candidate_index: read.reference_candidate_index.read().unwrap().clone(),
@@ -290,6 +298,7 @@ impl Graph {
         *self.unreadable_pages.write().unwrap() = Arc::new(Vec::new());
         *self.cache_index.write().unwrap() = Some(index);
         *self.disk_revs.write().unwrap() = state.disk_revs.into_iter().collect();
+        *self.vcs_anchored.write().unwrap() = state.vcs_anchored.into_iter().collect();
         // The loaded generation keeps its number, so the evaluator, the
         // reference index and the generation-keyed listing agree with it.
         self.cache_gen

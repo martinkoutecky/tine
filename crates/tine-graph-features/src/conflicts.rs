@@ -837,8 +837,11 @@ fn journal_objects(store: &Store) -> io::Result<Vec<ConflictObject>> {
 /// The marker listing entry for one page or journal file, or `None` when it
 /// is not a graph page, is a sync copy, is unreadable, or carries no column-0
 /// VCS marker. Such files stay real, readable pages; the store refuses to save
-/// them (R-VCS-MARKERS). Read failures are errors, never absence. Cost: one bounded read, O(file bytes); a byte prefilter
-/// skips the UTF-8 check and line scan for files without an anchor marker.
+/// them (R-VCS-MARKERS). Read failures are errors, never absence. Cost: O(1)
+/// for a page the store has observed without an anchor line
+/// (`Store::vcs_anchor_state`, no read); otherwise one bounded read, O(file
+/// bytes), where a byte prefilter skips the UTF-8 check and line scan for files
+/// without an anchor marker.
 fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConflict>> {
     let Some((kind, stem, name)) = graph_text_title(store, file) else {
         return Ok(None);
@@ -846,12 +849,18 @@ fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConf
     if sync_conflict_base(&stem).is_some() {
         return Ok(None);
     }
+    // A page the store has observed with no anchor line cannot be marker-
+    // bearing: no read. (Cached pages are readable, within the parse limit and
+    // valid UTF-8, so the read below could not have failed for them either.)
+    if store.vcs_anchor_state(file) == Some(false) {
+        return Ok(None);
+    }
     let (bytes, _) = match store.read(file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
         Ok(value) => value,
         Err(tine_store::StoreError::NotFound) => return Ok(None),
         Err(error) => return Err(crate::store_error(error)),
     };
-    if !has_anchor(&bytes) {
+    if !tine_core::concord_queue::has_vcs_anchor(&bytes) {
         return Ok(None);
     }
     let text = std::str::from_utf8(&bytes)
@@ -865,7 +874,9 @@ fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConf
     }))
 }
 
-/// Marker-bearing pages. Failed or partial scans propagate; cost O(graph bytes).
+/// Marker-bearing pages. Failed or partial scans propagate. Cost: O(pages)
+/// store lookups plus one read per page that is uncached or may carry an
+/// anchor line (none in an unmarked graph; was O(graph bytes), GH #623).
 fn list_vcs_marker_pages(store: &Store) -> io::Result<Vec<VcsMarkerConflict>> {
     let mut out = Vec::new();
     for area in [Area::Journals, Area::Pages] {
@@ -875,14 +886,6 @@ fn list_vcs_marker_pages(store: &Store) -> io::Result<Vec<VcsMarkerConflict>> {
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(out)
-}
-
-/// Whether `bytes` contain a column-0 anchor marker line (`<<<<<<< ` or
-/// `>>>>>>> `); the exact rules live in `vcs_conflict_markers`.
-fn has_anchor(bytes: &[u8]) -> bool {
-    bytes
-        .split(|&b| b == b'\n')
-        .any(|line| line.starts_with(b"<<<<<<< ") || line.starts_with(b">>>>>>> "))
 }
 
 /// The queue object for one listed copy; `None` for a stray whose winner is

@@ -39,7 +39,7 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// Bump whenever anything a checkpoint holds changes meaning or shape: a
 /// serialized type, the parser's output, an index's semantics.
 /// `checkpoint_tests::the_golden_body_is_pinned_to_format` fails on any such change.
-pub(crate) const FORMAT: u32 = 5;
+pub(crate) const FORMAT: u32 = 6;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.7";

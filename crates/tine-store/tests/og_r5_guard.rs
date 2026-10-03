@@ -13,7 +13,7 @@ fn save_publication_reuses_only_verified_prepared_bytes() {
         .next()
         .unwrap();
     assert!(
-        publish.contains("self.cache_upsert(entry, saved.clone(), content_rev(content))"),
+        publish.contains("self.cache_upsert(entry, saved.clone(), DiskObs::of(content))"),
         "I-15: publish the checked serialization parse; exemplar model.rs transaction_publish_page"
     );
     assert!(!publish.contains("parse_doc("),
