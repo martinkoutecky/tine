@@ -679,8 +679,28 @@ mod query_guide_tests {
             "{:?}",
             result.report().ignored
         );
-        assert!(workflow.markdown.contains("never fewer"));
-        assert!(workflow.markdown.contains("is left out whole"));
+        // Audit #1: a part Tine cannot read refuses the whole query (the old
+        // "never fewer / left out whole" partial-run rule is retired).
+        assert!(workflow.markdown.contains("refuses the whole query"));
+        assert!(!workflow.markdown.contains("is left out whole"));
+    }
+
+    /// OG parity audit #8/#8a/#9: what a simple query returns and how a legacy
+    /// table is laid out are stated where users read them.
+    #[test]
+    fn query_result_shape_is_documented() {
+        let queries = include_str!("templates/queries.md");
+        for control in [
+            "`(namespace Project)` — blocks on the pages directly under a namespace",
+            "journal days newest first, then the other pages by name",
+            "`query-properties:: [:block :page :status]`",
+            "`query-sort-desc:: false`",
+        ] {
+            assert!(
+                queries.contains(control),
+                "missing query Guide control: {control}"
+            );
+        }
     }
 
     #[test]

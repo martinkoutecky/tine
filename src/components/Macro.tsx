@@ -14,6 +14,7 @@ import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
 import { editEdnTitle, readEdnOptions } from "../editor/edn";
+import { columnKey, compareCells, hostColumns, hostSort, type TableSort } from "./legacyQueryTable";
 import { queryMacroExtent, queryMacroExtents, type MacroExtent } from "../editor/queryMacro";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import {
@@ -94,6 +95,8 @@ interface Row {
   path?: string;
   text: string;
   props: Record<string, string>;
+  /** `props` under OG's normalised column key (`columnKey`), first spelling wins. */
+  byKey: Record<string, string>;
 }
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -696,38 +699,53 @@ export function QueryMacro(props: {
       : `${group.kind}\0${group.page}\0${group.path ?? ""}`;
   const groupedQueryByKey = createMemo(() => new Map(groups().map((group) => [queryGroupKey(group, false), group] as const)));
   const flatQueryByKey = createMemo(() => new Map(groups().map((group) => [queryGroupKey(group, true), group] as const)));
-  const [sortCol, setSortCol] = createSignal<string>("");
-  const [sortDir, setSortDir] = createSignal(1);
+  // The legacy table's columns and initial sort come from the HOST block's own
+  // properties, like OG's query_table.cljs (audit #9); a header click then
+  // overrides them for this view, as OG's click does (it also persists the
+  // choice on the block; Tine keeps the click local and never rewrites the file).
+  const hostSortState = createMemo(() =>
+    props.blockId
+      ? hostSort(blockProperty(props.blockId, "query-sort-by"), blockProperty(props.blockId, "query-sort-desc"))
+      : null);
+  const [sortOverride, setSortOverride] = createSignal<TableSort | null>(null);
+  const sortState = (): TableSort | null => sortOverride() ?? hostSortState();
   const rows = createMemo<Row[]>(() =>
     !legacyTable() || collapsed() ? [] : groups().flatMap((g) =>
       g.blocks.map((b) => {
         const props: Record<string, string> = {};
-        for (const [k, val] of b.properties ?? []) props[k] = val;
-        return { page: g.page, kind: g.kind, path: g.path, text: visibleBody(b.raw).join(" "), props };
+        const byKey: Record<string, string> = {};
+        for (const [k, val] of b.properties ?? []) {
+          props[k] = val;
+          byKey[columnKey(k)] ??= val;
+        }
+        return { page: g.page, kind: g.kind, path: g.path, text: visibleBody(b.raw).join(" "), props, byKey };
       })
     )
   );
+  const hostCols = createMemo(() =>
+    props.blockId ? hostColumns(blockProperty(props.blockId, "query-properties")) : null);
+  /** Column ids in display order: `block`, `page`, then property keys. */
   const cols = createMemo(() => {
+    const named = hostCols();
+    if (named) return named;
     const keys = new Set<string>();
     for (const r of rows()) for (const k of Object.keys(r.props)) keys.add(k);
-    return Array.from(keys);
+    return ["block", "page", ...keys];
   });
+  const cell = (r: Row, c: string): string => (c === "block" ? r.text : c === "page" ? r.page : r.byKey[columnKey(c)] ?? r.props[c] ?? "");
   const sorted = createMemo(() => {
-    const c = sortCol();
-    if (!c) return rows();
-    const val = (r: Row) => (c === "page" ? r.page : c === "content" ? r.text : r.props[c] ?? "");
-    return [...rows()].sort((a, b) => val(a).localeCompare(val(b)) * sortDir());
+    const s = sortState();
+    if (!s) return rows();
+    const key = (r: Row) => cell(r, s.column);
+    return [...rows()].sort((a, b) => (s.desc ? compareCells(key(b), key(a)) : compareCells(key(a), key(b))));
   });
   const sortBy = (c: string) => {
-    if (sortCol() === c) setSortDir(-sortDir());
-    else {
-      setSortCol(c);
-      setSortDir(1);
-    }
+    const cur = sortState();
+    setSortOverride({ column: columnKey(c), desc: !(cur?.desc ?? true) });
   };
   // Clicks on query controls must not bubble to the block's onClick.
   const stop = (e: MouseEvent) => e.stopPropagation();
-  const arrow = (c: string) => (sortCol() === c ? (sortDir() > 0 ? " ▲" : " ▼") : "");
+  const arrow = (c: string) => (sortState()?.column === columnKey(c) ? (sortState()!.desc ? " ▼" : " ▲") : "");
 
   const hidden = () =>
     props.hideWhenEmpty && !isAdvanced() && !!displayed() && total() === 0 && blockingDiagnostics().length === 0;
@@ -1076,10 +1094,12 @@ export function QueryMacro(props: {
                       <table class="md-table query-table">
                         <thead>
                           <tr onClick={stop}>
-                            <th onClick={() => sortBy("content")}>Content{arrow("content")}</th>
-                            <th onClick={() => sortBy("page")}>Page{arrow("page")}</th>
                             <For each={cols()}>
-                              {(c) => <th onClick={() => sortBy(c)}>{c}{arrow(c)}</th>}
+                              {(c) => (
+                                <th onClick={() => sortBy(c)}>
+                                  {c === "block" ? "Content" : c === "page" ? "Page" : c}{arrow(c)}
+                                </th>
+                              )}
                             </For>
                           </tr>
                         </thead>
@@ -1087,35 +1107,44 @@ export function QueryMacro(props: {
                           <For each={sorted()}>
                             {(r) => (
                               <tr>
-                                <td>
-                                  <InlineText text={r.text} format={formatForPage(r.page)} />
-                                </td>
-                                <td
-                                  class="qt-page"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const target = { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) };
-                                    const dest = internalLinkDest(e);
-                                    if (dest === "sidebar") openPageInSidebar(target);
-                                    else if (dest === "background") openPageTargetInNewTab(target);
-                                    else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target });
-                                    else openPageTarget(target);
-                                  }}
-                                  onMouseDown={internalLinkMouseDown}
-                                  onAuxClick={(e) => {
-                                    e.stopPropagation();
-                                    internalLinkAuxClick(e, () => openPageTargetInNewTab({ name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) }));
-                                  }}
-                                  onContextMenu={(e) => {
-                                    if (!shouldOpenTextContextMenu(e.target)) return;
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    openPageContextMenu(e.clientX, e.clientY, { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
-                                  }}
-                                >
-                                  {r.page}
-                                </td>
-                                <For each={cols()}>{(c) => <td>{r.props[c] ?? ""}</td>}</For>
+                                <For each={cols()}>
+                                  {(c) => (
+                                    <Switch fallback={<td>{cell(r, c)}</td>}>
+                                      <Match when={c === "block"}>
+                                        <td>
+                                          <InlineText text={r.text} format={formatForPage(r.page)} />
+                                        </td>
+                                      </Match>
+                                      <Match when={c === "page"}>
+                                        <td
+                                          class="qt-page"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            const target = { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) };
+                                            const dest = internalLinkDest(e);
+                                            if (dest === "sidebar") openPageInSidebar(target);
+                                            else if (dest === "background") openPageTargetInNewTab(target);
+                                            else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target });
+                                            else openPageTarget(target);
+                                          }}
+                                          onMouseDown={internalLinkMouseDown}
+                                          onAuxClick={(e) => {
+                                            e.stopPropagation();
+                                            internalLinkAuxClick(e, () => openPageTargetInNewTab({ name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) }));
+                                          }}
+                                          onContextMenu={(e) => {
+                                            if (!shouldOpenTextContextMenu(e.target)) return;
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            openPageContextMenu(e.clientX, e.clientY, { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
+                                          }}
+                                        >
+                                          {r.page}
+                                        </td>
+                                      </Match>
+                                    </Switch>
+                                  )}
+                                </For>
                               </tr>
                             )}
                           </For>
