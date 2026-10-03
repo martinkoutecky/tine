@@ -303,14 +303,41 @@ pub(crate) fn approve_external_assets(
     remember_external_assets_approval(&app, &root, &live)
 }
 
+/// Open (or focus) the graph at `path` for the calling window. Runs on the
+/// blocking pool (I-13, master abf7af831884): a synchronous command runs on
+/// the UI thread, and an in-place switch tears the displaced graph's Store
+/// down (~200 ms for a Ready graph on a copy of the anonymized graph) besides
+/// opening the new one. If the window closed while the open ran, the binding
+/// this open created is released again and the open reports an error.
 #[tauri::command]
-pub(crate) fn load_graph(
+pub(crate) async fn load_graph(
     path: String,
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
 ) -> Result<LoadGraphResult, String> {
-    let result = load_graph_for_label(path, &app, window.label(), &state)?;
+    let label = window.label().to_string();
+    drop(window);
+    let worker_app = app.clone();
+    let worker_label = label.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app.state::<AppState>();
+        load_graph_for_label(path, &worker_app, &worker_label, &state)
+    })
+    .await
+    .map_err(|error| format!("graph-open worker failed: {error}"))??;
+    if app.get_webview_window(&label).is_none() {
+        if let Some(binding_generation) = result.binding_generation() {
+            let state = app.state::<AppState>();
+            let released = state
+                .graphs
+                .write()
+                .unwrap()
+                .release_binding(&label, binding_generation);
+            // Closed (and its ~200 ms Store teardown) outside the lock.
+            drop(released);
+        }
+        return Err("graph window closed while the graph was opening".into());
+    }
     #[cfg(desktop)]
     if let LoadGraphResult::Loaded {
         binding_generation, ..
@@ -319,7 +346,7 @@ pub(crate) fn load_graph(
         binding_generation, ..
     } = &result
     {
-        crate::complete_pending_capture_show(&app, window.label().to_string(), *binding_generation);
+        crate::complete_pending_capture_show(&app, label.clone(), *binding_generation);
     }
     Ok(result)
 }
@@ -375,11 +402,14 @@ pub(crate) fn load_graph_for_label(
     }?;
     let slot = Arc::new(GraphSlot::new(store, root_key));
     let warm_generation = begin_warm_cache(&slot);
-    state
+    let displaced = state
         .graphs
         .write()
         .unwrap()
         .bind(window_label.to_string(), slot.clone())?;
+    // The replaced graph's Store closes here, after the registry lock is
+    // released, so other graph commands do not wait on its teardown.
+    drop(displaced);
     state.note_focused(window_label);
     crate::concord_ledger::attach(app.path().app_data_dir().ok(), &slot);
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
@@ -417,7 +447,14 @@ pub(crate) async fn open_graph_window(
     {
         let id = state.next_window.fetch_add(1, Ordering::Relaxed);
         let label = format!("graph-{id}");
-        let result = load_graph_for_label(path, &app, &label, &state)?;
+        let worker_app = app.clone();
+        let worker_label = label.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let state = worker_app.state::<AppState>();
+            load_graph_for_label(path, &worker_app, &worker_label, &state)
+        })
+        .await
+        .map_err(|error| format!("graph-open worker failed: {error}"))??;
         if let LoadGraphResult::Loaded { ref meta, .. } = result {
             let name = Path::new(&meta.root)
                 .file_name()
@@ -500,6 +537,22 @@ pub(crate) enum LoadGraphResult {
     FocusedExisting {
         window_label: String,
     },
+}
+
+impl LoadGraphResult {
+    /// The binding this result created or found in the calling window; a
+    /// focus hand-off to another window binds nothing here.
+    fn binding_generation(&self) -> Option<u64> {
+        match self {
+            Self::Loaded {
+                binding_generation, ..
+            }
+            | Self::AlreadyCurrent {
+                binding_generation, ..
+            } => Some(*binding_generation),
+            Self::FocusedExisting { .. } => None,
+        }
+    }
 }
 
 /// Create a brand-new demo graph (the onboarding "Create a new graph" path) and

@@ -172,7 +172,14 @@ impl GraphRegistry {
         self.by_window.len()
     }
 
-    pub(crate) fn bind(&mut self, window: WindowKey, slot: Arc<GraphSlot>) -> Result<(), String> {
+    /// Bind `slot` to `window`. A replaced binding is revoked and returned,
+    /// so the caller drops it after releasing the registry lock: closing a
+    /// Ready Store takes ~200 ms (master abf7af831884).
+    pub(crate) fn bind(
+        &mut self,
+        window: WindowKey,
+        slot: Arc<GraphSlot>,
+    ) -> Result<Option<Arc<GraphSlot>>, String> {
         for (root, owner) in &self.by_root {
             if owner != &window
                 && (root.starts_with(&slot.root_key) || slot.root_key.starts_with(root))
@@ -184,7 +191,8 @@ impl GraphRegistry {
                 ));
             }
         }
-        if let Some(old) = self.by_window.insert(window.clone(), slot.clone()) {
+        let displaced = self.by_window.insert(window.clone(), slot.clone());
+        if let Some(old) = &displaced {
             // A graph switch revokes the old binding. Same-root scans keep the
             // slot and never pass through the registry.
             if old.binding_generation != slot.binding_generation || old.root_key != slot.root_key {
@@ -193,7 +201,27 @@ impl GraphRegistry {
             self.by_root.remove(&old.root_key);
         }
         self.by_root.insert(slot.root_key.clone(), window);
-        Ok(())
+        Ok(displaced)
+    }
+
+    /// Release `window`'s binding only if it is still the one an open with
+    /// `binding_generation` created: the window closed while that open ran
+    /// off the UI thread, after `WindowEvent::Destroyed` had already cleaned
+    /// up (master abf7af831884). A later open's binding is left alone.
+    pub(crate) fn release_binding(
+        &mut self,
+        window: &str,
+        binding_generation: u64,
+    ) -> Option<Arc<GraphSlot>> {
+        let owns = self
+            .by_window
+            .get(window)
+            .is_some_and(|slot| slot.binding_generation == binding_generation);
+        if owns {
+            self.remove(window)
+        } else {
+            None
+        }
     }
 
     pub(crate) fn remove(&mut self, window: &str) -> Option<Arc<GraphSlot>> {
@@ -567,6 +595,42 @@ mod tests {
             .load(std::sync::atomic::Ordering::Acquire));
         assert!(registry.owner(&b).is_none());
         assert_eq!(registry.len(), 0);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn a_graph_switch_hands_the_displaced_slot_back_to_drop_outside_the_lock() {
+        // Closing a Ready store takes ~200 ms (measured on a copy of the
+        // anonymized graph); dropping it inside `bind` held the registry write
+        // lock, and every graph command, for that long (master abf7af831884).
+        let base = std::env::temp_dir().join(format!("tine-registry-displaced-{}", std::process::id()));
+        let a = base.join("a");
+        let b = base.join("b");
+        let mut registry = GraphRegistry::default();
+        let old = graph(&a);
+        assert!(registry.bind("main".into(), old.clone()).unwrap().is_none());
+        let displaced = registry.bind("main".into(), graph(&b)).unwrap();
+        assert!(displaced.is_some_and(|slot| Arc::ptr_eq(&slot, &old)));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn a_window_closed_during_an_open_releases_only_that_opens_binding() {
+        let base = std::env::temp_dir().join(format!("tine-registry-closed-{}", std::process::id()));
+        let a = base.join("a");
+        let mut registry = GraphRegistry::default();
+        let slot = graph(&a);
+        registry.bind("graph-3".into(), slot.clone()).unwrap();
+        assert!(registry
+            .release_binding("graph-3", slot.binding_generation + 1)
+            .is_none());
+        assert_eq!(registry.owner(&a).as_deref(), Some("graph-3"));
+        let released = registry.release_binding("graph-3", slot.binding_generation);
+        assert!(released.is_some_and(|released| Arc::ptr_eq(&released, &slot)));
+        assert!(registry.owner(&a).is_none());
+        assert!(slot
+            .background_cancelled
+            .load(std::sync::atomic::Ordering::Acquire));
         let _ = std::fs::remove_dir_all(base);
     }
 

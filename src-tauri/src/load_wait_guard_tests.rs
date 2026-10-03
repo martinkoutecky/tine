@@ -36,6 +36,10 @@ fn reaches_load_wait(body: &str) -> bool {
     [
         ".whole_graph(",
         ".scan_refresh(",
+        // Opens a Store, joins the startup-open worker, and tears the
+        // displaced graph's Store down (~200 ms for a Ready graph, measured on
+        // a copy of the anonymized graph; master abf7af831884).
+        "load_graph_for_label(",
         "capture_quick_switch_for(",
         "tine_graph_features::pages::delete_page_expected(",
         "tine_graph_features::pages::merge_pages(",
