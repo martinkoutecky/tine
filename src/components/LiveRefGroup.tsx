@@ -108,6 +108,38 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   const byId = createMemo(() => new Map(props.blocks.map((b) => [b.id, b] as const)));
   const evidenceById = createMemo(() => new Map((props.evidence ?? []).map((item) => [item.block_id, item])));
   const dtoById = (id: string) => byId().get(id);
+  // OG groups a page's matches by `:block/parent` and renders ONE breadcrumb per
+  // parent group (block.cljs custom-query-results: `(group-by :block/parent ..)` +
+  // `breadcrumb-with-container`), with the page's own top-level blocks first.
+  // A hydrated page names the parent exactly; before hydration the DTO breadcrumb
+  // is the best available key (equal labels, same parent in practice).
+  const parentKey = (id: string): string => {
+    if (ready() && docNode(id)) return `p:${docNode(id).parent ?? ""}`;
+    return `c:${(dtoById(id)?.breadcrumb ?? []).join("\u0001")}`;
+  };
+  const grouping = createMemo(() => {
+    const ids = props.blocks.map((b) => b.id);
+    if (!props.showBreadcrumb) return { ids, starts: new Set<string>(ids) };
+    const groups = new Map<string, string[]>();
+    for (const id of ids) {
+      const key = parentKey(id);
+      const list = groups.get(key);
+      if (list) list.push(id);
+      else groups.set(key, [id]);
+    }
+    // Hydrated top-level blocks have a null parent (`p:`); DTO ones an empty crumb.
+    const isTop = (key: string, l: string[]) =>
+      key === "p:" || (key.startsWith("c:") && (dtoById(l[0])?.breadcrumb ?? []).length === 0);
+    const entries = [...groups.entries()];
+    const ordered = [
+      ...entries.filter(([k, l]) => isTop(k, l)),
+      ...entries.filter(([k, l]) => !isTop(k, l)),
+    ].map(([, l]) => l);
+    return { ids: ordered.flat(), starts: new Set(ordered.map((l) => l[0])) };
+  });
+  const groupedIds = () => grouping().ids;
+  /** True when `id` starts a parent group, i.e. its breadcrumb is not a repeat. */
+  const startsParentGroup = (id: string): boolean => grouping().starts.has(id);
   const liveBreadcrumb = (id: string): string[] | null => {
     if (!ready() || !docNode(id)) return null;
 
@@ -267,12 +299,12 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
             view and hides the caret). `roots` tracks result membership reactively;
             navOnly keeps structural mutations (merges/indents/moves) on page order. */}
         <OutlineScopeContext.Provider value={{
-          get roots() { return props.blocks.map((b) => b.id); },
+          get roots() { return groupedIds(); },
           collapsed: (id, stored) => collapseSurface.collapsed(id, stored),
           navOnly: true,
         }}>
         <LinkDepthContext.Provider value={linkDepth + 1}>
-        <For each={props.blocks.map((b) => b.id)}>
+        <For each={groupedIds()}>
           {(id) => {
             const crumb = () => {
               const all = liveBreadcrumb(id) ?? dtoById(id)?.breadcrumb ?? [];
@@ -281,7 +313,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
             };
             return (
               <>
-                <Show when={props.showBreadcrumb && crumb().length > 0}>
+                <Show when={props.showBreadcrumb && crumb().length > 0 && startsParentGroup(id)}>
                   <div class="ref-breadcrumb">
                     <For each={crumb()}>
                       {(c, i) => (

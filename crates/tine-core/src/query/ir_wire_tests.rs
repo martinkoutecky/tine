@@ -97,6 +97,7 @@ fn every_filter_variant() -> Filter {
                 Filter::attr(Attr::Name, CmpOp::StartsWith, Value::text("proj/")),
                 Filter::attr(Attr::Namespace, CmpOp::NotEq, Value::text("archive")),
                 Filter::attr(Attr::Journal, CmpOp::Eq, Value::Bool { value: true }),
+                Filter::attr(Attr::UsedAsTag, CmpOp::Eq, Value::Bool { value: true }),
                 Filter::attr(Attr::Day, CmpOp::Ge, Value::date("2026-01-01")),
             ]),
         ),
@@ -129,6 +130,20 @@ fn every_filter_variant() -> Filter {
             Rel::Blocks,
             Quant::Every,
             Filter::attr(Attr::Content, CmpOp::Eq, Value::text("x")),
+        ),
+        Filter::attr(
+            Attr::CreatedAt,
+            CmpOp::Between,
+            Value::List {
+                items: vec![Value::date("-7d"), Value::date("now")],
+            },
+        ),
+        Filter::attr(
+            Attr::LastModifiedAt,
+            CmpOp::Between,
+            Value::List {
+                items: vec![Value::date("-7d"), Value::date("now")],
+            },
         ),
         Filter::Raw {
             text: "(frobnicate x)".to_string(),

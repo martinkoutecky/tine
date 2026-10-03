@@ -6,6 +6,8 @@
 //! - the plan selects P in its old or new document (evaluated with the
 //!   answer's own registry snapshot), or
 //! - the plan read the property registry and P's registry rows moved, or
+//! - the plan read the graph's tag targets (`used_as_tag`) and P's `tags::`
+//!   moved (the one graph-wide read; every other leaf is page-local), or
 //! - the day rolled over, or the query configuration changed.
 //!
 //! Per-page evaluation is page-local (refs, tags, properties, task attributes,
@@ -230,6 +232,7 @@ impl QueryMemo {
                 };
                 !(cached.contains(entry)
                     || rows_moved && plan.registry().is_some()
+                    || plan.reads_tag_targets() && old_facts.tags() != new_facts.tags()
                     || plan.touches(entry, before, &old_facts, parse_config)
                     || plan.touches(entry, after, &new_facts, parse_config))
             });
@@ -322,6 +325,7 @@ mod tests {
             false,
             false,
             || Arc::new(tine_core::query::registry::Registry::empty(&config)),
+            || unreachable!(),
         ));
         let answer = memo.answer("regex".into(), JournalDate::today(), &config, || {
             (groups(9), Some(plan))
@@ -409,6 +413,7 @@ mod tests {
             JournalDate::today(),
             false,
             false,
+            || unreachable!(),
             || unreachable!(),
         ));
         for i in 0..8 {

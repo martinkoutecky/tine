@@ -225,6 +225,9 @@ fn answers(store: &Store) -> Vec<String> {
         "[[A]]",
         "(page-property alias Bee)",
         "(priority A)",
+        // Reads the graph-wide tag-target set (the plan's persisted
+        // `tag_targets`, invalidated by any page's `tags::` move).
+        "(all-page-tags)",
     ] {
         let groups =
             graph.run_query_bounded(query, RESULT_BRIDGE_MAX_ROWS, RESULT_BRIDGE_MAX_BYTES);
@@ -239,6 +242,15 @@ fn answers(store: &Store) -> Vec<String> {
 #[test]
 fn a_warm_checkpoint_loads_warm_and_answers_as_a_fresh_build() {
     let root = graph();
+    // Tag pages, so `(all-page-tags)` has rows: B tags t0 now, t9 after the
+    // closed edit below.
+    for (rel, text) in [
+        ("pages/t0.md", "- tagged zero\n"),
+        ("pages/t9.md", "- tagged nine\n"),
+    ] {
+        fs::write(root.path().join(rel), text).unwrap();
+        set_mtime(&root.path().join(rel), old());
+    }
     let dir = tempfile::tempdir().unwrap();
     let cp = dir.path().join("graph.bin");
     let written = open_cp(root.path(), &cp);
@@ -274,10 +286,10 @@ fn a_warm_checkpoint_loads_warm_and_answers_as_a_fresh_build() {
     fresh.close();
     loaded.close();
 
-    // Closed edit: B stops linking A, C gains a TODO.
+    // Closed edit: B stops linking A and moves its tag, C gains a TODO.
     fs::write(
         root.path().join("pages/B.md"),
-        "alias:: Bee\ntags:: t0\n\n- DONE see nothing #t1\n  - child ((x))\n",
+        "alias:: Bee\ntags:: t9\n\n- DONE see nothing #t1\n  - child ((x))\n",
     )
     .unwrap();
     fs::write(
@@ -293,6 +305,10 @@ fn a_warm_checkpoint_loads_warm_and_answers_as_a_fresh_build() {
     assert_eq!(load_outcome(&reloaded), "loaded");
     let fresh = Store::open(root.path(), Default::default()).unwrap().0;
     assert_ne!(edited, warm_answers, "the closed edit changes the answers");
+    assert!(
+        edited.contains(&"q:(all-page-tags) => t9:tagged nine".to_owned()),
+        "a loaded memo that reads tag targets is invalidated by a closed tags move: {edited:#?}"
+    );
     assert_eq!(edited, answers(&fresh));
 }
 
@@ -770,13 +786,13 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (6, GOLDEN),
+        (7, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }
 
 #[cfg(unix)]
-const GOLDEN: &str = "a951b951a1be78382c3772fff31adf79bb82ff6d4c5723b703e84cbbf560c8b3";
+const GOLDEN: &str = "ee076cf52892c56bad8900ed2288a8a157e7457d22964ec3ffb89d810c322ea3";
 
 /// GH #623 (FORMAT 6): which cached pages carried a VCS anchor line travels
 /// in the checkpoint, so a warm launch answers the conflict inventory with no

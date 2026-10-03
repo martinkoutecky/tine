@@ -1686,6 +1686,13 @@ pub(crate) fn document_block_ref_counts(doc: &Document) -> HashMap<String, usize
         }
     }
     let mut counts = std::collections::HashMap::new();
+    // OG parity (#7): the header pre-block is a block with `:block/refs`, so a
+    // `((uuid))` in a page property is one referrer of that block.
+    if let Some(pre) = crate::query::document_page_property_block(doc) {
+        for id in pre.projection().block_refs() {
+            *counts.entry(id.clone()).or_insert(0) += 1;
+        }
+    }
     walk(&doc.roots, &mut counts);
     counts
 }
@@ -9428,17 +9435,19 @@ mod tests {
         assert_eq!(count("[:find (pull ?b [*]) :where (deadline ?b)]"), 1);
         // (journal) restricts to blocks on journal pages.
         assert_eq!(count("[:find (pull ?b [*]) :where (journal ?b)]"), 2);
-        // (page "Name") pins to one page.
-        assert_eq!(count(r#"[:find (pull ?b [*]) :where (page ?b "Proj")]"#), 1);
+        // (page "Name") pins to one page: its header property block (OG's
+        // `:block/pre-block?` block, GH #617) and the one bullet, so 2 blocks.
+        assert_eq!(count(r#"[:find (pull ?b [*]) :where (page ?b "Proj")]"#), 2);
         // (namespace "Proj") matches pages under the namespace.
         assert_eq!(
             count(r#"[:find (pull ?b [*]) :where (namespace ?b "Proj")]"#),
             1
         );
-        // (page-tags "work") matches the tags:: page-property.
+        // (page-tags "work") matches the tags:: page-property: every block of
+        // the tagged page, header property block included (GH #617).
         assert_eq!(
             count(r#"[:find (pull ?b [*]) :where (page-tags ?b "work")]"#),
-            1
+            2
         );
         // (between scheduled …) is now field-aware, not hardwired to journal-day.
         assert_eq!(
