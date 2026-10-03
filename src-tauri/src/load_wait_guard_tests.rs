@@ -115,7 +115,6 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         "trash_sync_conflict",
         "trash_journal_file",
         "read_journal_file",
-        "get_page_by_path",
         "save_asset",
         "read_highlights",
         "write_pdf_view_state",
@@ -142,6 +141,7 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         "open_pdf",
         "write_highlights",
         "open_page_file",
+        "get_page_by_path",
     ] {
         assert!(
             listed

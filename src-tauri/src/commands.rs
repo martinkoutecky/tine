@@ -2136,18 +2136,22 @@ pub(crate) fn read_journal_file(name: String, state: GraphContext<'_>) -> Result
 
 /// Load a page from a SPECIFIC file by its graph-root-relative path — lets the UI
 /// navigate to a duplicate-day stray that shares a (kind,name) with the canonical
-/// file and so is unreachable by name (#21).
+/// file and so is unreachable by name (#21). External-change reloads use it
+/// too. A read waits for the store writer (a watcher cycle, a save), so it
+/// runs on the blocking pool, never on the main thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn get_page_by_path(
+pub(crate) async fn get_page_by_path(
     path: String,
     state: GraphContext<'_>,
 ) -> Result<Option<PageWire>, String> {
     let slot = slot_for_context(&state)?;
-    match slot.store.page(&PageId::from(path)) {
+    tauri::async_runtime::spawn_blocking(move || match slot.store.page(&PageId::from(path)) {
         Ok(read) => Ok(Some(page_dto(read))),
         Err(StoreError::NotFound | StoreError::InvalidTarget(_)) => Ok(None),
         Err(error) => Err(store_error(error)),
-    }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Reconcile a duplicate-day pair: append the blocks of `src` to `dst`, then trash
