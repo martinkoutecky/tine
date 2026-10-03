@@ -5,7 +5,9 @@
 //! current run plus build/platform facts, as reviewable JSON the user may copy.
 //! **Operations accepted.** `record_*` (Rust callers) and the
 //! `diagnostic_ipc_event` / `diagnostic_frontend_event` commands append one
-//! event; `clear_diagnostics` drops every event.
+//! event; `diagnostic_timing_event` / [`record_timing`] count one duration of a
+//! closed set of named timings into a fixed-size histogram (the report's
+//! `latency` section); `clear_diagnostics` drops every event and histogram.
 //!
 //! **Privacy boundary (I-5).** An event carries a fixed event name, catalogued
 //! command names, closed-vocabulary tokens, counts, booleans and durations —
@@ -29,7 +31,7 @@
 //! recorder is empty, full or cleared.
 
 use serde_json::{json, Map, Value};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -94,6 +96,9 @@ static PERSISTED: OnceLock<Mutex<Persisted>> = OnceLock::new();
 static DIRTY: AtomicBool = AtomicBool::new(false);
 
 static FLIGHT: Mutex<FlightRing> = Mutex::new(FlightRing::new());
+/// One bounded latency histogram per timing name in [`TIMING_NAMES`].
+static TIMINGS: Mutex<BTreeMap<&'static str, tine_store::LatencyHist>> =
+    Mutex::new(BTreeMap::new());
 static START: OnceLock<std::time::Instant> = OnceLock::new();
 
 fn elapsed_ms() -> u64 {
@@ -385,7 +390,8 @@ pub(crate) fn record_watch_refused(refused: bool) {
 }
 
 /// Commands whose own timing would only describe the recorder.
-const SELF_COMMANDS: [&str; 8] = [
+const SELF_COMMANDS: [&str; 9] = [
+    "diagnostic_timing_event",
     "diagnostic_ipc_event",
     "diagnostic_frontend_event",
     "diagnostic_report",
@@ -413,6 +419,66 @@ pub(crate) fn diagnostic_ipc_event(command: String, phase: String, elapsed_ms: u
     fields.insert("phase".into(), json!(phase));
     fields.insert("elapsedMs".into(), json!(elapsed_ms));
     record_fixed_event("ipc.command", fields);
+}
+
+/// The closed set of timings the report keeps a histogram for (GH #623: the
+/// focus-return stall was invisible because only commands slower than 500 ms
+/// were recorded). `rescan.*` are measured by the backend, `focus.*` by the
+/// window around one focus rescan (IPC round trip, wait for the completion
+/// event, graph-change applications, whole refresh, and how long the "Refreshing
+/// changes from disk" notice was visible), and the rest are page-load commands
+/// reported by the frontend, each also kept separately for calls made within
+/// ten seconds after a window focus return (`.afterFocus`). The frontend
+/// mirror is `src/focusTiming.ts`; a test keeps the two lists equal. Names
+/// are source literals: nothing a user typed can become one (I-5).
+pub(crate) const TIMING_NAMES: [&str; 19] = [
+    "focus.apply",
+    "focus.banner",
+    "focus.ipc",
+    "focus.total",
+    "focus.wait",
+    "get_backlinks",
+    "get_backlinks.afterFocus",
+    "get_page",
+    "get_page.afterFocus",
+    "get_page_by_path",
+    "get_page_by_path.afterFocus",
+    "journal_feed_page",
+    "journal_feed_page.afterFocus",
+    "page_inventory",
+    "page_inventory.afterFocus",
+    "rescan.queue",
+    "rescan.scan",
+    "search",
+    "search.afterFocus",
+];
+
+/// Count one duration under a registered timing name; any other name is
+/// dropped. O(log n), bounded memory (one fixed-size histogram per name).
+pub(crate) fn record_timing(name: &str, elapsed: Duration) {
+    let Some(name) = TIMING_NAMES.iter().find(|known| **known == name) else {
+        return;
+    };
+    if let Ok(mut timings) = TIMINGS.lock() {
+        timings.entry(*name).or_default().record(elapsed);
+    }
+}
+
+/// Count one frontend-measured duration (`diagnostic_timing_event`). The name
+/// must be one of [`TIMING_NAMES`]; anything else is dropped unrecorded.
+#[tauri::command]
+pub(crate) fn diagnostic_timing_event(name: String, elapsed_ms: u64) {
+    record_timing(&name, Duration::from_millis(elapsed_ms));
+}
+
+fn timings_json() -> Value {
+    let timings = TIMINGS.lock().map(|t| t.clone()).unwrap_or_default();
+    Value::Object(
+        timings
+            .iter()
+            .map(|(name, hist)| ((*name).to_owned(), hist.to_json()))
+            .collect(),
+    )
 }
 
 const UPDATER_STAGES: [&str; 7] = [
@@ -597,6 +663,8 @@ fn build_diagnostic_report(
             "graphBindings": graph_bindings.unwrap_or(0),
         },
         "graphs": graphs,
+        // Fixed-size latency histograms of the closed TIMING_NAMES (GH #623).
+        "latency": timings_json(),
         "sessions": { "previous": previous, "current": events },
     });
     DiagnosticReport {
@@ -695,6 +763,9 @@ pub(crate) async fn save_diagnostic_report(
 pub(crate) fn clear_diagnostics() {
     if let Ok(mut ring) = FLIGHT.lock() {
         *ring = FlightRing::new();
+    }
+    if let Ok(mut timings) = TIMINGS.lock() {
+        timings.clear();
     }
     if let Some(Ok(mut persisted)) = PERSISTED.get().map(Mutex::lock) {
         persisted.previous.clear();
@@ -820,6 +891,71 @@ mod tests {
         assert_eq!(batch["reconcileMs"], 17);
         assert_eq!(batch["pages"], 3);
         assert_eq!(batch["conflictsChanged"], true);
+    }
+
+    fn timing_count(report: &Value, name: &str) -> u64 {
+        report["latency"][name]["count"].as_u64().unwrap_or(0)
+    }
+
+    fn latency_report() -> Value {
+        let report = build_diagnostic_report(Some(1), Vec::new(), String::new(), String::new());
+        serde_json::from_str(&report.text).unwrap()
+    }
+
+    /// GH #623: a page click after a focus return is visible as a number even
+    /// when it is far below the 500 ms slow-command threshold.
+    #[test]
+    fn a_report_carries_a_bounded_latency_histogram_per_registered_timing() {
+        let before = timing_count(&latency_report(), "get_page.afterFocus");
+        for ms in [3, 40, 3_100] {
+            diagnostic_timing_event("get_page.afterFocus".into(), ms);
+        }
+        for _ in 0..1_000 {
+            diagnostic_timing_event("get_page.afterFocus".into(), 1);
+        }
+        let report = latency_report();
+        let hist = &report["latency"]["get_page.afterFocus"];
+        assert_eq!(timing_count(&report, "get_page.afterFocus"), before + 1_003);
+        assert!(hist["maxMs"].as_f64().unwrap() >= 3_100.0);
+        assert!(
+            hist["lastMs"].as_array().unwrap().len() <= 8,
+            "the recent ring stays fixed-size whatever the traffic"
+        );
+    }
+
+    #[test]
+    fn an_unregistered_timing_name_is_dropped_and_names_no_user_text() {
+        diagnostic_timing_event("My secret page".into(), 5);
+        diagnostic_timing_event("/home/someone/graph".into(), 5);
+        let text = serde_json::to_string(&latency_report()["latency"]).unwrap();
+        assert!(!text.contains("secret") && !text.contains("someone"));
+        let latency = latency_report();
+        for name in latency["latency"].as_object().unwrap().keys() {
+            assert!(TIMING_NAMES.contains(&name.as_str()), "{name}");
+        }
+    }
+
+    /// The frontend names every command it times from its own list; the two
+    /// lists must stay equal, and a timed command must be a registered one.
+    #[test]
+    fn the_timing_names_equal_the_frontend_list() {
+        let frontend = include_str!("../../src/focusTiming.ts");
+        for name in TIMING_NAMES {
+            assert!(
+                frontend.contains(&format!("\"{name}\""))
+                    || name.ends_with(".afterFocus")
+                    || name.starts_with("rescan."),
+                "src/focusTiming.ts must list {name}"
+            );
+            if let Some(command) = name.strip_suffix(".afterFocus") {
+                assert!(
+                    crate::command_surface::is_known_command(command),
+                    "{command}"
+                );
+            } else if !name.starts_with("focus.") && !name.starts_with("rescan.") {
+                assert!(crate::command_surface::is_known_command(name), "{name}");
+            }
+        }
     }
 
     #[test]

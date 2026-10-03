@@ -88,3 +88,33 @@ it("puts a failed command's text in the opt-in debug log only when debug logging
   await expect(backend().startupGraphPath()).rejects.toThrow("missing-graph-binding");
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("debug_log", { line: "command startup_graph_path failed: Error: missing-graph-binding" }));
 });
+
+const timings = () => invoke.mock.calls.filter(([cmd]) => cmd === "diagnostic_timing_event").map(([, args]) => args);
+
+it("counts every page-load call as a number under its registered name, never an argument (GH #623)", async () => {
+  invoke.mockImplementation(() => Promise.resolve(null));
+  const backend = await tauriBackend();
+  await backend.startupGraphPath();
+  await backend.getPage("My secret page", "page");
+  await backend.getPage("another", "page");
+  expect(timings()).toEqual([
+    { name: "get_page", elapsedMs: expect.any(Number) },
+    { name: "get_page", elapsedMs: expect.any(Number) },
+  ]);
+  expect(JSON.stringify(timings())).not.toContain("secret");
+  // A command outside the closed list, and the timing channel itself, are not timed.
+  invoke.mockClear();
+  await backend.startupGraphPath();
+  await backend.diagnosticTimingEvent!("focus.total", 12);
+  expect(timings()).toEqual([{ name: "focus.total", elapsedMs: 12 }]);
+});
+
+it("counts a page load made right after a focus return apart as afterFocus", async () => {
+  invoke.mockImplementation(() => Promise.resolve(null));
+  const backend = await tauriBackend();
+  await backend.startupGraphPath();
+  const { noteFocusReturn } = await import("./focusTiming");
+  noteFocusReturn();
+  await backend.getPage("p", "page");
+  expect(timings().map((args) => (args as { name: string }).name)).toEqual(["get_page", "get_page.afterFocus"]);
+});

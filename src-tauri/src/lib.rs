@@ -989,6 +989,7 @@ pub fn run() {
             flight::diagnostic_ipc_event,
             flight::diagnostic_report,
             flight::diagnostic_session_active,
+            flight::diagnostic_timing_event,
             flight::save_diagnostic_report,
             tine_quit,
             close_graph_window,

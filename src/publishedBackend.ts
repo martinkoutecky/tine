@@ -621,6 +621,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     },
     async debugLog() {},
     async diagnosticFrontendEvent() {},
+    async diagnosticTimingEvent() {},
     async diagnosticSessionActive() {},
     async getAppBool(key: string, fallback: boolean) {
       return appBools.get(key) ?? fallback;
@@ -870,6 +871,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "debugInfo",
   "debugLog",
   "diagnosticFrontendEvent",
+  "diagnosticTimingEvent",
   "diagnosticSessionActive",
   "getAppBool",
   "setAppBool",

@@ -114,7 +114,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "openPdf", "writeHighlights", "writePdfViewState", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setCaptureEnterFiles", "setLinkFirstMatch", "setWatchMode", "restoreBackup",
   "saveSession", "saveWorkspaces", "storeDraft", "retireDraft", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
-  "debugLog", "diagnosticFrontendEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
+  "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
   "saveGraphVerificationReport",
 ]);
 // All remaining Backend methods are reads, resource subscriptions, dialogs,

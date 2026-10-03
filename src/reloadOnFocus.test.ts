@@ -58,6 +58,48 @@ describe("reload on focus", () => {
     expect(refreshingFromDisk()).toBe(false);
   });
 
+  it("records the phase split of a focus rescan as numbers only (GH #623)", async () => {
+    const events: Array<[string, number]> = [];
+    (backend() as Api).diagnosticTimingEvent = async (name, ms) => { events.push([name, ms]); };
+    try {
+      const refresh = refreshOnReturnToWindow(18_000);
+      await vi.waitFor(() => expect(rescans).toBe(1));
+      let applied!: () => void;
+      trackGraphChangeApplication(new Promise<void>((resolve) => { applied = resolve; }));
+      complete!(sequence);
+      applied();
+      await refresh;
+      expect(events.map(([name]) => name)).toEqual(["focus.ipc", "focus.wait", "focus.apply", "focus.total"]);
+      for (const [, ms] of events) expect(Number.isFinite(ms) && ms >= 0).toBe(true);
+    } finally { delete (backend() as Api).diagnosticTimingEvent; }
+  });
+
+  it("records how long the notice was visible, only when it showed", async () => {
+    const events: string[] = [];
+    (backend() as Api).diagnosticTimingEvent = async (name) => { events.push(name); };
+    try {
+      const refresh = refreshOnReturnToWindow(19_000);
+      await vi.waitFor(() => expect(rescans).toBe(1));
+      await vi.waitFor(() => expect(refreshingFromDisk()).toBe(true));
+      complete!(sequence);
+      await refresh;
+      expect(events).toContain("focus.banner");
+      expect(events.indexOf("focus.total")).toBeGreaterThanOrEqual(0);
+    } finally { delete (backend() as Api).diagnosticTimingEvent; }
+  });
+
+  it("does not record the focus phases for a Settings rebuild", async () => {
+    const events: string[] = [];
+    (backend() as Api).diagnosticTimingEvent = async (name) => { events.push(name); };
+    try {
+      const pending = rescanGraphNowFromSettings();
+      await vi.waitFor(() => expect(rescans).toBe(1));
+      complete!(sequence);
+      await pending;
+      expect(events.filter((name) => name !== "focus.banner")).toEqual([]);
+    } finally { delete (backend() as Api).diagnosticTimingEvent; }
+  });
+
   it("coalesces a focus during a rescan and throttles a quick second return", async () => {
     const first = refreshOnReturnToWindow(20_000);
     expect(refreshOnReturnToWindow(20_100)).toBe(first);
