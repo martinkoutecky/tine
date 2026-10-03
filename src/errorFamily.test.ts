@@ -8,3 +8,8 @@ it("recognizes fixed incomplete-transaction wire families with opaque recovery d
   expect(errorFamily("a rollback-incomplete operation happened")).toBe("unknown");
   expect(errorFamily("graph verification cancelled")).toBe("unknown");
 });
+
+it("recognizes the unreadable-owner creation refusal (R-CREATE-UNREADABLE-OWNER)", () => {
+  expect(errorFamily(new Error("unreadable-owner"))).toBe("unreadable-owner");
+  expect(errorFamily("an unreadable-owner happened")).toBe("unknown");
+});

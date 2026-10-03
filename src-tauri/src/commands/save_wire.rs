@@ -14,6 +14,11 @@ pub(crate) struct SavePagesFailure {
     undo_failed: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     publication_errors: Vec<String>,
+    /// For the `unreadable-owner` family: the graph-relative file Tine cannot
+    /// read that could already be the page, so the user can repair it. A
+    /// recovery location, like `publication_errors`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unreadable_owner: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     operation: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -68,6 +73,10 @@ pub(super) fn save_pages_outcome_to_wire(outcome: SavePagesOutcome) -> SavePages
                         SaveOutcome::Conflict { disk } => Some(disk.clone().into()),
                         _ => None,
                     },
+                    unreadable_owner: match &outcome {
+                        SaveOutcome::UnreadableOwner { file } => Some(file.as_str().to_owned()),
+                        _ => None,
+                    },
                     family: if publication_errors.is_empty() {
                         save_outcome_to_wire(outcome).expect_err("failed page outcome")
                     } else {
@@ -98,6 +107,7 @@ pub(super) fn save_outcome_to_wire(outcome: SaveOutcome) -> Result<String, Strin
         SaveOutcome::InvalidTarget(_) => Err("invalid-target".into()),
         SaveOutcome::Twin { .. } => Err("twin".into()),
         SaveOutcome::Repeated => Err("repeated".into()),
+        SaveOutcome::UnreadableOwner { .. } => Err("unreadable-owner".into()),
         SaveOutcome::Io(error) => Err(format!("io:{:?}", error.kind())),
         SaveOutcome::Closed => Err("closed".into()),
         SaveOutcome::GuideEphemeral => Err("invalid-target".into()),
@@ -130,6 +140,7 @@ pub(super) fn store_failure_to_wire(index: usize, error: StoreError) -> SavePage
             disk_rev: None,
             undo_failed: Vec::new(),
             publication_errors: Vec::new(),
+            unreadable_owner: None,
             operation,
             os_error,
         },

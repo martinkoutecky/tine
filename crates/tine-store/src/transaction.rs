@@ -177,6 +177,13 @@ pub enum Refusal {
     },
     /// Page bytes are not UTF-8.
     Undecodable,
+    /// A name-only page creation was refused because a graph-text file Tine
+    /// cannot read (`file`) could already be that page
+    /// (R-CREATE-UNREADABLE-OWNER, docs/storage-contract.md).
+    UnreadableOwner {
+        /// The unreadable file or directory that could own the name.
+        file: FileId,
+    },
     /// A transaction named the same file more than once. Editing a page and
     /// moving that same file require separate transactions.
     RepeatedFile(FileId),
@@ -642,6 +649,53 @@ impl<'a> Transaction<'a> {
             }
         }
         let _ = id;
+        Ok(())
+    }
+
+    /// Refusal R-CREATE-UNREADABLE-OWNER (docs/storage-contract.md; master
+    /// 69e0a885ddf9 + 69525c055f0b, GH #543). Threat scenario: sync delivery,
+    /// an interrupted external write or malformed imported Markdown/Org leaves
+    /// a page file Tine cannot read, so its name is unknown; creating a page of
+    /// a name it could carry gives that name two files once the bad file is
+    /// repaired. Only the names that file could be are refused
+    /// (`Graph::unreadable_page_could_own`), and the refusal names the file;
+    /// every other creation proceeds. `names` are the names the new file
+    /// would claim: its file-name name and, for a page save, the DTO's name.
+    /// Cost: O(unreadable rows) metadata checks, each at most one bounded read.
+    fn unreadable_owner(&self, file: &FileId, names: &[&str]) -> Result<(), Why> {
+        if !self.page(file) {
+            return Ok(());
+        }
+        let path = self.path(file)?;
+        let Some(entry) = self.store.graph.entry_for_path(&path) else {
+            return Ok(());
+        };
+        if entry.kind != tine_core::model::PageKind::Page {
+            return Ok(());
+        }
+        let unreadable = self.store.graph.unreadable_pages();
+        if unreadable.is_empty() {
+            return Ok(());
+        }
+        let mut keys: Vec<String> = std::iter::once(entry.name.as_str())
+            .chain(names.iter().copied())
+            .map(tine_core::refs::page_key)
+            .filter(|key| !key.is_empty())
+            .collect();
+        keys.dedup();
+        for (failed, _) in unreadable.iter() {
+            if failed == file {
+                continue;
+            }
+            if keys
+                .iter()
+                .any(|key| self.store.graph.unreadable_page_could_own(failed, key))
+            {
+                return Err(Why::Refused(Refusal::UnreadableOwner {
+                    file: failed.clone(),
+                }));
+            }
+        }
         Ok(())
     }
 

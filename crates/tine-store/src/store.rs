@@ -2249,6 +2249,13 @@ pub enum SaveOutcome {
     },
     /// The same file was named twice in one page-save request.
     Repeated,
+    /// A new page was refused because a graph-text file Tine cannot read
+    /// could already be that page (R-CREATE-UNREADABLE-OWNER). Keep the
+    /// buffer; the user repairs or moves `file`, then saves again.
+    UnreadableOwner {
+        /// The unreadable file or directory, graph-relative.
+        file: crate::FileId,
+    },
     /// Invalid or unsafe target or page content; reason is for display.
     InvalidTarget(String),
     /// Filesystem operation failed.
@@ -2281,6 +2288,9 @@ impl SaveOutcome {
                 SaveOutcome::InvalidTarget(reason)
             }
             crate::Why::Refused(crate::Refusal::Closed) => SaveOutcome::Closed,
+            crate::Why::Refused(crate::Refusal::UnreadableOwner { file }) => {
+                SaveOutcome::UnreadableOwner { file }
+            }
             crate::Why::Refused(crate::Refusal::RepeatedFile(_)) => SaveOutcome::Repeated,
             crate::Why::Refused(crate::Refusal::Undecodable) => {
                 SaveOutcome::InvalidTarget("undecodable page".into())

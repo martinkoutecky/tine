@@ -132,6 +132,13 @@ fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
                         io::Error::new(io::ErrorKind::InvalidInput, "repeated file")
                     }
                     Refusal::Closed => io::Error::new(io::ErrorKind::BrokenPipe, "store closed"),
+                    Refusal::UnreadableOwner { file } => io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "{} cannot be read and may already be this page",
+                            file.as_str()
+                        ),
+                    ),
                 },
             })
         }

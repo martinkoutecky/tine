@@ -2157,6 +2157,25 @@ describe("save engine (persistence)", () => {
     expect(saveSpy).toHaveBeenCalledTimes(3);
   });
 
+  // R-CREATE-UNREADABLE-OWNER (master 69e0a885ddf9): the backend refuses a new
+  // page whose name an unreadable file may already own; the toast names that
+  // file, the edits stay dirty, and nothing retries or raises a disk conflict.
+  it("a create refused for an unreadable owner names the file and keeps the edits", async () => {
+    setToasts([]);
+    load([blk("x")]);
+    markDirty("Test", "save-block");
+    saveSpy.mockResolvedValue({ failed: { index: 0, family: "unreadable-owner", undoFailed: [], unreadableOwner: "pages/Other.md" } });
+    expect(await flushPage("Test")).toBe(false);
+    expect(isDirty("Test")).toBe(true);
+    expect(isConflicted("Test")).toBe(false);
+    const errors = toasts().filter((t) => t.kind === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain("pages/Other.md");
+    expect(errors[0].message).toContain("Test");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(saveSpy.mock.calls.length).toBeLessThanOrEqual(2); // at most the ordinary debounce
+  });
+
   it("a non-transient save failure is reported at once, without automatic retries", async () => {
     setToasts([]);
     load([blk("x")]);

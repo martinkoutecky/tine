@@ -57,6 +57,7 @@ impl<'a> Transaction<'a> {
                     }
                     self.absent(&file)?;
                     self.twin(&file, None)?;
+                    self.unreadable_owner(&file, &[doc.name.as_str()])?;
                 }
                 let old = match base {
                     // `save_page` maps ResolvingMarkers to Existing + Markers::Resolve.
@@ -127,6 +128,7 @@ impl<'a> Transaction<'a> {
                 self.path(file)?;
                 self.absent(file)?;
                 self.twin(file, None)?;
+                self.unreadable_owner(file, &[])?;
                 if file.as_str() == "logseq/config.edn" {
                     validate_config_content(self.store, content)?;
                 }
@@ -188,6 +190,7 @@ impl<'a> Transaction<'a> {
                     match self.absent(&candidate) {
                         Ok(()) => {
                             self.twin(&candidate, None)?;
+                            self.unreadable_owner(&candidate, &[])?;
                             if self.fixed_step_names().contains(&candidate) {
                                 return Err(Why::Refused(Refusal::RepeatedFile(candidate)));
                             }

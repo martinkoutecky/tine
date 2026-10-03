@@ -482,6 +482,7 @@ fn store_wire(outcome: SaveOutcome, doc: &PageDto) -> Result<String, String> {
             doc.name
         )),
         SaveOutcome::Repeated => Err("repeated".into()),
+        SaveOutcome::UnreadableOwner { file } => Err(format!("unreadable owner {}", file.as_str())),
         SaveOutcome::Io(error) => Err(error.to_string()),
         SaveOutcome::Closed => Err("store closed".into()),
         SaveOutcome::GuideEphemeral => Ok("guide-ephemeral".into()),

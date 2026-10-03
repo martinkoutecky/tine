@@ -258,6 +258,13 @@ function reportSaveFailure(name: string, family: string, message: string) {
 const SAVE_RETRY_DELAYS_MS = [100, 300] as const;
 const transientSaveFailures = new Map<string, number>();
 const saveRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** R-CREATE-UNREADABLE-OWNER (docs/storage-contract.md): the backend refused to
+ * create `name` because a file it cannot read may already be that page. Name
+ * the file so the user can repair or move it; the edits stay in the editor. */
+function unreadableOwnerMessage(name: string, owner: string | undefined): string {
+  return `Couldn't create “${name}”: ${owner ?? "a page file"} can't be read and may already be this page. `
+    + "Fix or move that file; your edits stay in the editor.";
+}
 function isRetryableSaveFamily(family: string): boolean {
   return family === "io" || family === "unknown";
 }
@@ -484,7 +491,7 @@ function resolveSaveMember(name: string, kind: PageKind) {
   return backend().resolvePage(name, kind);
 }
 
-function failGroup(g: SaveGroup, failure: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[]; operation?: string; osError?: number }, order: string[], entryPaths: string[] = []): boolean {
+function failGroup(g: SaveGroup, failure: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[]; unreadableOwner?: string; operation?: string; osError?: number }, order: string[], entryPaths: string[] = []): boolean {
   g.state = "open";
   sealedGroups.delete(g);
   for (const name of g.members) dirty.add(name);
@@ -501,6 +508,7 @@ function failGroup(g: SaveGroup, failure: { index: number; family: string; diskR
     if (family === "alias-owner-busy") markConflict(culprit, { kind: "alias-owner-busy" });
     else if (["conflict", "deleted", "twin", "read-only", "invalid-target"].includes(family))
       markConflict(culprit, { kind: "disk-changed" }, family === "deleted" ? null : failure.diskRev);
+    else if (family === "unreadable-owner") reportSaveFailure(culprit, family, unreadableOwnerMessage(culprit, failure.unreadableOwner));
     else reportSaveFailure(culprit, family, `Couldn't save “${culprit}” — ${family}${describeSavePlatformStep(readSavePlatformStep(failure))}.`);
   }
   for (const path of failure.undoFailed) {
@@ -1023,7 +1031,9 @@ async function doSave(
         dirty.add(name); // keep pending — retried automatically, then on next edit / flush
         if (isRetryableSaveFamily(family) && scheduleSaveRetry(name, token)) return false;
       }
-      if (family !== "conflict")
+      if (family === "unreadable-owner")
+        reportSaveFailure(name, family, unreadableOwnerMessage(name, (e as { unreadableOwner?: string }).unreadableOwner));
+      else if (family !== "conflict")
         reportSaveFailure(name, family, `Couldn't save “${name}” — ${family === "deleted" ? "the file was deleted on disk; your edits remain in the editor" : String(e)}${describeSavePlatformStep((e as { platformStep?: SavePlatformStep | null }).platformStep ?? null)}`);
     }
     return false;

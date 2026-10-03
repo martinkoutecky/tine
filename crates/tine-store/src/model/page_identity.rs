@@ -6,6 +6,64 @@ use std::io::{BufRead, BufReader, Read};
 use tine_core::model::PreambleRead;
 
 impl Graph {
+    /// Whether the unreadable graph-text entry `failed` (a row of
+    /// [`Graph::unreadable_pages`]) could be the ordinary page whose
+    /// `page_key` is `key`. Refusal `R-CREATE-UNREADABLE-OWNER`
+    /// (docs/storage-contract.md; master 69e0a885ddf9 + 69525c055f0b, GH #543):
+    /// sync delivery, an interrupted external write or malformed imported
+    /// Markdown/Org leaves a page file whose name Tine cannot settle; creating
+    /// a page of a name it may carry would give that name two files once the
+    /// bad file is repaired.
+    ///
+    /// Answers, cheapest first: a vanished entry owns nothing; an entry that is
+    /// neither a regular file nor a directory (FIFO, socket, device) is no page;
+    /// a directory Tine could not list may hold any page; a journal is named by
+    /// its date file name; otherwise the file-name name, then the preamble name
+    /// when the preamble still decodes (a parser rejection later in the body
+    /// leaves the title known), and only when the name itself cannot be read
+    /// (invalid UTF-8 or an oversized preamble) whether the file's bytes,
+    /// folded as page names are, contain `key`. A file unreadable now could be
+    /// any page. Cost: one `lstat` plus at most one bounded read of that file.
+    pub(crate) fn unreadable_page_could_own(&self, failed: &crate::FileId, key: &str) -> bool {
+        let path = self.root.join(failed.as_str());
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return false,
+            Err(_) => return true,
+        };
+        if metadata.is_dir() {
+            return true;
+        }
+        let stem = path.file_stem().and_then(|stem| stem.to_str());
+        let fmt = self.current_config().file_name_format;
+        if path.starts_with(self.journals_path()) {
+            return false;
+        }
+        if stem.is_some_and(|stem| tine_core::refs::page_key(&decode_page_name(stem, fmt)) == key) {
+            return true;
+        }
+        if !metadata.is_file() {
+            // A symlink is not followed and a FIFO, socket or device is never
+            // graph text: only its file name could name a page.
+            return false;
+        }
+        match effective_page_name(&path, stem.unwrap_or(""), fmt) {
+            Ok(name) => tine_core::refs::page_key(&name) == key,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) if error.kind() == io::ErrorKind::InvalidData => {
+                let mut bytes = Vec::new();
+                match fs::File::open(&path)
+                    .and_then(|file| file.take(PARSE_INPUT_MAX_BYTES).read_to_end(&mut bytes))
+                {
+                    Ok(_) => tine_core::refs::page_key(&String::from_utf8_lossy(&bytes))
+                        .contains(key),
+                    Err(error) => error.kind() != io::ErrorKind::NotFound,
+                }
+            }
+            Err(_) => true,
+        }
+    }
+
     pub(crate) fn find_claimants(&self, name: &str, kind: PageKind) -> Vec<PageEntry> {
         let key = (kind, tine_core::refs::page_key(name));
         loop {
@@ -171,6 +229,39 @@ fn page_claimants(
 #[cfg(test)]
 mod cold_index_tests {
     use super::*;
+
+    /// R-CREATE-UNREADABLE-OWNER: which names an unreadable entry could own.
+    #[test]
+    fn unreadable_page_could_own_answers_per_entry_shape() {
+        let dir = std::env::temp_dir().join(format!("tine-could-own-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(dir.join("pages/Bad.md"), b"title:: Target\ntags:: caf\xe9\n- x\n").unwrap();
+        fs::write(dir.join("pages/Known.md"), "title:: Named\n- mentions [[Target]]\n").unwrap();
+        fs::write(dir.join("journals/2026_10_03.md"), b"- caf\xe9 Target\n").unwrap();
+        let graph = Graph::open(&dir);
+        let id = |rel: &str| crate::FileId::from(rel.to_string());
+        let key = tine_core::refs::page_key;
+        // Undecodable name: the folded bytes decide, and the file name counts.
+        assert!(graph.unreadable_page_could_own(&id("pages/Bad.md"), &key("Target")));
+        assert!(graph.unreadable_page_could_own(&id("pages/Bad.md"), &key("bad")));
+        assert!(!graph.unreadable_page_could_own(&id("pages/Bad.md"), &key("Elsewhere")));
+        // A decodable preamble names the page exactly; a body mention is no claim.
+        assert!(graph.unreadable_page_could_own(&id("pages/Known.md"), &key("Named")));
+        assert!(!graph.unreadable_page_could_own(&id("pages/Known.md"), &key("Target")));
+        // A journal is named by its date file name, a vanished entry by nothing.
+        assert!(!graph.unreadable_page_could_own(&id("journals/2026_10_03.md"), &key("Target")));
+        assert!(!graph.unreadable_page_could_own(&id("pages/Gone.md"), &key("Target")));
+        #[cfg(unix)]
+        {
+            let fifo = dir.join("pages/Pipe.md");
+            assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+            assert!(!graph.unreadable_page_could_own(&id("pages/Pipe.md"), &key("Target")),
+                "a FIFO is no page and is never opened");
+        }
+        let _ = fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn a_late_title_claimant_seen_by_path_replaces_the_cached_winner() {

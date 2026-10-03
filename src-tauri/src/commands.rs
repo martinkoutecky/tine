@@ -554,7 +554,24 @@ mod save_wire_tests {
                 "io:PermissionDenied",
             ),
         ];
+        // R-CREATE-UNREADABLE-OWNER: its own family, and the unreadable file
+        // travels as an explicit recovery location the toast can name.
+        let owner = serde_json::to_string(&save_pages_outcome_to_wire(SavePagesOutcome::Failed {
+            index: 0,
+            outcome: SaveOutcome::UnreadableOwner {
+                file: tine_store::FileId::from("pages/Other.md".to_string()),
+            },
+            undo_failed: Vec::new(),
+            publication_errors: Vec::new(),
+        }))
+        .unwrap();
+        assert_eq!(
+            owner,
+            r#"{"failed":{"index":0,"family":"unreadable-owner","undoFailed":[],"unreadableOwner":"pages/Other.md"}}"#,
+            "{RULE}"
+        );
         let mut seen = std::collections::HashSet::new();
+        assert!(seen.insert("unreadable-owner"), "{RULE}");
         for (outcome, family) in families {
             let encoded =
                 serde_json::to_string(&save_pages_outcome_to_wire(SavePagesOutcome::Failed {

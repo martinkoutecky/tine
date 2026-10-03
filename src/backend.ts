@@ -74,14 +74,14 @@ export interface GraphAnswersChange {
 
 export type SavePagesResult =
   | { ok: string[]; changes?: GraphAnswersChange | null }
-  | { failed: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[]; operation?: string; osError?: number } };
+  | { failed: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[]; unreadableOwner?: string; operation?: string; osError?: number } };
 
 /** Adapt a one-page intent to the shared request while preserving its refusal.
  * Calls observed with its native answer delta before returning the revision;
  * the observer owns graph-binding validation. Cost follows save plus targets. */
 export async function saveOnePage(api: Backend, entry: SavePageEntry, bindingGeneration?: number, observed?: (change: GraphAnswersChange | null | undefined) => void): Promise<string> {
   const result = await api.savePages([entry], bindingGeneration);
-  if ("failed" in result) throw Object.assign(new Error(result.failed.family), { diskRev: result.failed.diskRev, platformStep: readSavePlatformStep(result.failed) });
+  if ("failed" in result) throw Object.assign(new Error(result.failed.family), { diskRev: result.failed.diskRev, platformStep: readSavePlatformStep(result.failed), unreadableOwner: result.failed.unreadableOwner });
   observed?.(result.changes);
   return result.ok[0];
 }

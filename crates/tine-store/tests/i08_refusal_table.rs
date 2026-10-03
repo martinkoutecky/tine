@@ -44,6 +44,7 @@ fn constructions(file: &str, source: &str) -> BTreeMap<String, usize> {
                             | "Repeated"
                             | "InvalidTarget"
                             | "GuideEphemeral"
+                            | "UnreadableOwner"
                     )
                 })
         };
