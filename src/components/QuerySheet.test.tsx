@@ -712,7 +712,7 @@ describe("reordering: the drag and the keyboard reach the same tree", () => {
     }
   });
 
-  it("refuses a drop whose target is in another list", () => {
+  it("drops into another group when the pointer is over one of its rows (GH #619 item 6)", () => {
     const builder = mountBuilder({
       kind: "and",
       items: [A, { kind: "and", items: [B, C] }],
@@ -721,25 +721,94 @@ describe("reordering: the drag and the keyboard reach the same tree", () => {
       const sheet = builder.open();
       const outer = rootItems(sheet);
       const nested = [...sheet.querySelector<HTMLElement>(".qs-group .qs-rows")!.children] as HTMLElement[];
-      // The pointer is over a row of the nested list. `closest()` resolves it to
-      // the GROUP's item in the dragged row's own list, so the only thing this
-      // drop can express is "after the group" — never "into it".
       stackRects([...outer, ...nested]);
       const handle = outer[0]!.querySelector<HTMLElement>(".qs-drag-handle")!;
       handle.dispatchEvent(pointer("pointerdown", 10, 10));
       const previous = document.elementFromPoint;
       try {
         document.elementFromPoint = () => nested[1]!;
-        document.dispatchEvent(pointer("pointermove", 10, 130));
-        document.dispatchEvent(pointer("pointerup", 10, 130));
+        document.dispatchEvent(pointer("pointermove", 10, 155));
+        // The bar is drawn on the nested row, in the nested list, not on the group.
+        expect(nested[1]!.classList.contains("qs-drop-after")).toBe(true);
+        document.dispatchEvent(pointer("pointerup", 10, 155));
       } finally {
         document.elementFromPoint = previous;
       }
+      // A is now the last condition of the inner group; the outer list keeps only that group.
       expect(filterOf(builder)).toEqual({
         kind: "and",
-        items: [{ kind: "and", items: [B, C] }, A],
+        items: [{ kind: "and", items: [B, C, A] }],
       });
       expect(builder.changes).toHaveLength(1);
+    } finally {
+      builder.dispose();
+    }
+  });
+
+  it("dissolves a group left with one condition when its other condition is dragged out", () => {
+    const builder = mountBuilder({
+      kind: "and",
+      items: [A, { kind: "and", items: [B, C] }],
+    });
+    try {
+      const sheet = builder.open();
+      const outer = rootItems(sheet);
+      const nested = [...sheet.querySelector<HTMLElement>(".qs-group .qs-rows")!.children] as HTMLElement[];
+      stackRects([...outer, ...nested]);
+      const handle = nested[1]!.querySelector<HTMLElement>(".qs-drag-handle")!;
+      handle.dispatchEvent(pointer("pointerdown", 10, 70));
+      const previous = document.elementFromPoint;
+      try {
+        document.elementFromPoint = () => outer[0]!;
+        document.dispatchEvent(pointer("pointermove", 10, 5));
+        document.dispatchEvent(pointer("pointerup", 10, 5));
+      } finally {
+        document.elementFromPoint = previous;
+      }
+      // C goes to the top; B is alone in its group, so B takes the group's place.
+      expect(filterOf(builder)).toEqual({ kind: "and", items: [C, A, B] });
+      expect(builder.changes).toHaveLength(1);
+      expect(sheet.querySelector(".qs-group")).toBeNull();
+    } finally {
+      builder.dispose();
+    }
+  });
+
+  it("never drops a group into itself, and draws no bar there", () => {
+    const start: Filter = { kind: "and", items: [A, { kind: "and", items: [B, C] }] };
+    const builder = mountBuilder(start);
+    try {
+      const sheet = builder.open();
+      const outer = rootItems(sheet);
+      const nested = [...sheet.querySelector<HTMLElement>(".qs-group .qs-rows")!.children] as HTMLElement[];
+      stackRects([...outer, ...nested]);
+      const handle = sheet.querySelector<HTMLElement>(".qs-group-header .qs-drag-handle")!;
+      handle.dispatchEvent(pointer("pointerdown", 10, 50));
+      const previous = document.elementFromPoint;
+      try {
+        document.elementFromPoint = () => nested[1]!;
+        document.dispatchEvent(pointer("pointermove", 10, 155));
+        expect(sheet.querySelector(".qs-drop-before, .qs-drop-after")).toBeNull();
+        document.dispatchEvent(pointer("pointerup", 10, 155));
+      } finally {
+        document.elementFromPoint = previous;
+      }
+      expect(builder.changes).toHaveLength(0);
+      expect(filterOf(builder)).toEqual(start);
+    } finally {
+      builder.dispose();
+    }
+  });
+
+  it("dropping on a condition only inserts beside it; it never creates a group", () => {
+    const builder = mountBuilder({ kind: "and", items: [A, B, C] });
+    try {
+      const sheet = builder.open();
+      const drop = dragOnto(rootItems(sheet), 0, 1);
+      drop();
+      // Beside it, in the same list: a reorder, never a new group.
+      expect(filterOf(builder)).toEqual({ kind: "and", items: [B, A, C] });
+      expect(sheet.querySelector(".qs-group")).toBeNull();
     } finally {
       builder.dispose();
     }

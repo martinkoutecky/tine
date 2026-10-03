@@ -1482,6 +1482,78 @@ export function moveSibling(root: Filter, loc: number[], to: number): Filter {
   });
 }
 
+/** **Move a condition or group into ANOTHER list, or to another place in its own (GH #619 item 6).**
+*
+*  `from` is the node's loc (its outermost `not`/`off` wrapper, as the sheet
+*  addresses it); `toParent` is the loc of the `and`/`or` whose list receives it;
+*  `toIndex` is the slot in that list's ORIGINAL children, `0..length`, the way a
+*  drop line reads ("before the row that is there now"). Everything is resolved to
+*  object references on the one clone BEFORE anything moves, so removing the node
+*  cannot shift the path the destination or the source group is found by.
+*
+*  Refused (tree handed back unchanged): a stale path, a destination that is not an
+*  `and`/`or`, a destination inside the moved node (a group into itself or its
+*  descendants), and a same-list move that lands where it already is.
+*
+*  The group the node LEFT is tidied, and only that one (I-4: authored empty groups
+*  elsewhere carry meaning). Left with one child, it dissolves into its parent: the
+*  child takes the group's place, inside the group's own `not`/`off` wrapper when it
+*  has one (`none of [A, B]` minus B is `not A`, which is the same query). A wrapper
+*  that would end up holding another `not`/`off` keeps its one-child group instead
+*  of stacking wrappers the sheet draws as one row. Left with none, it is pruned the
+*  way `removeAt` prunes. The root never dissolves or goes. Moving within one list
+*  leaves every list's size alone, so nothing dissolves. */
+export function moveAcross(root: Filter, from: number[], toParent: number[], toIndex: number): Filter {
+  if (from.length === 0 || !Number.isInteger(toIndex)) return root;
+  // A node cannot move into itself or anything below it.
+  if (from.length <= toParent.length && from.every((part, i) => toParent[i] === part)) return root;
+  return edit(root, (draft) => {
+    const at = locate(draft, from);
+    const dest = nodeAt(draft, toParent);
+    if (!at || !dest || (dest.kind !== "and" && dest.kind !== "or")) return false;
+    if (at.parent.kind !== "and" && at.parent.kind !== "or") return false;
+    const node = at.children[at.idx];
+    if (!node || toIndex < 0 || toIndex > dest.items.length) return false;
+
+    const sourceList = at.children;
+    const sameList = sourceList === dest.items;
+    if (sameList && (toIndex === at.idx || toIndex === at.idx + 1)) return false;
+
+    // The ancestry of the group being left, as references, before anything moves.
+    const chain: Filter[] = [draft];
+    for (const index of from.slice(0, -1)) chain.push(filterChildren(chain[chain.length - 1])![index]);
+
+    sourceList.splice(at.idx, 1);
+    dest.items.splice(sameList && at.idx < toIndex ? toIndex - 1 : toIndex, 0, node);
+    if (sameList) return true;
+
+    // The last link is the `and`/`or` that lost a child.
+    const owner = chain[chain.length - 1] as Filter & { kind: "and" | "or" };
+    const container = chain.length > 1 ? chain[chain.length - 2] : null;
+    if (!container) return true; // the root never dissolves
+    const only = owner.items.length === 1 ? owner.items[0] : null;
+    if (only) {
+      if (container.kind === "and" || container.kind === "or") {
+        container.items[container.items.indexOf(owner)] = only;
+      } else if ((container.kind === "not" || container.kind === "off") && only.kind !== "not" && only.kind !== "off") {
+        container.inner = only;
+      }
+    } else if (owner.items.length === 0) {
+      // Prune upward through whatever the removal empties, never past the root.
+      for (let level = chain.length - 1; level >= 1; level--) {
+        const gone = chain[level];
+        const holder = chain[level - 1];
+        if (holder.kind === "and" || holder.kind === "or") {
+          holder.items.splice(holder.items.indexOf(gone), 1);
+          if (holder.items.length > 0 || level === 1) break;
+        }
+        // A unary wrapper that lost its child goes too; keep climbing.
+      }
+    }
+    return true;
+  });
+}
+
 /** The path of the node's OWN `off` wrapper, relative to the node, or `null` when it has none. */
 function ownOffPath(node: Filter): number[] | null {
   if (node.kind === "off") return [];

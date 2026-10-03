@@ -37,6 +37,7 @@ import {
   isDisabledAt,
   isEmptyFilter,
   journalFilter,
+  moveAcross,
   moveSibling,
   namespaceFilter,
   onPageFilter,
@@ -1021,6 +1022,100 @@ describe("groupWithPrevious", () => {
     expect(groupWithPrevious(root, [2], "any")).toEqual(groupSelected(root, [[1], [2]], "any"));
     expect(groupWithPrevious(root, [2], "none")).toEqual(groupSelected(root, [[1], [2]], "none"));
     expect(groupWithPrevious(root, [2])).toEqual(groupSelected(root, [[1], [2]], "all"));
+  });
+});
+
+describe("moveAcross (GH #619 item 6: drag a condition between groups)", () => {
+  const D = pageRefFilter("D");
+  const and = (...items: Filter[]): Filter => ({ kind: "and", items });
+  const or = (...items: Filter[]): Filter => ({ kind: "or", items });
+
+  it("moves a row into another group at the slot the drop line shows", () => {
+    const root = and(A, or(B, C, D));
+    expect(moveAcross(root, [0], [1], 0)).toEqual(and(or(A, B, C, D)));
+    expect(moveAcross(root, [0], [1], 2)).toEqual(and(or(B, C, A, D)));
+    expect(moveAcross(root, [0], [1], 3)).toEqual(and(or(B, C, D, A)));
+  });
+
+  it("moves a row out of a group into the root list, and a group left with two keeps its place", () => {
+    const root = and(A, or(B, C, D));
+    expect(moveAcross(root, [1, 2], [], 0)).toEqual(and(D, A, or(B, C)));
+    expect(moveAcross(root, [1, 0], [], 2)).toEqual(and(A, or(C, D), B));
+  });
+
+  it("dissolves a group left with one condition into its parent, in place", () => {
+    const root = and(A, or(B, C), D);
+    // C leaves the `or`: B takes the group's place, between A and D.
+    expect(moveAcross(root, [1, 1], [], 3)).toEqual(and(A, B, D, C));
+    // Moving into the group's own sibling slot at the front: same dissolve.
+    expect(moveAcross(root, [1, 0], [], 0)).toEqual(and(B, A, C, D));
+  });
+
+  it("dissolves inside the group's own wrapper, so `none of` stays a negation", () => {
+    const none: Filter = { kind: "not", inner: or(B, C) };
+    const root = and(A, none);
+    expect(moveAcross(root, [1, 0, 1], [], 0)).toEqual(and(C, A, { kind: "not", inner: B }));
+    const off: Filter = { kind: "off", inner: and(B, C) };
+    expect(moveAcross(and(A, off), [1, 0, 0], [], 0)).toEqual(and(B, A, { kind: "off", inner: C }));
+  });
+
+  it("keeps a one-child group whose wrapper would end up holding another wrapper", () => {
+    const negB: Filter = { kind: "not", inner: B };
+    const none: Filter = { kind: "not", inner: or(negB, C) };
+    const root = and(A, none);
+    const moved = moveAcross(root, [1, 0, 1], [], 0);
+    expect(moved).toEqual(and(C, A, { kind: "not", inner: or(negB) }));
+  });
+
+  it("dissolves a nested group into the group above it, not the root", () => {
+    const root = and(A, or(B, and(C, D)));
+    // D leaves the inner `and`: C takes its place inside the `or`.
+    expect(moveAcross(root, [1, 1, 1], [], 0)).toEqual(and(D, A, or(B, C)));
+  });
+
+  it("moves a whole group, wrappers and all, into another group", () => {
+    const group: Filter = { kind: "off", inner: or(B, C) };
+    const root = and(A, group, and(D, A));
+    expect(moveAcross(root, [1], [2], 1)).toEqual(and(A, and(D, group, A)));
+  });
+
+  it("does not move a group into itself or anything below it", () => {
+    const root = and(A, or(B, and(C, D)));
+    expect(moveAcross(root, [1], [1], 0)).toBe(root);
+    expect(moveAcross(root, [1], [1, 1], 0)).toBe(root);
+    const none: Filter = { kind: "not", inner: or(B, C) };
+    const wrapped = and(A, none);
+    expect(moveAcross(wrapped, [1], [1, 0], 0)).toBe(wrapped);
+  });
+
+  it("moving within one list is a reorder and dissolves nothing", () => {
+    const root = and(A, or(B, C));
+    expect(moveAcross(root, [1, 0], [1], 2)).toEqual(and(A, or(C, B)));
+    expect(moveAcross(root, [1, 0], [1], 0)).toBe(root);
+    expect(moveAcross(root, [1, 0], [1], 1)).toBe(root);
+  });
+
+  it("refuses stale paths, a leaf destination and an out-of-range slot", () => {
+    const root = and(A, or(B, C));
+    expect(moveAcross(root, [9], [], 0)).toBe(root);
+    expect(moveAcross(root, [0], [0], 0)).toBe(root);
+    expect(moveAcross(root, [0], [7], 0)).toBe(root);
+    expect(moveAcross(root, [0], [1], 3)).toBe(root);
+    expect(moveAcross(root, [0], [1], -1)).toBe(root);
+    expect(moveAcross(root, [], [1], 0)).toBe(root);
+  });
+
+  it("prunes a group the move emptied, and leaves authored empty groups alone", () => {
+    const solo = and(A, or(B), and());
+    // The one-child `or` loses B: it empties and goes; the authored empty `and` stays.
+    expect(moveAcross(solo, [1, 0], [], 0)).toEqual(and(B, A, and()));
+  });
+
+  it("never edits the input tree", () => {
+    const root = and(A, or(B, C));
+    const before = structuredClone(root);
+    moveAcross(root, [1, 1], [], 0);
+    expect(root).toEqual(before);
   });
 });
 

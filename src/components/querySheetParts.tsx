@@ -408,6 +408,13 @@ export function buildNodes(filter: Filter, loc: number[], depth: number, inherit
   return { kind: "row", loc, filter, core: node, negated, negLoc, disabled, inherited };
 }
 
+/** How many subtrees the sheet folds into an "advanced" chip because they sit past the drawing depth. */
+export function advancedCount(node: SheetNode): number {
+  if (node.kind === "advanced") return 1;
+  if (node.kind === "group") return node.children.reduce((sum, child) => sum + advancedCount(child), 0);
+  return 0;
+}
+
 // Selecting, disabling and reordering (§7.4 remainder, P6)
 
 /** A node's place among its siblings — everything selection, moving and
@@ -479,7 +486,7 @@ export function DragHandle(props: { pos: SiblingPos; label: string; controls: Sh
       data-qs-handle={locKey(loc())}
       aria-label={props.label}
       aria-keyshortcuts="ArrowUp ArrowDown"
-      title="Drag to reorder, or use the up and down arrow keys"
+      title="Drag to reorder or into another group, or use the up and down arrow keys"
       onPointerDown={(event) => props.controls.startDrag(event, props.pos)}
       onKeyDown={(event) => {
         if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
