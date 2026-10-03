@@ -52,7 +52,16 @@ pub(crate) fn fail_next_sync() {
 
 /// Synchronize the supplied directory where the platform supports it.
 /// `EINVAL` and `ENOTSUP` from sync are treated as filesystem non-support;
-/// other open or sync errors are returned. Windows returns success without a
+/// other open or sync errors are returned. Master 54dfcc1b6674 additionally
+/// swallows `EBADF`, `EACCES`, `EISDIR`, `PermissionDenied` and `NotFound`;
+/// og does not, because none of them is a "this filesystem never offers
+/// directory sync" signal on a shipped target: the open here is `O_RDONLY`,
+/// which never yields `EISDIR` and gives a descriptor Linux, Android, macOS and
+/// iOS accept for `fsync` (so `EBADF` would be a real fault); an unopenable
+/// directory (`EACCES`) and a vanished one (`NotFound`, which also took the
+/// renamed file) give no durability at all. Swallowing them would acknowledge
+/// a save a crash can lose (I-2); as errors, the caller re-reads disk state.
+/// Pinned by `tests/directory_durability_guard.rs`. Windows returns success without a
 /// directory flush; standard file opening cannot flush its directory handles,
 /// and the caller is responsible for its own rename durability protocol.
 pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
