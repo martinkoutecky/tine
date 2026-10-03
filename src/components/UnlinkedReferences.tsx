@@ -1,7 +1,7 @@
 import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { errorFamily } from "../errorFamily";
+import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
@@ -19,12 +19,6 @@ type BoundedEvidence = NonNullable<RefGroup["evidence"]>[number] & {
   total?: number;
   truncated?: boolean;
 };
-
-type ReferenceLoadError = "bounded" | "backend";
-
-function classifyReferenceLoadError(error: unknown): ReferenceLoadError {
-  return errorFamily(error) === "result-too-large" ? "bounded" : "backend";
-}
 
 // "Unlinked References" — plain-text mentions of the page, collapsed by default.
 /** Show bounded plain-text mentions for one page. Expansion survives remounts
@@ -99,9 +93,7 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
       <Show when={open()}>
         <Show when={loadError()}>
           <div class="reference-filter-error reference-error" role="alert">
-            {loadError() === "bounded"
-              ? "Couldn’t load references: the bounded result limit was exceeded."
-              : "Couldn’t load references because the backend request failed."}
+            {referenceLoadErrorMessage(loadError()!)}
           </div>
         </Show>
         <Show when={occurrenceLimit().truncated}>

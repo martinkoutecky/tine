@@ -184,6 +184,23 @@ describe("Linked References filters", () => {
     dispose();
   });
 
+  // master 25f36f16dabd: the banner carries the backend's own explanation
+  // instead of a generic, transient-sounding sentence.
+  it("shows the backend's own error text in the references banner", async () => {
+    vi.spyOn(backend(), "getBacklinks").mockRejectedValue(new Error("io:PermissionDenied while reading pages/Target.md"));
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <LinkedReferences name="Target" />, root);
+
+    await tick();
+    await tick();
+    const message = root.querySelector<HTMLElement>('[role="alert"]')?.textContent ?? "";
+    expect(message).toContain("Couldn’t load references");
+    expect(message).toContain("io:PermissionDenied while reading pages/Target.md");
+    expect(message).not.toContain("backend request failed");
+    dispose();
+  });
+
   it("does not mislabel an ordinary backend failure as a bounded bridge error", async () => {
     vi.spyOn(backend(), "getBacklinks").mockRejectedValue(new Error("result-too-large: prose from another failure"));
     const root = document.createElement("div");

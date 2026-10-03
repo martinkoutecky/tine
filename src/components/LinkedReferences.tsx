@@ -1,7 +1,7 @@
 import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
 import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { errorFamily } from "../errorFamily";
+import { classifyReferenceLoadError, referenceLoadErrorMessage, type ReferenceLoadError } from "../referenceLoadError";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
@@ -30,12 +30,6 @@ type BoundedEvidence = NonNullable<RefGroup["evidence"]>[number] & {
   total?: number;
   truncated?: boolean;
 };
-
-type ReferenceLoadError = "bounded" | "backend";
-
-function classifyReferenceLoadError(error: unknown): ReferenceLoadError {
-  return errorFamily(error) === "result-too-large" ? "bounded" : "backend";
-}
 
 // Persist the per-page include/exclude reference filter so it survives reload.
 type FilterMap = Record<string, "in" | "out">;
@@ -309,9 +303,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
         <div class="linked-references reference-error" role="alert">
           <div class="references-header">Linked References</div>
           <div class="reference-filter-error">
-            {loadError() === "bounded"
-              ? "Couldn’t load references: the bounded result limit was exceeded."
-              : "Couldn’t load references because the backend request failed."}
+            {referenceLoadErrorMessage(loadError()!)}
           </div>
         </div>
       }
