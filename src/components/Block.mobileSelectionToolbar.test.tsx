@@ -13,6 +13,8 @@ vi.mock("../nativeChrome", () => ({
   get isMobilePlatform() {
     return platform.mobile;
   },
+  // The block-swipe wiring reads the E2E gesture override; unset in unit tests.
+  touchGesturePlatform: () => null,
 }));
 
 beforeAll(() => initParser());
