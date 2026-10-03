@@ -371,14 +371,14 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               if (bulletDragMoved()) return; // was a drag, not a click
               // GH #456: the same one decision every internal link uses (GH #283).
               switch (internalLinkDest(e)) {
-                case "sidebar": void openDurableBlock(props.id, "sidebar"); break;
-                case "background": void openDurableBlock(props.id, "tab"); break;
-                case "pane": void openDurableBlock(props.id, "pane"); break;
+                case "sidebar": openDurableBlock(props.id, "sidebar"); break;
+                case "background": openDurableBlock(props.id, "tab"); break;
+                case "pane": openDurableBlock(props.id, "pane"); break;
                 default: zoomInto(props.id);
               }
             }}
             onAuxClick={(e) => {
-              if (internalLinkAuxClick(e, () => void openDurableBlock(props.id, "tab"))) e.stopPropagation();
+              if (internalLinkAuxClick(e, () => openDurableBlock(props.id, "tab"))) e.stopPropagation();
             }}
           >
             <Show when={orderMarker()} fallback={<span class="bullet" />}>
@@ -424,7 +424,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                       title="Open block references (shift-click → sidebar)"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (e.shiftKey) void openDurableBlock(props.id, "sidebar");
+                        if (e.shiftKey) openDurableBlock(props.id, "sidebar");
                         else setShowRefs((v) => !v);
                       }}
                     >

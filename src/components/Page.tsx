@@ -1,7 +1,7 @@
 import { reportUiFailure } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, resolveBlockRef, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
-import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
+import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
+import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
@@ -574,16 +574,13 @@ export function PageView(): JSX.Element {
     const target = pageTargetFromRoute(r);
     return p && target && pageTargetMatchesLoaded(target, p) ? [p] : [];
   };
-  const zoomValid = () => {
-    const r = currentRoute();
-    if (r.kind !== "page" || !r.block) return null;
-    return resolveBlockRef({
-      uuid: r.block,
-      page: r.name,
-      pageKind: r.pageKind,
-      ...(r.path ? { path: r.path } : {}),
-    });
-  };
+  const zoomValid = () => resolveRouteBlock(router.route());
+  // A restored zoom is saved by position (navigation never writes an `id::`); settle it
+  // into the block's live key once its page has loaded.
+  createEffect(() => {
+    const r = router.route();
+    if (r.kind === "page" && r.blockPos && zoomValid()) router.settleActiveBlock();
+  });
   const contentReady = () => {
     const r = loadedRoute();
     return !!r && ready() && sameRoute(r, currentRoute()) && (r.kind !== "journals" || isLoaded() || !!feedRefusal());

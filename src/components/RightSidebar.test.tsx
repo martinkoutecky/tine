@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { editingId, endEdit } from "../editorController";
 import { initParser } from "../render/parse";
-import { pageByName, persistentBlockRef, resetStore } from "../document";
+import { blockRef, blockPositionRef, ensureBlockId, pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import type { PageDto, PageRead } from "../types";
@@ -56,7 +56,21 @@ function mount(items = [
 }
 
 describe("right sidebar collection disclosures", () => {
-  it("stores a fresh block's durable UUID instead of its transient sidebar key", async () => {
+  it("opening a fresh block in the sidebar writes nothing and stores its position, not an id", () => {
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-sidebar"] });
+    loadSingle({
+      ...page,
+      blocks: [{ id: "bfresh-sidebar", raw: "Fresh sidebar target", collapsed: false, children: [] }],
+    });
+
+    openBlockInSidebar(blockPositionRef(blockRef("bfresh-sidebar")));
+
+    expect(rightSidebar()[0]).toMatchObject({ kind: "block", page: page.name, pageKind: "page", blockPos: [0] });
+    expect(doc.byId["bfresh-sidebar"].raw).toBe("Fresh sidebar target");
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("Copy block ref on a sidebar block still stamps its durable UUID", async () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
     vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-sidebar"] });
@@ -64,16 +78,8 @@ describe("right sidebar collection disclosures", () => {
       ...page,
       blocks: [{ id: "bfresh-sidebar", raw: "Fresh sidebar target", collapsed: false, children: [] }],
     });
-
-    openBlockInSidebar((await persistentBlockRef("bfresh-sidebar"))!);
-
-    expect(rightSidebar()[0]).toMatchObject({
-      kind: "block",
-      uuid,
-      page: page.name,
-      pageKind: "page",
-    });
-    expect((rightSidebar()[0] as { uuid?: string }).uuid).not.toBe("bfresh-sidebar");
+    expect(await ensureBlockId("bfresh-sidebar")).toBe(uuid);
+    expect(doc.byId["bfresh-sidebar"].raw).toBe(`Fresh sidebar target\nid:: ${uuid}`);
   });
 
   it("resolves a durable Org sidebar UUID to its transient live store node", async () => {

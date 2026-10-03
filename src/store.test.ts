@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
-import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, persistentBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
+import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
 import { reloadPage, forgetPage } from "./document/workingSet";
 import { setBlockMoving, isBlockMoving } from "./document/edits/moves";
 import { loadSingle, reloadDisposition } from "./document/workingSet";
@@ -1990,20 +1990,45 @@ describe("save engine (persistence)", () => {
     expect(pageToDto("Test")!.blocks[0].raw).toBe("new graph");
   });
 
-  it("gives a fresh Markdown block one durable identity for persistent references and Copy block ref", async () => {
+  it("browsing to a fresh Markdown block writes nothing; Copy block ref stamps one durable identity", async () => {
     const uuid = "12345678-1234-4234-8234-123456789abc";
     vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
     load([blk("Fresh target")]);
     const storeKey = doc.pages[0].roots[0];
 
-    const ref = await persistentBlockRef(storeKey);
+    // Zoom / sidebar / tab navigation only ever builds a locator: no write, no id.
+    const nav = blockPositionRef({ ...blockRef(storeKey) });
+    expect(nav).toMatchObject({ uuid: storeKey, page: "Test", pageKind: "page", blockPos: [0] });
+    expect(doc.byId[storeKey].raw).toBe("Fresh target");
+    expect(isDirty("Test")).toBe(false);
 
-    expect(ref).toMatchObject({ uuid, page: "Test", pageKind: "page" });
-    if (!ref) throw new Error("block reference was not saved");
-    expect(ref.uuid).not.toBe(storeKey);
+    // Creating a reference still writes id:: exactly once (OG copy-block-ref!).
+    expect(await ensureBlockId(storeKey)).toBe(uuid);
     expect(doc.byId[storeKey].raw).toBe(`Fresh target\nid:: ${uuid}`);
     expect(await ensureBlockId(storeKey)).toBe(uuid);
     expect(doc.byId[storeKey].raw.match(/(?:^|\n)id::/g)).toHaveLength(1);
+
+    // Once the block has an authored id the saved locator carries it instead of a position.
+    expect(blockPositionRef({ ...blockRef(storeKey) })).toMatchObject({ uuid });
+    expect(blockPositionRef({ ...blockRef(storeKey) })).not.toHaveProperty("blockPos");
+  });
+
+  it("a saved position ref resolves by position on an ID-less block and settles to the live key", () => {
+    load([blk("first"), blk("second")]);
+    const [a, b] = doc.pages[0].roots;
+    const saved = { ...blockPositionRef({ ...blockRef(b) }) };
+    expect(saved.blockPos).toEqual([1]);
+    // A restart mints new runtime keys: the stale uuid is ignored, the position finds the block.
+    const stale = { ...saved, uuid: "gone-key" };
+    expect(resolveBlockRef(stale)).toBe(b);
+    expect(resolveBlockRef(stale)).not.toBe(a);
+    const settled = settleBlockRef(stale);
+    expect(settled).toMatchObject({ uuid: b, page: "Test" });
+    expect(settled).not.toHaveProperty("blockPos");
+    // Out of range: not found, so the caller falls back to the page top.
+    expect(resolveBlockRef({ ...stale, blockPos: [7] })).toBeNull();
+    expect(settleBlockRef({ ...stale, blockPos: [1, 0] })).toBeNull();
+    expect(doc.byId[b].raw).toBe("second");
   });
 
   it("never persists a UUID-shaped runtime locator as a fresh block's external identity (GH #373)", async () => {
@@ -2012,9 +2037,7 @@ describe("save engine (persistence)", () => {
     vi.spyOn(crypto, "randomUUID").mockReturnValue(external);
     load([{ id: runtime, raw: "Fresh deterministic runtime target", collapsed: false, children: [] }]);
 
-    const ref = await persistentBlockRef(runtime);
-
-    expect(ref?.uuid).toBe(external);
+    expect(await ensureBlockId(runtime)).toBe(external);
     expect(doc.byId[runtime].raw).toBe(`Fresh deterministic runtime target\nid:: ${external}`);
   });
 
@@ -2027,9 +2050,7 @@ describe("save engine (persistence)", () => {
       blocks: [{ id: runtime, raw: "Fresh Org runtime target", collapsed: false, children: [] }],
     });
 
-    const ref = await persistentBlockRef(runtime);
-
-    expect(ref?.uuid).toBe(external);
+    expect(await ensureBlockId(runtime)).toBe(external);
     expect(doc.byId[runtime].raw).toBe(`Fresh Org runtime target\n:PROPERTIES:\n:id: ${external}\n:END:`);
   });
 
@@ -2057,11 +2078,8 @@ describe("save engine (persistence)", () => {
       blocks: [target],
     });
 
-    const ref = await persistentBlockRef(target.id);
-
-    expect(ref).toMatchObject({ uuid, page: "2026-07-22", pageKind: "journal" });
-    if (!ref) throw new Error("block reference was not saved");
-    expect(ref.uuid).not.toBe(target.id);
+    expect(await ensureBlockId(target.id)).toBe(uuid);
+    expect(blockPositionRef({ ...blockRef(target.id), page: "2026-07-22", pageKind: "journal" })).toMatchObject({ uuid, page: "2026-07-22", pageKind: "journal" });
     expect(doc.byId[target.id].raw).toBe(
       `Fresh journal target\nSCHEDULED: <2026-07-22 Wed>\n:PROPERTIES:\n:id: ${uuid}\n:END:`,
     );

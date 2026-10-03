@@ -8,7 +8,7 @@
 import { createSignal, type Accessor } from "solid-js";
 import { pushRecent } from "./ui";
 import { navigationName } from "./pageIndex";
-import { persistentBlockRef, resolveBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
+import { blockRef, resolveBlockRef, settleBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
 import { graphOwner, readOwned } from "./owned";
@@ -17,7 +17,6 @@ import { navReuseTabs } from "./navSettings";
 import { isMobilePlatform } from "./nativeChrome";
 import type { PageKind } from "./types";
 import { installRouterBridge } from "./routerBridge";
-import { pushToast } from "./toasts";
 import { retirePdfNavigationIntent } from "./pdfNavigation";
 import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
 import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
@@ -173,6 +172,7 @@ export interface PaneRouter {
   closePdf(): Promise<boolean>;
   openQueryInNewTab(source: string, presentation?: QueryPresentation, foreground?: boolean): QueryRoute;
   updateActiveQuery(patch: QueryRoutePatch): void;
+  settleActiveBlock(): void;
   replaceActiveRoute(route: Route): void;
   resetTabsToJournals(): void;
   openFile(
@@ -231,6 +231,20 @@ export function routeTitle(r: Route): string {
   if (r.name === `${GUIDE_DISPLAY_PREFIX}Tine Guide`) return "Guide";
   if (isGuideRouteName(r.name)) return r.name.slice(GUIDE_DISPLAY_PREFIX.length);
   return r.name;
+}
+
+/** The live store key of the block a page route zooms into, or null while it is not
+ * loaded or no longer found. A saved ID-less zoom resolves by its position path; a
+ * runtime key stays valid after a reference stamps an `id::` on the block. */
+export function resolveRouteBlock(r: Route): string | null {
+  if (r.kind !== "page" || !r.block) return null;
+  return resolveBlockRef({
+    uuid: r.block,
+    page: r.name,
+    pageKind: r.pageKind,
+    ...(r.path ? { path: r.path } : {}),
+    ...(r.blockPos ? { blockPos: r.blockPos } : {}),
+  }, { navigation: true });
 }
 
 export function sameRoute(a: Route, b: Route): boolean {
@@ -650,6 +664,29 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     persist();
   }
 
+  /** A restored zoom names its block by position; once the page is loaded, swap the
+   * position for the block's live key (in place, no history entry, no reload) so later
+   * sibling edits cannot move the zoom. No-op for any other route. */
+  function settleActiveBlock() {
+    const current = route();
+    if (current.kind !== "page" || !current.blockPos || !current.block) return;
+    const settled = settleBlockRef({
+      uuid: current.block, page: current.name, pageKind: current.pageKind,
+      ...(current.path ? { path: current.path } : {}),
+      blockPos: current.blockPos,
+    });
+    if (!settled || settled.blockPos) return;
+    const { blockPos: _drop, ...rest } = current;
+    const next: Route = { ...rest, block: settled.uuid };
+    setTabs(tabs().map((tab) => {
+      if (tab.id !== activeId()) return tab;
+      const history = [...tab.history];
+      history[tab.pos] = next;
+      return { ...tab, history };
+    }));
+    persist();
+  }
+
   /** Collapse the whole tab session down to a single fresh Journals tab and focus
    *  it. Used on a genuine graph SWITCH: every existing tab's history (and any
    *  pin/zoom) points at pages from the OLD graph that don't exist in the new one,
@@ -688,8 +725,9 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
    *  Zooming navigates to the block's OWN page (not whichever route you're on), so
    *  it works from the journals feed, a linked-reference, or the command palette -
    *  not only when you're already on that page. Same destination as a middle-click,
-   *  just in the current tab. persistentBlockRef pins the uuid (writes id:: once)
-   *  so a zoomed tab survives a reload/restart, exactly like the new-tab path. */
+   *  just in the current tab. Zooming never writes: OG stamps an `id::` only when a
+   *  reference is created, so an ID-less block is named by its runtime key here and
+   *  by its position path in the saved session (blockPositionRef, GH #623). */
   function focusBlock(id: string | null) {
     if (id === null) {
       // Zoom out: stay on the current page, drop the block. (No-op off a page.)
@@ -701,13 +739,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       return;
     }
     if (!docNode(id)) return; // block no longer loaded - nothing to zoom into
-    const binding = captureBinding();
-    const revision = routeIntentRevision();
-    void persistentBlockRef(id).then((ref) => {
-      if (!stillBound(binding) || routeIntentRevision() !== revision) return;
-      if (ref) navigate({ kind: "page", ...pageTargetFromBlockRef(ref), block: ref.uuid });
-      else pushToast("Could not save the block ID; resolve the page save before opening this block.", "error");
-    }).catch((error) => pushToast(`Could not save the block ID: ${String(error)}`, "error"));
+    const ref = blockRef(id);
+    navigate({ kind: "page", ...pageTargetFromBlockRef(ref), block: ref.uuid });
   }
 
   /** Open a page and scroll the given block into view (block search results jump
@@ -728,7 +761,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       page: target.name,
       pageKind: target.pageKind,
       ...(target.path ? { path: target.path } : {}),
-    });
+    }, { navigation: true });
     // Pre-latch the target so its body renders eagerly (not as a deferred raw-text
     // placeholder) - a heavy target (table/image) then lands at its true height
     // instead of growing after the scroll. See AstBody / docs/adr (P1 lazy body).
@@ -1117,6 +1150,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     closePdf,
     openQueryInNewTab,
     updateActiveQuery,
+    settleActiveBlock,
     replaceActiveRoute,
     resetTabsToJournals,
     openFile,
@@ -1257,6 +1291,10 @@ export function updateActiveQuery(
 
 export function replaceActiveRoute(nextRoute: Route) {
   focusedRouterInstance().replaceActiveRoute(nextRoute);
+}
+
+export function settleActiveBlock() {
+  focusedRouterInstance().settleActiveBlock();
 }
 
 export function resetTabsToJournals() {

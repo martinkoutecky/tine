@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
 import { carryDay, carryDaysBack, carryPrevDay } from "./carry";
 import { journalTitle } from "./journal";
-import { resetStore, loadFeed, pageByName, setRaw, moveBlock, moveBlockFeed, moveSelectionItems, moveItem, selectBlock, extendSelectionTo, selectedIds, outdentSelection, promotePagePreamble, persistBlockRefTarget, persistentBlockRef, markDirty, flushPage, flushAll, isDirty, deletePage, undo } from "./document";
+import { resetStore, loadFeed, pageByName, setRaw, moveBlock, moveBlockFeed, moveSelectionItems, moveItem, selectBlock, extendSelectionTo, selectedIds, outdentSelection, promotePagePreamble, persistBlockRefTarget, ensureBlockId, markDirty, flushPage, flushAll, isDirty, deletePage, undo } from "./document";
 import { forgetPage } from "./document/workingSet";
 import { loadSingle } from "./document/workingSet";
 import { pageToDto } from "./document/convert";
@@ -252,20 +252,20 @@ describe("small document intents retain visible and saved outcomes", () => {
     await pending;
     expect(completed).toBe(true);
   });
-  it("waits for an existing in-memory ID before opening a persistent block route", async () => {
+  it("waits for an existing in-memory ID to reach disk before handing out a copied block ref", async () => {
     const uuid = "48ae2a7a-e09b-4a21-aa3a-010101010101";
     loadSingle(page("Target", [{ ...block(`target\nid:: ${uuid}`), id: uuid }], "page"));
     markDirty("Target", "save-block");
     let finish!: (result: { ok: string[] }) => void;
     vi.spyOn(backend(), "savePages").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
-    const pending = persistentBlockRef(uuid);
+    const pending = ensureBlockId(uuid);
     await vi.waitFor(() => expect(backend().savePages).toHaveBeenCalledOnce());
     let completed = false;
     void pending.then(() => { completed = true; });
     await Promise.resolve();
     expect(completed).toBe(false);
     finish({ ok: ["rev"] });
-    expect(await pending).toMatchObject({ uuid, page: "Target" });
+    expect(await pending).toBe(uuid);
   });
   it("refuses references when a new or already-stamped ID cannot be saved", async () => {
     const uuid = "48ae2a7a-e09b-4a21-aa3a-010101010101";
@@ -273,7 +273,7 @@ describe("small document intents retain visible and saved outcomes", () => {
     vi.spyOn(backend(), "savePages").mockResolvedValue({ failed: { index: 0, family: "conflict", undoFailed: [] } });
     expect(await persistBlockRefTarget(uuid, "Target", "page")).toBe(false);
     expect(pageToDto("Target")!.blocks[0].raw).toContain(`id:: ${uuid}`);
-    expect(await persistentBlockRef(uuid)).toBeNull();
+    expect(await ensureBlockId(uuid)).toBeNull();
   });
 });
 

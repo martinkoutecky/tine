@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
-import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, setRightSidebarWidth, persistRightSidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, type SidebarItem } from "../ui";
+import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, setRightSidebarWidth, persistRightSidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, type SidebarBlock, type SidebarItem } from "../ui";
 import { beginRowReorderDrag, rowReorderClickSuppressed, type RowDropTarget } from "./rowReorder";
 import "../styles/rightSidebarReorder.css";
 import { graphEpoch } from "../graphSession";
@@ -11,7 +11,7 @@ import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
-import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, whenPageReplaceable, node as docNode } from "../document";
+import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, node as docNode } from "../document";
 import { visibleBody } from "../render/block";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
@@ -338,7 +338,7 @@ function PageItem(props: {
 }
 
 function BlockItem(props: {
-  item: { uuid: string; page: string; pageKind: "journal" | "page"; path?: string };
+  item: { uuid: string; page: string; pageKind: "journal" | "page"; path?: string; blockPos?: number[] };
   surfaceKey: string;
   collapsed: boolean;
   onToggle: (control: HTMLButtonElement) => void;
@@ -354,9 +354,19 @@ function BlockItem(props: {
   // Resolve the durable sidebar identity back to the current live store node so
   // edits stay propagated even while its store key is still transient.
   const node = () => {
-    const id = resolveBlockRef(props.item);
+    const id = resolveBlockRef(props.item, { navigation: true });
     return id ? docNode(id) : undefined;
   };
+  // A restored item names its ID-less block by position (navigation never writes an
+  // `id::`); once its page loads, swap the position for the block's live key.
+  createEffect(() => {
+    const item = props.item;
+    if (!item.blockPos) return;
+    const settled = settleBlockRef(item);
+    if (!settled || settled.blockPos) return;
+    const { blockPos: _drop, ...rest } = item;
+    replaceSidebarBlock(item as SidebarBlock, { ...rest, kind: "block", uuid: settled.uuid } as SidebarBlock);
+  });
   const pageLoaded = () => {
     const loaded = pageByName(props.item.page);
     return !!loaded && (!props.item.path || loaded.id === props.item.path);

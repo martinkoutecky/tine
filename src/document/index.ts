@@ -29,8 +29,8 @@
  * that carries IDs, never per keystroke or save;
  * it returns null when the target graph changes and strips uncertain IDs on a
  * lookup failure. The caller needs no knowledge of which pages are loaded.
- * `persistentBlockRef` waits for the target ID's page save before placing a
- * reference in persisted UI. `persistBlockRefTarget` validates the target
+ * `blockPositionRef` and `settleBlockRef` let a saved session name an ID-less
+ * zoomed block by position: navigation never writes an `id::`. `persistBlockRefTarget` validates the target
  * before a source edit, then saves the target ID before the source reference
  * in one ordered group. A crash between those writes may leave an unreferenced
  * ID, never a dangling reference. Failure returns null or false. Cost is one
@@ -99,7 +99,7 @@ export { pasteClipboardPayload, sanitizeOutlineIdsForPaste } from "./edits/paste
 export { appendToTodayJournal, captureToPage } from "./edits/capture";
 export { beginPageHeaderEdit, blockPageReadOnly, blockProperty, blockWritable, collapsibleDescendantIds, expandAncestors, finishPageHeaderEdit, makeOwnNumberedList, orderedListMarker, pageHeaderProperties, promotePagePreamble, readPageProperties, readPageProperty, readSchedule, removeOwnNumberedList, setBlockProperty, setCollapsedDeep, setCollapsedDescendants, setHeading, setPageProperty, setSchedule, stopOwnNumberedListOnEmptyEnter, toggleBlockProperty, toggleListItemAtIndex, toggleOwnNumberedList } from "./edits/properties";
 export { ensurePagePropertyOnKeyPage } from "./edits/propertyDeclaration";
-export { blockExternalId, blockRef, ensureBlockId, existingBlockId, isBlockRefUuid, persistBlockRefTarget, persistentBlockRef, resolveBlockRef } from "./edits/identity";
+export { blockExternalId, blockPositionRef, blockRef, ensureBlockId, existingBlockId, isBlockRefUuid, persistBlockRefTarget, resolveBlockRef, settleBlockRef } from "./edits/identity";
 export { blockSubtreeMarkdown, buildClipboardPayload, dtoSubtreeMarkdown, exportNodesFor } from "./edits/serialize";
 export { clearSelection, cycleSelectionTasks, deleteSelection, expandBlockSelection, extendSelectionTo, hasSelection, indentSelection, isSelected, moveSelection, outdentSelection, selectBlock, selectBlockSubtree, selectedIds, selectionMarkdown, setSelectionHeading } from "./edits/selection";
 export { extendFeedForScroll, isBlockMoving, moveBlock, moveBlocksRelative, moveBlockFeed, moveItem, moveSelectionItems, nextVisibleOrExtend, setFeedExtender, withBlockMoving } from "./edits/moves";

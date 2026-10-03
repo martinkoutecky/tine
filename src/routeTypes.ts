@@ -51,4 +51,18 @@ export type Route =
   | QueryRoute
   | PdfRoute
   | InvalidRoute
-  | (PageTarget & { kind: "page"; block?: string; path?: string });
+  | (PageTarget & {
+    kind: "page";
+    block?: string;
+    path?: string;
+    /** Sibling-index path to `block`, saved in a session for an ID-less block (navigation
+     * never writes an `id::`); resolved by position on restore, then settled into `block`. */
+    blockPos?: number[];
+  });
+
+/** A persisted sibling-index path (`blockPos`), or null when malformed. Bounded so
+ * a hostile or corrupt session cannot make a restore walk an enormous path. */
+export function parseBlockPos(raw: unknown): number[] | null {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 256) return null;
+  return raw.every((n) => Number.isSafeInteger(n) && n >= 0 && n <= 1_000_000) ? raw.slice() as number[] : null;
+}

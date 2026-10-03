@@ -308,7 +308,7 @@ describe("QuickSwitcher search syntax help", () => {
     dispose();
   });
 
-  it("opens an unloaded selected block in the sidebar and starts durable target persistence", async () => {
+  it("opens an unloaded selected block in the sidebar by its authored id without writing any file", async () => {
     const runtimeId = "runtime-unloaded-block";
     const authoredId = "7eab7af1-1b53-4baa-9082-c1d63540e123";
     const canonicalPath = "pages/unloaded.md";
@@ -334,10 +334,11 @@ describe("QuickSwitcher search syntax help", () => {
       [exactPath, JSON.stringify(exact)],
     ]);
     const canonicalBytes = disk.get(canonicalPath)!;
+    const exactBytes = disk.get(exactPath)!;
     loadSingle(JSON.parse(canonicalBytes) as PageRead);
 
     const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
-    const getPageByPath = vi.spyOn(backend(), "getPageByPath").mockImplementation(async (path) => {
+    vi.spyOn(backend(), "getPageByPath").mockImplementation(async (path) => {
       const bytes = disk.get(path);
       return bytes ? JSON.parse(bytes) as PageRead : null;
     });
@@ -383,13 +384,11 @@ describe("QuickSwitcher search syntax help", () => {
       kind: "block", uuid: authoredId, page: "Unloaded", pageKind: "page",
       path: exactPath,
     }]));
-    await vi.waitFor(() => expect(getPageByPath).toHaveBeenCalledWith(exactPath));
-    expect(getPageByPath).toHaveBeenCalledWith(exactPath);
+    // Browsing never mutates the graph: neither file is written, byte for byte.
+    await Promise.resolve();
     expect(getPage).not.toHaveBeenCalled();
-    const savedExact = JSON.parse(disk.get(exactPath)!) as PageRead;
-    expect(savedExact.id).toBe(exactPath);
-    expect(savedExact.blocks[0].raw).toBe(`needle block\nid:: ${authoredId}`);
     expect(savePages).not.toHaveBeenCalled();
+    expect(disk.get(exactPath)).toBe(exactBytes);
     expect(disk.get(canonicalPath)).toBe(canonicalBytes);
     expect(canonical.blocks[0].raw).toBe("canonical sibling bytes");
     dispose();

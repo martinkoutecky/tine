@@ -14,6 +14,7 @@ beginPageHeaderEdit
 blockExternalId
 blockIsGridView
 blockPageReadOnly
+blockPositionRef  # why: a saved session names an ID-less zoomed block by position, so navigation never writes id:: (GH #623); batch-nav
 blockProperty
 blockRef
 blockSubtreeMarkdown
@@ -110,7 +111,6 @@ pageRoots
 pageVisibleOrder
 pasteClipboardPayload
 persistBlockRefTarget
-persistentBlockRef
 pinPageWhileDrafting  # why: a draft outside the block editor (sheet prop cell) pins the page its commit writes, so eviction cannot drop it (K17a); batch15a
 prevVisible
 promotePagePreamble
@@ -152,6 +152,7 @@ setPageProperty
 setRaw
 setSchedule
 setSelectionHeading  # why: context-menu heading applies to the whole selection in one undo (GH #240); batch19b
+settleBlockRef  # why: a restored position ref becomes the block's live identity once found (GH #623); batch-nav
 splitBlock
 stopOwnNumberedListOnEmptyEnter
 switcherPage

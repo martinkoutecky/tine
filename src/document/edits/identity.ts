@@ -26,20 +26,61 @@ export interface LoadedBlockRef {
   page: string;
   pageKind: PageKind;
   path?: string;
+  /** Sibling-index path from the page's top level to an ID-less block. Written
+   * only into a saved session (see {@link blockPositionRef}) and consumed once,
+   * on the first resolution after a restart ({@link settleBlockRef}); `uuid`
+   * is then a stale locator that must not be trusted. */
+  blockPos?: readonly number[];
+}
+
+/** The block at `pos` (sibling indices from the page's top level), or null. */
+function blockAtPosition(roots: readonly string[], pos: readonly number[]): string | null {
+  let siblings = roots;
+  let id: string | null = null;
+  for (const index of pos) {
+    id = siblings[index] ?? null;
+    if (id === null) return null;
+    siblings = doc.byId[id]?.children ?? [];
+  }
+  return id;
+}
+
+/** The sibling-index path of `target` under `roots`, or null. O(page blocks). */
+function positionOf(roots: readonly string[], target: string): number[] | null {
+  const walk = (ids: readonly string[], prefix: number[]): number[] | null => {
+    for (let i = 0; i < ids.length; i++) {
+      if (ids[i] === target) return [...prefix, i];
+      const found = walk(doc.byId[ids[i]]?.children ?? [], [...prefix, i]);
+      if (found) return found;
+    }
+    return null;
+  };
+  return walk(roots, []);
 }
 
 /** Resolve a durable external UUID back to the current live store key. The page
  * descriptor is part of the identity. A unique authored `id` claimant wins; two
  * authored claimants are ambiguous and resolve to null. A runtime store key is
  * only a fallback locator for a block with no authored id, so a runtime key never
- * acts as a second identity (GH #373). */
-export function resolveBlockRef(ref: LoadedBlockRef): string | null {
+ * acts as a second identity (GH #373). `navigation` is for a route or sidebar
+ * item that opened an ID-less block by its runtime key and must keep showing it
+ * after a reference to it stamps an `id::` in the same session: there the key
+ * stays a locator for a block on the ref's page even once it has an id. */
+export function resolveBlockRef(ref: LoadedBlockRef, opts: { navigation?: boolean } = {}): string | null {
   const owner = pageByName(ref.page);
   if (
     !owner
     || owner.kind !== ref.pageKind
     || (ref.path !== undefined && owner.id !== ref.path)
   ) return null;
+
+  if (ref.blockPos) {
+    // A restored, not-yet-settled ref: only the position names the block, and
+    // only an ID-less block can have been saved by position.
+    const id = blockAtPosition(owner.roots, ref.blockPos);
+    const node = id ? doc.byId[id] : undefined;
+    return id && node && node.page === ref.page && existingBlockId(node.raw, formatForBlock(id)) === null ? id : null;
+  }
 
   const stack = [...owner.roots];
   const seen = new Set<string>();
@@ -61,11 +102,8 @@ export function resolveBlockRef(ref: LoadedBlockRef): string | null {
   if (authoredClaim !== null) return authoredClaim;
 
   const runtime = doc.byId[ref.uuid];
-  return runtime
-    && runtime.page === ref.page
-    && existingBlockId(runtime.raw, formatForBlock(ref.uuid)) === null
-    ? ref.uuid
-    : null;
+  if (!runtime || runtime.page !== ref.page) return null;
+  return opts.navigation || existingBlockId(runtime.raw, formatForBlock(ref.uuid)) === null ? ref.uuid : null;
 }
 
 /** `raw` with a durable `id` property added in the page's on-disk format.
@@ -136,26 +174,16 @@ export function isBlockRefUuid(id: string): boolean {
   return UUID_RE.test(id);
 }
 
-/** Stamp an external UUID and wait for its page save. Existing IDs are flushed
- * too because their in-memory property may not yet be on disk. An ID-less block
- * always receives a fresh random UUID: runtime keys can themselves be
- * deterministic UUIDs, but they are locators and are never persisted as authored
- * identity (GH #373). */
-export async function ensureStableBlockId(id: string): Promise<string | null> {
-  return stampBlockId(id, null);
-}
-
-/** Stamp exactly `committed` (or the block's existing id when `committed` is
- * null, else a fresh UUID), flush, and return the stamped id once it is on disk.
- * A block that already carries a different id resolves null. */
-async function stampBlockId(id: string, committed: string | null): Promise<string | null> {
+/** Stamp exactly `committed`, flush, and return the stamped id once it is on
+ * disk. A block that already carries a different id resolves null. */
+async function stampBlockId(id: string, committed: string): Promise<string | null> {
   const binding = captureBinding();
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return null;
   const fmt = formatForBlock(id);
   const existing = existingBlockId(node.raw, fmt);
-  if (existing && committed !== null && existing !== committed) return null;
-  const uuid = existing ?? committed ?? crypto.randomUUID();
+  if (existing && existing !== committed) return null;
+  const uuid = existing ?? committed;
   if (!existing) {
     setDoc("byId", id, "raw", rawWithBlockId(node.raw, uuid, fmt));
     markDirty(node.page, "save-block");
@@ -165,12 +193,33 @@ async function stampBlockId(id: string, committed: string | null): Promise<strin
     && existingBlockId(doc.byId[id].raw, fmt) === uuid ? uuid : null;
 }
 
-/** A block ref usable in persisted UI state after its ID has reached disk.
- * Returns null on a refused save, lost ownership, or missing target; unexpected
- * save errors reject. Cost is one target page save. */
-export async function persistentBlockRef(id: string): Promise<LoadedBlockRef | null> {
-  const uuid = await ensureStableBlockId(id);
-  return uuid ? blockRef(id) : null;
+/** The ref a saved session should carry for `ref`: an ID-less block gains its
+ * position path, because its runtime key is only a locator that a restart may
+ * hand to a different block; an identified block is named by its `id::`, and an
+ * unloaded or unresolvable target keeps its ref unchanged. Navigation never
+ * writes an `id::` (OG writes one only when a reference is created); this is how
+ * a zoomed route survives a restart without it. Cost: O(page blocks). */
+export function blockPositionRef<T extends LoadedBlockRef>(ref: T): T {
+  if (ref.blockPos) return ref;
+  const id = resolveBlockRef(ref, { navigation: true });
+  const node = id ? doc.byId[id] : undefined;
+  if (!id || !node) return ref;
+  const authored = existingBlockId(node.raw, formatForBlock(id));
+  if (authored !== null) return authored === ref.uuid ? ref : { ...ref, uuid: authored };
+  const owner = pageByName(ref.page);
+  const pos = owner ? positionOf(owner.roots, id) : null;
+  return pos ? { ...ref, blockPos: pos } : ref;
+}
+
+/** A restored position ref once its block is found: the same ref carrying the
+ * block's live identity instead of the position, so later edits that shift
+ * siblings cannot move it. Null while the target is not (yet) resolvable. */
+export function settleBlockRef(ref: LoadedBlockRef): LoadedBlockRef | null {
+  if (!ref.blockPos) return ref;
+  const id = resolveBlockRef(ref);
+  if (!id) return null;
+  const { blockPos: _pos, ...rest } = ref;
+  return { ...rest, uuid: blockExternalId(id) ?? id };
 }
 
 /** Find the block that `externalId` names on `page` (exact `path` if given),

@@ -24,7 +24,7 @@ import {
 } from "./router";
 import { setNavReuseTabs } from "./navSettings";
 import { doc, setDoc } from "./document/model";
-import { resetStore } from "./document";
+import { isDirty, resetStore } from "./document";
 import { backend } from "./backend";
 
 // The router holds singleton tab state, so reset to a single unpinned journals
@@ -232,10 +232,10 @@ describe("reuse already-open tabs on user navigation", () => {
     await vi.waitFor(() => expect(route()).toEqual(zoomed));
   });
 
-  it("stores a fresh block's durable UUID in the persistent zoom route", async () => {
-    vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
+  it("zooming into a fresh block writes nothing: the route names the live block, not a stamped id", async () => {
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["saved-rev"] });
     const uuid = "12345678-1234-4234-8234-123456789abc";
-    vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
+    const random = vi.spyOn(crypto, "randomUUID").mockReturnValue(uuid);
     setDoc({
       byId: {
         "bfresh-route": {
@@ -258,14 +258,19 @@ describe("reuse already-open tabs on user navigation", () => {
 
     focusBlock("bfresh-route");
 
-    await vi.waitFor(() => expect(route()).toEqual({
+    expect(route()).toEqual({
       kind: "page",
       name: "Target",
       pageKind: "page",
       path: "pages/Target.md",
-      block: uuid,
-    }));
-    expect((route() as { block?: string }).block).not.toBe("bfresh-route");
+      block: "bfresh-route",
+    });
+    // Browsing never mutates the graph (OG stamps id:: only when a reference is made).
+    expect(doc.byId["bfresh-route"].raw).toBe("Fresh route target");
+    expect(isDirty("Target")).toBe(false);
+    await Promise.resolve();
+    expect(save).not.toHaveBeenCalled();
+    expect(random).not.toHaveBeenCalled();
   });
 
   it("explicit new-tab navigation still duplicates", () => {
@@ -395,10 +400,11 @@ describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
     openFile(path, "Twin", "page");
 
     focusBlock(id);
-    // GH #373: a UUID-shaped runtime key is a locator, never persisted identity.
-    await vi.waitFor(() => expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path, block: external }));
-    expect(route()).not.toMatchObject({ block: id });
-    expect(doc.byId[id].raw).toBe(`Client B\nid:: ${external}`);
+    // GH #373 + browsing-never-writes: a UUID-shaped runtime key is a locator for
+    // this session only; zooming neither stamps an id:: nor mints one.
+    expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path, block: id });
+    expect(doc.byId[id].raw).toBe("Client B");
+    expect(random).not.toHaveBeenCalled();
 
     focusBlock(null);
     expect(route()).toEqual({ kind: "page", name: "Twin", pageKind: "page", path });

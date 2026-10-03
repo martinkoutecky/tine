@@ -16,7 +16,7 @@ import { graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, write
 import { route, focusBlock, scheduleSessionSave, openPageTarget } from "./routerBridge";
 import { beginConflictRefresh, conflictQueue, conflictRefreshCurrent, forgetArrivalNotice, setConflictInventory, trackArrivalNotice } from "./conflictQueue";
 export { conflictQueue, settleArtifactConflict, syncConflicts, setSyncConflicts } from "./conflictQueue";
-import type { PageTarget } from "./routeTypes";
+import { parseBlockPos, type PageTarget } from "./routeTypes";
 import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
 import { setJournalTitleFormat } from "./journal";
@@ -932,6 +932,9 @@ export interface SidebarBlock {
   pageKind: "journal" | "page";
   /** Exact graph-relative owner. Absent on legacy entries, which resolve by name. */
   path?: string;
+  /** Sibling-index path to an ID-less block, saved by a session instead of writing an
+   * `id::` (navigation never mutates the graph); settled into `uuid` once resolved. */
+  blockPos?: number[];
   collapsed?: boolean;
 }
 export type SidebarItem = SidebarPage | SidebarBlock;
@@ -950,6 +953,10 @@ export function sidebarItemKey(item: SidebarItem): string {
     : `block:${item.uuid}`;
 }
 
+function sameBlockPos(a: readonly number[] | undefined, b: readonly number[] | undefined): boolean {
+  return a === b || (!!a && !!b && a.length === b.length && a.every((n, i) => n === b[i]));
+}
+
 function sameSidebarItems(left: readonly SidebarItem[], right: readonly SidebarItem[]): boolean {
   return left.length === right.length && left.every((item, index) => {
     const other = right[index];
@@ -959,7 +966,7 @@ function sameSidebarItems(left: readonly SidebarItem[], right: readonly SidebarI
     }
     return item.kind === "block" && other.kind === "block"
       && item.uuid === other.uuid && item.page === other.page && item.pageKind === other.pageKind
-      && item.path === other.path;
+      && item.path === other.path && sameBlockPos(item.blockPos, other.blockPos);
   });
 }
 
@@ -975,7 +982,10 @@ function validSidebarItem(i: unknown): i is SidebarItem {
   if (o.collapsed !== undefined && typeof o.collapsed !== "boolean") return false;
   if (o.path !== undefined && typeof o.path !== "string") return false;
   if (o.kind === "page") return typeof o.name === "string";
-  if (o.kind === "block") return typeof o.uuid === "string" && typeof o.page === "string";
+  if (o.kind === "block") {
+    return typeof o.uuid === "string" && typeof o.page === "string"
+      && (o.blockPos === undefined || parseBlockPos(o.blockPos) !== null);
+  }
   return false;
 }
 export function parseStoredSidebarItems(raw: string | null): SidebarItem[] {
@@ -1237,12 +1247,21 @@ export function removeDeletedBlocksFromSidebar(uuids: ReadonlySet<string>) {
   if (next.length !== rightSidebar().length) setRightSidebar(next);
 }
 
+/** Swap a restored positional sidebar item for its settled form (same slot). */
+export function replaceSidebarBlock(from: SidebarBlock, to: SidebarBlock): void {
+  const items = rightSidebar();
+  if (!items.includes(from)) return;
+  setRightSidebar(items.map((item) => (item === from ? to : item)));
+}
+
 /** Resolve block items in parallel; remove and save only confirmed missing targets.
  * Failed lookups remain and toast; pages are untouched. O(block items) backend calls plus save. */
 export async function pruneSidebarBlocks(): Promise<void> {
   const root = graphMeta()?.root;
   const owner = graphOwner(() => graphMeta()?.root === root);
-  const blocks = rightSidebar().filter((i): i is SidebarBlock => i.kind === "block");
+  // A positional item names an ID-less block, which the backend cannot resolve by
+  // uuid; the sidebar settles or drops it when its page loads.
+  const blocks = rightSidebar().filter((i): i is SidebarBlock => i.kind === "block" && !i.blockPos);
   if (!blocks.length) return;
   const result = await readOwned(owner, Promise.allSettled(blocks.map((b) => backend().resolveBlock(b.uuid))));
   if (result.kind === "stale") return;

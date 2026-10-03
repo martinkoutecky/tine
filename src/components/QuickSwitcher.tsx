@@ -17,7 +17,7 @@ import { SearchResultRow } from "./SearchResultRow";
 import type { MatchSpan, ObjectiveMatchClass, PageKind } from "../types";
 import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
-import { persistBlockRefTarget, createPage as saveCreatedPage, CreatePageRefusal, switcherPage } from "../document";
+import { createPage as saveCreatedPage, CreatePageRefusal, switcherPage } from "../document";
 import type { QueryPageScope } from "../types";
 import { blockDtoExternalId } from "../blockIdentity";
 import { readOr } from "../resourceRead";
@@ -296,14 +296,6 @@ export function QuickSwitcher(): JSX.Element {
     if (sel() >= n) setSel(0);
   });
 
-  const readyBlock = async (it: Extract<Item, { t: "block" }>): Promise<boolean> => {
-    try {
-      if (await persistBlockRefTarget(it.blockId, it.page, it.pageKind, it.path)) return true;
-    } catch { /* Report the failed save below. */ }
-    pushToast("Could not save the block ID. Resolve its page save and try again.", "error");
-    return false;
-  };
-
   const choose = async (it: Item) => {
     const embryo = switcherEmbryo();
     if (embryo) {
@@ -323,7 +315,6 @@ export function QuickSwitcher(): JSX.Element {
         it.run();
         return;
       case "block":
-        if (!(await readyBlock(it))) return;
         openPageAtBlock(it.page, it.pageKind, it.blockId, it.path);
         break;
     }
@@ -351,7 +342,6 @@ export function QuickSwitcher(): JSX.Element {
         }
         break;
       case "block":
-        if (!(await readyBlock(it))) return;
         router.openPageAtBlock(it.page, it.pageKind, it.blockId, it.path);
         break;
       case "command":
@@ -380,7 +370,6 @@ export function QuickSwitcher(): JSX.Element {
         it.run();
         break;
       case "block":
-        if (!(await readyBlock(it))) return;
         openRouteInOtherPane({ kind: "page", name: it.page, pageKind: it.pageKind, block: it.blockId, path: it.path });
         break;
     }
@@ -393,9 +382,7 @@ export function QuickSwitcher(): JSX.Element {
       openPageInSidebar(it.name, it.pageKind, it.path);
     } else {
       // Search results can target a page that is not loaded in the frontend.
-      // Stamp its id:: through the guarded ordinary page-save path before the
-      // durable sidebar item outlives this search session.
-      if (!(await readyBlock(it))) return;
+      // Opening is read-only (OG writes an id:: only when a reference is created).
       openBlockInSidebar({ uuid: it.blockId, page: it.page, pageKind: it.pageKind, path: it.path });
     }
     closeSwitcher();
@@ -411,7 +398,7 @@ export function QuickSwitcher(): JSX.Element {
       it.path
         ? openInNewTab({ kind: "page", name: it.name, pageKind: it.pageKind, path: it.path })
         : openPageInNewTab(it.name, it.pageKind);
-    else if (it.t === "block" && await readyBlock(it)) openInNewTab({
+    else if (it.t === "block") openInNewTab({
       kind: "page", name: it.page, pageKind: it.pageKind, block: it.blockId, path: it.path,
     });
   };

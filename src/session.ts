@@ -1,7 +1,8 @@
 import { reportUiFailure } from "./uiFailure";
 import { backend } from "./backend";
 import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
-import type { QueryRoute } from "./routeTypes";
+import { parseBlockPos, type QueryRoute } from "./routeTypes";
+import { blockPositionRef } from "./document";
 import { graphOwner, readOwned, writeOwned } from "./owned";
 import { dismissToast, pushToastUnique } from "./toasts";
 import { isSinglePaneShell } from "./nativeChrome";
@@ -152,10 +153,13 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
     || (o.pageKind !== "journal" && o.pageKind !== "page")) return null;
   if (o.path !== undefined && (typeof o.path !== "string" || o.path.length > 4096)) return null;
   if (o.block !== undefined && (typeof o.block !== "string" || o.block.length > 4096)) return null;
+  const blockPos = parseBlockPos(o.blockPos);
+  if (o.blockPos !== undefined && !blockPos) return null;
   return {
     kind: "page", name: o.name, pageKind: o.pageKind,
     ...(o.path ? { path: o.path } : {}),
     ...(o.block ? { block: o.block } : {}),
+    ...(o.block && blockPos ? { blockPos } : {}),
   };
 }
 
@@ -256,9 +260,40 @@ function parseLayoutNode(
   return null;
 }
 
+/** A route as a session stores it. A zoomed ID-less block is saved by position
+ * (its runtime key is only a locator and may denote another block after a
+ * restart); navigation never writes an `id::` to make it durable. */
+function persistedRoute(r: Route): Route {
+  if (r.kind !== "page" || !r.block) return r;
+  const ref = blockPositionRef({
+    uuid: r.block, page: r.name, pageKind: r.pageKind,
+    ...(r.path ? { path: r.path } : {}),
+    ...(r.blockPos ? { blockPos: r.blockPos } : {}),
+  });
+  if (ref.uuid === r.block && ref.blockPos === r.blockPos) return r;
+  const { blockPos: _drop, ...rest } = r;
+  return { ...rest, block: ref.uuid, ...(ref.blockPos ? { blockPos: [...ref.blockPos] } : {}) };
+}
+
+function persistedSnapshot(snapshot: PaneSnapshot): PaneSnapshot {
+  return { ...snapshot, tabs: snapshot.tabs.map((tab) => ({ ...tab, history: tab.history.map(persistedRoute) })) };
+}
+
+function persistedSidebarItem(item: SidebarItem): SidebarItem {
+  if (item.kind !== "block") return item;
+  const ref = blockPositionRef({
+    uuid: item.uuid, page: item.page, pageKind: item.pageKind,
+    ...(item.path ? { path: item.path } : {}),
+    ...(item.blockPos ? { blockPos: item.blockPos } : {}),
+  });
+  if (ref.uuid === item.uuid && ref.blockPos === item.blockPos) return item;
+  const { blockPos: _drop, ...rest } = item;
+  return { ...rest, uuid: ref.uuid, ...(ref.blockPos ? { blockPos: [...ref.blockPos] } : {}) };
+}
+
 function serializeLayout(node: LayoutNode): PersistedLayoutNode {
   if (node.kind === "pane") {
-    return { kind: "pane", paneId: node.paneId, ...paneRouter(node.paneId).snapshot() };
+    return { kind: "pane", paneId: node.paneId, ...persistedSnapshot(paneRouter(node.paneId).snapshot()) };
   }
   return {
     kind: "split",
@@ -271,13 +306,13 @@ function serializeLayout(node: LayoutNode): PersistedLayoutNode {
 export function buildPersistedSession(): PersistedSession {
   const ids = layoutPaneIds();
   const mirrorId = feedPaneId() ?? (ids.includes(focusedPaneId()) ? focusedPaneId() : ids[0]) ?? "main";
-  const mirror = paneRouter(mirrorId).snapshot();
+  const mirror = persistedSnapshot(paneRouter(mirrorId).snapshot());
   return {
     ...mirror,
     ...(currentWorkspaceId ? { workspaceId: currentWorkspaceId } : {}),
     leftSidebar: sidebarOpen(),
     rightSidebar: rightSidebarOpen(),
-    rightSidebarItems: rightSidebar(),
+    rightSidebarItems: rightSidebar().map(persistedSidebarItem),
     favoritesSectionExpanded: favoritesSectionExpanded(),
     recentSectionExpanded: recentSectionExpanded(),
     layout: serializeLayout(layoutRoot()),

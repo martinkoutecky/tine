@@ -87,7 +87,6 @@ pageRoots
 pageVisibleOrder
 pasteClipboardPayload
 persistBlockRefTarget
-persistentBlockRef
 prepareCrossPageSources
 prevVisible
 promotePagePreamble

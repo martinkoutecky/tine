@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
-import { routeTitle, type PaneRouter, type Route, type Tab } from "../router";
+import { resolveRouteBlock, routeTitle, type PaneRouter, type Route, type Tab } from "../router";
 import { formatForBlock, node as docNode } from "../document";
 import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
@@ -41,13 +41,21 @@ function blockSummary(raw: string, format: PropFormat, truncate = true): string 
   return truncate && plain.length > MAX_TITLE ? plain.slice(0, MAX_TITLE - 1).trimEnd() + "…" : plain;
 }
 
+// The loaded block a zoomed tab shows. A restored (position-saved) zoom has no
+// trustworthy key until its page loads, so it resolves by position.
+function tabBlockId(r: Route): string | undefined {
+  if (r.kind !== "page" || !r.block) return undefined;
+  return r.blockPos ? resolveRouteBlock(r) ?? undefined : r.block;
+}
+
 // Tab label: a zoomed-into block shows its (shortened) content; everything else
 // shows the page name (falling back to it when the block isn't loaded or empty).
 function tabTitle(r: Route): string {
   if (r.kind === "page" && r.block) {
-    const n = docNode(r.block);
+    const id = tabBlockId(r);
+    const n = id ? docNode(id) : undefined;
     if (n) {
-      const s = blockSummary(n.raw, formatForBlock(r.block));
+      const s = blockSummary(n.raw, formatForBlock(id!));
       if (s) return s;
     }
   }
@@ -56,9 +64,10 @@ function tabTitle(r: Route): string {
 
 function tabFullTitle(r: Route): string {
   if (r.kind === "page" && r.block) {
-    const n = docNode(r.block);
+    const id = tabBlockId(r);
+    const n = id ? docNode(id) : undefined;
     if (n) {
-      const summary = blockSummary(n.raw, formatForBlock(r.block), false);
+      const summary = blockSummary(n.raw, formatForBlock(id), false);
       if (summary) return summary;
     }
   }
