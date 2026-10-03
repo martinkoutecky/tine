@@ -353,6 +353,15 @@
       "acceptableVariations": ["The new day may appear a moment after midnight (timer margin), before or after the older day's save."],
       "nonRequirements": ["Whether the new day's journal file is created at rollover.", "Exact scroll position of the feed.", "Startup error toasts other than a journal-feed load failure."],
       "stability": "stable"
+    },
+    "scripts/e2e-touch-gestures.mjs": {
+      "contracts": [
+        { "class": "stateful-ux", "userOutcome": "On a phone, a left-edge swipe opens the left drawer (on iOS, with history to pop, it goes Back instead), while short, vertical or mid-screen swipes do nothing.", "blocking": true },
+        { "class": "core-operation", "userOutcome": "Swiping a block right indents it, swiping it left outdents it or opens its action menu, and the result is saved to the page file; short or vertical swipes change nothing.", "blocking": true }
+      ],
+      "acceptableVariations": ["Thresholds, snap-back animation, finger-tracking feel and swipe distances may evolve; blocking is that a deliberate swipe does the action and a clearly short or vertical one does not.", "The action-bar analogue may be a different menu or toolbar as long as it selects the block and offers its actions."],
+      "nonRequirements": ["Exact pixel thresholds, animation timing or haptics.", "The OS delivering real touches: this journey injects synthetic touch events into the WebKitGTK webview.", "Android hardware Back, which is an OS gesture covered by unit tests and a device check."],
+      "stability": "burn-in"
     }
   }
 }
