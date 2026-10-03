@@ -62,6 +62,25 @@ not publish a graph generation. `whole_graph()` returns the load error. A
 successful `scan_refresh()` retries the load and publishes a fresh generation;
 the answer becomes `Ok(true)`. `Err(Closed)` is terminal for that store.
 
+A page open never waits for the whole graph (GH #623 BR3). While
+`is_graph_ready()` is `Ok(false)` (initial parse running, or a launch checkpoint
+served while its diff runs), `page()` and `page_named()` parse the file from
+disk without taking the writer; a name only the index can resolve (an alias, a
+`title::` page) waits for Ready. A save made in that window survives the load:
+the initial parse or launch diff sees its new stamp. After Ready, a page open
+reads only that page: canonicality comes from the published name index
+(`Store::canonical_claim`), never from rereading every page's preamble. Proof:
+`crates/tine-store/src/store/page_open_tests.rs`.
+
+A save that changes only blocks' `collapsed::` property (value `true`, `false`
+or absent, decided by the parser, `model/collapse_only.rs`) publishes a
+generation that inherits the alias list and every unaffected memo, and does
+not mark the launch checkpoint dirty; the next launch diff rereads the folded
+file by its stamp. Unit cost: one fold writes 1 page file (68 B for a
+1-parent page, 1529 B for a 60-block page) with 2 fsyncs, no checkpoint
+rewrite and no work proportional to the graph. Proof:
+`crates/tine-store/src/store/fold_save_tests.rs`.
+
 ## I-8 refusal scenarios
 
 Each row below is keyed by the source file, owning function and refusal family.
