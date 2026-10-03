@@ -831,6 +831,17 @@ describe("filterPhrase / querySentence", () => {
     expect(said(querySentence({ anchor: "page", filter: { kind: "true" } }))).toBe("All pages");
   });
 
+  it("GH #619 item 9: in `Pages and blocks` mode the subject names both families, never `Blocks`", () => {
+    expect(said(querySentence({ anchor: "block", filter: { kind: "and", items: [] }, both: true })))
+      .toBe("All pages and blocks");
+    const filter: Filter = { kind: "and", items: [taskFilter(["TODO"])] };
+    const both = said(querySentence({ anchor: "block", filter, both: true }));
+    expect(both).toMatch(/^Pages and blocks where /);
+    expect(both).not.toMatch(/^Blocks where /);
+    // The one-family reading is unchanged.
+    expect(said(querySentence({ anchor: "block", filter, both: false }))).toMatch(/^Blocks where /);
+  });
+
   it("reads a filter as one sentence whose subject is the anchor", () => {
     const filter: Filter = {
       kind: "and",

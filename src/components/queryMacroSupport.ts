@@ -1,5 +1,5 @@
 // Pure support for the query macro (`Macro.tsx` re-exports what other modules import from there).
-import type { Diagnostic, PageRow, QueryReport, QueryStatistics } from "../editor/queryIr";
+import type { Anchor, Diagnostic, PageRow, QueryReport, QueryResult, QueryStatistics } from "../editor/queryIr";
 import type { PageKind, QueryExecution, RefGroup } from "../types";
 import { columnKey } from "./legacyQueryTable";
 
@@ -58,6 +58,22 @@ export interface BothFamilies {
   /** Why the other anchor's reading of the same conditions did not apply. */
   pageNote: string | null;
   blockNote: string | null;
+  /** Per family: rows the engine counted but a `sample` did not return. */
+  pageMore: boolean;
+  blockMore: boolean;
+  /** The anchor the macro's own text has (the other family is the twin reading). */
+  ownAnchor: Anchor;
+}
+
+/** True when a run counted more rows than it returned (a `sample` cut it). `matched_total` is the
+ *  pre-sample count; the returned rows are counted BEFORE any host-block exclusion, which the count
+ *  includes. An over-bound result never gets here: the engine rejects it (`result-too-large`). */
+export function resultTruncated(result: QueryResult): boolean {
+  if (result.matched_total === undefined) return false;
+  const returned = result.anchor === "page"
+    ? result.pages.length
+    : result.groups.reduce((sum, group) => sum + group.blocks.length, 0);
+  return result.matched_total > returned;
 }
 /** The host block property the "Pages and blocks" choice is stored in. The anchor
  *  itself lives only in the TQL text (`@page` / `@block`; an OG-form `{{query}}`

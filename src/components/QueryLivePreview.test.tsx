@@ -127,3 +127,45 @@ describe("live results in the sheet", () => {
     } finally { view.dispose(); }
   });
 });
+
+// GH #619 item 9: in "Pages and blocks" mode the sheet's preview shows both families, not just the own anchor.
+describe("live results in Pages and blocks mode", () => {
+  const pageResult = (matched: number): QueryResult => ({
+    anchor: "page",
+    pages: [{ path: "pages/Twin.md", name: "Twin", kind: "page", properties: [] }],
+    diagnostics: [], report: { ran: [], ignored: [], supported: true }, total: 1, matched_total: matched, exceeded: false,
+  });
+
+  it("shows the page family and the block family together, with per-family counts and a cut-off note", async () => {
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("@page and task TODO");
+    const parse = backend().parseQuery.bind(backend());
+    vi.spyOn(backend(), "parseQuery").mockImplementation(async (text, ...rest) => {
+      const parsed = await parse(text.startsWith("@page") ? "-- task TODO" : text, ...rest);
+      return text.startsWith("@page") ? { ...parsed, query: { ...parsed.query, anchor: "page" as const } } : parsed;
+    });
+    vi.spyOn(backend(), "queryRun").mockImplementation(async (query) =>
+      query.anchor === "page" ? pageResult(7) : groupOf("a block hit"));
+    const host = document.createElement("div");
+    document.body.append(host);
+    const [current] = createSignal<BuilderSession>(session(WIDE));
+    const dispose = render(
+      () => <QueryBuilder session={current} onChange={() => undefined} blockId="host" both={{ on: () => true, set: () => undefined }} />,
+      host,
+    );
+    host.querySelector<HTMLButtonElement>(".qs-gear")!.click();
+    try {
+      const live = () => document.querySelector<HTMLElement>('.qs-sheet [aria-label="Live results"]');
+      await vi.waitFor(() => expect(live()?.textContent).toContain("a block hit"));
+      expect(live()?.textContent).toContain("Twin");
+      const sheet = document.querySelector<HTMLElement>(".qs-sheet")!;
+      expect(sheet.querySelector(".qs-live-count")?.textContent).toContain("7 pages");
+      expect(sheet.querySelector(".qs-live-count")?.textContent).toContain("1 block");
+      expect(sheet.textContent).toContain("More pages match than are shown.");
+      expect(sheet.textContent).not.toContain("More blocks match than are shown.");
+      // The sentence names both families.
+      const sentence = host.querySelector(".qs-sentence")?.textContent ?? "";
+      expect(sentence).toMatch(/Pages and blocks/);
+      expect(sentence).not.toMatch(/^Blocks where/);
+    } finally { dispose(); }
+  });
+});

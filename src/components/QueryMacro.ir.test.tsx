@@ -1096,6 +1096,33 @@ describe("item 9: a query can show pages and blocks together", () => {
     } finally { dispose(); }
   });
 
+  it("says per family when a sample cut the answer short, and says nothing for a complete one", async () => {
+    load(`${TQL_MACRO}\ntine.result-kinds:: pages-and-blocks`);
+    engineByAnchor();
+    // Pages: 1 returned of 5 counted (a `sample`). Blocks: complete.
+    vi.spyOn(backend(), "queryRun").mockImplementation(async (query) =>
+      query.anchor === "page" ? { ...pageAnswer(), matched_total: 5 } : blockRunResult(groups()));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-page-link")?.textContent).toContain("Twin"));
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      const sections = [...root.querySelectorAll<HTMLElement>("[data-query-result-kind]")];
+      expect(sections[0].textContent).toContain("More pages match than are shown.");
+      expect(sections[1].textContent).not.toContain("match than are shown");
+    } finally { dispose(); }
+  });
+
+  it("a block family of a table-view block renders as a table, like blocks mode", async () => {
+    load(`${TQL_MACRO}\ntine.result-kinds:: pages-and-blocks\ntine.view:: table`);
+    engineByAnchor();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      const blockSection = root.querySelector<HTMLElement>('[data-query-result-kind="block"]')!;
+      expect(blockSection.querySelector('[data-sheet-field-header]')).not.toBeNull();
+    } finally { dispose(); }
+  });
+
   it("without the property it stays a plain block query", async () => {
     load(TQL_MACRO);
     engineByAnchor();

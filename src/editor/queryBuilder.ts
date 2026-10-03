@@ -1186,7 +1186,7 @@ function clausePhrase(filter: Filter, depth: number, isRoot: boolean): PhraseSeg
 * **The resting sentence for a whole query (SPEC §7.2, design §2.1).**
 *
 * One plain-English line whose subject is the anchor — "Blocks where …" /
-* "Pages where …" — and whose predicate is the filter read as prose, values as
+* "Pages where …" ("Pages and blocks where …" in both-families mode) — and whose predicate is the filter read as prose, values as
 * soft chips. It says "where" because the sheet's anchor line says "Find
 * blocks where …": the resting line and the editing line are one sentence.
 * An empty filter reads "All blocks" / "All pages": the honest
@@ -1196,10 +1196,12 @@ function clausePhrase(filter: Filter, depth: number, isRoot: boolean): PhraseSeg
 * a user edits and the sentence they read are the same words, and it is bounded
 * by the same cap (I-22).
 */
-export function querySentence(query: { anchor: Anchor; filter: Filter }): PhraseSegment[] {
-  const plural = query.anchor === "page" ? "pages" : "blocks";
+export function querySentence(query: { anchor: Anchor; filter: Filter; both?: boolean }): PhraseSegment[] {
+  // GH #619 item 9: in "Pages and blocks" mode the subject is both families — never "Blocks where …"
+  // for a query that also lists pages.
+  const plural = query.both ? "pages and blocks" : query.anchor === "page" ? "pages" : "blocks";
   if (isEmptyFilter(query.filter)) return [words("All "), named(plural)];
-  const subject = plural === "pages" ? "Pages" : "Blocks";
+  const subject = query.both ? "Pages and blocks" : plural === "pages" ? "Pages" : "Blocks";
   return [named(subject), words(" where "), ...clausePhrase(query.filter, 0, true)];
 }
 

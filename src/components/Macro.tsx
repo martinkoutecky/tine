@@ -22,10 +22,8 @@ import {
   sourceOptions,
   sourceOriginal,
   sourcePrintDialect,
-  type Diagnostic,
   type ExecutionContext,
   type ExplainEmptyResult,
-  type Anchor,
   type ParsedQuery,
   type Query,
   type QueryPrintDialect,
@@ -42,6 +40,7 @@ import { QueryResultSections } from "./QueryResultSections";
 import { QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
 import type { PageKind, QueryHit, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
+import { bothFamilies } from "../queryTwin";
 import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
 import { savedDslToFriendlySearch } from "../editor/searchQuery";
 import { displayPropertyPatch, isLegacyBareColumnList, mergeQueryAggregateValue } from "../editor/queryViewProperties";
@@ -364,34 +363,13 @@ export function QueryMacro(props: {
     let both: BothFamilies | null = null;
     let twinGroups: RefGroup[] = [];
     if (request.both) {
-      // The same conditions under the OTHER anchor, re-validated by the engine
-      // exactly as the sheet's anchor switch does (print, then parse): a leaf
-      // that does not apply there comes back as a diagnostic, never as a
-      // frontend guess (§7.4, D-14). Never flip the IR's anchor directly.
-      const other: Anchor = request.query.query.anchor === "page" ? "block" : "page";
-      const printed = await readOwned(owner, backend().printQuery({ ...request.query.query, anchor: other }, request.query.view, "tql"));
-      if (printed.kind === "stale") return undefined;
-      const reread = await readOwned(owner, sharedQueryResult(scope, `ir-twin-parse\0${request.key}`, () =>
-        backend().parseQuery(printed.value, "tql", hostProperties())));
-      if (reread.kind === "stale") return undefined;
-      const twin = await readOwned(owner, sharedQueryResult(scope, `ir-twin\0${request.key}`, () =>
-        backend().queryRun(reread.value.query, reread.value.view, request.context)));
-      if (twin.kind === "stale") return undefined;
-      const twinResult = twin.value;
-      const note = (diagnostics: Diagnostic[] | undefined): string | null => {
-        const live = (diagnostics ?? []).filter((d) => !d.disabled);
-        return live.length > 0 ? live.map((d) => d.message).join(" · ") : null;
-      };
-      const pagesResult = result.anchor === "page" ? result : twinResult;
-      const blocksResult = result.anchor === "block" ? result : twinResult;
-      twinGroups = blocksResult.anchor === "block" ? withoutHostBlock(blocksResult.groups, props.blockId) : [];
-      const pages = pagesResult.anchor === "page" ? pagesResult.pages : [];
-      both = {
-        pages,
-        pageTotal: pagesResult.anchor === "page" ? pagesResult.matched_total ?? pages.length : 0,
-        pageNote: note(pagesResult.diagnostics),
-        blockNote: note(blocksResult.diagnostics),
-      };
+      const twin = await bothFamilies({
+        owner, scope, key: request.key, query: request.query.query, view: request.query.view,
+        context: request.context, own: result, hostBlockId: props.blockId, hostProperties: hostProperties(),
+      });
+      if (!twin) return undefined;
+      both = twin.both;
+      twinGroups = twin.blockGroups;
     }
     return {
       requestKey: request.displayKey,
@@ -995,7 +973,7 @@ export function QueryMacro(props: {
                         {
                           kind: "page",
                           hits: both().pages.length,
-                          hasMore: false,
+                          hasMore: both().pageMore,
                           note: both().pageNote ?? undefined,
                           body: (
                             <QueryPageRows
@@ -1009,12 +987,31 @@ export function QueryMacro(props: {
                         {
                           kind: "block",
                           hits: groups().reduce((a, g) => a + g.blocks.length, 0),
-                          hasMore: false,
+                          hasMore: both().blockMore,
                           note: both().blockNote ?? undefined,
+                          // The block presentation (list / table / board) is the one the blocks
+                          // family has on its own; the sheet footer's statistics belong to the
+                          // macro's OWN anchor, so a page-anchored macro's blocks get none.
                           body: (
-                            <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} />}>
-                              <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} />
-                            </Show>
+                            <Switch fallback={
+                              <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} />}>
+                                <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} />
+                              </Show>
+                            }>
+                              <Match when={sheetFace() && !!props.blockId && blockFace() === "table"}>
+                                <SheetContainer>
+                                  <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
+                                    queryDisplay={{ view: reading()?.view ?? {},
+                                      ...(both().ownAnchor === "block" ? { statistics: displayed()?.statistics, statisticsView: runnable()?.view } : {}),
+                                      apply: (next) => void applyDisplay(next) }} />
+                                </SheetContainer>
+                              </Match>
+                              <Match when={sheetFace() && !!props.blockId && blockFace() === "board"}>
+                                <SheetContainer>
+                                  <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet()?.groupBy} groups={groups()} />
+                                </SheetContainer>
+                              </Match>
+                            </Switch>
                           ),
                         },
                       ]}

@@ -179,9 +179,11 @@ export function QuerySentence(props: {
   onOpen: () => void;
   open?: boolean;
   sentenceRef?: (element: HTMLSpanElement) => void;
+  /** GH #619 item 9: the query lists pages AND blocks, so the sentence's subject says so. */
+  both?: () => boolean;
 }): JSX.Element {
   const segments = createMemo<PhraseSegment[]>(() =>
-    querySentence({ anchor: props.query.anchor, filter: props.query.filter }),
+    querySentence({ anchor: props.query.anchor, filter: props.query.filter, both: props.both?.() === true }),
   );
   // A retained leaf reads as its decoded text; the diagnostic is why it is red, so it is the hover text rather …
   const rawTitles = createMemo(() => {

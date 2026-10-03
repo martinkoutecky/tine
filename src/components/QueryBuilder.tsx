@@ -827,6 +827,7 @@ export function QueryBuilder(props: {
           view={() => session()?.view ?? {}}
           context={props.previewContext}
           hostBlockId={props.blockId}
+          both={props.both?.on}
         />
       </Show>
       <Show when={props.display}>{(display) => <QueryDisplay
@@ -905,6 +906,7 @@ export function QueryBuilder(props: {
           <Show when={!props.sheetAlwaysOpen}>
             <QuerySentence
               query={current().query}
+              both={props.both?.on}
               total={props.total}
               open={open()}
               onOpen={() => setOpen(!open())}
