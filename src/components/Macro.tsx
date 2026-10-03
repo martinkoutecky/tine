@@ -2,12 +2,11 @@ import { For, Show, Switch, Match, createMemo, createResource, createSignal, use
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
-import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, pageIdentityKey, openQueryExport, switcherOpen } from "../ui";
+import { openPageInSidebar, openBlockInSidebar, pageIdentityKey, openQueryExport, switcherOpen } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
-import { blockProperty, blockWritable, formatForPage, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
+import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 import { resolveBlockBatched } from "../resolveBatch";
-import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { QueryGroups } from "./QueryGroup";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
@@ -27,25 +26,21 @@ import {
   type ExecutionContext,
   type ExplainEmptyResult,
   type Anchor,
-  type PageRow,
   type ParsedQuery,
   type Query,
   type QueryPrintDialect,
-  type QueryReport,
-  type QueryStatistics,
   type Source,
   type ViewSettings,
 } from "../editor/queryIr";
 import { visibleBody } from "../render/block";
 import { facetsOf } from "../render/facets";
 import { sheetConfig } from "../sheet/config";
-import { InlineText } from "../render/inline";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import { QueryResultSections } from "./QueryResultSections";
 import { QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
-import type { PageKind, QueryExecution, QueryHit, RefGroup } from "../types";
+import type { PageKind, QueryHit, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
 import { savedDslToFriendlySearch } from "../editor/searchQuery";
@@ -59,6 +54,12 @@ import { focusedRouter, openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { pushToast, pushToastUnique } from "../toasts";
 import { ExternalLink } from "./ExternalLink";
+import {
+  boundedFeature, cellText, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY,
+  type BothFamilies, type QueryOperation, type Row,
+} from "./queryMacroSupport";
+export { boundedFeature, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY };
+import { QueryLegacyTable } from "./QueryLegacyTable";
 
 const QUERY_VIEWS: QueryView[] = ["search", "list", "table", "board"];
 const QUERY_VIEW_LABEL: Record<QueryView, string> = {
@@ -91,41 +92,10 @@ function saveCollapsed(key: string, v: boolean) {
   }
 }
 
-interface Row {
-  page: string;
-  kind: PageKind;
-  path?: string;
-  text: string;
-  props: Record<string, string>;
-  /** `props` under OG's normalised column key (`columnKey`), first spelling wins. */
-  byKey: Record<string, string>;
-}
-
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const sameJson = <T,>(a: T, b: T) => JSON.stringify(a) === JSON.stringify(b);
 const CURRENT_PAGE_RE = /<%\s*current page\s*%>/i;
 const BLOCK_CHANGED = "The block changed while saving. Try this edit again.";
-
-/** A bounded excerpt of the ENGINE-PRINTED text a crossing save wrote (master
- *  `boundedFeature`, I-22). It is labelled as an excerpt, never as "the
- *  unsupported feature": nothing in the engine answers that question. */
-export function boundedFeature(message: string): string | null {
-  const single = message.replace(/\s+/g, " ").trim();
-  if (!single) return null;
-  return single.length > 120 ? `${single.slice(0, 119)}…` : single;
-}
-
-/** Remove the block a query is written in from that query's own results
- *  (GH #469; OG `query/result.cljs` "exclude the current one, otherwise it'll
- *  loop forever"). Only the block goes; its children are ordinary results. */
-export function withoutHostBlock(groups: RefGroup[], hostBlockId: string | undefined): RefGroup[] {
-  if (!hostBlockId) return groups;
-  const hosts = (group: RefGroup) => group.blocks.some((block) => block.id === hostBlockId);
-  if (!groups.some(hosts)) return groups;
-  return groups
-    .map((group) => (hosts(group) ? { ...group, blocks: group.blocks.filter((block) => block.id !== hostBlockId) } : group))
-    .filter((group) => group.blocks.length > 0);
-}
 
 // Device-local dismissal keyed by graph (D-11): one read per graph binding,
 // shared by every crossing in this window (I-12/I-13).
@@ -187,34 +157,6 @@ function createQueryReading(request: () => ReadingRequest | undefined) {
   });
   return resource;
 }
-
-interface QueryOperation {
-  requestKey: string;
-  groups: RefGroup[];
-  pages: PageRow[] | null;
-  diagnostics: Diagnostic[];
-  report: QueryReport | null;
-  statistics?: QueryStatistics;
-  search: QueryExecution | null;
-  matchedTotal: number | null;
-  /** GH #619 item 9: "Pages and blocks" — both families of ONE query. The page
-   *  family is the page-anchored reading and the block family the block-anchored
-   *  one, whichever the macro's own text is. `null` for an ordinary query. */
-  both: BothFamilies | null;
-}
-interface BothFamilies {
-  pages: PageRow[];
-  pageTotal: number;
-  /** Why the other anchor's reading of the same conditions did not apply. */
-  pageNote: string | null;
-  blockNote: string | null;
-}
-/** The host block property the "Pages and blocks" choice is stored in. The anchor
- *  itself lives only in the TQL text (`@page` / `@block`; an OG-form `{{query}}`
- *  infers it), so there is no OG key to reuse; OG ignores an unknown `tine.*`
- *  block property exactly as it ignores `tine.view`. */
-export const RESULT_KINDS_PROPERTY = "tine.result-kinds";
-export const PAGES_AND_BLOCKS = "pages-and-blocks";
 
 /** Present a query macro through the Rust parse/run/print seam. Every mounted,
  *  expanded block re-runs a graph-wide evaluation on each graph save; identical
@@ -427,11 +369,13 @@ export function QueryMacro(props: {
       // that does not apply there comes back as a diagnostic, never as a
       // frontend guess (§7.4, D-14). Never flip the IR's anchor directly.
       const other: Anchor = request.query.query.anchor === "page" ? "block" : "page";
-      const twin = await readOwned(owner, sharedQueryResult(scope, `ir-twin\0${request.key}`, async () => {
-        const printed = await backend().printQuery({ ...request.query.query, anchor: other }, request.query.view, "tql");
-        const reread = await backend().parseQuery(printed, "tql", hostProperties());
-        return backend().queryRun(reread.query, reread.view, request.context);
-      }));
+      const printed = await readOwned(owner, backend().printQuery({ ...request.query.query, anchor: other }, request.query.view, "tql"));
+      if (printed.kind === "stale") return undefined;
+      const reread = await readOwned(owner, sharedQueryResult(scope, `ir-twin-parse\0${request.key}`, () =>
+        backend().parseQuery(printed.value, "tql", hostProperties())));
+      if (reread.kind === "stale") return undefined;
+      const twin = await readOwned(owner, sharedQueryResult(scope, `ir-twin\0${request.key}`, () =>
+        backend().queryRun(reread.value.query, reread.value.view, request.context)));
       if (twin.kind === "stale") return undefined;
       const twinResult = twin.value;
       const note = (diagnostics: Diagnostic[] | undefined): string | null => {
@@ -796,7 +740,7 @@ export function QueryMacro(props: {
     for (const r of rows()) for (const k of Object.keys(r.props)) keys.add(k);
     return ["block", "page", ...keys];
   });
-  const cell = (r: Row, c: string): string => (c === "block" ? r.text : c === "page" ? r.page : r.byKey[columnKey(c)] ?? r.props[c] ?? "");
+  const cell = cellText;
   const sorted = createMemo(() => {
     const s = sortState();
     if (!s) return rows();
@@ -1191,67 +1135,7 @@ export function QueryMacro(props: {
                         </Show>
                       }
                     >
-                      <div class="md-table-wrap">
-                      <table class="md-table query-table">
-                        <thead>
-                          <tr onClick={stop}>
-                            <For each={cols()}>
-                              {(c) => (
-                                <th onClick={() => sortBy(c)}>
-                                  {c === "block" ? "Content" : c === "page" ? "Page" : c}{arrow(c)}
-                                </th>
-                              )}
-                            </For>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <For each={sorted()}>
-                            {(r) => (
-                              <tr>
-                                <For each={cols()}>
-                                  {(c) => (
-                                    <Switch fallback={<td>{cell(r, c)}</td>}>
-                                      <Match when={c === "block"}>
-                                        <td>
-                                          <InlineText text={r.text} format={formatForPage(r.page)} />
-                                        </td>
-                                      </Match>
-                                      <Match when={c === "page"}>
-                                        <td
-                                          class="qt-page"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            const target = { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) };
-                                            const dest = internalLinkDest(e);
-                                            if (dest === "sidebar") openPageInSidebar(target);
-                                            else if (dest === "background") openPageTargetInNewTab(target);
-                                            else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target });
-                                            else openPageTarget(target);
-                                          }}
-                                          onMouseDown={internalLinkMouseDown}
-                                          onAuxClick={(e) => {
-                                            e.stopPropagation();
-                                            internalLinkAuxClick(e, () => openPageTargetInNewTab({ name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) }));
-                                          }}
-                                          onContextMenu={(e) => {
-                                            if (!shouldOpenTextContextMenu(e.target)) return;
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            openPageContextMenu(e.clientX, e.clientY, { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
-                                          }}
-                                        >
-                                          {r.page}
-                                        </td>
-                                      </Match>
-                                    </Switch>
-                                  )}
-                                </For>
-                              </tr>
-                            )}
-                          </For>
-                        </tbody>
-                      </table>
-                      </div>
+                      <QueryLegacyTable cols={cols()} rows={sorted()} sortBy={sortBy} arrow={arrow} />
                     </Show>
                   </Show>
                 </Match>

@@ -1164,8 +1164,12 @@ fn the_wide_journal_range_resolves_around_every_journal_date() {
                         op: CmpOp::Between,
                         value: Value::List {
                             items: vec![
-                                Value::Date { literal: "-2000y".into() },
-                                Value::Date { literal: "+2000y".into() },
+                                Value::Date {
+                                    literal: "-2000y".into()
+                                },
+                                Value::Date {
+                                    literal: "+2000y".into()
+                                },
                             ],
                         },
                     },

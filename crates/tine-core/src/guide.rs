@@ -652,6 +652,31 @@ mod query_guide_tests {
         assert!(!queries.contains("## Not in this build yet"));
     }
 
+    /// GH #619 (og-query-ux): the Guide names every sheet capability the
+    /// design list added, with the control's own wording.
+    #[test]
+    fn gh619_query_sheet_ux_is_documented() {
+        let queries = include_str!("templates/queries.md");
+        for control in [
+            "onto another group to move that condition into it",
+            "**Any status**",
+            "**In a journal page**",
+            "*Scheduled: next 7 days*",
+            "nothing the builder wrote is labelled *advanced*",
+            "follow every change you make, before you save",
+            "Matches that share a parent show that parent's breadcrumb once",
+            "the page's own properties next to its name as text you can select",
+            "**Pages and blocks**",
+            "`tine.result-kinds:: pages-and-blocks`",
+            "press **Edit as text**",
+        ] {
+            assert!(
+                queries.contains(control),
+                "missing GH #619 query Guide control: {control}"
+            );
+        }
+    }
+
     /// GH #542 (master c1b14a859): the Guide's advanced-query example is one
     /// Tine runs whole, and the page states the disclosed-superset rule.
     #[test]

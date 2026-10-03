@@ -47,8 +47,12 @@ fs.writeFileSync(`${GRAPH}/pages/Shots.md`, [
   "  - TODO two",
   "- {{query (task TODO)}}",
   "- {{query (and (task TODO) (or (between scheduled today +7d) (between deadline today +7d)))}}",
+  "- {{query (and \"journalmark\" (between -2000y +2000y))}}",
   "",
 ].join("\n"));
+// GH #619 item 3: "In a journal page" writes (between -2000y +2000y); it must match ONLY blocks on a journal page.
+fs.writeFileSync(`${GRAPH}/journals/2025_03_04.md`, "- journalmark on a journal\n");
+fs.writeFileSync(`${GRAPH}/pages/Plain.md`, "- journalmark on a plain page\n");
 const LIBRARY_FILE = `${GRAPH}/pages/Library.md`;
 const QUERIES_FILE = `${GRAPH}/pages/Queries.md`;
 // Order matters: the journey finds each query block by its position.
@@ -334,6 +338,12 @@ await withApp(4, async (browser) => {
     .querySelectorAll(".ref-breadcrumb")].map((c) => (c.textContent ?? "").replace(/\s+/g, " ").trim()).filter((t) => t.includes("Parent A")));
   if (crumbs.length !== 1) throw new Error(`Parent A's breadcrumb should show once for its two matches; saw ${JSON.stringify(crumbs)}`);
   try { await browser.saveScreenshot(`${ARTIFACTS}/item1-group-by-parent.png`); } catch {}
+  // Item 3: the wide journal range keeps journal blocks and drops the same text on an ordinary page.
+  await waitForQuery(browser, 2, (t) => t.includes("journalmark"), "the journal-range answer never landed");
+  const journalText = await browser.execute(() => document.querySelectorAll(".page-blocks .query-block")[2]?.textContent ?? "");
+  if (!/journalmark on a journal/.test(journalText) || /plain page/.test(journalText)) {
+    throw new Error(`the journal range should answer journal blocks only; saw ${journalText}`);
+  }
   // Items 4 and 5: the sheet on a builder-shaped planning query has no "advanced" chip and keeps the text closed.
   await browser.execute(() => {
     for (const close of document.querySelectorAll(".toast-sticky .toast-close")) {

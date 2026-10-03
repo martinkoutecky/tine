@@ -43,7 +43,7 @@ import {
 import { sharedQueryResult } from "../queryResultCache";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
-import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
+import { QUERY_TEXT_OPEN_KEY, persistQueryTextOpen, queryBuilderAutoOpen, queryTextOpen, setQueryBuilderAutoOpen } from "../ui";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { QueryDisplay } from "./QueryDisplay";
 import { QueryLivePreview } from "./QueryLivePreview";
@@ -93,23 +93,11 @@ const errorMessage = (error: unknown): string =>
 // The text pane (§4.3.1, §7.1)
 
 /** GH #619 item 4: the query text is hidden behind an "Edit as text" toggle, and the toggle remembers its state.
- *  It is a per-device view preference (like the other display toggles), kept in localStorage; an unreadable or
- *  unwritable store only costs the memory, never the toggle. */
-export const QUERY_TEXT_OPEN_KEY = "tine.query.textOpen";
-function readTextOpen(): boolean {
-  try {
-    return localStorage.getItem(QUERY_TEXT_OPEN_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-function writeTextOpen(open: boolean): void {
-  try {
-    localStorage.setItem(QUERY_TEXT_OPEN_KEY, open ? "1" : "0");
-  } catch {
-    // Not remembered; the toggle still works for this session.
-  }
-}
+ *  It is a per-device view preference kept by the shared display-preference store in `ui.ts`; an unreadable or
+ *  unwritable store only costs the memory (and shows that store's toast), never the toggle. */
+export { QUERY_TEXT_OPEN_KEY };
+const readTextOpen = queryTextOpen;
+const writeTextOpen = persistQueryTextOpen;
 
 /** How long the pane waits after the last keystroke before asking the engine. */
 const PANE_DEBOUNCE_MS = 150;

@@ -20,10 +20,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Query sheet, from hestratos's design list (GH #619, UI-OG-GH619-*): the Task field has **Any status** (writes every task marker OG knows) and a new **In a journal page** condition (writes `(between -2000y +2000y)`, which Logseq reads as journal-only); a condition can be dragged into another group and a group left with one condition dissolves; the query text is hidden behind a remembered **Edit as text** toggle; results show and follow your edits inside the open sheet before you save (debounced, latest answer only); page results show the page's own properties as selectable text (display only; editing them from the row needs a page-load and write seam that is not in this change); and the Find menu has **Pages and blocks**, showing both answers with Pages above Blocks, stored as `tine.result-kinds:: pages-and-blocks` which Logseq ignores.
 - Settings → About: **Check for updates automatically** can disable startup update checks and notifications on this device; manual checks remain available (GH #618).
 
 ### Changed
 
+- Query sheet rows no longer say *advanced* for anything the builder wrote, and Scheduled/Deadline/journal date ranges read as Scheduled, Deadline or journal date instead of *Between dates* (GH #619, UI-OG-GH619-NO-ADVANCED).
 - REG-OG-P12B-PAGE-HEADER: A Markdown page header is now exactly the leading properties the parser accepts, so a no-space `key::value` line is page text rather than a property, in the editor, page promotion on save and alias lookup alike.
 - REG-OG-P12B-FENCES: Fence-aware editing (property and language autocomplete, code-body editing, calc blocks, hidden metadata) follows Logseq's parser instead of CommonMark: any fence run closes a fence, whatever its length.
 
