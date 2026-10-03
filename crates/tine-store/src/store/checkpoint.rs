@@ -389,6 +389,7 @@ impl ChangeFeed {
             name_by_path,
             unreadable: Arc::new(Vec::new()),
             answers: Default::default(),
+            folds_only: false,
         };
         // The first publication carries every answer, as a cold one does.
         snapshot.answers = snapshot.answer_changes(None, &[], true);
@@ -523,6 +524,12 @@ impl Signal {
         state.dirty_since.get_or_insert(now);
         state.last_publication = Some(now);
         self.wake.notify_all();
+    }
+
+    /// Whether a publication is waiting to be written.
+    #[cfg(test)]
+    pub(crate) fn dirty(&self) -> bool {
+        self.state.lock().unwrap().dirty_since.is_some()
     }
 
     /// Ask for a checkpoint now (after a Rescan), without waiting.

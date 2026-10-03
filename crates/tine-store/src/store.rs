@@ -319,11 +319,15 @@ struct Snapshot {
     name_by_path: Arc<SharedMap<PathBuf, (PageKind, String)>>,
     unreadable: Arc<Vec<(FileId, String)>>,
     answers: (bool, BTreeMap<String, usize>),
+    /// This publication only folded or unfolded blocks (GH #623 item 3).
+    folds_only: bool,
 }
 
 mod answer_changes;
 pub(crate) mod checkpoint;
 mod diagnostics;
+#[cfg(test)]
+mod fold_save_tests;
 #[cfg(test)]
 mod page_open_tests;
 mod snapshot;
@@ -458,9 +462,6 @@ impl ChangeFeed {
         rebuild: bool,
     ) -> GraphRev {
         let old = self.snapshot.read().unwrap().clone();
-        if old.is_none() || config_changed || rebuild || !files.is_empty() {
-            self.checkpoint.get().inspect(|signal| signal.published());
-        }
         let journals_dir = self.graph.current_config().journals_dir.clone();
         if old.is_none()
             || config_changed
@@ -483,6 +484,13 @@ impl ChangeFeed {
             rebuild,
             rev,
         ));
+        // A fold leaves the launch checkpoint's derived state true; its file
+        // stamp is stale, so the next launch diff rereads that one file
+        // (ADR 0070) instead of the whole checkpoint being rewritten for it.
+        if (old.is_none() || config_changed || rebuild || !files.is_empty()) && !snapshot.folds_only
+        {
+            self.checkpoint.get().inspect(|signal| signal.published());
+        }
         #[cfg(test)]
         pause_at_hook(&self.snapshot_publish_pause);
         let mut state = self.state.lock().unwrap();

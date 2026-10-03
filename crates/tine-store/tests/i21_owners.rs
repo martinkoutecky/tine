@@ -95,7 +95,9 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // OG-B-FAIL2: trash_asset now awaits one blocking job because the
         // writer-side reference check can await initial graph publication.
         // Its command future owns/reaps the result; Store close revokes writes.
-        34,
+        // +1 GH #623: get_page_by_path parses off the main thread, awaited by
+        // its command future like get_page.
+        35,
         "command future",
         "caller awaits blocking result",
     ),
