@@ -8,7 +8,7 @@ import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
-import { encodePropertyLeaf, pageRefFilter, propertyFilter, taskFilter } from "../editor/queryBuilder";
+import { anyTaskFilter, encodePropertyLeaf, betweenFilter, journalFilter, pageRefFilter, propertyFilter, taskFilter } from "../editor/queryBuilder";
 import { diagnosticFor, PropertyValueCell } from "./querySheetParts";
 import type { Filter, ParsedQuery, RegistrySnapshot } from "../editor/queryIr";
 
@@ -992,6 +992,57 @@ describe("a group that has been switched off is still a group", () => {
         items: [{ kind: "off", inner: { kind: "and", items: [A, B] } }, C],
       });
       expect(builder.changes).toHaveLength(2);
+    } finally {
+      builder.dispose();
+    }
+  });
+});
+
+// GH #619 items 2, 3 and 5 at the sheet: what the user sees and clicks.
+describe("GH #619: Any status, In a journal page, no advanced chip for builder shapes", () => {
+  it("offers Any status on the Task value menu, writes every OG marker, and reads it back as Any status", async () => {
+    const builder = mountBuilder({ kind: "and", items: [taskFilter(["TODO"])] });
+    try {
+      const sheet = builder.open();
+      await settle();
+      sheet.querySelector<HTMLButtonElement>(".qs-value")!.click();
+      const any = document.querySelector<HTMLButtonElement>(".qs-any-option");
+      expect(any).not.toBeNull();
+      expect(any!.textContent).toBe("Any status");
+      any!.click();
+      await settle();
+      expect(builder.changes).toHaveLength(1);
+      expect(builder.session().query.filter).toEqual({ kind: "and", items: [anyTaskFilter()] });
+      expect(sheet.querySelector(".qs-value")!.textContent).toBe("Any status");
+    } finally {
+      builder.dispose();
+    }
+  });
+
+  it("names the journal condition 'In a journal page' and shows it as a condition, not as dates", async () => {
+    const builder = mountBuilder({ kind: "and", items: [journalFilter()] });
+    try {
+      const sheet = builder.open();
+      await settle();
+      const row = sheet.querySelector(".qs-row")!;
+      expect(row.querySelector(".qs-field")!.textContent).toContain("In a journal page");
+      expect(row.textContent).not.toMatch(/2000|-2000y|\+2000y/);
+    } finally {
+      builder.dispose();
+    }
+  });
+
+  it("does not call a builder-made scheduled condition inside an any-of group advanced", async () => {
+    const nested: Filter = {
+      kind: "and",
+      items: [pageRefFilter("x"), { kind: "or", items: [betweenFilter("scheduled", "-7d", "+7d"), betweenFilter("journal", "today", "+7d")] }],
+    };
+    const builder = mountBuilder(nested);
+    try {
+      const text = builder.host.textContent ?? "";
+      expect(text).not.toMatch(/advanced/i);
+      expect(text).toContain("scheduled: 7 days ago to 7 days ahead");
+      expect(text).toContain("journal date: next 7 days");
     } finally {
       builder.dispose();
     }

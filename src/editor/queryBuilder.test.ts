@@ -13,7 +13,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ADVANCED_PHRASE,
+  JOURNAL_ANY_RANGE,
   MAX_QUERY_BUILDER_DEPTH,
+  anyTaskFilter,
+  isAnyTaskStatus,
+  OG_TASK_MARKERS,
   addChild,
   betweenFilter,
   builderLeafKind,
@@ -164,8 +168,23 @@ describe("leaf constructors mirror the OG parser's IR", () => {
     expect(namespaceFilter("Projects")).toEqual(
       throughPage({ kind: "leaf", leaf: { kind: "attr", attr: "name", op: "starts_with", value: { kind: "text", text: "Projects/" } } }),
     );
+    // OG has no `(journal)`: "In a journal page" is OG's own `between` over a range wider than any journal date (GH #619).
     expect(journalFilter()).toEqual(
-      throughPage({ kind: "leaf", leaf: { kind: "attr", attr: "journal", op: "eq", value: { kind: "bool", bool: true } } }),
+      throughPage({
+        kind: "leaf",
+        leaf: {
+          kind: "attr",
+          attr: "day",
+          op: "between",
+          value: {
+            kind: "list",
+            items: [
+              { kind: "date", literal: JOURNAL_ANY_RANGE[0] },
+              { kind: "date", literal: JOURNAL_ANY_RANGE[1] },
+            ],
+          },
+        },
+      }),
     );
     expect(pagePropertyFilter("fach", null)).toEqual(throughPage(propertyFilter("fach", null)));
   });
@@ -340,7 +359,7 @@ describe("filterValueLabel: the row's value cell holds VALUES", () => {
     expect(filterValueLabel(namespaceFilter("Projects"))).toBe("Projects");
     expect(filterValueLabel(pageRefFilter("Foo"))).toBe("Foo");
     expect(filterValueLabel(contentFilter("100% done"))).toBe("100% done");
-    expect(filterValueLabel(betweenFilter("scheduled", "-7d", "+7d"))).toBe("-7d ~ +7d");
+    expect(filterValueLabel(betweenFilter("scheduled", "-7d", "+7d"))).toBe("7 days ago to 7 days ahead");
   });
 
   it("keeps the whole phrase when a condition compares against nothing", () => {
@@ -400,8 +419,8 @@ describe("filterLabel is total over the IR", () => {
     expect(filterLabel(namespaceFilter("Projects"))).toBe("namespace: Projects");
     expect(filterLabel(journalFilter())).toBe("on journal page");
     expect(filterLabel(contentFilter("100% done"))).toBe('text: "100% done"');
-    expect(filterLabel(betweenFilter("journal", "-30d", "today"))).toBe("between: -30d ~ today");
-    expect(filterLabel(betweenFilter("scheduled", "-7d", "+7d"))).toBe("scheduled between: -7d ~ +7d");
+    expect(filterLabel(betweenFilter("journal", "-30d", "today"))).toBe("journal date: last 30 days");
+    expect(filterLabel(betweenFilter("scheduled", "-7d", "+7d"))).toBe("scheduled: 7 days ago to 7 days ahead");
   });
 });
 
@@ -1207,4 +1226,81 @@ it("all query editing gestures retain authored empty siblings (I-4; queryBuilder
     removeAt(tree, [3, 0]),
   ]) expect(filterChildren(next)?.[0]).toEqual(empty);
   expect(tree.items).toEqual([empty, A, B, { kind: "and", items: [C] }]);
+});
+
+// GH #619 (hestratos): task "Any status", "In a journal page" read-back, no "(advanced)" for builder shapes
+
+describe("task Any status (GH #619 item 2)", () => {
+  it("writes every status OG knows and reads back as `Any status`", () => {
+    const filter = anyTaskFilter();
+    expect(builderLeafKind(filter)).toBe("task");
+    expect(filterLabel(filter)).toBe("task: Any status");
+    expect(filterValueLabel(filter)).toBe("Any status");
+    // OG's own marker set, not Tine's STARTED, so OG can read the text.
+    expect(OG_TASK_MARKERS).not.toContain("STARTED");
+    expect(OG_TASK_MARKERS).toHaveLength(10);
+  });
+
+  it("does not call a partial selection `Any status`", () => {
+    expect(isAnyTaskStatus(["TODO", "DOING"])).toBe(false);
+    expect(filterLabel(taskFilter(["TODO", "DOING"]))).toBe("task: TODO | DOING");
+  });
+});
+
+describe("In a journal page (GH #619 item 3)", () => {
+  it("is recognised as the journal condition, not as dates", () => {
+    expect(builderLeafKind(journalFilter())).toBe("journal");
+    expect(filterLabel(journalFilter())).toBe("on journal page");
+    // A genuine date range stays a dates condition.
+    expect(builderLeafKind(betweenFilter("journal", "-30d", "today"))).toBe("between");
+  });
+});
+
+describe("no ⟨advanced⟩ for a shape the builder wrote (GH #619 item 5)", () => {
+  const said = (segments: { text: string }[]) => segments.map((s) => s.text).join("");
+  const everyBuilderShape: [string, Filter][] = [
+    ["page ref", pageRefFilter("A")],
+    ["task", taskFilter(["TODO"])],
+    ["any task", anyTaskFilter()],
+    ["priority", priorityFilter(["A"])],
+    ["property", propertyFilter("type", "book")],
+    ["scheduled", planningFilter("scheduled")],
+    ["deadline", planningFilter("deadline")],
+    ["journal", journalFilter()],
+    ["journal dates", betweenFilter("journal", "today", "+7d")],
+    ["scheduled dates", betweenFilter("scheduled", "today", "+7d")],
+    ["deadline dates", betweenFilter("deadline", "-7d", "today")],
+    ["scheduled from", betweenFilter("scheduled", "today", "")],
+    ["content", contentFilter("x")],
+    ["on page", onPageFilter("A")],
+    ["namespace", namespaceFilter("A")],
+    ["page property", pagePropertyFilter("fach", "x")],
+    ["page tags", pageTagsFilter(["a"])],
+  ];
+
+  it("keeps every builder shape one plain condition two groups deep", () => {
+    for (const [name, filter] of everyBuilderShape) {
+      const nested: Filter = {
+        kind: "and",
+        items: [pageRefFilter("x"), { kind: "or", items: [filter, pageRefFilter("y")] }],
+      };
+      expect(said(querySentence({ anchor: "block", filter: nested })), name).not.toContain(ADVANCED_PHRASE);
+    }
+  });
+
+  it("phrases a scheduled/deadline date in plain words", () => {
+    expect(filterLabel(betweenFilter("scheduled", "today", "+7d"))).toBe("scheduled: next 7 days");
+    expect(filterLabel(betweenFilter("deadline", "-7d", "today"))).toBe("deadline: last 7 days");
+    expect(filterLabel(betweenFilter("scheduled", "today", ""))).toBe("scheduled: from today");
+    expect(filterLabel(betweenFilter("journal", "-30d", "today"))).toBe("journal date: last 30 days");
+  });
+
+  it("still collapses a nested level the builder cannot re-collect", () => {
+    let rel: Filter = pageRefFilter("bottom");
+    for (let i = 0; i < 64; i++) {
+      rel = { kind: "leaf", leaf: { kind: "rel", rel: "page", quant: "any", pred: rel } };
+    }
+    expect(filterLabel(rel)).toContain(ADVANCED_PHRASE);
+    expect(filterLabel(rel).length).toBeLessThan(120);
+  });
 });

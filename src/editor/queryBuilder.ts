@@ -2,6 +2,7 @@ import { isLeafLike } from "./queryIr";
 // The visual builder's model — **over the IR, not over text** (SPEC §7.1, §7.4).
 
 import { MARKERS as TASK_MARKERS } from "../markers";
+import { DATE_PRESETS } from "./dateExpr";
 import type {
   Anchor,
   Attr,
@@ -89,6 +90,39 @@ export function pageRefFilter(name: string): Filter {
 export function taskFilter(markers: string[]): Filter {
   const picked = markers.length ? markers : ["TODO", "DOING", "NOW", "LATER"];
   return attr("task", "in", textList(picked));
+}
+
+/** Every task status OG knows: OG `logseq.db.default/built-in-markers`
+*  (`deps/db/src/logseq/db/default.cljs`). OG's `(task …)` rule needs a
+*  non-empty marker set, so "Any status" is spelled as this list — the one
+*  spelling OG reads as "every task". Tine's own marker list also has `STARTED`,
+*  which OG does not know; it is deliberately NOT written, so the text stays
+*  exactly what OG would run (GH #619, item 2). */
+export const OG_TASK_MARKERS: readonly string[] = [
+  "NOW",
+  "LATER",
+  "DOING",
+  "DONE",
+  "CANCELED",
+  "CANCELLED",
+  "IN-PROGRESS",
+  "TODO",
+  "WAIT",
+  "WAITING",
+];
+
+/** The "Any status" condition: `(task NOW LATER …)` over every OG marker. */
+export function anyTaskFilter(): Filter {
+  return taskFilter([...OG_TASK_MARKERS]);
+}
+
+/** Whether a marker list says "Any status": exactly OG's set, or every marker
+*  Tine itself knows (a hand-written list covering both reads the same). */
+export function isAnyTaskStatus(markers: string[]): boolean {
+  const have = new Set(markers.map((m) => m.toUpperCase()));
+  const covers = (all: readonly string[]) =>
+    have.size === all.length && all.every((m) => have.has(m));
+  return covers(OG_TASK_MARKERS) || covers(TASK_MARKERS);
 }
 
 /** `(priority …)` — `og.rs` `"priority"`. */
@@ -638,9 +672,30 @@ export function planningFilter(which: "scheduled" | "deadline"): Filter {
   return attr(which, "is_set", { kind: "none" });
 }
 
-/** `(journal)` — `og.rs` `"journal"`. */
+/** The range "In a journal page" writes: wider than any journal date, in OG's
+*  own relative-date spelling (`->journal-day-int` accepts a signed count and a
+*  `y` unit; `(t/years -2000)` is year 26, `(t/years 2000)` year 4026). */
+export const JOURNAL_ANY_RANGE: readonly [string, string] = ["-2000y", "+2000y"];
+
+/** "In a journal page" — `(between -2000y +2000y)`. OG has no `(journal)`
+*  filter; its `between` rule (`deps/db/src/logseq/db/rules.cljc`) requires the
+*  block's page to be a journal, so a range wider than every journal date IS
+*  "is on a journal page", and OG reads the text the same way Tine does
+*  (GH #619, item 3). The legacy `(journal)` text Tine used to write still
+*  reads as this condition ({@link builderLeafKind}). */
 export function journalFilter(): Filter {
-  return throughPage(attr("journal", "eq", { kind: "bool", bool: true }));
+  return throughPage(boundedFilter("day", JOURNAL_ANY_RANGE[0], JOURNAL_ANY_RANGE[1]));
+}
+
+/** Whether `pred` (a page-row predicate) is the wide journal range. */
+function isJournalAnyRange(pred: Filter): boolean {
+  const leaf = asAttrLeaf(pred);
+  if (leaf?.attr !== "day" || leaf.op !== "between") return false;
+  if (leaf.value.kind !== "list" || leaf.value.items.length !== 2) return false;
+  return (
+    dateOf(leaf.value.items[0]) === JOURNAL_ANY_RANGE[0] &&
+    dateOf(leaf.value.items[1]) === JOURNAL_ANY_RANGE[1]
+  );
 }
 
 /** `(page x)` — `og.rs` `"page"`. */
@@ -772,6 +827,7 @@ export function builderLeafKind(filter: Filter): BuilderLeafKind | null {
     if (leaf?.attr === "journal") return "journal";
     if (leaf?.attr === "name" && leaf.op === "eq") return "onPage";
     if (leaf?.attr === "name" && leaf.op === "starts_with") return "namespace";
+    if (isJournalAnyRange(page.pred)) return "journal";
     if (leaf?.attr === "day") return "between";
     return null;
   }
@@ -863,9 +919,48 @@ function valuePhrase(value: Value): string {
   }
 }
 
-function betweenPhrase(value: Value): string {
-  if (value.kind !== "list" || value.items.length !== 2) return valuePhrase(value);
-  return `${dateOf(value.items[0]) ?? valuePhrase(value.items[0])} ~ ${dateOf(value.items[1]) ?? valuePhrase(value.items[1])}`;
+/** A relative-date bound in plain words (`-7d` → "7 days ago"); anything else — an
+ *  ISO date, a journal title — is shown as typed. Pure display: the stored token
+ *  is never rewritten. */
+function boundWords(token: string): string {
+  const t = token.trim();
+  switch (t.toLowerCase()) {
+    case "today":
+    case "now":
+      return "today";
+    case "yesterday":
+    case "tomorrow":
+      return t.toLowerCase();
+  }
+  const rel = /^([+-]?)(\d+)([dwmy])$/i.exec(t);
+  if (!rel) return t;
+  const unit = { d: "day", w: "week", m: "month", y: "year" }[rel[3].toLowerCase() as "d" | "w" | "m" | "y"];
+  const n = parseInt(rel[2], 10);
+  if (n === 0) return "today";
+  return `${n} ${unit}${n === 1 ? "" : "s"} ${rel[1] === "-" ? "ago" : "ahead"}`;
+}
+
+/** The plain-words reading of a `between` pair: a preset's own name
+ *  ("next 7 days"), else "7 days ago to 7 days ahead". */
+function rangeWords(low: string, high: string): string {
+  const preset = DATE_PRESETS.find((p) => p.start === low.trim() && p.end === high.trim());
+  if (preset) return preset.label.toLowerCase();
+  return `${boundWords(low)} to ${boundWords(high)}`;
+}
+
+/** What a date condition on `attr` says — shared by the sentence, the row and the
+ *  value cell, so "scheduled: next 7 days" is spelled one way everywhere (GH #619). */
+function datePhrase(attr: Attr, leaf: Leaf & { kind: "attr" }): PhraseSegment[] | null {
+  const field = attr === "day" ? "journal date" : ATTR_PHRASE[attr];
+  if (leaf.op === "between" && leaf.value.kind === "list" && leaf.value.items.length === 2) {
+    const [low, high] = leaf.value.items.map((item) => dateOf(item) ?? valuePhrase(item));
+    return [words(`${field}: `), chip(rangeWords(low, high))];
+  }
+  if ((leaf.op === "ge" || leaf.op === "le") && leaf.value.kind === "date") {
+    const when = boundWords(leaf.value.literal);
+    return [words(`${field}: `), chip(leaf.op === "ge" ? `from ${when}` : `until ${when}`)];
+  }
+  return null;
 }
 
 /** One piece of a rendered phrase (SPEC §7.2). */
@@ -957,7 +1052,9 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
         break;
     }
     if (leaf.rel === "page") {
-      const inner = filterPhrase(leaf.pred, depth + 1);
+      // A shape the builder itself writes is ONE condition, however deep its group sits:
+      // only a predicate the builder cannot re-collect is a nested level (GH #619).
+      const inner = filterPhrase(leaf.pred, kind ? depth : depth + 1);
       return kind === "pageProperty" ? [words("page "), ...inner] : inner;
     }
     if (leaf.rel === "props") {
@@ -980,8 +1077,10 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
   }
   // An attribute leaf.
   switch (kind) {
-    case "task":
-      return [words("task: "), chip((listOf(leaf.value) ?? []).join(" | ") || "any")];
+    case "task": {
+      const markers = listOf(leaf.value) ?? [];
+      return [words("task: "), chip(isAnyTaskStatus(markers) ? "Any status" : markers.join(" | ") || "any")];
+    }
     case "priority":
       return [words("priority: "), chip((listOf(leaf.value) ?? []).join(" | ") || "any")];
     case "scheduled":
@@ -999,9 +1098,9 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
     default:
       break;
   }
-  if (leaf.op === "between") {
-    const field = leaf.attr === "day" ? "" : `${ATTR_PHRASE[leaf.attr]} `;
-    return [words(`${field}between: `), chip(betweenPhrase(leaf.value))];
+  if (leaf.attr === "day" || leaf.attr === "scheduled" || leaf.attr === "deadline") {
+    const phrase = datePhrase(leaf.attr, leaf);
+    if (phrase) return phrase;
   }
   if (leaf.op === "is_set" || leaf.op === "is_not_set" || leaf.op === "is_blank") {
     return [named(ATTR_PHRASE[leaf.attr]), words(` ${OP_PHRASE[leaf.op]}`)];

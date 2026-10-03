@@ -18,6 +18,7 @@ import {
 import { backend } from "../backend";
 import {
   MAX_QUERY_BUILDER_DEPTH,
+  anyTaskFilter,
   betweenFilter,
   contentFilter,
   encodePropertyLeaf,
@@ -258,7 +259,7 @@ export const FILTER_TYPES: { kind: BuilderLeafKind; label: string }[] = [
   { kind: "property", label: "Property" },
   { kind: "scheduled", label: "Scheduled" },
   { kind: "deadline", label: "Deadline" },
-  { kind: "journal", label: "On journal page" },
+  { kind: "journal", label: "In a journal page" },
   { kind: "between", label: "Between dates" },
   { kind: "content", label: "Full-text search" },
   { kind: "onPage", label: "On page" },
@@ -274,7 +275,7 @@ export const FIELD_LABELS: Record<BuilderLeafKind, string> = {
   property: "Property",
   scheduled: "Scheduled",
   deadline: "Deadline",
-  journal: "On journal page",
+  journal: "In a journal page",
   between: "Between dates",
   content: "Full-text search",
   onPage: "On page",
@@ -706,12 +707,19 @@ export function MultiPick(props: {
   options: string[];
   initial?: string[];
   onCommit: (picked: string[]) => void;
+  /** A one-click "everything" choice above the checkboxes (task: "Any status"). */
+  any?: { label: string; onPick: () => void };
 }): JSX.Element {
   const [picked, setPicked] = createSignal<string[]>(props.initial ?? []);
   const toggle = (o: string) =>
     setPicked(picked().includes(o) ? picked().filter((x) => x !== o) : [...picked(), o]);
   return (
     <div class="qs-value-editor">
+      <Show when={props.any}>
+        <button type="button" class="qs-option qs-any-option" onClick={() => props.any!.onPick()}>
+          {props.any!.label}
+        </button>
+      </Show>
       <For each={props.options}>
         {(o) => (
           <label class="qs-check">
@@ -841,7 +849,11 @@ export function ValueEditor(props: {
         <PageInput placeholder="Page or tag name" onCommit={(name) => props.onCommit(pageRefFilter(name))} />
       </Show>
       <Show when={props.kind === "task"}>
-        <MultiPick options={MARKERS} onCommit={(markers) => props.onCommit(taskFilter(markers))} />
+        <MultiPick
+          options={MARKERS}
+          any={{ label: "Any status", onPick: () => props.onCommit(anyTaskFilter()) }}
+          onCommit={(markers) => props.onCommit(taskFilter(markers))}
+        />
       </Show>
       <Show when={props.kind === "priority"}>
         <MultiPick options={PRIORITIES} onCommit={(levels) => props.onCommit(priorityFilter(levels))} />
