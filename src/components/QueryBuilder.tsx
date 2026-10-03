@@ -10,7 +10,7 @@ import {
   onMount,
   type JSX,
 } from "solid-js";
-import { Portal } from "solid-js/web";
+import { FloatingPortal } from "./FloatingPortal";
 import { backend } from "../backend";
 import {
   builderRoot,
@@ -783,7 +783,7 @@ export function QueryBuilder(props: {
           </Show>
           <Show when={props.sheetAlwaysOpen}>{sheet()}</Show>
           <Show when={open() && !props.sheetAlwaysOpen}>
-            <Portal>
+            <FloatingPortal>
               <div
                 class="qs-overlay"
                 onClick={(e) => {
@@ -805,7 +805,7 @@ export function QueryBuilder(props: {
               >
                 {sheet()}
               </div>
-            </Portal>
+            </FloatingPortal>
           </Show>
         </div>
       )}

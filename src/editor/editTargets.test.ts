@@ -55,3 +55,21 @@ describe("forbidsEditEntry: native scrollbar drag (master 8d404e9c1)", () => {
     expect(forbidsEditEntry(press(host, code, 50, 60))).toBe(false);
   });
 });
+
+describe("forbidsEditEntry: portalled surfaces (GH #619, master 2617ff194)", () => {
+  it("never arms edit entry for a press that originates outside the block that owns the handler", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const sheet = document.createElement("button"); // portalled to <body>, NOT inside host
+    document.body.appendChild(sheet);
+    expect(forbidsEditEntry(press(host, sheet, 5, 5))).toBe(true);
+  });
+
+  it("still allows a press on the block's own text", () => {
+    const host = document.createElement("div");
+    const text = document.createElement("span");
+    host.appendChild(text);
+    document.body.appendChild(host);
+    expect(forbidsEditEntry(press(host, text, 5, 5))).toBe(false);
+  });
+});

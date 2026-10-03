@@ -1,5 +1,5 @@
 import { Show, createContext, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
-import { Portal } from "solid-js/web";
+import { FloatingPortal } from "../components/FloatingPortal";
 import { RefBlocks } from "../components/RefBlocks";
 import type { BlockDto } from "../types";
 import { registerTransientLayer } from "../transientLayers";
@@ -133,7 +133,7 @@ export function PeekPopup(props: {
   });
 
   return (
-    <Portal>
+    <FloatingPortal>
       <div
         class="peek-popup"
         ref={popupEl}
@@ -156,6 +156,6 @@ export function PeekPopup(props: {
             ? `${MAX_PEEK_COUNT}+ more blocks` : `${props.truncatedCount!()} more blocks`}</div>
         </Show>
       </div>
-    </Portal>
+    </FloatingPortal>
   );
 }
