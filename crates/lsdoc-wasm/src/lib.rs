@@ -7,6 +7,49 @@
 
 use wasm_bindgen::prelude::*;
 
+// Panic = abort, so a Rust panic is a bare wasm `unreachable` trap whose message is
+// otherwise lost (the og "Unreachable code should not be executed (evaluating
+// 'page_header_json')" report carried no cause). The hook runs BEFORE the abort: it
+// logs the message to the console and keeps the latest one for `last_panic`, which the
+// glue (scripts/build-wasm.mjs) reads when it recovers from a trap. Only the location and a
+// literal message are kept (I-5: no page text in logs). The hook itself must never panic
+// (that would be a second abort inside the abort): it uses `try_borrow_mut` and formats
+// into a fresh String.
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(message: &str);
+}
+
+thread_local! {
+    static LAST_PANIC: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+#[wasm_bindgen(start)]
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        // I-5: a formatted panic message can embed page text (str slicing panics quote the
+        // string), and the thrown Error reaches the diagnostics log. Keep the location, which
+        // names the site, and the message only when it is a fixed literal.
+        let place = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        let literal = info.payload().downcast_ref::<&str>().copied().unwrap_or("<formatted message withheld>");
+        let message = format!("lsdoc-wasm panic at {place}: {literal}");
+        LAST_PANIC.with(|slot| {
+            if let Ok(mut slot) = slot.try_borrow_mut() {
+                *slot = message.clone();
+            }
+        });
+        console_error(&message);
+    }));
+}
+
+/// The message of the most recent panic in this instance ("" if none). A trapped
+/// instance still answers small calls; the glue reads this before reinstantiating.
+#[wasm_bindgen]
+pub fn last_panic() -> String {
+    LAST_PANIC.with(|slot| slot.try_borrow().map(|s| s.clone()).unwrap_or_default())
+}
+
 #[path = "../../tine-core/src/page_identity.rs"]
 mod page_identity;
 #[path = "../../tine-core/src/query/group_field.rs"]

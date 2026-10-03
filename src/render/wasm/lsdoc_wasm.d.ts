@@ -31,10 +31,18 @@ export function format_journal_date(year: number, month: number, day: number, pa
  */
 export function header_tokens_json(raw: string, is_org: boolean): string;
 
+export function install_panic_hook(): void;
+
 /**
  * Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
  */
 export function is_query_macro_name(name: string): boolean;
+
+/**
+ * The message of the most recent panic in this instance ("" if none). A trapped
+ * instance still answers small calls; the glue reads this before reinstantiating.
+ */
+export function last_panic(): string;
 
 export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_marker: string, new_marker: string, enabled: boolean, with_seconds: boolean): string;
 
@@ -210,7 +218,9 @@ export interface InitOutput {
     readonly encode_page_name: (a: number, b: number, c: number) => [number, number];
     readonly format_journal_date: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly header_tokens_json: (a: number, b: number, c: number) => [number, number];
+    readonly install_panic_hook: () => void;
     readonly is_query_macro_name: (a: number, b: number) => number;
+    readonly last_panic: () => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];

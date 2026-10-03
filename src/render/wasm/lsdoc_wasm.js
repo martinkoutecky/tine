@@ -5,7 +5,7 @@
  * @param {string} value
  * @returns {string | undefined}
  */
-export function canonical_group_field(value) {
+function __tine_raw_canonical_group_field(value) {
     const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.canonical_group_field(ptr0, len0);
@@ -24,7 +24,7 @@ export function canonical_group_field(value) {
  * @param {boolean} legacy
  * @returns {string}
  */
-export function decode_page_name(stem, legacy) {
+function __tine_raw_decode_page_name(stem, legacy) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -46,7 +46,7 @@ export function decode_page_name(stem, legacy) {
  * @param {any} request
  * @returns {string}
  */
-export function edit_block_regions_json(raw, is_org, regions, request) {
+function __tine_raw_edit_block_regions_json(raw, is_org, regions, request) {
     let deferred3_0;
     let deferred3_1;
     try {
@@ -74,7 +74,7 @@ export function edit_block_regions_json(raw, is_org, regions, request) {
  * @param {boolean} legacy
  * @returns {string}
  */
-export function encode_page_name(name, legacy) {
+function __tine_raw_encode_page_name(name, legacy) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -97,7 +97,7 @@ export function encode_page_name(name, legacy) {
  * @param {string} pattern
  * @returns {string}
  */
-export function format_journal_date(year, month, day, pattern) {
+function __tine_raw_format_journal_date(year, month, day, pattern) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -119,7 +119,7 @@ export function format_journal_date(year, month, day, pattern) {
  * @param {boolean} is_org
  * @returns {string}
  */
-export function header_tokens_json(raw, is_org) {
+function __tine_raw_header_tokens_json(raw, is_org) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -134,16 +134,38 @@ export function header_tokens_json(raw, is_org) {
     }
 }
 
+function __tine_raw_install_panic_hook() {
+    wasm.install_panic_hook();
+}
+
 /**
  * Whether a parser-tokenized macro name is a query; O(name bytes), no I/O.
  * @param {string} name
  * @returns {boolean}
  */
-export function is_query_macro_name(name) {
+function __tine_raw_is_query_macro_name(name) {
     const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.is_query_macro_name(ptr0, len0);
     return ret !== 0;
+}
+
+/**
+ * The message of the most recent panic in this instance ("" if none). A trapped
+ * instance still answers small calls; the glue reads this before reinstantiating.
+ * @returns {string}
+ */
+function __tine_raw_last_panic() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.last_panic();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
 }
 
 /**
@@ -155,7 +177,7 @@ export function is_query_macro_name(name) {
  * @param {boolean} with_seconds
  * @returns {string}
  */
-export function logbook_apply_marker_transition(raw, is_org, old_marker, new_marker, enabled, with_seconds) {
+function __tine_raw_logbook_apply_marker_transition(raw, is_org, old_marker, new_marker, enabled, with_seconds) {
     let deferred4_0;
     let deferred4_1;
     try {
@@ -180,7 +202,7 @@ export function logbook_apply_marker_transition(raw, is_org, old_marker, new_mar
  * @param {boolean} with_seconds
  * @returns {string}
  */
-export function logbook_clock_in(raw, is_org, with_seconds) {
+function __tine_raw_logbook_clock_in(raw, is_org, with_seconds) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -201,7 +223,7 @@ export function logbook_clock_in(raw, is_org, with_seconds) {
  * @param {boolean} with_seconds
  * @returns {string}
  */
-export function logbook_clock_out(raw, is_org, with_seconds) {
+function __tine_raw_logbook_clock_out(raw, is_org, with_seconds) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -221,7 +243,7 @@ export function logbook_clock_out(raw, is_org, with_seconds) {
  * @param {boolean} is_org
  * @returns {string}
  */
-export function logbook_info_json(raw, is_org) {
+function __tine_raw_logbook_info_json(raw, is_org) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -244,7 +266,7 @@ export function logbook_info_json(raw, is_org) {
  * See docs/wasm-parse-plan.md §7D.
  * @returns {string}
  */
-export function lsdoc_tag() {
+function __tine_raw_lsdoc_tag() {
     let deferred1_0;
     let deferred1_1;
     try {
@@ -263,7 +285,7 @@ export function lsdoc_tag() {
  * @param {string} path
  * @returns {string}
  */
-export function mime_from_path(path) {
+function __tine_raw_mime_from_path(path) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -283,7 +305,7 @@ export function mime_from_path(path) {
  * @param {string} content
  * @returns {string[]}
  */
-export function nested_reference_names(content) {
+function __tine_raw_nested_reference_names(content) {
     const ptr0 = passStringToWasm0(content, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.nested_reference_names(ptr0, len0);
@@ -298,7 +320,7 @@ export function nested_reference_names(content) {
  * @param {number} depth
  * @returns {string}
  */
-export function ordered_list_glyph(index, depth) {
+function __tine_raw_ordered_list_glyph(index, depth) {
     let deferred1_0;
     let deferred1_1;
     try {
@@ -317,7 +339,7 @@ export function ordered_list_glyph(index, depth) {
  * @param {string} raw
  * @returns {string}
  */
-export function page_header_json(raw) {
+function __tine_raw_page_header_json(raw) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -337,7 +359,7 @@ export function page_header_json(raw) {
  * @param {string} name
  * @returns {string}
  */
-export function page_identity_key(name) {
+function __tine_raw_page_identity_key(name) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -359,7 +381,7 @@ export function page_identity_key(name) {
  * @param {boolean} is_org
  * @returns {string}
  */
-export function page_regions_json(raw, is_org) {
+function __tine_raw_page_regions_json(raw, is_org) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -379,7 +401,7 @@ export function page_regions_json(raw, is_org) {
  * @param {boolean} is_org
  * @returns {string}
  */
-export function parse_block_bundle_json(raw, is_org) {
+function __tine_raw_parse_block_bundle_json(raw, is_org) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -404,7 +426,7 @@ export function parse_block_bundle_json(raw, is_org) {
  * @param {boolean} is_org
  * @returns {string}
  */
-export function parse_block_json(raw, is_org) {
+function __tine_raw_parse_block_json(raw, is_org) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -429,7 +451,7 @@ export function parse_block_json(raw, is_org) {
  * @param {boolean} is_org
  * @returns {string}
  */
-export function parse_document_json(text, is_org) {
+function __tine_raw_parse_document_json(text, is_org) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -451,7 +473,7 @@ export function parse_document_json(text, is_org) {
  * @param {boolean} is_org
  * @returns {string}
  */
-export function parse_inline_json(raw, is_org) {
+function __tine_raw_parse_inline_json(raw, is_org) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -473,7 +495,7 @@ export function parse_inline_json(raw, is_org) {
  * @param {string} pattern
  * @returns {string}
  */
-export function parse_journal_format_json(text, pattern) {
+function __tine_raw_parse_journal_format_json(text, pattern) {
     let deferred3_0;
     let deferred3_1;
     try {
@@ -496,7 +518,7 @@ export function parse_journal_format_json(text, pattern) {
  * @param {boolean} preview
  * @returns {string}
  */
-export function pdf_asset_key(filename, preview) {
+function __tine_raw_pdf_asset_key(filename, preview) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -517,7 +539,7 @@ export function pdf_asset_key(filename, preview) {
  * @param {string} line
  * @returns {string}
  */
-export function property_line_json(line) {
+function __tine_raw_property_line_json(line) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -541,7 +563,7 @@ export function property_line_json(line) {
  * @param {string} value
  * @returns {string}
  */
-export function query_edn_json(source, operation, value) {
+function __tine_raw_query_edn_json(source, operation, value) {
     let deferred4_0;
     let deferred4_1;
     try {
@@ -566,7 +588,7 @@ export function query_edn_json(source, operation, value) {
  * @param {string} raw
  * @returns {string}
  */
-export function query_macro_extents_json(raw) {
+function __tine_raw_query_macro_extents_json(raw) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -586,7 +608,7 @@ export function query_macro_extents_json(raw) {
  * @param {string} name
  * @returns {boolean}
  */
-export function query_macro_is_tql(name) {
+function __tine_raw_query_macro_is_tql(name) {
     const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.query_macro_is_tql(ptr0, len0);
@@ -602,7 +624,7 @@ export function query_macro_is_tql(name) {
  * @param {boolean} filename_candidates
  * @returns {string | undefined}
  */
-export function reference_target_name(kind, value, label, org, filename_candidates) {
+function __tine_raw_reference_target_name(kind, value, label, org, filename_candidates) {
     const ptr0 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -633,7 +655,7 @@ export function reference_target_name(kind, value, label, org, filename_candidat
  * @param {boolean} is_org
  * @returns {string}
  */
-export function render_block_html(raw, is_org) {
+function __tine_raw_render_block_html(raw, is_org) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -654,7 +676,7 @@ export function render_block_html(raw, is_org) {
  * @param {boolean} remove_accents
  * @returns {string}
  */
-export function search_fold(text, remove_accents) {
+function __tine_raw_search_fold(text, remove_accents) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -677,7 +699,7 @@ export function search_fold(text, remove_accents) {
  * @param {string} original
  * @returns {boolean}
  */
-export function search_matches(query, remove_accents, lower, original) {
+function __tine_raw_search_matches(query, remove_accents, lower, original) {
     const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(lower, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -694,7 +716,7 @@ export function search_matches(query, remove_accents, lower, original) {
  * @param {boolean} remove_accents
  * @returns {string}
  */
-export function search_query_json(query, remove_accents) {
+function __tine_raw_search_query_json(query, remove_accents) {
     let deferred2_0;
     let deferred2_1;
     try {
@@ -719,7 +741,7 @@ export function search_query_json(query, remove_accents) {
  * @param {boolean} first
  * @returns {string}
  */
-export function search_spans_json(query, remove_accents, text, limit, first) {
+function __tine_raw_search_spans_json(query, remove_accents, text, limit, first) {
     let deferred3_0;
     let deferred3_1;
     try {
@@ -744,7 +766,7 @@ export function search_spans_json(query, remove_accents, text, limit, first) {
  * @param {boolean} remove_accents
  * @returns {string}
  */
-export function search_substring_spans_json(text, needle, limit, remove_accents) {
+function __tine_raw_search_substring_spans_json(text, needle, limit, remove_accents) {
     let deferred3_0;
     let deferred3_1;
     try {
@@ -767,7 +789,7 @@ export function search_substring_spans_json(text, needle, limit, remove_accents)
  * @param {string} value
  * @returns {string[]}
  */
-export function split_linkable_property(value) {
+function __tine_raw_split_linkable_property(value) {
     const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.split_linkable_property(ptr0, len0);
@@ -799,6 +821,9 @@ function __wbg_get_imports() {
         },
         __wbg___wbindgen_throw_344f42d3211c4765: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
+        },
+        __wbg_error_93e15b0debaf64cc: function(arg0, arg1) {
+            console.error(getStringFromWasm0(arg0, arg1));
         },
         __wbg_from_13e323c65fc8f464: function(arg0) {
             const ret = Array.from(arg0);
@@ -1098,3 +1123,59 @@ export function __tineReinstantiate() {
   const instance = new WebAssembly.Instance(wasmModule, __wbg_get_imports());
   return __wbg_finalize_init(instance, wasmModule);
 }
+
+// Tine trap isolation: see scripts/build-wasm.mjs. One guarded export per wasm-bindgen export.
+function __tineGuard(name, raw) {
+  return function (...args) {
+    try {
+      return raw.apply(this, args);
+    } catch (e) {
+      const trapped =
+        (typeof WebAssembly !== 'undefined' && e instanceof WebAssembly.RuntimeError) ||
+        (e instanceof RangeError && /call stack/i.test(String(e.message)));
+      if (!trapped) throw e;
+      let panic = '';
+      try { panic = __tine_raw_last_panic(); } catch (_) { /* the instance is too far gone to answer */ }
+      __tineReinstantiate();
+      throw new Error('lsdoc-wasm trap in ' + name + ': ' + (panic || e.message), { cause: e });
+    }
+  };
+}
+export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
+export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);
+export const edit_block_regions_json = __tineGuard("edit_block_regions_json", __tine_raw_edit_block_regions_json);
+export const encode_page_name = __tineGuard("encode_page_name", __tine_raw_encode_page_name);
+export const format_journal_date = __tineGuard("format_journal_date", __tine_raw_format_journal_date);
+export const header_tokens_json = __tineGuard("header_tokens_json", __tine_raw_header_tokens_json);
+export const install_panic_hook = __tineGuard("install_panic_hook", __tine_raw_install_panic_hook);
+export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw_is_query_macro_name);
+export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);
+export const logbook_apply_marker_transition = __tineGuard("logbook_apply_marker_transition", __tine_raw_logbook_apply_marker_transition);
+export const logbook_clock_in = __tineGuard("logbook_clock_in", __tine_raw_logbook_clock_in);
+export const logbook_clock_out = __tineGuard("logbook_clock_out", __tine_raw_logbook_clock_out);
+export const logbook_info_json = __tineGuard("logbook_info_json", __tine_raw_logbook_info_json);
+export const lsdoc_tag = __tineGuard("lsdoc_tag", __tine_raw_lsdoc_tag);
+export const mime_from_path = __tineGuard("mime_from_path", __tine_raw_mime_from_path);
+export const nested_reference_names = __tineGuard("nested_reference_names", __tine_raw_nested_reference_names);
+export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_ordered_list_glyph);
+export const page_header_json = __tineGuard("page_header_json", __tine_raw_page_header_json);
+export const page_identity_key = __tineGuard("page_identity_key", __tine_raw_page_identity_key);
+export const page_regions_json = __tineGuard("page_regions_json", __tine_raw_page_regions_json);
+export const parse_block_bundle_json = __tineGuard("parse_block_bundle_json", __tine_raw_parse_block_bundle_json);
+export const parse_block_json = __tineGuard("parse_block_json", __tine_raw_parse_block_json);
+export const parse_document_json = __tineGuard("parse_document_json", __tine_raw_parse_document_json);
+export const parse_inline_json = __tineGuard("parse_inline_json", __tine_raw_parse_inline_json);
+export const parse_journal_format_json = __tineGuard("parse_journal_format_json", __tine_raw_parse_journal_format_json);
+export const pdf_asset_key = __tineGuard("pdf_asset_key", __tine_raw_pdf_asset_key);
+export const property_line_json = __tineGuard("property_line_json", __tine_raw_property_line_json);
+export const query_edn_json = __tineGuard("query_edn_json", __tine_raw_query_edn_json);
+export const query_macro_extents_json = __tineGuard("query_macro_extents_json", __tine_raw_query_macro_extents_json);
+export const query_macro_is_tql = __tineGuard("query_macro_is_tql", __tine_raw_query_macro_is_tql);
+export const reference_target_name = __tineGuard("reference_target_name", __tine_raw_reference_target_name);
+export const render_block_html = __tineGuard("render_block_html", __tine_raw_render_block_html);
+export const search_fold = __tineGuard("search_fold", __tine_raw_search_fold);
+export const search_matches = __tineGuard("search_matches", __tine_raw_search_matches);
+export const search_query_json = __tineGuard("search_query_json", __tine_raw_search_query_json);
+export const search_spans_json = __tineGuard("search_spans_json", __tine_raw_search_spans_json);
+export const search_substring_spans_json = __tineGuard("search_substring_spans_json", __tine_raw_search_substring_spans_json);
+export const split_linkable_property = __tineGuard("split_linkable_property", __tine_raw_split_linkable_property);

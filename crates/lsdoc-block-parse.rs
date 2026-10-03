@@ -510,7 +510,11 @@ pub(crate) fn parse_projection(raw: &str, is_org: bool) -> Projection {
 /// no re-bulleting. A quote staircase deeper than [`SOURCE_QUOTE_DEPTH_MAX`]
 /// is refused before lsdoc recurses, and a tree deeper than the block bound is
 /// drained iteratively; either way `None`, and the caller degrades (no refs
-/// from that value, an empty document) instead of aborting (I-22). Every
+/// from that value, an empty document) instead of aborting (I-22). Text lsdoc
+/// does not yet own (an ownership gap in v2, e.g. `"- s::\r"`) is likewise
+/// `None` through the strict hook rather than the panicking `parse_format`: in
+/// the wasm build (`panic = "abort"`) that panic is an `unreachable` trap with
+/// no message and no way to isolate it. Every
 /// production `lsdoc::parse*` call is in this file
 /// (`tine-core/tests/lsdoc_parse_boundary.rs`).
 #[allow(dead_code)] // each crate that includes this file uses a subset
@@ -518,7 +522,8 @@ pub(crate) fn parse_text_bounded(text: &str, format: &str) -> Option<Projection>
     if !quote_depth_within(text, SOURCE_QUOTE_DEPTH_MAX) {
         return None;
     }
-    let mut projection = lsdoc::parse_format(text, format);
+    let mut projection =
+        lsdoc::__try_parse_format_v2(text, if format == "org" { "org" } else { "md" })?;
     let blocks = std::mem::take(&mut projection.blocks);
     if parsed_tree_within_limit(&blocks, MAX_PARSED_TREE_DEPTH) {
         projection.blocks = blocks;

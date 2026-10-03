@@ -125,6 +125,39 @@ export function __tineReinstantiate() {
 }
 `,
 );
+// Tine trap isolation (I-2): a Rust panic is an `unreachable` trap (panic = "abort"), and a
+// trap leaves the instance unusable for the session (leaked shadow stack, RefCell borrows that
+// never release). Only two doors used to recover (parse_block_bundle_json, header_tokens_json);
+// every other door took the whole page down with the next call. Wrap EVERY export so a trap
+// (or a stack overflow) reinstantiates a fresh instance and surfaces as an ordinary Error
+// carrying the panic message (see `last_panic` in crates/lsdoc-wasm), never as a poisoned
+// instance. The rename keeps the generated bindings byte-identical underneath.
+const exported = [...glue.matchAll(/^export function (\w+)\(/gm)].map((m) => m[1]).filter((n) => n !== "__tineReinstantiate");
+if (!exported.includes("last_panic")) {
+  throw new Error("build-wasm: last_panic export missing from glue — crates/lsdoc-wasm lost its panic hook.");
+}
+for (const name of exported) glue = glue.replace(new RegExp(`^export function ${name}\\(`, "m"), `function __tine_raw_${name}(`);
+glue +=
+  `
+// Tine trap isolation: see scripts/build-wasm.mjs. One guarded export per wasm-bindgen export.
+function __tineGuard(name, raw) {
+  return function (...args) {
+    try {
+      return raw.apply(this, args);
+    } catch (e) {
+      const trapped =
+        (typeof WebAssembly !== 'undefined' && e instanceof WebAssembly.RuntimeError) ||
+        (e instanceof RangeError && /call stack/i.test(String(e.message)));
+      if (!trapped) throw e;
+      let panic = '';
+      try { panic = __tine_raw_last_panic(); } catch (_) { /* the instance is too far gone to answer */ }
+      __tineReinstantiate();
+      throw new Error('lsdoc-wasm trap in ' + name + ': ' + (panic || e.message), { cause: e });
+    }
+  };
+}
+` +
+  exported.map((n) => `export const ${n} = __tineGuard(${JSON.stringify(n)}, __tine_raw_${n});\n`).join("");
 writeFileSync(join(outDir, "lsdoc_wasm.js"), glue);
 
 let dts = readFileSync(join(tmp, "lsdoc_wasm.d.ts"), "utf8");
