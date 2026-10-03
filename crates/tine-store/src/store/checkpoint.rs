@@ -42,7 +42,7 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 pub(crate) const FORMAT: u32 = 7;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
-pub(crate) const PARSER: &str = "lsdoc v0.5.7";
+pub(crate) const PARSER: &str = "lsdoc v0.5.8";
 /// Quiet time after the last dirtying publication before a checkpoint.
 pub(crate) const IDLE: Duration = Duration::from_secs(60);
 /// Least time between two checkpoint writes (Martin, 2026-10-02): at most 12
