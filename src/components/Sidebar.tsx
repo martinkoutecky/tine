@@ -7,6 +7,7 @@ import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { pushToast } from "../toasts";
 import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type LoadGraphPathOutcome } from "../graph";
+import { reportGraphOpenFailure } from "../graphOpenFailure";
 import { backend } from "../backend";
 import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { allPages as allGraphPages, pageListLabels } from "../pages";
@@ -401,13 +402,14 @@ export function GraphSwitcher(props: {
                 onClick={(event) => {
                   const newWindow = event.shiftKey;
                   close();
-                  void props.actions.openKnown(graph.path, newWindow)
+                  const attempt = () => void props.actions.openKnown(graph.path, newWindow)
                     .then((outcome) => {
                       if (!newWindow && (outcome.kind === "loaded" || outcome.kind === "already_current")) {
                         props.onActiveNavigationComplete?.();
                       }
                     })
-                    .catch((error) => pushToast(`Couldn't open ${graph.name}. (${String(error)})`, "error"));
+                    .catch((error) => reportGraphOpenFailure(error, attempt));
+                  attempt();
                 }}
               >
                 <span class="graph-switch-row-name">{graph.name}</span>
@@ -438,7 +440,10 @@ export function GraphSwitcher(props: {
                 .then((outcome) => {
                   if (outcome.kind === "loaded" || outcome.kind === "already_current") props.onActiveNavigationComplete?.();
                 })
-                .catch((error) => pushToast(`Couldn't open the selected graph. (${String(error)})`, "error"));
+                // Target-specific failures are reported by switchGraph after the
+                // picker returns a path, so their Retry keeps that path. A
+                // rejection here is a picker failure with no target to retry.
+                .catch((error) => pushToast(`Couldn't open the graph picker. (${String(error)})`, "error"));
             }}
           >
             Open graph…

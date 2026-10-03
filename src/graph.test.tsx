@@ -666,3 +666,26 @@ describe("OG-R3B custom journal format publication (I-4)", () => {
     });
   }
 });
+
+describe("graph open failure recovery (master 9a9122b1544d)", () => {
+  it("keeps a picked graph's open failure sticky and retries the same path", async () => {
+    const harness = await loadHarness(null);
+    harness.api.pickFolder.mockResolvedValue(META.root);
+    harness.api.loadGraph.mockRejectedValue(new Error("disk went away"));
+    const toastModule = await import("./toasts");
+    toastModule.setToasts([]);
+
+    await expect(harness.switchGraph()).resolves.toEqual({ kind: "aborted" });
+    const failures = toastModule.toasts().filter((toast) => toast.kind === "error");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]!.message).toContain("disk went away");
+    expect(failures[0]!.sticky).toBe(true);
+    expect(failures[0]!.action?.label).toBe("Retry");
+
+    failures[0]!.action!.run();
+    await vi.waitFor(() => expect(harness.api.loadGraph).toHaveBeenCalledTimes(2));
+    expect(harness.api.loadGraph).toHaveBeenLastCalledWith(META.root);
+    // Retry reopens the same target; it never re-asks the picker.
+    expect(harness.api.pickFolder).toHaveBeenCalledTimes(1);
+  });
+});

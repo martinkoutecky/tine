@@ -3,6 +3,7 @@ import type { LoadGraphPathOutcome } from "../graph";
 import type { ContextMenuAction } from "../ui";
 import { pushToast } from "../toasts";
 import { graphOwner, writeOwned } from "../owned";
+import { reportGraphOpenFailure } from "../graphOpenFailure";
 
 export interface GraphRowMenuDeps {
   openKnown(path: string, newWindow: boolean): Promise<LoadGraphPathOutcome>;
@@ -18,9 +19,9 @@ export interface GraphRowMenuDeps {
  * operation reports its own failure. Cost: O(1), no I/O until an action runs. */
 export function graphRowMenuActions(graph: KnownGraph, deps: GraphRowMenuDeps): ContextMenuAction[] {
   const owner = graphOwner();
-  const open = (newWindow: boolean) => {
+  const open = (newWindow: boolean): void => {
     void writeOwned(owner, deps.openKnown(graph.path, newWindow))
-      .catch((error) => pushToast(`Could not open ${graph.name}: ${String(error)}`, "error"));
+      .catch((error) => reportGraphOpenFailure(error, () => open(newWindow)));
   };
   return [
     ...(deps.desktop ? [{

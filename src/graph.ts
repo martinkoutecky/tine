@@ -29,6 +29,7 @@ import { openConfiguredHomePage } from "./homePage";
 import { isPublishedExport } from "./publishedBackend";
 import { clearWorkspaces } from "./workspaces";
 import { reportUiFailure } from "./uiFailure";
+import { reportGraphOpenFailure } from "./graphOpenFailure";
 export const [graphConfigProblem, setGraphConfigProblem] = createSignal<unknown>(null);
 
 const GRAPH_KEY = "tine.graphPath";
@@ -488,7 +489,7 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
     if (result.status === "picked") {
       if (result.path) {
         console.info("[tine/android] loadGraphPath: start");
-        const outcome = await loadGraphPath(result.path);
+        const outcome = await openPickedGraphPath(result.path);
         console.info("[tine/android] loadGraphPath: done");
         return outcome;
       }
@@ -508,7 +509,19 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
   }
   const picked = await readOwned(owner, backend().pickFolder());
   if (picked.kind === "stale") return { kind: "aborted" };
-  return picked.value ? loadGraphPath(picked.value) : { kind: "aborted" };
+  return picked.value ? openPickedGraphPath(picked.value) : { kind: "aborted" };
+}
+
+/** Open a folder the picker returned; a failure becomes a sticky toast whose
+ * Retry reopens this same path (never the picker) and the call resolves
+ * aborted. Cost follows loadGraphPath. */
+async function openPickedGraphPath(path: string): Promise<LoadGraphPathOutcome> {
+  try {
+    return await loadGraphPath(path);
+  } catch (error) {
+    reportGraphOpenFailure(error, () => void openPickedGraphPath(path));
+    return { kind: "aborted" };
+  }
 }
 
 /** Create a demo graph under a desktop-picked folder or the mobile default
