@@ -18,7 +18,7 @@ ensurePrivateSessionBus();
 
 const APP = process.env.TINE_APP || "/tmp/tine-multiprocess";
 const TD = process.env.TAURI_DRIVER || "/aux/koutecky/logseq/.toolchain/cargo/bin/tauri-driver";
-const WD = process.env.WEBKIT_DRIVER || "/tmp/tine-webdriver/usr/bin/WebKitWebDriver";
+const WD = process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver";
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4454);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4455);
 const WAIT_TIMEOUT = Number(process.env.E2E_WAIT_TIMEOUT_MS || 60_000);
