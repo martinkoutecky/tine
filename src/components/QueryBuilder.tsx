@@ -43,7 +43,8 @@ import {
 import { sharedQueryResult } from "../queryResultCache";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
-import { QUERY_TEXT_OPEN_KEY, persistQueryTextOpen, queryBuilderAutoOpen, queryTextOpen, setQueryBuilderAutoOpen } from "../ui";
+import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
+import { queryTextOpen, setQueryTextOpen as rememberTextOpen } from "../navSettings";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { QueryDisplay } from "./QueryDisplay";
 import { QueryLivePreview } from "./QueryLivePreview";
@@ -93,11 +94,8 @@ const errorMessage = (error: unknown): string =>
 // The text pane (§4.3.1, §7.1)
 
 /** GH #619 item 4: the query text is hidden behind an "Edit as text" toggle, and the toggle remembers its state.
- *  It is a per-device view preference kept by the shared display-preference store in `ui.ts`; an unreadable or
- *  unwritable store only costs the memory (and shows that store's toast), never the toggle. */
-export { QUERY_TEXT_OPEN_KEY };
-const readTextOpen = queryTextOpen;
-const writeTextOpen = persistQueryTextOpen;
+ *  It is a per-device preference persisted through the app-settings backend (`navSettings.ts`), so it survives a
+ *  restart; localStorage does not in the Tine app. A failed write rolls the toggle back and toasts. */
 
 /** How long the pane waits after the last keystroke before asking the engine. */
 const PANE_DEBOUNCE_MS = 150;
@@ -533,10 +531,10 @@ export function QueryBuilder(props: {
   const [stale, setStale] = createSignal(false);
   const [open, setOpen] = createSignal(false);
   // The text pane is mounted only while its toggle is on (default off, remembered).
-  const [textOpen, setTextOpenSignal] = createSignal(readTextOpen());
+  // The remembered state is a durable device preference (navSettings), not localStorage.
+  const textOpen = queryTextOpen;
   const setTextOpen = (next: boolean) => {
-    setTextOpenSignal(next);
-    writeTextOpen(next);
+    rememberTextOpen(next);
     // A hidden pane cannot hold an unparsed draft, so nothing is left "stale" behind it.
     if (!next) {
       setStale(false);

@@ -4,8 +4,8 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { clearTransientLayersForTest } from "../transientLayers";
+import { initNavSettings, queryTextOpen, resetQueryTextOpenForTests } from "../navSettings";
 import {
-  QUERY_TEXT_OPEN_KEY,
   QueryBuilder,
   resetQueryRegistryRevisionForTests,
   type BuilderSession,
@@ -139,7 +139,8 @@ function deferredParser() {
 
 beforeEach(() => {
   // GH #619 item 4: the text pane sits behind a remembered toggle; these tests are about the pane.
-  localStorage.setItem(QUERY_TEXT_OPEN_KEY, "1");
+  resetQueryTextOpenForTests(true);
+  vi.spyOn(backend(), "setAppBool").mockResolvedValue(undefined);
   resetQueryRegistryRevisionForTests();
   vi.spyOn(backend(), "queryFacets").mockResolvedValue([]);
   vi.spyOn(backend(), "queryRegistry").mockResolvedValue(EMPTY_REGISTRY);
@@ -537,8 +538,33 @@ describe("§7.8: the part the sheet cannot draw is still reachable", () => {
 describe("GH #619 item 4: the text is behind an \"Edit as text\" toggle that remembers its state", () => {
   const toggle = () => document.querySelector<HTMLButtonElement>(".qs-text-toggle")!;
 
+  it("persists the toggle through the app-settings store, so a restart keeps it (not localStorage)", async () => {
+    const store = new Map<string, boolean>();
+    const setAppBool = vi.spyOn(backend(), "setAppBool").mockImplementation(async (key, value) => { store.set(key, value); });
+    vi.spyOn(backend(), "getAppBool").mockImplementation(async (key, fallback) => store.get(key) ?? fallback);
+    resetQueryTextOpenForTests(false);
+    const builder = mountBuilder(session(taskFilter(["TODO"])));
+    try {
+      builder.open();
+      await settle();
+      toggle().click();
+      await settle();
+      expect(setAppBool).toHaveBeenCalledWith("query_text_open", true);
+      expect(queryTextOpen()).toBe(true);
+    } finally {
+      builder.dispose();
+    }
+    // A restart: the in-memory signal is gone, localStorage is gone, only the settings store remains.
+    localStorage.clear();
+    resetQueryTextOpenForTests(false);
+    expect(queryTextOpen()).toBe(false);
+    await initNavSettings();
+    await settle();
+    expect(queryTextOpen()).toBe(true);
+  });
+
   it("opens the sheet without the text, shows it on the toggle, and remembers the choice", async () => {
-    localStorage.removeItem(QUERY_TEXT_OPEN_KEY);
+    resetQueryTextOpenForTests(false);
     const printQuery = vi.spyOn(backend(), "printQuery").mockResolvedValue("@block and task is TODO");
     let builder = mountBuilder(session(taskFilter(["TODO"])));
     try {
@@ -582,7 +608,7 @@ describe("GH #619 item 4: the text is behind an \"Edit as text\" toggle that rem
   });
 
   it("still opens a retained leaf for editing as text from a closed toggle", async () => {
-    localStorage.removeItem(QUERY_TEXT_OPEN_KEY);
+    resetQueryTextOpenForTests(false);
     vi.spyOn(backend(), "printQuery").mockResolvedValue("@block and (foo bar)");
     const builder = mountBuilder(session({ kind: "raw", text: "foo bar", diagnostic_kind: "syntax" }));
     try {

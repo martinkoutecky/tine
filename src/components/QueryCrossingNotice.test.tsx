@@ -32,7 +32,7 @@ import { bumpGraphEpoch } from "../graphSession";
 import type { ParsedQuery } from "../editor/queryIr";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import type { RefGroup } from "../types";
-import { QUERY_TEXT_OPEN_KEY } from "./QueryBuilder";
+import { resetQueryTextOpenForTests } from "../navSettings";
 
 beforeAll(async () => {
   await initParser();
@@ -41,7 +41,7 @@ beforeAll(async () => {
 // GH #619 item 4: the query text is behind an "Edit as text" toggle, closed by default. These
 // tests are about the text pane, so they open the toggle the way a user who wants the text has.
 beforeEach(() => {
-  localStorage.setItem(QUERY_TEXT_OPEN_KEY, "1");
+  resetQueryTextOpenForTests(true);
 });
 
 afterEach(() => {

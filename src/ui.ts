@@ -102,11 +102,6 @@ function saveStr(key: string, val: string | null, what = "display preference"): 
   }
 }
 
-/** GH #619 item 4: whether the query sheet's "Edit as text" pane is remembered open (per-device view preference). */
-export const QUERY_TEXT_OPEN_KEY = "tine.query.textOpen";
-export const queryTextOpen = (): boolean => loadStr(QUERY_TEXT_OPEN_KEY) === "1";
-export const persistQueryTextOpen = (open: boolean): boolean => saveStr(QUERY_TEXT_OPEN_KEY, open ? "1" : null, "query text preference");
-
 /** Persist the device theme through the shared display-preference writer.
  * Returns whether storage accepted it; errors show the existing toast. */
 export function persistThemePreference(key: string, value: string): boolean {

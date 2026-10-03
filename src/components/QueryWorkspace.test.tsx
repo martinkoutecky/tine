@@ -17,11 +17,11 @@ import {
 import { bumpGraphEpoch, pageInventoryRev } from "../graphSession";
 import { backend } from "../backend";
 import { resetStore } from "../document";
-import { QUERY_TEXT_OPEN_KEY } from "./QueryBuilder";
+import { resetQueryTextOpenForTests } from "../navSettings";
 
 afterEach(() => {
   clearTransientLayersForTest();
-  localStorage.removeItem(QUERY_TEXT_OPEN_KEY);
+  resetQueryTextOpenForTests(false);
   document.body.innerHTML = "";
 });
 
@@ -468,7 +468,7 @@ describe("QueryWorkspace", () => {
     // has no printer, so this test says what Rust would answer.
     vi.spyOn(backend(), "printQuery").mockResolvedValue(route.source);
     // GH #619 item 4: the text pane is behind a remembered toggle; this test is about the pane.
-    localStorage.setItem(QUERY_TEXT_OPEN_KEY, "1");
+    resetQueryTextOpenForTests(true);
     const lower = vi.fn(() => true);
     const unregisterLower = registerTransientLayer({ id: "query-workspace-lower", dismiss: lower });
     const root = document.createElement("div");
