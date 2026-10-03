@@ -1597,12 +1597,19 @@ fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<Str
 
 /// Open an `assets/`-relative file, directory, or (empty name) the assets root (GH #367)
 /// in the OS default app / file manager. Gated to the canonical assets dir.
+///
+/// The path check and the opener start (PATH search, exec) run on the blocking
+/// pool, off the UI thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
+pub(crate) async fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    let target = tine_graph_features::assets::path_for_os_open(&slot.store, &name)
-        .map_err(feature_asset_access_error)?;
-    open_asset_with_os(&name, &target, false)
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = tine_graph_features::assets::path_for_os_open(&slot.store, &name)
+            .map_err(feature_asset_access_error)?;
+        open_asset_with_os(&name, &target, false)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn open_asset_with_os(name: &str, target: &std::path::Path, editing: bool) -> Result<(), String> {
@@ -1689,15 +1696,21 @@ fn open_page_source_with_os(target: &std::path::Path, reveal: bool) -> Result<()
 /// Double quotes group a program/argument containing whitespace; backslashes are
 /// literal so Windows paths such as `"C:\Program Files\draw.io\draw.io.exe" {}`
 /// survive unchanged.
+/// The handoff check and the editor start run on the blocking pool, off the UI
+/// thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn edit_asset_external(
+pub(crate) async fn edit_asset_external(
     name: String,
     command: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    let target = asset_handoff_target(&slot, &name)?;
-    edit_asset_with_os(&name, &command, &target)
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = asset_handoff_target(&slot, &name)?;
+        edit_asset_with_os(&name, &command, &target)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn edit_asset_with_os(name: &str, command: &str, target: &std::path::Path) -> Result<(), String> {

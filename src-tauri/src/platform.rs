@@ -186,19 +186,25 @@ fn linux_copy_image(bytes: &[u8]) -> Result<(), String> {
     Err(last_err)
 }
 
+/// Starting the clipboard tool (PATH search, exec, writing the image to its
+/// stdin) runs on the blocking pool, off the UI thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn copy_image_to_clipboard(
+pub(crate) async fn copy_image_to_clipboard(
     app: tauri::AppHandle,
     bytes_b64: String,
 ) -> Result<(), String> {
-    use tauri_plugin_clipboard_manager::ClipboardExt;
-    let bytes = decode_asset_b64(&bytes_b64)?;
-    #[cfg(target_os = "linux")]
-    if linux_copy_image(&bytes).is_ok() {
-        return Ok(());
-    }
-    let img = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
-    app.clipboard().write_image(&img).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_clipboard_manager::ClipboardExt;
+        let bytes = decode_asset_b64(&bytes_b64)?;
+        #[cfg(target_os = "linux")]
+        if linux_copy_image(&bytes).is_ok() {
+            return Ok(());
+        }
+        let img = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
+        app.clipboard().write_image(&img).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// What the backend knows about the rendering path, so the UI can warn — loudly
@@ -282,60 +288,66 @@ pub(crate) fn external_open_plan(url: &str) -> Result<ExternalOpen, String> {
 /// Open a web/mail URL, or a local `file:` link, in the user's default external
 /// application. The URL is passed as a single argument (no shell), so it can't
 /// inject commands.
+/// Starting the opener (PATH search, exec) runs on the blocking pool, off the
+/// UI thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    if let ExternalOpen::LocalPath(path) = external_open_plan(&url)? {
-        // Every OS opener accepts a path that is not there — `explorer.exe` even
-        // opens an unrelated window for one — so without this check a stale link
-        // reproduces the reported "clicking does nothing" from the other side.
-        if !path.exists() {
-            return Err(format!("{} could not be found", path.display()));
+pub(crate) async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if let ExternalOpen::LocalPath(path) = external_open_plan(&url)? {
+            // Every OS opener accepts a path that is not there — `explorer.exe` even
+            // opens an unrelated window for one — so without this check a stale link
+            // reproduces the reported "clicking does nothing" from the other side.
+            if !path.exists() {
+                return Err(format!("{} could not be found", path.display()));
+            }
+            #[cfg(desktop)]
+            return open_page_source(&path);
+            #[cfg(not(desktop))]
+            {
+                let _ = (path, &app);
+                return Err("opening local files is available on desktop only".into());
+            }
         }
-        #[cfg(desktop)]
-        return open_page_source(&path);
+        // Linux/macOS: spawn the desktop-session URL opener directly (Linux needs
+        // the env-scrubbed browser policy; see opener_command_env).
+        #[cfg(all(desktop, not(target_os = "windows")))]
+        {
+            let _ = &app;
+            #[cfg(target_os = "linux")]
+            let mut command = opener_command_env("xdg-open", OpenerEnvPolicy::Browser);
+            #[cfg(target_os = "macos")]
+            let mut command = opener_command("open");
+            command.arg(&url).spawn().map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        // Windows: do NOT spawn `explorer <url>`. explorer.exe treats an http(s)/
+        // mailto argument as a shell item and frequently opens a File Explorer
+        // window instead of handing the URL to the default browser/mail client
+        // (GH #215). Route the open through the opener plugin, which calls
+        // ShellExecute — the canonical Windows "open this URL" API and the same
+        // path mobile already uses successfully.
+        #[cfg(all(desktop, target_os = "windows"))]
+        {
+            use tauri_plugin_opener::OpenerExt;
+            app.opener()
+                .open_url(url, None::<&str>)
+                .map_err(|e| e.to_string())
+        }
+        // Mobile (Android/iOS): there is no xdg-open/open/explorer to spawn, so hand
+        // the URL to the platform via the opener plugin (an ACTION_VIEW Intent on
+        // Android). This is what makes the About/Help/Releases links actually open on
+        // Android — before this they fired a command that returned an error the
+        // frontend silently swallowed (GH #49).
         #[cfg(not(desktop))]
         {
-            let _ = (path, &app);
-            return Err("opening local files is available on desktop only".into());
+            use tauri_plugin_opener::OpenerExt;
+            app.opener()
+                .open_url(url, None::<&str>)
+                .map_err(|e| e.to_string())
         }
-    }
-    // Linux/macOS: spawn the desktop-session URL opener directly (Linux needs
-    // the env-scrubbed browser policy; see opener_command_env).
-    #[cfg(all(desktop, not(target_os = "windows")))]
-    {
-        let _ = &app;
-        #[cfg(target_os = "linux")]
-        let mut command = opener_command_env("xdg-open", OpenerEnvPolicy::Browser);
-        #[cfg(target_os = "macos")]
-        let mut command = opener_command("open");
-        command.arg(&url).spawn().map_err(|e| e.to_string())?;
-        Ok(())
-    }
-    // Windows: do NOT spawn `explorer <url>`. explorer.exe treats an http(s)/
-    // mailto argument as a shell item and frequently opens a File Explorer
-    // window instead of handing the URL to the default browser/mail client
-    // (GH #215). Route the open through the opener plugin, which calls
-    // ShellExecute — the canonical Windows "open this URL" API and the same
-    // path mobile already uses successfully.
-    #[cfg(all(desktop, target_os = "windows"))]
-    {
-        use tauri_plugin_opener::OpenerExt;
-        app.opener()
-            .open_url(url, None::<&str>)
-            .map_err(|e| e.to_string())
-    }
-    // Mobile (Android/iOS): there is no xdg-open/open/explorer to spawn, so hand
-    // the URL to the platform via the opener plugin (an ACTION_VIEW Intent on
-    // Android). This is what makes the About/Help/Releases links actually open on
-    // Android — before this they fired a command that returned an error the
-    // frontend silently swallowed (GH #49).
-    #[cfg(not(desktop))]
-    {
-        use tauri_plugin_opener::OpenerExt;
-        app.opener()
-            .open_url(url, None::<&str>)
-            .map_err(|e| e.to_string())
-    }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Build the OS "open" command, scrubbing the env vars Tine (or its AppImage

@@ -235,8 +235,10 @@ pub(crate) fn forget_known_graph(path: String, app: tauri::AppHandle) -> Result<
 /// Reveal a remembered graph root in the desktop file manager. Only paths
 /// already in the known-graph list are accepted; absent paths and mobile
 /// platforms return an error. Cost: O(known graphs) plus one OS handoff.
+/// The file-manager handoff waits for `dbus-send`'s reply, so it runs on the
+/// blocking pool, off the UI thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn reveal_known_graph(path: String, app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) async fn reveal_known_graph(path: String, app: tauri::AppHandle) -> Result<(), String> {
     if !list_known_graphs(app)
         .iter()
         .any(|known| known.path == path)
@@ -245,7 +247,11 @@ pub(crate) fn reveal_known_graph(path: String, app: tauri::AppHandle) -> Result<
     }
     #[cfg(desktop)]
     {
-        crate::platform::reveal_page_source(std::path::Path::new(&path))
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::platform::reveal_page_source(std::path::Path::new(&path))
+        })
+        .await
+        .map_err(|error| error.to_string())?
     }
     #[cfg(not(desktop))]
     {

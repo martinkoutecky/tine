@@ -135,11 +135,18 @@ fn discover_dictionaries() -> Vec<String> {
 /// Installed spell-check dictionary codes (e.g. ["cs_CZ", "en_GB", "en_US"]). Empty
 /// on non-Linux (those webviews use the OS checker, which the frontend handles by
 /// falling back to a free-text language field).
+///
+/// Discovery runs `enchant-lsmod` and waits for it, so it runs on the blocking
+/// pool: on the UI thread it held every other synchronous command at launch
+/// for as long as the PATH search and the child took (5.4 s measured, GH #623;
+/// guard `load_wait_guard_tests::child_process_tauri_commands_leave_the_ui_thread`).
 #[tauri::command]
-pub(crate) fn list_spellcheck_dictionaries() -> Vec<String> {
+pub(crate) async fn list_spellcheck_dictionaries() -> Vec<String> {
     #[cfg(target_os = "linux")]
     {
-        discover_dictionaries()
+        tauri::async_runtime::spawn_blocking(discover_dictionaries)
+            .await
+            .unwrap_or_default()
     }
     #[cfg(not(target_os = "linux"))]
     {

@@ -97,7 +97,9 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // Its command future owns/reaps the result; Store close revokes writes.
         // +1 GH #623: get_page_by_path parses off the main thread, awaited by
         // its command future like get_page.
-        35,
+        // +2 GH #623: open_asset and edit_asset_external start the OS opener
+        // (PATH search, exec) on the blocking pool, awaited by their futures.
+        37,
         "command future",
         "caller awaits blocking result",
     ),
@@ -106,7 +108,8 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         "spawn_blocking(",
         // GH #623: save_session's two fsyncs run on the blocking pool; the
         // command future awaits and reaps the result before replying.
-        1,
+        // +1 GH #623: reveal_known_graph waits for dbus-send there.
+        2,
         "command future",
         "caller awaits blocking result",
     ),
