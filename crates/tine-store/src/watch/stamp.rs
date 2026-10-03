@@ -55,6 +55,8 @@ pub(crate) fn stamp_metadata(path: &Path) -> Option<Stamp> {
     #[cfg(feature = "test-faults")]
     if crate::file_kind::is_graph_text_path(path) {
         crate::cost_counters::stamp_by_path();
+    } else {
+        crate::cost_counters::asset_stamp_by_path();
     }
     stamp_from_metadata(&fs::symlink_metadata(path).ok()?)
 }

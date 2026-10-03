@@ -324,7 +324,7 @@ struct State {
     checkpoint_load: Option<(&'static str, u64, u64)>,
     serving_us: Option<u64>,
     checkpoint_writes: u64,
-    checkpoint_last: Option<(&'static str, u64, u64, u64)>,
+    checkpoint_last: Option<(&'static str, u64, u64, u64, u64)>,
 }
 
 /// Recorder owned by the `Graph`; one per opened store.
@@ -443,18 +443,20 @@ impl DiagRecorder {
         self.state().serving_us = Some(self.since_launch());
     }
 
-    /// One checkpoint attempt: closed outcome token, wall time, raw body
-    /// bytes and file bytes (zero unless written).
+    /// One checkpoint attempt: closed outcome token, wall time, how long the
+    /// capture held the writer lock, raw body bytes and file bytes (zero
+    /// unless written).
     pub(crate) fn checkpoint_write(
         &self,
         outcome: &'static str,
         wall: Duration,
+        writer_held: Duration,
         raw: u64,
         file: u64,
     ) {
         let mut state = self.state();
         state.checkpoint_writes += 1;
-        state.checkpoint_last = Some((outcome, micros(wall), raw, file));
+        state.checkpoint_last = Some((outcome, micros(wall), micros(writer_held), raw, file));
     }
 
     /// CRLF-file count of the last installed load pass (`None` before one).
@@ -507,9 +509,10 @@ impl DiagRecorder {
                 })),
                 "servingMs": state.serving_us.map(ms),
                 "writes": state.checkpoint_writes,
-                "last": state.checkpoint_last.map(|(outcome, wall, raw, file)| json!({
+                "last": state.checkpoint_last.map(|(outcome, wall, held, raw, file)| json!({
                     "outcome": outcome,
                     "wallMs": ms(wall),
+                    "writerHeldMs": ms(held),
                     "rawBytes": raw,
                     "fileBytes": file,
                 })),

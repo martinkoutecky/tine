@@ -759,7 +759,7 @@ impl Publisher {
                 };
                 let began = Instant::now();
                 let marks = lazy_marks(&self.changes);
-                let outcome = self.write_once();
+                let (outcome, held) = self.write_once();
                 let (token, raw, file) = match &outcome {
                     CheckpointWrite::Written {
                         raw_bytes,
@@ -770,15 +770,30 @@ impl Publisher {
                 };
                 self.graph
                     .diag
-                    .checkpoint_write(token, began.elapsed(), raw, file);
+                    .checkpoint_write(token, began.elapsed(), held, raw, file);
                 self.signal.finished(ticket, outcome, marks);
             });
         // No thread (resource exhaustion): launches stay cold. Not a refusal.
         let _ = spawned;
     }
 
+    #[cfg(test)]
     fn capture(&self) -> Result<(Body<PagesOut>, [u8; 32]), &'static str> {
+        self.capture_held().0
+    }
+
+    /// The capture and how long it held the writer lock: every save, rescan
+    /// and watcher cycle of this graph waits behind that interval (GH #623:
+    /// a page click right after a focus return was seen waiting about 3 s;
+    /// the diagnostics now say whether this interval can be the cause).
+    fn capture_held(&self) -> (Result<(Body<PagesOut>, [u8; 32]), &'static str>, Duration) {
         let _writer = self.writer.lock().unwrap();
+        let held = Instant::now();
+        let captured = self.capture_locked();
+        (captured, held.elapsed())
+    }
+
+    fn capture_locked(&self) -> Result<(Body<PagesOut>, [u8; 32]), &'static str> {
         if !matches!(*self.load.status.lock().unwrap(), LoadStatus::Ready) {
             return Err("loading");
         }
@@ -832,11 +847,18 @@ impl Publisher {
         ))
     }
 
-    fn write_once(&self) -> CheckpointWrite {
-        let (body, config_key) = match self.capture() {
+    /// The outcome and the writer-lock hold of its capture (zero when the
+    /// capture was skipped before measuring).
+    fn write_once(&self) -> (CheckpointWrite, Duration) {
+        let (captured, held) = self.capture_held();
+        let (body, config_key) = match captured {
             Ok(captured) => captured,
-            Err(reason) => return CheckpointWrite::Skipped(reason),
+            Err(reason) => return (CheckpointWrite::Skipped(reason), held),
         };
+        (self.write_captured(body, config_key), held)
+    }
+
+    fn write_captured(&self, body: Body<PagesOut>, config_key: [u8; 32]) -> CheckpointWrite {
         let (bytes, raw_bytes) = match encode(&self.graph.root, config_key, &body) {
             Ok(encoded) => encoded,
             Err(error) => return CheckpointWrite::Failed(error),

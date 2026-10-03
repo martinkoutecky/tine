@@ -22,7 +22,7 @@ use std::sync::Mutex;
 
 use crate::model::Graph;
 use crate::store::ChangeKind;
-use crate::watch::{stamp_metadata, Stamp};
+use crate::watch::{stamp_from_metadata, stamp_metadata, Stamp};
 
 /// Where the asset capability lives, and the lexical spelling under the graph
 /// root that a recursive watch may report for it (notify follows links).
@@ -205,7 +205,15 @@ fn collect(root: &Path) -> (HashMap<PathBuf, Stamp>, bool) {
             if kind.is_dir() {
                 stack.push(path);
             } else if kind.is_file() {
-                match stamp_metadata(&path) {
+                // The listing's own metadata (no-follow; on Windows from
+                // FindNextFileW), so a walk opens no file: a per-file
+                // `symlink_metadata` here cost one open per asset, under the
+                // store's writer lock, on every focus rescan (GH #623).
+                match entry
+                    .metadata()
+                    .ok()
+                    .and_then(|metadata| stamp_from_metadata(&metadata))
+                {
                     Some(stamp) => {
                         files.insert(path, stamp);
                     }
