@@ -69,6 +69,29 @@ describe("QueryPageRows", () => {
     }
   });
 
+  // GH #619 item 8: OG shows a page result with its page properties; the default list
+  // view showed only the name, so properties were visible only after switching to Table.
+  it("list view shows each page's own properties as selectable text beside its link", () => {
+    const rows = [
+      row("Alpha", "pages/Alpha.md", [["status", "open"], ["owner", "Ada"]]),
+      row("Beta", "pages/Beta.md"),
+    ];
+    const { root, dispose } = mount(() => <QueryPageRows rows={rows} view="list" />);
+    try {
+      const items = [...root.querySelectorAll(".query-results-list > li")];
+      expect(items).toHaveLength(2);
+      const props = [...items[0].querySelectorAll(".query-page-prop")].map((el) => el.textContent?.replace(/\s+/g, " ").trim());
+      expect(props).toEqual(["status: open", "owner: Ada"]);
+      // A page with no properties gets no empty property strip.
+      expect(items[1].querySelector(".query-page-props")).toBeNull();
+      // The link is still the only button: the text is plain, selectable content.
+      expect(items[0].querySelectorAll("button")).toHaveLength(1);
+      expect(items[0].querySelector(".query-page-props")?.getAttribute("data-selectable")).toBe("text");
+    } finally {
+      dispose();
+    }
+  });
+
   // C3X X6 (L13): two components answered "what does this page column show"; only the
   // search-hit one accepted `journal_day`, so a Table column of that name was blank here.
   it("shows the same journal_day / journal-day / day value in every answerer", () => {

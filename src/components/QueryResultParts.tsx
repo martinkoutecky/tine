@@ -51,11 +51,24 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
       {row.name}
     </button>
   );
+  // GH #619 item 8: OG lists a page result with its page properties. Plain selectable
+  // text, not buttons. Editing them from the row is deliberately not offered (receipt:
+  // the block-result editor writes block text, page properties go through a different
+  // write path that needs the page loaded into the document).
+  const propertyStrip = (row: PageRow) => (
+    <Show when={row.properties.length > 0}>
+      <span class="query-page-props" data-selectable="text">
+        <For each={row.properties}>{([key, val]) => (
+          <span class="query-page-prop"><span class="query-page-prop-key">{key}:</span> {val}</span>
+        )}</For>
+      </span>
+    </Show>
+  );
   return (
     <Switch
       fallback={
         <ul class="query-results-list" aria-label="Page results">
-          <For each={props.rows}>{(row) => <li>{link(row)}</li>}</For>
+          <For each={props.rows}>{(row) => <li>{link(row)}{propertyStrip(row)}</li>}</For>
         </ul>
       }
     >
