@@ -125,10 +125,8 @@ jobs:
       - name: Committed lsdoc WASM contract is current
         run: node scripts/check-wasm-pin.mjs
 
-      # The Guide demo bundles the app, and so the committed wasm: check it
-      # before the clean-source rebuild below replaces that artifact.
-      - name: Canonical Guide/demo is generated and current
-        run: npm run docs:check
+      # og: website/demo is master's and is not checked here
+      # (scripts/build-guide-demo.mjs header).
 
       - name: F-Droid clean-source WASM rebuild succeeds
         run: |

@@ -1,5 +1,5 @@
 // Browser smoke for the generated live Guide: reviewed permalink, baked query,
-// read-only controls, and static fallback. Run after `npm run docs:build`.
+// read-only controls, and static fallback. Run after `npm run docs:build` (writes target/guide/demo).
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import http from "node:http";
@@ -9,7 +9,7 @@ import { chromium } from "playwright";
 
 const queryFixture = Boolean(process.env.TINE_PUBLISHED_ROOT);
 const root = path.resolve(process.env.TINE_PUBLISHED_ROOT ??
-  path.dirname(fileURLToPath(import.meta.url)), ...(queryFixture ? [] : ["../website/demo"]));
+  path.dirname(fileURLToPath(import.meta.url)), ...(queryFixture ? [] : ["../target/guide/demo"]));
 const mime = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css",
   ".json": "application/json", ".wasm": "application/wasm", ".svg": "image/svg+xml" };
 const server = http.createServer(async (request, response) => {

@@ -19,7 +19,6 @@
     "check:regressions": "node scripts/check-regression-catalog.mjs",
     "check:release-readiness": "node scripts/check-release-readiness.mjs",
     "docs:build": "node scripts/build-guide-demo.mjs",
-    "docs:check": "node scripts/build-guide-demo.mjs --check",
     "docs:check-geometry": "node scripts/check-publish-outline-geometry.mjs",
     "ui:check-block-first-line": "node scripts/check-block-first-line-alignment.mjs",
     "ui:check-mobile-layout": "node scripts/check-mobile-layout.mjs",

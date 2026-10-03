@@ -77,7 +77,7 @@ if (process.env.REQUIRE_RELEASE_READINESS === "1") {
   for (const [script, args = []] of [
     ["check-regression-catalog.mjs"],
     ["check-release-readiness.mjs"],
-    ["build-guide-demo.mjs", ["--check"]],
+    // No demo check: website/demo is master's (build-guide-demo.mjs header).
   ]) {
     const result = spawnSync(process.execPath, [path.join(root, "scripts", script), ...args], { encoding: "utf8" });
     if (result.status !== 0) problems.push(`${script} failed:\n${result.stderr || result.stdout}`);

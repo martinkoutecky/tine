@@ -1,12 +1,12 @@
 // Browser geometry regression for the exported Guide's outline connectors and
-// inline block-embed root. Run after `npm run docs:build`.
+// inline block-embed root. Run after `npm run docs:build` (writes target/guide/demo).
 import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
-const PAGE = path.join(ROOT, "website/demo/index.html");
+const PAGE = path.join(ROOT, "target/guide/demo/index.html");
 const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu"] });
 try {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 } });

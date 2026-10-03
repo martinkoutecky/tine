@@ -7,10 +7,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const checkedIn = path.join(root, "website/demo");
-const check = process.argv.includes("--check");
-const temp = check ? fs.mkdtempSync(path.join(os.tmpdir(), "tine-guide-demo-")) : null;
-const output = check ? path.join(temp, "demo") : checkedIn;
+// og (the beta channel): the public demo at website/demo is master's and is
+// published from master only (Martin, 2026-10-03). og never regenerates or
+// checks it; this script builds og's Guide site into the untracked
+// target/guide/demo for og's own publish journeys
+// (e2e-og-published-guide, check-publish-outline-geometry).
+if (process.argv.includes("--check")) {
+  console.error("build-guide-demo --check: website/demo follows master on og; there is nothing to check here.");
+  process.exit(1);
+}
+const checkedIn = path.join(root, "target/guide/demo");
+const check = false;
+const temp = null;
+const output = checkedIn;
 
 // The checked-in public demo is a reproducible artifact, independent of the
 // local build clock and the commit which happens to run this check.
@@ -19,6 +28,7 @@ const frontend = spawnSync("npx", ["--no-install", "vite", "build"],
   { cwd: root, stdio: "inherit", env: guideBuildEnv });
 if (frontend.status !== 0) process.exit(frontend.status ?? 1);
 if (!check) fs.rmSync(output, { recursive: true, force: true });
+fs.mkdirSync(path.dirname(output), { recursive: true });
 
 // Sheets are computed by the app's own TS evaluator, never by the Rust publisher
 // (I-12): dump the Guide's sheet blocks, compute them with src/sheet/staticExport.ts
