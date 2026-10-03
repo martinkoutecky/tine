@@ -182,6 +182,13 @@ await withApp(0, async (browser) => {
     timeout: 10_000, interval: 100, timeoutMsg: "the /query command was not offered",
   });
   await browser.keys(["Enter"]);
+  // GH #619 item 4: the query text is behind an "Edit as text" toggle, closed on a fresh profile.
+  const toggle = await browser.$(".qs-sheet .qs-text-toggle");
+  await toggle.waitForExist({ timeout: 15_000 });
+  if (await browser.execute(() => !!document.querySelector(".qs-sheet .query-text-pane-input"))) {
+    throw new Error("the query text was open by default; it should sit behind Edit as text");
+  }
+  await toggle.click();
   const pane = await browser.$(".qs-sheet .query-text-pane-input");
   await pane.waitForExist({ timeout: 15_000 });
   // `/query` opens the sheet on the empty condition list. The field chooser is an explicit user action

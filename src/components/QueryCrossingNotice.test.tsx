@@ -15,7 +15,7 @@
 //  C3  [Keep it] closes it; "Don't show this again" is device-local
 //      keyed by graph (D-11) and silences the NEXT crossing.
 //  C4  A save that does not cross says nothing.
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
@@ -32,9 +32,16 @@ import { bumpGraphEpoch } from "../graphSession";
 import type { ParsedQuery } from "../editor/queryIr";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import type { RefGroup } from "../types";
+import { QUERY_TEXT_OPEN_KEY } from "./QueryBuilder";
 
 beforeAll(async () => {
   await initParser();
+});
+
+// GH #619 item 4: the query text is behind an "Edit as text" toggle, closed by default. These
+// tests are about the text pane, so they open the toggle the way a user who wants the text has.
+beforeEach(() => {
+  localStorage.setItem(QUERY_TEXT_OPEN_KEY, "1");
 });
 
 afterEach(() => {
