@@ -358,7 +358,10 @@ fn read_collection(src: &str, at: usize) -> Result<(Vec<String>, usize), (String
         } else if c == close {
             return Ok((names, i + 1));
         } else if matches!(c, ')' | ']' | '}') {
-            return Err(("this collection is closed by the wrong bracket".to_string(), i + 1));
+            return Err((
+                "this collection is closed by the wrong bracket".to_string(),
+                i + 1,
+            ));
         } else if src[i..].starts_with("[[") {
             let (name, end) = read_page_ref(src, i);
             names.push(name);
@@ -544,11 +547,12 @@ impl<'a> OgParse<'a> {
         // the rest of the form is tokenized afresh from where the collection
         // ended; spans stay offsets into the original text.
         self.toks.truncate(self.pos);
-        self.toks.extend(tokenize(&self.src[end..]).into_iter().map(|t| Spanned {
-            tok: t.tok,
-            start: t.start + end,
-            end: t.end + end,
-        }));
+        self.toks
+            .extend(tokenize(&self.src[end..]).into_iter().map(|t| Spanned {
+                tok: t.tok,
+                start: t.start + end,
+                end: t.end + end,
+            }));
         // Whatever follows the collection is ignored by OG; consume it so the
         // form still closes cleanly (an ignored argument may itself be a list).
         self.skip_args();
@@ -810,6 +814,7 @@ impl<'a> OgParse<'a> {
                 self.between()
             }
             "sample" => {
+                // OG `build-sample` (`query_dsl.cljs:327-332`) only reads an integer.
                 if let Some(n) = self.name().and_then(|s| s.trim().parse::<u32>().ok()) {
                     self.view.sample = Some(n);
                 }
@@ -817,11 +822,12 @@ impl<'a> OgParse<'a> {
             }
             "sort-by" => {
                 let field = self.name().unwrap_or_default();
-                // OG's own default here is `:desc`; Tine has always defaulted to
-                // ascending and the shipped behaviour is what P0 must preserve.
+                // OG `build-sort-by` (`query_dsl.cljs:335-348`): the order is
+                // `:asc` only when the keyword is exactly `asc`; anything else,
+                // including no order at all, is `:desc`.
                 let dir = match self.opt_word_or_string() {
-                    Some(d) if d.eq_ignore_ascii_case("desc") => SortDir::Desc,
-                    _ => SortDir::Asc,
+                    Some(d) if d.trim_start_matches(':') == "asc" => SortDir::Asc,
+                    _ => SortDir::Desc,
                 };
                 self.view.sort = vec![(Field::new(field), dir)];
                 Filter::True
@@ -1071,8 +1077,19 @@ pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings)
             }
         }
     }
+    let had_clauses = !items.is_empty();
     let items = lift_directives(items);
+    // OG parses a query made only of directives (`(sort-by x)`, `(sample 3)`,
+    // `(and (sort-by x))`) to a nil query, which runs nothing and renders no
+    // results (`query_dsl.cljs:521-547`, `query` returns nil). Not "everything".
+    let only_directives = had_clauses
+        && match items.as_slice() {
+            [] => true,
+            [Filter::And { items } | Filter::Or { items }] => items.is_empty(),
+            _ => false,
+        };
     let filter = match items.len() {
+        _ if only_directives => Filter::False,
         0 => Filter::True,
         1 => items.into_iter().next().expect("one"),
         _ => Filter::and(items),

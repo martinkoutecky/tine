@@ -591,7 +591,7 @@ mod rename_guide_tests {
 #[cfg(test)]
 mod query_guide_tests {
     /// og 14 Q2: the Guide describes queries as this build runs them — the
-    /// OG simple language, the advanced subset with its ran/ignored note, OG's
+    /// OG simple language, the advanced subset with its whole-query refusal, OG's
     /// current-page binding, host-block view properties, visible diagnostics,
     /// the refusal bound, and what is NOT offered here yet.
     #[test]
@@ -603,8 +603,7 @@ mod query_guide_tests {
             "(between scheduled today +7d)",
             "at most 10,000 years",
             "tine.sample:: 10",
-            "**ran**",
-            "**ignored**",
+            "the whole query is refused",
             ":inputs [:current-page]",
             "then today's journal. It is not the page the query block sits on",
             "Tine didn't understand part of this query, so it returned no results",

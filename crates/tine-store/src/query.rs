@@ -20,6 +20,8 @@ use tine_core::query::{
 use tine_core::refs;
 mod eval;
 pub(crate) mod exec;
+#[doc(hidden)]
+pub use exec::{pin_sample_seed, SampleSeedGuard};
 pub(crate) mod index;
 pub(crate) mod memo;
 pub(crate) mod page_properties;

@@ -203,7 +203,12 @@ fn every_collection_spelling_answers_the_same_for_task_priority_and_page_tags() 
         ),
         (
             "todo",
-            &["TODO DOING", "#{TODO DOING}", "(TODO DOING)", "[:todo :doing]"],
+            &[
+                "TODO DOING",
+                "#{TODO DOING}",
+                "(TODO DOING)",
+                "[:todo :doing]",
+            ],
         ),
         (
             "priority",
@@ -221,7 +226,11 @@ fn every_collection_spelling_answers_the_same_for_task_priority_and_page_tags() 
     ];
     for (form, spellings) in blocks {
         let want = set(&graph, &format!("({form} {})", spellings[0]));
-        assert!(want.len() >= 2, "({form} {}) should match: {want:?}", spellings[0]);
+        assert!(
+            want.len() >= 2,
+            "({form} {}) should match: {want:?}",
+            spellings[0]
+        );
         for spelling in spellings {
             let q = format!("({form} {spelling})");
             assert_eq!(set(&graph, &q), want, "{q}");
@@ -229,7 +238,10 @@ fn every_collection_spelling_answers_the_same_for_task_priority_and_page_tags() 
             let q = format!("(and ({form} {spelling}) (not \"closed\"))");
             assert_eq!(
                 set(&graph, &q),
-                want.iter().filter(|b| !b.contains("closed")).cloned().collect::<BTreeSet<_>>(),
+                want.iter()
+                    .filter(|b| !b.contains("closed"))
+                    .cloned()
+                    .collect::<BTreeSet<_>>(),
                 "{q}"
             );
         }
@@ -265,7 +277,10 @@ fn a_nested_or_unclosed_collection_is_a_query_error_not_a_guess() {
             Registry::none(),
         );
         assert!(
-            query.diagnostics.iter().any(|d| d.kind == tine_core::query::ir::DiagnosticKind::Syntax),
+            query
+                .diagnostics
+                .iter()
+                .any(|d| d.kind == tine_core::query::ir::DiagnosticKind::Syntax),
             "{q}: {:?}",
             query.diagnostics
         );
@@ -278,17 +293,135 @@ fn a_nested_or_unclosed_collection_is_a_query_error_not_a_guess() {
 fn not_negates_the_conjunction_of_all_its_operands() {
     let (_dir, graph) = fixture();
     let work = set(&graph, "(page \"Work\")");
-    let urgent: BTreeSet<String> = work.iter().filter(|b| b.contains("urgent")).cloned().collect();
+    let urgent: BTreeSet<String> = work
+        .iter()
+        .filter(|b| b.contains("urgent"))
+        .cloned()
+        .collect();
     assert_eq!(urgent.len(), 1, "{work:?}");
     // One operand: the rows it matches go.
     let minus_a = set(&graph, "(and (page \"Work\") (not (priority A)))");
-    assert_eq!(minus_a, work.difference(&urgent).cloned().collect::<BTreeSet<_>>());
+    assert_eq!(
+        minus_a,
+        work.difference(&urgent).cloned().collect::<BTreeSet<_>>()
+    );
     // Two operands that no single row satisfies together drop nothing, although
     // each alone would drop rows (the old reader dropped everything: a syntax error).
-    assert_eq!(set(&graph, "(and (page \"Work\") (not (priority A) (priority B)))"), work);
-    assert_eq!(set(&graph, "(and (page \"Work\") (not (task TODO) (priority A)))"), work);
+    assert_eq!(
+        set(
+            &graph,
+            "(and (page \"Work\") (not (priority A) (priority B)))"
+        ),
+        work
+    );
+    assert_eq!(
+        set(
+            &graph,
+            "(and (page \"Work\") (not (task TODO) (priority A)))"
+        ),
+        work
+    );
     // Operands that one row satisfies together drop exactly that row.
-    assert_eq!(set(&graph, "(and (page \"Work\") (not (priority A) \"urgent\"))"), minus_a);
+    assert_eq!(
+        set(
+            &graph,
+            "(and (page \"Work\") (not (priority A) \"urgent\"))"
+        ),
+        minus_a
+    );
     // Variadic `not` also works at the top of the form and with a directive.
     assert!(!set(&graph, "(not (priority A) \"urgent\" (sort-by priority))").is_empty());
+}
+
+fn priorities(graph: &WholeGraph, q: &str) -> Vec<char> {
+    raws(graph, q)
+        .iter()
+        .filter_map(|raw| raw.split("[#").nth(1).and_then(|rest| rest.chars().next()))
+        .collect()
+}
+
+/// Audit #6: OG `build-sort-by` (`query_dsl.cljs:335-348`) is `:desc` unless the
+/// keyword is exactly `asc`.
+#[test]
+fn sort_by_defaults_to_descending_like_og() {
+    let (_dir, graph) = fixture();
+    let base = "(and (page \"Work\") (priority A B C)";
+    assert_eq!(
+        priorities(&graph, &format!("{base} (sort-by priority))")),
+        ['C', 'B', 'A']
+    );
+    assert_eq!(
+        priorities(&graph, &format!("{base} (sort-by priority desc))")),
+        ['C', 'B', 'A']
+    );
+    assert_eq!(
+        priorities(&graph, &format!("{base} (sort-by priority :desc))")),
+        ['C', 'B', 'A']
+    );
+    assert_eq!(
+        priorities(&graph, &format!("{base} (sort-by priority asc))")),
+        ['A', 'B', 'C']
+    );
+    assert_eq!(
+        priorities(&graph, &format!("{base} (sort-by priority :asc))")),
+        ['A', 'B', 'C']
+    );
+    // Any other word is not `:asc`, so OG sorts descending.
+    assert_eq!(
+        priorities(&graph, &format!("{base} (sort-by priority upward))")),
+        ['C', 'B', 'A']
+    );
+}
+
+/// Audit #6: OG `query` (`query_dsl.cljs:583-589`) takes `(take n (shuffle rows))`
+/// BEFORE the sort, so a sample is a random subset of the filtered result, not
+/// its first n after sorting.
+#[test]
+fn sample_is_a_random_subset_taken_before_the_sort() {
+    let q = "(and (page \"Work\") (priority A B C) (sample 2) (sort-by priority))";
+    let mut subsets = BTreeSet::new();
+    for seed in 0..24u64 {
+        // A fresh graph per seed: results are memoized per query text.
+        let (_dir, graph) = fixture();
+        let _pin = tine_store::query::pin_sample_seed(seed);
+        let got = priorities(&graph, q);
+        assert_eq!(got.len(), 2, "seed {seed}: {got:?}");
+        assert!(
+            got[0] > got[1],
+            "a sample is sorted afterwards (desc): {got:?}"
+        );
+        let again = {
+            let (_dir, graph) = fixture();
+            priorities(&graph, q)
+        };
+        assert_eq!(got, again, "the same seed picks the same subset");
+        subsets.insert(got);
+    }
+    // Sorting first and truncating (the old behaviour) always gave [C, B].
+    assert!(subsets.len() > 1, "every seed gave one subset: {subsets:?}");
+    // A sample larger than the result changes nothing.
+    let (_dir, graph) = fixture();
+    assert_eq!(
+        priorities(
+            &graph,
+            "(and (page \"Work\") (priority A B C) (sample 99) (sort-by priority))"
+        ),
+        ['C', 'B', 'A']
+    );
+}
+
+/// Audit #6: a query made only of directives is OG's nil query: it runs nothing.
+#[test]
+fn a_query_of_only_directives_returns_nothing_like_og() {
+    let (_dir, graph) = fixture();
+    for q in [
+        "(sort-by priority)",
+        "(sample 3)",
+        "(and (sort-by priority))",
+        "(and (sample 2) (sort-by priority desc))",
+    ] {
+        assert!(page_names(&graph, q).is_empty(), "{q}");
+    }
+    // A directive beside a real clause still shapes it.
+    assert!(!raws(&graph, "(and (priority A) (sort-by priority))").is_empty());
 }

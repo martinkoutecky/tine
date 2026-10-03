@@ -27,7 +27,7 @@ icon:: 🔎
 		- `(page "Page")`, `(namespace Project)` — blocks on a page, or under a namespace.
 		- `(property status active)`, `(page-property type book)`, `(page-tags public)` — by block or page properties and tags. `(all-page-tags)` lists the pages that some page uses as a tag. A page-level filter returns pages, not blocks.
 		- `(between -7d today)` — journal blocks in a date range; `(between scheduled today +7d)` also works on `scheduled` or `deadline`. Dates are `today`, `yesterday`, `tomorrow`, `2026-01-31`, a journal title like `[[Jan 31st, 2026]]`, or an offset like `-7d`, `+2w`, `-1m`, `+1y` (lowercase units, at most 10,000 years).
-		- `(sort-by priority desc)`, `(sample 10)` — order the results (by `priority`, `page`, `scheduled`, `deadline` or any property), or keep only the first N after sorting.
+		- `(sort-by priority asc)`, `(sample 10)` — order the results (by `priority`, `page`, `scheduled`, `deadline` or any property; like Logseq, the order is descending unless you write `asc`), or keep a random N of the matches (chosen before sorting, so each run can show a different few). A query made only of these directives, with no condition, shows nothing.
 		- A bare word or quoted text finds block content; Tine's `(search "cafe")` predicate uses the search syntax. Both respect `:feature/enable-search-remove-accents? false` in `logseq/config.edn`, so `cafe` then differs from `café`.
 	- A block property on the query block itself can set the view: `tine.sort:: priority desc` and `tine.sample:: 10` win over the same directive in the query text.
 - ## Display and property types
