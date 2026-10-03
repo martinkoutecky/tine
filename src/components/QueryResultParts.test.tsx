@@ -13,9 +13,14 @@ import type { PageRow } from "../editor/queryIr";
 import { QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
 import * as router from "../router";
 import * as ui from "../ui";
+import { backend } from "../backend";
+import { pageByName, resetStore } from "../document";
+import type { PageRead } from "../types";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  ui.closePageProps();
+  resetStore();
   document.body.innerHTML = "";
 });
 
@@ -84,9 +89,41 @@ describe("QueryPageRows", () => {
       expect(props).toEqual(["status: open", "owner: Ada"]);
       // A page with no properties gets no empty property strip.
       expect(items[1].querySelector(".query-page-props")).toBeNull();
-      // The link is still the only button: the text is plain, selectable content.
-      expect(items[0].querySelectorAll("button")).toHaveLength(1);
+      // The values are plain, selectable content (no buttons inside the strip); the only
+      // buttons are the page link and the edit pencil (follow-up B: edit from the row).
+      expect(items[0].querySelector(".query-page-props")!.querySelectorAll("button")).toHaveLength(0);
+      expect([...items[0].querySelectorAll("button")].map((b) => b.className)).toEqual(["query-page-link", "query-page-props-edit"]);
       expect(items[0].querySelector(".query-page-props")?.getAttribute("data-selectable")).toBe("text");
+    } finally {
+      dispose();
+    }
+  });
+
+  // GH #619 item 8 / follow-up B: the pencil LOADS the page (a read) and opens the existing
+  // properties panel; the panel's write is setPageProperty (covered by the real-app journey).
+  it("loads the page and opens the properties panel from the row's pencil", async () => {
+    const page = { id: "p1", name: "Alpha", kind: "page", title: "Alpha", pre_block: "status:: open", blocks: [], rev: "r1", format: "md" } as PageRead;
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(page);
+    const { root, dispose } = mount(() => <QueryPageRows rows={[row("Alpha", "pages/Alpha.md", [["status", "open"]])]} view="list" />);
+    try {
+      expect(pageByName("Alpha")).toBeUndefined();
+      root.querySelector<HTMLButtonElement>(".query-page-props-edit")!.click();
+      await vi.waitFor(() => expect(ui.pagePropsPanel()?.scope).toEqual({ kind: "page", name: "Alpha" }));
+      expect(getPage).toHaveBeenCalledWith("Alpha", "page");
+      expect(pageByName("Alpha")?.name).toBe("Alpha");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("opens no panel when the page is gone, and says so", async () => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null as unknown as PageRead);
+    const { root, dispose } = mount(() => <QueryPageRows rows={[row("Gone", "pages/Gone.md")]} view="list" />);
+    try {
+      root.querySelector<HTMLButtonElement>(".query-page-props-edit")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(ui.pagePropsPanel()).toBeNull();
+      expect(pageByName("Gone")).toBeUndefined();
     } finally {
       dispose();
     }

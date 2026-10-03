@@ -8334,6 +8334,22 @@ img.emoji {
 .query-page-prop-key {
   color: var(--text-muted);
 }
+.query-results-list .query-page-props-edit,
+.query-page-props-edit {
+  display: inline-block;
+  width: auto;
+  padding: 0 6px;
+  margin: 0 0 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.query-page-props-edit:hover,
+.query-page-props-edit:focus-visible {
+  color: var(--text-primary, inherit);
+}
 .query-list-context {
   overflow: hidden;
   color: var(--text-muted);

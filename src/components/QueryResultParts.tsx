@@ -6,6 +6,7 @@ import { internalLinkDest } from "../linkGesture";
 import { openPageInSidebar } from "../ui";
 import { fieldLabel, isFieldId } from "../sheet/fields";
 import { querySummary } from "../editor/queryAggregate";
+import { openPagePropertiesFromRow } from "../queryPageProps";
 
 // Presentation parts of a query block's answer: page rows and the engine's
 // statistics. Neither decides membership or computes an answer (I-12).
@@ -51,18 +52,31 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
       {row.name}
     </button>
   );
-  // GH #619 item 8: OG lists a page result with its page properties. Plain selectable
-  // text, not buttons. Editing them from the row is deliberately not offered (receipt:
-  // the block-result editor writes block text, page properties go through a different
-  // write path that needs the page loaded into the document).
+  // GH #619 item 8: OG lists a page result with its page properties, as plain selectable
+  // text; the pencil edits them. The row only carries the query's answer, so the pencil first
+  // loads the page (a read) and then opens the existing properties panel, whose write is the
+  // guarded `setPageProperty` path (see ../queryPageProps).
   const propertyStrip = (row: PageRow) => (
-    <Show when={row.properties.length > 0}>
-      <span class="query-page-props" data-selectable="text">
-        <For each={row.properties}>{([key, val]) => (
-          <span class="query-page-prop"><span class="query-page-prop-key">{key}:</span> {val}</span>
-        )}</For>
-      </span>
-    </Show>
+    <>
+      <Show when={row.properties.length > 0}>
+        <span class="query-page-props" data-selectable="text">
+          <For each={row.properties}>{([key, val]) => (
+            <span class="query-page-prop"><span class="query-page-prop-key">{key}:</span> {val}</span>
+          )}</For>
+        </span>
+      </Show>
+      <button
+        type="button"
+        class="query-page-props-edit"
+        aria-label={`Edit properties of ${row.name}`}
+        title="Edit page properties"
+        onClick={(event) => {
+          event.stopPropagation();
+          const rect = event.currentTarget.getBoundingClientRect();
+          void openPagePropertiesFromRow(row, rect.left, rect.bottom + 4);
+        }}
+      >✎</button>
+    </>
   );
   return (
     <Switch

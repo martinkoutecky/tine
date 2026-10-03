@@ -35,7 +35,7 @@ const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Queries]]\n");
 fs.writeFileSync(`${GRAPH}/pages/Tasks.md`, "- TODO alpha task\n- TODO beta task\n- DONE finished task\n");
-fs.writeFileSync(`${GRAPH}/pages/Book A.md`, "type:: book\n\n- A book page\n");
+fs.writeFileSync(`${GRAPH}/pages/Book A.md`, "type:: book\nowner:: Ada\n\n- A book page\n");
 fs.writeFileSync(`${GRAPH}/pages/Notes.md`, "type:: note\n\n- Not a book\n");
 // GH #619 item 9: a page and a block that both carry `type:: book`, so ONE `(property type book)`
 // query has a page answer (Book A, Library) and a block answer (the shelf item).
@@ -366,6 +366,46 @@ await withApp(4, async (browser) => {
   });
   if (!/scheduled/i.test(sheet.text)) throw new Error(`the scheduled condition did not show in plain words: ${sheet.text}`);
   try { await browser.saveScreenshot(`${ARTIFACTS}/item45-plain-chips-text-closed.png`); } catch {}
+});
+
+// 9. GH #619 item 8 / follow-up B: a page result row shows the page's properties and lets the user EDIT
+// them from the row. The row only carries the answer, so the pencil loads the page and opens the existing
+// properties panel; the write is the ordinary guarded page-property write. The file and the row agree.
+const BOOK_FILE = `${GRAPH}/pages/Book A.md`;
+await withApp(5, async (browser) => {
+  await openPageByName(browser, "Queries");
+  await waitForQuery(browser, 1, (t) => t.includes("Book A") && /owner:\s*Ada/.test(t), "the page row did not show its properties as text");
+  const edit = await browser.execute(() => {
+    const block = document.querySelectorAll(".page-blocks .query-block")[1];
+    const li = [...block.querySelectorAll(".query-results-list > li")].find((item) => (item.textContent ?? "").includes("Book A"));
+    const pencil = li?.querySelector(".query-page-props-edit");
+    if (!(pencil instanceof HTMLElement)) return false;
+    pencil.scrollIntoView({ block: "center" });
+    pencil.click();
+    return true;
+  });
+  if (!edit) throw new Error("the Book A result row offered no way to edit its properties");
+  await browser.$(".page-props-panel").waitForExist({ timeout: 10_000 });
+  const marked = await browser.execute(() => {
+    const field = [...document.querySelectorAll(".page-props-panel .pp-field")].find((f) => f.querySelector(".pp-label")?.textContent?.trim() === "owner");
+    const input = field?.querySelector(".pp-input");
+    if (!(input instanceof HTMLElement)) return false;
+    input.setAttribute("data-e2e-target", "1");
+    return true;
+  });
+  if (!marked) throw new Error("the properties panel did not list the page's owner property");
+  const input = await browser.$('.page-props-panel [data-e2e-target="1"]');
+  await input.setValue("Grace");
+  await browser.keys("Enter");
+  await browser.$(".page-props-panel").waitForExist({ reverse: true, timeout: 10_000 });
+  await browser.waitUntil(() => /owner:: Grace/.test(fs.readFileSync(BOOK_FILE, "utf8")), {
+    timeout: 15_000, interval: 150, timeoutMsg: `the edited property never reached the file:\n${fs.readFileSync(BOOK_FILE, "utf8")}`,
+  });
+  const onDisk = fs.readFileSync(BOOK_FILE, "utf8");
+  if (/Ada/.test(onDisk) || !/type:: book/.test(onDisk) || !/- A book page/.test(onDisk)) throw new Error(`the property edit damaged the page:\n${onDisk}`);
+  // The row itself shows the new value (the query answered again after the save).
+  await waitForQuery(browser, 1, (t) => /owner:\s*Grace/.test(t) && !/owner:\s*Ada/.test(t), "the row did not show the edited value");
+  try { await browser.saveScreenshot(`${ARTIFACTS}/item8-edit-from-row.png`); } catch {}
 });
 
 console.log(`PASS query sheet journey (${createdLine})`);
