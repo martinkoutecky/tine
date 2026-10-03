@@ -518,6 +518,8 @@ fn tql_attr_name(attr: Attr, through_page: bool) -> String {
         Attr::Priority => "priority",
         Attr::Scheduled => "scheduled",
         Attr::Deadline => "deadline",
+        Attr::CreatedAt => "created_at",
+        Attr::LastModifiedAt => "last_modified_at",
         Attr::Name => "name",
         Attr::Journal => "journal",
         Attr::Day => "day",
@@ -743,6 +745,8 @@ fn og_attr(attr: Attr, op: CmpOp, value: &Value, on_page: bool) -> Option<String
         (Attr::Priority, CmpOp::In) => Some(og_words("priority", list_of(value)?)),
         (Attr::Scheduled, CmpOp::Between) => og_between("scheduled", value),
         (Attr::Deadline, CmpOp::Between) => og_between("deadline", value),
+        (Attr::CreatedAt, CmpOp::Between) => og_timestamp_between("created-at", value),
+        (Attr::LastModifiedAt, CmpOp::Between) => og_timestamp_between("last-modified-at", value),
         (Attr::Day, CmpOp::Between) if on_page => og_between("journal", value),
         (Attr::Journal, CmpOp::Eq) if on_page && *value == (Value::Bool { value: true }) => {
             Some("(journal)".to_string())
@@ -848,6 +852,39 @@ fn og_between(field: &str, value: &Value) -> Option<String> {
         "(between {field}{} {})",
         date_bound(low)?,
         date_bound(high)?
+    ))
+}
+
+/// `(between created-at START END)`: always the four-token form, since the OG
+/// reader only knows a timestamp range with its field named.
+fn og_timestamp_between(field: &str, value: &Value) -> Option<String> {
+    let Value::List { items } = value else {
+        return None;
+    };
+    let [low, high] = items.as_slice() else {
+        return None;
+    };
+    let bound = |value: &Value| -> Option<String> {
+        let Value::Date { literal } = value else {
+            return None;
+        };
+        let text = literal.trim();
+        if !crate::query::is_timestamp_token(text) {
+            return None;
+        }
+        // A journal title is the one shape that needs its brackets back.
+        Some(
+            if crate::query::DateToken::parse(text).is_some_and(|token| !token.prints_bare()) {
+                format!("[[{text}]]")
+            } else {
+                text.to_string()
+            },
+        )
+    };
+    Some(format!(
+        "(between {field} {} {})",
+        bound(low)?,
+        bound(high)?
     ))
 }
 

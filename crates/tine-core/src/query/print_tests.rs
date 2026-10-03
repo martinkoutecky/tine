@@ -252,6 +252,9 @@ fn every_tql_shape_round_trips() {
         "scheduled is not null",
         "deadline is null",
         "scheduled between today and '+7d'",
+        "created_at between '-7d' and 'now'",
+        "last_modified_at between '-3h' and '+90n'",
+        "created_at is not null",
         "page.name = 'Home'",
         "page.name like 'proj/%'",
         "page.journal = true",
@@ -460,6 +463,9 @@ fn og_expressible_queries_round_trip_through_the_og_printer() {
         "(journal)",
         "(page-tags public private)",
         "(between scheduled today +7d)",
+        "(between created-at -7d now)",
+        "(between last-modified-at -3h +90n)",
+        "(between created-at [[Jan 1st, 2024]] [[Jan 2nd, 2024]])",
         "(and (task TODO) (page Home))",
     ] {
         og_round_trips(source);

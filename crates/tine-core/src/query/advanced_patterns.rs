@@ -1198,6 +1198,70 @@ pub fn resolve_date_token(tok: &str, today: JournalDate) -> Option<i64> {
     DateToken::parse(tok)?.resolve(today)
 }
 
+/// Milliseconds in one day.
+const MS_PER_DAY: i64 = 86_400_000;
+
+/// The largest `h`/`n` offset a timestamp bound may carry. Hours and minutes
+/// beyond this span (about 10 000 years) read as no bound, exactly as an
+/// out-of-range day offset does, so the arithmetic cannot overflow.
+const MAX_CLOCK_OFFSET: i64 = MAX_DATE_OFFSET_YEARS * 366 * 24 * 60;
+
+/// UTC midnight of `date`, in epoch milliseconds (OG `tc/to-long (t/today)`).
+fn midnight_ms(date: JournalDate) -> i64 {
+    date.to_days() * MS_PER_DAY
+}
+
+/// A `[+|-]N` count followed by the `h` (hours) or `n` (minutes) unit letter:
+/// the two units only a TIMESTAMP bound has. `None` for any other shape.
+fn clock_offset_ms(token: &str) -> Option<Option<i64>> {
+    let (sign, rest) = match token.as_bytes().first()? {
+        b'+' => (1i64, &token[1..]),
+        b'-' => (-1i64, &token[1..]),
+        _ => (1i64, token),
+    };
+    let per_unit = match rest.as_bytes().last()? {
+        b'h' => 3_600_000,
+        b'n' => 60_000,
+        _ => return None,
+    };
+    let digits = &rest[..rest.len() - 1];
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(match digits.parse::<i64>() {
+        Ok(n) if n <= MAX_CLOCK_OFFSET => Some(sign * n * per_unit),
+        _ => None,
+    })
+}
+
+/// Whether `tok` is a bound of a `created_at` / `last_modified_at` range:
+/// everything [`DateToken`] reads, plus `now` and the `h`/`n` clock offsets.
+pub fn is_timestamp_token(tok: &str) -> bool {
+    let tok = tok.trim();
+    match clock_offset_ms(tok) {
+        Some(offset) => offset.is_some(),
+        None => matches!(DateToken::parse(tok), Some(token) if token != DateToken::OutOfRange),
+    }
+}
+
+/// Resolve a `created_at` / `last_modified_at` bound to epoch milliseconds,
+/// OG `->timestamp` (query_dsl.cljs:81-113): `now` is the instant `now_ms`;
+/// every other keyword, a journal title or stem, and every signed offset is
+/// anchored at UTC midnight of `today` (`d`/`w`/`m`/`y` move whole days, `h`
+/// and `n` add hours and minutes to that midnight, NOT to the current time).
+/// `None` when the token is not a timestamp bound.
+pub fn resolve_timestamp_token(tok: &str, today: JournalDate, now_ms: i64) -> Option<i64> {
+    let tok = tok.trim();
+    if tok.eq_ignore_ascii_case("now") {
+        return Some(now_ms);
+    }
+    if let Some(offset) = clock_offset_ms(tok) {
+        return offset.map(|offset| midnight_ms(today) + offset);
+    }
+    let day = DateToken::parse(tok)?.resolve(today)?;
+    Some(midnight_ms(JournalDate::from_ordinal(day)))
+}
+
 #[cfg(test)]
 mod date_token_tests {
     use super::*;

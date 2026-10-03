@@ -816,6 +816,8 @@ const ATTR_PHRASE: Record<Attr, string> = {
   priority: "priority",
   scheduled: "scheduled",
   deadline: "deadline",
+  created_at: "created",
+  last_modified_at: "last modified",
   name: "name",
   journal: "journal",
   day: "date",

@@ -131,6 +131,20 @@ fn every_filter_variant() -> Filter {
             Quant::Every,
             Filter::attr(Attr::Content, CmpOp::Eq, Value::text("x")),
         ),
+        Filter::attr(
+            Attr::CreatedAt,
+            CmpOp::Between,
+            Value::List {
+                items: vec![Value::date("-7d"), Value::date("now")],
+            },
+        ),
+        Filter::attr(
+            Attr::LastModifiedAt,
+            CmpOp::Between,
+            Value::List {
+                items: vec![Value::date("-7d"), Value::date("now")],
+            },
+        ),
         Filter::Raw {
             text: "(frobnicate x)".to_string(),
             kind: DiagnosticKind::UnknownHead,

@@ -219,6 +219,9 @@ pub(crate) struct EvalCtx<'a> {
     /// represented by `page_props` and is never a block-row element.
     pub(crate) page_roots: &'a [DocBlock],
     pub(crate) today: JournalDate,
+    /// The instant `now` names in a `created_at` / `last_modified_at` bound,
+    /// epoch milliseconds, read once when this page row's context is built.
+    pub(crate) now_ms: i64,
     pub(crate) remove_accents: bool,
     pub(crate) compiled: &'a CompiledLeaves,
     /// The page's on-disk format: the atomizer parses a property value with the
@@ -258,6 +261,7 @@ impl<'a> EvalCtx<'a> {
             page_props,
             page_roots,
             today,
+            now_ms: clock_now_ms(),
             remove_accents,
             compiled,
             format,
@@ -354,6 +358,20 @@ fn eval_block_leaf(
                     block.raw(),
                     "DEADLINE:",
                 ),
+                ctx,
+            ),
+            Attr::CreatedAt => eval_timestamp(
+                *op,
+                value,
+                &block.projection().properties,
+                CREATED_KEYS,
+                ctx,
+            ),
+            Attr::LastModifiedAt => eval_timestamp(
+                *op,
+                value,
+                &block.projection().properties,
+                MODIFIED_KEYS,
                 ctx,
             ),
             // Page attributes only ever appear under a `page` relation, and the
@@ -884,6 +902,75 @@ fn eval_planning(op: CmpOp, value: &Value, text: Option<&str>, ctx: &EvalCtx) ->
         _ => text
             .and_then(planning_day)
             .is_some_and(|day| compare_day(op, value, day, ctx.today)),
+    }
+}
+
+/// The property spellings of a block's creation / modification instant, in the
+/// normal form (`-`, lowercase). OG writes `created-at` / `last-modified-at`;
+/// `created_at` / `last_modified_at` is the underscore spelling its `between`
+/// keys use. Both read (Tine superset).
+const CREATED_KEYS: &[&str] = &["created-at", "created_at"];
+const MODIFIED_KEYS: &[&str] = &["last-modified-at", "last_modified_at"];
+
+/// The wall clock in epoch milliseconds (OG `util/time-ms`).
+fn clock_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// A timestamp-property comparison. Presence is the property's presence; a
+/// value that is not a whole number of milliseconds has presence but no
+/// instant, so it fails every comparison. `between` is OG's half-open range:
+/// the lower bound inclusive, the upper exclusive, the two bounds sorted
+/// (`build-between-three-arg`); both bounds must resolve.
+fn eval_timestamp(
+    op: CmpOp,
+    value: &Value,
+    properties: &[(String, String)],
+    keys: &[&str],
+    ctx: &EvalCtx,
+) -> bool {
+    let raw = properties
+        .iter()
+        .find(|(key, _)| keys.iter().any(|wanted| key.eq_ignore_ascii_case(wanted)))
+        .map(|(_, raw)| raw.trim());
+    match op {
+        CmpOp::IsSet => return raw.is_some(),
+        CmpOp::IsNotSet => return raw.is_none(),
+        _ => {}
+    }
+    let Some(at) = raw.and_then(|raw| raw.parse::<i64>().ok()) else {
+        return false;
+    };
+    let resolve = |value: &Value| match value {
+        Value::Date { literal } => {
+            tine_core::query::resolve_timestamp_token(literal, ctx.today, ctx.now_ms)
+        }
+        Value::Number { number } => Some(*number as i64),
+        _ => None,
+    };
+    match op {
+        CmpOp::Between => match value {
+            Value::List { items } if items.len() == 2 => {
+                match (resolve(&items[0]), resolve(&items[1])) {
+                    (Some(a), Some(b)) => {
+                        let (low, high) = if a > b { (b, a) } else { (a, b) };
+                        at >= low && at < high
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        },
+        CmpOp::Ge => resolve(value).is_some_and(|bound| at >= bound),
+        CmpOp::Le => resolve(value).is_some_and(|bound| at <= bound),
+        CmpOp::Gt => resolve(value).is_some_and(|bound| at > bound),
+        CmpOp::Lt => resolve(value).is_some_and(|bound| at < bound),
+        CmpOp::Eq => resolve(value).is_some_and(|bound| at == bound),
+        CmpOp::NotEq => resolve(value).is_some_and(|bound| at != bound),
+        _ => false,
     }
 }
 

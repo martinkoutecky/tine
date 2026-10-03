@@ -902,6 +902,22 @@ impl<'a> OgParse<'a> {
             Deadline,
             Any,
         }
+        // OG's three-argument form: the field names a block TIMESTAMP property,
+        // spelled `created-at` / `created_at` / `last-modified-at` /
+        // `last_modified_at` in any case (`->timestamp`'s `string/replace "-"
+        // "_"`), and both bounds must resolve (query_dsl.cljs:214-229).
+        if let Some(Tok::Word(w)) = self.peek() {
+            let key = w.to_ascii_lowercase().replace('-', "_");
+            let attr = match key.as_str() {
+                "created_at" => Some(Attr::CreatedAt),
+                "last_modified_at" => Some(Attr::LastModifiedAt),
+                _ => None,
+            };
+            if let Some(attr) = attr {
+                self.pos += 1;
+                return self.timestamp_between(attr);
+            }
+        }
         let field = match self.peek() {
             Some(Tok::Word(w)) => match w.to_ascii_lowercase().as_str() {
                 "journal" => {
@@ -961,6 +977,49 @@ impl<'a> OgParse<'a> {
                 range(Attr::Scheduled),
                 range(Attr::Deadline),
             ]),
+        }
+    }
+}
+
+impl OgParse<'_> {
+    /// The two bounds of `(between created-at START END)`. A missing or
+    /// unresolvable bound makes the query invalid, as OG's `when (and start
+    /// end)` makes it produce no clause.
+    fn timestamp_between(&mut self, attr: Attr) -> Filter {
+        let at = self.pos;
+        let low = self
+            .name()
+            .map(|t| t.strip_prefix(':').unwrap_or(&t).to_string());
+        let high = self
+            .name()
+            .map(|t| t.strip_prefix(':').unwrap_or(&t).to_string());
+        for (index, token) in [&low, &high].into_iter().enumerate() {
+            let ok = token
+                .as_deref()
+                .is_some_and(crate::query::is_timestamp_token);
+            if !ok {
+                let span = self.span_at(at + index);
+                let shown = token.as_deref().unwrap_or("(missing)");
+                self.diagnose(
+                    DiagnosticKind::Syntax,
+                    format!(
+                        "`{shown}` is not a timestamp bound (`now`, `today`, `yesterday`, \
+                         `tomorrow`, a journal page, or an offset such as `-7d`, `-3h`, `-30n`)"
+                    ),
+                    span,
+                );
+                return Filter::False;
+            }
+        }
+        match (low, high) {
+            (Some(low), Some(high)) => Filter::attr(
+                attr,
+                CmpOp::Between,
+                Value::List {
+                    items: vec![Value::date(low), Value::date(high)],
+                },
+            ),
+            _ => Filter::False,
         }
     }
 }

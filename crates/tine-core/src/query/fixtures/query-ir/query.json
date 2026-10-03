@@ -334,6 +334,48 @@
         }
       },
       {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "attr",
+          "attr": "created_at",
+          "op": "between",
+          "value": {
+            "kind": "list",
+            "items": [
+              {
+                "kind": "date",
+                "literal": "-7d"
+              },
+              {
+                "kind": "date",
+                "literal": "now"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "attr",
+          "attr": "last_modified_at",
+          "op": "between",
+          "value": {
+            "kind": "list",
+            "items": [
+              {
+                "kind": "date",
+                "literal": "-7d"
+              },
+              {
+                "kind": "date",
+                "literal": "now"
+              }
+            ]
+          }
+        }
+      },
+      {
         "kind": "raw",
         "text": "(frobnicate x)",
         "diagnostic_kind": "unknown_head",

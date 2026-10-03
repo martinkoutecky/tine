@@ -425,3 +425,187 @@ fn a_query_of_only_directives_returns_nothing_like_og() {
     // A directive beside a real clause still shapes it.
     assert!(!raws(&graph, "(and (priority A) (sort-by priority))").is_empty());
 }
+
+const JAN_1_2024: i64 = 1_704_067_200_000;
+const HOUR: i64 = 3_600_000;
+const DAY: i64 = 24 * HOUR;
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+/// UTC midnight of the local civil `today`: the anchor of every `d`/`h`/`n`
+/// offset (OG `->timestamp` adds to `(t/today)`, not to the current instant).
+fn midnight_today() -> i64 {
+    tine_core::date::JournalDate::today().to_days() * DAY
+}
+
+fn timestamp_graph() -> (tempfile::TempDir, WholeGraph) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("pages")).unwrap();
+    std::fs::create_dir(dir.path().join("journals")).unwrap();
+    let midnight = midnight_today();
+    let now = now_ms();
+    let blocks = [
+        ("first-instant", format!("created-at:: {JAN_1_2024}")),
+        ("noon", format!("created-at:: {}", JAN_1_2024 + 12 * HOUR)),
+        (
+            "second-midnight",
+            format!("created-at:: {}", JAN_1_2024 + DAY),
+        ),
+        ("snake", format!("created_at:: {}", JAN_1_2024 + HOUR)),
+        (
+            "modified",
+            format!("last-modified-at:: {}", JAN_1_2024 + 2 * HOUR),
+        ),
+        ("recent", format!("created-at:: {}", now - 1000)),
+        ("a-month-ago", format!("created-at:: {}", now - 30 * DAY)),
+        ("long-ago", format!("created-at:: {}", now - 2000 * DAY)),
+        ("tomorrow-ish", format!("created-at:: {}", now + DAY)),
+        (
+            "midnight-plus-30h",
+            format!("created-at:: {}", midnight + 30 * HOUR),
+        ),
+        (
+            "midnight-plus-10h",
+            format!("created-at:: {}", midnight + 10 * HOUR),
+        ),
+        (
+            "midnight-plus-90n",
+            format!("created-at:: {}", midnight + 90 * 60_000),
+        ),
+        ("not-a-number", "created-at:: yesterday".to_string()),
+        ("no-stamp", "other:: 1".to_string()),
+    ];
+    let mut text = String::new();
+    for (label, prop) in blocks {
+        text.push_str(&format!("- {label}\n  {prop}\n"));
+    }
+    std::fs::write(dir.path().join("pages/Stamped.md"), text).unwrap();
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let graph = store.whole_graph().unwrap();
+    (dir, graph)
+}
+
+fn labels(graph: &WholeGraph, q: &str) -> BTreeSet<String> {
+    raws(graph, q)
+        .into_iter()
+        .map(|raw| {
+            raw.lines()
+                .next()
+                .unwrap_or("")
+                .trim_start_matches("- ")
+                .to_string()
+        })
+        .collect()
+}
+
+fn want(items: &[&str]) -> BTreeSet<String> {
+    items.iter().map(|item| item.to_string()).collect()
+}
+
+/// Audit #4: `(between created-at START END)` (OG `build-between-three-arg`,
+/// query_dsl.cljs:214-229) is a range over the block's timestamp property --
+/// lower bound inclusive, upper exclusive, the pair sorted. Before the fix the
+/// parser read `created-at` as the FIRST BOUND of the journal-day form and the
+/// query matched nothing.
+#[test]
+fn between_created_at_is_a_half_open_range_over_the_timestamp_property() {
+    let (_dir, graph) = timestamp_graph();
+    let jan_1_2 = "[[Jan 1st, 2024]] [[Jan 2nd, 2024]]";
+    let expected = want(&["first-instant", "noon", "snake"]);
+    for field in ["created-at", "created_at", "CREATED-AT", "Created_At"] {
+        assert_eq!(
+            labels(&graph, &format!("(between {field} {jan_1_2})")),
+            expected,
+            "{field}: lower inclusive, upper exclusive (second-midnight is out)"
+        );
+    }
+    assert_eq!(
+        labels(
+            &graph,
+            "(between created-at [[Jan 2nd, 2024]] [[Jan 1st, 2024]])"
+        ),
+        expected,
+        "OG sorts the two bounds"
+    );
+    assert_eq!(
+        labels(&graph, &format!("(between last-modified-at {jan_1_2})")),
+        want(&["modified"]),
+        "last-modified-at reads its own property, never created-at's"
+    );
+    assert_eq!(
+        labels(&graph, &format!("(between last_modified_at {jan_1_2})")),
+        want(&["modified"])
+    );
+}
+
+#[test]
+fn between_timestamp_bounds_read_now_and_h_n_offsets_like_og_to_timestamp() {
+    let (_dir, graph) = timestamp_graph();
+    // The wall clock decides where `now` falls relative to the midnight-anchored
+    // blocks, so each assertion looks only at the family it is about.
+    let only = |q: &str, prefix: &str| -> BTreeSet<String> {
+        labels(&graph, q)
+            .into_iter()
+            .filter(|label| label.starts_with(prefix))
+            .collect()
+    };
+    let clock = |q: &str| {
+        let mut found = only(q, "recent");
+        found.extend(only(q, "a-month"));
+        found.extend(only(q, "long"));
+        found.extend(only(q, "tomorrow"));
+        found
+    };
+    // `now` is the current instant; `-1000d` is 1000 days before UTC midnight.
+    assert_eq!(
+        clock("(between created-at -1000d now)"),
+        want(&["recent", "a-month-ago"]),
+        "now is the instant, not the day"
+    );
+    // `+24h`/`+48h` are hours past UTC MIDNIGHT of today (not past now).
+    assert_eq!(
+        only("(between created-at +24h +48h)", "midnight"),
+        want(&["midnight-plus-30h"])
+    );
+    assert_eq!(
+        only("(between created-at +1d +2d)", "midnight"),
+        want(&["midnight-plus-30h"]),
+        "24h is the same bound as 1d"
+    );
+    assert_eq!(
+        only("(between created-at +60n +120n)", "midnight"),
+        want(&["midnight-plus-90n"])
+    );
+    assert_eq!(
+        only("(between created-at +8h +12h)", "midnight"),
+        want(&["midnight-plus-10h"])
+    );
+}
+
+#[test]
+fn between_timestamp_with_an_unresolvable_or_missing_bound_is_invalid() {
+    let (_dir, graph) = timestamp_graph();
+    for q in [
+        "(between created-at nonsense today)",
+        "(between created-at today)",
+        "(between created-at)",
+        "(between created-at -99999999999999999999h today)",
+    ] {
+        let (query, _) = parse_query_input(
+            q,
+            QueryInput::MacroQuery,
+            tine_core::date::JournalDate::today(),
+            Registry::none(),
+        );
+        assert!(
+            query.is_invalid(),
+            "{q}: OG builds no clause unless both bounds resolve"
+        );
+        assert!(raws(&graph, q).is_empty(), "{q}");
+    }
+}

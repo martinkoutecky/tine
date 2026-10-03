@@ -1049,6 +1049,8 @@ fn block_attr(name: &str) -> Option<(Attr, ValueType)> {
         "priority" => (Attr::Priority, ValueType::Text),
         "scheduled" => (Attr::Scheduled, ValueType::Date),
         "deadline" => (Attr::Deadline, ValueType::Date),
+        "created_at" => (Attr::CreatedAt, ValueType::Date),
+        "last_modified_at" => (Attr::LastModifiedAt, ValueType::Date),
         _ => return None,
     })
 }
@@ -1071,6 +1073,8 @@ fn attr_label(attr: Attr) -> &'static str {
         Attr::Priority => "priority",
         Attr::Scheduled => "scheduled",
         Attr::Deadline => "deadline",
+        Attr::CreatedAt => "created at",
+        Attr::LastModifiedAt => "last modified at",
         Attr::Name => "name",
         Attr::Journal => "journal",
         Attr::Day => "day",
@@ -1153,7 +1157,12 @@ fn op_applies(target: &Target, op: CmpOp, ty: ValueType) -> bool {
                 || matches!(
                     target,
                     Target::Attr {
-                        attr: Attr::Task | Attr::Priority | Attr::Scheduled | Attr::Deadline,
+                        attr: Attr::Task
+                            | Attr::Priority
+                            | Attr::Scheduled
+                            | Attr::Deadline
+                            | Attr::CreatedAt
+                            | Attr::LastModifiedAt,
                         ..
                     }
                 )
