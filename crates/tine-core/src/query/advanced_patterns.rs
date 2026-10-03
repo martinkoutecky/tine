@@ -563,15 +563,38 @@ pub(crate) fn advanced_pred(
             if consumed_patterns.contains(&index) || attribute_patterns.contains(&index) {
                 return None;
             }
-            parse_adv_group(group, &inputs, today, &mut ran, &mut ignored, 0)
+            let ignored_before = ignored.len();
+            let lowered = parse_adv_group(group, &inputs, today, &mut ran, &mut ignored, 0);
+            if lowered.is_none() && ignored.len() == ignored_before {
+                // Every clause that does not lower is named: refusing is the
+                // contract (below), so a silent drop would be a silent widening.
+                ignored.push("clause".into());
+            }
+            lowered
         })
         .collect();
+    // An `:in` variable the `:inputs` do not bind to a value Tine resolves
+    // (`:current-block`, `:parent-block`, a `:current-page` with no current
+    // page, ...) leaves every clause that reads it unevaluable.
+    let where_text = groups.join("\n");
+    for variable in declared_input_vars(query_src) {
+        if !inputs.contains_key(&variable) && advanced_var_uses(&where_text, &variable) > 0 {
+            ignored.push(format!("input {variable}"));
+        }
+    }
     // GH #542: a `:result-transform` is a Clojure function (ADR 0042 keeps
     // scripting out). It reorders or reshapes the answer, so say it did not run.
     if query_src.contains(":result-transform") {
         ignored.push("result-transform".into());
     }
     if ignored.iter().any(|item| item == "query-nesting-too-deep") {
+        return (None, Vec::new(), ignored);
+    }
+    // OG executes the whole DataScript query. A clause Tine cannot lower can
+    // only be dropped by answering a different (broader or narrower) question,
+    // so the query is refused as a whole and the report names what it could not
+    // lower (Martin, 2026-10-03). `ran` is empty: nothing ran.
+    if !ignored.is_empty() {
         return (None, Vec::new(), ignored);
     }
     if preds.is_empty() {
@@ -964,16 +987,9 @@ pub(super) enum AdvancedInput {
     Page(String),
 }
 
-/// Build a typed positional input map by zipping `:in $ ?a ?b …` with
-/// `:inputs [ … ]`. Dates stay numeric; Logseq's typed `:current-page` keyword
-/// receives the caller's focused page. Unknown keywords remain unbound.
-fn resolve_inputs(
-    src: &str,
-    current_page: Option<&str>,
-    today: JournalDate,
-) -> std::collections::HashMap<String, AdvancedInput> {
-    let mut map = std::collections::HashMap::new();
-    let vars: Vec<String> = match src.find(":in") {
+/// The `?var`s an `:in` clause declares, in order.
+fn declared_input_vars(src: &str) -> Vec<String> {
+    match src.find(":in") {
         Some(i) => {
             let rest = &src[i + 3..];
             let end = rest
@@ -987,7 +1003,19 @@ fn resolve_inputs(
                 .collect()
         }
         None => Vec::new(),
-    };
+    }
+}
+
+/// Build a typed positional input map by zipping `:in $ ?a ?b …` with
+/// `:inputs [ … ]`. Dates stay numeric; Logseq's typed `:current-page` keyword
+/// receives the caller's focused page. Unknown keywords remain unbound.
+fn resolve_inputs(
+    src: &str,
+    current_page: Option<&str>,
+    today: JournalDate,
+) -> std::collections::HashMap<String, AdvancedInput> {
+    let mut map = std::collections::HashMap::new();
+    let vars = declared_input_vars(src);
     let vals: Vec<String> = match src.find(":inputs") {
         Some(i) => {
             let rest = &src[i + ":inputs".len()..];

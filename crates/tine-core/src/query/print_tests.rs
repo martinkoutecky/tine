@@ -1009,3 +1009,120 @@ fn an_anchor_the_og_form_would_lose_is_not_og_expressible() {
     .0;
     assert!(og_expressible(&todo, &view));
 }
+
+/// The 19 OG leaf forms the generated print/parse probe combines (audit
+/// 2026-10-02, finding 2): every OG simple-query head plus the view directives.
+const GENERATED_LEAVES: [&str; 19] = [
+    "[[Alpha]]",
+    "\"needle\"",
+    "(property status Target)",
+    "(property rank)",
+    "(task TODO)",
+    "(task TODO DOING)",
+    "(priority A)",
+    "(page Home)",
+    "(page-property status Target)",
+    "(page-property status)",
+    "(page-tags Target)",
+    "(all-page-tags)",
+    "(namespace Project)",
+    "(between -7d today)",
+    "(between scheduled today +7d)",
+    "(between deadline today +7d)",
+    "(journal)",
+    "(sort-by rank desc)",
+    "(sample 5)",
+];
+
+/// What printing then re-parsing a generated form did.
+#[derive(Debug, PartialEq, Eq)]
+enum GeneratedOutcome {
+    /// The source does not parse as a valid query (not a print question).
+    Invalid,
+    /// The printer refused: safe, the builder saves it in TQL instead.
+    Refused,
+    /// Printed and read back as the same normalized query and view.
+    Same,
+    /// Printed and read back as a DIFFERENT query or view: a meaning change.
+    Changed(String),
+}
+
+fn generated_outcome(source: &str) -> GeneratedOutcome {
+    let (query, view) = og(source);
+    if query.is_invalid() {
+        return GeneratedOutcome::Invalid;
+    }
+    let Ok(printed) = query_print(&query, &view, PrintDialect::Og, false) else {
+        return GeneratedOutcome::Refused;
+    };
+    let (again, again_view) = og(&printed);
+    if again.normalized() == query.normalized() && again_view == view {
+        GeneratedOutcome::Same
+    } else {
+        GeneratedOutcome::Changed(printed)
+    }
+}
+
+/// **The permanent form of the audit's 760-input probe (og lane qfix #2).** The
+/// 19 leaves, every ordered pair joined by `and` and by `or`, and `not` of each
+/// leaf. For every input the OG printer either REFUSES (safe: the builder saves
+/// the query in TQL) or prints a form that reads back as the identical
+/// normalized query and view. A meaning change on save is the harm: a
+/// `page-property` filter that came back as a block `property` filter returned
+/// no rows for the same graph.
+#[test]
+fn generated_og_forms_never_change_meaning_through_print_and_parse() {
+    let mut inputs: Vec<String> = GENERATED_LEAVES.iter().map(|s| s.to_string()).collect();
+    for left in GENERATED_LEAVES {
+        for right in GENERATED_LEAVES {
+            for head in ["and", "or"] {
+                inputs.push(format!("({head} {left} {right})"));
+            }
+        }
+    }
+    for leaf in GENERATED_LEAVES {
+        inputs.push(format!("(not {leaf})"));
+    }
+    assert_eq!(inputs.len(), 760);
+
+    let mut changed = Vec::new();
+    let (mut same, mut refused, mut invalid) = (0usize, 0usize, 0usize);
+    for source in &inputs {
+        match generated_outcome(source) {
+            GeneratedOutcome::Same => same += 1,
+            GeneratedOutcome::Refused => refused += 1,
+            GeneratedOutcome::Invalid => invalid += 1,
+            GeneratedOutcome::Changed(printed) => changed.push(format!("{source}  =>  {printed}")),
+        }
+    }
+    assert!(
+        changed.is_empty(),
+        "{} of 760 generated forms changed meaning on print/parse:\n{}",
+        changed.len(),
+        changed.join("\n")
+    );
+    // The probe must exercise printing, not refuse its way to green.
+    assert!(same >= 500, "same={same} refused={refused} invalid={invalid}");
+}
+
+/// The audit's repro, pinned by name: under a block anchor a `page-property`
+/// leaf prints as `page-property`, never as the block `property` head.
+#[test]
+fn a_page_property_under_a_block_anchor_prints_as_page_property() {
+    for (source, printed) in [
+        (
+            "(and (task TODO) (page-property status Target))",
+            "(and (task TODO) (page-property status Target))",
+        ),
+        (
+            "(and (task TODO) (page-property status))",
+            "(and (task TODO) (page-property status))",
+        ),
+    ] {
+        let (query, view) = og(source);
+        assert_eq!(
+            query_print(&query, &view, PrintDialect::Og, false).as_deref(),
+            Ok(printed)
+        );
+    }
+}

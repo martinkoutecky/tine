@@ -675,8 +675,16 @@ fn og_form(query: &Query) -> Option<String> {
     // "Find: blocks" on an empty query printed `{{query }}`, which reads back as
     // pages, so the choice vanished (#615/#619). Such a query is saved in the
     // anchor-carrying `{{tine-query}}` dialect instead.
+    //
+    // The same re-read guards the MEANING, not only the anchor: a form that
+    // reads back as a different normalized filter is refused (the builder then
+    // saves TQL) rather than saved as another query. Print-side bugs of that
+    // shape (`page-property` printed as `property`, og lane qfix #2) become a
+    // refusal instead of a silent meaning change; the generated 760-form test in
+    // `print_tests.rs` pins that no ordinary form is refused by it.
     let (reread, _) = super::og::parse_og(&form, crate::date::JournalDate::today());
-    (reread.anchor == query.anchor).then_some(form)
+    (reread.anchor == query.anchor && reread.normalized().filter == query.normalized().filter)
+        .then_some(form)
 }
 
 fn og_clause(filter: &Filter, anchor: Anchor) -> Option<String> {
@@ -709,7 +717,7 @@ fn og_leaf(leaf: &Leaf, anchor: Anchor, through_page: bool) -> Option<String> {
         Leaf::Attr { attr, op, value } => {
             og_attr(*attr, *op, value, through_page || anchor == Anchor::Page)
         }
-        Leaf::Rel { rel, quant, pred } => og_rel(*rel, *quant, pred, anchor),
+        Leaf::Rel { rel, quant, pred } => og_rel(*rel, *quant, pred, anchor, through_page),
     }
 }
 
@@ -747,7 +755,18 @@ fn og_attr(attr: Attr, op: CmpOp, value: &Value, on_page: bool) -> Option<String
     }
 }
 
-fn og_rel(rel: Rel, quant: Quant, pred: &Filter, anchor: Anchor) -> Option<String> {
+/// `through_page` is `true` below a `Rel::Page`: the leaf is then about the
+/// block's PAGE even when the query is block-anchored, which is what
+/// `page-property` means (`(and (task TODO) (page-property k v))` is
+/// `Rel::Page(Rel::Props …)`). Reading only the anchor printed it as the block
+/// `property` head, so a saved edit changed the query's meaning.
+fn og_rel(
+    rel: Rel,
+    quant: Quant,
+    pred: &Filter,
+    anchor: Anchor,
+    through_page: bool,
+) -> Option<String> {
     if quant != Quant::Any {
         return None;
     }
@@ -757,7 +776,7 @@ fn og_rel(rel: Rel, quant: Quant, pred: &Filter, anchor: Anchor) -> Option<Strin
             Filter::Leaf { leaf } => og_leaf(leaf, anchor, true),
             _ => None,
         },
-        Rel::Props => og_props(pred, anchor == Anchor::Page),
+        Rel::Props => og_props(pred, through_page || anchor == Anchor::Page),
         // `tags` (the block's own inline tags), `children` and `blocks` are
         // Tine-only relations: OG's DSL has no head for any of them.
         Rel::Tags | Rel::Children | Rel::Blocks => None,

@@ -210,8 +210,10 @@ export function QueryMacro(props: {
   title?: string;
   /** Owner page context for read-only surfaces such as BEGIN_QUERY. */
   currentPage?: string;
-  /** For advanced sources, hide rows if the report has ignored clauses. The
-   *  run still occurs; pair with `unsupportedLabel` to avoid showing the source. */
+  /** For advanced sources, hide rows if the report has ignored clauses. (The
+   *  engine now refuses a query with any unlowerable clause, so `ignored` is
+   *  empty whenever `supported`; kept as a belt-and-braces display guard.) Pair
+   *  with `unsupportedLabel` to avoid showing the source. */
   strictAdvanced?: boolean;
   unsupportedLabel?: string;
   // Render nothing when there are no results (the app-inserted journal agenda).
@@ -790,7 +792,15 @@ export function QueryMacro(props: {
             <div class="query-unsupported" role={props.unsupportedLabel ? "alert" : undefined}>
               <Show
                 when={props.unsupportedLabel}
-                fallback={<>Advanced (datalog) query: no supported clauses. <code>{`{{${props.body}}}`}</code></>}
+                fallback={
+                  <>
+                    Advanced (datalog) query not run: Tine cannot run{" "}
+                    {(advInfo()?.ignored ?? []).length > 0
+                      ? `these clauses (${advInfo()!.ignored.join(", ")})`
+                      : "some of its clauses"}
+                    , and a partial answer would be wrong. <code>{`{{${props.body}}}`}</code>
+                  </>
+                }
               >
                 {(label) => <>{label()}: query contains unsupported clauses.</>}
               </Show>
@@ -799,10 +809,7 @@ export function QueryMacro(props: {
           <Match when={true}>
             <Show when={isAdvanced() && advInfo()?.supported}>
               <div class="query-adv-note">
-                Partial datalog — ran: {(advInfo()!.ran ?? []).join(", ") || "—"}
-                <Show when={(advInfo()!.ignored ?? []).length > 0}>
-                  {` · ignored: ${advInfo()!.ignored!.join(", ")}`}
-                </Show>
+                Advanced query — ran: {(advInfo()!.ran ?? []).join(", ") || "—"}
               </div>
             </Show>
             <div class="query-header">
