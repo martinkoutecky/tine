@@ -5,12 +5,27 @@
 //! graph is loaded, an unmarked graph's inventory reads no page file at all,
 //! and a marked graph reads exactly its anchor-carrying files.
 //!
-//! The counters are process-global, so this file holds one test.
+//! The counters are process-global, so this file holds one test. Fixture files
+//! are backdated out of the 2 s racy window (§5.4): a freshly written file is
+//! legitimately re-hashed by the watcher's racy follow-up diff about 2 s after
+//! open, and under load that follow-up landed inside the counted window
+//! (15 or 63 extra hash reads, never a marker read).
 //! Invariants: I-25 (unit cost), I-12.
 
 use std::fs;
+use std::time::{Duration, SystemTime};
 use tine_graph_features::conflicts::conflict_inventory;
 use tine_store::{cost_counters, Store};
+
+fn backdate(path: &std::path::Path) {
+    let old = SystemTime::now() - Duration::from_secs(3600);
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+}
 
 #[test]
 fn the_inventory_reads_only_pages_that_may_carry_an_anchor_line() {
@@ -38,6 +53,11 @@ fn the_inventory_reads_only_pages_that_may_carry_an_anchor_line() {
         ("F1", "- a\n```\n<<<<<<< HEAD\n```\n"),
     ] {
         fs::write(root.path().join(format!("pages/{name}.md")), text).unwrap();
+    }
+    for dir in ["pages", "logseq"] {
+        for entry in fs::read_dir(root.path().join(dir)).unwrap() {
+            backdate(&entry.unwrap().path());
+        }
     }
     let store = Store::open(root.path(), Default::default()).unwrap().0;
     store.whole_graph().unwrap();
