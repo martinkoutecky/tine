@@ -6,7 +6,7 @@ use super::*;
 
 impl Store {
     /// A JSON object of numbers and closed status tokens for the diagnostics
-    /// dump: `launch`, `onDemandBuilds`, `fullDiffs`, `saves`, `checkpoint`
+    /// dump: `launch`, `onDemandBuilds`, `fullDiffs`, `assetWalks`, `pageWriterWaits`, `saves`, `checkpoint`
     /// (launch checkpoint load and writes, ADR 0070) and `shape`. It
     /// holds no page name, path or text. Reads the built page cache without
     /// building it, so `shape` is `{"ready": false}` until the first load

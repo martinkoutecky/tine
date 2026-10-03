@@ -301,6 +301,78 @@ impl SaveTiming {
     }
 }
 
+/// Upper bounds (ms) of the latency buckets; the last bucket is open-ended.
+const LATENCY_BOUNDS_MS: [u64; 5] = [1, 10, 100, 500, 2000];
+/// Most recent durations a histogram keeps verbatim.
+const LATENCY_RECENT: usize = 8;
+
+/// A bounded latency record: count, bucket counts, maximum and the last few
+/// durations. Fixed size whatever the traffic; numbers only (I-5). It is the
+/// one latency shape in the diagnostics (store lock waits and per-command
+/// latency in the app's flight recorder), so the two cannot drift (I-12).
+#[derive(Clone, Debug, Default)]
+pub struct LatencyHist {
+    count: u64,
+    buckets: [u64; LATENCY_BOUNDS_MS.len() + 1],
+    max_us: u64,
+    recent: VecDeque<u64>,
+}
+
+impl LatencyHist {
+    /// An empty histogram.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Count one duration (O(1), no allocation once the recent ring is full).
+    pub fn record(&mut self, elapsed: Duration) {
+        let us = micros(elapsed);
+        self.count += 1;
+        let bucket = LATENCY_BOUNDS_MS
+            .iter()
+            .position(|bound| us <= bound * 1000)
+            .unwrap_or(LATENCY_BOUNDS_MS.len());
+        self.buckets[bucket] += 1;
+        self.max_us = self.max_us.max(us);
+        if self.recent.len() == LATENCY_RECENT {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(us);
+    }
+
+    /// Count, buckets with their upper bounds, maximum and last durations, in ms.
+    pub fn to_json(&self) -> Value {
+        json!({
+            "count": self.count,
+            "maxMs": ms(self.max_us),
+            "bucketUpperBoundsMs": LATENCY_BOUNDS_MS,
+            "buckets": self.buckets,
+            "lastMs": self.recent.iter().map(|us| ms(*us)).collect::<Vec<_>>(),
+        })
+    }
+}
+
+/// One full asset walk (`observe_assets(full)`): how long it waited for the
+/// writer lock, how long it held it, and how many assets it reported changed.
+#[derive(Clone, Copy)]
+struct AssetWalkStats {
+    at_us: u64,
+    writer_wait_us: u64,
+    held_us: u64,
+    changed: u64,
+}
+
+/// A `Store::page` that waited at least this long for the writer lock is kept
+/// verbatim with its launch-relative time (GH #623: a page click ~3 s after a
+/// focus return).
+const SLOW_PAGE_WAIT_US: u64 = 100_000;
+
+#[derive(Clone, Copy)]
+struct SlowPageWait {
+    at_us: u64,
+    wait_us: u64,
+}
+
 #[derive(Default)]
 struct State {
     open_us: Option<u64>,
@@ -325,6 +397,10 @@ struct State {
     serving_us: Option<u64>,
     checkpoint_writes: u64,
     checkpoint_last: Option<(&'static str, u64, u64, u64, u64)>,
+    asset_walks: VecDeque<AssetWalkStats>,
+    asset_walks_total: u64,
+    page_waits: LatencyHist,
+    slow_page_waits: VecDeque<SlowPageWait>,
 }
 
 /// Recorder owned by the `Graph`; one per opened store.
@@ -406,6 +482,38 @@ impl DiagRecorder {
             state.diffs.pop_front();
         }
         state.diffs.push_back(stats);
+    }
+
+    /// One full asset walk finished (writer lock held for `held`).
+    pub(crate) fn asset_walk(&self, writer_wait: Duration, held: Duration, changed: usize) {
+        let mut state = self.state();
+        state.asset_walks_total += 1;
+        if state.asset_walks.len() == RECENT {
+            state.asset_walks.pop_front();
+        }
+        let at_us = micros(self.began.elapsed());
+        state.asset_walks.push_back(AssetWalkStats {
+            at_us,
+            writer_wait_us: micros(writer_wait),
+            held_us: micros(held),
+            changed: changed as u64,
+        });
+    }
+
+    /// `Store::page` acquired the writer lock after waiting `waited`.
+    pub(crate) fn page_writer_wait(&self, waited: Duration) {
+        let mut state = self.state();
+        state.page_waits.record(waited);
+        let wait_us = micros(waited);
+        if wait_us >= SLOW_PAGE_WAIT_US {
+            if state.slow_page_waits.len() == RECENT {
+                state.slow_page_waits.pop_front();
+            }
+            let at_us = micros(self.began.elapsed());
+            state
+                .slow_page_waits
+                .push_back(SlowPageWait { at_us, wait_us });
+        }
     }
 
     pub(crate) fn save(&self, timing: SaveTiming, committed: bool) {
@@ -533,6 +641,22 @@ impl DiagRecorder {
                     "changed": diff.changed,
                 })).collect::<Vec<_>>(),
             },
+            "assetWalks": {
+                "total": state.asset_walks_total,
+                "recent": state.asset_walks.iter().map(|walk| json!({
+                    "atMsAfterLaunch": ms(walk.at_us),
+                    "writerWaitMs": ms(walk.writer_wait_us),
+                    "heldMs": ms(walk.held_us),
+                    "changed": walk.changed,
+                })).collect::<Vec<_>>(),
+            },
+            "pageWriterWaits": {
+                "all": state.page_waits.to_json(),
+                "slow": state.slow_page_waits.iter().map(|wait| json!({
+                    "atMsAfterLaunch": ms(wait.at_us),
+                    "waitMs": ms(wait.wait_us),
+                })).collect::<Vec<_>>(),
+            },
             "saves": {
                 "total": state.saves_total,
                 "recent": state.saves.iter().map(|save| json!({
@@ -617,5 +741,46 @@ mod tests {
         );
         assert_eq!(dump["launch"]["loadPassesTotal"], MAX_PASSES + 3);
         assert_eq!(dump["launch"]["loadRestarts"], MAX_PASSES + 3);
+    }
+
+    #[test]
+    fn latency_records_are_fixed_size_whatever_the_traffic() {
+        let mut hist = LatencyHist::new();
+        for millis in [0u64, 1, 2, 10, 11, 100, 101, 500, 501, 2000, 2001, 9000] {
+            hist.record(Duration::from_millis(millis));
+        }
+        for _ in 0..1000 {
+            hist.record(Duration::from_micros(5));
+        }
+        let json = hist.to_json();
+        assert_eq!(json["count"], 1012);
+        assert_eq!(json["buckets"].as_array().unwrap().len(), 6);
+        assert_eq!(json["lastMs"].as_array().unwrap().len(), LATENCY_RECENT);
+        assert_eq!(json["maxMs"], 9000.0);
+        // 0 ms, 1 ms and the 1000 sub-ms records sit at or under the 1 ms bound.
+        assert_eq!(json["buckets"][0], 1002);
+        assert_eq!(
+            json["buckets"][5], 2,
+            "2001 ms and 9000 ms are over 2000 ms"
+        );
+
+        let diag = DiagRecorder::new();
+        for _ in 0..(RECENT + 5) {
+            diag.asset_walk(Duration::from_millis(1), Duration::from_millis(2), 0);
+            diag.page_writer_wait(Duration::from_millis(250));
+        }
+        diag.page_writer_wait(Duration::from_millis(3));
+        let dump = diag.snapshot("ready");
+        assert_eq!(dump["assetWalks"]["total"], RECENT + 5);
+        assert_eq!(
+            dump["assetWalks"]["recent"].as_array().unwrap().len(),
+            RECENT
+        );
+        assert_eq!(dump["pageWriterWaits"]["all"]["count"], RECENT + 6);
+        assert_eq!(
+            dump["pageWriterWaits"]["slow"].as_array().unwrap().len(),
+            RECENT,
+            "only waits of 100 ms or more are kept verbatim, bounded"
+        );
     }
 }
