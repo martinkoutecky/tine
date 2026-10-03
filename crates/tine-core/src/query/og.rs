@@ -333,6 +333,67 @@ fn read_string(src: &str, at: usize) -> (String, usize) {
     (text, (j + 1).min(src.len()))
 }
 
+/// Read one Clojure collection (`[..]`, `#{..}`, `(..)`) of NAMES from `src` at
+/// `at`, as OG's `read-string` would after `pre-transform`: strings, bare
+/// symbols/keywords, `[[page]]` / `#tag` refs (pre-transform quotes those), commas
+/// as whitespace. Returns the names and the offset just past the closing
+/// delimiter. A nested collection has no `name` in OG (the query throws), and an
+/// unterminated or mismatched collection is a reader error; both are `Err` with
+/// the offset to resume from.
+fn read_collection(src: &str, at: usize) -> Result<(Vec<String>, usize), (String, usize)> {
+    let (close, mut i) = if src[at..].starts_with("#{") {
+        ('}', at + 2)
+    } else if src[at..].starts_with('[') {
+        (']', at + 1)
+    } else {
+        (')', at + 1)
+    };
+    let mut names = Vec::new();
+    loop {
+        let Some(c) = src[i..].chars().next() else {
+            return Err(("this collection is never closed".to_string(), src.len()));
+        };
+        if c.is_whitespace() || c == ',' {
+            i += c.len_utf8();
+        } else if c == close {
+            return Ok((names, i + 1));
+        } else if matches!(c, ')' | ']' | '}') {
+            return Err(("this collection is closed by the wrong bracket".to_string(), i + 1));
+        } else if src[i..].starts_with("[[") {
+            let (name, end) = read_page_ref(src, i);
+            names.push(name);
+            i = end;
+        } else if src[i..].starts_with("#[[") {
+            let (name, end) = read_page_ref(src, i + 1);
+            names.push(name);
+            i = end;
+        } else if matches!(c, '[' | '(' | '{') || src[i..].starts_with("#{") {
+            return Err((
+                "a nested collection is not a name, so Logseq cannot run this query".to_string(),
+                i + 1,
+            ));
+        } else if c == '"' {
+            let (text, end) = read_string(src, i);
+            names.push(text);
+            i = end;
+        } else {
+            let mut j = i;
+            while j < src.len() {
+                let d = src[j..].chars().next().expect("char boundary");
+                if d.is_whitespace() || matches!(d, ',' | '(' | ')' | '[' | ']' | '{' | '}' | '"') {
+                    break;
+                }
+                j += d.len_utf8();
+            }
+            let word = &src[i..j];
+            // `#tag` is a page ref; a keyword's `name` has no colon.
+            let word = word.strip_prefix('#').unwrap_or(word);
+            names.push(word.trim_start_matches(':').to_string());
+            i = j.max(i + c.len_utf8());
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // parse-property-value (OG query_dsl.cljs:242-252), transcribed
 // ---------------------------------------------------------------------------
@@ -453,37 +514,76 @@ impl<'a> OgParse<'a> {
 
     /// OG `build-task` / `build-priority` / `build-page-tags`
     /// (`query_dsl.cljs:279-320`): `(if (coll? (first (rest e))) (first (rest e))
-    /// (rest e))`. A leading Clojure vector `[A B]` supplies the whole list and
-    /// everything after it is ignored; otherwise the names are variadic. The
-    /// tokenizer sees a vector as plain words, so rejoin them up to the word
-    /// holding the closing `]`. Commas are whitespace to Clojure's reader.
+    /// (rest e))`. The FIRST argument, when it is any Clojure collection the
+    /// reader accepts (vector `[A B]`, set `#{A B}`, list `(A B)`), supplies the
+    /// whole list and everything after it is ignored; otherwise the names are
+    /// variadic. Elements go through `name`, so a keyword loses its `:`
+    /// (`(task :todo)`), while a quoted string keeps it. Commas are whitespace
+    /// to Clojure's reader.
     fn vector_or_names(&mut self) -> Vec<String> {
-        let opens =
-            matches!(self.peek(), Some(Tok::Word(w)) if w.starts_with('[') && !w.starts_with("[["));
+        let opens = self.toks.get(self.pos).is_some_and(|t| {
+            let rest = &self.src[t.start..];
+            t.tok == Tok::LParen
+                || rest.starts_with("#{")
+                || (rest.starts_with('[') && !rest.starts_with("[["))
+        });
         if !opens {
-            return self.names();
+            return self.variadic_names();
         }
-        let mut raw = String::new();
-        while let Some(Tok::Word(w)) = self.peek() {
-            let w = w.clone();
+        let at = self.toks[self.pos].start;
+        let (names, end) = match read_collection(self.src, at) {
+            Ok(read) => read,
+            Err((message, end)) => {
+                let span = Some(Span::from_byte_range(self.src, at, end));
+                self.diagnose(DiagnosticKind::Syntax, message, span);
+                (Vec::new(), end)
+            }
+        };
+        // The collection was read from the source text, so the tokens the
+        // tokenizer cut out of it (it knows nothing of brackets) are dropped and
+        // the rest of the form is tokenized afresh from where the collection
+        // ended; spans stay offsets into the original text.
+        self.toks.truncate(self.pos);
+        self.toks.extend(tokenize(&self.src[end..]).into_iter().map(|t| Spanned {
+            tok: t.tok,
+            start: t.start + end,
+            end: t.end + end,
+        }));
+        // Whatever follows the collection is ignored by OG; consume it so the
+        // form still closes cleanly (an ignored argument may itself be a list).
+        self.skip_args();
+        names
+    }
+
+    /// Skip every argument up to, not including, the `)` that closes the form
+    /// being read, stepping over nested lists whole.
+    fn skip_args(&mut self) {
+        let mut depth = 0usize;
+        while let Some(tok) = self.peek() {
+            match tok {
+                Tok::LParen => depth += 1,
+                Tok::RParen if depth == 0 => return,
+                Tok::RParen => depth -= 1,
+                _ => {}
+            }
             self.pos += 1;
-            raw.push_str(&w);
-            raw.push(' ');
-            if w.contains(']') {
-                break;
+        }
+    }
+
+    /// The variadic spelling: every remaining name token. A bare keyword
+    /// (`:todo`) is a Clojure keyword, whose `name` has no colon; a quoted
+    /// string is a string and is taken as written.
+    fn variadic_names(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        loop {
+            let keyword = matches!(self.peek(), Some(Tok::Word(w)) if w.starts_with(':'));
+            match self.name() {
+                Some(name) if keyword => out.push(name.trim_start_matches(':').to_string()),
+                Some(name) => out.push(name),
+                None => break,
             }
         }
-        // Whatever follows the vector is ignored by OG; consume it so the form
-        // still closes cleanly.
-        let _ = self.names();
-        let inner = raw.trim();
-        let inner = inner.strip_prefix('[').unwrap_or(inner);
-        let inner = inner.split(']').next().unwrap_or(inner);
-        inner
-            .split(|c: char| c.is_whitespace() || c == ',')
-            .filter(|t| !t.is_empty())
-            .map(|t| t.trim_matches('"').to_string())
-            .collect()
+        out
     }
 
     /// Skip to just past the `)` closing the form that opened at depth 0 here.

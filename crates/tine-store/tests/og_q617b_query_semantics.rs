@@ -172,3 +172,102 @@ fn page_ref_and_not_task_returns_the_pages_other_blocks() {
     assert!(!hits.iter().any(|b| b.contains("TODO Parent")), "{hits:?}");
     assert!(!hits.iter().any(|b| b.contains("TODO One")), "{hits:?}");
 }
+
+/// Audit #3: OG reads the FIRST argument of `task`/`todo`/`priority`/`page-tags`
+/// as the whole collection when it is any Clojure collection (`coll?`: vector,
+/// set or list); otherwise the names are variadic, as symbols, keywords or
+/// quoted strings (`query_dsl.cljs:279-320`). Every spelling of one list answers
+/// the same, for every form that takes it.
+#[test]
+fn every_collection_spelling_answers_the_same_for_task_priority_and_page_tags() {
+    let (_dir, graph) = fixture();
+    // (form, one-argument spellings of the same list, expected is non-empty)
+    let blocks: [(&str, &[&str]); 3] = [
+        (
+            "task",
+            &[
+                "TODO DOING",
+                "[TODO DOING]",
+                "[TODO, DOING]",
+                "#{TODO DOING}",
+                "(TODO DOING)",
+                "[\"TODO\" \"DOING\"]",
+                "#{\"todo\" doing}",
+                "\"TODO\" \"DOING\"",
+                ":todo :doing",
+                "[:todo :doing]",
+                "#{:todo, :doing}",
+                "[TODO DOING] ignored",
+                "#{TODO DOING} (never-read)",
+            ],
+        ),
+        (
+            "todo",
+            &["TODO DOING", "#{TODO DOING}", "(TODO DOING)", "[:todo :doing]"],
+        ),
+        (
+            "priority",
+            &[
+                "A B",
+                "[A B]",
+                "#{A B}",
+                "(A B)",
+                "(a, b)",
+                "\"A\" \"B\"",
+                ":a :b",
+                "#{:a :b} C",
+            ],
+        ),
+    ];
+    for (form, spellings) in blocks {
+        let want = set(&graph, &format!("({form} {})", spellings[0]));
+        assert!(want.len() >= 2, "({form} {}) should match: {want:?}", spellings[0]);
+        for spelling in spellings {
+            let q = format!("({form} {spelling})");
+            assert_eq!(set(&graph, &q), want, "{q}");
+            // The rest of the enclosing form must still parse after the collection.
+            let q = format!("(and ({form} {spelling}) (not \"closed\"))");
+            assert_eq!(
+                set(&graph, &q),
+                want.iter().filter(|b| !b.contains("closed")).cloned().collect::<BTreeSet<_>>(),
+                "{q}"
+            );
+        }
+    }
+    let want = page_names(&graph, "(page-tags alpha gamma)");
+    assert_eq!(want.len(), 2, "{want:?}");
+    for spelling in [
+        "[alpha gamma]",
+        "[alpha, gamma]",
+        "#{alpha gamma}",
+        "(alpha gamma)",
+        "[\"alpha\" \"gamma\"]",
+        "[ [[alpha]] [[gamma]] ]",
+        "#{#alpha #gamma}",
+        ":alpha :gamma",
+        "\"alpha\" \"gamma\"",
+        "#{alpha gamma} beta",
+    ] {
+        let q = format!("(page-tags {spelling})");
+        assert_eq!(page_names(&graph, &q), want, "{q}");
+    }
+}
+
+/// A collection that Logseq's reader cannot turn into names makes the whole
+/// query fail there; Tine reports it instead of matching a guess.
+#[test]
+fn a_nested_or_unclosed_collection_is_a_query_error_not_a_guess() {
+    for q in ["(task [TODO [DOING]])", "(task #{TODO", "(priority (A ])"] {
+        let (query, _view) = parse_query_input(
+            q,
+            QueryInput::MacroQuery,
+            tine_core::date::JournalDate::today(),
+            Registry::none(),
+        );
+        assert!(
+            query.diagnostics.iter().any(|d| d.kind == tine_core::query::ir::DiagnosticKind::Syntax),
+            "{q}: {:?}",
+            query.diagnostics
+        );
+    }
+}
