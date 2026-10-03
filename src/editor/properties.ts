@@ -43,7 +43,16 @@ function pageHeader(raw: string): PageHeader {
   // Every header line holds `::`; without one there is nothing to parse.
   if (!raw.includes("::") || !parserReady()) return NO_HEADER;
   if (lastHeader?.raw === raw) return lastHeader.header;
-  const parsed = JSON.parse(page_header_json(raw)) as { end: number; entries: PageHeader["entries"] };
+  let json: string;
+  try {
+    json = page_header_json(raw);
+  } catch {
+    // A parser trap (the glue already recovered a fresh instance) must not take the page down:
+    // read it as "no header" for this text, the same answer as before the parser is ready.
+    console.error("page header parse failed");
+    return NO_HEADER;
+  }
+  const parsed = JSON.parse(json) as { end: number; entries: PageHeader["entries"] };
   const header = { end: utf8ToUtf16Cursor(raw)(parsed.end), entries: parsed.entries.map(({ key, value, line }) => ({ key, value, line })) };
   lastHeader = { raw, header };
   return header;
