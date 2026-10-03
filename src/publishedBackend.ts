@@ -788,6 +788,11 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return false;
     },
     async clearDiagnostics() {},
+    // Windows Defender is the native app's concern; a published export never shows the hint.
+    async defenderHint() {
+      return { show: false };
+    },
+    async dismissDefenderHint() {},
     onStorageTransition: unsubscribed,
     onGraphRescanComplete: unsubscribed,
     onConflictsChanged: unsubscribed,
@@ -932,6 +937,8 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "diagnosticReport",
   "saveDiagnosticReport",
   "clearDiagnostics",
+  "defenderHint",
+  "dismissDefenderHint",
   "onStorageTransition",
   "onGraphRescanComplete",
   "onConflictsChanged",
@@ -950,6 +957,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
  *  capture, native UI, OS. Pinned here so a new `Backend` method must be
  *  classified deliberately. */
 export const PUBLISHED_REFUSED_METHODS = [
+  "addDefenderExclusion",
   "savePages",
   "publishLive",
   "sheetExportInputs",

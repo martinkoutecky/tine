@@ -115,7 +115,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "setBackupKeep", "setCaptureEnterFiles", "setLinkFirstMatch", "setWatchMode", "restoreBackup",
   "saveSession", "saveWorkspaces", "storeDraft", "retireDraft", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
-  "saveGraphVerificationReport",
+  "saveGraphVerificationReport", "addDefenderExclusion", "dismissDefenderHint",
 ]);
 // All remaining Backend methods are reads, resource subscriptions, dialogs,
 // transient OS controls, or graph-binding controls. Adding a method requires
@@ -139,7 +139,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "readHighlights", "onGraphChanged", "onGraphChangedBulk", "onGraphWatchStatus", "onGraphRescanComplete", "rescanGraphNow", "onGraphConfigChanged", "onAssetChanged", "getBackupKeep", "getCaptureEnterFiles", "getLinkFirstMatch",
   "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "localClock", "gpuEnv", "getSmoothScroll",
   "getAppBool", "getAppString", "listSpellcheckDictionaries", "debugInfo",
-  "diagnosticReport", "appArchitecture", "watcherLatencyRecent", "takeDataHomeFallbackNotice",
+  "diagnosticReport", "defenderHint", "appArchitecture", "watcherLatencyRecent", "takeDataHomeFallbackNotice",
 ]);
 // These helpers receive Owner from audited constructor call sites. Arbitrary
 // Owner parameters do not prove provenance to this syntax scan.

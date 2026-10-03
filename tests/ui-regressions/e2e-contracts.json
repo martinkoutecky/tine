@@ -19,6 +19,12 @@
       "nonRequirements": ["Exact picker dimensions, animation, or DOM shape."],
       "stability": "stable"
     },
+    "scripts/e2e-browse-never-writes.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "Zooming into a block by its bullet and jumping to a block from Ctrl-K leave the page file byte-for-byte unchanged, and after a restart the zoomed block is restored while the file is still unchanged.", "blocking": true, "authority": "Browsing must never mutate the user's graph (GH #623): a Logseq graph is shared with other tools and sync, so a stamped id:: is an unwanted file change." }],
+      "acceptableVariations": ["Which navigation entry reaches the block (bullet click or Ctrl-K), as long as the block ends up zoomed.", "Timing of the session write, which is awaited by polling for the recorded position."],
+      "nonRequirements": ["Exact breadcrumb markup or zoom animation.", "How the session encodes an ID-less block, only that the page file is not changed.", "Startup toasts unrelated to navigation."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-block-embed.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "Embedded blocks keep local disclosure, keyboard navigation, deletion, and caret ownership in the visible embed.", "blocking": true }],
       "acceptableVariations": ["Embed styling and control placement may evolve without changing the focused editing surface."],

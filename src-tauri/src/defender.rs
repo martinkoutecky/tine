@@ -31,12 +31,14 @@ use serde::Serialize;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Realtime {
     On,
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Off,
     /// Windows, but the query failed or answered something unexpected (no
     /// Defender at all, a third-party antivirus owning protection, no
     /// PowerShell).
     Unknown,
     /// Not a Windows build: Defender does not exist here.
+    #[cfg_attr(target_os = "windows", allow(dead_code))]
     NotApplicable,
 }
 
@@ -64,6 +66,7 @@ pub(crate) const SLOW_COLD_LOAD_MS: f64 = 15_000.0;
 /// Parse the PowerShell answer to
 /// `(Get-CimInstance ... MSFT_MpComputerStatus).RealTimeProtectionEnabled`.
 /// Anything but a clean `True`/`False` line is `Unknown`: never guess.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // only the Windows module calls this; tests cover it everywhere
 pub(crate) fn parse_realtime(output: &str) -> Realtime {
     match output.trim().to_ascii_lowercase().as_str() {
         "true" => Realtime::On,
@@ -93,12 +96,14 @@ pub(crate) fn exclusion_path(root: &std::path::Path) -> String {
 }
 
 /// PowerShell single-quoted literal: `'` doubles, nothing else is special.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // only the Windows module calls this; tests cover it everywhere
 fn ps_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
 /// The script the elevated child runs. The path is one quoted literal, so a
 /// folder name cannot add a command.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // only the Windows module calls this; tests cover it everywhere
 pub(crate) fn inner_script(path: &str) -> String {
     format!(
         "$ErrorActionPreference='Stop'; Add-MpPreference -ExclusionPath {}",
@@ -110,6 +115,7 @@ pub(crate) fn inner_script(path: &str) -> String {
 /// waits, and exits with the child's code. A declined or impossible elevation
 /// exits [`EXIT_NOT_ELEVATED`], so "you said no" is distinguishable from
 /// "Defender refused".
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // only the Windows module calls this; tests cover it everywhere
 pub(crate) fn outer_script(inner_b64: &str) -> String {
     format!(
         "$ErrorActionPreference='Stop'; try {{ $p = Start-Process -FilePath powershell.exe \
@@ -122,6 +128,7 @@ pub(crate) fn outer_script(inner_b64: &str) -> String {
 pub(crate) const EXIT_NOT_ELEVATED: i32 = 2;
 
 /// `-EncodedCommand` wants base64 of UTF-16LE.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // only the Windows module calls this; tests cover it everywhere
 pub(crate) fn encode_command(script: &str) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
@@ -154,6 +161,7 @@ pub(crate) enum ExclusionOutcome {
     Added,
     /// The user declined the administrator prompt, or elevation was not
     /// possible; nothing changed.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Declined,
     /// The elevated command ran and failed (policy-managed Defender, tamper
     /// protection, third-party antivirus). `code` is the exit code, if any.
@@ -161,6 +169,7 @@ pub(crate) enum ExclusionOutcome {
 }
 
 /// Map the outer process's exit code.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // only the Windows module calls this; tests cover it everywhere
 pub(crate) fn outcome_from_exit(code: Option<i32>) -> ExclusionOutcome {
     match code {
         Some(0) => ExclusionOutcome::Added,

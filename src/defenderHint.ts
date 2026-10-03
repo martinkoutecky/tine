@@ -11,7 +11,7 @@
  *  (`notices.json`, never in the graph). An unreadable answer costs no hint:
  *  recovery over refusal (a missing hint never harms the graph). */
 import { backend } from "./backend";
-import { graphOwner, readOwned } from "./owned";
+import { graphOwner, readOwned, writeOwned } from "./owned";
 import { pushToast } from "./toasts";
 
 /** The hint wording (Martin reviews this text; the Guide page quotes it). */
@@ -55,10 +55,16 @@ export async function maybeShowDefenderHint(): Promise<void> {
     action: {
       label: DEFENDER_HINT_ACTION,
       run: () => {
+        // The backend acts on the graph that is open now; a hint left over from a
+        // graph that has since been closed must not change anything.
+        if (!owner()) return;
         acting = true;
-        void backend().addDefenderExclusion().then(
-          (result) => {
-            const { text, kind } = exclusionResultMessage(result);
+        void writeOwned(owner, backend().addDefenderExclusion()).then(
+          (answer) => {
+            // A graph switch during the elevation prompt only drops the success
+            // toast; the setting itself was changed (or not) by the backend.
+            if (answer.kind !== "current") return;
+            const { text, kind } = exclusionResultMessage(answer.value);
             pushToast(text, kind);
           },
           (error: unknown) => pushToast(`Could not run the exclusion: ${String(error)}`, "error"),
@@ -69,8 +75,11 @@ export async function maybeShowDefenderHint(): Promise<void> {
     // declined or failed attempt may be retried, and a success is recorded by
     // the backend.
     onDismiss: () => {
-      if (acting) return;
-      void backend().dismissDefenderHint().catch(() => {});
+      if (acting || !owner()) return;
+      void writeOwned(owner, backend().dismissDefenderHint()).then(
+        () => undefined,
+        (error: unknown) => pushToast(`Could not remember that you closed the hint: ${String(error)}`, "error"),
+      );
     },
   });
 }
