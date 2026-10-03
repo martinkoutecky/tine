@@ -478,6 +478,28 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn mobile_guide_names_the_touch_gestures_and_the_one_back_ladder() {
+        // GH #501 / #492: a gesture nothing announces reads as missing, so the
+        // mobile page has to say what each swipe does and which one is Back.
+        let mobile = include_str!("templates/platforms-and-mobile.md");
+        assert!(mobile.contains("## Touch gestures on a phone"));
+        for outcome in [
+            "Swipe a block **right** to indent it",
+            "**left a short way** to outdent it",
+            "**left a long way** to select it and open its action menu",
+            "**Swipe in from the left edge** to open the left drawer",
+            "**Back is one ladder everywhere.**",
+            "snapping back if you let go early",
+            "swipe sideways to move between the page's images, and swipe down to close",
+        ] {
+            assert!(
+                mobile.contains(outcome),
+                "missing touch-gesture Guide outcome: {outcome}"
+            );
+        }
+    }
+
+    #[test]
     fn in_page_find_guide_says_the_match_itself_is_revealed() {
         // GH #253 (master 46a5290a2): Find scrolls to the occurrence, not its block.
         let search = include_str!("templates/pages-links-references-search.md");
