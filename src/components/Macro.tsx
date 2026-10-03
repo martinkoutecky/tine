@@ -363,8 +363,8 @@ export function QueryMacro(props: {
     let both: BothFamilies | null = null;
     let twinGroups: RefGroup[] = [];
     if (request.both) {
-      const twin = await bothFamilies({
-        owner, scope, key: request.key, query: request.query.query, view: request.query.view,
+      const twin = await bothFamilies(owner, {
+        scope, key: request.key, query: request.query.query, view: request.query.view,
         context: request.context, own: result, hostBlockId: props.blockId, hostProperties: hostProperties(),
       });
       if (!twin) return undefined;

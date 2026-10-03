@@ -106,8 +106,8 @@ export function QueryLivePreview(props: {
     const result = landed.value;
     const diagnostics = (result.diagnostics ?? []).filter((d) => !d.disabled).map((d) => d.message);
     if (req.both) {
-      const twin = await bothFamilies({
-        owner, scope, key: `preview\0${req.key}\0${revision}`, query: req.query, view: req.view,
+      const twin = await bothFamilies(owner, {
+        scope, key: `preview\0${req.key}\0${revision}`, query: req.query, view: req.view,
         context: req.context, own: result, hostBlockId: props.hostBlockId,
       });
       if (!twin) return undefined;

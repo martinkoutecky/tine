@@ -23,8 +23,7 @@ const note = (diagnostics: Diagnostic[] | undefined): string | null => {
 };
 
 /** The query's two families given its own run (`own`). `undefined` when the owner went stale. */
-export async function bothFamilies(args: {
-  owner: Owner;
+export async function bothFamilies(owner: Owner, args: {
   scope: string;
   /** Distinguishes this caller's cache entries; the caller's request key goes after it. */
   key: string;
@@ -35,7 +34,7 @@ export async function bothFamilies(args: {
   hostBlockId?: string;
   hostProperties?: [string, string][];
 }): Promise<{ both: BothFamilies; blockGroups: RefGroup[] } | undefined> {
-  const { owner, scope, key, query, view, context, own } = args;
+  const { scope, key, query, view, context, own } = args;
   const other: Anchor = query.anchor === "page" ? "block" : "page";
   const printed = await readOwned(owner, backend().printQuery({ ...query, anchor: other }, view, "tql"));
   if (printed.kind === "stale") return undefined;
