@@ -1138,6 +1138,18 @@ fn a_launch_diff_that_leaves_a_path_racy_runs_one_follow_up_diff() {
         store.close();
         return;
     };
+    // The OS watch installing after Ready reconciles once to close its install
+    // gap (`DiffTrigger::WatchInstall`); on a slow host (the Windows runner) that
+    // lands after the rewrite below and legitimately catches it first.
+    let installs = |store: &Store| {
+        store.diagnostics()["fullDiffs"]["recent"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|diff| diff["trigger"] == "watch_install")
+            .count()
+    };
+    let installs_before = installs(&store);
     // Rewritten unseen by the (deaf) watcher.
     fs::write(&a, "- links [[Six]]\n").unwrap();
     let deadline = due + Duration::from_secs(4);
@@ -1149,7 +1161,7 @@ fn a_launch_diff_that_leaves_a_path_racy_runs_one_follow_up_diff() {
         std::thread::sleep(Duration::from_millis(20));
     }
     let caught = Instant::now();
-    if polled(&store) {
+    if polled(&store) || installs(&store) > installs_before {
         store.close();
         return;
     }
