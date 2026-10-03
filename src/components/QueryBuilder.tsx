@@ -46,6 +46,7 @@ import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { QueryDisplay } from "./QueryDisplay";
+import { QueryLivePreview } from "./QueryLivePreview";
 import { readLatestOr } from "../resourceRead";
 
 /** One animation frame later (a timer where there is no rAF). */
@@ -529,6 +530,8 @@ export function QueryBuilder(props: {
   /** The pane's text no longer parses, so the rows on screen are the LAST reading that ran. */
   onStale?: (stale: boolean) => void;
   blockId?: string;
+  /** The bindings a live preview runs under (the block's own run uses the same). */
+  previewContext?: () => import("../editor/queryIr").ExecutionContext | undefined;
   parentTransientId?: string;
   /** Display writes use the host's guarded query save. Workspace callers may
    * leave it absent until their route owns a display draft. */
@@ -828,6 +831,16 @@ export function QueryBuilder(props: {
 
   const footer = () => (
     <>
+      {/* GH #619 item 7: the sheet covers the block's results, so it carries its own live ones. The
+          workspace shows its results beside the sheet already. */}
+      <Show when={!props.sheetAlwaysOpen}>
+        <QueryLivePreview
+          query={() => session()?.query}
+          view={() => session()?.view ?? {}}
+          context={props.previewContext}
+          hostBlockId={props.blockId}
+        />
+      </Show>
       <Show when={props.display}>{(display) => <QueryDisplay
         view={display().view} apply={display().apply} registry={registry} formulas={display().formulas}
         rowKind={() => session()?.query.anchor ?? "block"}

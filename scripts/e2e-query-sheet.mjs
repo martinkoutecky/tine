@@ -205,7 +205,25 @@ await withApp(0, async (browser) => {
     const input = document.querySelector(".qs-sheet .query-text-pane-input");
     if (input instanceof HTMLElement) input.focus();
   });
+  // GH #619 item 7: while the sheet is open the results show IN it and follow the conditions, before
+  // anything is saved. Type one draft, see its answer, type another, see the answer change.
+  const liveText = () => browser.execute(() => {
+    const region = document.querySelector('.qs-sheet [aria-label="Live results"]');
+    return region ? (region.textContent ?? "").replace(/\s+/g, " ") : null;
+  });
+  const waitLive = async (predicate, what) => {
+    let last = null;
+    await browser.waitUntil(async () => { last = await liveText(); return last !== null && predicate(last); },
+      { timeout: 20_000, interval: 150 }).catch(() => {
+      throw new Error(`live results: ${what}; the region said ${JSON.stringify(last)}`);
+    });
+  };
+  await pane.setValue("@block and content like '%beta%'");
+  await waitLive((t) => t.includes("beta task") && !t.includes("alpha task"), "the first draft's answer never showed in the sheet");
   await pane.setValue("@block and content like '%alpha%'");
+  await waitLive((t) => t.includes("alpha task") && !t.includes("beta task"), "the live results did not follow the edit");
+  if (disk().includes("alpha") || disk().includes("beta")) throw new Error(`previewing a draft wrote the page:\n${disk()}`);
+  try { await browser.saveScreenshot(`${ARTIFACTS}/item7-live-results.png`); } catch {}
   const save = await browser.$(".qs-sheet .query-text-pane-save");
   await browser.waitUntil(async () => save.isEnabled(), { timeout: 15_000, interval: 150, timeoutMsg: "Save query text never enabled" });
   await save.click();

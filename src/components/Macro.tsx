@@ -938,6 +938,7 @@ export function QueryMacro(props: {
                   formulas: () => [...formulasOf(hostProperties()).keys()] }}
                 paneDialect="tql"
                 blockId={props.blockId}
+                previewContext={executionContext}
                 total={<span class="query-count">{total()}</span>}
                 onStale={setPaneStale}
                 onOpenChange={setSheetOpen}

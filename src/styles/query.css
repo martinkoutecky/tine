@@ -987,3 +987,10 @@
 .qs-text-toggle:hover {
   border-color: var(--link-color);
 }
+/* GH #619 item 7: live results inside the sheet. Bounded height; the page behind it is covered. */
+.qs-live { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--border-color); padding-top: 6px; }
+.qs-live-pending .qs-live-rows { opacity: 0.55; }
+.qs-live-count, .qs-live-empty, .qs-live-diagnostics { margin: 0; font-size: 0.85em; color: var(--text-secondary); }
+.qs-live-diagnostics { color: var(--color-warning, #c80); }
+.qs-live-rows { list-style: none; margin: 0; padding: 0; max-height: 14em; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.qs-live-row { display: flex; gap: 6px; align-items: baseline; font-size: 0.9em; user-select: text; }
