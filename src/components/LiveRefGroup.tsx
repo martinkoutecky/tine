@@ -43,13 +43,17 @@ interface LiveRefGroupProps {
   showBreadcrumb?: boolean;
   surface: "ref" | "query" | "embed";
   evidence?: ReferenceBlockEvidence[];
+  /** The caller already gated this group on viewport proximity (a query group that mounted its header): mount the
+   *  rows with it. A second, independent IntersectionObserver gate would let the header render with no rows
+   *  whenever the two observers disagree (the header gate fires, the row gate never does). */
+  eager?: boolean;
 }
 
 export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
-  const [near, setNear] = createSignal(false);
+  const [near, setNear] = createSignal(untrack(() => props.eager === true));
   let el: HTMLDivElement | undefined;
   onMount(() => {
-    if (!el) return;
+    if (!el || near()) return;
     const node = el;
     observeNear(node, () => setNear(true));
     onCleanup(() => unobserveNear(node));
