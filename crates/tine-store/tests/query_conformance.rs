@@ -385,9 +385,17 @@ fn all_page_tags_selects_every_page_some_page_uses_as_a_tag() {
 fn all_page_tags_answer_follows_an_edit_of_another_pages_tags() {
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("pages")).unwrap();
-    write(dir.path(), "pages/Alpha.md", "tags:: Target\n\n- a block on Alpha\n");
+    write(
+        dir.path(),
+        "pages/Alpha.md",
+        "tags:: Target\n\n- a block on Alpha\n",
+    );
     write(dir.path(), "pages/Target.md", "- a block on the tag page\n");
-    write(dir.path(), "pages/Other.md", "- a block on an unrelated page\n");
+    write(
+        dir.path(),
+        "pages/Other.md",
+        "- a block on an unrelated page\n",
+    );
     let (store, _, _) = Store::open(dir.path(), OpenOptions::default()).expect("open");
     let names = |store: &Store| {
         let (query, view) =
@@ -402,7 +410,11 @@ fn all_page_tags_answer_follows_an_edit_of_another_pages_tags() {
         names
     };
     assert_eq!(names(&store), vec!["Target"]);
-    assert_eq!(names(&store), vec!["Target"], "second run is the memoized one");
+    assert_eq!(
+        names(&store),
+        vec!["Target"],
+        "second run is the memoized one"
+    );
     let id = tine_store::PageId::from("pages/Alpha.md".to_string());
     let read = store.page(&id).unwrap();
     let mut doc = read.doc;
@@ -478,7 +490,11 @@ fn all_page_tags_round_trips_through_tql() {
         }
     }
     // Composed with a block filter, the tag test still reads the block's page.
-    case(graph, "(and (task TODO) (all-page-tags))", &["TODO a tag page"]);
+    case(
+        graph,
+        "(and (task TODO) (all-page-tags))",
+        &["TODO a tag page"],
+    );
 }
 
 /// REG-P0-QUERY-UNKNOWN-HEAD-001.

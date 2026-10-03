@@ -1102,7 +1102,10 @@ fn generated_og_forms_never_change_meaning_through_print_and_parse() {
         changed.join("\n")
     );
     // The probe must exercise printing, not refuse its way to green.
-    assert!(same >= 500, "same={same} refused={refused} invalid={invalid}");
+    assert!(
+        same >= 500,
+        "same={same} refused={refused} invalid={invalid}"
+    );
 }
 
 /// The audit's repro, pinned by name: under a block anchor a `page-property`

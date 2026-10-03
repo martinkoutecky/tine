@@ -363,7 +363,10 @@ fn gh542_contains_narrowed_marker_lowers_to_a_task_leaf() {
         :result-transform (fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))}}"#
     );
     let (lowered, ran, ignored) = advanced_pred(&with_transform, None, TODAY);
-    assert!(lowered.is_none(), "a result-transform refuses the whole query");
+    assert!(
+        lowered.is_none(),
+        "a result-transform refuses the whole query"
+    );
     assert!(ran.is_empty());
     assert_eq!(ignored, vec!["result-transform"]);
 }
