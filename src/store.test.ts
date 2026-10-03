@@ -1900,7 +1900,11 @@ describe("save engine (persistence)", () => {
     saveSpy.mockRejectedValue(new Error("io:Other"));
     markDirty("Test", "save-block");
     expect(await flushPage("Test")).toBe(false);
+    // The automatic transient retries (100 ms, 300 ms) run and fail too.
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(await flushPage("Test")).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(saveSpy.mock.calls.length).toBeGreaterThanOrEqual(4);
     expect(toasts().filter((toast) => toast.kind === "error" && toast.message.includes("Test")),
       "I-10: identical save failures show one toast; exemplar src/persistence.ts lastSaveFailure").toHaveLength(1);
   });
@@ -2115,6 +2119,55 @@ describe("save engine (persistence)", () => {
     expect(await flushPage("Test")).toBe(false);
     expect(isDirty("Test")).toBe(true);
     expect(await flushPage("Test")).toBe(true); // retry succeeds
+  });
+
+  // master 620b88da596c: a transient save failure heals itself (100 ms, then
+  // 300 ms) before the user is told; the page stays dirty until it saves.
+  it("a transient error retries on its own before showing a save failure", async () => {
+    setToasts([]);
+    load([blk("x")]);
+    markDirty("Test", "save-block");
+    saveSpy.mockRejectedValueOnce(new Error("io:StorageFull"));
+    expect(await flushPage("Test")).toBe(false);
+    expect(isDirty("Test")).toBe(true);
+    expect(toasts().filter((t) => t.kind === "error")).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+    expect(isDirty("Test")).toBe(false);
+    expect(toasts().filter((t) => t.kind === "error")).toHaveLength(0);
+  });
+
+  it("reports a save failure only after the bounded automatic retries also fail", async () => {
+    setToasts([]);
+    load([blk("x")]);
+    markDirty("Test", "save-block");
+    saveSpy.mockRejectedValue(new Error("persistent failure"));
+    expect(await flushPage("Test")).toBe(false);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+    expect(toasts().filter((t) => t.kind === "error")).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(saveSpy).toHaveBeenCalledTimes(3);
+    expect(isDirty("Test")).toBe(true);
+    const errors = toasts().filter((t) => t.kind === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain("persistent failure");
+    // Retries are bounded: nothing further is attempted until the next edit/flush.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(saveSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("a non-transient save failure is reported at once, without automatic retries", async () => {
+    setToasts([]);
+    load([blk("x")]);
+    markDirty("Test", "save-block");
+    saveSpy.mockRejectedValue(new Error("publication-incomplete:pages/Test.md"));
+    await vi.advanceTimersByTimeAsync(400); // the ordinary debounced save
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(toasts().filter((t) => t.kind === "error")).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(isDirty("Test")).toBe(true);
   });
 
   // B15b: a save carries the page's file identity (PageId). A loaded page sends

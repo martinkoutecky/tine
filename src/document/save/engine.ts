@@ -245,7 +245,46 @@ function reportSaveFailure(name: string, family: string, message: string) {
   noteRisk(name);
   saveFailureToasts.set(name, pushToast(message, "error", { sticky: true, action: { label: "Review unsaved", run: openUnsavedRecovery } }));
 }
+/** A save that failed for a reason a moment's wait can cure (an I/O error: a
+ * full disk being cleared, a sync client briefly holding the file, a momentary
+ * EIO) is retried on its own before the user is told: after 100 ms, then after
+ * 300 ms. Only the third consecutive failure reaches `reportSaveFailure`. The
+ * page stays in `dirty` throughout, so nothing is dropped; every retry is the
+ * ordinary guarded save (same base revision), so a retry after a write that did
+ * land is refused as a conflict rather than clobbering. Ported from master
+ * 620b88da596c. Families that a retry cannot change (conflict, deleted, twin,
+ * read-only, invalid target, an incomplete publication that needs a look at
+ * the disk, a closed graph) report at once. */
+const SAVE_RETRY_DELAYS_MS = [100, 300] as const;
+const transientSaveFailures = new Map<string, number>();
+const saveRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+function isRetryableSaveFamily(family: string): boolean {
+  return family === "io" || family === "unknown";
+}
+function clearSaveRetry(name: string) {
+  transientSaveFailures.delete(name);
+  const timer = saveRetryTimers.get(name);
+  if (timer !== undefined) clearTimeout(timer);
+  saveRetryTimers.delete(name);
+}
+/** Arm the next automatic retry for `name`; false once the retries are spent. */
+function scheduleSaveRetry(name: string, token: number): boolean {
+  const failures = (transientSaveFailures.get(name) ?? 0) + 1;
+  if (failures > SAVE_RETRY_DELAYS_MS.length) {
+    transientSaveFailures.delete(name);
+    return false;
+  }
+  transientSaveFailures.set(name, failures);
+  const prior = saveRetryTimers.get(name);
+  if (prior !== undefined) clearTimeout(prior);
+  saveRetryTimers.set(name, setTimeout(() => {
+    saveRetryTimers.delete(name);
+    if (token === graphToken && dirty.has(name) && !isConflicted(name)) void enqueueSave(name);
+  }, SAVE_RETRY_DELAYS_MS[failures - 1]));
+  return true;
+}
 function forgetSaveFailure(name: string) {
+  clearSaveRetry(name);
   if (lastSaveFailure.delete(name)) noteRisk(name);
   const toast = saveFailureToasts.get(name);
   saveFailureToasts.delete(name);
@@ -801,6 +840,7 @@ export function resetSaveState() {
   sealedGroups.clear();
   saveAttempts.clear();
   for (const name of [...lastSaveFailure.keys()]) forgetSaveFailure(name);
+  for (const name of [...saveRetryTimers.keys(), ...transientSaveFailures.keys()]) clearSaveRetry(name);
   setConflictReasons({});
 }
 
@@ -866,7 +906,8 @@ function enqueueSave(
 /** Write the page's CURRENT state once. No-op success if it isn't dirty and not
  *  forced. Sends `baseRev` (the version the editor loaded) so the backend
  *  conflicts against external changes; updates the baseline on success. On a
- *  conflict marks it (no clobber); on a transient error keeps it dirty + toasts. */
+ *  conflict marks it (no clobber); on a transient error keeps it dirty, retries
+ *  twice on its own, and reports only if those retries fail too. */
 async function doSave(
   name: string,
   force: boolean,
@@ -977,8 +1018,10 @@ async function doSave(
           || family === "read-only" || family === "invalid-target") {
         const observedRev = (e as { diskRev?: string | null }).diskRev;
         markConflict(name, { kind: "disk-changed" }, family === "deleted" ? null : observedRev);
+        clearSaveRetry(name);
       } else {
-        dirty.add(name); // keep pending — retried on next edit / flush
+        dirty.add(name); // keep pending — retried automatically, then on next edit / flush
+        if (isRetryableSaveFamily(family) && scheduleSaveRetry(name, token)) return false;
       }
       if (family !== "conflict")
         reportSaveFailure(name, family, `Couldn't save “${name}” — ${family === "deleted" ? "the file was deleted on disk; your edits remain in the editor" : String(e)}${describeSavePlatformStep((e as { platformStep?: SavePlatformStep | null }).platformStep ?? null)}`);
