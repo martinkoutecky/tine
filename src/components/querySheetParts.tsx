@@ -1006,10 +1006,11 @@ export function AnchorLine(props: {
                   props.both?.set(true);
                   return;
                 }
-                // Back to ONE family: drop the both-choice, and move the anchor only if
-                // it is not already the query's own (the anchor switch is the engine's).
+                // Back to ONE family: drop the both-choice. The anchor switch is the
+                // engine's and a no-op for the query's own anchor, but it also cancels
+                // a pending anchor preview, so it is always asked.
                 if (bothOn()) props.both?.set(false);
-                if (key !== props.anchor()) props.onAnchor(key as Anchor);
+                props.onAnchor(key as Anchor);
               }}
             />
           )}
