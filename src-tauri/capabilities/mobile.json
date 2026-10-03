@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "Mobile-only permissions. Tine's SafeBack plugin is the Android Back owner and the frontend must be able to register its listener; the plugin is compiled only on Android, so its permission must not apply to desktop.",
+  "platforms": ["android", "iOS"],
+  "windows": ["main", "graph-*"],
+  "permissions": ["safe-back:default"]
+}

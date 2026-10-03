@@ -32,7 +32,7 @@ function dispatchDeps(): AndroidBackDispatchDeps & {
   return state;
 }
 
-describe("GH #161 official Android AppPlugin Back owner", () => {
+describe("GH #161 Android SafeBack owner", () => {
   it("peels exactly transient, drawer, one history step, then root close", () => {
     const deps = dispatchDeps();
     deps.transient = true;
@@ -133,7 +133,7 @@ describe("GH #161 official Android AppPlugin Back owner", () => {
     expect(subscribe).not.toHaveBeenCalled();
   });
 
-  it("leaves native fallback intact when platform or subscription setup rejects", async () => {
+  it("leaves the native SafeBack owner blocking when platform or subscription setup rejects", async () => {
     for (const failure of ["platform", "subscribe"] as const) {
       const deps = dispatchDeps();
       const setupFailed = vi.fn();
@@ -184,20 +184,65 @@ describe("GH #161 official Android AppPlugin Back owner", () => {
     await vi.waitFor(() => expect(unregister).toHaveBeenCalledOnce());
   });
 
-  it("keeps the generated Activity free of Wry ownership and uses one official AppPlugin subscription", () => {
+  it("uses a permanent SafeBack owner and never revives the AppPlugin fallback", () => {
     const activity = readFileSync(
       "src-tauri/gen/android/app/src/main/java/page/tine/app/MainActivity.kt",
+      "utf8",
+    );
+    const safeBackPlugin = readFileSync(
+      "src-tauri/gen/android/app/src/main/java/page/tine/app/SafeBackPlugin.kt",
       "utf8",
     );
     const app = readFileSync("src/App.tsx", "utf8");
 
     expect(activity).not.toContain("handleBackNavigation");
-    expect(activity).not.toContain("OnBackPressedDispatcher");
-    expect(app).toContain('import("@tauri-apps/api/app")');
-    expect(app.match(/onBackButtonPress\(handler\)/g)).toHaveLength(1);
+    expect(activity).toContain("OnBackPressedCallback(true)");
+    expect(activity).toContain("SafeBackBridge.dispatchIfReady()");
+    expect(activity).toContain("showBlockedBackNotice()");
+    expect(activity).toContain("SafeBackBridge.clear()");
+    expect(activity).not.toContain("onBackPressedDispatcher.onBackPressed");
+    expect(app).not.toContain("@tauri-apps/api/app");
+    expect(app).toContain('addPluginListener("safe-back", "android-safe-back", handler)');
+    expect(app).not.toContain("onBackButtonPress");
     expect(app).not.toContain('addEventListener("popstate"');
+    // og keeps its reset-and-retry root close (master's phase coordinator is
+    // deliberately not ported): a failed exit resets the accepted transaction
+    // so the next Back can try again.
     expect(app).toContain("requestAndroidRootClose(\n    safeClose,");
     expect(app).toContain('safeClose.prepare()) !== "accepted"');
     expect(app).toMatch(/catch \{\s*\/\/ The native close attempt failed[\s\S]*?allowClose = false;[\s\S]*?safeClose\.reset\(\);[\s\S]*?closeInProgress = false;/);
+    expect(safeBackPlugin).toContain("private var webView: WebView? = null");
+    expect(safeBackPlugin).toContain('hasListener("android-safe-back")');
+    expect(safeBackPlugin).toContain('trigger("android-safe-back"');
+    expect(safeBackPlugin).toContain("fun dispatchIfReady(): Boolean");
+    // An inlined plugin gets no ACL manifest unless the build script declares
+    // one, and without it the frontend's listener registration is refused
+    // before it reaches Android: Back is owned, never delivered, in silence.
+    const buildScript = readFileSync("src-tauri/build.rs", "utf8");
+    expect(buildScript).toMatch(/\.plugin\(\s*"safe-back",/u);
+    expect(buildScript).toContain('.commands(&["registerListener", "removeListener"])');
+    const mobileCapability = JSON.parse(readFileSync("src-tauri/capabilities/mobile.json", "utf8"));
+    expect(mobileCapability.permissions).toContain("safe-back:default");
+    expect(mobileCapability.platforms).toContain("android");
+    expect(safeBackPlugin).not.toContain(".goBack()");
+    expect(safeBackPlugin).not.toContain("activity.onBackPressed()");
+    expect(safeBackPlugin).not.toContain("isEnabled = false");
+  });
+
+  it("registers the native Back owner for Android only, with every shipped target accounted for", () => {
+    // AGENTS.md section 2: a platform cfg names all five shipped targets. Linux,
+    // Windows and macOS have no Back gesture; iOS Back is the JS edge swipe
+    // (src/edgeSwipe.ts), so only Android has a native owner. A new
+    // `target_os` here must be a deliberate decision, not a forgotten target.
+    const lib = readFileSync("src-tauri/src/lib.rs", "utf8");
+    const nativePlugin = readFileSync("src-tauri/src/android_safe_back.rs", "utf8");
+    expect(lib).toMatch(/#\[cfg\(target_os = "android"\)\]\s*let builder = builder\.plugin\(android_safe_back::init\(\)\);/);
+    expect(lib).toContain("(Linux, Windows, macOS, iOS) have no native Back owner by design");
+    const targets = new Set([...nativePlugin.matchAll(/target_os = "([a-z]+)"/g)].map((m) => m[1]));
+    expect([...targets]).toEqual(["android"]);
+    expect(nativePlugin).toContain('Builder::new("safe-back")');
+    expect(nativePlugin).toContain('register_android_plugin(PLUGIN_IDENTIFIER, "SafeBackPlugin")');
+    const mobile = JSON.parse(readFileSync("src-tauri/capabilities/mobile.json", "utf8"));
+    expect(mobile.platforms).toEqual(["android", "iOS"]);
   });
 });

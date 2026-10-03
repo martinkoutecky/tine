@@ -4,6 +4,7 @@
 
 mod android_folder_picker;
 mod android_media;
+mod android_safe_back;
 mod android_system_bars;
 mod app_identity;
 mod backup;
@@ -712,6 +713,12 @@ pub fn run() {
     let builder = builder.plugin(android_media::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_system_bars::init());
+    // Android's permanent Back owner (see android_safe_back.rs). The other four
+    // shipped targets (Linux, Windows, macOS, iOS) have no native Back owner by design:
+    // desktop has no Back gesture and iOS Back is the JS edge swipe
+    // (src/edgeSwipe.ts). src/androidBack.test.ts pins this set.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_safe_back::init());
     // Mobile has no xdg-open/open/explorer, so `open_external` routes URL opens
     // through this plugin's platform Intent instead (GH #49). Windows uses it
     // for ShellExecute, because `explorer <url>` opens a File Explorer window

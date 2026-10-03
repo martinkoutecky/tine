@@ -1,4 +1,5 @@
 import type { SafeCloseCoordinator, SafeClosePrepareResult } from "./safeClose";
+import { dispatchAppBack, type AppBackDeps, type AppBackDisposition } from "./appBack";
 import { ownedWhen, readOwned, readOwnedResource } from "./owned";
 
 export interface AndroidBackPayload {
@@ -22,38 +23,17 @@ export async function exitAndroidActivity(
   await exit(0);
 }
 
-export interface AndroidBackDispatchDeps {
-  dismissTransient(): boolean;
-  dismissDrawer(): boolean;
-  restoreDrawerFocus(): void;
-  /** Whether Tine actually went back. The WebView's own `canGoBack` cannot
-   * answer this: the mobile router pushes same-URL entries, so its history
-   * moves without the address or the entry count changing, and entries that
-   * are not Tine's can sit in the same stack. Only the router knows. */
-  historyBack(): boolean;
-  closeRoot(): void;
-}
+/** Kept as names for the Android-facing seam; the ladder itself lives in
+ * src/appBack.ts and is shared with the iOS edge swipe. */
+export type AndroidBackDispatchDeps = AppBackDeps;
+export type AndroidBackDisposition = AppBackDisposition;
 
-export type AndroidBackDisposition = "transient" | "drawer" | "history" | "root";
-
-/** Synchronous ordering matters: a hardware Back gesture selects exactly one
- * rung and never synthesizes a KeyboardEvent or a second router back action.
- * The history rung is taken iff the router moved (master 07cb27262); the
- * native `canGoBack` payload is not consulted. */
+/** The native `canGoBack` payload is not consulted (master 07cb27262). */
 export function dispatchAndroidBack(
   _payload: AndroidBackPayload,
   deps: AndroidBackDispatchDeps,
 ): AndroidBackDisposition {
-  if (deps.dismissTransient()) return "transient";
-  if (deps.dismissDrawer()) {
-    deps.restoreDrawerFocus();
-    return "drawer";
-  }
-  // `canGoBack` was true on a phone whose router had nothing to pop, so Back
-  // landed on the history rung and silently did nothing, forever.
-  if (deps.historyBack()) return "history";
-  deps.closeRoot();
-  return "root";
+  return dispatchAppBack(deps);
 }
 
 export interface AndroidBackInstallDeps extends AndroidBackDispatchDeps {
@@ -62,7 +42,7 @@ export interface AndroidBackInstallDeps extends AndroidBackDispatchDeps {
   setupFailed?(error: unknown): void;
 }
 
-/** On Android, register one AppPlugin Back listener for this installation.
+/** On Android, register one SafeBack listener (the native owner's event) for this installation.
  * Dispatch dismisses a transient, then a drawer, then router history, then
  * requests root close. Other platforms install nothing. Setup failures call
  * setupFailed when supplied and do not reject through the returned cleanup
