@@ -14,7 +14,8 @@
 // Typing is never blocked by observation (SPEC-storage §6.1, K22): while the
 // rescan runs the editor stays live, and a stale-base save is refused by the
 // base-revision guard and becomes a conflict, never a silent overwrite. A
-// rescan slower than 120 ms only says so (`refreshingFromDisk`). Throttled: a
+// rescan slower than 500 ms only says so (`refreshingFromDisk`, a dim
+// status in the lower-right corner beside the help button). Throttled: a
 // focus is a gesture users make constantly, and a rescan costs one stat per
 // graph-text file. Coalesced: a focus during a rescan of the same graph joins it.
 import { createSignal } from "solid-js";
@@ -31,7 +32,7 @@ import { graphTransitioning } from "./ui";
 export const FOCUS_RESCAN_THROTTLE_MS = 1500;
 const COMPLETION_TIMEOUT_MS = 30_000;
 /** A rescan that takes longer than this says what it is doing. */
-const REFRESH_NOTICE_DELAY_MS = 120;
+export const REFRESH_NOTICE_DELAY_MS = 500;
 
 /** True while a rescan has been running longer than the notice delay. A status
  *  line only: nothing waits on it and no input is held. */

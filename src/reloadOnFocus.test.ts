@@ -4,7 +4,7 @@
 // SPEC-storage §6.1: the save guard, not an input barrier, protects stale bytes).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { refreshingFromDisk, refreshOnReturnToWindow, rescanGraphNowFromSettings, resetFocusRescanThrottle, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
+import { REFRESH_NOTICE_DELAY_MS, refreshingFromDisk, refreshOnReturnToWindow, rescanGraphNowFromSettings, resetFocusRescanThrottle, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
 import { setToasts, toasts } from "./toasts";
 import { setGraphTransitioning } from "./ui";
 
@@ -49,6 +49,9 @@ describe("reload on focus", () => {
     const refresh = refreshOnReturnToWindow(16_000);
     await vi.waitFor(() => expect(rescans).toBe(1));
     expect(refreshingFromDisk()).toBe(false); // a fast rescan never flashes a notice
+    expect(REFRESH_NOTICE_DELAY_MS).toBe(500);
+    await new Promise((resolve) => setTimeout(resolve, REFRESH_NOTICE_DELAY_MS - 150));
+    expect(refreshingFromDisk()).toBe(false); // still quiet well after the old 120 ms delay
     await vi.waitFor(() => expect(refreshingFromDisk()).toBe(true));
     complete!(sequence);
     await refresh;
