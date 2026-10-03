@@ -8,9 +8,11 @@ import {
   createUniqueId,
   onCleanup,
   onMount,
+  untrack,
   type JSX,
 } from "solid-js";
-import { Portal } from "solid-js/web";
+import { FloatingPortal } from "./FloatingPortal";
+import { placeSheetTop } from "./popoverFit";
 import { backend } from "../backend";
 import {
   builderRoot,
@@ -45,6 +47,17 @@ import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { QueryDisplay } from "./QueryDisplay";
 import { readLatestOr } from "../resourceRead";
+
+/** One animation frame later (a timer where there is no rAF). */
+const nextFrame = (callback: () => void): number =>
+  typeof requestAnimationFrame === "function"
+    ? requestAnimationFrame(callback)
+    : (setTimeout(callback, 16) as unknown as number);
+const cancelFrame = (handle: number) => {
+  if (!handle) return;
+  if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(handle);
+  else clearTimeout(handle);
+};
 
 // **The visual query builder: a resting SENTENCE that expands into a SHEET** (SPEC §7.2–§7.4).
 
@@ -545,11 +558,32 @@ export function QueryBuilder(props: {
   const suggestions = createMemo(() => suggestedKeys(registry.rows()));
   const vocabulary = () => (registry.rows() ?? []).map((row) => row.normalized_name);
 
-  // Open the sheet with the field chooser focused when this block was just created via `/query` — consume the …
-  const autoOpen = !!props.blockId && queryBuilderAutoOpen() === props.blockId;
-  if (autoOpen) {
-    setQueryBuilderAutoOpen(null);
-    setOpen(true);
+  // Open the sheet (on its empty condition list, chooser CLOSED — Martin 2026-10-03, GH #619 comment 2) when this block was just created via `/query`.
+  // **Consumed once this builder is CONNECTED, never at construction (GH #619).** The block swaps its edit
+  // surface for its view surface right after `/query`, and a builder can be constructed into a subtree that is
+  // thrown away or attached a frame later. The instance that took the one-shot flag at construction could be
+  // the detached one: it opened a sheet no sentence anchored, which painted at the viewport's top-left. Waiting
+  // for a connected sentence means the instance the user actually sees is the one that opens.
+  if (props.blockId) {
+    createEffect(() => {
+      if (queryBuilderAutoOpen() !== props.blockId) return;
+      let frame = 0;
+      let alive = true;
+      const take = () => {
+        if (!alive || queryBuilderAutoOpen() !== props.blockId) return;
+        if (!props.sheetAlwaysOpen && !sentenceEl?.isConnected) {
+          frame = nextFrame(take);
+          return;
+        }
+        setQueryBuilderAutoOpen(null);
+        setOpen(true);
+      };
+      take();
+      onCleanup(() => {
+        alive = false;
+        cancelFrame(frame);
+      });
+    });
   }
 
   /** A row edit: a new filter over the CURRENT reading, saved immediately. */
@@ -681,22 +715,81 @@ export function QueryBuilder(props: {
   });
 
   // The sheet is portalled and positioned from the sentence's rect on wide screens.
-  const [rect, setRect] = createSignal<{ top: number; left: number; width: number } | null>(null);
-  const measure = () => {
+  // **Measured only from a CONNECTED sentence, and the sheet is not drawn until it has been (GH #619).** A
+  // detached element's rect is all zeros, and the fixed anchor used to be drawn from that: the sheet opened at
+  // the viewport's top-left. A builder whose sentence is not in the document yet retries each frame; once it
+  // is, it measures, then re-measures after layout settles, on scroll/resize and when the sentence resizes.
+  const [rect, setRect] = createSignal<{ top: number; left: number; width: number; placed: boolean } | null>(null);
+  let observeSheet: (() => void) | undefined;
+  const measure = (): boolean => {
     const element = sentenceEl;
-    if (!element) return;
+    if (!element || !element.isConnected) return false;
     const box = element.getBoundingClientRect();
-    setRect({ top: box.bottom, left: box.left, width: Math.max(box.width, 320) });
+    // The sheet's own height (known once it is mounted) decides whether it hangs below, flips above, or is
+    // pushed up so it never runs off the window. Hidden until that has been measured, so it never jumps.
+    const view = window.visualViewport?.height ?? window.innerHeight;
+    const next = {
+      top: sheetEl ? placeSheetTop(box.top, box.bottom, sheetEl.offsetHeight, view) : box.bottom,
+      left: box.left,
+      width: Math.max(box.width, 320),
+      placed: !!sheetEl,
+    };
+    const prev = untrack(rect);
+    if (!prev || prev.top !== next.top || prev.left !== next.left || prev.width !== next.width || prev.placed !== next.placed) {
+      setRect(next);
+    }
+    observeSheet?.();
+    return true;
   };
   createEffect(() => {
-    if (!open() || props.sheetAlwaysOpen) return;
-    measure();
-    if (typeof window === "undefined") return;
-    window.addEventListener("scroll", measure, true);
-    window.addEventListener("resize", measure);
+    if (!open() || props.sheetAlwaysOpen) {
+      setRect(null);
+      return;
+    }
+    let alive = true;
+    let frame = 0;
+    const settle = () => {
+      if (!alive) return;
+      if (!measure()) {
+        frame = nextFrame(settle);
+        return;
+      }
+      // Layout that lands just after mount (the answers above hydrating) moves the sentence: look once more.
+      frame = nextFrame(() => {
+        measure();
+        frame = nextFrame(measure);
+      });
+    };
+    settle();
+    const remeasure = () => void measure();
+    let observer: ResizeObserver | undefined;
+    if (typeof window !== "undefined") {
+      window.addEventListener("scroll", remeasure, true);
+      window.addEventListener("resize", remeasure);
+      if (typeof ResizeObserver === "function") {
+        const watching = new ResizeObserver(remeasure);
+        observer = watching;
+        let watchedSheet: Element | undefined;
+        // The sheet mounts only after the first measurement; watch it from the first measurement after that.
+        observeSheet = () => {
+          if (sheetEl && sheetEl !== watchedSheet) {
+            watchedSheet = sheetEl;
+            watching.observe(sheetEl);
+          }
+        };
+        if (sentenceEl) observer.observe(sentenceEl);
+        const block = sentenceEl?.closest(".query-block");
+        if (block) observer.observe(block);
+      }
+    }
     onCleanup(() => {
-      window.removeEventListener("scroll", measure, true);
-      window.removeEventListener("resize", measure);
+      alive = false;
+      cancelFrame(frame);
+      observer?.disconnect();
+      observeSheet = undefined;
+      if (typeof window === "undefined") return;
+      window.removeEventListener("scroll", remeasure, true);
+      window.removeEventListener("resize", remeasure);
     });
   });
 
@@ -749,7 +842,6 @@ export function QueryBuilder(props: {
       setOpenMenu={setOpenMenu}
       // In the workspace the sheet is not a layer of its own: its menus parent to the Advanced modal exactly as …
       layerId={props.sheetAlwaysOpen ? props.parentTransientId : sheetLayerId}
-      autoOpenChooser={autoOpen}
       footer={footer()}
       stale={stale()}
       sheetRef={(element) => {
@@ -782,8 +874,8 @@ export function QueryBuilder(props: {
             )}
           </Show>
           <Show when={props.sheetAlwaysOpen}>{sheet()}</Show>
-          <Show when={open() && !props.sheetAlwaysOpen}>
-            <Portal>
+          <Show when={open() && !props.sheetAlwaysOpen && rect() !== null}>
+            <FloatingPortal>
               <div
                 class="qs-overlay"
                 onClick={(e) => {
@@ -793,19 +885,16 @@ export function QueryBuilder(props: {
               />
               <div
                 class="qs-sheet-anchor"
-                style={
-                  rect()
-                    ? {
-                        top: `${rect()!.top}px`,
-                        left: `${rect()!.left}px`,
-                        width: `${rect()!.width}px`,
-                      }
-                    : undefined
-                }
+                style={{
+                  top: `${rect()?.top ?? 0}px`,
+                  left: `${rect()?.left ?? 0}px`,
+                  width: `${rect()?.width ?? 320}px`,
+                  visibility: rect()?.placed ? undefined : "hidden",
+                }}
               >
                 {sheet()}
               </div>
-            </Portal>
+            </FloatingPortal>
           </Show>
         </div>
       )}

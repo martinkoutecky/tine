@@ -241,6 +241,15 @@
       "nonRequirements": ["Sheet geometry, animation, or the order of rows inside the why-empty table."],
       "stability": "burn-in"
     },
+    "scripts/e2e-query-sheet-input.mjs": {
+      "contracts": [
+        { "class": "stateful-ux", "userOutcome": "With a query's builder sheet open, real pointer presses and key presses on the sheet's own controls (the + Add condition button, the field chooser's filter and rows, its operator list) act on the sheet: the block behind does not enter edit mode, the sheet stays open, typed keys reach the filter, and Escape peels the chooser then the sheet without editing or changing any other block.", "blocking": true },
+        { "class": "stateful-ux", "userOutcome": "The sheet opens next to the query sentence it belongs to and the field chooser's rows are readable and on screen.", "blocking": true }
+      ],
+      "acceptableVariations": ["Which side of the sentence the sheet opens on, the chooser's row height, the wording of rows and operators, and how many Escape presses it takes while the chooser and sheet are both open."],
+      "nonRequirements": ["Exact sheet or popover geometry, animation, or the order of fields in the chooser."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-rename.mjs": {
       "contracts": [
         { "class": "core-operation", "userOutcome": "Renaming a page updates the real graph and keeps linked-reference behavior coherent.", "blocking": true },

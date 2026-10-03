@@ -47,6 +47,7 @@ import {
   type PropertyOperatorId,
 } from "../editor/queryBuilder";
 import type { Anchor, Cardinality, Diagnostic, Filter, ObservedType, Query, RegistryRow } from "../editor/queryIr";
+import { fitPopoverToViewport } from "./popoverFit";
 import { Listbox, stop, type ListboxOption } from "./QueryListbox";
 import { QueryVocabularyPicker, type VocabularyChoice } from "./QueryVocabularyPicker";
 import { PropertyType } from "./PropertyType";
@@ -626,6 +627,9 @@ export function Popover(props: {
     <Show when={props.open()}>
       {props.children((element) => {
         rootEl = element;
+        // GH #619: every popover fits the viewport (flips or scrolls inside itself) instead of hanging off it.
+        const stopFit = fitPopoverToViewport(element);
+        onCleanup(stopFit);
       })}
     </Show>
   );
@@ -904,8 +908,6 @@ export interface QuerySheetProps {
   setOpenMenu: (key: string | null) => void;
   /** The layer every menu in here parents to. */
   layerId?: string;
-  /** Open the field chooser on an empty add row the moment the sheet appears — the `/query` entry (§7.3). */
-  autoOpenChooser?: boolean;
   footer?: JSX.Element;
   sheetRef?: (element: HTMLDivElement) => void;
   stale?: boolean;
