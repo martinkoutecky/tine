@@ -2,7 +2,7 @@
 //! shape as numbers only. I-5 (privacy boundary): no page name, path or text.
 use serde_json::Value;
 use std::fs;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
 
 const SECRET_NAME: &str = "Zyxwvu-Distinctive-Page-Name";
@@ -32,6 +32,20 @@ fn fixture() -> (tempfile::TempDir, Store) {
     .unwrap();
     fs::write(root.join("pages/Cafe\u{301}.md"), "- decomposed accent\n").unwrap();
     fs::write(root.join("journals/2026_09_20.md"), "- a day\n").unwrap();
+    // Outside the 2 s racy window (§5.4): fresh fixture files would draw the
+    // watcher's racy follow-up full diff about 2 s after open, which lands
+    // between a test's `before` count and its assertion under load.
+    let old = SystemTime::now() - Duration::from_secs(3600);
+    for sub in ["pages", "journals"] {
+        for entry in fs::read_dir(root.join(sub)).unwrap() {
+            fs::File::options()
+                .write(true)
+                .open(entry.unwrap().path())
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+        }
+    }
     let store = Store::open(root, Default::default()).unwrap().0;
     let deadline = Instant::now() + Duration::from_secs(60);
     while !store.is_graph_ready().unwrap() {
@@ -166,31 +180,31 @@ fn launch_phases_separate_reading_from_parsing() {
     assert!(n(&pass["parallel"]["workers"]) >= 1);
 }
 
+fn latest_diff(dump: &Value, trigger: &str) -> Option<Value> {
+    dump["fullDiffs"]["recent"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|diff| diff["trigger"] == trigger)
+        .cloned()
+}
+
 #[test]
 fn rescan_and_saves_are_recorded() {
     let (_dir, store) = fixture();
     let before = n(&store.diagnostics()["fullDiffs"]["total"]);
     store.scan_refresh().unwrap();
     let dump = store.diagnostics();
-    assert_eq!(n(&dump["fullDiffs"]["total"]), before + 1);
-    let last = dump["fullDiffs"]["recent"]
-        .as_array()
-        .unwrap()
-        .last()
-        .unwrap()
-        .clone();
-    assert_eq!(last["trigger"], "rescan_command");
-    assert!(n(&last["files"]) >= 5);
+    // The poll watcher runs its own full diff every cycle, so an entry is found
+    // by its trigger, not assumed to be the last one.
+    assert!(n(&dump["fullDiffs"]["total"]) > before);
+    let rescan = latest_diff(&dump, "rescan_command").expect("rescan recorded");
+    assert!(n(&rescan["files"]) >= 5);
 
     // The Settings button is the forced rebuild and says so in the report.
     store.rebuild_graph().unwrap();
-    let rebuilt = store.diagnostics()["fullDiffs"]["recent"]
-        .as_array()
-        .unwrap()
-        .last()
-        .unwrap()
-        .clone();
-    assert_eq!(rebuilt["trigger"], "rebuild_command");
+    let rebuilt = latest_diff(&store.diagnostics(), "rebuild_command").expect("rebuild recorded");
     assert!(n(&rebuilt["files"]) >= 5);
 
     let id = PageId::from("pages/Hub.md");
