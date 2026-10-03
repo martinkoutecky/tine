@@ -9,7 +9,9 @@ use std::time::Instant;
 use tine_store::{OpenOptions, Store};
 
 /// Process CPU time in microseconds: on this shared, heavily loaded machine
-/// wall time is inflated by contention, CPU time much less so.
+/// wall time is inflated by contention, CPU time much less so. Off Unix (the
+/// Windows CI compiles examples) it falls back to wall time since first call.
+#[cfg(unix)]
 fn cpu_us() -> u128 {
     let mut ts = libc::timespec {
         tv_sec: 0,
@@ -18,6 +20,11 @@ fn cpu_us() -> u128 {
     // SAFETY: `ts` is a valid out-pointer for the duration of the call.
     unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts) };
     ts.tv_sec as u128 * 1_000_000 + ts.tv_nsec as u128 / 1000
+}
+#[cfg(not(unix))]
+fn cpu_us() -> u128 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_micros()
 }
 
 fn main() {
