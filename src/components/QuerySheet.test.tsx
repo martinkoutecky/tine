@@ -1101,6 +1101,23 @@ describe("GH #619: Any status, In a journal page, no advanced chip for builder s
     }
   });
 
+  it("names the date a range row is about: Scheduled and Deadline, not 'Between dates'", async () => {
+    const builder = mountBuilder({
+      kind: "and",
+      items: [betweenFilter("scheduled", "today", "+7d"), betweenFilter("deadline", "today", "+7d")],
+    });
+    try {
+      const sheet = builder.open();
+      await settle();
+      const fields = [...sheet.querySelectorAll(".qs-row .qs-field")].map((f) => f.textContent ?? "");
+      expect(fields[0]).toContain("Scheduled");
+      expect(fields[1]).toContain("Deadline");
+      expect(fields.join(" ")).not.toContain("Between dates");
+    } finally {
+      builder.dispose();
+    }
+  });
+
   it("does not call a builder-made scheduled condition inside an any-of group advanced", async () => {
     const nested: Filter = {
       kind: "and",

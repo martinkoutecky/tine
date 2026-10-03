@@ -8,6 +8,7 @@ import {
   filterValueLabel,
   propertyFilter,
   builderLeafKind,
+  betweenRowField,
   encodePropertyLeaf,
   filterLabel,
   filterPhrase,
@@ -43,6 +44,7 @@ import {
   diagnosticFor,
   QuerySentence,
   FIELD_LABELS,
+  BETWEEN_FIELD_LABEL,
   KIND_PHRASE,
   type SheetNode,
   advancedCount,
@@ -721,6 +723,9 @@ function QueryRow(props: {
     const test = property();
     if (test) return test.throughPage ? "Page property" : "Property";
     const k = kind();
+    // A scheduled/deadline/journal-date range names its date, not the generic "Between dates" (GH #619 item 5).
+    const dated = betweenRowField(core());
+    if (dated && dated !== "any") return BETWEEN_FIELD_LABEL[dated];
     return k ? FIELD_LABELS[k] : "Condition";
   };
   const operatorLabel = () => {

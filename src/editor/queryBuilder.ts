@@ -816,6 +816,17 @@ export function propertyLeafKey(filter: Filter): string | null {
   return parts && parts.key !== "tags" ? parts.key : null;
 }
 
+/** Which date a `between`-kind row ranges over, so the row can say "Scheduled" or "Deadline" instead of
+ *  the generic "Between dates" (GH #619 item 5). `null` for any other shape. */
+export function betweenRowField(filter: Filter): BetweenField | null {
+  if (builderLeafKind(filter) !== "between") return null;
+  const page = asRelLeaf(filter, "page");
+  const leaf = asAttrLeaf(page ? page.pred : filter);
+  if (!leaf) return null;
+  if (leaf.attr === "scheduled" || leaf.attr === "deadline") return leaf.attr;
+  return leaf.attr === "day" ? "journal" : null;
+}
+
 /** Which builder shape this filter is, or `null` for anything the pickers cannot re-collect. */
 export function builderLeafKind(filter: Filter): BuilderLeafKind | null {
   const page = asRelLeaf(filter, "page");
