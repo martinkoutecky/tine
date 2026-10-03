@@ -20,11 +20,11 @@ use tine_core::query::{
 use tine_core::refs;
 mod eval;
 pub(crate) mod exec;
-#[doc(hidden)]
-pub use exec::{pin_sample_seed, SampleSeedGuard};
 pub(crate) mod index;
 pub(crate) mod memo;
 pub(crate) mod page_properties;
+#[cfg(test)]
+mod sample_seed_tests;
 use page_properties::{page_document_is_org, page_facets, page_property_lines};
 
 #[derive(Debug, Clone)]
@@ -2944,11 +2944,12 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             ids,
+            // Journal groups run newest day first (OG block.cljs:3497, audit #8a).
             vec![
-                DEC_5_A.to_string(),
-                DEC_5_B.to_string(),
                 DEC_7_A.to_string(),
                 DEC_7_B.to_string(),
+                DEC_5_A.to_string(),
+                DEC_5_B.to_string(),
             ]
         );
 

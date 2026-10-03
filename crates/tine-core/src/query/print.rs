@@ -755,9 +755,12 @@ fn og_attr(attr: Attr, op: CmpOp, value: &Value, on_page: bool) -> Option<String
             Some("(all-page-tags)".to_string())
         }
         (Attr::Name, CmpOp::Eq) if on_page => Some(format!("(page {})", word(text_of(value)?))),
-        (Attr::Name, CmpOp::StartsWith) if on_page => {
-            let namespace = text_of(value)?.strip_suffix('/')?;
-            Some(format!("(namespace {})", word(namespace)))
+        // OG's simple-query `(namespace x)` is the IMMEDIATE-parent rule
+        // (rules.cljc:124-127). The recursive prefix form (`Name StartsWith "x/"`,
+        // what an advanced `(namespace ?p "x")` lowers to) has no DSL spelling,
+        // so printing it as `(namespace x)` would change its meaning: refuse.
+        (Attr::Namespace, CmpOp::Eq) if on_page => {
+            Some(format!("(namespace {})", word(text_of(value)?)))
         }
         _ => None,
     }

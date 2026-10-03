@@ -373,43 +373,6 @@ fn sort_by_defaults_to_descending_like_og() {
     );
 }
 
-/// Audit #6: OG `query` (`query_dsl.cljs:583-589`) takes `(take n (shuffle rows))`
-/// BEFORE the sort, so a sample is a random subset of the filtered result, not
-/// its first n after sorting.
-#[test]
-fn sample_is_a_random_subset_taken_before_the_sort() {
-    let q = "(and (page \"Work\") (priority A B C) (sample 2) (sort-by priority))";
-    let mut subsets = BTreeSet::new();
-    for seed in 0..24u64 {
-        // A fresh graph per seed: results are memoized per query text.
-        let (_dir, graph) = fixture();
-        let _pin = tine_store::query::pin_sample_seed(seed);
-        let got = priorities(&graph, q);
-        assert_eq!(got.len(), 2, "seed {seed}: {got:?}");
-        assert!(
-            got[0] > got[1],
-            "a sample is sorted afterwards (desc): {got:?}"
-        );
-        let again = {
-            let (_dir, graph) = fixture();
-            priorities(&graph, q)
-        };
-        assert_eq!(got, again, "the same seed picks the same subset");
-        subsets.insert(got);
-    }
-    // Sorting first and truncating (the old behaviour) always gave [C, B].
-    assert!(subsets.len() > 1, "every seed gave one subset: {subsets:?}");
-    // A sample larger than the result changes nothing.
-    let (_dir, graph) = fixture();
-    assert_eq!(
-        priorities(
-            &graph,
-            "(and (page \"Work\") (priority A B C) (sample 99) (sort-by priority))"
-        ),
-        ['C', 'B', 'A']
-    );
-}
-
 /// Audit #6: a query made only of directives is OG's nil query: it runs nothing.
 #[test]
 fn a_query_of_only_directives_returns_nothing_like_og() {
@@ -608,4 +571,110 @@ fn between_timestamp_with_an_unresolvable_or_missing_bound_is_invalid() {
         );
         assert!(raws(&graph, q).is_empty(), "{q}");
     }
+}
+
+/// Audit #8. OG's simple-query `(namespace x)` is the IMMEDIATE-parent rule
+/// (`rules.cljc:124-127`): `x/a` matches and `x/a/b` does not. The recursive rule
+/// (`rules.cljc:7-12`) belongs to advanced queries and must keep matching
+/// descendants.
+#[test]
+fn simple_namespace_is_immediate_children_only_while_advanced_stays_recursive() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("pages")).unwrap();
+    std::fs::create_dir(dir.path().join("journals")).unwrap();
+    let w = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
+    w("pages/Project%2FAlpha.md", "- child alpha\n");
+    w("pages/Project%2FAlpha%2FBeta.md", "- grandchild beta\n");
+    w("pages/Project%2FGamma.md", "- child gamma\n");
+    w("pages/Other.md", "- unrelated\n");
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let graph = store.whole_graph().unwrap();
+
+    // `(namespace x)` alone is page-anchored; a block-anchored conjunction
+    // (`(and (task ..) ..)`) reads the same relation through the block's page.
+    let pages = |q: &str| -> Vec<String> {
+        let mut v: Vec<String> = page_names(&graph, q)
+            .into_iter()
+            .map(|debug| {
+                debug
+                    .split('"')
+                    .nth(1)
+                    .unwrap_or(debug.as_str())
+                    .to_string()
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        pages("(namespace Project)"),
+        ["pages/Project%2FAlpha.md", "pages/Project%2FGamma.md"],
+        "immediate children only; the grandchild is not a direct child"
+    );
+    assert_eq!(
+        pages("(namespace project/alpha)"),
+        ["pages/Project%2FAlpha%2FBeta.md"],
+        "the parent is the whole prefix, compared like any page name (case folded)"
+    );
+    assert_eq!(pages("(namespace Other)"), Vec::<String>::new());
+
+    // The advanced `(namespace ?b "Project")` clause is the recursive rule.
+    let (query, view) = parse_query_input(
+        r#"[:find (pull ?b [*]) :where (namespace ?b "Project")]"#,
+        QueryInput::Advanced,
+        tine_core::date::JournalDate::today(),
+        Registry::none(),
+    );
+    let IrAnswer::Result(result) = graph
+        .query_ir(IrRequest::Run {
+            query: &query,
+            view: &view,
+            context: &ExecutionContext::default(),
+        })
+        .unwrap()
+    else {
+        panic!("query_ir(Run) returns a result");
+    };
+    let QueryRows::Block { groups } = result.rows else {
+        panic!("advanced block query");
+    };
+    let mut advanced: Vec<String> = groups
+        .into_iter()
+        .flat_map(|g| g.blocks.into_iter().map(|b| b.raw.trim().to_string()))
+        .collect();
+    advanced.sort();
+    assert_eq!(
+        advanced,
+        ["child alpha", "child gamma", "grandchild beta"],
+        "advanced queries keep OG's recursive namespace rule"
+    );
+}
+
+/// Audit #8a: OG renders grouped block results with
+/// `(sort-by (comp :block/journal-day first) >)` (`components/block.cljs:3497,
+/// 3523, 3552`): with no explicit sort, journal days run NEWEST first and pages
+/// that are not journals come after them.
+#[test]
+fn journal_result_groups_run_newest_first_when_no_sort_is_given() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("pages")).unwrap();
+    std::fs::create_dir(dir.path().join("journals")).unwrap();
+    let w = |name: &str, text: &str| std::fs::write(dir.path().join(name), text).unwrap();
+    w("journals/2025_12_31.md", "- TODO old\n");
+    w("journals/2026_01_01.md", "- TODO new\n");
+    w("journals/2024_06_15.md", "- TODO oldest\n");
+    w("pages/Alpha.md", "- TODO page a\n");
+    w("pages/Zed.md", "- TODO page z\n");
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let graph = store.whole_graph().unwrap();
+    assert_eq!(
+        raws(&graph, "(task TODO)"),
+        [
+            "TODO new",
+            "TODO old",
+            "TODO oldest",
+            "TODO page a",
+            "TODO page z"
+        ]
+    );
 }

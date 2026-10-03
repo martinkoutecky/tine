@@ -344,7 +344,7 @@ fn the_two_dialects_agree_row_for_row() {
         ("(priority A)", "priority = 'A'"),
         ("(property size 5)", "prop('size') = '5'"),
         ("(page Names)", "page.name = 'Names'"),
-        ("(namespace Proj)", "page.name like 'proj/%'"),
+        ("(namespace Proj)", "page.namespace = 'Proj'"),
         ("(scheduled)", "scheduled is not null"),
         ("(deadline)", "deadline is not null"),
     ] {

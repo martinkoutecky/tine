@@ -438,7 +438,18 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
                         .page_key
                         .rsplit_once('/')
                         .map(|(head, _)| head.to_string());
-                    eval_optional_text(*op, value, parent.as_deref(), ctx)
+                    // The parent is a normalized page key, so an equality
+                    // operand is normalized the same way (case, NFC): `Ünï`
+                    // must find `ünï/child` as every other page-name compare.
+                    match (op, value.as_text(), parent.as_deref()) {
+                        (CmpOp::Eq, Some(text), actual) => {
+                            actual.is_some_and(|actual| actual == refs::page_key(text))
+                        }
+                        (CmpOp::NotEq, Some(text), actual) => {
+                            actual.is_some_and(|actual| actual != refs::page_key(text))
+                        }
+                        _ => eval_optional_text(*op, value, parent.as_deref(), ctx),
+                    }
                 }
                 _ => false,
             },

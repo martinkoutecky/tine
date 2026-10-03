@@ -734,12 +734,15 @@ impl<'a> OgParse<'a> {
                     Value::text(self.name()?),
                 ))
             }
-            // OG `(namespace x)` is recursive membership: the normalized page
-            // name starts with `x/` (§3.2 M20).
+            // OG's simple-query `(namespace x)` is the IMMEDIATE-parent rule
+            // (rules.cljc:124-127: `[?p :block/namespace ?parent] [?parent
+            // :block/name "x"]`): `x/a` matches, `x/a/b` does not. The recursive
+            // rule (rules.cljc:7-12) is reachable only from advanced queries,
+            // which lower to a name prefix in `advanced_patterns.rs`.
             "namespace" => through_page(Filter::attr(
-                Attr::Name,
-                CmpOp::StartsWith,
-                Value::text(format!("{}/", self.name()?)),
+                Attr::Namespace,
+                CmpOp::Eq,
+                Value::text(self.name()?),
             )),
             "property" => {
                 self.blocks = true;
@@ -1287,13 +1290,7 @@ mod tests {
         );
 
         let page_query = parse("(and (and (namespace Alpha) (namespace Beta)) (namespace Gamma))");
-        let namespace = |name: &str| {
-            Filter::attr(
-                Attr::Name,
-                CmpOp::StartsWith,
-                Value::text(format!("{name}/")),
-            )
-        };
+        let namespace = |name: &str| Filter::attr(Attr::Namespace, CmpOp::Eq, Value::text(name));
         let page_filter = Filter::And {
             items: vec![
                 Filter::And {

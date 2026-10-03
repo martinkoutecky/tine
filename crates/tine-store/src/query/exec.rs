@@ -4,8 +4,9 @@
 //!
 //! Semantics are master's (walk + results, production comparison mode):
 //! - block rows: OG top-level roots per page (a match whose immediate parent
-//!   matched is dropped), base order page name then kind rank (journal first)
-//!   then physical path, document order within a page;
+//!   matched is dropped), base order journal day newest first (non-journal pages
+//!   last), then page name, kind rank and physical path, document order within a
+//!   page;
 //! - `sort-by` is global over single blocks, re-coalescing adjacent same-page
 //!   runs; `sample` applies after sorting; admission charges each offered row
 //!   and `total` counts every offered row;
@@ -365,15 +366,16 @@ thread_local! {
 /// Pin the seed every `sample` on THIS thread draws from, until the guard
 /// drops. A seed is the only randomness in query execution, so a test that
 /// pins it gets a reproducible subset.
-#[doc(hidden)]
-pub fn pin_sample_seed(seed: u64) -> SampleSeedGuard {
+#[cfg(test)]
+pub(crate) fn pin_sample_seed(seed: u64) -> SampleSeedGuard {
     SAMPLE_SEED.with(|cell| cell.set(Some(seed)));
     SampleSeedGuard
 }
 
-#[doc(hidden)]
-pub struct SampleSeedGuard;
+#[cfg(test)]
+pub(crate) struct SampleSeedGuard;
 
+#[cfg(test)]
 impl Drop for SampleSeedGuard {
     fn drop(&mut self) {
         SAMPLE_SEED.with(|cell| cell.set(None));
@@ -454,10 +456,17 @@ fn kind_rank(kind: PageKind) -> u8 {
     }
 }
 
-/// SPEC §3.5's base order for block groups (M13).
+/// SPEC §3.5's base order for block groups (M13), amended for OG parity (#8a):
+/// OG renders grouped results with `(sort-by (comp :block/journal-day first) >)`
+/// (`components/block.cljs:3497,3523,3552`), so journal days run NEWEST first and
+/// pages that are not journals follow. The reference groups (`query::collect_bounded`)
+/// already order this way; one rule for every group list (I-12). Ties fall back
+/// to page name, then kind rank, then physical path.
 fn base_order(a: &PageEntry, b: &PageEntry) -> std::cmp::Ordering {
-    a.name
-        .cmp(&b.name)
+    b.date_key
+        .unwrap_or(i64::MIN)
+        .cmp(&a.date_key.unwrap_or(i64::MIN))
+        .then_with(|| a.name.cmp(&b.name))
         .then_with(|| kind_rank(a.kind).cmp(&kind_rank(b.kind)))
         .then_with(|| a.rel_path_str().as_bytes().cmp(b.rel_path_str().as_bytes()))
 }
