@@ -108,4 +108,38 @@ describe("query sheet placement (GH #619)", () => {
     expect(document.querySelector(".qs-menu")).toBeNull();
     dispose();
   });
+
+  // The sheet is `position:fixed` and not scrollable on a wide layout, so a sentence near the bottom of the
+  // window used to leave the sheet's lower half (and its text-pane input) off screen and unreachable.
+  describe("vertical placement", () => {
+    const place = async (sheetHeight: number, view: number, box = BOX) => {
+      vi.spyOn(window, "innerHeight", "get").mockReturnValue(view);
+      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains("qs-sheet") ? sheetHeight : 0;
+      });
+      vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+        return (this.isConnected && this.classList.contains("qs-sentence")
+          ? { ...box, toJSON() {} }
+          : { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON() {} }) as DOMRect;
+      });
+      const { host, dispose } = mountDetached();
+      document.body.append(host);
+      host.querySelector<HTMLButtonElement>(".qs-gear")!.click();
+      await frames(8);
+      const anchor = document.querySelector<HTMLElement>(".qs-sheet-anchor");
+      const result = { top: anchor?.style.top, hidden: anchor?.style.visibility === "hidden" };
+      dispose();
+      return result;
+    };
+    it("stays under the sentence when it fits", async () => {
+      expect(await place(300, 820)).toEqual({ top: "140px", hidden: false });
+    });
+    it("flips above a sentence near the bottom of the window", async () => {
+      const low = { ...BOX, top: 700, bottom: 740, y: 700 };
+      expect(await place(290, 820, low)).toEqual({ top: "410px", hidden: false });
+    });
+    it("is clamped into the window when it fits on neither side", async () => {
+      expect(await place(700, 820)).toEqual({ top: "112px", hidden: false });
+    });
+  });
 });

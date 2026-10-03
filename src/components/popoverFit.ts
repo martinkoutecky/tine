@@ -24,6 +24,17 @@ export function placePopover(needed: number, below: number, above: number): Popo
   return { flip, maxHeight: Math.max(MIN_HEIGHT, Math.floor(room)) };
 }
 
+/** Where the wide-layout query sheet's top edge goes (GH #619). The sheet is `position:fixed` under its
+ *  sentence, so a sentence near the bottom of the window left the sheet's lower half off screen with nothing to
+ *  scroll it back. It stays under the sentence when it fits there, else sits above it when it fits there, else is
+ *  pushed up to the viewport's bottom edge (covering the sentence rather than leaving controls unreachable). */
+export function placeSheetTop(sentenceTop: number, sentenceBottom: number, sheetHeight: number, viewHeight: number): number {
+  if (sheetHeight <= 0) return sentenceBottom;
+  if (sentenceBottom + sheetHeight <= viewHeight - EDGE) return sentenceBottom;
+  if (sentenceTop - sheetHeight >= EDGE) return sentenceTop - sheetHeight;
+  return Math.max(EDGE, viewHeight - sheetHeight - EDGE);
+}
+
 /** The nearest ancestor that clips and scrolls its content (the bottom sheet on a phone), if any. A popover
  *  inside one cannot flip upward: the part above the scroller's top edge is clipped and unreachable. It opens
  *  downward and the scroller's own scroll reveals it. */

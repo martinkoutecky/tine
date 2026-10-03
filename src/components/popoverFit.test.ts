@@ -2,7 +2,7 @@
 // being squeezed to a few px (jsdom has no layout; the Chromium proof is scripts/shot-query-chooser.mjs).
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { placePopover } from "./popoverFit";
+import { placePopover, placeSheetTop } from "./popoverFit";
 
 describe("placePopover", () => {
   it("stays below when it fits there", () => {
@@ -17,6 +17,20 @@ describe("placePopover", () => {
   });
   it("never clamps below a usable height", () => {
     expect(placePopover(900, 40, 30).maxHeight).toBe(120);
+  });
+});
+
+describe("placeSheetTop (GH #619: the sheet stays inside the window)", () => {
+  it("hangs under the sentence when it fits there, and before it has been measured", () => {
+    expect(placeSheetTop(100, 140, 300, 820)).toBe(140);
+    expect(placeSheetTop(700, 740, 0, 820)).toBe(740);
+  });
+  it("flips above the sentence when it only fits there", () => {
+    expect(placeSheetTop(600, 640, 291, 820)).toBe(309);
+  });
+  it("is pushed up to the bottom edge when it fits on neither side", () => {
+    expect(placeSheetTop(200, 240, 700, 820)).toBe(112);
+    expect(placeSheetTop(200, 240, 2000, 820)).toBe(8);
   });
 });
 

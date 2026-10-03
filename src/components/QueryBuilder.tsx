@@ -12,6 +12,7 @@ import {
   type JSX,
 } from "solid-js";
 import { FloatingPortal } from "./FloatingPortal";
+import { placeSheetTop } from "./popoverFit";
 import { backend } from "../backend";
 import {
   builderRoot,
@@ -718,14 +719,26 @@ export function QueryBuilder(props: {
   // detached element's rect is all zeros, and the fixed anchor used to be drawn from that: the sheet opened at
   // the viewport's top-left. A builder whose sentence is not in the document yet retries each frame; once it
   // is, it measures, then re-measures after layout settles, on scroll/resize and when the sentence resizes.
-  const [rect, setRect] = createSignal<{ top: number; left: number; width: number } | null>(null);
+  const [rect, setRect] = createSignal<{ top: number; left: number; width: number; placed: boolean } | null>(null);
+  let observeSheet: (() => void) | undefined;
   const measure = (): boolean => {
     const element = sentenceEl;
     if (!element || !element.isConnected) return false;
     const box = element.getBoundingClientRect();
-    const next = { top: box.bottom, left: box.left, width: Math.max(box.width, 320) };
+    // The sheet's own height (known once it is mounted) decides whether it hangs below, flips above, or is
+    // pushed up so it never runs off the window. Hidden until that has been measured, so it never jumps.
+    const view = window.visualViewport?.height ?? window.innerHeight;
+    const next = {
+      top: sheetEl ? placeSheetTop(box.top, box.bottom, sheetEl.offsetHeight, view) : box.bottom,
+      left: box.left,
+      width: Math.max(box.width, 320),
+      placed: !!sheetEl,
+    };
     const prev = untrack(rect);
-    if (!prev || prev.top !== next.top || prev.left !== next.left || prev.width !== next.width) setRect(next);
+    if (!prev || prev.top !== next.top || prev.left !== next.left || prev.width !== next.width || prev.placed !== next.placed) {
+      setRect(next);
+    }
+    observeSheet?.();
     return true;
   };
   createEffect(() => {
@@ -754,7 +767,16 @@ export function QueryBuilder(props: {
       window.addEventListener("scroll", remeasure, true);
       window.addEventListener("resize", remeasure);
       if (typeof ResizeObserver === "function") {
-        observer = new ResizeObserver(remeasure);
+        const watching = new ResizeObserver(remeasure);
+        observer = watching;
+        let watchedSheet: Element | undefined;
+        // The sheet mounts only after the first measurement; watch it from the first measurement after that.
+        observeSheet = () => {
+          if (sheetEl && sheetEl !== watchedSheet) {
+            watchedSheet = sheetEl;
+            watching.observe(sheetEl);
+          }
+        };
         if (sentenceEl) observer.observe(sentenceEl);
         const block = sentenceEl?.closest(".query-block");
         if (block) observer.observe(block);
@@ -764,6 +786,7 @@ export function QueryBuilder(props: {
       alive = false;
       cancelFrame(frame);
       observer?.disconnect();
+      observeSheet = undefined;
       if (typeof window === "undefined") return;
       window.removeEventListener("scroll", remeasure, true);
       window.removeEventListener("resize", remeasure);
@@ -866,6 +889,7 @@ export function QueryBuilder(props: {
                   top: `${rect()?.top ?? 0}px`,
                   left: `${rect()?.left ?? 0}px`,
                   width: `${rect()?.width ?? 320}px`,
+                  visibility: rect()?.placed ? undefined : "hidden",
                 }}
               >
                 {sheet()}
