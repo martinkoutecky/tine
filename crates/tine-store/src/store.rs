@@ -41,7 +41,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use crate::model::{classify_legacy_trash_entry, trash_dir_kind, trash_root, TrashEntryKind};
 
@@ -1506,6 +1506,8 @@ impl Store {
         max_bytes: Option<u64>,
     ) -> Result<(Vec<u8>, FileRev), StoreError> {
         let path = self.path_for_os_handoff(file, false)?;
+        #[cfg(feature = "test-faults")]
+        crate::cost_counters::store_read();
         let mut input = File::open(path).map_err(StoreError::from_io)?;
         let meta = input.metadata().map_err(StoreError::from_io)?;
         if !meta.is_file() {
@@ -1813,7 +1815,9 @@ impl Store {
     /// Warm lookup skips that scan. Target parse costs O(bytes + blocks);
     /// publication adds O(P) metadata. Reads write no page bytes.
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
+        let waiting = Instant::now();
         let _writer = self.writer.lock().unwrap();
+        self.graph.diag.page_writer_wait(waiting.elapsed());
         let before_generation = self.graph.cache_generation();
         if self.is_closed() {
             return Err(StoreError::Closed);

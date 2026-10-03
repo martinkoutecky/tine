@@ -288,3 +288,23 @@ fn the_checkpoint_section_is_closed_tokens_only() {
         );
     }
 }
+
+#[test]
+fn page_reads_and_asset_walks_are_recorded_for_the_focus_return_diagnosis() {
+    let (_dir, store) = fixture();
+    let before = store.diagnostics();
+    let walks = n(&before["assetWalks"]["total"]);
+    let reads = n(&before["pageWriterWaits"]["all"]["count"]);
+    store.page(&PageId::from("pages/Hub.md")).unwrap();
+    store.scan_refresh().unwrap();
+    let after = store.diagnostics();
+    assert_eq!(n(&after["pageWriterWaits"]["all"]["count"]), reads + 1);
+    // The watcher thread may add a walk of its own, so at least this one.
+    assert!(
+        n(&after["assetWalks"]["total"]) > walks,
+        "a focus rescan's full asset walk is recorded"
+    );
+    let recent = after["assetWalks"]["recent"].as_array().unwrap();
+    let walk = recent.last().unwrap();
+    assert!(walk["writerWaitMs"].is_number() && walk["heldMs"].is_number());
+}

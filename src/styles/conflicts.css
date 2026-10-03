@@ -398,21 +398,39 @@
   padding: 6px 14px 0;
 }
 
-/* A focus rescan slower than 120 ms says what it is doing; it holds no input. */
+/* A focus rescan slower than 500 ms says what it is doing; it holds no input.
+   It sits in the lower-right status area, immediately left of the fixed help
+   "?" button (help.css .help-corner: 34px wide, 16px off the right edge, 12px
+   on small screens), shares that button's bottom rule so it lifts with it above
+   the mobile keyboard toolbar, and is dimmed so it stays peripheral. */
 .focus-refresh-status {
   position: fixed;
-  left: 50%;
-  bottom: 1rem;
+  right: calc(var(--overlay-inset-right, 0px) + 16px + 34px + 8px);
+  bottom: calc(max(calc(var(--overlay-inset-bottom, 0px) + 16px), var(--mobile-kb-toolbar-lift, 16px)) + 3px);
   z-index: 10020;
-  transform: translateX(-50%);
-  padding: 0.42rem 0.72rem;
-  border: 1px solid var(--border-color);
+  max-width: calc(100vw - var(--overlay-inset-right, 0px) - 16px - 34px - 8px - 12px);
+  padding: 0.3rem 0.62rem;
+  /* ~60% dimmed: border and text are 60% of their colour over an OPAQUE pill,
+     so page text underneath is covered rather than read through it (a plain
+     `opacity: 0.6` made the pill see-through). */
+  border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
   border-radius: 999px;
   background: var(--bg-secondary);
-  color: var(--text-muted);
-  box-shadow: 0 6px 24px rgb(0 0 0 / 24%);
+  color: color-mix(in srgb, var(--text-muted) 60%, transparent);
   font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  /* Same geometry as the help "?" FAB's small-screen rule (12px gutter). */
+  .focus-refresh-status {
+    right: calc(var(--overlay-inset-right, 0px) + 12px + 34px + 8px);
+    bottom: calc(max(calc(var(--overlay-inset-bottom, 0px) + 12px), var(--mobile-kb-toolbar-lift, 12px)) + 3px);
+    max-width: calc(100vw - var(--overlay-inset-right, 0px) - 12px - 34px - 8px - 12px);
+  }
 }
 
 /* Concord P5: an external change held for review ("always ask"). A calm bar

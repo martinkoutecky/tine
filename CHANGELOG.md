@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- Launch and focus return on large graphs (GH #623): the conflicts list no longer reads every page file (the store remembers which pages carry merge-conflict marker lines, kept in the launch checkpoint), the asset scan no longer opens every asset file while holding the store's writer lock, and the "Refreshing changes from disk…" notice moved beside the help button, dimmed and shown only after half a second; the diagnostic report now also carries per-command latency histograms and the focus-return phase split (numbers only).
 - **Raw HTML resources (UI-OG-DUPBL2-D29):** local images and sandboxed iframes use actual DOM attributes, so image text in comments and `data-src` lookalikes cannot select the wrong resource.
 - Uppercase `.ORG` files retain Org format in conflict diffs, PDF annotations and page rename/merge (REG-OG-DUPAL2-F12).
 - Keep code examples in a user’s Favorites page from being adopted as favorites arrangement metadata (UI-OG-DUPBL1-FAVORITES-LITERAL-MARKER).

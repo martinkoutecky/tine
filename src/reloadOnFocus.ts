@@ -14,11 +14,13 @@
 // Typing is never blocked by observation (SPEC-storage §6.1, K22): while the
 // rescan runs the editor stays live, and a stale-base save is refused by the
 // base-revision guard and becomes a conflict, never a silent overwrite. A
-// rescan slower than 120 ms only says so (`refreshingFromDisk`). Throttled: a
+// rescan slower than 500 ms only says so (`refreshingFromDisk`, a dim
+// status in the lower-right corner beside the help button). Throttled: a
 // focus is a gesture users make constantly, and a rescan costs one stat per
 // graph-text file. Coalesced: a focus during a rescan of the same graph joins it.
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { noteFocusReturn, type FocusPhase } from "./focusTiming";
 import { captureBinding, stillBound, type Binding } from "./binding";
 import { applyGraphChangesBulk, replayDeferredExternalReloads } from "./document";
 import { ownedWhen, readOwnedResource, type Owned } from "./owned";
@@ -31,7 +33,7 @@ import { graphTransitioning } from "./ui";
 export const FOCUS_RESCAN_THROTTLE_MS = 1500;
 const COMPLETION_TIMEOUT_MS = 30_000;
 /** A rescan that takes longer than this says what it is doing. */
-const REFRESH_NOTICE_DELAY_MS = 120;
+export const REFRESH_NOTICE_DELAY_MS = 500;
 
 /** True while a rescan has been running longer than the notice delay. A status
  *  line only: nothing waits on it and no input is held. */
@@ -39,13 +41,23 @@ const [refreshingFromDisk, setRefreshingFromDisk] = createSignal(false);
 export { refreshingFromDisk };
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 
+let noticeShownAt: number | null = null;
+
+/** GH #623: one phase of a focus rescan, as a number in the flight recorder. */
+function recordPhase(phase: FocusPhase, startedAt: number): void {
+  void backend().diagnosticTimingEvent?.(phase, performance.now() - startedAt);
+}
+
 function beginRefreshNotice(): void {
-  noticeTimer ??= setTimeout(() => { noticeTimer = null; setRefreshingFromDisk(true); }, REFRESH_NOTICE_DELAY_MS);
+  noticeTimer ??= setTimeout(() => { noticeTimer = null; noticeShownAt = performance.now(); setRefreshingFromDisk(true); }, REFRESH_NOTICE_DELAY_MS);
 }
 
 function endRefreshNotice(): void {
   if (noticeTimer !== null) clearTimeout(noticeTimer);
   noticeTimer = null;
+  // How long the notice was actually on screen (only when it showed at all).
+  if (noticeShownAt !== null) recordPhase("focus.banner", noticeShownAt);
+  noticeShownAt = null;
   setRefreshingFromDisk(false);
 }
 
@@ -122,6 +134,7 @@ function releaseActive(refresh: Promise<void>): void {
 export function refreshOnReturnToWindow(now = Date.now(), force = false, rebuild = false): Promise<void> {
   // A published export is an immutable snapshot with no watcher behind it.
   if (isPublishedExport()) return Promise.resolve();
+  noteFocusReturn();
   replayDeferredExternalReloads();
   if (!graphReadyForRescan()) return Promise.resolve();
   const changed = retireChangedBinding();
@@ -137,17 +150,30 @@ export function refreshOnReturnToWindow(now = Date.now(), force = false, rebuild
   const binding = stateBinding!;
   const current = () => { if (!stillBound(binding)) throw new StaleFocusRefresh(); };
   beginRefreshNotice();
+  const startedAt = performance.now();
+  // A forced/rebuild rescan is a different, much longer operation (Settings):
+  // only the focus-return stat diff is recorded as the focus phases.
+  const measured = !rebuild;
   let refresh!: Promise<void>;
   refresh = (async () => {
     try {
       await ensureCompletionListener((cb) => api.onGraphRescanComplete!(cb));
       current();
+      const ipcAt = performance.now();
       const sequence = await api.rescanGraphNow!(rebuild);
+      if (measured) recordPhase("focus.ipc", ipcAt);
       current();
+      const waitAt = performance.now();
       await waitForCompletion(sequence);
+      if (measured) recordPhase("focus.wait", waitAt);
+      const applyAt = performance.now();
       while (applications.size) {
         await Promise.allSettled([...applications]);
         current();
+      }
+      if (measured) {
+        recordPhase("focus.apply", applyAt);
+        recordPhase("focus.total", startedAt);
       }
       replayDeferredExternalReloads();
       lastFinishedAt = Date.now();

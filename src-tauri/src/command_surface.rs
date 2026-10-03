@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 171] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 172] = [
     "app_architecture",
     "app_platform",
     "apply_journal_filename_migrations",
@@ -41,6 +41,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 171] = [
     "diagnostic_ipc_event",
     "diagnostic_report",
     "diagnostic_session_active",
+    "diagnostic_timing_event",
     "duplicate_journal_diff",
     "edit_asset_external",
     "empty_asset_trash",

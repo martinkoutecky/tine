@@ -284,7 +284,10 @@ fn arrival_numeric_budgets() {
     // graph-shape snapshot behind Settings > Help & diagnostics (GH #623).
     // The 39th operation is Store::rebuild_graph: the forced full rebuild behind
     // the Settings "Rescan graph" button, which ignores every stamp (GH #623).
-    assert!(operations <= 39, "tine-store Rule 1: Store + Transaction has {operations} public methods, budget 39; imitate crates/tine-store/SURFACE.txt");
+    // The 40th operation is Store::vcs_anchor_state: whether a cached page carries
+    // a merge-conflict anchor line, answered from the state the load pass already
+    // built so the conflicts list reads no file for an unmarked page (GH #623).
+    assert!(operations <= 40, "tine-store Rule 1: Store + Transaction has {operations} public methods, budget 40; imitate crates/tine-store/SURFACE.txt");
     assert!(questions <= 25, "tine-store Rule 4: WholeGraph has {questions} public methods, budget 25; imitate crates/tine-store/SURFACE.txt");
     assert!(
         types <= 55,

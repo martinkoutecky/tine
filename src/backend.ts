@@ -4,6 +4,7 @@
 
 import { readSavePlatformStep } from "./savePlatformStep";
 import { markCommandSlow } from "./slowBackend";
+import { timingNamesForCommand } from "./focusTiming";
 import type { GraphVerificationProgress, GraphVerificationReport } from "./graphVerification";
 import type {
   Diagnostic,
@@ -676,6 +677,9 @@ export interface Backend {
   /** Record one fixed-kind frontend event. The backend drops the event when a
    *  token is outside its closed vocabulary; fields carry no free text. */
   diagnosticFrontendEvent(kind: DiagnosticFrontendKind, fields?: DiagnosticFrontendFields): Promise<void>;
+  /** Count one duration under a registered timing name (focus phases, page-load
+   *  commands; see focusTiming.ts). Numbers only; native builds only. */
+  diagnosticTimingEvent?(name: string, elapsedMs: number): Promise<void>;
   /** The backend's current UTC offset and sample instant: the app's calendar
    * authority (see `appNow` in journal.ts, GH #607). */
   localClock(): Promise<{ offset_minutes: number; unix_ms: number }>;
@@ -725,7 +729,13 @@ export function queryPrintRefusal(error: unknown): QueryPrintRefusedError | null
 /** Commands whose timing would only describe the diagnostics channel. */
 const DIAGNOSTIC_COMMANDS = new Set([
   "debug_info", "debug_log", "diagnostic_ipc_event", "diagnostic_frontend_event", "diagnostic_report", "clear_diagnostics",
-  "save_diagnostic_report", "diagnostic_session_active",
+  "save_diagnostic_report", "diagnostic_session_active", "diagnostic_timing_event",
+]);
+/** GH #623: the page-load commands whose every call is timed (and, apart, the calls
+ *  made soon after a focus return). A closed list, so no argument or free text can
+ *  become a timing name (I-5); the Rust side registers the same names. */
+const TIMED_COMMANDS: ReadonlySet<string> = new Set([
+  "get_page", "get_page_by_path", "get_backlinks", "journal_feed_page", "page_inventory", "search",
 ]);
 /** A command still running after this long is recorded as `slow`. */
 const SLOW_IPC_MS = 500;
@@ -763,6 +773,7 @@ class TauriBackend implements Backend {
     try {
       const result = await this.invoke<T>(cmd, leasedArgs);
       if (slow) this.reportIpcPhase(cmd, "completed", started);
+      this.reportCommandTiming(cmd, started);
       return result;
     } catch (error) {
       this.reportIpcPhase(cmd, "failed", started);
@@ -781,6 +792,21 @@ class TauriBackend implements Backend {
     if (this.ipcDiagnosticsUnavailable) return;
     const elapsedMs = Math.max(0, Math.round(performance.now() - started));
     void this.invoke<void>("diagnostic_ipc_event", { command, phase, elapsedMs }).catch(() => {
+      this.ipcDiagnosticsUnavailable = true;
+    });
+  }
+
+  /** GH #623: count every call of a page-load command (not only slow ones),
+   *  and apart those made soon after a focus return. Numbers only. */
+  private reportCommandTiming(cmd: string, started: number) {
+    if (!TIMED_COMMANDS.has(cmd)) return;
+    const names = timingNamesForCommand(cmd);
+    for (const name of names) this.diagnosticTimingEvent(name, performance.now() - started);
+  }
+
+  diagnosticTimingEvent(name: string, elapsedMs: number): Promise<void> {
+    if (this.ipcDiagnosticsUnavailable) return Promise.resolve();
+    return this.invoke<void>("diagnostic_timing_event", { name, elapsedMs: Math.max(0, Math.round(elapsedMs)) }).catch(() => {
       this.ipcDiagnosticsUnavailable = true;
     });
   }

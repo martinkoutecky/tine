@@ -613,7 +613,9 @@ impl Core {
     /// publication so an own asset write and its baseline update cannot
     /// interleave with the comparison.
     fn observe_assets(&self, exact: &HashSet<PathBuf>, full: bool) {
+        let waiting = Instant::now();
         let _writer = self.writer.lock().unwrap();
+        let (writer_wait, held) = (waiting.elapsed(), Instant::now());
         if self.closed.load(Ordering::Acquire) {
             return;
         }
@@ -623,6 +625,11 @@ impl Core {
             .into_iter()
             .filter_map(|(path, kind)| Some((self.file_id(&path)?, kind, None)))
             .collect();
+        if full {
+            self.graph
+                .diag
+                .asset_walk(writer_wait, held.elapsed(), files.len());
+        }
         if !files.is_empty() {
             self.changes
                 .publish_watched(Origin::External, files, false, Vec::new(), || {}, None);

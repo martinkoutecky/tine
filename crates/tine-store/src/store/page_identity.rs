@@ -10,6 +10,24 @@ fn in_directory(path: &str, directory: &str) -> bool {
 }
 
 impl Store {
+    /// Whether the page file `file` carried a VCS anchor line (`<<<<<<< ` or
+    /// `>>>>>>> ` at column 0) in the bytes the store last observed for it,
+    /// from state it already holds (the launch pass reads every file once and
+    /// the launch checkpoint carries the answer; saves and external changes
+    /// refresh it with the revision they record). `Some(false)` means reading
+    /// the file cannot find an anchor line; `Some(true)` means it may, so the
+    /// caller scans the bytes; `None` means the page is not in the page cache
+    /// (still loading, or never cached: shadow journals, sync copies,
+    /// unreadable or oversized files), so only a read can tell. Touches no
+    /// file. Cost O(1).
+    pub fn vcs_anchor_state(&self, file: &FileId) -> Option<bool> {
+        if self.is_closed() {
+            return None;
+        }
+        self.graph
+            .vcs_anchor_state(&self.graph.root.join(file.as_str()))
+    }
+
     /// On a case-insensitive volume, an old route may reach a file through
     /// another case spelling. Canonicalization reveals the disk spelling;
     /// accept it only when case is the entire difference and it remains an

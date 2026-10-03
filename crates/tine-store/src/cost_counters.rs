@@ -23,6 +23,8 @@ static QUERY_CARRY_BLOCK_PROBES: AtomicU64 = AtomicU64::new(0);
 static QUERY_REGISTRY_PAGES_READ: AtomicU64 = AtomicU64::new(0);
 static HASH_READS: AtomicU64 = AtomicU64::new(0);
 static STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
+static ASSET_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
+static STORE_READS: AtomicU64 = AtomicU64::new(0);
 
 /// Primitive counts since the last reset. The fixture uses one process per case.
 #[derive(Clone, Copy, Debug, Default)]
@@ -77,6 +79,13 @@ pub struct Counts {
     /// (`watch::stamp_metadata`, a per-file `symlink_metadata`, which opens
     /// the file on Windows) rather than from a directory listing's entries.
     pub stamps_by_path: u64,
+    /// Non-graph-text (asset) files stamped by path (`watch::stamp_metadata`),
+    /// which opens the file on Windows; the asset full walk uses the listing.
+    pub asset_stamps_by_path: u64,
+    /// Whole-file reads made through `Store::read` (the feature crates' bounded
+    /// file read: conflict markers, sync copies), which the load pass's own
+    /// `full_reads` does not include.
+    pub store_reads: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -105,6 +114,8 @@ pub fn reset() {
         &QUERY_REGISTRY_PAGES_READ,
         &HASH_READS,
         &STAMPS_BY_PATH,
+        &ASSET_STAMPS_BY_PATH,
+        &STORE_READS,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -136,9 +147,17 @@ pub fn snapshot() -> Counts {
         query_registry_pages_read: QUERY_REGISTRY_PAGES_READ.load(Ordering::Relaxed),
         hash_reads: HASH_READS.load(Ordering::Relaxed),
         stamps_by_path: STAMPS_BY_PATH.load(Ordering::Relaxed),
+        asset_stamps_by_path: ASSET_STAMPS_BY_PATH.load(Ordering::Relaxed),
+        store_reads: STORE_READS.load(Ordering::Relaxed),
     }
 }
 
+pub(crate) fn store_read() {
+    STORE_READS.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn asset_stamp_by_path() {
+    ASSET_STAMPS_BY_PATH.fetch_add(1, Ordering::Relaxed);
+}
 pub(crate) fn stamp_by_path() {
     STAMPS_BY_PATH.fetch_add(1, Ordering::Relaxed);
 }

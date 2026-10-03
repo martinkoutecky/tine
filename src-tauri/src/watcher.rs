@@ -303,13 +303,24 @@ pub(crate) async fn rescan_graph_now(
     let app = state.window.app_handle().clone();
     let label = state.window.label().to_owned();
     let sequence = RESCAN_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
+    let queued = std::time::Instant::now();
     tauri::async_runtime::spawn_blocking(move || {
+        // GH #623: how long the blocking pool kept the scan waiting, and how
+        // long the scan itself took, reach the diagnostics as numbers.
+        let focus_scan = !rebuild.unwrap_or(false);
+        if focus_scan {
+            crate::flight::record_timing("rescan.queue", queued.elapsed());
+        }
+        let began = std::time::Instant::now();
         // A failed scan published nothing to wait for: it completes at once.
         let scanned = if rebuild.unwrap_or(false) {
             slot.store.rebuild_graph()
         } else {
             slot.store.scan_refresh()
         };
+        if focus_scan {
+            crate::flight::record_timing("rescan.scan", began.elapsed());
+        }
         let Ok(target) = scanned else {
             crate::debug::diag("watcher-focus-rescan-failed");
             return emit_rescan_complete(&app, &label, sequence);

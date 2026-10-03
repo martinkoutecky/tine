@@ -373,6 +373,16 @@ pub(crate) struct Graph {
     /// mismatched entry always falls through to the correct parse-compare path, so
     /// the worst a desync can cause is redundant work, never a stale serve.
     disk_revs: RwLock<std::collections::HashMap<PathBuf, String>>,
+    /// The cached pages whose bytes carry a column-0 VCS anchor line
+    /// (`tine_core::concord_queue::has_vcs_anchor`), observed from the SAME
+    /// bytes as `disk_revs[path]`. Invariant: a cached page (an entry in
+    /// `disk_revs`) with no entry here has no anchor line, so "which pages
+    /// might carry merge markers" is answered with no file read
+    /// ([`Graph::vcs_anchor_state`]); a page not in `disk_revs` is unknown.
+    /// Written only beside `disk_revs`, under the same locks (page_lock →
+    /// cache → disk_revs → vcs_anchored); a superset is harmless, a subset
+    /// would hide a conflicted page. Checkpointed (FORMAT 6).
+    vcs_anchored: RwLock<std::collections::HashSet<PathBuf>>,
     /// Per-resolved-path write locks. The same page file has TWO in-process
     /// writers — the editor (`save_page`/`write_page`) and the PDF highlight path
     /// (`write_highlights`, for an `hls__` page) — and a rename rewrites many
@@ -1609,7 +1619,25 @@ struct PageCacheBuild {
     unreadable: Vec<(String, String)>,
 }
 
-type ParsedPage = (PageEntry, Document, String);
+type ParsedPage = (PageEntry, Document, DiskObs);
+
+/// What the store observed in one page's bytes when it parsed them: the
+/// revision (the freshness key, see `disk_revs`) and whether the bytes carry a
+/// VCS anchor line (see `vcs_anchored`). Both come from the same bytes.
+pub(crate) struct DiskObs {
+    pub(crate) rev: String,
+    pub(crate) anchored: bool,
+}
+
+impl DiskObs {
+    /// Cost O(bytes): one hash and one vectorized substring pass.
+    pub(crate) fn of(content: &str) -> Self {
+        Self {
+            rev: content_rev(content),
+            anchored: tine_core::concord_queue::has_vcs_anchor(content.as_bytes()),
+        }
+    }
+}
 enum PageParseFailure {
     Panic(String, String),
     Unreadable(String, String),
@@ -2164,6 +2192,7 @@ impl Graph {
             opened_at: std::time::SystemTime::now(),
             recent_writes: std::sync::Mutex::new(std::collections::HashMap::new()),
             disk_revs: RwLock::new(std::collections::HashMap::new()),
+            vcs_anchored: RwLock::new(std::collections::HashSet::new()),
             page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -2818,7 +2847,12 @@ impl Graph {
         unreadable.dedup_by(|a, b| a.0 == b.0);
         let revs: std::collections::HashMap<PathBuf, String> = built
             .iter()
-            .map(|(e, _, r)| (e.path.clone(), r.clone()))
+            .map(|(e, _, obs)| (e.path.clone(), obs.rev.clone()))
+            .collect();
+        let anchored: std::collections::HashSet<PathBuf> = built
+            .iter()
+            .filter(|(_, _, obs)| obs.anchored)
+            .map(|(e, _, _)| e.path.clone())
             .collect();
         let pages: Vec<(PageEntry, Arc<Document>)> = built
             .into_iter()
@@ -2859,6 +2893,7 @@ impl Graph {
         );
         *self.cache_index.write().unwrap() = Some(index);
         *self.disk_revs.write().unwrap() = revs;
+        *self.vcs_anchored.write().unwrap() = anchored;
         if replace {
             // A replaced cache is new content under the old generation: the
             // generation-keyed page list, name index and block index must
@@ -3073,7 +3108,7 @@ impl Graph {
                 if let Some(stamp) = stamp {
                     stamps.insert(
                         path.clone(),
-                        stamp.with_rev(Some(crate::store::FileRev::from(rev.clone()))),
+                        stamp.with_rev(Some(crate::store::FileRev::from(rev.rev.clone()))),
                     );
                     if is_racy {
                         racy.insert(path.clone());
@@ -3234,11 +3269,12 @@ impl Graph {
         self.discovery_errors.write().unwrap().clear();
         *self.cache_index.write().unwrap() = None;
         self.disk_revs.write().unwrap().clear(); // under the cache lock (cache → disk_revs)
-                                                 // Bump the generation AFTER discarding the cache (under the cache lock), so
-                                                 // a reader that loads the new gen then reads the cache sees None (and
-                                                 // rebuilds from disk) rather than the stale pre-invalidation content — same
-                                                 // gen-after-content ordering as cache_upsert. The gen-keyed block index
-                                                 // then rebuilds against fresh content too.
+        self.vcs_anchored.write().unwrap().clear();
+        // Bump the generation AFTER discarding the cache (under the cache lock), so
+        // a reader that loads the new gen then reads the cache sees None (and
+        // rebuilds from disk) rather than the stale pre-invalidation content — same
+        // gen-after-content ordering as cache_upsert. The gen-keyed block index
+        // then rebuilds against fresh content too.
         self.cache_gen
             .fetch_add(1, std::sync::atomic::Ordering::Release);
         drop(guard);
@@ -3248,7 +3284,7 @@ impl Graph {
     /// if the cache hasn't been built yet. `disk_rev` is `content_rev` of the
     /// exact on-disk bytes `doc` was produced from (the freshness key — see
     /// `disk_revs`).
-    fn cache_upsert(&self, entry: PageEntry, mut doc: Document, disk_rev: String) {
+    fn cache_upsert(&self, entry: PageEntry, mut doc: Document, disk: DiskObs) {
         // Fill runtime ids for any block that lacks one (e.g. PDF-highlight writes)
         // from this physical owner. Blocks saved from the frontend already carry
         // live ids, which are deliberately kept through the in-memory save path.
@@ -3291,7 +3327,16 @@ impl Graph {
             // always cache → disk_revs; readers never hold disk_revs while taking
             // the cache lock, so this nesting can't deadlock. Sets only when the
             // page is actually cached (preserves "entry exists IFF cached").
-            self.disk_revs.write().unwrap().insert(path_key, disk_rev);
+            // The anchor observation moves with the rev, from the same bytes.
+            {
+                let mut anchored = self.vcs_anchored.write().unwrap();
+                if disk.anchored {
+                    anchored.insert(path_key.clone());
+                } else {
+                    anchored.remove(&path_key);
+                }
+            }
+            self.disk_revs.write().unwrap().insert(path_key, disk.rev);
             if let Ok(mtime) = fs::metadata(&evict_entry.path).and_then(|meta| meta.modified()) {
                 Arc::make_mut(&mut self.observed_mtimes.write().unwrap())
                     .insert(evict_entry.rel_path_str().to_owned(), mtime);
@@ -3434,6 +3479,20 @@ impl SnapshotMemos {
 }
 
 impl Graph {
+    /// Whether the cached page at `path` has a VCS anchor line in the bytes
+    /// the store last observed for it: `Some(false)` means no read of the file
+    /// can find one, `Some(true)` that one may exist (the caller scans), `None`
+    /// that the page is not cached (not loaded yet, or never cached:
+    /// shadow journals, sync copies, unreadable or oversized files), so only
+    /// reading the file can tell. Cost O(1).
+    pub(crate) fn vcs_anchor_state(&self, path: &Path) -> Option<bool> {
+        let _cache = self.cache.read().unwrap();
+        if !self.disk_revs.read().unwrap().contains_key(path) {
+            return None;
+        }
+        Some(self.vcs_anchored.read().unwrap().contains(path))
+    }
+
     /// Drop one physical page from the cache after its file disappears. Unlike
     /// `cache_remove`, this preserves same-name siblings and rebuilds the logical
     /// first-wins index from the surviving entries.
@@ -3449,6 +3508,7 @@ impl Graph {
                 // Drop the rev under the cache lock (same cache → disk_revs order
                 // as cache_upsert) so the two never diverge.
                 self.disk_revs.write().unwrap().remove(&entry.path);
+                self.vcs_anchored.write().unwrap().remove(&entry.path);
                 Arc::make_mut(&mut self.observed_mtimes.write().unwrap())
                     .remove(entry.rel_path_str());
             }
@@ -4015,12 +4075,32 @@ impl Graph {
                     }
                 };
                 if cached_norm == newdoc {
+                    // Unchanged document, but not necessarily unchanged bytes:
+                    // parsing normalizes some lines (a column-0 continuation
+                    // line parses like an indented one), so these bytes may
+                    // carry an anchor line the cached bytes did not. The flag
+                    // may only err toward true, so raise it (still under the
+                    // cache lock: cache → vcs_anchored).
+                    if tine_core::concord_queue::has_vcs_anchor(content.as_bytes()) {
+                        self.vcs_anchored
+                            .write()
+                            .unwrap()
+                            .insert(path.to_path_buf());
+                    }
                     return None; // unchanged / our own write
                 }
             }
         }
         newdoc.roots.shrink_to_fit();
-        self.cache_upsert(entry.clone(), newdoc, disk_rev);
+        let anchored = tine_core::concord_queue::has_vcs_anchor(content.as_bytes());
+        self.cache_upsert(
+            entry.clone(),
+            newdoc,
+            DiskObs {
+                rev: disk_rev,
+                anchored,
+            },
+        );
         Some(entry)
     }
 
@@ -4087,7 +4167,7 @@ impl Graph {
                             crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
                         }
                         if let Some(entry) = self.cacheable_page_entry(path) {
-                            self.cache_upsert(entry, saved.clone(), content_rev(content));
+                            self.cache_upsert(entry, saved.clone(), DiskObs::of(content));
                         }
                     } else {
                         self.reconcile_page_content(path, content, false);

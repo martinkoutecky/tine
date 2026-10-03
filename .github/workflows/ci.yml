@@ -376,3 +376,67 @@ jobs:
           name: perf-ab-${{ github.run_attempt }}
           path: |
             test-results/perf/
+
+  # GH #623: cold/warm launch of an Ellis-shaped graph (12.9k pages, 12.4k assets) with Windows
+  # Defender really ON. Hosted Windows images ship Defender passive and every other job runs it
+  # that way, so no other CI number says what a user's launch costs. Release-candidate CI only
+  # (this job lives in the `full` and `performance` scopes, never on a push or a pull request).
+  # It is deliberately NOT one of the required evidence jobs in scripts/ci-evidence-lib.mjs and is
+  # continue-on-error: it REPORTS numbers (job summary + artifact) and enforces no budget. Its one
+  # assertion is that Defender is on (run-defender-launch.ps1), so a number is never measured with
+  # it silently off; a failed assertion shows as an error annotation on this job.
+  # What a budget would be (not set; needs a few release candidates of data): a ratio gate on the
+  # cold Ready time and on the worst page click during a rescan against the Defender-passive prims
+  # baseline, plus an absolute ceiling on that worst click (ADR 0058: UI never blocks > 500 ms).
+  windows-defender-launch:
+    name: Full CI / Windows Defender-on launch (advisory)
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'performance')
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Build the launch measurement (release)
+        run: cargo build --release -p tine-store --features test-faults --example defender_ab
+      - name: Fetch the anonymous shape export and generate the graph
+        env:
+          PYTHONUTF8: "1"
+        shell: pwsh
+        run: |
+          $d = ".github/scripts/ellis-shape"
+          New-Item -ItemType Directory -Force $d | Out-Null
+          curl.exe -sSL -o ellis.zip https://github.com/user-attachments/files/32962824/graph-shape-export.zip
+          $sha = (Get-FileHash ellis.zip -Algorithm SHA256).Hash.ToLower()
+          if ($sha -ne '57cd9566195adc62bee4ed5c6055c6d973d5fc61832ae3ad27b74c99f3ab3e2f') { throw "shape export changed: $sha" }
+          Expand-Archive ellis.zip -DestinationPath $d -Force
+          # the generator makes the 12,441 assets sparse files of up to ~26 GB apparent size; NTFS truncate
+          # allocates them for real, so cap each at 4 KiB (Tine only stats assets; the count is what matters)
+          $src = Get-Content .github/scripts/ellis-generate.py -Raw
+          $src = $src.Replace('f.truncate(sizes[k])', 'f.truncate(min(sizes[k], 4096))')
+          Set-Content -Path "$d/generate.py" -Value $src -Encoding utf8
+          # the generator reads the CSVs next to itself; they may sit in a subfolder of the zip
+          foreach ($n in 'nodes.csv','edges.csv','totals.txt') { $f = Get-ChildItem $d -Recurse -Filter $n | Select-Object -First 1; if ($f.DirectoryName -ne (Resolve-Path $d).Path) { Copy-Item $f.FullName $d } }
+          python "$d/generate.py" --out "$env:USERPROFILE\ellis\master"
+      - name: Launch measurement with Defender ON (asserts it is on first)
+        shell: pwsh
+        run: ./.github/scripts/run-defender-launch.ps1 -Reps 3
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path results.jsonl) {
+            python .github/scripts/summarize-defender-launch.py | Tee-Object -FilePath summary.md
+            Get-Content summary.md | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: defender-launch-results
+          path: |
+            results.jsonl
+            summary.md
+          retention-days: 30
