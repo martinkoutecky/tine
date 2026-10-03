@@ -532,6 +532,8 @@ export function QueryBuilder(props: {
   blockId?: string;
   /** The bindings a live preview runs under (the block's own run uses the same). */
   previewContext?: () => import("../editor/queryIr").ExecutionContext | undefined;
+  /** The macro's "pages and blocks" choice (GH #619 item 9); absent on the workspace. */
+  both?: import("./querySheetParts").BothKindsControl;
   parentTransientId?: string;
   /** Display writes use the host's guarded query save. Workspace callers may
    * leave it absent until their route owns a display draft. */
@@ -884,6 +886,7 @@ export function QueryBuilder(props: {
     <QuerySheet
       anchor={() => session()?.query.anchor ?? "block"}
       onAnchor={(anchor) => void switchAnchor(anchor)}
+      both={props.both}
       anchorPrompt={anchorPrompt}
       root={root}
       query={() => session()?.query}

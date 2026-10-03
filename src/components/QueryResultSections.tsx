@@ -11,6 +11,9 @@ export interface ResultFamily {
   hits: number;
   hasMore: boolean;
   body: JSX.Element;
+  /** Why this family is empty or partial (an engine diagnostic, e.g. a condition
+   *  that does not apply to this kind of result). Shown whenever the read landed. */
+  note?: string;
 }
 
 /** Render both families even at zero rows. `failure` suppresses bodies and
@@ -37,6 +40,9 @@ export function QueryResultSections(props: {
         <Show when={family.hits > 0} fallback={<p>{family.kind === "page" ? "No matching pages." : "No matching blocks."}</p>}>
           {family.body}
         </Show>
+      </Show>
+      <Show when={!props.pending && !props.failure && family.note}>
+        <p class="query-result-section-note" role="note">{family.note}</p>
       </Show>
       <Show when={!props.pending && !props.failure && family.hasMore}>
         <p>More {family.kind === "page" ? "pages" : "blocks"} match than are shown.</p>

@@ -907,9 +907,20 @@ export const ANCHOR_OPTIONS: { key: Anchor; label: string; hint: string }[] = [
   { key: "page", label: "pages", hint: "whole pages" },
 ];
 
+/** GH #619 item 9: the macro's third result choice, "pages and blocks". It is a
+ *  host-block setting beside the anchor, not an anchor: the anchor stays the query's
+ *  own and the host runs the other reading too. Absent where the surface has no host
+ *  block to store it on (the query workspace). */
+export interface BothKindsControl {
+  on: () => boolean;
+  set: (on: boolean) => void;
+}
+export const BOTH_KINDS_OPTION = "both";
+
 export interface QuerySheetProps {
   anchor: () => Anchor;
   onAnchor: (anchor: Anchor) => void;
+  both?: BothKindsControl;
   anchorPrompt: () => AnchorPrompt | null;
   /** The `and`/`or` root the sheet edits. */
   root: () => Filter;
@@ -935,6 +946,7 @@ export interface QuerySheetProps {
 export function AnchorLine(props: {
   anchor: () => Anchor;
   onAnchor: (anchor: Anchor) => void;
+  both?: BothKindsControl;
   empty: boolean;
   openMenu: () => string | null;
   setOpenMenu: (key: string | null) => void;
@@ -943,7 +955,19 @@ export function AnchorLine(props: {
   let triggerEl: HTMLButtonElement | undefined;
   const menuId = `qs-anchor-${createUniqueId()}`;
   const open = () => props.openMenu() === "anchor";
-  const label = () => (props.anchor() === "page" ? "pages" : "blocks");
+  const bothOn = () => props.both?.on() === true;
+  const label = () => (bothOn() ? "pages and blocks" : props.anchor() === "page" ? "pages" : "blocks");
+  const options = () => [
+    ...ANCHOR_OPTIONS.map((option) => ({
+      key: option.key as string,
+      label: option.label,
+      hint: option.hint,
+      active: !bothOn() && option.key === props.anchor(),
+    })),
+    ...(props.both
+      ? [{ key: BOTH_KINDS_OPTION, label: "pages and blocks", hint: "pages above, matching blocks below", active: bothOn() }]
+      : []),
+  ];
   return (
     <div class="qs-anchor">
       {/* Not a row and not deletable: it is the sentence's subject (§7.4). */}
@@ -975,15 +999,17 @@ export function AnchorLine(props: {
               id={menuId}
               label="What this query selects"
               rootRef={rootRef}
-              options={ANCHOR_OPTIONS.map((option) => ({
-                key: option.key,
-                label: option.label,
-                hint: option.hint,
-                active: option.key === props.anchor(),
-              }))}
+              options={options()}
               onPick={(key) => {
                 props.setOpenMenu(null);
-                props.onAnchor(key as Anchor);
+                if (key === BOTH_KINDS_OPTION) {
+                  props.both?.set(true);
+                  return;
+                }
+                // Back to ONE family: drop the both-choice, and move the anchor only if
+                // it is not already the query's own (the anchor switch is the engine's).
+                if (bothOn()) props.both?.set(false);
+                if (key !== props.anchor()) props.onAnchor(key as Anchor);
               }}
             />
           )}

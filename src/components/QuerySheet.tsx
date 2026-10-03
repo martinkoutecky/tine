@@ -326,6 +326,7 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
       <AnchorLine
         anchor={props.anchor}
         onAnchor={props.onAnchor}
+        both={props.both}
         empty={isEmpty()}
         openMenu={props.openMenu}
         setOpenMenu={props.setOpenMenu}

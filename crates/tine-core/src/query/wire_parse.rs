@@ -179,4 +179,18 @@ mod tests {
             "the page half inherits the singular view, which the draft did not touch"
         );
     }
+
+    /// GH #619 item 9: the macro's "pages and blocks" choice rides in
+    /// `tine.result-kinds`, a host property the engine does not read. Present or
+    /// absent, the parse is identical (OG ignores it the same way).
+    #[test]
+    fn the_result_kinds_host_property_does_not_change_the_reading() {
+        let with = vec![("tine.result-kinds".to_string(), "pages-and-blocks".to_string())];
+        let a = parse_query_pair("(task TODO)", QueryTextDialect::MacroQuery, &with, Registry::none());
+        let b = parse_query_pair("(task TODO)", QueryTextDialect::MacroQuery, &[], Registry::none());
+        assert_eq!(
+            serde_json::to_value(&a).unwrap(),
+            serde_json::to_value(&b).unwrap()
+        );
+    }
 }

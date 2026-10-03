@@ -26,6 +26,7 @@ import {
   type Diagnostic,
   type ExecutionContext,
   type ExplainEmptyResult,
+  type Anchor,
   type PageRow,
   type ParsedQuery,
   type Query,
@@ -42,6 +43,7 @@ import { InlineText } from "../render/inline";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
+import { QueryResultSections } from "./QueryResultSections";
 import { QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
 import type { PageKind, QueryExecution, QueryHit, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
@@ -195,7 +197,24 @@ interface QueryOperation {
   statistics?: QueryStatistics;
   search: QueryExecution | null;
   matchedTotal: number | null;
+  /** GH #619 item 9: "Pages and blocks" — both families of ONE query. The page
+   *  family is the page-anchored reading and the block family the block-anchored
+   *  one, whichever the macro's own text is. `null` for an ordinary query. */
+  both: BothFamilies | null;
 }
+interface BothFamilies {
+  pages: PageRow[];
+  pageTotal: number;
+  /** Why the other anchor's reading of the same conditions did not apply. */
+  pageNote: string | null;
+  blockNote: string | null;
+}
+/** The host block property the "Pages and blocks" choice is stored in. The anchor
+ *  itself lives only in the TQL text (`@page` / `@block`; an OG-form `{{query}}`
+ *  infers it), so there is no OG key to reuse; OG ignores an unknown `tine.*`
+ *  block property exactly as it ignores `tine.view`. */
+export const RESULT_KINDS_PROPERTY = "tine.result-kinds";
+export const PAGES_AND_BLOCKS = "pages-and-blocks";
 
 /** Present a query macro through the Rust parse/run/print seam. Every mounted,
  *  expanded block re-runs a graph-wide evaluation on each graph save; identical
@@ -251,6 +270,16 @@ export function QueryMacro(props: {
   const optionValues = createMemo(() => readEdnOptions(opts()));
   const titleOption = (): string | undefined => optionValues()?.title ?? undefined;
   const isAdvanced = () => source()?.kind === "advanced";
+  const bothKinds = (): boolean =>
+    hostProperties().some(([key, value]) => key.toLowerCase() === RESULT_KINDS_PROPERTY && value.trim().toLowerCase() === PAGES_AND_BLOCKS);
+  const setBothKinds = (on: boolean) => {
+    const blockId = props.blockId;
+    const node = blockId ? docNode(blockId) : undefined;
+    if (!blockId || !node || bothKinds() === on) return;
+    withUndoUnit(on ? "query:result-kinds:both" : "query:result-kinds:one", [node.page], () => {
+      setBlockProperty(blockId, RESULT_KINDS_PROPERTY, on ? PAGES_AND_BLOCKS : null);
+    });
+  };
 
   // GH #301: `<% current page %>` binds the FOCUSED pane's route page and re-runs
   // on navigation. Substitution is execution-only: the builder keeps the dyvar.
@@ -341,9 +370,10 @@ export function QueryMacro(props: {
     if (!query) return undefined;
     const context = executionContext();
     const search = friendlySearch();
-    const displayKey = JSON.stringify([graphEpoch(), query.query, query.view, context ?? null, search, collapsed()]);
+    const both = search === null && bothKinds();
+    const displayKey = JSON.stringify([graphEpoch(), query.query, query.view, context ?? null, search, collapsed(), both]);
     const key = `${displayKey}\0${collapsed() ? "collapsed" : dataRev()}`;
-    return { query, context, search, displayKey, key };
+    return { query, context, search, displayKey, key, both };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};
   const [operation] = createResource(runRequest, async (request): Promise<QueryOperation | undefined> => {
@@ -379,6 +409,7 @@ export function QueryMacro(props: {
         requestKey: request.displayKey,
         groups: [...grouped.values()], pages: null, diagnostics: [],
         report: null, search: hits.length === landed.value.hits.length ? landed.value : { ...landed.value, hits }, matchedTotal: null,
+        both: null,
       };
     }
     const landed = await readOwned(owner, sharedQueryResult(
@@ -388,15 +419,46 @@ export function QueryMacro(props: {
     ));
     if (landed.kind === "stale") return undefined;
     const result = landed.value;
+    let both: BothFamilies | null = null;
+    let twinGroups: RefGroup[] = [];
+    if (request.both) {
+      // The same conditions under the OTHER anchor, re-validated by the engine
+      // exactly as the sheet's anchor switch does (print, then parse): a leaf
+      // that does not apply there comes back as a diagnostic, never as a
+      // frontend guess (§7.4, D-14). Never flip the IR's anchor directly.
+      const other: Anchor = request.query.query.anchor === "page" ? "block" : "page";
+      const twin = await readOwned(owner, sharedQueryResult(scope, `ir-twin\0${request.key}`, async () => {
+        const printed = await backend().printQuery({ ...request.query.query, anchor: other }, request.query.view, "tql");
+        const reread = await backend().parseQuery(printed, "tql", hostProperties());
+        return backend().queryRun(reread.query, reread.view, request.context);
+      }));
+      if (twin.kind === "stale") return undefined;
+      const twinResult = twin.value;
+      const note = (diagnostics: Diagnostic[] | undefined): string | null => {
+        const live = (diagnostics ?? []).filter((d) => !d.disabled);
+        return live.length > 0 ? live.map((d) => d.message).join(" · ") : null;
+      };
+      const pagesResult = result.anchor === "page" ? result : twinResult;
+      const blocksResult = result.anchor === "block" ? result : twinResult;
+      twinGroups = blocksResult.anchor === "block" ? withoutHostBlock(blocksResult.groups, props.blockId) : [];
+      const pages = pagesResult.anchor === "page" ? pagesResult.pages : [];
+      both = {
+        pages,
+        pageTotal: pagesResult.anchor === "page" ? pagesResult.matched_total ?? pages.length : 0,
+        pageNote: note(pagesResult.diagnostics),
+        blockNote: note(blocksResult.diagnostics),
+      };
+    }
     return {
       requestKey: request.displayKey,
-      groups: result.anchor === "block" ? withoutHostBlock(result.groups, props.blockId) : [],
-      pages: result.anchor === "page" ? result.pages : null,
+      groups: both ? twinGroups : result.anchor === "block" ? withoutHostBlock(result.groups, props.blockId) : [],
+      pages: both ? null : result.anchor === "page" ? result.pages : null,
       diagnostics: result.diagnostics ?? [],
       report: result.report,
       statistics: result.statistics,
       search: null,
       matchedTotal: result.matched_total ?? null,
+      both,
     };
   });
   /** The last coherent answer; an errored run shows its error, not old rows. */
@@ -430,6 +492,8 @@ export function QueryMacro(props: {
     })));
   });
   const total = () => {
+    const both = displayed()?.both;
+    if (both) return both.pageTotal + groups().reduce((a, g) => a + g.blocks.length, 0);
     const pages = pageRows();
     if (pages) return displayed()?.matchedTotal ?? pages.length;
     if (friendlySearch() !== null || currentView() === "search") return searchPresentationHits().length;
@@ -939,6 +1003,7 @@ export function QueryMacro(props: {
                 paneDialect="tql"
                 blockId={props.blockId}
                 previewContext={executionContext}
+                both={props.blockId ? { on: bothKinds, set: setBothKinds } : undefined}
                 total={<span class="query-count">{total()}</span>}
                 onStale={setPaneStale}
                 onOpenChange={setSheetOpen}
@@ -977,6 +1042,41 @@ export function QueryMacro(props: {
                 {(statistics) => <QueryStatisticsSummary statistics={statistics()} />}
               </Show>
               <Switch>
+                <Match when={displayed()?.both}>
+                  {(both) => (
+                    <QueryResultSections
+                      pending={false}
+                      failure={null}
+                      families={[
+                        {
+                          kind: "page",
+                          hits: both().pages.length,
+                          hasMore: false,
+                          note: both().pageNote ?? undefined,
+                          body: (
+                            <QueryPageRows
+                              rows={both().pages}
+                              view={simpleView()}
+                              groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
+                              columns={runnable()?.view.columns}
+                            />
+                          ),
+                        },
+                        {
+                          kind: "block",
+                          hits: groups().reduce((a, g) => a + g.blocks.length, 0),
+                          hasMore: false,
+                          note: both().blockNote ?? undefined,
+                          body: (
+                            <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} />}>
+                              <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} />
+                            </Show>
+                          ),
+                        },
+                      ]}
+                    />
+                  )}
+                </Match>
                 <Match when={pageRows()}>
                   {(pages) => (
                     <Show when={pages().length > 0} fallback={empty()}>
