@@ -61,7 +61,7 @@ import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishedPermalink } from "./publishedPermalink";
 import { maybeShowDefenderHint } from "./defenderHint";
-import { graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owner } from "./owned";
+import { graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -682,7 +682,7 @@ export function App(): JSX.Element {
       ...backDeps,
       // No JS listener: the native owner stays registered and blocks Back
       // (with a throttled notice) rather than letting the WebView navigate.
-      setupFailed: (error) => console.warn("Android SafeBack listener unavailable; native owner remains blocking", error),
+      setupFailed: () => console.warn("Android SafeBack listener unavailable; native owner remains blocking"),
     });
     onCleanup(uninstall);
   });
@@ -693,10 +693,18 @@ export function App(): JSX.Element {
     if (!isTauri()) return;
     let disposed = false;
     let uninstall: () => void = () => {};
-    void backend().appPlatform().then((native) => {
+    void (async () => {
+      let native: Owned<"android" | "ios" | "desktop">;
+      try {
+        native = await readOwned(ownedWhen(() => !disposed), backend().appPlatform());
+      } catch {
+        console.warn("edge swipe: platform unavailable, left-edge gestures stay off");
+        return;
+      }
+      if (native.kind === "stale") return;
       // touchGesturePlatform() is the real mobile platform, or - only under the
       // TINE_E2E_TOUCH_GESTURES harness hook - the platform the journey asks for.
-      const platform = touchGesturePlatform() ?? native;
+      const platform = touchGesturePlatform() ?? native.value;
       if (disposed || platform === "desktop") return;
       uninstall = installEdgeSwipe({
         platform,
@@ -711,7 +719,7 @@ export function App(): JSX.Element {
         openDrawer: () => setLeftSidebarOpen(true),
         surface: () => document.querySelector<HTMLElement>(".app-container > .main-container"),
       });
-    }).catch(() => {});
+    })();
     onCleanup(() => { disposed = true; uninstall(); });
   });
 
