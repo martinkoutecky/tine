@@ -130,7 +130,7 @@ function MountedQueryGroup(props: QueryGroupProps): JSX.Element {
           >
             {page()}
           </div>
-          <LiveRefGroup page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb />
+          <LiveRefGroup page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb eager />
         </>
       )}
     </Show>

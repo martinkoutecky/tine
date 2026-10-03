@@ -96,7 +96,18 @@ async function withApp(index, fn) {
     try {
       await fn(browser);
     } catch (error) {
-      const state = await browser.execute(() => ({ text: document.body.innerText })).catch(() => null);
+      const state = await browser.execute(() => ({
+        text: document.body.innerText,
+        // The DOM of every query block: a group header without its row is diagnosed from this, not from the text.
+        queryBlocks: [...document.querySelectorAll(".page-blocks .query-block")].map((b) => b.outerHTML.slice(0, 6000)),
+        scroller: (() => {
+          const pane = document.querySelector(".main-content");
+          const r = pane?.getBoundingClientRect();
+          return pane ? { top: Math.round(r.top), bottom: Math.round(r.bottom), scrollTop: pane.scrollTop, scrollHeight: pane.scrollHeight } : null;
+        })(),
+        // Each query block's group shells against the pane's visible edge: a dormant group sits below `bottom`.
+        groups: [...document.querySelectorAll(".page-blocks .query-block .query-group")].map((g) => ({ top: Math.round(g.getBoundingClientRect().top), mounted: g.childElementCount > 0 })),
+      })).catch(() => ({}));
       fs.writeFileSync(`${ARTIFACTS}/failure-state-${index}.json`, `${JSON.stringify(state, null, 2)}\n`);
       try { await browser.saveScreenshot(`${ARTIFACTS}/failure-${index}.png`); } catch {}
       throw error;
@@ -127,6 +138,14 @@ async function waitForQuery(browser, index, predicate, what) {
   }, index), { timeout: 10_000, interval: 100, timeoutMsg: `query block ${index} did not mount` });
   let last = null;
   await browser.waitUntil(async () => {
+    // The block grows when its builder and answer land, which moves its result group back below the scroller's
+    // visible edge. A group only hydrates while it intersects the scroll pane (rootMargin does not extend past a
+    // scroll container's clip), so a single scroll before the answer lands can leave the row dormant: DOM dumps of
+    // the failing step-6 runs showed the group 30-100 px under the pane with the row absent, and scrollIntoView
+    // alone made it appear. Keep the block in view for as long as we are waiting, as a reader would.
+    await browser.execute((i) => {
+      document.querySelectorAll(".page-blocks .query-block")[i]?.scrollIntoView({ block: "center" });
+    }, index);
     last = await queryText(browser, index);
     return last !== null && predicate(last);
   }, { timeout: 20_000, interval: 150, timeoutMsg: "timed out" }).catch(() => {
