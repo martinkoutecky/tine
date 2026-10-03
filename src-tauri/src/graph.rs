@@ -495,7 +495,7 @@ pub(crate) async fn open_graph_window(
                     let _ = window.set_focus();
                 }
                 Err(error) => {
-                    state.graphs.write().unwrap().remove(&label);
+                    let _ = crate::state::release_window_graph(&state.graphs, &label);
                     return Err(format!("couldn't create graph window: {error}"));
                 }
             }

@@ -140,10 +140,35 @@ pub(crate) fn graph_meta(slot: &GraphSlot) -> tine_core::model::GraphMeta {
     )
 }
 
+/// Test probe run as a slot starts closing, with that slot's root, so a test
+/// can observe which locks are held while the Store closes.
+#[cfg(test)]
+#[allow(clippy::type_complexity)]
+pub(crate) static SLOT_CLOSE_PROBE: Mutex<Option<Box<dyn Fn(&Path) + Send>>> = Mutex::new(None);
+
 impl Drop for GraphSlot {
     fn drop(&mut self) {
+        #[cfg(test)]
+        if let Some(probe) = SLOT_CLOSE_PROBE.lock().unwrap().as_ref() {
+            probe(&self.root_key);
+        }
         self.store.close();
     }
+}
+
+/// Release the graph of a window that was destroyed (or never got built);
+/// true when no graph window remains. The Store closes (~200 ms for a Ready graph) after the
+/// registry lock is released, so other windows' graph commands do not wait on
+/// it (as `load_graph` does for a displaced graph). Cost: one registry write
+/// plus the released Store's close on the calling thread.
+pub(crate) fn release_window_graph(graphs: &RwLock<GraphRegistry>, window: &str) -> bool {
+    let (released, empty) = {
+        let mut registry = graphs.write().unwrap();
+        let released = registry.remove(window);
+        (released, registry.len() == 0)
+    };
+    drop(released);
+    empty
 }
 
 #[derive(Default)]
@@ -634,6 +659,58 @@ mod tests {
             .background_cancelled
             .load(std::sync::atomic::Ordering::Acquire));
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn a_destroyed_window_closes_its_graph_after_releasing_the_registry_lock() {
+        // Closing a Ready Store takes ~200 ms; under the registry write lock
+        // that stalled every other window's graph commands.
+        let base =
+            std::env::temp_dir().join(format!("tine-registry-destroyed-{}", std::process::id()));
+        let root = base.join("a");
+        let graphs = Arc::new(RwLock::new(GraphRegistry::default()));
+        graphs
+            .write()
+            .unwrap()
+            .bind("graph-2".into(), graph(&root))
+            .unwrap();
+        let observed: Arc<Mutex<Option<bool>>> = Arc::new(Mutex::new(None));
+        {
+            let (graphs, observed, root) = (graphs.clone(), observed.clone(), root.clone());
+            *SLOT_CLOSE_PROBE.lock().unwrap() = Some(Box::new(move |closing: &Path| {
+                if closing == root {
+                    *observed.lock().unwrap() = Some(graphs.try_write().is_ok());
+                }
+            }));
+        }
+        let empty = release_window_graph(&graphs, "graph-2");
+        *SLOT_CLOSE_PROBE.lock().unwrap() = None;
+        assert!(empty);
+        assert_eq!(
+            *observed.lock().unwrap(),
+            Some(true),
+            "the destroyed window's Store must close with the registry lock released"
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn window_graphs_are_released_only_through_the_lock_releasing_helper() {
+        // A slot removed inline (`graphs.write().unwrap().remove(..)`) closes
+        // its Store while the registry lock is held; exemplar
+        // state.rs release_window_graph.
+        for (file, source) in [
+            ("lib.rs", include_str!("lib.rs")),
+            ("graph.rs", include_str!("graph.rs")),
+            ("commands.rs", include_str!("commands.rs")),
+            ("watcher.rs", include_str!("watcher.rs")),
+        ] {
+            let compact: String = source.split_whitespace().collect();
+            assert!(
+                !compact.contains(".write().unwrap().remove("),
+                "{file} closes a graph under the registry lock; use state::release_window_graph"
+            );
+        }
     }
 
     #[test]

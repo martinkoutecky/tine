@@ -751,8 +751,7 @@ pub fn run() {
                     }
                 }
                 tauri::WindowEvent::Destroyed => {
-                    state.graphs.write().unwrap().remove(label);
-                    if state.graphs.read().unwrap().len() == 0 {
+                    if state::release_window_graph(&state.graphs, label) {
                         #[cfg(target_os = "linux")]
                         platform::kill_webkit_children();
                         app.exit(0);
