@@ -330,6 +330,7 @@ mod diagnostics;
 mod fold_save_tests;
 #[cfg(test)]
 mod page_open_tests;
+mod page_read;
 mod snapshot;
 
 impl ChangeFeed {
@@ -1851,70 +1852,12 @@ impl Store {
         let (id, path, entry) = self.page_target(id)?;
         let canonical = self.canonical_claim(&entry);
         let read = self.page_read(id, self.parse_page(&path, &entry, canonical)?)?;
-        let (id, rev) = (&read.id, &read.rev);
         if self.graph.cache_generation() != before_generation
             && !matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_))
         {
-            let known = self
-                .changes
-                .snapshot
-                .read()
-                .unwrap()
-                .as_ref()
-                .is_some_and(|snapshot| {
-                    snapshot
-                        .claimants
-                        .get(&(
-                            entry.kind == PageKind::Journal,
-                            tine_core::refs::page_key(&entry.name),
-                        ))
-                        .is_some_and(|claimants| {
-                            claimants.iter().any(|claimant| claimant.path == path)
-                        })
-                });
-            let raced = self.watch.note_own(&[(id.file(), Some(rev.clone()))]);
-            self.changes.publish(
-                Origin::External,
-                vec![(
-                    id.file(),
-                    if known {
-                        ChangeKind::Modified
-                    } else {
-                        ChangeKind::Created
-                    },
-                    Some(rev.clone()),
-                )],
-                false,
-                vec![(id.file(), entry.kind, entry.name)],
-            );
-            self.watch.reconcile_raced(&raced);
+            self.publish_observed(&read, &path, entry);
         }
         Ok(read)
-    }
-
-    /// The validated page file `id` names: its disk spelling, path and
-    /// listing entry. Refuses a symlinked page or one outside the areas.
-    fn page_target(&self, id: &PageId) -> Result<(PageId, PathBuf, PageEntry), StoreError> {
-        if self.as_page(&id.file()).is_none() {
-            return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
-        }
-        let id = self
-            .disk_spelling_for_case_alias(id)
-            .unwrap_or_else(|| id.clone());
-        // v0.6.5's page walker never indexes a symlinked page file (it could
-        // expose a file outside the graph), so no listing hands out such an
-        // id; refuse one here too. Ancestors must stay inside the area. The
-        // read itself uses the lexical path, which is the page's identity.
-        let path = self.graph.root.join(id.as_str());
-        self.path_for_os_handoff(&id.file(), false)?;
-        if fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
-            return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
-        }
-        let entry = self
-            .graph
-            .entry_for_path(&path)
-            .ok_or_else(|| StoreError::InvalidTarget(id.as_str().to_owned()))?;
-        Ok((id, path, entry))
     }
 
     /// Parse one page file: the canonical claimant through the cache (which
@@ -1959,24 +1902,6 @@ impl Store {
             }
         })?
         .ok_or(StoreError::NotFound)
-    }
-
-    /// A parsed page as a read: its revision and read-only state.
-    fn page_read(&self, id: PageId, mut doc: PageDto) -> Result<PageRead, StoreError> {
-        let rev = FileRev(doc.rev.clone().ok_or(StoreError::NotFound)?);
-        let read_only = if self.config().problem.is_some() {
-            doc.read_only = true;
-            Some("config.edn could not be read; graph is read-only".to_owned())
-        } else {
-            doc.read_only
-                .then(|| "Org file does not round-trip".to_owned())
-        };
-        Ok(PageRead {
-            id,
-            doc,
-            rev,
-            read_only,
-        })
     }
 
     /// Read an ordinary page by effective name, or a journal by its file
