@@ -67,6 +67,28 @@ describe("crash-surviving drafts (og ADR 0061)", () => {
     expect(records()).toEqual([]);
   });
 
+  it("keeps a draft while a failed save awaits its automatic retry, and retires it when the retry saves", async () => {
+    // Master 620b88da596c retries a transient save failure before reporting it;
+    // a crash during that window must still leave the crash-surviving copy.
+    let calls = 0;
+    vi.mocked(backend().savePages).mockImplementation(async (entries) => {
+      calls += 1;
+      if (calls === 1) throw new Error("disk full");
+      if (calls === 2) await new Promise((resolve) => setTimeout(resolve, REFRESH_MS + 200));
+      return { ok: entries.map((_, i) => `saved-${i}`) };
+    });
+    setRaw("p1", "typed");
+    await vi.advanceTimersByTimeAsync(450 + 100 + REFRESH_MS + 50);
+    expect(calls).toBe(2);
+    expect(records()).toHaveLength(1);
+    expect(records()[0]).toMatchObject({ reason: "save-failed", page_name: "P" });
+    await settle();
+    await settle();
+    expect(isDirty("P")).toBe(false);
+    expect(records()).toEqual([]);
+    expect(toasts().filter((toast) => toast.kind === "error")).toEqual([]);
+  });
+
   it("keeps a conflicted page's draft until the user resolves it", async () => {
     setRaw("p1", "mine");
     markConflict("P");

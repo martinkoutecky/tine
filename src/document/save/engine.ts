@@ -3,7 +3,7 @@ import { pageByName, setPageId, doc } from "../model";
 import { createSignal } from "solid-js";
 import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
 import { type ClipboardSourcePage } from "../../clipboard";
-import { captureBinding, type Binding, stillBound } from "../../binding";
+import { captureBinding, clearOnBindingInvalidated, type Binding, stillBound } from "../../binding";
 import { pageToDto, appendAliasDraft, aliasDraftBlocks, replaceLandedAliasDraft } from "../convert";
 import type { BlockDto, PageDto, PageKind } from "../../types";
 import { backend, saveOnePage, type SavePageEntry } from "../../backend";
@@ -143,7 +143,9 @@ type DraftKeeper = (name: string, atRisk: boolean) => void;
 let draftKeeper: DraftKeeper | null = null;
 export function installDraftKeeper(keeper: DraftKeeper | null) { draftKeeper = keeper; }
 function noteRisk(name: string) {
-  draftKeeper?.(name, !!conflictReasons()[name] || lastSaveFailure.has(name));
+  // A save awaiting its automatic retry is at risk too: a crash in that
+  // window must still leave the crash-surviving copy (I-2).
+  draftKeeper?.(name, !!conflictReasons()[name] || lastSaveFailure.has(name) || transientSaveFailures.has(name));
 }
 /** A watcher observation of a page holding unsaved edits (og I1c, master
  *  c68c0b6e7; Direct Files audit F17). `observedRev` is the file's revision now
@@ -258,6 +260,12 @@ function reportSaveFailure(name: string, family: string, message: string) {
 const SAVE_RETRY_DELAYS_MS = [100, 300] as const;
 const transientSaveFailures = new Map<string, number>();
 const saveRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+// I-21: a pending automatic retry belongs to the binding whose save failed.
+clearOnBindingInvalidated(() => {
+  for (const timer of saveRetryTimers.values()) clearTimeout(timer);
+  saveRetryTimers.clear();
+  transientSaveFailures.clear();
+});
 /** R-CREATE-UNREADABLE-OWNER (docs/storage-contract.md): the backend refused to
  * create `name` because a file it cannot read may already be that page. Name
  * the file so the user can repair or move it; the edits stay in the editor. */
@@ -282,6 +290,7 @@ function scheduleSaveRetry(name: string, token: number): boolean {
     return false;
   }
   transientSaveFailures.set(name, failures);
+  if (failures === 1) noteRisk(name);
   const prior = saveRetryTimers.get(name);
   if (prior !== undefined) clearTimeout(prior);
   saveRetryTimers.set(name, setTimeout(() => {
@@ -291,8 +300,9 @@ function scheduleSaveRetry(name: string, token: number): boolean {
   return true;
 }
 function forgetSaveFailure(name: string) {
+  const retrying = transientSaveFailures.has(name);
   clearSaveRetry(name);
-  if (lastSaveFailure.delete(name)) noteRisk(name);
+  if (lastSaveFailure.delete(name) || retrying) noteRisk(name);
   const toast = saveFailureToasts.get(name);
   saveFailureToasts.delete(name);
   if (toast !== undefined) dismissToast(toast);
