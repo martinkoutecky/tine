@@ -1442,6 +1442,18 @@ export function closeWelcome() {
 
 // Full-screen image lightbox (click an inline image to zoom).
 export const [lightbox, setLightbox] = createSignal<string | null>(null);
+// The images the viewer can page through (GH #501), starting at the opened one,
+// and which of them is showing. `lightbox()` stays the single source of truth for
+// the displayed src; when it does not match the gallery slot (a plain
+// setLightbox(src) caller) the viewer shows just that image.
+export const [lightboxGallery, setLightboxGallery] = createSignal<string[]>([]);
+export const [lightboxIndex, setLightboxIndex] = createSignal(0);
+export function openLightbox(src: string, gallery?: string[]) {
+  const list = gallery && gallery.length > 0 ? gallery : [src];
+  setLightboxGallery(list);
+  setLightboxIndex(0);
+  setLightbox(src);
+}
 
 // Expanded audio player overlay (the "Expand" button on an inline audio embed):
 // a dimmed, ~90%-wide panel with a waveform scrubber + skip controls. `url` is the

@@ -92,7 +92,7 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   Logseq's `{:width …}` brace, so it round-trips.
 - ⊕ **Audio ⤢ Expand** opens a wide overlay player — a **waveform scrubber** with
   ±5s / ±15s skip, play/pause, speed, and a time read-out.
-- Click an image for a **lightbox** (Esc / click-away to close; right-click / Copy
+- Click an image for a **lightbox** (Esc / click-away to close; on a phone a tap toggles the buttons and a drag up or down closes; right-click / Copy
   puts it on the clipboard).
 - Video/audio play **inline** where the codec is supported, else fall back to a
   click-to-open chip that launches the OS default player (Tine scrubs its own render

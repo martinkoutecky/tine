@@ -861,6 +861,9 @@ pub struct GraphMeta {
     pub favorites: Vec<String>,
     /// The page holding the Favorites arrangement (`:tine/favorites-page`).
     pub favorites_page: Option<String>,
+    /// `:mobile {:gestures/disabled-in-block-with-tags [..]}` (OG): tags that
+    /// switch the block swipe gestures off inside a block carrying them.
+    pub mobile_gestures_disabled_in_block_with_tags: Vec<String>,
     /// Effective journal title format (`:journal/page-title-format`, default
     /// `MMM do, yyyy`) — so the frontend formats "today" to match the backend.
     pub journal_page_title_format: String,
@@ -971,6 +974,9 @@ impl GraphMeta {
             default_home: config.default_home.clone(),
             favorites: config.favorites.clone(),
             favorites_page: config.favorites_page.clone(),
+            mobile_gestures_disabled_in_block_with_tags: config
+                .mobile_gestures_disabled_in_block_with_tags
+                .clone(),
             journal_page_title_format: journal_format.title_format().to_string(),
             journal_file_name_format: journal_format.file_format().to_string(),
             preferred_format: config.preferred_format.ext().to_string(),

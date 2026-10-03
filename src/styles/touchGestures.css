@@ -53,3 +53,21 @@ html[data-platform="android"] :is(.page-ref, .tag) {
   top: auto;
   bottom: calc(100% + 4px);
 }
+
+/* Block swipe (GH #501, src/blockSwipe.ts): the row owns horizontal pans, the
+   page keeps vertical scrolling and pinch. Rows that contain their own
+   sideways scroller (code, tables, sheets) keep full native panning instead:
+   touch-action intersects down the tree, so a pan-y ancestor would freeze the
+   inner scroller. The swipe's own disabled zones already skip those targets. */
+html[data-touch-gestures] .block-main:not(:has(.code-block, .md-table-wrap, .sheet-scroll)) {
+  touch-action: pan-y pinch-zoom;
+}
+/* Swipe feedback: the row follows the finger a little and tints by the action
+   a release would run. Presentation only; the action is decided in blockSwipe.ts. */
+html[data-touch-gestures] .block-main[data-swipe] {
+  transform: translateX(calc(var(--swipe-dx, 0px) * 0.35));
+  transition: none;
+}
+html[data-touch-gestures] .block-main[data-swipe="indent"] { background: color-mix(in srgb, var(--accent, #4a90d9) 12%, transparent); }
+html[data-touch-gestures] .block-main[data-swipe="outdent"] { background: color-mix(in srgb, var(--accent, #4a90d9) 12%, transparent); }
+html[data-touch-gestures] .block-main[data-swipe="actions"] { background: color-mix(in srgb, var(--accent, #4a90d9) 22%, transparent); }

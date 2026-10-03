@@ -46,14 +46,14 @@ import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
-import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer } from "./ui";
+import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
 installAliasDraftRouteHandler((name, kind) => openPage(name, kind));
 import { pushToast } from "./toasts";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
-import { dismissTopTransient } from "./transientLayers";
+import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
 import { flushAll, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
@@ -61,7 +61,7 @@ import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishedPermalink } from "./publishedPermalink";
 import { maybeShowDefenderHint } from "./defenderHint";
-import { graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owner } from "./owned";
+import { graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -75,7 +75,7 @@ import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
 import { initDebug, dbg, recordDiagnostic, recordSessionActive } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
-import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls } from "./nativeChrome";
+import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls, touchGesturePlatform } from "./nativeChrome";
 import {
   PaneContext,
   closePane,
@@ -93,7 +93,9 @@ import {
 import { paneSel, samePaneTarget } from "./paneSelect";
 import { SurfaceContext } from "./components/Block";
 import { endEdit } from "./editorController";
-import { exitAndroidActivity, installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
+import { createAndroidRootCloseCoordinator, exitAndroidActivity, installAndroidBackHandler } from "./androidBack";
+import { appBackAvailable, dispatchAppBack } from "./appBack";
+import { installEdgeSwipe } from "./edgeSwipe";
 import { createSafeCloseCoordinator } from "./safeClose";
 import { openUnsavedRecovery } from "./unsavedRecovery";
 import { UnsavedRecovery } from "./components/UnsavedRecovery";
@@ -149,12 +151,19 @@ export const safeClose = createSafeCloseCoordinator({
 
 setUpdateExitGuard(safeClose);
 
+// Master parity (AndroidRootClosePhase): once the frontend close is accepted the
+// graph is durable, a failed activity exit keeps the transition shield, and the
+// next Back retries only the exit, never the flush.
+const androidRootClose = createAndroidRootCloseCoordinator(safeClose, {
+  finishActivity: exitAndroidActivity,
+  finishActivityFailed: () => pushToast(
+    "Tine couldn't close the Android activity. Tap Back to retry closing.",
+    "error",
+  ),
+});
+
 async function closeAndroidRootSafely(): Promise<void> {
-  await requestAndroidRootClose(
-    safeClose,
-    () => exitAndroidActivity(),
-    () => pushToast("Couldn't close the app. Your graph remains open.", "error"),
-  );
+  await androidRootClose.request();
 }
 
 /** Capture the actual live Journals surfaces that justified a watcher restart.
@@ -650,30 +659,75 @@ export function App(): JSX.Element {
   // into the backend log so a remote "bad startup" is diagnosable in one file.
   onMount(() => void initDebug());
 
-  // AppPlugin is the single Android native Back owner.  A drawer/transient is
-  // never represented by synthetic history; route history remains the fallback.
+  // ONE Back ladder (src/appBack.ts) serves both Back gestures: Android's
+  // native SafeBack listener (below) and the iOS left-edge swipe (installed
+  // after it).  A drawer/transient is never represented by synthetic history;
+  // route history remains the fallback.
+  const backDeps = {
+    dismissTransient: () => dismissTopTransient("back"),
+    dismissDrawer: () => dismissMobileDrawer("back"),
+    restoreDrawerFocus: () => restoreDrawerFocus("back"),
+    historyBack: () => {
+      if (!canGoBack()) return false;
+      goBack();
+      return true;
+    },
+    closeRoot: () => { void closeAndroidRootSafely(); },
+  };
   onMount(() => {
     if (!isTauri()) return;
     const uninstall = installAndroidBackHandler({
       platform: () => backend().appPlatform(),
+      // The permanent native owner (MainActivity's OnBackPressedCallback +
+      // SafeBackPlugin) forwards Back here.  AppPlugin's own listener is NOT
+      // used: with none registered Tauri falls back to WebView.goBack()/finish,
+      // which bypasses the ladder (master 61a663291 and successors).
       subscribe: async (handler) => {
-        const { onBackButtonPress } = await import("@tauri-apps/api/app");
-        return onBackButtonPress(handler);
+        const { addPluginListener } = await import("@tauri-apps/api/core");
+        return addPluginListener("safe-back", "android-safe-back", handler);
       },
-      dismissTransient: () => dismissTopTransient("back"),
-      dismissDrawer: () => dismissMobileDrawer("back"),
-      restoreDrawerFocus: () => restoreDrawerFocus("back"),
-      historyBack: () => {
-        if (!canGoBack()) return false;
-        goBack();
-        return true;
-      },
-      closeRoot: () => { void closeAndroidRootSafely(); },
-      // No JS listener means the inspected AppPlugin retains its native WebView
-      // history/activity fallback. Do not install a competing recovery owner.
-      setupFailed: () => console.warn("Android Back listener unavailable; using native fallback"),
+      ...backDeps,
+      // No JS listener: the native owner stays registered and blocks Back
+      // (with a throttled notice) rather than letting the WebView navigate.
+      setupFailed: () => console.warn("Android SafeBack listener unavailable; native owner remains blocking"),
     });
     onCleanup(uninstall);
+  });
+
+  // iOS Back and the left-drawer pull share ONE left-edge recognizer
+  // (src/edgeSwipe.ts); the ladder it runs on commit is the same `backDeps`.
+  onMount(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    let uninstall: () => void = () => {};
+    void (async () => {
+      let native: Owned<"android" | "ios" | "desktop">;
+      try {
+        native = await readOwned(ownedWhen(() => !disposed), backend().appPlatform());
+      } catch {
+        console.warn("edge swipe: platform unavailable, left-edge gestures stay off");
+        return;
+      }
+      if (native.kind === "stale") return;
+      // touchGesturePlatform() is the real mobile platform, or - only under the
+      // TINE_E2E_TOUCH_GESTURES harness hook - the platform the journey asks for.
+      const platform = touchGesturePlatform() ?? native.value;
+      if (disposed || platform === "desktop") return;
+      uninstall = installEdgeSwipe({
+        platform,
+        backAvailable: () => appBackAvailable({
+          hasTransient: () => topTransientLayer() !== undefined,
+          hasDrawer: () => activeDrawer() !== null,
+          canGoBack,
+        }),
+        drawerOpenable: () => mobileDrawerMode() && activeDrawer() === null,
+        // The edge swipe never closes the app: iOS has no root rung.
+        back: () => { dispatchAppBack({ ...backDeps, closeRoot() {} }); },
+        openDrawer: () => setLeftSidebarOpen(true),
+        surface: () => document.querySelector<HTMLElement>(".app-container > .main-container"),
+      });
+    })();
+    onCleanup(() => { disposed = true; uninstall(); });
   });
 
   onMount(async () => {

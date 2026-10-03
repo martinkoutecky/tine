@@ -25,7 +25,7 @@ function meta(root: string): GraphMeta {
     logbook_with_second_support: true,
     logbook_enabled_in_timestamped_blocks: false,
     logbook_enabled_in_all_blocks: false,
-    guide_announced: true,
+    guide_announced: true, mobile_gestures_disabled_in_block_with_tags: [],
   };
 }
 

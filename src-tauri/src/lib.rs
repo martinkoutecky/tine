@@ -4,6 +4,7 @@
 
 mod android_folder_picker;
 mod android_media;
+mod android_safe_back;
 mod android_system_bars;
 mod app_identity;
 mod backup;
@@ -119,6 +120,20 @@ const MAIN_WINDOW_REVEAL_FALLBACK_MS: u64 = 3_000;
 /// or later graph windows.
 fn force_mobile_drawers_e2e() -> bool {
     std::env::var("TINE_E2E_FORCE_MOBILE_DRAWERS").as_deref() == Ok("1")
+}
+
+/// Test-only: `TINE_E2E_TOUCH_GESTURES=ios|android` makes the frontend's touch
+/// gesture layer (left-edge swipe, block swipe, image viewer) behave as on that
+/// OS inside a desktop WebKitGTK process, so the native E2E can drive real
+/// synthetic touch sequences through the app (GH #501, #492). Anything else,
+/// including unset, is `None`. The frontend reads it through
+/// `touchGesturePlatform()` and nothing else changes platform identity.
+fn e2e_touch_gestures_platform() -> Option<&'static str> {
+    match std::env::var("TINE_E2E_TOUCH_GESTURES").as_deref() {
+        Ok("ios") => Some("ios"),
+        Ok("android") => Some("android"),
+        _ => None,
+    }
 }
 
 fn apply_mobile_drawer_e2e_window_policy(
@@ -646,6 +661,13 @@ pub fn run() {
         crate::graph::app_platform()
     ));
 
+    let builder = match e2e_touch_gestures_platform() {
+        Some(kind) => builder.append_invoke_initialization_script(format!(
+            "globalThis.__TINE_E2E_TOUCH_GESTURES__ = {kind:?};"
+        )),
+        None => builder,
+    };
+
     // The backend's zone offset at launch, so the frontend's first "today" is
     // already the backend's (GH #607); `local_clock` keeps it current.
     let (offset_minutes, unix_ms) = tine_core::date::JournalDate::local_utc_offset_now();
@@ -712,6 +734,12 @@ pub fn run() {
     let builder = builder.plugin(android_media::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_system_bars::init());
+    // Android's permanent Back owner (see android_safe_back.rs). The other four
+    // shipped targets (Linux, Windows, macOS, iOS) have no native Back owner by design:
+    // desktop has no Back gesture and iOS Back is the JS edge swipe
+    // (src/edgeSwipe.ts). src/androidBack.test.ts pins this set.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_safe_back::init());
     // Mobile has no xdg-open/open/explorer, so `open_external` routes URL opens
     // through this plugin's platform Intent instead (GH #49). Windows uses it
     // for ShellExecute, because `explorer <url>` opens a File Explorer window
@@ -1177,6 +1205,29 @@ mod platform_lifecycle_guard_tests {
                 "\"globalThis.__TINE_PLATFORM__ = {:?};\",\n        crate::graph::app_platform()"
             ),
             "GH #446: lib.rs must inject __TINE_PLATFORM__ from crate::graph::app_platform()"
+        );
+    }
+
+    /// GH #501/#492: the native touch-gesture E2E asks for a platform through
+    /// `TINE_E2E_TOUCH_GESTURES`; it reaches the frontend ONLY as
+    /// `__TINE_E2E_TOUCH_GESTURES__`, never as `__TINE_PLATFORM__`, so desktop
+    /// chrome keeps its real identity.
+    #[test]
+    fn e2e_touch_gesture_override_never_rewrites_platform_identity() {
+        let source = lib_source();
+        assert!(
+            source.contains("globalThis.__TINE_E2E_TOUCH_GESTURES__ = {kind:?};")
+                && source.contains("std::env::var(\"TINE_E2E_TOUCH_GESTURES\")"),
+            "lib.rs must inject the touch-gesture E2E override as __TINE_E2E_TOUCH_GESTURES__"
+        );
+        let start = source
+            .find("match e2e_touch_gestures_platform() {")
+            .expect("override injection block");
+        let block = &source[start..];
+        let block = &block[..block.find("None => builder,").expect("block end")];
+        assert!(
+            !block.contains("__TINE_PLATFORM__"),
+            "the E2E override must not set __TINE_PLATFORM__ (GH #446)"
         );
     }
 

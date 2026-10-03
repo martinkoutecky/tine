@@ -1,4 +1,5 @@
 import type { SafeCloseCoordinator, SafeClosePrepareResult } from "./safeClose";
+import { dispatchAppBack, type AppBackDeps, type AppBackDisposition } from "./appBack";
 import { ownedWhen, readOwned, readOwnedResource } from "./owned";
 
 export interface AndroidBackPayload {
@@ -22,38 +23,17 @@ export async function exitAndroidActivity(
   await exit(0);
 }
 
-export interface AndroidBackDispatchDeps {
-  dismissTransient(): boolean;
-  dismissDrawer(): boolean;
-  restoreDrawerFocus(): void;
-  /** Whether Tine actually went back. The WebView's own `canGoBack` cannot
-   * answer this: the mobile router pushes same-URL entries, so its history
-   * moves without the address or the entry count changing, and entries that
-   * are not Tine's can sit in the same stack. Only the router knows. */
-  historyBack(): boolean;
-  closeRoot(): void;
-}
+/** Kept as names for the Android-facing seam; the ladder itself lives in
+ * src/appBack.ts and is shared with the iOS edge swipe. */
+export type AndroidBackDispatchDeps = AppBackDeps;
+export type AndroidBackDisposition = AppBackDisposition;
 
-export type AndroidBackDisposition = "transient" | "drawer" | "history" | "root";
-
-/** Synchronous ordering matters: a hardware Back gesture selects exactly one
- * rung and never synthesizes a KeyboardEvent or a second router back action.
- * The history rung is taken iff the router moved (master 07cb27262); the
- * native `canGoBack` payload is not consulted. */
+/** The native `canGoBack` payload is not consulted (master 07cb27262). */
 export function dispatchAndroidBack(
   _payload: AndroidBackPayload,
   deps: AndroidBackDispatchDeps,
 ): AndroidBackDisposition {
-  if (deps.dismissTransient()) return "transient";
-  if (deps.dismissDrawer()) {
-    deps.restoreDrawerFocus();
-    return "drawer";
-  }
-  // `canGoBack` was true on a phone whose router had nothing to pop, so Back
-  // landed on the history rung and silently did nothing, forever.
-  if (deps.historyBack()) return "history";
-  deps.closeRoot();
-  return "root";
+  return dispatchAppBack(deps);
 }
 
 export interface AndroidBackInstallDeps extends AndroidBackDispatchDeps {
@@ -62,7 +42,7 @@ export interface AndroidBackInstallDeps extends AndroidBackDispatchDeps {
   setupFailed?(error: unknown): void;
 }
 
-/** On Android, register one AppPlugin Back listener for this installation.
+/** On Android, register one SafeBack listener (the native owner's event) for this installation.
  * Dispatch dismisses a transient, then a drawer, then router history, then
  * requests root close. Other platforms install nothing. Setup failures call
  * setupFailed when supplied and do not reject through the returned cleanup
@@ -91,23 +71,90 @@ export function installAndroidBackHandler(deps: AndroidBackInstallDeps): () => v
   };
 }
 
-export type AndroidRootCloseResult = SafeClosePrepareResult | "exit_requested" | "exit_failed";
+export type AndroidRootCloseResult =
+  | SafeClosePrepareResult
+  | "exit_requested"
+  | "exit_failed";
 
-/** Root close shares the desktop coordinator.  A failed native invoke resets
- * the accepted transaction so the next hardware Back can safely retry. */
+/** Once frontend preparation is accepted the graph is durable, and the only
+ * remaining step is the activity exit. Direct Files has no native runtime to
+ * drain before it (ADR 0066). */
+export enum AndroidRootClosePhase {
+  Idle = "Idle",
+  PreparingFrontend = "PreparingFrontend",
+  PreparedAwaitingExit = "PreparedAwaitingExit",
+}
+
+interface AndroidRootCloseState {
+  phase: AndroidRootClosePhase;
+}
+
+export interface AndroidRootCloseCoordinator {
+  request(): Promise<AndroidRootCloseResult>;
+  phase(): AndroidRootClosePhase;
+}
+
+/** Android's root close: the shared safe-close transaction, then the activity
+ * exit. A failed exit keeps the transition shield, and a later Back retries
+ * only the exit, never the flush. */
 export async function requestAndroidRootClose(
   safeClose: SafeCloseCoordinator,
-  exit: () => Promise<void>,
-  exitFailed: () => void,
+  state: AndroidRootCloseState,
+  finishActivity: () => Promise<void>,
+  finishActivityFailed: () => void,
 ): Promise<AndroidRootCloseResult> {
-  const prepared = await safeClose.prepare();
-  if (prepared !== "accepted") return prepared;
+  if (state.phase === AndroidRootClosePhase.PreparedAwaitingExit) {
+    return requestAndroidActivityExit(finishActivity, finishActivityFailed);
+  }
+  if (state.phase !== AndroidRootClosePhase.Idle) return "in_flight";
+
+  state.phase = AndroidRootClosePhase.PreparingFrontend;
+  let prepared: SafeClosePrepareResult;
   try {
-    await exit();
+    prepared = await safeClose.prepare();
+  } catch {
+    // SafeClose itself releases its shield in its finally block. Keep this
+    // coordinator retryable too if a frontend dependency throws unexpectedly.
+    state.phase = AndroidRootClosePhase.Idle;
+    return "rejected";
+  }
+  if (prepared !== "accepted") {
+    state.phase = AndroidRootClosePhase.Idle;
+    return prepared;
+  }
+
+  state.phase = AndroidRootClosePhase.PreparedAwaitingExit;
+  return requestAndroidActivityExit(finishActivity, finishActivityFailed);
+}
+
+async function requestAndroidActivityExit(
+  finishActivity: () => Promise<void>,
+  finishActivityFailed: () => void,
+): Promise<"exit_requested" | "exit_failed"> {
+  try {
+    await finishActivity();
     return "exit_requested";
   } catch {
-    safeClose.reset();
-    exitFailed();
+    // The graph is already durable. Keep the transition shield in place: a
+    // later Back must only retry this activity-exit handoff.
+    finishActivityFailed();
     return "exit_failed";
   }
+}
+
+export function createAndroidRootCloseCoordinator(
+  safeClose: SafeCloseCoordinator,
+  {
+    finishActivity,
+    finishActivityFailed,
+  }: {
+    finishActivity: () => Promise<void>;
+    finishActivityFailed: () => void;
+  },
+): AndroidRootCloseCoordinator {
+  const state: AndroidRootCloseState = { phase: AndroidRootClosePhase.Idle };
+  return {
+    request: () => requestAndroidRootClose(safeClose, state, finishActivity, finishActivityFailed),
+    phase: () => state.phase,
+  };
 }

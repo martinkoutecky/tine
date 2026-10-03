@@ -76,6 +76,21 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     }
   });
 
+  // The long-left swipe opens this menu on the selected block as the analogue of
+  // OG's mobile action bar (frontend/mobile/action_bar.cljs): Copy, Cut, Delete,
+  // Copy ref and (iPad) Right sidebar. Card (SRS) and Copy url have no Tine
+  // counterpart by decision (docs/BACKLOG.md: no flashcards; Tine registers no
+  // URL scheme), so they are deliberately absent here.
+  it("offers every OG action-bar action Tine can honour (Copy, Cut, Delete, Copy ref, Right sidebar)", () => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "leaf");
+    expect(menuLabels()).toEqual(
+      expect.arrayContaining(["Copy block", "Cut block", "Delete block", "Copy block ref", "Open in sidebar"]),
+    );
+    dispose();
+  });
+
   it("offers block Properties… only on a writable block, opening the block scope (GH #164)", () => {
     load(true);
     const dispose = mount(() => <ContextMenu />);

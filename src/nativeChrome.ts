@@ -31,6 +31,11 @@ declare global {
   // Set by Tauri before frontend code runs (src-tauri/src/lib.rs), from the
   // build's own `app_platform()`. See platformKind below.
   var __TINE_PLATFORM__: "android" | "ios" | "desktop" | undefined;
+  // E2E-only (src-tauri/src/lib.rs, TINE_E2E_TOUCH_GESTURES): makes the touch
+  // gesture layer (edge swipe, block swipe, image viewer) behave as on that
+  // OS in a desktop WebKitGTK process. It changes nothing else: layout,
+  // keyboard chrome and platform branches still see a desktop.
+  var __TINE_E2E_TOUCH_GESTURES__: "android" | "ios" | undefined;
 }
 
 export type PlatformKind = "android" | "ios" | "desktop";
@@ -65,6 +70,16 @@ export const platformKind: PlatformKind = detectPlatformKind();
  *  True on iPad too; ask `isSinglePaneShell()` for phone-shaped layout. */
 export const isMobilePlatform: boolean = platformKind !== "desktop";
 
+/** Which touch OS the gesture layer (edge swipe, block swipe, image viewer)
+ *  should behave as: the real mobile platform, or - only in the native E2E
+ *  harness - the platform named by TINE_E2E_TOUCH_GESTURES. Null on desktop.
+ *  Read at call time so a test can set the global. O(1). */
+export function touchGesturePlatform(): "android" | "ios" | null {
+  if (platformKind !== "desktop") return platformKind;
+  const forced = typeof globalThis !== "undefined" ? globalThis.__TINE_E2E_TOUCH_GESTURES__ : undefined;
+  return forced === "android" || forced === "ios" ? forced : null;
+}
+
 /** Stamp the resolved platform on <html> so CSS can ask the same question the
  *  TypeScript does. Styling that depends on touch input — suppressing the
  *  native long-press selection under Tine's own long-press menu, GH #452 —
@@ -72,6 +87,10 @@ export const isMobilePlatform: boolean = platformKind !== "desktop";
 export function installPlatformAttribute(): void {
   if (typeof document === "undefined") return;
   document.documentElement.setAttribute("data-platform", platformKind);
+  const touch = touchGesturePlatform();
+  // CSS for the gesture layer (touch-action on block rows) keys on this, which
+  // also covers the E2E override that data-platform deliberately ignores.
+  if (touch) document.documentElement.setAttribute("data-touch-gestures", touch);
 }
 
 // macOS detection: WKWebView's UA contains "Macintosh"/"Mac OS X". navigator.platform

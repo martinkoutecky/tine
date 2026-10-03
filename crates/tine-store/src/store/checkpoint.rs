@@ -177,6 +177,7 @@ pub(crate) fn config_key(config: &tine_core::config::Config) -> [u8; 32] {
         default_journal_template: _,
         default_home: _,
         favorites: _,
+        mobile_gestures_disabled_in_block_with_tags: _,
         macros: _,
         enable_timetracking: _,
         show_brackets: _,

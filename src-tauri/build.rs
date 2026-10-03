@@ -67,5 +67,19 @@ fn main() {
         "cargo:rustc-env=TINE_RELEASE_IDENTIFIER={}",
         text(release, "identifier")
     );
-    tauri_build::build()
+    // `safe-back` is an INLINED plugin (src/android_safe_back.rs): it lives in
+    // this crate, so nothing generates an ACL manifest for it unless this build
+    // script does. Without one, `plugin:safe-back|registerListener` is refused
+    // before it reaches Android, the frontend's Back listener never registers,
+    // and the native owner consumes every gesture with nowhere to send it —
+    // invisible from Rust and from the emulator alike (master 61a663291 line).
+    tauri_build::try_build(
+        tauri_build::Attributes::new().plugin(
+            "safe-back",
+            tauri_build::InlinedPlugin::new()
+                .commands(&["registerListener", "removeListener"])
+                .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
+        ),
+    )
+    .expect("failed to run tauri-build");
 }

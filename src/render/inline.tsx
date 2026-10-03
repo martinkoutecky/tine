@@ -12,7 +12,7 @@ import { openPage, openPageInNewTab, openPageAtBlock, openInNewTab, focusBlock }
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
-import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, showBrackets } from "../ui";
+import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { reportLinkOpenFailure } from "../components/ExternalLink";
@@ -57,6 +57,7 @@ import { createLongPress } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
+import { galleryFor } from "../imageGallery";
 
 // ===========================================================================
 // AST renderer (lsdoc). Renders an `Inline[]` produced by the Rust parser to
@@ -957,7 +958,7 @@ function AssetImage(props: {
           src={src()!}
           alt={props.alt}
           style={imgStyle()}
-          onClick={(e) => { e.stopPropagation(); setLightbox(src()!); }}
+          onClick={(e) => { e.stopPropagation(); openLightbox(src()!, galleryFor(e.currentTarget)); }}
         />
         <Show when={assetActions()}>
           <span class="asset-action-bar" aria-hidden="true">
