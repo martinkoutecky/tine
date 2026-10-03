@@ -71,23 +71,90 @@ export function installAndroidBackHandler(deps: AndroidBackInstallDeps): () => v
   };
 }
 
-export type AndroidRootCloseResult = SafeClosePrepareResult | "exit_requested" | "exit_failed";
+export type AndroidRootCloseResult =
+  | SafeClosePrepareResult
+  | "exit_requested"
+  | "exit_failed";
 
-/** Root close shares the desktop coordinator.  A failed native invoke resets
- * the accepted transaction so the next hardware Back can safely retry. */
+/** Once frontend preparation is accepted the graph is durable, and the only
+ * remaining step is the activity exit. Direct Files has no native runtime to
+ * drain before it (ADR 0066). */
+export enum AndroidRootClosePhase {
+  Idle = "Idle",
+  PreparingFrontend = "PreparingFrontend",
+  PreparedAwaitingExit = "PreparedAwaitingExit",
+}
+
+interface AndroidRootCloseState {
+  phase: AndroidRootClosePhase;
+}
+
+export interface AndroidRootCloseCoordinator {
+  request(): Promise<AndroidRootCloseResult>;
+  phase(): AndroidRootClosePhase;
+}
+
+/** Android's root close: the shared safe-close transaction, then the activity
+ * exit. A failed exit keeps the transition shield, and a later Back retries
+ * only the exit, never the flush. */
 export async function requestAndroidRootClose(
   safeClose: SafeCloseCoordinator,
-  exit: () => Promise<void>,
-  exitFailed: () => void,
+  state: AndroidRootCloseState,
+  finishActivity: () => Promise<void>,
+  finishActivityFailed: () => void,
 ): Promise<AndroidRootCloseResult> {
-  const prepared = await safeClose.prepare();
-  if (prepared !== "accepted") return prepared;
+  if (state.phase === AndroidRootClosePhase.PreparedAwaitingExit) {
+    return requestAndroidActivityExit(finishActivity, finishActivityFailed);
+  }
+  if (state.phase !== AndroidRootClosePhase.Idle) return "in_flight";
+
+  state.phase = AndroidRootClosePhase.PreparingFrontend;
+  let prepared: SafeClosePrepareResult;
   try {
-    await exit();
+    prepared = await safeClose.prepare();
+  } catch {
+    // SafeClose itself releases its shield in its finally block. Keep this
+    // coordinator retryable too if a frontend dependency throws unexpectedly.
+    state.phase = AndroidRootClosePhase.Idle;
+    return "rejected";
+  }
+  if (prepared !== "accepted") {
+    state.phase = AndroidRootClosePhase.Idle;
+    return prepared;
+  }
+
+  state.phase = AndroidRootClosePhase.PreparedAwaitingExit;
+  return requestAndroidActivityExit(finishActivity, finishActivityFailed);
+}
+
+async function requestAndroidActivityExit(
+  finishActivity: () => Promise<void>,
+  finishActivityFailed: () => void,
+): Promise<"exit_requested" | "exit_failed"> {
+  try {
+    await finishActivity();
     return "exit_requested";
   } catch {
-    safeClose.reset();
-    exitFailed();
+    // The graph is already durable. Keep the transition shield in place: a
+    // later Back must only retry this activity-exit handoff.
+    finishActivityFailed();
     return "exit_failed";
   }
+}
+
+export function createAndroidRootCloseCoordinator(
+  safeClose: SafeCloseCoordinator,
+  {
+    finishActivity,
+    finishActivityFailed,
+  }: {
+    finishActivity: () => Promise<void>;
+    finishActivityFailed: () => void;
+  },
+): AndroidRootCloseCoordinator {
+  const state: AndroidRootCloseState = { phase: AndroidRootClosePhase.Idle };
+  return {
+    request: () => requestAndroidRootClose(safeClose, state, finishActivity, finishActivityFailed),
+    phase: () => state.phase,
+  };
 }

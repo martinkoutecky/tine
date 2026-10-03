@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { requestAndroidRootClose } from "./androidBack";
+import { AndroidRootClosePhase, createAndroidRootCloseCoordinator } from "./androidBack";
 import { createSafeCloseCoordinator, type SafeCloseDeps } from "./safeClose";
 import type { DiscardReason } from "./backend";
 
@@ -27,6 +27,19 @@ function harness(overrides: Partial<SafeCloseDeps> = {}) {
     ...overrides,
   };
   return { deps, transitions, safeClose: createSafeCloseCoordinator(deps) };
+}
+
+function androidRootClose(
+  safeClose: ReturnType<typeof createSafeCloseCoordinator>,
+  finishActivity: () => Promise<void>,
+  overrides: Partial<{ finishActivityFailed: () => void }> = {},
+) {
+  const deps = {
+    finishActivity,
+    finishActivityFailed: vi.fn(),
+    ...overrides,
+  };
+  return { deps, rootClose: createAndroidRootCloseCoordinator(safeClose, deps) };
 }
 
 describe("GH #161 shared safe-close transaction", () => {
@@ -81,8 +94,9 @@ describe("GH #161 shared safe-close transaction", () => {
   it("flushes graph and session once before an accepted Android root exit", async () => {
     const { deps, safeClose, transitions } = harness();
     const exit = vi.fn(async () => {});
+    const { rootClose } = androidRootClose(safeClose, exit);
 
-    await expect(requestAndroidRootClose(safeClose, exit, vi.fn())).resolves.toBe("exit_requested");
+    await expect(rootClose.request()).resolves.toBe("exit_requested");
     expect(deps.blurActive).toHaveBeenCalledOnce();
     expect(deps.endEdit).toHaveBeenCalledOnce();
     expect(deps.flushPdfWork).toHaveBeenCalledOnce();
@@ -98,10 +112,11 @@ describe("GH #161 shared safe-close transaction", () => {
     const flush = deferred<boolean>();
     const { deps, safeClose } = harness({ flushAll: vi.fn(() => flush.promise) });
     const exit = vi.fn(async () => {});
+    const { rootClose } = androidRootClose(safeClose, exit);
 
-    const first = requestAndroidRootClose(safeClose, exit, vi.fn());
+    const first = rootClose.request();
     await Promise.resolve();
-    await expect(requestAndroidRootClose(safeClose, exit, vi.fn())).resolves.toBe("in_flight");
+    await expect(rootClose.request()).resolves.toBe("in_flight");
     expect(deps.flushAll).toHaveBeenCalledOnce();
     expect(exit).not.toHaveBeenCalled();
 
@@ -116,8 +131,9 @@ describe("GH #161 shared safe-close transaction", () => {
       confirmDiscard: vi.fn(async () => false),
     });
     const exit = vi.fn(async () => {});
+    const { rootClose } = androidRootClose(safeClose, exit);
 
-    await expect(requestAndroidRootClose(safeClose, exit, vi.fn())).resolves.toBe("rejected");
+    await expect(rootClose.request()).resolves.toBe("rejected");
     expect(deps.confirmDiscard).toHaveBeenCalledOnce();
     expect(deps.flushSession).not.toHaveBeenCalled();
     expect(exit).not.toHaveBeenCalled();
@@ -154,8 +170,9 @@ describe("GH #161 shared safe-close transaction", () => {
       confirmDiscard: vi.fn(async () => true),
     });
     const exit = vi.fn(async () => {});
+    const { rootClose } = androidRootClose(safeClose, exit);
 
-    await expect(requestAndroidRootClose(safeClose, exit, vi.fn())).resolves.toBe("exit_requested");
+    await expect(rootClose.request()).resolves.toBe("exit_requested");
     expect(deps.confirmDiscard).toHaveBeenCalledExactlyOnceWith("failed");
     expect(deps.flushSession).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledOnce();
@@ -180,8 +197,9 @@ describe("GH #161 shared safe-close transaction", () => {
       runBounded,
     });
     const exit = vi.fn(async () => {});
+    const { rootClose } = androidRootClose(safeClose, exit);
 
-    const closing = requestAndroidRootClose(safeClose, exit, vi.fn());
+    const closing = rootClose.request();
     await Promise.resolve();
     landsLate.resolve(true);
 
@@ -204,8 +222,9 @@ describe("GH #161 shared safe-close transaction", () => {
       runBounded,
     });
     const exit = vi.fn(async () => {});
+    const { rootClose } = androidRootClose(safeClose, exit);
 
-    await expect(requestAndroidRootClose(safeClose, exit, vi.fn())).resolves.toBe("exit_requested");
+    await expect(rootClose.request()).resolves.toBe("exit_requested");
     expect(deps.notifyStillSaving).toHaveBeenCalledOnce();
     expect(reasons).toEqual(["still-saving"]);
     expect(exit).toHaveBeenCalledOnce();
@@ -217,8 +236,9 @@ describe("GH #161 shared safe-close transaction", () => {
       confirmDiscard: vi.fn(async () => { throw new Error("dialog failed"); }),
     });
     const exit = vi.fn(async () => {});
+    const { rootClose } = androidRootClose(safeClose, exit);
 
-    await expect(requestAndroidRootClose(safeClose, exit, vi.fn())).resolves.toBe("rejected");
+    await expect(rootClose.request()).resolves.toBe("rejected");
     expect(deps.notifyConfirmationFailure).toHaveBeenCalledOnce();
     expect(exit).not.toHaveBeenCalled();
     expect(transitions).toEqual([true, false]);
@@ -229,24 +249,47 @@ describe("GH #161 shared safe-close transaction", () => {
       flushSession: vi.fn(async () => { throw new Error("session failed"); }),
     });
     const exit = vi.fn(async () => {});
+    const { rootClose } = androidRootClose(safeClose, exit);
 
-    await expect(requestAndroidRootClose(safeClose, exit, vi.fn())).resolves.toBe("exit_requested");
+    await expect(rootClose.request()).resolves.toBe("exit_requested");
     expect(exit).toHaveBeenCalledOnce();
   });
 
-  it("resets an accepted transaction after invoke failure so a later Back can retry", async () => {
+  it("keeps the shield after activity exit rejection and retries only the exit", async () => {
     const { deps, safeClose, transitions } = harness();
     const exit = vi.fn()
       .mockRejectedValueOnce(new Error("plugin unavailable"))
       .mockResolvedValueOnce(undefined);
-    const exitFailed = vi.fn();
+    const finishActivityFailed = vi.fn();
+    const { rootClose } = androidRootClose(safeClose, exit, { finishActivityFailed });
 
-    await expect(requestAndroidRootClose(safeClose, exit, exitFailed)).resolves.toBe("exit_failed");
-    expect(exitFailed).toHaveBeenCalledOnce();
-    expect(safeClose.inFlight()).toBe(false);
-    await expect(requestAndroidRootClose(safeClose, exit, exitFailed)).resolves.toBe("exit_requested");
-    expect(deps.flushAll).toHaveBeenCalledTimes(2);
+    await expect(rootClose.request()).resolves.toBe("exit_failed");
+    expect(finishActivityFailed).toHaveBeenCalledOnce();
+    expect(rootClose.phase()).toBe(AndroidRootClosePhase.PreparedAwaitingExit);
+    expect(safeClose.inFlight()).toBe(true);
+    expect(transitions).toEqual([true]);
+    expect(deps.flushAll).toHaveBeenCalledOnce();
+
+    await expect(rootClose.request()).resolves.toBe("exit_requested");
+    expect(deps.flushAll).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledTimes(2);
-    expect(transitions).toEqual([true, false, true]);
+    expect(transitions).toEqual([true]);
+  });
+
+  it("a second Back while the activity exit is pending never re-runs the flush or the discard prompt", async () => {
+    const { deps, safeClose } = harness();
+    const exitGate = deferred<void>();
+    const exit = vi.fn(() => exitGate.promise);
+    const { rootClose } = androidRootClose(safeClose, exit);
+
+    const first = rootClose.request();
+    await vi.waitFor(() => expect(exit).toHaveBeenCalledOnce());
+    const second = rootClose.request();
+    exitGate.resolve();
+    await expect(first).resolves.toBe("exit_requested");
+    await expect(second).resolves.toBe("exit_requested");
+    expect(deps.flushAll).toHaveBeenCalledOnce();
+    expect(deps.confirmDiscard).not.toHaveBeenCalled();
+    expect(deps.setTransition).toHaveBeenCalledTimes(1);
   });
 });

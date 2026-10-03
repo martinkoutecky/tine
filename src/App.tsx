@@ -93,7 +93,7 @@ import {
 import { paneSel, samePaneTarget } from "./paneSelect";
 import { SurfaceContext } from "./components/Block";
 import { endEdit } from "./editorController";
-import { exitAndroidActivity, installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
+import { createAndroidRootCloseCoordinator, exitAndroidActivity, installAndroidBackHandler } from "./androidBack";
 import { appBackAvailable, dispatchAppBack } from "./appBack";
 import { installEdgeSwipe } from "./edgeSwipe";
 import { createSafeCloseCoordinator } from "./safeClose";
@@ -151,12 +151,19 @@ export const safeClose = createSafeCloseCoordinator({
 
 setUpdateExitGuard(safeClose);
 
+// Master parity (AndroidRootClosePhase): once the frontend close is accepted the
+// graph is durable, a failed activity exit keeps the transition shield, and the
+// next Back retries only the exit, never the flush.
+const androidRootClose = createAndroidRootCloseCoordinator(safeClose, {
+  finishActivity: exitAndroidActivity,
+  finishActivityFailed: () => pushToast(
+    "Tine couldn't close the Android activity. Tap Back to retry closing.",
+    "error",
+  ),
+});
+
 async function closeAndroidRootSafely(): Promise<void> {
-  await requestAndroidRootClose(
-    safeClose,
-    () => exitAndroidActivity(),
-    () => pushToast("Couldn't close the app. Your graph remains open.", "error"),
-  );
+  await androidRootClose.request();
 }
 
 /** Capture the actual live Journals surfaces that justified a watcher restart.

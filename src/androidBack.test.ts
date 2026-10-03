@@ -205,10 +205,12 @@ describe("GH #161 Android SafeBack owner", () => {
     expect(app).toContain('addPluginListener("safe-back", "android-safe-back", handler)');
     expect(app).not.toContain("onBackButtonPress");
     expect(app).not.toContain('addEventListener("popstate"');
-    // og keeps its reset-and-retry root close (master's phase coordinator is
-    // deliberately not ported): a failed exit resets the accepted transaction
-    // so the next Back can try again.
-    expect(app).toContain("requestAndroidRootClose(\n    safeClose,");
+    // Android root Back follows master's AndroidRootClosePhase coordinator: a
+    // failed activity exit keeps the shield and the next Back retries only the
+    // exit (src/safeClose.test.ts pins the phases).
+    expect(app).toContain("createAndroidRootCloseCoordinator(safeClose, {");
+    expect(app).toContain("await androidRootClose.request();");
+    expect(app).not.toContain("requestAndroidRootClose");
     expect(app).toContain('safeClose.prepare()) !== "accepted"');
     expect(app).toMatch(/catch \{\s*\/\/ The native close attempt failed[\s\S]*?allowClose = false;[\s\S]*?safeClose\.reset\(\);[\s\S]*?closeInProgress = false;/);
     expect(safeBackPlugin).toContain("private var webView: WebView? = null");
