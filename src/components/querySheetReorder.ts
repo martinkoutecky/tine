@@ -34,6 +34,12 @@ export interface QuerySheetReorderRequest {
   commit: (to: number) => void;
 }
 
+/** The index the dragged item ends at if dropped on `target` (its own index when the drop is a no-op). */
+function endsAt(from: number, target: { index: number; before: boolean }): number {
+  const to = target.index + (target.before ? 0 : 1);
+  return from < to ? to - 1 : to;
+}
+
 /** Start a reorder drag from an item's HANDLE. */
 export function beginQuerySheetReorder(event: PointerEvent, request: QuerySheetReorderRequest): void {
   if (event.button !== 0) return;
@@ -69,13 +75,16 @@ export function beginQuerySheetReorder(event: PointerEvent, request: QuerySheetR
     event,
     querySheetSiblingSelector(request.parent),
     (target) =>
+      // A slot next to the dragged item itself changes nothing, so it draws no bar (GH #619: with two conditions
+      // the bar crept between them toward a "hidden" third, though the only real slot was above the first).
       request.setTarget(
-        target ? { parent: request.parent, index: target.index, before: target.before } : null,
+        target && endsAt(request.from, target) !== request.from
+          ? { parent: request.parent, index: target.index, before: target.before }
+          : null,
       ),
     (target) => {
       if (finished || !request.isCurrent()) return;
-      const to = target.index + (target.before ? 0 : 1);
-      const adjusted = request.from < to ? to - 1 : to;
+      const adjusted = endsAt(request.from, target);
       if (adjusted !== request.from) request.commit(adjusted);
     },
   );
