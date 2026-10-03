@@ -140,6 +140,7 @@ import { SheetBoard } from "./SheetBoard";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
+import { wireBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, timeStamp } from "./blockParts";
@@ -312,6 +313,10 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     >
       <div
         class="block-main"
+        ref={(el) => {
+          // GH #501: touch swipes on the row (touch platforms only; src/blockSwipe.ts).
+          onMount(() => onCleanup(wireBlockSwipe(el, { id: props.id, scope: outlineScope, editing, readOnly })));
+        }}
         classList={{
           // Heading level on the row so the bullet column can match the (taller)
           // heading line box and the bullet stays centered on the first line. While

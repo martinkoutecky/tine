@@ -122,6 +122,20 @@ fn force_mobile_drawers_e2e() -> bool {
     std::env::var("TINE_E2E_FORCE_MOBILE_DRAWERS").as_deref() == Ok("1")
 }
 
+/// Test-only: `TINE_E2E_TOUCH_GESTURES=ios|android` makes the frontend's touch
+/// gesture layer (left-edge swipe, block swipe, image viewer) behave as on that
+/// OS inside a desktop WebKitGTK process, so the native E2E can drive real
+/// synthetic touch sequences through the app (GH #501, #492). Anything else,
+/// including unset, is `None`. The frontend reads it through
+/// `touchGesturePlatform()` and nothing else changes platform identity.
+fn e2e_touch_gestures_platform() -> Option<&'static str> {
+    match std::env::var("TINE_E2E_TOUCH_GESTURES").as_deref() {
+        Ok("ios") => Some("ios"),
+        Ok("android") => Some("android"),
+        _ => None,
+    }
+}
+
 fn apply_mobile_drawer_e2e_window_policy(
     windows: &mut [tauri::utils::config::WindowConfig],
     force: bool,
@@ -646,6 +660,13 @@ pub fn run() {
         "globalThis.__TINE_PLATFORM__ = {:?};",
         crate::graph::app_platform()
     ));
+
+    let builder = match e2e_touch_gestures_platform() {
+        Some(kind) => builder.append_invoke_initialization_script(format!(
+            "globalThis.__TINE_E2E_TOUCH_GESTURES__ = {kind:?};"
+        )),
+        None => builder,
+    };
 
     // The backend's zone offset at launch, so the frontend's first "today" is
     // already the backend's (GH #607); `local_clock` keeps it current.
