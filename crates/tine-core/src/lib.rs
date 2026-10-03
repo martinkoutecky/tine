@@ -45,3 +45,6 @@ pub mod standalone_macro;
 
 pub mod ordinal;
 pub mod pdf_key;
+/// Pure policy of the lsdoc-wasm panic hook, tested here (the wasm crate includes it by path).
+#[cfg(test)]
+mod wasm_panic_report;

@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- A page containing a lone carriage return (a CR not followed by LF, for example `key::` ended by CR) no longer shows "This page could not be displayed. Unreachable code should not be executed" and no longer breaks every later page: the lsdoc parser (v0.5.8) now handles bare CRs as Logseq's parser does, and any future parser panic is confined to the one call that caused it.
 - Saving on a network or FUSE filesystem that cannot sync directories (some NFS mounts, Android shared storage) no longer fails: as on master, the errors such filesystems give for a directory sync (EBADF, EACCES, EISDIR, EINVAL) are tolerated, while a real I/O failure or a full disk still fails the save.
 - A save that fails for a passing reason (a disk hiccup, a file briefly locked by another program) is retried automatically after 100 ms and 300 ms before Tine reports it; the page stays marked unsaved until it is saved (REG-OG-XPORT-SAVE-TRANSIENT-RETRY).
 - Creating a page is refused, naming the file, when a file Tine cannot read (for example one with broken text encoding delivered by sync or an editor) may already be that page, instead of creating a second file for the same page; your edits stay in the editor (REG-OG-XPORT-CREATE-UNREADABLE-OWNER).

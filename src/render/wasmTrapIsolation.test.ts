@@ -33,11 +33,17 @@ describe("a wasm trap is isolated to the call that caused it", () => {
     expect(last_panic()).toBe("");
   });
 
-  it("names the panic site but withholds formatted messages (I-5)", () => {
+  it("parses the bare-CR inputs that used to trap (lsdoc v0.5.8 owns them)", () => {
+    // These were lsdoc v2 ownership gaps (`parse_format` panicked with a formatted message).
+    // The hook's I-5 withholding of formatted messages is unit-tested in
+    // crates/tine-core/src/wasm_panic_report.rs, since no formatted panic is reachable now.
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    // An lsdoc v2 ownership gap: `parse_format` panics with a formatted message. Minimal input.
-    expect(() => parse_block_json("s::\r", false)).toThrow(/panic at \S*v2\/mod\.rs:\d+: <formatted message withheld>/);
-    expect(logged).toHaveBeenCalledTimes(1);
+    for (const raw of ["s::\r", "- s::\r", "- tags:: x\rid:: ::}}"]) {
+      expect(() => parse_block_json(raw, false), JSON.stringify(raw)).not.toThrow();
+      expect(() => page_header_json(raw), JSON.stringify(raw)).not.toThrow();
+    }
+    expect(logged).not.toHaveBeenCalled();
+    expect(last_panic()).toBe("");
   });
 
   it("survives more traps than a leaked shadow stack could (no cumulative poisoning)", () => {

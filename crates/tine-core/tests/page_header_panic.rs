@@ -14,7 +14,7 @@ fn page_header_survives_bare_cr_after_empty_property() {
     for raw in ["- s::\r", "- tags:: x\rid:: ::}}"] {
         let result = std::panic::catch_unwind(|| page_header(raw));
         let header = result.unwrap_or_else(|_| panic!("page_header panicked on {raw:?}"));
-        // An unowned page is quarantined as literal: no header, no entries.
+        // lsdoc v0.5.8 owns these; as in mldoc, a bare-CR-ended `key::` line is not a property.
         assert!(header.entries.is_empty(), "{raw:?} yielded entries");
         assert!(header.end <= raw.len());
     }
