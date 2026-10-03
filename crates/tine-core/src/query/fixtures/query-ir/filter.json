@@ -187,6 +187,18 @@
               "kind": "leaf",
               "leaf": {
                 "kind": "attr",
+                "attr": "used_as_tag",
+                "op": "eq",
+                "value": {
+                  "kind": "bool",
+                  "bool": true
+                }
+              }
+            },
+            {
+              "kind": "leaf",
+              "leaf": {
+                "kind": "attr",
                 "attr": "day",
                 "op": "ge",
                 "value": {

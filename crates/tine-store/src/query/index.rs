@@ -19,7 +19,7 @@
 
 use crate::model::persistent::{Map as SharedMap, Pages};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -502,6 +502,20 @@ impl QueryIndex {
                 None => self.build_registry(pages),
             })
         }))
+    }
+
+    /// Every page key some page's `tags::` names (OG `rules.cljc:96-98`
+    /// `[_ :block/tags ?p]`, behind `(all-page-tags)`). One pass over the cached
+    /// per-page facts: O(pages + tag values), built per plan that reads it,
+    /// nothing persisted.
+    pub(crate) fn tag_targets(&self, pages: &Pages) -> HashSet<String> {
+        let mut targets = HashSet::new();
+        for (entry, doc) in pages {
+            for tag in self.facts(entry, doc).tags() {
+                targets.insert(tine_core::refs::normalize(tag));
+            }
+        }
+        targets
     }
 
     /// The page at `path` in this snapshot's vector.

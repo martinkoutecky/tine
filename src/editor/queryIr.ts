@@ -25,12 +25,12 @@ export type Attr =
   // block row
   | "content" | "task" | "priority" | "scheduled" | "deadline"
   // page row
-  | "name" | "journal" | "day" | "namespace"
+  | "name" | "journal" | "day" | "namespace" | "used_as_tag"
   // property element
   | "key" | "value" | "atom_count";
 export const ATTRS: readonly Attr[] = [
   "content", "task", "priority", "scheduled", "deadline",
-  "name", "journal", "day", "namespace",
+  "name", "journal", "day", "namespace", "used_as_tag",
   "key", "value", "atom_count",
 ];
 

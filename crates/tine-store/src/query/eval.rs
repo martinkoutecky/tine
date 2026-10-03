@@ -18,7 +18,7 @@
 //! with no product caller, so they were not ported.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use tine_core::date::JournalDate;
@@ -227,6 +227,9 @@ pub(crate) struct EvalCtx<'a> {
     pub(crate) config: &'a ParseConfig,
     /// ONE coherent registry snapshot for the whole query (§6.2).
     pub(crate) registry: &'a Registry,
+    /// Every page key some page's `tags::` names: the graph-wide answer behind
+    /// `used_as_tag` (OG `(all-page-tags)`). Empty unless the plan reads it.
+    pub(crate) tag_targets: &'a HashSet<String>,
     pub(crate) cache: &'a EvalCache,
 }
 
@@ -244,6 +247,7 @@ impl<'a> EvalCtx<'a> {
         compiled: &'a CompiledLeaves,
         config: &'a ParseConfig,
         registry: &'a Registry,
+        tag_targets: &'a HashSet<String>,
         cache: &'a EvalCache,
     ) -> Self {
         EvalCtx {
@@ -259,6 +263,7 @@ impl<'a> EvalCtx<'a> {
             format,
             config,
             registry,
+            tag_targets,
             cache,
         }
     }
@@ -401,6 +406,14 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
                     }
                 }
                 Attr::Day => eval_day(*op, value, ctx.journal, ctx.today),
+                Attr::UsedAsTag => {
+                    let used = ctx.tag_targets.contains(&ctx.page_key);
+                    match (op, value.as_bool()) {
+                        (CmpOp::Eq, Some(wanted)) => used == wanted,
+                        (CmpOp::NotEq, Some(wanted)) => used != wanted,
+                        _ => false,
+                    }
+                }
                 Attr::Namespace => {
                     // The immediate parent segment (Tine-only, M20).
                     let parent = ctx

@@ -522,13 +522,14 @@ fn tql_attr_name(attr: Attr, through_page: bool) -> String {
         Attr::Journal => "journal",
         Attr::Day => "day",
         Attr::Namespace => "namespace",
+        Attr::UsedAsTag => "used_as_tag",
         Attr::Key => "key",
         Attr::Value => "value",
         Attr::AtomCount => "atom_count",
     };
     let page_row = matches!(
         attr,
-        Attr::Name | Attr::Journal | Attr::Day | Attr::Namespace
+        Attr::Name | Attr::Journal | Attr::Day | Attr::Namespace | Attr::UsedAsTag
     );
     if through_page && page_row {
         format!("page.{bare}")
@@ -745,6 +746,9 @@ fn og_attr(attr: Attr, op: CmpOp, value: &Value, on_page: bool) -> Option<String
         (Attr::Day, CmpOp::Between) if on_page => og_between("journal", value),
         (Attr::Journal, CmpOp::Eq) if on_page && *value == (Value::Bool { value: true }) => {
             Some("(journal)".to_string())
+        }
+        (Attr::UsedAsTag, CmpOp::Eq) if on_page && *value == (Value::Bool { value: true }) => {
+            Some("(all-page-tags)".to_string())
         }
         (Attr::Name, CmpOp::Eq) if on_page => Some(format!("(page {})", word(text_of(value)?))),
         (Attr::Name, CmpOp::StartsWith) if on_page => {

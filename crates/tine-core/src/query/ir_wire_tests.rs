@@ -97,6 +97,7 @@ fn every_filter_variant() -> Filter {
                 Filter::attr(Attr::Name, CmpOp::StartsWith, Value::text("proj/")),
                 Filter::attr(Attr::Namespace, CmpOp::NotEq, Value::text("archive")),
                 Filter::attr(Attr::Journal, CmpOp::Eq, Value::Bool { value: true }),
+                Filter::attr(Attr::UsedAsTag, CmpOp::Eq, Value::Bool { value: true }),
                 Filter::attr(Attr::Day, CmpOp::Ge, Value::date("2026-01-01")),
             ]),
         ),

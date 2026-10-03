@@ -820,6 +820,7 @@ const ATTR_PHRASE: Record<Attr, string> = {
   journal: "journal",
   day: "date",
   namespace: "namespace",
+  used_as_tag: "used as a tag",
   key: "key",
   value: "value",
   atom_count: "values",

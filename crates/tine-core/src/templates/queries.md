@@ -25,7 +25,7 @@ icon:: 🔎
 		- `(task TODO DOING)` — blocks with one of these task markers; `(priority A)` — by priority.
 		- `[[Page]]`, `(page-ref Page)`, `#tag` — blocks that reference a page.
 		- `(page "Page")`, `(namespace Project)` — blocks on a page, or under a namespace.
-		- `(property status active)`, `(page-property type book)`, `(page-tags public)`, `(all-page-tags)` — by block or page properties and tags. A page-level filter returns pages, not blocks.
+		- `(property status active)`, `(page-property type book)`, `(page-tags public)` — by block or page properties and tags. `(all-page-tags)` lists the pages that some page uses as a tag. A page-level filter returns pages, not blocks.
 		- `(between -7d today)` — journal blocks in a date range; `(between scheduled today +7d)` also works on `scheduled` or `deadline`. Dates are `today`, `yesterday`, `tomorrow`, `2026-01-31`, a journal title like `[[Jan 31st, 2026]]`, or an offset like `-7d`, `+2w`, `-1m`, `+1y` (lowercase units, at most 10,000 years).
 		- `(sort-by priority desc)`, `(sample 10)` — order the results (by `priority`, `page`, `scheduled`, `deadline` or any property), or keep only the first N after sorting.
 		- A bare word or quoted text finds block content; Tine's `(search "cafe")` predicate uses the search syntax. Both respect `:feature/enable-search-remove-accents? false` in `logseq/config.edn`, so `cafe` then differs from `café`.
@@ -37,7 +37,7 @@ icon:: 🔎
 	- Beside a property condition, **declare type…** writes `tine.type:: number`, `date`, `checkbox`, `ref` or `text` on the page named for that property key. Select **list of** for multiple values, or remove the declaration. The badge distinguishes an observed type from a declared one and shows mismatches against a declaration.
 - ## Advanced (datalog) queries
 	- `{{query {:query [:find (pull ?b [*]) :where …]}}}` and `#+BEGIN_QUERY` blocks run a supported subset of Logseq's datalog: task markers, priority, page references, properties, page, namespace, page tags, scheduled/deadline and journal date ranges.
-	- A note above the results lists which clauses **ran** and which were **ignored**. An ignored clause did not filter the results; a query with no supported clause shows a notice instead of results.
+	- A query runs only if Tine can read every clause of it. If any clause is outside the supported subset (a `:result-transform`, an input other than `:current-page`, a rule Tine does not know), the whole query is refused: a notice names the clauses Tine could not run and shows no results, because an answer to part of a query would be wrong.
 	- `:inputs [:current-page]` binds the page open in the focused pane, like Logseq: if no page is open it uses your configured home page, then today's journal. It is not the page the query block sits on.
 - ## When a query shows nothing
 	- If Tine cannot read part of a query, the block says so — **Tine didn't understand part of this query, so it returned no results** — followed by what it could not read. An empty list without that message means the query is valid and nothing matches yet.

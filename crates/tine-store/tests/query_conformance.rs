@@ -353,27 +353,82 @@ fn the_two_dialects_agree_row_for_row() {
     }
 }
 
-/// REG-P0-QUERY-ALL-PAGE-TAGS-001.
+/// REG-P0-QUERY-ALL-PAGE-TAGS-001, corrected by og lane qfix #2a: OG
+/// `rules.cljc:96-98` (`[_ :block/tags ?p]`) answers the pages some page USES
+/// AS A TAG, not the pages that carry a `tags::` of their own. `Alpha` carries
+/// the tag and is NOT an answer; `Target` is named by it and has no tags itself.
 #[test]
-fn all_page_tags_selects_every_page_carrying_a_tag() {
-    let fixture = truth_graph();
+fn all_page_tags_selects_every_page_some_page_uses_as_a_tag() {
+    let fixture = open(&[
+        ("pages/Alpha.md", "tags:: Target\n\n- a block on Alpha\n"),
+        ("pages/Target.md", "- a block on the tag page\n"),
+        ("pages/Other.md", "- a block on an unrelated page\n"),
+        // Tag identity is the page key: case and `[[ ]]` do not matter.
+        ("pages/Beta.md", "tags:: [[other]]\n\n- a block on Beta\n"),
+    ]);
     let result = run_text(&fixture.graph, "(all-page-tags)", QueryDialect::Og);
-    assert_eq!(page_names(&result), vec!["Tagged"]);
-    // The block-group bridge answers with that page's blocks.
+    let mut names = page_names(&result);
+    names.sort();
+    assert_eq!(names, vec!["Other", "Target"]);
+    // The block-group bridge answers with those pages' blocks.
     case(
         &fixture.graph,
         "(all-page-tags)",
-        &["a block on a tagged page"],
+        &["a block on the tag page", "a block on an unrelated page"],
     );
 }
 
-/// Master 04ca56743 (`all_page_tags_round_trips_with_absent_blank_and_populated_properties`):
-/// `(all-page-tags)` keeps its page scope and its presence/blank meaning when the
-/// editing pane and the persisted macro spell it in TQL, and every spelling
-/// answers the same pages. A bare `atom_count > 0` had no TQL spelling, and
-/// `not(blank)` alone would include a page with no `tags::` at all.
+/// An edit to ANY page's `tags::` can change which OTHER pages are answers, so
+/// the memo may not carry a plan that reads the graph's tag targets across it
+/// (the one graph-wide read; every other leaf is page-local).
 #[test]
-fn all_page_tags_round_trips_through_tql_with_absent_blank_and_populated_tags() {
+fn all_page_tags_answer_follows_an_edit_of_another_pages_tags() {
+    let dir = TempDir::new();
+    std::fs::create_dir_all(dir.path().join("pages")).unwrap();
+    write(dir.path(), "pages/Alpha.md", "tags:: Target\n\n- a block on Alpha\n");
+    write(dir.path(), "pages/Target.md", "- a block on the tag page\n");
+    write(dir.path(), "pages/Other.md", "- a block on an unrelated page\n");
+    let (store, _, _) = Store::open(dir.path(), OpenOptions::default()).expect("open");
+    let names = |store: &Store| {
+        let (query, view) =
+            parse_query_text("(all-page-tags)", QueryDialect::Og, JournalDate::today());
+        let mut names = page_names(&run_ir(
+            &store.whole_graph().unwrap(),
+            &query,
+            &view,
+            &ExecutionContext::none(),
+        ));
+        names.sort();
+        names
+    };
+    assert_eq!(names(&store), vec!["Target"]);
+    assert_eq!(names(&store), vec!["Target"], "second run is the memoized one");
+    let id = tine_store::PageId::from("pages/Alpha.md".to_string());
+    let read = store.page(&id).unwrap();
+    let mut doc = read.doc;
+    doc.pre_block = Some("tags:: Other".to_string());
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::ReplacePage,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &doc
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+    assert_eq!(
+        names(&store),
+        vec!["Other"],
+        "the memoized answer must not survive another page's tag edit"
+    );
+}
+
+/// `(all-page-tags)` keeps its page scope and its incoming-tag meaning when the
+/// editing pane and the persisted macro spell it in TQL, and every spelling
+/// answers the same pages (`not` included: a page nobody tags, with or
+/// without a `tags::` of its own).
+#[test]
+fn all_page_tags_round_trips_through_tql() {
     use std::collections::BTreeSet;
     use tine_core::query::print::{query_print, PrintDialect};
 
@@ -384,13 +439,10 @@ fn all_page_tags_round_trips_through_tql_with_absent_blank_and_populated_tags() 
         ),
         ("pages/blank.md", "tags::\n\n- TODO blank page tags\n"),
         (
-            "pages/whitespace.md",
-            "tags::   \n\n- TODO whitespace page tags\n",
-        ),
-        (
             "pages/tagged.md",
             "tags:: alpha, beta\n\n- TODO tagged task\n",
         ),
+        ("pages/alpha.md", "- TODO a tag page\n"),
     ]);
     let graph = &fixture.graph;
     let pages = |result: &QueryResult| page_names(result).into_iter().collect::<BTreeSet<_>>();
@@ -398,11 +450,8 @@ fn all_page_tags_round_trips_through_tql_with_absent_blank_and_populated_tags() 
     let today = JournalDate::today();
 
     for (source, expected) in [
-        ("(all-page-tags)", set(&["tagged"])),
-        (
-            "(not (all-page-tags))",
-            set(&["absent", "blank", "whitespace"]),
-        ),
+        ("(all-page-tags)", set(&["alpha"])),
+        ("(not (all-page-tags))", set(&["absent", "blank", "tagged"])),
     ] {
         let (query, view) = parse_query_text(source, QueryDialect::Og, today);
         assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);
@@ -429,11 +478,7 @@ fn all_page_tags_round_trips_through_tql_with_absent_blank_and_populated_tags() 
         }
     }
     // Composed with a block filter, the tag test still reads the block's page.
-    case(
-        graph,
-        "(and (task TODO) (all-page-tags))",
-        &["TODO tagged task"],
-    );
+    case(graph, "(and (task TODO) (all-page-tags))", &["TODO a tag page"]);
 }
 
 /// REG-P0-QUERY-UNKNOWN-HEAD-001.

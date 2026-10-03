@@ -18,6 +18,7 @@
 //! reference set ([`PageFacts::may_reference`]), and `and` conjuncts are
 //! evaluated cheapest first. Both are evaluation-order changes only.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use tine_core::date::JournalDate;
@@ -60,6 +61,10 @@ pub(crate) struct Plan {
     today: JournalDate,
     remove_accents: bool,
     registry: Option<Arc<Registry>>,
+    /// The page keys some page's `tags::` names, built once per plan when the
+    /// filter reads `used_as_tag` (graph-wide, so the memo cannot treat such a
+    /// plan as page-local: see [`Plan::reads_tag_targets`]).
+    tag_targets: Option<Arc<HashSet<String>>>,
 }
 
 impl Plan {
@@ -82,6 +87,7 @@ impl Plan {
         block_rows: bool,
         remove_accents: bool,
         registry: impl FnOnce() -> Arc<Registry>,
+        tag_targets: impl FnOnce() -> Arc<HashSet<String>>,
     ) -> Plan {
         let evaluable = query.evaluable_filter();
         let (anchor, filter) = match query.anchor {
@@ -90,6 +96,17 @@ impl Plan {
         };
         let filter = cheapest_first(filter);
         let registry = filter.has_props_leaf().then(registry);
+        let tag_targets = filter
+            .any_leaf(&mut |leaf| {
+                matches!(
+                    leaf,
+                    Leaf::Attr {
+                        attr: Attr::UsedAsTag,
+                        ..
+                    }
+                )
+            })
+            .then(tag_targets);
         Plan {
             anchor,
             page_property_rows: query.anchor == Anchor::Block,
@@ -99,7 +116,16 @@ impl Plan {
             today,
             remove_accents,
             registry,
+            tag_targets,
         }
+    }
+
+    /// Whether the answer depends on every page's `tags::` rather than only the
+    /// evaluated page's own text, so an edit that moves any page's tags can
+    /// change a page it never touched (the memo's page-local rule does not
+    /// hold for it).
+    pub(crate) fn reads_tag_targets(&self) -> bool {
+        self.tag_targets.is_some()
     }
 
     pub(crate) fn registry(&self) -> Option<&Arc<Registry>> {
@@ -126,6 +152,7 @@ impl Plan {
             &self.compiled,
             config,
             self.registry.as_deref().unwrap_or(Registry::none()),
+            self.tag_targets.as_deref().unwrap_or(empty_tag_targets()),
             atoms,
         )
     }
@@ -221,6 +248,11 @@ impl Plan {
         self.anchor == Anchor::Block
             && required_refs(&self.filter).is_some_and(|names| !facts.may_reference(entry, &names))
     }
+}
+
+fn empty_tag_targets() -> &'static HashSet<String> {
+    static EMPTY: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(HashSet::new)
 }
 
 /// One block row of a page: a block of its document, or the page's header
@@ -773,6 +805,7 @@ pub(crate) fn plan(
         block_rows,
         graph.config().enable_search_remove_accents,
         || graph.with_pages(|pages| index.registry(pages)),
+        || graph.with_pages(|pages| Arc::new(index.tag_targets(pages))),
     )
 }
 

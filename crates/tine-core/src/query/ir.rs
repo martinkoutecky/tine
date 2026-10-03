@@ -81,6 +81,11 @@ pub enum Attr {
     Journal,
     Day,
     Namespace,
+    /// Some page's `tags::` names this page: OG `rules.cljc:96-98`
+    /// `[_ :block/tags ?p]`, the `(all-page-tags)` rule. A GRAPH-wide
+    /// relation, answered from the query's tag-target set rather than from the
+    /// page row alone (`Plan::tag_targets`).
+    UsedAsTag,
     // property element
     Key,
     Value,
@@ -121,7 +126,7 @@ impl Attr {
             | Attr::Namespace
             | Attr::Key => Some(ValueType::Text),
             Attr::Scheduled | Attr::Deadline | Attr::Day => Some(ValueType::Date),
-            Attr::Journal => Some(ValueType::Checkbox),
+            Attr::Journal | Attr::UsedAsTag => Some(ValueType::Checkbox),
             Attr::AtomCount => Some(ValueType::Number),
             Attr::Value => None,
         }
@@ -139,6 +144,7 @@ impl Attr {
             Attr::Journal => "journal",
             Attr::Day => "day",
             Attr::Namespace => "namespace",
+            Attr::UsedAsTag => "used_as_tag",
             Attr::Key => "key",
             Attr::Value => "value",
             Attr::AtomCount => "atom_count",

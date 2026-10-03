@@ -648,8 +648,11 @@ impl<'a> OgParse<'a> {
                     ]),
                 ))
             }
-            // OG `build-all-page-tags` (`:322-325`): pages carrying at least one
-            // tag. It takes no arguments.
+            // OG `build-all-page-tags` (`:322-325`) + `rules.cljc:96-98`
+            // `[_ :block/tags ?p]`: every page that some page uses as a tag.
+            // The relation is INCOMING (the page is named by another page's
+            // `tags::`), so it is the graph-wide `used_as_tag` page attribute,
+            // never a property of the page's own header. It takes no arguments.
             "all-page-tags" => {
                 let extra = self.names();
                 if !extra.is_empty() {
@@ -660,21 +663,11 @@ impl<'a> OgParse<'a> {
                         span,
                     );
                 }
-                // Use the canonical presence and blank forms: both have a
-                // lossless TQL spelling. A bare `atom_count > 0` has none.
-                // Presence is required because `not(blank)` includes absence.
-                let key = Filter::attr(Attr::Key, CmpOp::Eq, Value::text("tags"));
-                Filter::and(vec![
-                    through_page(Filter::rel(Rel::Props, Quant::Any, key.clone())),
-                    Filter::not(through_page(Filter::rel(
-                        Rel::Props,
-                        Quant::Any,
-                        Filter::and(vec![
-                            key,
-                            Filter::attr(Attr::AtomCount, CmpOp::Eq, Value::Number { number: 0.0 }),
-                        ]),
-                    ))),
-                ])
+                through_page(Filter::attr(
+                    Attr::UsedAsTag,
+                    CmpOp::Eq,
+                    Value::Bool { value: true },
+                ))
             }
             // Tine extensions, kept parsing for existing files, never OG-expressible.
             "search" => {
@@ -1236,20 +1229,17 @@ mod tests {
 
     /// REG-P0-QUERY-ALL-PAGE-TAGS-001. OG has `(all-page-tags)`; Tine did not,
     /// so a graph carrying one silently returned nothing.
+    /// OG `rules.cljc:96-98`: `(all-page-tags)` is the INCOMING relation (pages
+    /// some page uses as a tag), spelled `used_as_tag` in the IR, never a test
+    /// of the page's own `tags::` (og lane qfix #2a).
     #[test]
-    fn all_page_tags_is_the_pages_tags_property_with_at_least_one_atom() {
+    fn all_page_tags_is_the_pages_some_page_uses_as_a_tag() {
         let query = parse("(all-page-tags)");
         assert!(!query.is_invalid(), "{:?}", query.diagnostics);
         assert_eq!(query.anchor, Anchor::Page);
         assert_eq!(
             query.normalized().filter,
-            super::super::tql::parse_tql(
-                "@page and prop('tags') is not null and not prop('tags') = ''",
-                crate::query::registry::Registry::none(),
-            )
-            .0
-            .normalized()
-            .filter
+            Filter::attr(Attr::UsedAsTag, CmpOp::Eq, Value::Bool { value: true })
         );
     }
 

@@ -1059,6 +1059,7 @@ fn page_attr(name: &str) -> Option<(Attr, ValueType)> {
         "journal" => (Attr::Journal, ValueType::Checkbox),
         "day" => (Attr::Day, ValueType::Date),
         "namespace" => (Attr::Namespace, ValueType::Text),
+        "used_as_tag" => (Attr::UsedAsTag, ValueType::Checkbox),
         _ => return None,
     })
 }
@@ -1074,6 +1075,7 @@ fn attr_label(attr: Attr) -> &'static str {
         Attr::Journal => "journal",
         Attr::Day => "day",
         Attr::Namespace => "namespace",
+        Attr::UsedAsTag => "used as tag",
         Attr::Key => "key",
         Attr::Value => "value",
         Attr::AtomCount => "atom count",

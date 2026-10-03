@@ -796,7 +796,7 @@ export function QueryMacro(props: {
                   <>
                     Advanced (datalog) query not run: Tine cannot run{" "}
                     {(advInfo()?.ignored ?? []).length > 0
-                      ? `these clauses (${advInfo()!.ignored.join(", ")})`
+                      ? `these clauses (${(advInfo()?.ignored ?? []).join(", ")})`
                       : "some of its clauses"}
                     , and a partial answer would be wrong. <code>{`{{${props.body}}}`}</code>
                   </>
