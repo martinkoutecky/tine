@@ -70,7 +70,11 @@ fn directory_sync_reports_a_missing_or_unopenable_directory() {
 
     let missing = base.join("gone");
     let error = tine_store::directory_durability::sync_directory_entry(&missing).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::NotFound, "a vanished directory is not a synced one");
+    assert_eq!(
+        error.kind(),
+        ErrorKind::NotFound,
+        "a vanished directory is not a synced one"
+    );
 
     // Writable and searchable (a rename into it succeeds) but unreadable, so
     // the directory cannot be opened to sync it: EACCES.

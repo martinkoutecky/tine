@@ -603,7 +603,8 @@ mod tests {
         // Closing a Ready store takes ~200 ms (measured on a copy of the
         // anonymized graph); dropping it inside `bind` held the registry write
         // lock, and every graph command, for that long (master abf7af831884).
-        let base = std::env::temp_dir().join(format!("tine-registry-displaced-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("tine-registry-displaced-{}", std::process::id()));
         let a = base.join("a");
         let b = base.join("b");
         let mut registry = GraphRegistry::default();
@@ -616,7 +617,8 @@ mod tests {
 
     #[test]
     fn a_window_closed_during_an_open_releases_only_that_opens_binding() {
-        let base = std::env::temp_dir().join(format!("tine-registry-closed-{}", std::process::id()));
+        let base =
+            std::env::temp_dir().join(format!("tine-registry-closed-{}", std::process::id()));
         let a = base.join("a");
         let mut registry = GraphRegistry::default();
         let slot = graph(&a);

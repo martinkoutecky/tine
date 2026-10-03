@@ -2920,7 +2920,11 @@ mod tests {
         )
         .unwrap();
         let graph = test_snapshot(&dir);
-        let block_id = format!("page-property:{:?}:{}", PageKind::Page, refs::page_key("Source"));
+        let block_id = format!(
+            "page-property:{:?}:{}",
+            PageKind::Page,
+            refs::page_key("Source")
+        );
         let context = backlink_filter_context(
             &graph,
             "Target",
@@ -2930,8 +2934,15 @@ mod tests {
                 block_id,
             }],
         );
-        assert_eq!(context.entries.len(), 1, "the page-property root is answered");
-        assert!(context.entries[0].truncated, "the entry itself hit its facet budget");
+        assert_eq!(
+            context.entries.len(),
+            1,
+            "the page-property root is answered"
+        );
+        assert!(
+            context.entries[0].truncated,
+            "the entry itself hit its facet budget"
+        );
         assert!(
             context.truncated,
             "a truncated page-property entry must mark the context truncated"

@@ -55,8 +55,9 @@ impl Graph {
                 match fs::File::open(&path)
                     .and_then(|file| file.take(PARSE_INPUT_MAX_BYTES).read_to_end(&mut bytes))
                 {
-                    Ok(_) => tine_core::refs::page_key(&String::from_utf8_lossy(&bytes))
-                        .contains(key),
+                    Ok(_) => {
+                        tine_core::refs::page_key(&String::from_utf8_lossy(&bytes)).contains(key)
+                    }
                     Err(error) => error.kind() != io::ErrorKind::NotFound,
                 }
             }
@@ -237,8 +238,16 @@ mod cold_index_tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
-        fs::write(dir.join("pages/Bad.md"), b"title:: Target\ntags:: caf\xe9\n- x\n").unwrap();
-        fs::write(dir.join("pages/Known.md"), "title:: Named\n- mentions [[Target]]\n").unwrap();
+        fs::write(
+            dir.join("pages/Bad.md"),
+            b"title:: Target\ntags:: caf\xe9\n- x\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Known.md"),
+            "title:: Named\n- mentions [[Target]]\n",
+        )
+        .unwrap();
         fs::write(dir.join("journals/2026_10_03.md"), b"- caf\xe9 Target\n").unwrap();
         let graph = Graph::open(&dir);
         let id = |rel: &str| crate::FileId::from(rel.to_string());
@@ -256,9 +265,15 @@ mod cold_index_tests {
         #[cfg(unix)]
         {
             let fifo = dir.join("pages/Pipe.md");
-            assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
-            assert!(!graph.unreadable_page_could_own(&id("pages/Pipe.md"), &key("Target")),
-                "a FIFO is no page and is never opened");
+            assert!(std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success());
+            assert!(
+                !graph.unreadable_page_could_own(&id("pages/Pipe.md"), &key("Target")),
+                "a FIFO is no page and is never opened"
+            );
         }
         let _ = fs::remove_dir_all(dir);
     }

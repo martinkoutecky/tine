@@ -64,7 +64,12 @@ fn create_by_name(store: &Store, name: &str) -> (PageId, SaveOutcome) {
         Resolved::Absent { id } => id,
         _ => panic!("{name} should resolve as absent"),
     };
-    let outcome = store.save(tine_store::EditKind::CreatePage, &id, SaveBase::CreateNew, &doc(name));
+    let outcome = store.save(
+        tine_store::EditKind::CreatePage,
+        &id,
+        SaveBase::CreateNew,
+        &doc(name),
+    );
     (id, outcome)
 }
 
@@ -77,7 +82,12 @@ const UNREADABLE_TARGET: &[u8] = b"title:: Target\ntags:: caf\xe9\n\n- body\n";
 fn create_refuses_a_name_an_unreadable_file_could_own_and_names_the_file() {
     let (root, store) = graph(&[("pages/Other.md", UNREADABLE_TARGET)]);
     assert!(
-        store.whole_graph().unwrap().unreadable_files().iter().any(|(id, _)| id.as_str() == "pages/Other.md"),
+        store
+            .whole_graph()
+            .unwrap()
+            .unreadable_files()
+            .iter()
+            .any(|(id, _)| id.as_str() == "pages/Other.md"),
         "precondition: Other.md is unreadable"
     );
     let (id, outcome) = create_by_name(&store, "Target");
@@ -111,7 +121,11 @@ fn an_unreadable_file_blocks_only_names_it_could_be() {
 #[test]
 fn a_repaired_file_no_longer_blocks_its_name() {
     let (root, store) = graph(&[("pages/Other.md", UNREADABLE_TARGET)]);
-    fs::write(root.join("pages/Other.md"), b"title:: Target\ntags:: cafe\n\n- body\n").unwrap();
+    fs::write(
+        root.join("pages/Other.md"),
+        b"title:: Target\ntags:: cafe\n\n- body\n",
+    )
+    .unwrap();
     store.scan_refresh().unwrap();
     // Now readable: Target exists and resolves to Other.md.
     assert!(matches!(
@@ -134,7 +148,12 @@ fn a_parser_rejected_file_with_a_readable_title_blocks_only_that_title() {
     }
     let (root, store) = graph(&[("pages/Deep.md", &bytes)]);
     assert!(
-        store.whole_graph().unwrap().unreadable_files().iter().any(|(id, _)| id.as_str() == "pages/Deep.md"),
+        store
+            .whole_graph()
+            .unwrap()
+            .unreadable_files()
+            .iter()
+            .any(|(id, _)| id.as_str() == "pages/Deep.md"),
         "precondition: the parser rejects Deep.md"
     );
     let (_, outcome) = create_by_name(&store, "Target");
@@ -171,7 +190,10 @@ fn create_unique_of_a_page_is_refused_too() {
 fn a_fifo_in_pages_blocks_no_creation() {
     let (root, store) = graph(&[]);
     let fifo = root.join("pages/Target-pipe.md");
-    let status = std::process::Command::new("mkfifo").arg(&fifo).status().unwrap();
+    let status = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap();
     assert!(status.success());
     store.scan_refresh().unwrap();
     let (_, outcome) = create_by_name(&store, "Target");
