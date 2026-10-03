@@ -4665,9 +4665,9 @@ fn dedup_journal_days(
 
 #[cfg(test)]
 thread_local! {
-static GRAPH_LIST_CALLS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+pub(crate) static GRAPH_LIST_CALLS: std::cell::Cell<usize> = std::cell::Cell::new(0);
 #[cfg(test)]
-static GRAPH_PREAMBLE_READS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+pub(crate) static GRAPH_PREAMBLE_READS: std::cell::Cell<usize> = std::cell::Cell::new(0);
     static CACHE_LINEAR_SCAN_STEPS: std::cell::Cell<usize> = std::cell::Cell::new(0);
 }
 

@@ -23,11 +23,22 @@ pub enum PageReadError {
 }
 
 /// Resolve a page name or alias and read its current file. Cost O(index lookup + page bytes).
+/// Before the graph is ready (GH #623), a name some file claims opens from
+/// that file without waiting for the index: `page_named` finds it from the
+/// file names, and claimant order ranks a file named for the page above any
+/// `title::` claimant, so this is the page the index would pick. A name only
+/// the index can resolve (an alias) or one no file claims waits for it, so a
+/// name the index could still resolve never reads as absent.
 pub fn get_page(
     store: &Store,
     name: &str,
     kind: PageKind,
 ) -> Result<Option<PageRead>, PageReadError> {
+    if store.is_graph_ready().is_ok_and(|ready| !ready) {
+        if let Some(read) = store.page_named(name, kind).map_err(PageReadError::Store)? {
+            return Ok(Some(read));
+        }
+    }
     let resolved = match store.whole_graph() {
         Ok(view) => view.resolve(name, kind == PageKind::Journal),
         Err(LoadError::Failed { .. }) => {
