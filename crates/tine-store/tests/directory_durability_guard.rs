@@ -53,41 +53,28 @@ fn directory_sync_has_one_owner_and_no_discarded_result() {
     }
 }
 
-/// Master 54dfcc1b6674 also swallows `EACCES`, `EBADF`, `EISDIR`,
-/// `PermissionDenied` and `NotFound` from a directory sync. og deliberately
-/// does not (see `sync_directory_entry`): a directory that vanished after the
-/// rename took the renamed file with it, and an unopenable directory gives no
-/// durability, so reporting either as synced would acknowledge a save that a
-/// crash can lose. These stay errors the caller recovers from by re-reading.
+/// Master 54dfcc1b6674's policy (Martin 2026-10-03: follow master): a
+/// directory that cannot be opened or synced because the filesystem does not
+/// offer it does not fail the save. Here a vanished and an unopenable directory
+/// stand in for the NFS/FUSE answers; a real I/O failure still surfaces
+/// (`dir_sync_is_unsupported` unit test).
 #[cfg(unix)]
 #[test]
-fn directory_sync_reports_a_missing_or_unopenable_directory() {
-    use std::io::ErrorKind;
+fn directory_sync_tolerates_filesystems_without_directory_sync() {
     use std::os::unix::fs::PermissionsExt;
     let base = std::env::temp_dir().join(format!("tine-dir-sync-errno-{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);
     fs::create_dir_all(&base).unwrap();
 
     let missing = base.join("gone");
-    let error = tine_store::directory_durability::sync_directory_entry(&missing).unwrap_err();
-    assert_eq!(
-        error.kind(),
-        ErrorKind::NotFound,
-        "a vanished directory is not a synced one"
-    );
+    tine_store::directory_durability::sync_directory_entry(&missing)
+        .expect("NotFound is a filesystem answer, not a lost save");
 
-    // Writable and searchable (a rename into it succeeds) but unreadable, so
-    // the directory cannot be opened to sync it: EACCES.
     let unreadable = base.join("unreadable");
     fs::create_dir(&unreadable).unwrap();
     fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o300)).unwrap();
-    let openable = fs::File::open(&unreadable).is_ok();
     let result = tine_store::directory_durability::sync_directory_entry(&unreadable);
     fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o700)).unwrap();
-    // A privileged user bypasses the permission bits; only assert where the
-    // directory really could not be opened.
-    if !openable {
-        assert_eq!(result.unwrap_err().kind(), ErrorKind::PermissionDenied);
-    }
+    result.expect("EACCES on a directory open is tolerated as in master");
     let _ = fs::remove_dir_all(&base);
 }

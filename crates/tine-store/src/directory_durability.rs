@@ -51,19 +51,11 @@ pub(crate) fn fail_next_sync() {
 }
 
 /// Synchronize the supplied directory where the platform supports it.
-/// `EINVAL` and `ENOTSUP` from sync are treated as filesystem non-support;
-/// other open or sync errors are returned. Master 54dfcc1b6674 additionally
-/// swallows `EBADF`, `EACCES`, `EISDIR`, `PermissionDenied` and `NotFound`;
-/// og does not, because none of them is a "this filesystem never offers
-/// directory sync" signal on a shipped target: the open here is `O_RDONLY`,
-/// which never yields `EISDIR` and gives a descriptor Linux, Android, macOS and
-/// iOS accept for `fsync` (so `EBADF` would be a real fault); an unopenable
-/// directory (`EACCES`) and a vanished one (`NotFound`, which also took the
-/// renamed file) give no durability at all. Swallowing them would acknowledge
-/// a save a crash can lose (I-2); as errors, the caller re-reads disk state.
-/// Pinned by `tests/directory_durability_guard.rs`. Windows returns success without a
-/// directory flush; standard file opening cannot flush its directory handles,
-/// and the caller is responsible for its own rename durability protocol.
+/// Errors that mean "this filesystem does not offer directory sync" are
+/// tolerated ([`dir_sync_is_unsupported`]); a real failure (`EIO`, `ENOSPC`, …)
+/// is returned, and the caller re-reads disk state. Windows returns success
+/// without a directory flush; standard file opening cannot flush its directory
+/// handles, and the caller is responsible for its own rename durability protocol.
 pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
     #[cfg(all(feature = "test-faults", unix))]
     if FAIL_NEXT_SYNC.with(|fail| fail.replace(false)) {
@@ -79,18 +71,10 @@ pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
         target_os = "ios"
     ))]
     {
-        let directory = std::fs::File::open(dir).map_err(report_failure)?;
-        match directory.sync_all() {
-            Err(error)
-                if matches!(
-                    error.raw_os_error(),
-                    Some(libc::EINVAL) | Some(libc::ENOTSUP)
-                ) =>
-            {
-                Ok(())
-            }
-            Err(error) => Err(report_failure(error)),
+        match std::fs::File::open(dir).and_then(|directory| directory.sync_all()) {
             Ok(()) => Ok(()),
+            Err(error) if dir_sync_is_unsupported(&error) => Ok(()),
+            Err(error) => Err(report_failure(error)),
         }
     }
     #[cfg(target_os = "windows")]
@@ -113,6 +97,74 @@ pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
             io::ErrorKind::Unsupported,
             "directory sync unsupported on this target",
         ))
+    }
+}
+
+/// True for directory-sync errors that mean "this filesystem does not offer
+/// it", as opposed to a real durability failure. Ported from master
+/// 54dfcc1b6674 (`dir_fsync_is_unsupported`; Martin 2026-10-03: follow master).
+///
+/// Several NFS and FUSE implementations (Android shared storage is FUSE)
+/// answer an open or fsync of a directory with `EBADF`, `EACCES`, `EISDIR` or
+/// `EINVAL`. Refusing every save there would make the graph uneditable over a
+/// guarantee that filesystem cannot give; the file bytes themselves are
+/// already written and fsynced. A real `EIO`/`ENOSPC` still fails the save,
+/// because then the rename may not survive a crash.
+pub(crate) fn dir_sync_is_unsupported(error: &io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::Unsupported
+            | io::ErrorKind::InvalidInput
+            | io::ErrorKind::PermissionDenied
+            | io::ErrorKind::NotFound
+    ) {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        error.raw_os_error().is_some_and(|errno| {
+            [
+                libc::EBADF,
+                libc::EACCES,
+                libc::EISDIR,
+                libc::EINVAL,
+                libc::ENOTSUP,
+            ]
+            .contains(&errno)
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dir_sync_is_unsupported;
+    use std::io;
+
+    #[cfg(unix)]
+    #[test]
+    fn unsupported_errnos_are_tolerated_and_real_failures_are_not() {
+        for errno in [
+            libc::EBADF,
+            libc::EACCES,
+            libc::EISDIR,
+            libc::EINVAL,
+            libc::ENOTSUP,
+        ] {
+            assert!(
+                dir_sync_is_unsupported(&io::Error::from_raw_os_error(errno)),
+                "errno {errno}"
+            );
+        }
+        for errno in [libc::EIO, libc::ENOSPC, libc::EROFS, libc::EDQUOT] {
+            assert!(
+                !dir_sync_is_unsupported(&io::Error::from_raw_os_error(errno)),
+                "errno {errno}"
+            );
+        }
     }
 }
 
