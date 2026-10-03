@@ -669,6 +669,9 @@ mod query_guide_tests {
             "**Pages and blocks**",
             "`tine.result-kinds:: pages-and-blocks`",
             "press **Edit as text**",
+            "press the pencil beside them to edit those properties",
+            "the sentence then reads *Pages and blocks where …*",
+            "a section that a **Sample** cut short says *More pages match than are shown*",
         ] {
             assert!(
                 queries.contains(control),
