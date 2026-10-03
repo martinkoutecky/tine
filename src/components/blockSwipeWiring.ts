@@ -1,5 +1,8 @@
-import { attachBlockSwipe, type BlockSwipeAction } from "../blockSwipe";
-import { clearSelection, indentSelection, outdentSelection, selectBlock } from "../document";
+import { attachBlockSwipe, swipeDisabledByTags, type BlockSwipeAction } from "../blockSwipe";
+import { graphMeta } from "../graphSession";
+import { pageIdentityKey } from "../pageIdentity";
+import { pageRefsInText } from "../render/pageRefs";
+import { clearSelection, indentSelection, node as docNode, outdentSelection, pageByName, selectBlock } from "../document";
 import type { OutlineScope } from "../document";
 import { dispatchFocusedEditorCommand, focusedEditorCommandBridge } from "../editorCommandBridge";
 import { touchGesturePlatform } from "../nativeChrome";
@@ -25,6 +28,19 @@ export interface BlockRowSwipeDeps {
 export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () => void {
   return attachBlockSwipe(row, {
     platform: touchGesturePlatform(),
+    // OG `:mobile :gestures/disabled-in-block-with-tags`, read at touchstart so
+    // a config edit applies to the next touch. Refs come from the one lsdoc
+    // parse of each ancestor block (never a regex over raw text).
+    disabledByTags: (el) =>
+      swipeDisabledByTags(
+        el,
+        (graphMeta()?.mobile_gestures_disabled_in_block_with_tags ?? []).map(pageIdentityKey),
+        (blockId) => {
+          const block = docNode(blockId);
+          if (!block) return [];
+          return pageRefsInText(block.raw, pageByName(block.page)?.format ?? "md").map(pageIdentityKey);
+        },
+      ),
     editing: deps.editing,
     run(action: BlockSwipeAction, x: number, y: number) {
       if (deps.readOnly()) return;

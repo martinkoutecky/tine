@@ -3,7 +3,9 @@
 // native E2E (scripts/e2e-touch-gestures.mjs) and the device-only list in the
 // changelog receipt.
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { attachBlockSwipe, blockSwipeDisabledTarget } from "./blockSwipe";
+import { attachBlockSwipe, blockSwipeDisabledTarget, swipeDisabledByTags } from "./blockSwipe";
+import { setGraphMeta } from "./graphSession";
+import type { GraphMeta } from "./types";
 import { wireBlockSwipe } from "./components/blockSwipeWiring";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
@@ -255,5 +257,86 @@ describe("disabled zones (OG target-disable-swipe? + Tine equivalents)", () => {
     const leaf = document.createElement("span"); wide.appendChild(leaf);
     row.appendChild(wide);
     expect(blockSwipeDisabledTarget(leaf, row)).toBe(true);
+  });
+});
+
+// OG `:mobile {:gestures/disabled-in-block-with-tags [...]}` (`target-disable-swipe?`).
+describe("user tag opt-out (swipeDisabledByTags)", () => {
+  /** `.ls-block[data-block-id=outer] > .block-children-container > .ls-block[inner] > row` */
+  function nest(outer: string, inner: string): HTMLElement {
+    const a = document.createElement("div"); a.className = "ls-block"; a.setAttribute("data-block-id", outer);
+    const kids = document.createElement("div"); kids.className = "block-children-container";
+    const b = document.createElement("div"); b.className = "ls-block"; b.setAttribute("data-block-id", inner);
+    const r = document.createElement("div"); r.className = "block-main";
+    b.appendChild(r); kids.appendChild(b); a.appendChild(kids); document.body.appendChild(a);
+    return r;
+  }
+  const refs = (table: Record<string, string[]>) => (id: string) => table[id] ?? [];
+
+  it("a block carrying a listed tag disables the swipe; one without it does not", () => {
+    const r = nest("o", "i");
+    expect(swipeDisabledByTags(r, ["kanban"], refs({ i: ["kanban"] }))).toBe(true);
+    expect(swipeDisabledByTags(r, ["kanban"], refs({ i: ["other"] }))).toBe(false);
+  });
+
+  it("a descendant of a tagged block is disabled too (the DOM nests children, as in OG)", () => {
+    const r = nest("o", "i");
+    expect(swipeDisabledByTags(r, ["kanban"], refs({ o: ["kanban"], i: [] }))).toBe(true);
+  });
+
+  it("matches as OG does: a substring of the refs string (kan matches kanban)", () => {
+    const r = nest("o", "i");
+    expect(swipeDisabledByTags(r, ["kan"], refs({ i: ["kanban"] }))).toBe(true);
+    expect(swipeDisabledByTags(r, ["kanban"], refs({ i: ["kan"] }))).toBe(false);
+  });
+
+  it("an empty entry is ignored, and with nothing listed no block is even looked up", () => {
+    const r = nest("o", "i");
+    let asked = 0;
+    const counting = (id: string) => { asked++; return id === "i" ? ["x"] : []; };
+    expect(swipeDisabledByTags(r, [], counting)).toBe(false);
+    expect(swipeDisabledByTags(r, [""], counting)).toBe(false);
+    expect(asked).toBe(0);
+    expect(swipeDisabledByTags(r, ["", "x"], counting)).toBe(true);
+  });
+
+  it("a row outside any block is not disabled", () => {
+    expect(swipeDisabledByTags(row, ["kanban"], () => ["kanban"])).toBe(false);
+  });
+});
+
+describe("user tag opt-out wired to the real store and graph meta", () => {
+  afterEach(() => setGraphMeta(null));
+  const meta = (tags: string[]) => ({ mobile_gestures_disabled_in_block_with_tags: tags }) as unknown as GraphMeta;
+  function inBlock(id: string) {
+    const b = document.createElement("div"); b.className = "ls-block"; b.setAttribute("data-block-id", id);
+    document.body.appendChild(b); b.appendChild(row);
+  }
+
+  it("a swipe on a block tagged with a listed page does nothing; an untagged one still indents", () => {
+    loadPage([blk("a"), blk("b #kanban"), blk("c")]);
+    const [, b, c] = doc.pages[0].roots;
+    setGraphMeta(meta(["Kanban"]));
+    inBlock(b);
+    wire(b);
+    swipe(row, 80);
+    expect(shape()).toEqual([["a"], ["b #kanban"], ["c"]]);
+    // the next block carries no listed tag: unaffected
+    const row2 = document.createElement("div"); row2.className = "block-main";
+    const b2 = document.createElement("div"); b2.className = "ls-block"; b2.setAttribute("data-block-id", c);
+    b2.appendChild(row2); document.body.appendChild(b2);
+    cleanups.push(wireBlockSwipe(row2, { id: c, scope: null, editing: () => false, readOnly: () => false }));
+    swipe(row2, 80, 0, row2);
+    expect(shape()).toEqual([["a"], ["b #kanban", [["c"]]]]);
+  });
+
+  it("the same swipe works when nothing is listed", () => {
+    loadPage([blk("a"), blk("b #kanban")]);
+    const [, b] = doc.pages[0].roots;
+    setGraphMeta(meta([]));
+    inBlock(b);
+    wire(b);
+    swipe(row, 80);
+    expect(shape()).toEqual([["a", [["b #kanban"]]]]);
   });
 });

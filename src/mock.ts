@@ -699,6 +699,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         block_hidden_properties: [], linked_references_collapsed_threshold: 100,
         default_journal_template: null,
         favorites: [],
+        mobile_gestures_disabled_in_block_with_tags: [],
         journal_page_title_format: "MMM do, yyyy",
         journal_file_name_format: "yyyy_MM_dd",
         preferred_format: "md",

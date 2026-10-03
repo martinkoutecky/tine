@@ -226,9 +226,43 @@ export function blockSwipeDisabledTarget(target: EventTarget | null, row: Elemen
   return false;
 }
 
+/** OG `build-refs-data-value`: the `data-refs-self` string a block carries,
+ *  `["a", "b"]`, of its page-name refs. Exported so the matcher below is
+ *  exactly OG's substring test over that string. */
+export function blockRefsDataValue(names: readonly string[]): string {
+  return `[${names.map((name) => `"${name}"`).join(", ")}]`;
+}
+
+/** OG's user opt-out (`:mobile {:gestures/disabled-in-block-with-tags [..]}`,
+ *  `target-disable-swipe?`): a touch inside a block - or inside any descendant
+ *  of a block, the DOM nests children - whose own refs contain a listed entry
+ *  is not a swipe. OG's test is `[data-refs-self*=entry]`, a SUBSTRING match
+ *  over the whole `["a", "b"]` string (so "kan" also matches `kanban`), done
+ *  here on the same string. `listed` and the names from `refsOf` must be
+ *  case-folded alike by the caller (OG's names are the lowercase `:block/name`).
+ *  An empty entry is ignored (OG's selector for it is invalid and throws).
+ *  `refsOf` is only called when something is listed, per ancestor block. */
+export function swipeDisabledByTags(
+  row: Element,
+  listed: readonly string[],
+  refsOf: (blockId: string) => readonly string[],
+): boolean {
+  const tags = listed.filter((tag) => tag !== "");
+  if (tags.length === 0) return false;
+  for (let el = row.closest(".ls-block"); el; el = el.parentElement?.closest(".ls-block") ?? null) {
+    const id = el.getAttribute("data-block-id");
+    if (!id) continue;
+    const value = blockRefsDataValue(refsOf(id));
+    if (tags.some((tag) => value.includes(tag))) return true;
+  }
+  return false;
+}
+
 export interface BlockSwipeDeps {
   /** Which touch platform this is (null: swipes are not installed). */
   platform: "ios" | "android" | null;
+  /** The user's tag opt-out verdict for this row, asked at touchstart. */
+  disabledByTags?(row: Element): boolean;
   editing(): boolean;
   /** Run the action. `x`/`y` are the release point (the menu's anchor). */
   run(action: BlockSwipeAction, x: number, y: number): void;
@@ -267,7 +301,13 @@ export function attachBlockSwipe(row: HTMLElement, deps: BlockSwipeDeps): () => 
   const onStart = (e: TouchEvent) => {
     const p = point(e);
     if (!p) return;
-    swipe.start(p.x, p.y, e.timeStamp, e.touches.length, blockSwipeDisabledTarget(e.target, row));
+    swipe.start(
+      p.x,
+      p.y,
+      e.timeStamp,
+      e.touches.length,
+      blockSwipeDisabledTarget(e.target, row) || (deps.disabledByTags?.(row) ?? false),
+    );
   };
   const onMove = (e: TouchEvent) => {
     const p = point(e);

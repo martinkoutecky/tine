@@ -77,6 +77,12 @@ pub struct Config {
     pub default_home: Option<String>,
     /// `:favorites ["Page" …]` — favorited page names (on-disk, graph-portable).
     pub favorites: Vec<String>,
+    /// `:mobile {:gestures/disabled-in-block-with-tags ["kanban"]}` — OG's
+    /// opt-out of the block swipe gestures: a swipe that starts inside a block
+    /// (or a descendant of a block) whose own refs contain any entry does
+    /// nothing (`frontend.handler.block/target-disable-swipe?`). Only a vector
+    /// of strings directly inside a top-level `:mobile` map counts.
+    pub mobile_gestures_disabled_in_block_with_tags: Vec<String>,
     /// `:tine/favorites-page "Name"` — the page holding the Favorites arrangement
     /// (labels, nesting, order). Logseq ignores the key; `:favorites` stays the
     /// flat membership list Logseq reads.
@@ -191,6 +197,7 @@ impl Default for Config {
             default_home: None,
             favorites: Vec::new(),
             favorites_page: None,
+            mobile_gestures_disabled_in_block_with_tags: Vec::new(),
             journal_file_name_format: None,
             journal_page_title_format: None,
             preferred_format: crate::model::Format::Md,
@@ -262,6 +269,8 @@ impl Config {
         cfg.default_home =
             nested_string(edn, ":default-home", ":page").filter(|s| !s.trim().is_empty());
         cfg.favorites = parse_string_vector(edn, ":favorites");
+        cfg.mobile_gestures_disabled_in_block_with_tags =
+            nested_string_vector(edn, ":mobile", ":gestures/disabled-in-block-with-tags");
         cfg.favorites_page =
             string_value(edn, ":tine/favorites-page").filter(|s| !s.trim().is_empty());
         cfg.journal_file_name_format =
@@ -675,7 +684,12 @@ fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
     let Some(start) = read_keyword(edn, key) else {
         return Vec::new();
     };
-    let from = skip_blank(edn, start + key.len());
+    string_vector_at(edn, skip_blank(edn, start + key.len()))
+}
+
+/// The quoted strings of the `[...]` vector opening at byte `from`; empty when
+/// there is no `[` there.
+fn string_vector_at(edn: &str, from: usize) -> Vec<String> {
     let b = edn.as_bytes();
     if b.get(from) != Some(&b'[') {
         return Vec::new();
@@ -700,6 +714,22 @@ fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// A vector of strings for `inner` directly inside the map following `outer`
+/// (`:mobile {:gestures/disabled-in-block-with-tags ["kanban"]}`). Nested
+/// extension maps cannot shadow either key.
+fn nested_string_vector(edn: &str, outer: &str, inner: &str) -> Vec<String> {
+    let Some(key) = read_keyword(edn, outer) else {
+        return Vec::new();
+    };
+    let Some((open, close)) = balanced_map_at(edn, skip_blank(edn, key + outer.len())) else {
+        return Vec::new();
+    };
+    let Some(irel) = find_keyword_at_map_level(&edn[open + 1..close], inner) else {
+        return Vec::new();
+    };
+    string_vector_at(edn, skip_blank(edn, open + 1 + irel + inner.len()))
 }
 
 /// A direct string entry in a direct root settings map. Nested extension
@@ -1324,5 +1354,54 @@ mod non_ascii_scan_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod mobile_gestures_tests {
+    use super::*;
+
+    fn tags(edn: &str) -> Vec<String> {
+        Config::parse(edn).mobile_gestures_disabled_in_block_with_tags
+    }
+
+    #[test]
+    fn default_is_empty() {
+        assert!(tags("{}").is_empty());
+        assert!(tags("{:mobile {}}").is_empty());
+    }
+
+    #[test]
+    fn reads_the_og_key() {
+        assert_eq!(
+            tags(r#"{:mobile {:gestures/disabled-in-block-with-tags ["kanban" "board"]}}"#),
+            ["kanban", "board"]
+        );
+    }
+
+    #[test]
+    fn a_commented_entry_is_not_a_value() {
+        let edn =
+            "{:mobile {:gestures/disabled-in-block-with-tags [\n \"kanban\"\n ;; \"example\"\n]}}";
+        assert_eq!(tags(edn), ["kanban"]);
+    }
+
+    #[test]
+    fn a_nested_map_cannot_shadow_the_key() {
+        // The key inside another setting's map is not the `:mobile` setting.
+        assert!(
+            tags(r#"{:other {:mobile {:gestures/disabled-in-block-with-tags ["x"]}}}"#).is_empty()
+        );
+        // Nor does a sibling key inside `:mobile` bleed through.
+        assert!(
+            tags(r#"{:mobile {:other {:gestures/disabled-in-block-with-tags ["x"]}}}"#).is_empty()
+        );
+    }
+
+    #[test]
+    fn a_wrong_shape_yields_nothing_and_does_not_panic() {
+        assert!(tags(r#"{:mobile {:gestures/disabled-in-block-with-tags "kanban"}}"#).is_empty());
+        assert!(tags(r#"{:mobile "kanban"}"#).is_empty());
+        assert!(tags(r#"{:mobile {:gestures/disabled-in-block-with-tags"#).is_empty());
     }
 }

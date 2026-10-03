@@ -490,7 +490,9 @@ mod rename_guide_tests {
             "**Swipe in from the left edge** to open the left drawer",
             "**Back is one ladder everywhere.**",
             "snapping back if you let go early",
-            "swipe sideways to move between the page's images, and swipe down to close",
+            "swipe sideways to move between the page's images, and drag up or down to close",
+            "A single tap shows or hides the buttons instead of closing",
+            ":mobile {:gestures/disabled-in-block-with-tags [",
         ] {
             assert!(
                 mobile.contains(outcome),
