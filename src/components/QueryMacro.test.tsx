@@ -679,6 +679,79 @@ describe("QueryMacro sheet integration", () => {
     dispose();
   });
 
+  // OG query_table.cljs:61-109,163-179 (audit #9): the legacy table reads its columns
+  // and initial sort from the HOST block's `query-properties`, `query-sort-by` and
+  // `query-sort-desc`.
+  describe("legacy :table-view? host properties", () => {
+    const groupsWith = (rows: Array<[string, Array<[string, string]>]>): RefGroup[] => [
+      {
+        page: "Sheet",
+        kind: "page",
+        blocks: rows.map(([text, properties], index) => ({
+          id: `row-${index}`, raw: text, collapsed: false, children: [], properties,
+        })),
+      },
+    ];
+    const rowsData: Array<[string, Array<[string, string]>]> = [
+      ["TODO bravo", [["owner", "Beta"], ["rank", "10"]]],
+      ["TODO alpha", [["owner", "Alpha"], ["rank", "9"]]],
+      ["TODO charlie", [["owner", "Gamma"], ["rank", "100"]]],
+    ];
+    const headers = (root: HTMLElement) =>
+      [...root.querySelectorAll(".query-table th")].map((th) => th.textContent?.replace(/[ ▲▼]/g, ""));
+    const firstColumn = (root: HTMLElement) =>
+      [...root.querySelectorAll(".query-table tbody tr")].map((tr) => tr.querySelector("td")!.textContent);
+
+    async function table(raw: string) {
+      loadQueryDoc(raw);
+      mockRun(groupsWith(rowsData));
+      const view = mount(() => <Block id="query" />);
+      await settleQuery();
+      return view;
+    }
+
+    it("shows only the columns query-properties names, in that order", async () => {
+      const { root, dispose } = await table(
+        "{{query (task TODO) {:table-view? true}}}\nquery-properties:: [:rank :block]"
+      );
+      expect(headers(root)).toEqual(["rank", "Content"]);
+      expect(firstColumn(root)).toEqual(["10", "9", "100"]);
+      dispose();
+    });
+
+    it("derives block, page and the property columns when query-properties is absent", async () => {
+      const { root, dispose } = await table("{{query (task TODO) {:table-view? true}}}");
+      expect(headers(root)).toEqual(["Content", "Page", "owner", "rank"]);
+      dispose();
+    });
+
+    it("sorts by query-sort-by, descending unless query-sort-desc is false", async () => {
+      const desc = await table("{{query (task TODO) {:table-view? true}}}\nquery-sort-by:: owner");
+      expect(firstColumn(desc.root)).toEqual(["charlie", "bravo", "alpha"]);
+      desc.dispose();
+      document.body.innerHTML = "";
+      const asc = await table(
+        "{{query (task TODO) {:table-view? true}}}\nquery-sort-by:: owner\nquery-sort-desc:: false"
+      );
+      expect(firstColumn(asc.root)).toEqual(["alpha", "bravo", "charlie"]);
+      asc.dispose();
+    });
+
+    it("compares numeric cells as numbers", async () => {
+      const { root, dispose } = await table(
+        "{{query (task TODO) {:table-view? true}}}\nquery-sort-by:: rank\nquery-sort-desc:: false"
+      );
+      expect(firstColumn(root)).toEqual(["alpha", "bravo", "charlie"]);
+      dispose();
+    });
+
+    it("leaves the engine order alone when no sort property is given", async () => {
+      const { root, dispose } = await table("{{query (task TODO) {:table-view? true}}}");
+      expect(firstColumn(root)).toEqual(["bravo", "alpha", "charlie"]);
+      dispose();
+    });
+  });
+
   // og's "shows an enabled Simple toggle for stashed advanced queries…" is retired
   // with the frontend datalog/DSL converters, as on master (§9 P0-ts: the
   // `⚙ advanced` / `← Simple` pair is gone; Macro.tsx has no stash).
@@ -862,8 +935,9 @@ describe("a query never returns its own block (GH #469)", () => {
   });
 });
 
-// Ported from master QueryMacro.test.tsx (the field chooser is og's QueryListbox `.qs-menu`).
-it("choosing the Query slash command opens its sheet and field chooser", async () => {
+// Ported from master QueryMacro.test.tsx, then changed on purpose (Martin 2026-10-03, GH #619 comment 2): the sheet opens
+// on the empty condition list and the field chooser (og's QueryListbox `.qs-menu`) stays CLOSED until the user opens it.
+it("choosing the Query slash command opens its sheet on the condition list, chooser closed", async () => {
   vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => {
     const read = readQuery(text, dialect, properties);
     return { ...read, query: { ...read.query, filter: { kind: "and", items: [] } } };
@@ -890,7 +964,9 @@ it("choosing the Query slash command opens its sheet and field chooser", async (
     command.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(doc.byId.query.raw.trim()).toBe("{{query }}"));
     await vi.waitFor(() => expect(document.querySelector(".qs-sheet")).not.toBeNull());
-    await vi.waitFor(() => expect(document.querySelector(".qs-menu")).not.toBeNull());
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(document.querySelector(".qs-menu")).toBeNull();
+    expect(document.querySelectorAll(".qs-sheet .qs-row")).toHaveLength(0);
     expect(editingId()).toBeNull();
   } finally { dispose(); }
 });

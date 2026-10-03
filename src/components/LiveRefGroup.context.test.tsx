@@ -113,6 +113,40 @@ describe("LiveRefGroup reference context", () => {
     }
   });
 
+  it("renders one breadcrumb per shared parent and gathers siblings under it (OG group-by :block/parent)", async () => {
+    const leaf = (id: string, raw: string): BlockDto => ({ id, raw, collapsed: false, children: [] });
+    const s1 = leaf("sib-1", "Sibling one [[Target]]");
+    const s2 = leaf("sib-2", "Sibling two [[Target]]");
+    const t1 = leaf("other-1", "Other [[Target]]");
+    const page: PageDto = {
+      name: "Grouped",
+      title: "Grouped",
+      kind: "page",
+      pre_block: null,
+      blocks: [
+        { id: "parent-a", raw: "Parent A", collapsed: false, children: [s1, s2] },
+        { id: "parent-b", raw: "Parent B", collapsed: false, children: [t1] },
+      ],
+    };
+    loadSingle(page);
+    const hit = (b: BlockDto, crumb: string) => ({ ...b, breadcrumb: [crumb] });
+    // Interleaved on purpose: OG groups by parent, so the siblings join up.
+    const blocks = [hit(s1, "Parent A"), hit(t1, "Parent B"), hit(s2, "Parent A")];
+    const { root, dispose } = mount(() => (
+      <LiveRefGroup page={page.name} kind={page.kind} blocks={blocks} surface="query" showBreadcrumb />
+    ));
+    try {
+      await expect.poll(() => root.querySelectorAll(".ref-breadcrumb").length).toBe(2);
+      const crumbs = [...root.querySelectorAll(".ref-breadcrumb")].map((c) => c.textContent?.replace(/\s+/g, "").trim());
+      expect(crumbs).toEqual(["ParentA", "ParentB"]);
+      const text = root.textContent ?? "";
+      expect(text.indexOf("Sibling one")).toBeLessThan(text.indexOf("Sibling two"));
+      expect(text.indexOf("Sibling two")).toBeLessThan(text.indexOf("Other"));
+    } finally {
+      dispose();
+    }
+  });
+
   it("defaults the first descendant branch closed, keeps toggles view-local, and survives result-object refresh", async () => {
     const { page, result } = hierarchy();
     loadSingle(page);

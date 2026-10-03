@@ -10,10 +10,8 @@ impl Graph {
         let key = (kind, tine_core::refs::page_key(name));
         loop {
             let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
-            if let Some((g, index)) = self.find_entry_cache.read().unwrap().as_ref() {
-                if *g == gen && (index.has_kind(kind) || index.entries.contains_key(&key)) {
-                    return index.entries.get(&key).cloned().unwrap_or_default();
-                }
+            if let Some(found) = self.cached_claimants(&key, gen) {
+                return found;
             }
 
             let mut built = FindEntryIndex::new();
@@ -44,6 +42,35 @@ impl Graph {
                 return found;
             }
         }
+    }
+
+    /// The claimant index's answer for `key` at cache generation `gen`, if
+    /// it has one; `None` means only a walk can answer.
+    fn cached_claimants(&self, key: &(PageKind, String), gen: u64) -> Option<Vec<PageEntry>> {
+        let cache = self.find_entry_cache.read().unwrap();
+        let (g, index) = cache.as_ref()?;
+        (*g == gen && (index.has_kind(key.0) || index.entries.contains_key(key)))
+            .then(|| index.entries.get(key).cloned().unwrap_or_default())
+    }
+
+    /// [`Self::find_entry`] that answers a name some file is named for from
+    /// that file (GH #623 BR3). While the claimant index cannot answer, an
+    /// ordinary page tries [`filename_claimants`] (a listing of file names
+    /// plus the matching files) before the O(P) preamble walk, which a
+    /// title-only or absent name still needs. Same answer either way.
+    pub(crate) fn find_entry_named_file_first(
+        &self,
+        name: &str,
+        kind: PageKind,
+    ) -> Option<PageEntry> {
+        let key = (kind, tine_core::refs::page_key(name));
+        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+        if kind == PageKind::Page && self.cached_claimants(&key, gen).is_none() {
+            if let Some(winner) = filename_claimants(self, name).into_iter().next() {
+                return Some(winner);
+            }
+        }
+        self.find_entry(name, kind)
     }
 
     /// A direct path read can observe a new or retitled file before the watcher.
@@ -476,6 +503,33 @@ pub(super) fn list_graph_pages(graph: &Graph) -> Vec<PageEntry> {
 pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Vec<PageEntry> {
     #[cfg(test)]
     super::GRAPH_LIST_CALLS.with(|calls| calls.set(calls.get() + 1));
+    list_pages(graph, kind, None)
+}
+
+/// The ordinary pages whose file stem decodes to `name`, each named by its
+/// preamble like any listing, ranked by the one claimant order; only those
+/// still named `name` are kept (GH #623 BR3). They are exactly the
+/// filename-rank claimants of `name`, which outrank every claimant that
+/// takes the name by `title::` alone (`compare_page_claimants`), so a
+/// nonempty answer starts with the claimant a full listing would rank first.
+/// Lists file names only and opens just the matching files, instead of the
+/// O(P) preamble reads of a full listing. Records no discovery errors: only
+/// a full listing knows the whole set.
+pub(crate) fn filename_claimants(graph: &Graph, name: &str) -> Vec<PageEntry> {
+    let key = tine_core::refs::page_key(name);
+    let mut entries: Vec<_> = list_pages(graph, Some(PageKind::Page), Some(&key))
+        .into_iter()
+        .filter(|entry| tine_core::refs::page_key(&entry.name) == key)
+        .collect();
+    let format = graph.current_journal_format();
+    let name_format = graph.current_config().file_name_format;
+    entries.sort_by(|a, b| compare_page_claimants(a, b, &format, name_format));
+    entries
+}
+
+/// `stem_key`: list only ordinary pages whose decoded stem has this
+/// `page_key`, and leave the discovery errors alone.
+fn list_pages(graph: &Graph, kind: Option<PageKind>, stem_key: Option<&str>) -> Vec<PageEntry> {
     let mut entries = Vec::new();
     let root = &graph.root;
     let format = graph.current_journal_format();
@@ -498,6 +552,12 @@ pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Ve
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
             return;
         };
+        if stem_key.is_some_and(|key| {
+            path.starts_with(&journals)
+                || tine_core::refs::page_key(&decode_page_name(stem, name_format)) != key
+        }) {
+            return;
+        }
         let (name, kind, date_key) = if path.starts_with(&journals) {
             match format.parse(stem) {
                 Some(date) => (
@@ -530,6 +590,9 @@ pub(crate) fn list_graph_pages_kind(graph: &Graph, kind: Option<PageKind>) -> Ve
             path,
         });
     });
+    if stem_key.is_some() {
+        return entries;
+    }
     failures.extend(
         walk_errors
             .into_iter()

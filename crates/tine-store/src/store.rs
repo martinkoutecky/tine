@@ -319,11 +319,18 @@ struct Snapshot {
     name_by_path: Arc<SharedMap<PathBuf, (PageKind, String)>>,
     unreadable: Arc<Vec<(FileId, String)>>,
     answers: (bool, BTreeMap<String, usize>),
+    /// This publication only folded or unfolded blocks (GH #623 item 3).
+    folds_only: bool,
 }
 
 mod answer_changes;
 pub(crate) mod checkpoint;
 mod diagnostics;
+#[cfg(test)]
+mod fold_save_tests;
+#[cfg(test)]
+mod page_open_tests;
+mod page_read;
 mod snapshot;
 
 impl ChangeFeed {
@@ -456,9 +463,6 @@ impl ChangeFeed {
         rebuild: bool,
     ) -> GraphRev {
         let old = self.snapshot.read().unwrap().clone();
-        if old.is_none() || config_changed || rebuild || !files.is_empty() {
-            self.checkpoint.get().inspect(|signal| signal.published());
-        }
         let journals_dir = self.graph.current_config().journals_dir.clone();
         if old.is_none()
             || config_changed
@@ -481,6 +485,13 @@ impl ChangeFeed {
             rebuild,
             rev,
         ));
+        // A fold leaves the launch checkpoint's derived state true; its file
+        // stamp is stale, so the next launch diff rereads that one file
+        // (ADR 0070) instead of the whole checkpoint being rewritten for it.
+        if (old.is_none() || config_changed || rebuild || !files.is_empty()) && !snapshot.folds_only
+        {
+            self.checkpoint.get().inspect(|signal| signal.published());
+        }
         #[cfg(test)]
         pause_at_hook(&self.snapshot_publish_pause);
         let mut state = self.state.lock().unwrap();
@@ -1800,8 +1811,8 @@ impl Store {
 
     /// Read one physical page. `NotFound` alone means absence and permits an
     /// empty editable page; unsafe, parse, size, I/O and closed-store errors
-    /// must surface as failures. Every call holds the writer lock, even a miss.
-    /// A new external file publishes `Origin::External`/`Created`; a changed
+    /// must surface as failures. From Ready on, every call holds the writer
+    /// lock, even a miss. A new external file publishes `Origin::External`/`Created`; a changed
     /// known file publishes `Modified`. Equal bytes do not publish again.
     /// A readable duplicate-day stray is returned but never published or
     /// added to graph-wide answers. Missing files do not wait for initial
@@ -1810,11 +1821,27 @@ impl Store {
     /// An accessible path below an unreadable directory is read directly.
     /// Observed edits may wait for parsing, another writer, restore or site
     /// publication. Case aliases return the file's actual disk spelling.
-    /// A cold read parses only the target, but canonicality may build a live
-    /// O(P + preamble bytes) name index on first lookup or invalidation.
-    /// Warm lookup skips that scan. Target parse costs O(bytes + blocks);
-    /// publication adds O(P) metadata. Reads write no page bytes.
+    /// Canonicality is answered from the published name index while it
+    /// describes the current cache generation, so a read opens no other file
+    /// (GH #623 BR3: rebuilding the live name index read every page preamble
+    /// under the writer, ~2.8 s on Windows, and queued every other open
+    /// behind it); a journal, or a stale publication, still asks the live
+    /// index. Before Ready (initial parse, or a launch checkpoint served
+    /// while the launch diff runs) a read takes no writer and publishes
+    /// nothing: it parses the file directly, the revision comes from the
+    /// same bytes, and the load or launch diff takes the file in, so a page
+    /// opens in parse time whatever the graph is doing. Target parse costs
+    /// O(bytes + blocks); publication adds O(P) metadata. Reads write no
+    /// page bytes.
     pub fn page(&self, id: &PageId) -> Result<PageRead, StoreError> {
+        if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
+            if self.is_closed() {
+                return Err(StoreError::Closed);
+            }
+            let (id, path, entry) = self.page_target(id)?;
+            let doc = self.parse_page(&path, &entry, false)?;
+            return self.page_read(id, doc);
+        }
         let waiting = Instant::now();
         let _writer = self.writer.lock().unwrap();
         self.graph.diag.page_writer_wait(waiting.elapsed());
@@ -1822,30 +1849,26 @@ impl Store {
         if self.is_closed() {
             return Err(StoreError::Closed);
         }
-        if self.as_page(&id.file()).is_none() {
-            return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
+        let (id, path, entry) = self.page_target(id)?;
+        let canonical = self.canonical_claim(&entry);
+        let read = self.page_read(id, self.parse_page(&path, &entry, canonical)?)?;
+        if self.graph.cache_generation() != before_generation
+            && !matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_))
+        {
+            self.publish_observed(&read, &path, entry);
         }
-        let id = self
-            .disk_spelling_for_case_alias(id)
-            .unwrap_or_else(|| id.clone());
-        // v0.6.5's page walker never indexes a symlinked page file (it could
-        // expose a file outside the graph), so no listing hands out such an
-        // id; refuse one here too. Ancestors must stay inside the area. The
-        // read itself uses the lexical path, which is the page's identity.
-        let path = self.graph.root.join(id.as_str());
-        self.path_for_os_handoff(&id.file(), false)?;
-        if fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
-            return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
-        }
-        let entry = self
-            .graph
-            .entry_for_path(&path)
-            .ok_or_else(|| StoreError::InvalidTarget(id.as_str().to_owned()))?;
-        let canonical = self
-            .graph
-            .find_entry(&entry.name, entry.kind)
-            .is_some_and(|found| found.path == path);
-        let mut doc = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        Ok(read)
+    }
+
+    /// Parse one page file: the canonical claimant through the cache (which
+    /// it reconciles), any other file directly.
+    fn parse_page(
+        &self,
+        path: &Path,
+        entry: &PageEntry,
+        canonical: bool,
+    ) -> Result<PageDto, StoreError> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             #[cfg(test)]
             if fs::read_to_string(&path)
                 .is_ok_and(|text| text.contains("__TINE_TEST_PAGE_PARSE_PANIC__"))
@@ -1853,9 +1876,9 @@ impl Store {
                 panic!("deterministic test page parser panic");
             }
             if canonical {
-                self.graph.load_page(&entry).map(Some)
+                self.graph.load_page(entry).map(Some)
             } else {
-                self.graph.load_by_validated_path(&path)
+                self.graph.load_by_validated_path(path)
             }
         }))
         .map_err(|panic| {
@@ -1878,64 +1901,15 @@ impl Store {
                 StoreError::from_io(error)
             }
         })?
-        .ok_or(StoreError::NotFound)?;
-        let rev = FileRev(doc.rev.clone().ok_or(StoreError::NotFound)?);
-        let read_only = if self.config().problem.is_some() {
-            doc.read_only = true;
-            Some("config.edn could not be read; graph is read-only".to_owned())
-        } else {
-            doc.read_only
-                .then(|| "Org file does not round-trip".to_owned())
-        };
-        if self.graph.cache_generation() != before_generation
-            && !matches!(*self.load.status.lock().unwrap(), LoadStatus::Failed(_))
-        {
-            let known = self
-                .changes
-                .snapshot
-                .read()
-                .unwrap()
-                .as_ref()
-                .is_some_and(|snapshot| {
-                    snapshot
-                        .claimants
-                        .get(&(
-                            entry.kind == PageKind::Journal,
-                            tine_core::refs::page_key(&entry.name),
-                        ))
-                        .is_some_and(|claimants| {
-                            claimants.iter().any(|claimant| claimant.path == path)
-                        })
-                });
-            let raced = self.watch.note_own(&[(id.file(), Some(rev.clone()))]);
-            self.changes.publish(
-                Origin::External,
-                vec![(
-                    id.file(),
-                    if known {
-                        ChangeKind::Modified
-                    } else {
-                        ChangeKind::Created
-                    },
-                    Some(rev.clone()),
-                )],
-                false,
-                vec![(id.file(), entry.kind, entry.name)],
-            );
-            self.watch.reconcile_raced(&raced);
-        }
-        Ok(PageRead {
-            id: id.clone(),
-            doc,
-            rev,
-            read_only,
-        })
+        .ok_or(StoreError::NotFound)
     }
 
     /// Read an ordinary page by effective name, or a journal by its file
-    /// stem or parseable display title. First lookup or invalidation builds a
-    /// live O(P) file/preamble index, seeing files created after `open`;
-    /// warm lookups reuse it. This remains available after a
+    /// stem or parseable display title, without waiting for the initial
+    /// parse. A page some file is named for is found from a listing of file
+    /// names and the matching files; otherwise the first lookup or
+    /// invalidation builds a live O(P) file/preamble index, seeing files
+    /// created after `open`, and warm lookups reuse it. This remains available after a
     /// failed initial parse; aliases require a successful graph view and are
     /// not resolved here. When files claim the same name or journal day, it
     /// uses the same claimant ranking as `WholeGraph::resolve` (canonical
@@ -1954,7 +1928,7 @@ impl Store {
         } else {
             name.to_owned()
         };
-        let Some(entry) = self.graph.find_entry(&lookup, kind) else {
+        let Some(entry) = self.graph.find_entry_named_file_first(&lookup, kind) else {
             return Ok(None);
         };
         let id = PageId::from(self.graph.rel_path(&entry.path));

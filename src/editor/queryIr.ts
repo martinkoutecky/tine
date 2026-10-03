@@ -23,14 +23,14 @@ export const ANCHORS: readonly Anchor[] = ["block", "page"];
 /** The attributes of a block row, of a page row, and the three attributes of the elements relations yield. */
 export type Attr =
   // block row
-  | "content" | "task" | "priority" | "scheduled" | "deadline"
+  | "content" | "task" | "priority" | "scheduled" | "deadline" | "created_at" | "last_modified_at"
   // page row
-  | "name" | "journal" | "day" | "namespace"
+  | "name" | "journal" | "day" | "namespace" | "used_as_tag"
   // property element
   | "key" | "value" | "atom_count";
 export const ATTRS: readonly Attr[] = [
-  "content", "task", "priority", "scheduled", "deadline",
-  "name", "journal", "day", "namespace",
+  "content", "task", "priority", "scheduled", "deadline", "created_at", "last_modified_at",
+  "name", "journal", "day", "namespace", "used_as_tag",
   "key", "value", "atom_count",
 ];
 

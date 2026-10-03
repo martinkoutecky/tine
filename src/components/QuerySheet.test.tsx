@@ -674,6 +674,31 @@ describe("reordering: the drag and the keyboard reach the same tree", () => {
     }
   });
 
+  it("draws no drop bar at a slot beside the dragged condition itself (GH #619)", () => {
+    // Two conditions, dragging the LOWER one up. Only one slot changes anything: above the first. The slot
+    // between the two (the first's lower edge or the dragged row's own upper edge) and the slot below the
+    // dragged row are no-ops, and a bar there reads as a hidden third condition.
+    const builder = mountBuilder({ kind: "and", items: [A, B] });
+    try {
+      const sheet = builder.open();
+      const bars = () => rootItems(sheet).map((item) => [item.classList.contains("qs-drop-before"), item.classList.contains("qs-drop-after")]);
+      const none = [[false, false], [false, false]];
+      for (const [over, before] of [[0, false], [1, true], [1, false]] as const) {
+        const drop = dragOnto(rootItems(sheet), 1, over, before);
+        expect(bars()).toEqual(none);
+        drop();
+      }
+      expect(builder.changes).toHaveLength(0);
+      const drop = dragOnto(rootItems(sheet), 1, 0, true);
+      expect(bars()).toEqual([[true, false], [false, false]]);
+      drop();
+      expect(builder.changes).toHaveLength(1);
+      expect(filterOf(builder)).toEqual({ kind: "and", items: [B, A] });
+    } finally {
+      builder.dispose();
+    }
+  });
+
   it("moves a whole group, wrappers and subtree together", () => {
     const group: Filter = { kind: "off", inner: { kind: "or", items: [B, C] } };
     const builder = mountBuilder({ kind: "and", items: [A, group] });

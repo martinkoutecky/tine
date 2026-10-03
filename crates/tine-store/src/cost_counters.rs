@@ -169,6 +169,19 @@ pub(crate) fn full_read() {
 }
 pub(crate) fn preamble_read() {
     PREAMBLE_READS.fetch_add(1, Ordering::Relaxed);
+    let delay = PREAMBLE_OPEN_DELAY_US.load(Ordering::Relaxed);
+    if delay > 0 {
+        std::thread::sleep(std::time::Duration::from_micros(delay));
+    }
+}
+
+static PREAMBLE_OPEN_DELAY_US: AtomicU64 = AtomicU64::new(0);
+
+/// Make every page-preamble open take `micros` longer, as on Windows where
+/// an antivirus scanner holds each first open for ~250 µs (GH #623 BR3).
+/// Not cleared by [`reset`].
+pub fn set_preamble_open_delay(micros: u64) {
+    PREAMBLE_OPEN_DELAY_US.store(micros, Ordering::Relaxed);
 }
 pub(crate) fn parse() {
     PARSES.fetch_add(1, Ordering::Relaxed);

@@ -133,23 +133,31 @@ fn gh542_reporter_advanced_queries_answer_like_logseq() {
     assert_eq!(raws.len(), 9, "{raws:?}");
     assert!(!raws.contains(&"DONE finished".to_owned()));
 
-    // NOW: a marker variable narrowed by `contains?`. The result transform is a
-    // Clojure function og does not run; it only orders, and it is reported
-    // rather than silently dropped.
-    let (raws, result) = answer(
-        &graph,
-        r#"{:title "NOW"
-            :query [:find (pull ?h [*])
+    // NOW: a marker variable narrowed by `contains?`.
+    let now_query = r#":query [:find (pull ?h [*])
                     :where
                     [?h :block/marker ?marker]
-                    [(contains? #{"NOW" "DOING"} ?marker)]]
-            :result-transform (fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))}"#,
-    );
+                    [(contains? #{"NOW" "DOING"} ?marker)]]"#;
+    let (raws, result) = answer(&graph, &format!(r#"{{:title "NOW" {now_query}}}"#));
     assert!(result.supported, "{:?}", result.ignored);
+    assert!(result.ignored.is_empty(), "{:?}", result.ignored);
     assert_eq!(
         raws,
         sorted(&["NOW doing it", "DOING in progress", "NOW page now"])
     );
+
+    // The same query with the Clojure result transform is REFUSED whole: it
+    // only orders in OG, but Tine cannot run it, and an answer that silently
+    // skipped it would be a different query's answer (Martin, 2026-10-03).
+    let (raws, result) = answer(
+        &graph,
+        &format!(
+            r#"{{:title "NOW" {now_query}
+            :result-transform (fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))}}"#
+        ),
+    );
+    assert!(!result.supported);
+    assert!(raws.is_empty(), "{raws:?}");
     assert_eq!(result.ignored, vec!["result-transform".to_owned()]);
 
     // NEXT, with its result variable matching its clauses: tasks on journal
@@ -231,35 +239,34 @@ fn gh542_reporter_advanced_queries_answer_like_logseq() {
     );
 }
 
-/// A `not` or `or` og only partly understands must not run as the part it
-/// understood: `not` of a narrower clause removes blocks the query keeps, and
-/// `or` of fewer branches drops blocks the query returns.
+/// A clause og only partly understands refuses the whole query (Martin,
+/// 2026-10-03): a `not` of a narrower clause removes blocks the query keeps,
+/// an `or` of fewer branches drops blocks the query returns, and a plain
+/// unknown clause beside a lowered one would broaden the answer. None of them
+/// may run as the part Tine understood.
 #[test]
-fn gh542_a_partly_understood_not_or_or_is_not_narrowed() {
+fn gh542_a_clause_tine_cannot_lower_refuses_the_whole_query() {
     let graph = open("partial", &[("journals/2026_06_20.md", TASKS)]);
 
-    let (raws, result) = answer(
-        &graph,
+    for query in [
         r#"[:find (pull ?b [*])
             :where (task ?b #{"TODO"}) (not (and (task ?b #{"TODO"}) (bogus ?b)))]"#,
-    );
-    assert!(
-        raws.iter().filter(|raw| raw.starts_with("TODO")).count() == 4,
-        "{raws:?} ignored={:?}",
-        result.ignored
-    );
-    assert!(!result.ignored.is_empty());
-
-    let (raws, result) = answer(
-        &graph,
         r#"[:find (pull ?b [*]) :where (task ?b #{"TODO" "DONE"}) (or (task ?b #{"DONE"}) (bogus ?b))]"#,
-    );
-    assert!(
-        raws.iter().filter(|raw| raw.starts_with("TODO")).count() == 4,
-        "{raws:?} ignored={:?}",
-        result.ignored
-    );
-    assert!(!result.ignored.is_empty());
+        // The audit's repro (2026-10-02, finding 1): a content join beside a
+        // supported marker clause answered every TODO block as one group.
+        r#"[:find (pull ?b [*]) :where [?b :block/marker "TODO"] [?b :block/content ?c]
+            [(clojure.string/includes? ?c "plain")]]"#,
+        // An unbound input (`:current-block`) leaves the clause that reads it
+        // unevaluable.
+        r#"{:query [:find (pull ?b [*]) :in $ ?cb :where [?b :block/marker "TODO"] [?b :block/parent ?cb]]
+            :inputs [:current-block]}"#,
+    ] {
+        let (raws, result) = answer(&graph, query);
+        assert!(!result.supported, "{query}: ran={:?}", result.ran);
+        assert!(raws.is_empty(), "{query}: {raws:?}");
+        assert!(!result.ignored.is_empty(), "{query}");
+        assert!(result.ran.is_empty(), "{query}: {:?}", result.ran);
+    }
 }
 
 /// QA1's OUT side: a variable shared with another clause is a join. og does not

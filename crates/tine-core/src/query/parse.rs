@@ -290,11 +290,38 @@ pub(crate) const ADVANCED_UNRESOLVED_MESSAGE: &str =
     "this is an advanced (datalog) query, not the simple DSL";
 
 /// The message a resolution that could not bind the query reports (§4.4):
-/// no clause lowered, or the source exceeded the size/nesting limits. A
-/// PARTIALLY recognized form is not this case: it runs the lowered clauses
-/// (see [`resolve_for_execution`]).
+/// at least one clause (or `:result-transform`, or `:inputs` binding) could not
+/// be lowered, or the source exceeded the size/nesting limits. The refusal is
+/// WHOLE: a partially recognized form does not run (see
+/// [`resolve_for_execution`]). The diagnostic carries this text followed by the
+/// parenthesized list of what was not lowered (see [`unsupported_message`]).
 pub(crate) const ADVANCED_UNSUPPORTED_MESSAGE: &str =
-    "this advanced query's clauses are not supported, so it returns no results";
+    "this advanced query has clauses Tine cannot run, so it returns no results";
+
+/// [`ADVANCED_UNSUPPORTED_MESSAGE`] naming the ignored clauses (distinct, in
+/// first-seen order, at most eight).
+fn unsupported_message(ignored: &[String]) -> String {
+    let mut names: Vec<&str> = Vec::new();
+    for item in ignored {
+        if !names.contains(&item.as_str()) {
+            names.push(item);
+        }
+    }
+    if names.is_empty() {
+        return ADVANCED_UNSUPPORTED_MESSAGE.to_string();
+    }
+    let more = names.len().saturating_sub(8);
+    names.truncate(8);
+    let tail = if more > 0 {
+        format!(", and {more} more")
+    } else {
+        String::new()
+    };
+    format!(
+        "{ADVANCED_UNSUPPORTED_MESSAGE} (not lowered: {}{tail})",
+        names.join(", ")
+    )
+}
 
 /// A query BOUND to one execution (SPEC §4.4, R5).
 ///
@@ -359,15 +386,17 @@ impl ResolvedQuery {
 /// provisional inspection diagnostic is removed; static (size/depth)
 /// diagnostics survive.
 ///
-/// **Execution is partial:** if at least one clause lowers, the conjunction of
-/// the lowered clauses runs with `supported = true`, and every clause it could
-/// not lower (unsupported patterns, a `?current-page` pattern with no current
-/// page, `:result-transform`) is dropped and listed only in `report.ignored`,
-/// so the answer may be broader than the authored query. Only when no clause
-/// lowers, or the source exceeds the size/nesting limits, is the filter
-/// [`Filter::False`], `supported = false`, and the
-/// `ADVANCED_UNSUPPORTED_MESSAGE` `Syntax` diagnostic added (a size refusal
-/// also lists `query-too-large` in `ignored`).
+/// **Execution is all-or-nothing** (Martin, 2026-10-03; OG runs the whole
+/// DataScript query, so a subset answer is a different query's answer). If
+/// EVERY clause lowers the conjunction runs with `supported = true` and an
+/// empty `report.ignored`. If any clause cannot be lowered (an unsupported
+/// pattern or function, a `?current-page` pattern with no current page, an
+/// `:inputs` binding Tine does not resolve such as `:current-block`, a
+/// `:result-transform`), or the source exceeds the size/nesting limits, the
+/// WHOLE query is refused: the filter is [`Filter::False`], `supported =
+/// false`, `report.ignored` names every clause that did not lower, and the
+/// [`ADVANCED_UNSUPPORTED_MESSAGE`] `Syntax` diagnostic (naming them) is added.
+/// No partial result is ever produced.
 ///
 /// For every other source the IR is already the query; only the execution-day
 /// snapshot is added, which is what makes an OG `(between -7d today)` and a TQL
@@ -418,7 +447,7 @@ pub fn resolve_for_execution(
     if !supported {
         bound.diagnostics.push(Diagnostic::new(
             DiagnosticKind::Syntax,
-            ADVANCED_UNSUPPORTED_MESSAGE,
+            unsupported_message(&ignored),
         ));
     }
     ResolvedQuery {

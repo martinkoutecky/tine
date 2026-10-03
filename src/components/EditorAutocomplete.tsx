@@ -1,5 +1,5 @@
 import { For, Show, createEffect, type JSX } from "solid-js";
-import { Portal } from "solid-js/web";
+import { FloatingPortal } from "./FloatingPortal";
 
 /** The editor's portaled completion surface. Pending and failed block reads
  * stay local to this popup, preserving the text and offering an explicit retry.
@@ -18,7 +18,7 @@ export function EditorAutocomplete<T extends { label: string; sub?: string }>(pr
     props.index;
     queueMicrotask(() => list?.querySelector(".ac-item.active")?.scrollIntoView({ block: "nearest" }));
   });
-  return <Portal>
+  return <FloatingPortal>
     <div class="autocomplete" ref={(element) => { list = element; props.listRef(element); }} data-lenis-prevent style={props.style}>
       <Show when={props.blockState === "pending"}><div class="ac-item" role="status">Searching…</div></Show>
       <Show when={props.blockState === "error"}>
@@ -34,5 +34,5 @@ export function EditorAutocomplete<T extends { label: string; sub?: string }>(pr
         <Show when={item.sub}><span class="ac-sub">{item.sub}</span></Show>
       </div>}</For>
     </div>
-  </Portal>;
+  </FloatingPortal>;
 }

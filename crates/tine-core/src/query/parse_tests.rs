@@ -308,11 +308,13 @@ fn gh542_attribute_patterns_lower_only_block_local_meaning() {
     assert!(ran.is_empty(), "{ran:?}");
     assert_eq!(ignored, vec!["pattern", "pattern"]);
 
-    // A `not` correlated with an outer binding is not "no deadline".
-    let (_, ran, ignored) = lower(
+    // A `not` correlated with an outer binding is not "no deadline", and the
+    // query holding it is refused whole (nothing runs, the `not` is named).
+    let (lowered, ran, ignored) = lower(
         "[:find (pull ?b [*]) :where (task ?b #{\"TODO\"}) [?b :block/scheduled ?d] (not [?b :block/deadline ?d])]",
     );
-    assert_eq!(ran, vec!["task"]);
+    assert!(lowered.is_none());
+    assert!(ran.is_empty(), "{ran:?}");
     assert!(ignored.contains(&"not".to_string()), "{ignored:?}");
 
     // A literal of the wrong type never matches in Logseq; it is not guessed.
@@ -326,17 +328,16 @@ fn gh542_attribute_patterns_lower_only_block_local_meaning() {
 }
 
 /// GH #542 (og lane Q1): a marker variable narrowed by `contains?` lowers to a
-/// task leaf, and the Clojure `:result-transform` is reported, not run. og's
-/// pre-port engine answered this query with an empty result.
+/// task leaf. og's pre-port engine answered this query with an empty result.
+/// A `:result-transform` is a Clojure function Tine cannot run, so the same
+/// query WITH one is refused whole (Martin, 2026-10-03), never run without it.
 #[test]
 fn gh542_contains_narrowed_marker_lowers_to_a_task_leaf() {
-    let source = r#"{:title "NOW"
-        :query [:find (pull ?h [*])
+    let query = r#"[:find (pull ?h [*])
                 :where
                 [?h :block/marker ?marker]
-                [(contains? #{"NOW" "DOING"} ?marker)]]
-        :result-transform (fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))}"#;
-    let (lowered, ran, ignored) = advanced_pred(source, None, TODAY);
+                [(contains? #{"NOW" "DOING"} ?marker)]]"#;
+    let (lowered, ran, ignored) = advanced_pred(query, None, TODAY);
     let filter = lowered
         .expect("the contains? pattern is in the subset")
         .filter;
@@ -355,6 +356,18 @@ fn gh542_contains_narrowed_marker_lowers_to_a_task_leaf() {
         ])
     );
     assert!(!ran.is_empty());
+    assert!(ignored.is_empty());
+
+    let with_transform = format!(
+        r#"{{:title "NOW" :query {query}
+        :result-transform (fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))}}"#
+    );
+    let (lowered, ran, ignored) = advanced_pred(&with_transform, None, TODAY);
+    assert!(
+        lowered.is_none(),
+        "a result-transform refuses the whole query"
+    );
+    assert!(ran.is_empty());
     assert_eq!(ignored, vec!["result-transform"]);
 }
 
@@ -393,7 +406,8 @@ fn resolve_for_execution_binds_advanced_sources_once() {
         .query()
         .diagnostics
         .iter()
-        .any(|d| d.kind == DiagnosticKind::Syntax && d.message == ADVANCED_UNSUPPORTED_MESSAGE));
+        .any(|d| d.kind == DiagnosticKind::Syntax
+            && d.message.starts_with(ADVANCED_UNSUPPORTED_MESSAGE)));
 }
 
 /// I-22 benign extreme paired with the TQL size refusal: sources right AT the

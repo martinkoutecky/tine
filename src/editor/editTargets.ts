@@ -58,6 +58,13 @@ function pressIsOnHorizontalScrollbar(node: HTMLElement, e: MouseEvent): boolean
 export function forbidsEditEntry(e: MouseEvent): boolean {
   const target = e.target as Element | null;
   const host = e.currentTarget as Element;
+  // A press that is not in this host's DOM at all still arrives here when a
+  // surface was floated through a bare `<Portal>` (Solid walks `_$host`, the
+  // LOGICAL parent): the query sheet is exactly that. It landed on the floating
+  // surface, never on this block's text, and entering the editor would unmount
+  // the surface before its own click could run (GH #619). `FloatingPortal`
+  // severs that chain; this is the second line, ported from master 2617ff194.
+  if (target && !host.contains(target)) return true;
   for (let node = target; node && host.contains(node); node = node.parentElement) {
     if (node instanceof HTMLElement && pressIsOnHorizontalScrollbar(node, e)) return true;
     if (node === host) break;

@@ -613,7 +613,7 @@ mod rename_guide_tests {
 #[cfg(test)]
 mod query_guide_tests {
     /// og 14 Q2: the Guide describes queries as this build runs them — the
-    /// OG simple language, the advanced subset with its ran/ignored note, OG's
+    /// OG simple language, the advanced subset with its whole-query refusal, OG's
     /// current-page binding, host-block view properties, visible diagnostics,
     /// the refusal bound, and what is NOT offered here yet.
     #[test]
@@ -625,8 +625,7 @@ mod query_guide_tests {
             "(between scheduled today +7d)",
             "at most 10,000 years",
             "tine.sample:: 10",
-            "**ran**",
-            "**ignored**",
+            "the whole query is refused",
             ":inputs [:current-page]",
             "then today's journal. It is not the page the query block sits on",
             "Tine didn't understand part of this query, so it returned no results",
@@ -702,8 +701,28 @@ mod query_guide_tests {
             "{:?}",
             result.report().ignored
         );
-        assert!(workflow.markdown.contains("never fewer"));
-        assert!(workflow.markdown.contains("is left out whole"));
+        // Audit #1: a part Tine cannot read refuses the whole query (the old
+        // "never fewer / left out whole" partial-run rule is retired).
+        assert!(workflow.markdown.contains("refuses the whole query"));
+        assert!(!workflow.markdown.contains("is left out whole"));
+    }
+
+    /// OG parity audit #8/#8a/#9: what a simple query returns and how a legacy
+    /// table is laid out are stated where users read them.
+    #[test]
+    fn query_result_shape_is_documented() {
+        let queries = include_str!("templates/queries.md");
+        for control in [
+            "`(namespace Project)` — blocks on the pages directly under a namespace",
+            "journal days newest first, then the other pages by name",
+            "`query-properties:: [:block :page :status]`",
+            "`query-sort-desc:: false`",
+        ] {
+            assert!(
+                queries.contains(control),
+                "missing query Guide control: {control}"
+            );
+        }
     }
 
     #[test]

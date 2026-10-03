@@ -105,8 +105,6 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         "import_asset",
         "import_native_capture",
         "read_text_file",
-        "open_asset",
-        "edit_asset_external",
         "detect_media_editor",
         "trash_asset",
         "empty_asset_trash",
@@ -115,7 +113,6 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         "trash_sync_conflict",
         "trash_journal_file",
         "read_journal_file",
-        "get_page_by_path",
         "save_asset",
         "read_highlights",
         "write_pdf_view_state",
@@ -142,6 +139,7 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         "open_pdf",
         "write_highlights",
         "open_page_file",
+        "get_page_by_path",
     ] {
         assert!(
             listed
@@ -158,4 +156,81 @@ fn guard_detects_a_new_synchronous_load_wait() {
     assert!(commands(planted)
         .iter()
         .any(|(_, asynchronous, body)| !asynchronous && reaches_load_wait(body)));
+}
+
+/// What starts a child process: a direct spawn, or a helper that spawns one.
+/// Spawning searches PATH and execs (the parent blocks until the child has
+/// exec'd), and `output()`/`status()` wait for the child to exit.
+fn runs_child_process(body: &str) -> bool {
+    [
+        "Command::new(",
+        "opener_command(",
+        "opener_command_env(",
+        "open_page_source(",
+        "reveal_page_source(",
+        "discover_dictionaries",
+        "linux_copy_image(",
+        "open_asset_with_os(",
+        "edit_asset_with_os(",
+    ]
+    .iter()
+    .any(|marker| body.contains(marker))
+}
+
+fn tauri_sources(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            tauri_sources(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs")
+            && !path.to_string_lossy().contains("test")
+        {
+            let source = std::fs::read_to_string(&path).unwrap();
+            if source.contains("#[tauri::command]") {
+                out.push((path.display().to_string(), source));
+            }
+        }
+    }
+}
+
+#[test]
+fn child_process_tauri_commands_leave_the_ui_thread() {
+    let mut sources = Vec::new();
+    tauri_sources(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut sources,
+    );
+    assert!(sources.len() > 5, "the command sources were found");
+    let mut offenders = Vec::new();
+    let mut checked = 0;
+    for (file, source) in &sources {
+        for (name, asynchronous, body) in commands(source) {
+            if runs_child_process(&body) {
+                checked += 1;
+                if !asynchronous || !body.contains("spawn_blocking(") {
+                    offenders.push(format!("{name} ({file})"));
+                }
+            }
+        }
+    }
+    assert!(
+        checked >= 6,
+        "the child-process commands were found ({checked})"
+    );
+    assert!(
+        offenders.is_empty(),
+        "I-21 / GH #623: a synchronous Tauri command runs on the UI thread, and every other \
+         synchronous command queues behind it; starting a child process there (PATH search, exec, \
+         waiting for its exit) froze every IPC call at launch for 5.4 s while \
+         list_spellcheck_dictionaries ran enchant-lsmod. Make it async and start the child on the \
+         blocking pool; exemplar spellcheck.rs::list_spellcheck_dictionaries. Offenders: {offenders:?}"
+    );
+}
+
+#[test]
+fn guard_detects_a_synchronous_child_process_command() {
+    let planted = "#[tauri::command]\npub(crate) fn probe() -> () { std::process::Command::new(\"x\").output(); }";
+    assert!(commands(planted)
+        .iter()
+        .any(|(_, asynchronous, body)| !asynchronous && runs_child_process(body)));
 }

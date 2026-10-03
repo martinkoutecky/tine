@@ -4,8 +4,9 @@
 //!
 //! Semantics are master's (walk + results, production comparison mode):
 //! - block rows: OG top-level roots per page (a match whose immediate parent
-//!   matched is dropped), base order page name then kind rank (journal first)
-//!   then physical path, document order within a page;
+//!   matched is dropped), base order journal day newest first (non-journal pages
+//!   last), then page name, kind rank and physical path, document order within a
+//!   page;
 //! - `sort-by` is global over single blocks, re-coalescing adjacent same-page
 //!   runs; `sample` applies after sorting; admission charges each offered row
 //!   and `total` counts every offered row;
@@ -18,11 +19,12 @@
 //! reference set ([`PageFacts::may_reference`]), and `and` conjuncts are
 //! evaluated cheapest first. Both are evaluation-order changes only.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use tine_core::date::JournalDate;
 use tine_core::doc::{property_key_norm, DocBlock, Document};
-use tine_core::model::{PageEntry, PageKind, RefGroup};
+use tine_core::model::{BlockDto, PageEntry, PageKind, RefGroup};
 use tine_core::query::atom::ParseConfig;
 use tine_core::query::ir::{
     Anchor, Attr, Bounds, CmpOp, ExecutionContext, ExplainEmptyResult, Filter, Leaf, PageRow,
@@ -49,12 +51,34 @@ use crate::model::GraphRead;
 /// filter, its compiled patterns and the registry snapshot it coerces by.
 pub(crate) struct Plan {
     anchor: Anchor,
+    /// Whether the header page-property block is one of the page's block rows:
+    /// true for a query that is block-anchored as written (OG's block
+    /// queries). A `@page` query the legacy bridge lists block-wise answers
+    /// with the page's outline blocks, as before.
+    page_property_rows: bool,
     filter: Filter,
     compiled: CompiledLeaves,
     track: bool,
     today: JournalDate,
     remove_accents: bool,
     registry: Option<Arc<Registry>>,
+    /// The page keys some page's `tags::` names, built once per plan when the
+    /// filter reads `used_as_tag` (graph-wide, so the memo cannot treat such a
+    /// plan as page-local: see [`Plan::reads_tag_targets`]).
+    tag_targets: Option<Arc<HashSet<String>>>,
+}
+
+/// A [`Plan`]'s persisted half (launch checkpoint, ADR 0070): every field
+/// but the compiled patterns.
+pub(crate) struct PlanCheckpointParts<'a> {
+    pub(crate) anchor: Anchor,
+    pub(crate) page_property_rows: bool,
+    pub(crate) filter: &'a Filter,
+    pub(crate) track: bool,
+    pub(crate) today: JournalDate,
+    pub(crate) remove_accents: bool,
+    pub(crate) registry: Option<&'a Arc<Registry>>,
+    pub(crate) tag_targets: Option<&'a Arc<HashSet<String>>>,
 }
 
 impl Plan {
@@ -77,6 +101,7 @@ impl Plan {
         block_rows: bool,
         remove_accents: bool,
         registry: impl FnOnce() -> Arc<Registry>,
+        tag_targets: impl FnOnce() -> Arc<HashSet<String>>,
     ) -> Plan {
         let evaluable = query.evaluable_filter();
         let (anchor, filter) = match query.anchor {
@@ -85,63 +110,92 @@ impl Plan {
         };
         let filter = cheapest_first(filter);
         let registry = filter.has_props_leaf().then(registry);
+        let tag_targets = filter
+            .any_leaf(&mut |leaf| {
+                matches!(
+                    leaf,
+                    Leaf::Attr {
+                        attr: Attr::UsedAsTag,
+                        ..
+                    }
+                )
+            })
+            .then(tag_targets);
         Plan {
             anchor,
+            page_property_rows: query.anchor == Anchor::Block,
             compiled: CompiledLeaves::for_query(&filter, remove_accents),
             track: eval::uses_path_refs(&filter),
             filter,
             today,
             remove_accents,
             registry,
+            tag_targets,
         }
     }
 
     /// The plan's data in launch-checkpoint form (ADR 0070): everything but
     /// the compiled patterns, which are a function of the filter and policy.
-    pub(crate) fn checkpoint_parts(
-        &self,
-    ) -> (
-        Anchor,
-        &Filter,
-        bool,
-        JournalDate,
-        bool,
-        Option<&Arc<Registry>>,
-    ) {
+    /// The tag-target set is carried as captured: the memo entry holding this
+    /// plan is dropped by any later edit that moves a page's `tags::`
+    /// ([`Self::reads_tag_targets`]), so while the entry lives the set equals
+    /// what [`Self::new`] would build from the generation it belongs to.
+    pub(crate) fn checkpoint_parts(&self) -> PlanCheckpointParts<'_> {
         let Plan {
             anchor,
+            page_property_rows,
             filter,
             compiled: _,
             track,
             today,
             remove_accents,
             registry,
+            tag_targets,
         } = self;
-        let registry = registry.as_ref();
-        (*anchor, filter, *track, *today, *remove_accents, registry)
+        PlanCheckpointParts {
+            anchor: *anchor,
+            page_property_rows: *page_property_rows,
+            filter,
+            track: *track,
+            today: *today,
+            remove_accents: *remove_accents,
+            registry: registry.as_ref(),
+            tag_targets: tag_targets.as_ref(),
+        }
     }
 
     /// A plan restored from [`Self::checkpoint_parts`], its patterns compiled
     /// exactly as [`Self::new`] compiles them.
-    pub(crate) fn from_checkpoint_parts(
-        (anchor, filter, track, today, remove_accents, registry): (
-            Anchor,
-            Filter,
-            bool,
-            JournalDate,
-            bool,
-            Option<Arc<Registry>>,
-        ),
-    ) -> Plan {
-        Plan {
+    pub(crate) fn from_checkpoint_parts(parts: PlanCheckpointParts<'_>) -> Plan {
+        let PlanCheckpointParts {
             anchor,
-            compiled: CompiledLeaves::for_query(&filter, remove_accents),
-            track,
+            page_property_rows,
             filter,
+            track,
             today,
             remove_accents,
             registry,
+            tag_targets,
+        } = parts;
+        Plan {
+            anchor,
+            page_property_rows,
+            compiled: CompiledLeaves::for_query(filter, remove_accents),
+            track,
+            filter: filter.clone(),
+            today,
+            remove_accents,
+            registry: registry.cloned(),
+            tag_targets: tag_targets.cloned(),
         }
+    }
+
+    /// Whether the answer depends on every page's `tags::` rather than only the
+    /// evaluated page's own text, so an edit that moves any page's tags can
+    /// change a page it never touched (the memo's page-local rule does not
+    /// hold for it).
+    pub(crate) fn reads_tag_targets(&self) -> bool {
+        self.tag_targets.is_some()
     }
 
     pub(crate) fn registry(&self) -> Option<&Arc<Registry>> {
@@ -168,24 +222,45 @@ impl Plan {
             &self.compiled,
             config,
             self.registry.as_deref().unwrap_or(Registry::none()),
+            self.tag_targets.as_deref().unwrap_or(empty_tag_targets()),
             atoms,
         )
     }
 
     /// The block rows of one page: every matching block whose immediate parent
     /// did not match (OG `tree/filter-top-level-blocks`), in document order.
-    fn block_hits<'a>(&self, ctx: &EvalCtx, doc: &'a Document, out: &mut Vec<&'a DocBlock>) {
+    /// The header page-property block comes first: OG stores it as the page's
+    /// first block (`:block/pre-block? true`, `:block/properties` of the page
+    /// header), so `property`, `page`, `between`, page-ref and full-text
+    /// predicates match it like any block (query_dsl.cljs `build-property`;
+    /// rules.cljc `:property`, `:page`, `:between`), and it never has a
+    /// parent or children to suppress.
+    fn block_hits<'a>(
+        &self,
+        ctx: &EvalCtx,
+        doc: &'a Document,
+        facts: &PageFacts,
+        out: &mut Vec<Hit<'a>>,
+    ) {
+        if let Some(block) = facts
+            .page_property_block()
+            .filter(|_| self.page_property_rows)
+        {
+            if eval::eval_block(&self.filter, block, &PathRefCounts::new(), ctx) {
+                out.push(Hit::PageProperty);
+            }
+        }
         struct Roots<'a, 'o, 'c> {
             filter: &'c Filter,
             ctx: &'c EvalCtx<'c>,
             matched: Vec<bool>,
-            out: &'o mut Vec<&'a DocBlock>,
+            out: &'o mut Vec<Hit<'a>>,
         }
         impl<'a> PathRefVisitor<'a, DocBlock> for Roots<'a, '_, '_> {
             fn enter(&mut self, block: &'a DocBlock, ancestors: &PathRefCounts) {
                 let hit = eval::eval_block(self.filter, block, ancestors, self.ctx);
                 if hit && !self.matched.last().copied().unwrap_or(false) {
-                    self.out.push(block);
+                    self.out.push(Hit::Block(block));
                 }
                 self.matched.push(hit);
             }
@@ -231,7 +306,7 @@ impl Plan {
             Anchor::Page => eval::eval_page(&self.filter, &ctx),
             Anchor::Block => {
                 let mut hits = Vec::new();
-                self.block_hits(&ctx, doc, &mut hits);
+                self.block_hits(&ctx, doc, facts, &mut hits);
                 !hits.is_empty()
             }
         }
@@ -243,6 +318,45 @@ impl Plan {
         self.anchor == Anchor::Block
             && required_refs(&self.filter).is_some_and(|names| !facts.may_reference(entry, &names))
     }
+}
+
+fn empty_tag_targets() -> &'static HashSet<String> {
+    static EMPTY: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(HashSet::new)
+}
+
+/// One block row of a page: a block of its document, or the page's header
+/// property block, which lives in the page's facts (`PageFacts::
+/// page_property_block`) rather than in `Document::roots`.
+#[derive(Clone, Copy)]
+enum Hit<'a> {
+    PageProperty,
+    Block(&'a DocBlock),
+}
+
+impl<'a> Hit<'a> {
+    /// `facts` must be those of the page that produced the hit.
+    fn block<'f>(&self, facts: &'f PageFacts) -> &'f DocBlock
+    where
+        'a: 'f,
+    {
+        match self {
+            Hit::Block(block) => block,
+            Hit::PageProperty => facts
+                .page_property_block()
+                .expect("a PageProperty hit comes from facts that carry the block"),
+        }
+    }
+}
+
+/// The wire row for one hit; the header property block is a read-only
+/// synthetic row (`BlockDto::page_property`), exactly as in backlinks.
+fn row_dto(facts: &PageFacts, block: &DocBlock) -> BlockDto {
+    let mut dto = result_dto(block);
+    dto.page_property = facts
+        .page_property_block()
+        .is_some_and(|header| std::ptr::eq(header, block));
+    dto
 }
 
 /// Page refs one of which every matching block's path-refs closure must
@@ -312,6 +426,76 @@ fn cost(filter: &Filter) -> u8 {
     }
 }
 
+thread_local! {
+    /// A test's pinned `sample` seed (see [`pin_sample_seed`]); `None` draws a
+    /// fresh seed per execution, as OG's `shuffle` does.
+    static SAMPLE_SEED: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Pin the seed every `sample` on THIS thread draws from, until the guard
+/// drops. A seed is the only randomness in query execution, so a test that
+/// pins it gets a reproducible subset.
+#[cfg(test)]
+pub(crate) fn pin_sample_seed(seed: u64) -> SampleSeedGuard {
+    SAMPLE_SEED.with(|cell| cell.set(Some(seed)));
+    SampleSeedGuard
+}
+
+#[cfg(test)]
+pub(crate) struct SampleSeedGuard;
+
+#[cfg(test)]
+impl Drop for SampleSeedGuard {
+    fn drop(&mut self) {
+        SAMPLE_SEED.with(|cell| cell.set(None));
+    }
+}
+
+fn fresh_sample_seed() -> u64 {
+    if let Some(seed) = SAMPLE_SEED.with(|cell| cell.get()) {
+        return seed;
+    }
+    static DRAWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos() as u64);
+    nanos
+        ^ DRAWS
+            .fetch_add(0x9E37_79B9_7F4A_7C15, std::sync::atomic::Ordering::Relaxed)
+            .rotate_left(17)
+}
+
+/// Keep a uniformly random subset of `items` of at most `n` elements, in their
+/// current relative order (a partial Fisher-Yates over the indices, splitmix64
+/// as the generator). Cost O(len).
+fn take_random_subset<T>(items: &mut Vec<T>, n: usize) {
+    if items.len() <= n {
+        return;
+    }
+    let mut state = fresh_sample_seed();
+    let mut next = move || {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    for at in 0..n {
+        let pick = at + (next() % (order.len() - at) as u64) as usize;
+        order.swap(at, pick);
+    }
+    let mut keep = vec![false; items.len()];
+    for &index in &order[..n] {
+        keep[index] = true;
+    }
+    let mut index = 0;
+    items.retain(|_| {
+        index += 1;
+        keep[index - 1]
+    });
+}
+
 /// The recency axis (Unix seconds): a journal by the day it represents, any
 /// other page by the mtime captured with the page table; oldest when unknown.
 fn recency(
@@ -341,10 +525,17 @@ fn kind_rank(kind: PageKind) -> u8 {
     }
 }
 
-/// SPEC §3.5's base order for block groups (M13).
+/// SPEC §3.5's base order for block groups (M13), amended for OG parity (#8a):
+/// OG renders grouped results with `(sort-by (comp :block/journal-day first) >)`
+/// (`components/block.cljs:3497,3523,3552`), so journal days run NEWEST first and
+/// pages that are not journals follow. The reference groups (`query::collect_bounded`)
+/// already order this way; one rule for every group list (I-12). Ties fall back
+/// to page name, then kind rank, then physical path.
 fn base_order(a: &PageEntry, b: &PageEntry) -> std::cmp::Ordering {
-    a.name
-        .cmp(&b.name)
+    b.date_key
+        .unwrap_or(i64::MIN)
+        .cmp(&a.date_key.unwrap_or(i64::MIN))
+        .then_with(|| a.name.cmp(&b.name))
         .then_with(|| kind_rank(a.kind).cmp(&kind_rank(b.kind)))
         .then_with(|| a.rel_path_str().as_bytes().cmp(b.rel_path_str().as_bytes()))
 }
@@ -517,7 +708,7 @@ pub(crate) fn execute(
         let atoms = EvalCache::default();
         match plan.anchor {
             Anchor::Block => {
-                let mut groups: Vec<(&PageEntry, Arc<PageFacts>, Vec<&DocBlock>)> = Vec::new();
+                let mut groups: Vec<(&PageEntry, Arc<PageFacts>, Vec<Hit>)> = Vec::new();
                 for (entry, doc) in pages {
                     let facts = index.facts(entry, doc);
                     if plan.skips(entry, &facts) {
@@ -527,6 +718,7 @@ pub(crate) fn execute(
                     plan.block_hits(
                         &plan.ctx(entry, doc, &facts, config, &atoms),
                         doc,
+                        &facts,
                         &mut hits,
                     );
                     if !hits.is_empty() {
@@ -537,9 +729,16 @@ pub(crate) fn execute(
                 let mut rows: Vec<(usize, &DocBlock)> = groups
                     .iter()
                     .enumerate()
-                    .flat_map(|(at, (_, _, hits))| hits.iter().map(move |block| (at, *block)))
+                    .flat_map(|(at, (_, facts, hits))| {
+                        hits.iter().map(move |hit| (at, hit.block(facts)))
+                    })
                     .collect();
                 result.matched_total = Some(rows.len());
+                // OG `query` (`query_dsl.cljs:583-589`): `sample` is a random
+                // subset of the FILTERED result, taken before `sort-by`.
+                if let Some(sample) = sample {
+                    take_random_subset(&mut rows, sample);
+                }
                 let sorted = !view.sort.is_empty();
                 if sorted {
                     let mut page_recency: Vec<Option<i64>> = vec![None; groups.len()];
@@ -564,9 +763,6 @@ pub(crate) fn execute(
                         compare_sort_decorations(&a.0, &b.0, &ascending).then_with(|| a.1.cmp(&b.1))
                     });
                     rows = decorated.into_iter().map(|(_, _, row)| row).collect();
-                }
-                if let Some(sample) = sample {
-                    rows.truncate(sample);
                 }
                 if let Some(fold) = fold.as_mut() {
                     for (at, block) in &rows {
@@ -598,6 +794,7 @@ pub(crate) fn execute(
                 let mut last: Option<usize> = None;
                 for (at, block) in rows {
                     let entry = groups[at].0;
+                    let facts = &groups[at].1;
                     if !budget.admit_estimated(&entry.name, shallow_dto_estimated_bytes(block, &[]))
                     {
                         continue;
@@ -613,12 +810,12 @@ pub(crate) fn execute(
                         out.last_mut()
                             .expect("group")
                             .blocks
-                            .push(result_dto(block));
+                            .push(row_dto(facts, block));
                     } else {
                         out.push(RefGroup {
                             page: entry.name.clone(),
                             kind: entry.kind,
-                            blocks: vec![result_dto(block)],
+                            blocks: vec![row_dto(facts, block)],
                             evidence: Vec::new(),
                         });
                     }
@@ -643,6 +840,9 @@ pub(crate) fn execute(
                         .cmp(b.0.rel_path_str().as_bytes())
                 });
                 let matched = matches.len();
+                if let Some(sample) = sample {
+                    take_random_subset(&mut matches, sample);
+                }
                 if !view.sort.is_empty() {
                     let mut decorated: Vec<(Vec<SortDecor>, usize, (&PageEntry, Arc<PageFacts>))> =
                         matches
@@ -672,7 +872,7 @@ pub(crate) fn execute(
                     matches = decorated.into_iter().map(|(_, _, row)| row).collect();
                 }
                 if let Some(fold) = fold.as_mut() {
-                    for (entry, facts) in matches.iter().take(sample.unwrap_or(usize::MAX)) {
+                    for (entry, facts) in matches.iter() {
                         let values = statistics_values(fold, facts.properties());
                         let keys = statistics_keys(
                             fold,
@@ -697,13 +897,9 @@ pub(crate) fn execute(
                         fold.add(&values, keys)?;
                     }
                 }
-                // `sample` keeps the first N ordered pages, so sampling before
-                // admission returns the same rows and admits only what is
-                // returned: a sampled page query over the bound is answered,
-                // as a sampled block query is (Reader B, og 14 Q2).
-                if let Some(sample) = sample {
-                    matches.truncate(sample);
-                }
+                // The sample was taken before the sort, so admission sees only
+                // the returned rows: a sampled page query over the bound is
+                // answered, as a sampled block query is (Reader B, og 14 Q2).
                 let offered = matches.len();
                 let mut budget = ConstructionBudget::new(bounds.max_rows, bounds.max_bytes);
                 let mut rows = Vec::new();
@@ -752,7 +948,7 @@ fn count(graph: &impl GraphRead, index: &QueryIndex, plan: &Plan) -> usize {
                 Anchor::Page => count += usize::from(eval::eval_page(&plan.filter, &ctx)),
                 Anchor::Block => {
                     hits.clear();
-                    plan.block_hits(&ctx, doc, &mut hits);
+                    plan.block_hits(&ctx, doc, &facts, &mut hits);
                     count += hits.len();
                 }
             }
@@ -776,6 +972,7 @@ pub(crate) fn plan(
         block_rows,
         graph.config().enable_search_remove_accents,
         || graph.with_pages(|pages| index.registry(pages)),
+        || graph.with_pages(|pages| Arc::new(index.tag_targets(pages))),
     )
 }
 

@@ -24,6 +24,43 @@ impl Store {
         }
         self.graph.find_entry(name, kind)
     }
+
+    /// Whether `entry`, read by path, is the winning claimant of its name
+    /// (GH #623 BR3). An ordinary page is answered from the published name
+    /// index while that index describes the current cache generation, so no
+    /// other file is opened; a file the index does not list under this name
+    /// yet (new, or retitled before the watcher saw it) is ranked against
+    /// the listed claimants by the one claimant order. A journal, or a stale
+    /// or absent publication, asks the live index (a journal walk lists
+    /// journal file names only). Erring towards "not canonical" is safe: the
+    /// page is then parsed directly and its revision still comes from the
+    /// bytes served.
+    pub(crate) fn canonical_claim(&self, entry: &PageEntry) -> bool {
+        if entry.kind == PageKind::Page {
+            if let Some(snapshot) = self
+                .changes
+                .snapshot
+                .read()
+                .unwrap()
+                .as_ref()
+                .filter(|snapshot| snapshot.cache_generation == self.graph.cache_generation())
+            {
+                let listed = name_claimants(&snapshot.claimants, &entry.name, entry.kind);
+                if listed.iter().any(|claimant| claimant.path == entry.path) {
+                    return listed[0].path == entry.path;
+                }
+                let format = self.graph.current_journal_format();
+                let name_format = self.graph.current_config().file_name_format;
+                return listed.iter().all(|claimant| {
+                    crate::model::compare_page_claimants(entry, claimant, &format, name_format)
+                        .is_lt()
+                });
+            }
+        }
+        self.graph
+            .find_entry(&entry.name, entry.kind)
+            .is_some_and(|found| found.path == entry.path)
+    }
 }
 
 impl WholeGraph {
@@ -174,6 +211,7 @@ impl Snapshot {
             })
             .map(|(id, _, _)| id.as_str().to_owned())
             .collect();
+        let mut folds_only = false;
         let evaluator = if let Some(old) = old
             .filter(|old| old.cache_generation == cache_generation && !config_changed && !rebuild)
         {
@@ -189,7 +227,11 @@ impl Snapshot {
             );
             if !name_set_changed {
                 if let Some(old) = old {
-                    evaluator.carry_memos_from(&old.graph, &changed_paths);
+                    let folds = evaluator.carry_from(&old.graph, &changed_paths);
+                    folds_only = folds
+                        && files
+                            .iter()
+                            .all(|(_, kind, _)| *kind == ChangeKind::Modified);
                 }
             }
             Arc::new(evaluator)
@@ -205,6 +247,7 @@ impl Snapshot {
             name_by_path,
             unreadable: graph.unreadable_pages(),
             answers: Default::default(),
+            folds_only,
         };
         snapshot.answers = snapshot.answer_changes(old, &changed_paths, name_set_changed);
         snapshot

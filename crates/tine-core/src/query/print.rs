@@ -518,17 +518,20 @@ fn tql_attr_name(attr: Attr, through_page: bool) -> String {
         Attr::Priority => "priority",
         Attr::Scheduled => "scheduled",
         Attr::Deadline => "deadline",
+        Attr::CreatedAt => "created_at",
+        Attr::LastModifiedAt => "last_modified_at",
         Attr::Name => "name",
         Attr::Journal => "journal",
         Attr::Day => "day",
         Attr::Namespace => "namespace",
+        Attr::UsedAsTag => "used_as_tag",
         Attr::Key => "key",
         Attr::Value => "value",
         Attr::AtomCount => "atom_count",
     };
     let page_row = matches!(
         attr,
-        Attr::Name | Attr::Journal | Attr::Day | Attr::Namespace
+        Attr::Name | Attr::Journal | Attr::Day | Attr::Namespace | Attr::UsedAsTag
     );
     if through_page && page_row {
         format!("page.{bare}")
@@ -663,12 +666,28 @@ fn og_form(query: &Query) -> Option<String> {
     // `@page` is OG's `blocks?` rule reading false — the anchor is implied by
     // the heads, so a page-anchored filter is printable exactly when every one
     // of its leaves is a page-row head.
-    match filter {
+    let form = match filter {
         Filter::True => Some(String::new()),
         Filter::And { items } if items.is_empty() => Some(String::new()),
         Filter::And { items } if items.len() == 1 => og_clause(&items[0], query.anchor),
         other => og_clause(other, query.anchor),
-    }
+    }?;
+    // The OG dialect carries no anchor of its own: OG's `blocks?` rule infers it
+    // from the form (`query_dsl.cljs:build-query`). A form that would read back
+    // under the OTHER anchor is not expressible in OG -- the builder's
+    // "Find: blocks" on an empty query printed `{{query }}`, which reads back as
+    // pages, so the choice vanished (#615/#619). Such a query is saved in the
+    // anchor-carrying `{{tine-query}}` dialect instead.
+    //
+    // The same re-read guards the MEANING, not only the anchor: a form that
+    // reads back as a different normalized filter is refused (the builder then
+    // saves TQL) rather than saved as another query. Print-side bugs of that
+    // shape (`page-property` printed as `property`, og lane qfix #2) become a
+    // refusal instead of a silent meaning change; the generated 760-form test in
+    // `print_tests.rs` pins that no ordinary form is refused by it.
+    let (reread, _) = super::og::parse_og(&form, crate::date::JournalDate::today());
+    (reread.anchor == query.anchor && reread.normalized().filter == query.normalized().filter)
+        .then_some(form)
 }
 
 fn og_clause(filter: &Filter, anchor: Anchor) -> Option<String> {
@@ -701,7 +720,7 @@ fn og_leaf(leaf: &Leaf, anchor: Anchor, through_page: bool) -> Option<String> {
         Leaf::Attr { attr, op, value } => {
             og_attr(*attr, *op, value, through_page || anchor == Anchor::Page)
         }
-        Leaf::Rel { rel, quant, pred } => og_rel(*rel, *quant, pred, anchor),
+        Leaf::Rel { rel, quant, pred } => og_rel(*rel, *quant, pred, anchor, through_page),
     }
 }
 
@@ -726,20 +745,39 @@ fn og_attr(attr: Attr, op: CmpOp, value: &Value, on_page: bool) -> Option<String
         (Attr::Priority, CmpOp::In) => Some(og_words("priority", list_of(value)?)),
         (Attr::Scheduled, CmpOp::Between) => og_between("scheduled", value),
         (Attr::Deadline, CmpOp::Between) => og_between("deadline", value),
+        (Attr::CreatedAt, CmpOp::Between) => og_timestamp_between("created-at", value),
+        (Attr::LastModifiedAt, CmpOp::Between) => og_timestamp_between("last-modified-at", value),
         (Attr::Day, CmpOp::Between) if on_page => og_between("journal", value),
         (Attr::Journal, CmpOp::Eq) if on_page && *value == (Value::Bool { value: true }) => {
             Some("(journal)".to_string())
         }
+        (Attr::UsedAsTag, CmpOp::Eq) if on_page && *value == (Value::Bool { value: true }) => {
+            Some("(all-page-tags)".to_string())
+        }
         (Attr::Name, CmpOp::Eq) if on_page => Some(format!("(page {})", word(text_of(value)?))),
-        (Attr::Name, CmpOp::StartsWith) if on_page => {
-            let namespace = text_of(value)?.strip_suffix('/')?;
-            Some(format!("(namespace {})", word(namespace)))
+        // OG's simple-query `(namespace x)` is the IMMEDIATE-parent rule
+        // (rules.cljc:124-127). The recursive prefix form (`Name StartsWith "x/"`,
+        // what an advanced `(namespace ?p "x")` lowers to) has no DSL spelling,
+        // so printing it as `(namespace x)` would change its meaning: refuse.
+        (Attr::Namespace, CmpOp::Eq) if on_page => {
+            Some(format!("(namespace {})", word(text_of(value)?)))
         }
         _ => None,
     }
 }
 
-fn og_rel(rel: Rel, quant: Quant, pred: &Filter, anchor: Anchor) -> Option<String> {
+/// `through_page` is `true` below a `Rel::Page`: the leaf is then about the
+/// block's PAGE even when the query is block-anchored, which is what
+/// `page-property` means (`(and (task TODO) (page-property k v))` is
+/// `Rel::Page(Rel::Props …)`). Reading only the anchor printed it as the block
+/// `property` head, so a saved edit changed the query's meaning.
+fn og_rel(
+    rel: Rel,
+    quant: Quant,
+    pred: &Filter,
+    anchor: Anchor,
+    through_page: bool,
+) -> Option<String> {
     if quant != Quant::Any {
         return None;
     }
@@ -749,7 +787,7 @@ fn og_rel(rel: Rel, quant: Quant, pred: &Filter, anchor: Anchor) -> Option<Strin
             Filter::Leaf { leaf } => og_leaf(leaf, anchor, true),
             _ => None,
         },
-        Rel::Props => og_props(pred, anchor == Anchor::Page),
+        Rel::Props => og_props(pred, through_page || anchor == Anchor::Page),
         // `tags` (the block's own inline tags), `children` and `blocks` are
         // Tine-only relations: OG's DSL has no head for any of them.
         Rel::Tags | Rel::Children | Rel::Blocks => None,
@@ -817,6 +855,39 @@ fn og_between(field: &str, value: &Value) -> Option<String> {
         "(between {field}{} {})",
         date_bound(low)?,
         date_bound(high)?
+    ))
+}
+
+/// `(between created-at START END)`: always the four-token form, since the OG
+/// reader only knows a timestamp range with its field named.
+fn og_timestamp_between(field: &str, value: &Value) -> Option<String> {
+    let Value::List { items } = value else {
+        return None;
+    };
+    let [low, high] = items.as_slice() else {
+        return None;
+    };
+    let bound = |value: &Value| -> Option<String> {
+        let Value::Date { literal } = value else {
+            return None;
+        };
+        let text = literal.trim();
+        if !crate::query::is_timestamp_token(text) {
+            return None;
+        }
+        // A journal title is the one shape that needs its brackets back.
+        Some(
+            if crate::query::DateToken::parse(text).is_some_and(|token| !token.prints_bare()) {
+                format!("[[{text}]]")
+            } else {
+                text.to_string()
+            },
+        )
+    };
+    Some(format!(
+        "(between {field} {} {})",
+        bound(low)?,
+        bound(high)?
     ))
 }
 

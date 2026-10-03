@@ -16,6 +16,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tine_core::query::ir::{Anchor, Filter, RegistrySnapshot};
 use tine_core::query::registry::Registry;
 
+use crate::query::exec::PlanCheckpointParts;
+
 use super::*;
 
 /// `value` as JSON text (DTOs whose serde form is JSON-only).
@@ -49,11 +51,15 @@ impl RegistryParts {
 #[derive(Serialize, Deserialize)]
 struct PlanParts {
     anchor: Anchor,
+    page_property_rows: bool,
     filter: String,
     track: bool,
     today: i64,
     remove_accents: bool,
     registry: Option<RegistryParts>,
+    /// The plan's graph-wide tag-target set (`used_as_tag`), sorted; `None`
+    /// when the filter reads none (exactly when `Plan::new` builds none).
+    tag_targets: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -155,17 +161,23 @@ impl Serialize for MemoState {
             let entry = &memo.entries[key];
             let plan = match &entry.plan {
                 Some(plan) => {
-                    let (anchor, filter, track, today, remove_accents, registry) =
-                        plan.checkpoint_parts();
+                    let parts = plan.checkpoint_parts();
                     Some(PlanParts {
-                        anchor,
-                        filter: to_json(filter)?,
-                        track,
-                        today: today.ordinal_key(),
-                        remove_accents,
-                        registry: registry
+                        anchor: parts.anchor,
+                        page_property_rows: parts.page_property_rows,
+                        filter: to_json(parts.filter)?,
+                        track: parts.track,
+                        today: parts.today.ordinal_key(),
+                        remove_accents: parts.remove_accents,
+                        registry: parts
+                            .registry
                             .map(|registry| RegistryParts::of(registry))
                             .transpose()?,
+                        tag_targets: parts.tag_targets.map(|targets| {
+                            let mut targets: Vec<String> = targets.iter().cloned().collect();
+                            targets.sort();
+                            targets
+                        }),
                     })
                 }
                 None => None,
@@ -203,14 +215,19 @@ impl<'de> Deserialize<'de> for MemoState {
                         .registry
                         .map(RegistryParts::into_registry)
                         .transpose()?;
-                    Some(Arc::new(Plan::from_checkpoint_parts((
-                        plan.anchor,
-                        filter,
-                        plan.track,
-                        JournalDate::from_ordinal(plan.today),
-                        plan.remove_accents,
-                        registry,
-                    ))))
+                    let tag_targets: Option<Arc<HashSet<String>>> = plan
+                        .tag_targets
+                        .map(|targets| Arc::new(targets.into_iter().collect()));
+                    Some(Arc::new(Plan::from_checkpoint_parts(PlanCheckpointParts {
+                        anchor: plan.anchor,
+                        page_property_rows: plan.page_property_rows,
+                        filter: &filter,
+                        track: plan.track,
+                        today: JournalDate::from_ordinal(plan.today),
+                        remove_accents: plan.remove_accents,
+                        registry: registry.as_ref(),
+                        tag_targets: tag_targets.as_ref(),
+                    })))
                 }
                 None => None,
             };
@@ -245,15 +262,9 @@ impl MemoState {
         self.0.today = day;
         for entry in self.0.entries.values_mut() {
             if let Some(plan) = &entry.plan {
-                let (anchor, filter, track, _, remove_accents, registry) = plan.checkpoint_parts();
-                entry.plan = Some(Arc::new(Plan::from_checkpoint_parts((
-                    anchor,
-                    filter.clone(),
-                    track,
-                    JournalDate::from_ordinal(day),
-                    remove_accents,
-                    registry.cloned(),
-                ))));
+                let mut parts = plan.checkpoint_parts();
+                parts.today = JournalDate::from_ordinal(day);
+                entry.plan = Some(Arc::new(Plan::from_checkpoint_parts(parts)));
             }
         }
         self

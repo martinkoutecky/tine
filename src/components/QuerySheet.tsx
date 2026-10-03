@@ -294,9 +294,6 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
   // The add-condition chooser is one of the sheet's menus, not a signal of its own: sharing `openMenu` is what …
   const adding = () => props.openMenu() === ADD_MENU_KEY;
   const setAdding = (open: boolean) => props.setOpenMenu(open ? ADD_MENU_KEY : null);
-  createEffect(() => {
-    if (props.autoOpenChooser) setAdding(true);
-  });
 
   const addAtRoot = (filter: Filter) => {
     props.apply(addChild(props.root(), [], filter));

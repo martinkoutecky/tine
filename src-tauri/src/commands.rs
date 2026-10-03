@@ -1597,12 +1597,19 @@ fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<Str
 
 /// Open an `assets/`-relative file, directory, or (empty name) the assets root (GH #367)
 /// in the OS default app / file manager. Gated to the canonical assets dir.
+///
+/// The path check and the opener start (PATH search, exec) run on the blocking
+/// pool, off the UI thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
+pub(crate) async fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    let target = tine_graph_features::assets::path_for_os_open(&slot.store, &name)
-        .map_err(feature_asset_access_error)?;
-    open_asset_with_os(&name, &target, false)
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = tine_graph_features::assets::path_for_os_open(&slot.store, &name)
+            .map_err(feature_asset_access_error)?;
+        open_asset_with_os(&name, &target, false)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn open_asset_with_os(name: &str, target: &std::path::Path, editing: bool) -> Result<(), String> {
@@ -1689,15 +1696,21 @@ fn open_page_source_with_os(target: &std::path::Path, reveal: bool) -> Result<()
 /// Double quotes group a program/argument containing whitespace; backslashes are
 /// literal so Windows paths such as `"C:\Program Files\draw.io\draw.io.exe" {}`
 /// survive unchanged.
+/// The handoff check and the editor start run on the blocking pool, off the UI
+/// thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn edit_asset_external(
+pub(crate) async fn edit_asset_external(
     name: String,
     command: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    let target = asset_handoff_target(&slot, &name)?;
-    edit_asset_with_os(&name, &command, &target)
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = asset_handoff_target(&slot, &name)?;
+        edit_asset_with_os(&name, &command, &target)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn edit_asset_with_os(name: &str, command: &str, target: &std::path::Path) -> Result<(), String> {
@@ -2136,18 +2149,22 @@ pub(crate) fn read_journal_file(name: String, state: GraphContext<'_>) -> Result
 
 /// Load a page from a SPECIFIC file by its graph-root-relative path — lets the UI
 /// navigate to a duplicate-day stray that shares a (kind,name) with the canonical
-/// file and so is unreachable by name (#21).
+/// file and so is unreachable by name (#21). External-change reloads use it
+/// too. A read waits for the store writer (a watcher cycle, a save), so it
+/// runs on the blocking pool, never on the main thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) fn get_page_by_path(
+pub(crate) async fn get_page_by_path(
     path: String,
     state: GraphContext<'_>,
 ) -> Result<Option<PageWire>, String> {
     let slot = slot_for_context(&state)?;
-    match slot.store.page(&PageId::from(path)) {
+    tauri::async_runtime::spawn_blocking(move || match slot.store.page(&PageId::from(path)) {
         Ok(read) => Ok(Some(page_dto(read))),
         Err(StoreError::NotFound | StoreError::InvalidTarget(_)) => Ok(None),
         Err(error) => Err(store_error(error)),
-    }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Reconcile a duplicate-day pair: append the blocks of `src` to `dst`, then trash

@@ -18,7 +18,7 @@
 //! with no product caller, so they were not ported.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use tine_core::date::JournalDate;
@@ -219,6 +219,9 @@ pub(crate) struct EvalCtx<'a> {
     /// represented by `page_props` and is never a block-row element.
     pub(crate) page_roots: &'a [DocBlock],
     pub(crate) today: JournalDate,
+    /// The instant `now` names in a `created_at` / `last_modified_at` bound,
+    /// epoch milliseconds, read once when this page row's context is built.
+    pub(crate) now_ms: i64,
     pub(crate) remove_accents: bool,
     pub(crate) compiled: &'a CompiledLeaves,
     /// The page's on-disk format: the atomizer parses a property value with the
@@ -227,6 +230,9 @@ pub(crate) struct EvalCtx<'a> {
     pub(crate) config: &'a ParseConfig,
     /// ONE coherent registry snapshot for the whole query (§6.2).
     pub(crate) registry: &'a Registry,
+    /// Every page key some page's `tags::` names: the graph-wide answer behind
+    /// `used_as_tag` (OG `(all-page-tags)`). Empty unless the plan reads it.
+    pub(crate) tag_targets: &'a HashSet<String>,
     pub(crate) cache: &'a EvalCache,
 }
 
@@ -244,6 +250,7 @@ impl<'a> EvalCtx<'a> {
         compiled: &'a CompiledLeaves,
         config: &'a ParseConfig,
         registry: &'a Registry,
+        tag_targets: &'a HashSet<String>,
         cache: &'a EvalCache,
     ) -> Self {
         EvalCtx {
@@ -254,11 +261,13 @@ impl<'a> EvalCtx<'a> {
             page_props,
             page_roots,
             today,
+            now_ms: clock_now_ms(),
             remove_accents,
             compiled,
             format,
             config,
             registry,
+            tag_targets,
             cache,
         }
     }
@@ -351,6 +360,20 @@ fn eval_block_leaf(
                 ),
                 ctx,
             ),
+            Attr::CreatedAt => eval_timestamp(
+                *op,
+                value,
+                block.projection().properties(),
+                CREATED_KEYS,
+                ctx,
+            ),
+            Attr::LastModifiedAt => eval_timestamp(
+                *op,
+                value,
+                block.projection().properties(),
+                MODIFIED_KEYS,
+                ctx,
+            ),
             // Page attributes only ever appear under a `page` relation, and the
             // property-element attributes only under `props`.
             _ => false,
@@ -401,13 +424,32 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
                     }
                 }
                 Attr::Day => eval_day(*op, value, ctx.journal, ctx.today),
+                Attr::UsedAsTag => {
+                    let used = ctx.tag_targets.contains(&ctx.page_key);
+                    match (op, value.as_bool()) {
+                        (CmpOp::Eq, Some(wanted)) => used == wanted,
+                        (CmpOp::NotEq, Some(wanted)) => used != wanted,
+                        _ => false,
+                    }
+                }
                 Attr::Namespace => {
                     // The immediate parent segment (Tine-only, M20).
                     let parent = ctx
                         .page_key
                         .rsplit_once('/')
                         .map(|(head, _)| head.to_string());
-                    eval_optional_text(*op, value, parent.as_deref(), ctx)
+                    // The parent is a normalized page key, so an equality
+                    // operand is normalized the same way (case, NFC): `Ünï`
+                    // must find `ünï/child` as every other page-name compare.
+                    match (op, value.as_text(), parent.as_deref()) {
+                        (CmpOp::Eq, Some(text), actual) => {
+                            actual.is_some_and(|actual| actual == refs::page_key(text))
+                        }
+                        (CmpOp::NotEq, Some(text), actual) => {
+                            actual.is_some_and(|actual| actual != refs::page_key(text))
+                        }
+                        _ => eval_optional_text(*op, value, parent.as_deref(), ctx),
+                    }
                 }
                 _ => false,
             },
@@ -748,7 +790,20 @@ fn eval_content(op: CmpOp, value: &Value, block: &DocBlock, ctx: &EvalCtx) -> bo
             .any(|item| item.as_text().is_some_and(|text| body == fold(text)))
     };
     match op {
-        CmpOp::Like => folded().is_some_and(|pattern| ctx.cache.like(body, &pattern)),
+        // OG's bare-string search is `:block-content` over the block's RAW
+        // content (`query_dsl.cljs:build-block-content`, `rules.cljc:114` `block-content`; CONTENT
+        // includes the `key:: value` property lines), so a substring that
+        // only occurs in a property line must hit. Tine's body is the visible
+        // text (SPEC), so the property lines are tried as extra haystacks,
+        // one `key:: value` line each (a pattern never spans two lines).
+        CmpOp::Like => folded().is_some_and(|pattern| {
+            ctx.cache.like(body, &pattern)
+                || block
+                    .projection()
+                    .properties()
+                    .iter()
+                    .any(|(k, v)| ctx.cache.like(&fold(&format!("{k}:: {v}")), &pattern))
+        }),
         CmpOp::StartsWith => folded().is_some_and(|prefix| body.starts_with(&prefix)),
         CmpOp::Eq => folded().is_some_and(|text| body == text),
         CmpOp::NotEq => folded().is_some_and(|text| body != text),
@@ -858,6 +913,75 @@ fn eval_planning(op: CmpOp, value: &Value, text: Option<&str>, ctx: &EvalCtx) ->
         _ => text
             .and_then(planning_day)
             .is_some_and(|day| compare_day(op, value, day, ctx.today)),
+    }
+}
+
+/// The property spellings of a block's creation / modification instant, in the
+/// normal form (`-`, lowercase). OG writes `created-at` / `last-modified-at`;
+/// `created_at` / `last_modified_at` is the underscore spelling its `between`
+/// keys use. Both read (Tine superset).
+const CREATED_KEYS: &[&str] = &["created-at", "created_at"];
+const MODIFIED_KEYS: &[&str] = &["last-modified-at", "last_modified_at"];
+
+/// The wall clock in epoch milliseconds (OG `util/time-ms`).
+fn clock_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// A timestamp-property comparison. Presence is the property's presence; a
+/// value that is not a whole number of milliseconds has presence but no
+/// instant, so it fails every comparison. `between` is OG's half-open range:
+/// the lower bound inclusive, the upper exclusive, the two bounds sorted
+/// (`build-between-three-arg`); both bounds must resolve.
+fn eval_timestamp(
+    op: CmpOp,
+    value: &Value,
+    properties: &[(String, String)],
+    keys: &[&str],
+    ctx: &EvalCtx,
+) -> bool {
+    let raw = properties
+        .iter()
+        .find(|(key, _)| keys.iter().any(|wanted| key.eq_ignore_ascii_case(wanted)))
+        .map(|(_, raw)| raw.trim());
+    match op {
+        CmpOp::IsSet => return raw.is_some(),
+        CmpOp::IsNotSet => return raw.is_none(),
+        _ => {}
+    }
+    let Some(at) = raw.and_then(|raw| raw.parse::<i64>().ok()) else {
+        return false;
+    };
+    let resolve = |value: &Value| match value {
+        Value::Date { literal } => {
+            tine_core::query::resolve_timestamp_token(literal, ctx.today, ctx.now_ms)
+        }
+        Value::Number { number } => Some(*number as i64),
+        _ => None,
+    };
+    match op {
+        CmpOp::Between => match value {
+            Value::List { items } if items.len() == 2 => {
+                match (resolve(&items[0]), resolve(&items[1])) {
+                    (Some(a), Some(b)) => {
+                        let (low, high) = if a > b { (b, a) } else { (a, b) };
+                        at >= low && at < high
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        },
+        CmpOp::Ge => resolve(value).is_some_and(|bound| at >= bound),
+        CmpOp::Le => resolve(value).is_some_and(|bound| at <= bound),
+        CmpOp::Gt => resolve(value).is_some_and(|bound| at > bound),
+        CmpOp::Lt => resolve(value).is_some_and(|bound| at < bound),
+        CmpOp::Eq => resolve(value).is_some_and(|bound| at == bound),
+        CmpOp::NotEq => resolve(value).is_some_and(|bound| at != bound),
+        _ => false,
     }
 }
 

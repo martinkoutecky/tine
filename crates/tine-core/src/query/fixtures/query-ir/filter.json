@@ -187,6 +187,18 @@
               "kind": "leaf",
               "leaf": {
                 "kind": "attr",
+                "attr": "used_as_tag",
+                "op": "eq",
+                "value": {
+                  "kind": "bool",
+                  "bool": true
+                }
+              }
+            },
+            {
+              "kind": "leaf",
+              "leaf": {
+                "kind": "attr",
                 "attr": "day",
                 "op": "ge",
                 "value": {
@@ -316,6 +328,48 @@
               "text": "x"
             }
           }
+        }
+      }
+    },
+    {
+      "kind": "leaf",
+      "leaf": {
+        "kind": "attr",
+        "attr": "created_at",
+        "op": "between",
+        "value": {
+          "kind": "list",
+          "items": [
+            {
+              "kind": "date",
+              "literal": "-7d"
+            },
+            {
+              "kind": "date",
+              "literal": "now"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "leaf",
+      "leaf": {
+        "kind": "attr",
+        "attr": "last_modified_at",
+        "op": "between",
+        "value": {
+          "kind": "list",
+          "items": [
+            {
+              "kind": "date",
+              "literal": "-7d"
+            },
+            {
+              "kind": "date",
+              "literal": "now"
+            }
+          ]
         }
       }
     },

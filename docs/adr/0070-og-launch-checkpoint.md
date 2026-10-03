@@ -128,7 +128,11 @@ index.
   not of the generation.
 - **Write:** one publisher thread per store (`tine-checkpoint`, registered in
   `tests/i21_owners.rs`). Two things mark the generation dirty: a
-  publication that changes it, and lazily built state the last write or load
+  publication that changes it (except a save that only folds or unfolds
+  blocks, GH #623 item 3: it changes no index or memo, and the next launch
+  diff rereads the folded file by its stamp —
+  `fold_save_tests::a_fold_rebuilds_nothing_and_survives_a_warm_relaunch`),
+  and lazily built state the last write or load
   lacked (`LazyMarks`: one bit per lazily built slot the checkpoint writes,
   plus each memo's entry and byte counts; the idle thread compares every
   `LAZY_POLL`, and a write or a skip that waits for the next publication
@@ -168,7 +172,12 @@ index.
   network or FUSE mount):
   `checkpoint_tests::a_launch_diff_that_leaves_a_path_racy_runs_one_follow_up_diff`.
 - **Stale window:** page opens read the disk and take their base revision from
-  it, so no save is based on checkpoint state. Graph-wide destructive operations
+  it, so no save is based on checkpoint state. Before Ready a page open takes
+  neither the writer nor the launch: it parses the file directly, and a name
+  that only the index can resolve (an alias, a `title::` page) waits for Ready
+  (GH #623 BR3, `store/page_open_tests.rs`). A save made in that window is a
+  changed stamp to the launch diff, so it survives the load
+  (`an_edit_saved_while_a_checkpoint_is_served_is_reconciled`). Graph-wide destructive operations
   wait for Ready in one of two ways:
   - Store transactions and restore take the writer. The launch holds the
     writer from serving until Ready.

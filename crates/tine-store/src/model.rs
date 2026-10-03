@@ -4,6 +4,7 @@
 //! values remain separate external reference identities.
 
 mod checkpoint_state;
+mod collapse_only;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
 mod layout_retention;
 pub(crate) mod persistent;
@@ -755,33 +756,39 @@ impl ReadSnapshot {
         snapshot
     }
 
-    pub(crate) fn carry_memos_from(&self, old: &Self, changed_paths: &[String]) {
-        if changed_paths.is_empty()
-            || (old.memos.derived_cache.read().unwrap().is_none() && old.memos.query.is_empty())
-        {
-            return;
+    /// Carry what `old` derived into this generation for an edit of
+    /// `changed_paths` that moved no page name (the caller checks): the alias
+    /// list and the memos. Returns whether the edit only folded or unfolded
+    /// blocks ([`collapse_only::collapse_only`]). The edited pages are looked
+    /// up once (I-13: only the edited page is inspected).
+    pub(crate) fn carry_from(&self, old: &Self, changed_paths: &[String]) -> bool {
+        if changed_paths.is_empty() {
+            return false;
         }
-        let mut edits = Vec::new();
-        let old_positions = Arc::clone(&old.reference_candidate_index.read().unwrap().positions);
-        let new_positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
-        for path in changed_paths {
-            #[cfg(feature = "test-faults")]
-            crate::cost_counters::memo_page_probes(2);
-            let before = old_positions
-                .get(path)
-                .and_then(|&i| old.pages.get(i))
-                .filter(|(e, _)| e.rel_path_str() == path);
-            let after = new_positions
-                .get(path)
-                .and_then(|&i| self.pages.get(i))
-                .filter(|(e, _)| e.rel_path_str() == path);
-            let (Some((_, previous)), Some((entry, current))) = (before, after) else {
-                return;
-            };
-            if crate::query::document_aliases(previous) != crate::query::document_aliases(current) {
-                return;
-            }
-            edits.push((entry.clone(), Arc::clone(previous), Arc::clone(current)));
+        let Some(edits) = self.edited_pages(old, changed_paths) else {
+            return false;
+        };
+        let aliases_unchanged = edits.iter().all(|(_, previous, current)| {
+            crate::query::document_aliases(previous) == crate::query::document_aliases(current)
+        });
+        if !aliases_unchanged {
+            return false;
+        }
+        self.carry_alias_list_from(old);
+        let folds_only = edits
+            .iter()
+            .all(|(_, previous, current)| collapse_only::collapse_only(previous, current));
+        self.carry_memos_from(old, edits);
+        folds_only
+    }
+
+    fn carry_memos_from(
+        &self,
+        old: &Self,
+        edits: Vec<(tine_core::model::PageEntry, Arc<Document>, Arc<Document>)>,
+    ) {
+        if old.memos.derived_cache.read().unwrap().is_none() && old.memos.query.is_empty() {
+            return;
         }
         *self.memos.derived_cache.write().unwrap() =
             old.memos.derived_cache.read().unwrap().clone();
@@ -790,8 +797,42 @@ impl ReadSnapshot {
             .query
             .carry_from(&old.memos.query, &parse_config, &edits);
         for (entry, previous, current) in edits {
-            self.memos
-                .scope_derived_invalidation(self, &entry, Some(&previous), &current, 0, true);
+            // GH #623 item 3: a fold changes no predicate (collapse_only.rs),
+            // so only answers holding this page's blocks are dropped and the
+            // graph-wide alias and page-name sets are not rebuilt.
+            let scope = if collapse_only::collapse_only(&previous, &current) {
+                Scope::FoldOnly
+            } else {
+                Scope::Predicates
+            };
+            self.memos.scope_derived_invalidation(
+                self,
+                &entry,
+                Some(&previous),
+                &current,
+                0,
+                scope,
+            );
+        }
+    }
+
+    /// Whether this generation's alias list is built (or inherited).
+    #[cfg(test)]
+    pub(crate) fn alias_list_built(&self) -> bool {
+        self.aliases.get().is_some()
+    }
+
+    /// Inherit `old`'s alias list; the caller has checked that no page name
+    /// and no changed page's aliases moved. Otherwise the first alias read of
+    /// every generation — any backlinks answer — rebuilds it by walking every
+    /// page, O(P) per save (GH #623 item 3). The list is a function of page
+    /// names, paths and per-page aliases, so it is unchanged.
+    fn carry_alias_list_from(&self, old: &Self) {
+        if let Some(aliases) = old.aliases.get() {
+            let _ = self.aliases.set(aliases.clone());
+        }
+        if let Some(by_key) = old.alias_owner_paths_by_key.get() {
+            let _ = self.alias_owner_paths_by_key.set(by_key.clone());
         }
     }
 
@@ -1686,6 +1727,13 @@ pub(crate) fn document_block_ref_counts(doc: &Document) -> HashMap<String, usize
         }
     }
     let mut counts = std::collections::HashMap::new();
+    // OG parity (#7): the header pre-block is a block with `:block/refs`, so a
+    // `((uuid))` in a page property is one referrer of that block.
+    if let Some(pre) = crate::query::document_page_property_block(doc) {
+        for id in pre.projection().block_refs() {
+            *counts.entry(id.clone()).or_insert(0) += 1;
+        }
+    }
     walk(&doc.roots, &mut counts);
     counts
 }
@@ -1762,6 +1810,16 @@ struct DerivedCache {
     results: std::collections::HashMap<String, (BoundedRefGroups, usize)>,
     lru: std::collections::VecDeque<String>,
     bytes: usize,
+}
+
+/// What one page edit can change in the derived answers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    /// Membership may change: evict answers the page is in or matches.
+    Predicates,
+    /// A fold (`collapse_only`): membership cannot change; evict only the
+    /// answers that hold the page's blocks, whose text moved.
+    FoldOnly,
 }
 
 #[derive(Default)]
@@ -3361,9 +3419,9 @@ impl Graph {
 }
 
 impl SnapshotMemos {
-    /// See `cache_upsert`. When `scoped`, evict only derived entries the edited
-    /// page (`entry`, `doc`) participates in and re-tag the survivors to `newgen`;
-    /// otherwise drop the whole derived cache.
+    /// See `cache_upsert`. Evict only derived entries the edited page
+    /// (`entry`, `doc`) participates in and re-tag the survivors to `newgen`
+    /// (all of them on a day rollover).
     fn scope_derived_invalidation(
         &self,
         graph: &impl GraphRead,
@@ -3371,7 +3429,7 @@ impl SnapshotMemos {
         previous_doc: Option<&Document>,
         doc: &Document,
         newgen: u64,
-        scoped: bool,
+        scope: Scope,
     ) {
         // A generation with no memo entries has nothing to prune. In particular,
         // avoid rebuilding its alias and real-page sets for a routine save.
@@ -3380,7 +3438,7 @@ impl SnapshotMemos {
         }
         // Resolve aliases BEFORE taking the derived lock (page_aliases may take the
         // cache lock); never hold derived while taking cache.
-        let (aliases, real_pages) = if scoped {
+        let (aliases, real_pages) = if scope == Scope::Predicates {
             (graph.page_aliases(), crate::query::real_page_names(graph))
         } else {
             (Vec::new(), Arc::new(crate::query::RealPageNames::new()))
@@ -3402,8 +3460,8 @@ impl SnapshotMemos {
             let Some(dc) = g.as_mut() else {
                 return;
             };
-            if !scoped || dc.today != today {
-                *g = None; // full invalidate (alias/page-set/cold-cache, or day rollover)
+            if dc.today != today {
+                *g = None; // full invalidate on a day rollover
                 return;
             }
             let mut removed_bytes = 0usize;
@@ -3419,6 +3477,9 @@ impl SnapshotMemos {
                 {
                     removed_bytes = removed_bytes.saturating_add(*result_bytes);
                     return false;
+                }
+                if scope == Scope::FoldOnly {
+                    return true;
                 }
                 let page_affects = |candidate: &Document| match key.split_once('\0') {
                     Some(("b", target)) => crate::query::page_affects_backlinks(
@@ -4658,9 +4719,9 @@ fn dedup_journal_days(
 
 #[cfg(test)]
 thread_local! {
-static GRAPH_LIST_CALLS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+pub(crate) static GRAPH_LIST_CALLS: std::cell::Cell<usize> = std::cell::Cell::new(0);
 #[cfg(test)]
-static GRAPH_PREAMBLE_READS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+pub(crate) static GRAPH_PREAMBLE_READS: std::cell::Cell<usize> = std::cell::Cell::new(0);
     static CACHE_LINEAR_SCAN_STEPS: std::cell::Cell<usize> = std::cell::Cell::new(0);
 }
 
@@ -9428,17 +9489,19 @@ mod tests {
         assert_eq!(count("[:find (pull ?b [*]) :where (deadline ?b)]"), 1);
         // (journal) restricts to blocks on journal pages.
         assert_eq!(count("[:find (pull ?b [*]) :where (journal ?b)]"), 2);
-        // (page "Name") pins to one page.
-        assert_eq!(count(r#"[:find (pull ?b [*]) :where (page ?b "Proj")]"#), 1);
+        // (page "Name") pins to one page: its header property block (OG's
+        // `:block/pre-block?` block, GH #617) and the one bullet, so 2 blocks.
+        assert_eq!(count(r#"[:find (pull ?b [*]) :where (page ?b "Proj")]"#), 2);
         // (namespace "Proj") matches pages under the namespace.
         assert_eq!(
             count(r#"[:find (pull ?b [*]) :where (namespace ?b "Proj")]"#),
             1
         );
-        // (page-tags "work") matches the tags:: page-property.
+        // (page-tags "work") matches the tags:: page-property: every block of
+        // the tagged page, header property block included (GH #617).
         assert_eq!(
             count(r#"[:find (pull ?b [*]) :where (page-tags ?b "work")]"#),
-            1
+            2
         );
         // (between scheduled …) is now field-aware, not hardwired to journal-day.
         assert_eq!(

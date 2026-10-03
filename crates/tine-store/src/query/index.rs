@@ -20,7 +20,7 @@
 
 use crate::model::persistent::{Map as SharedMap, Pages};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -87,6 +87,14 @@ pub(crate) struct PageFacts {
     /// de-duplicated: the page-level half of `:block/path-refs`, which is what
     /// lets a page-ref query skip a page without walking it.
     refs: Box<[String]>,
+    /// The page's header-style property block as a block-anchored query row
+    /// (OG's `:block/pre-block?` block, which every block predicate sees):
+    /// built once per page generation, never per query. `None` when the page
+    /// has no header properties. Unit cost: one `DocBlock` of the page's
+    /// header property text (O(header bytes), the same text the backlink
+    /// path projects per query) per facts derivation, i.e. per page edit
+    /// that reaches the query index; zero extra work per query.
+    page_property_block: Option<DocBlock>,
 }
 
 impl PageFacts {
@@ -123,6 +131,13 @@ impl PageFacts {
             }
         }
         let mut refs = Vec::new();
+        let page_property_block = doc
+            .pre_block
+            .as_deref()
+            .and_then(|pre| super::page_property_block(entry, pre));
+        if let Some(block) = &page_property_block {
+            refs.extend(block.projection().refs_norm().iter().cloned());
+        }
         blocks(&doc.roots, &mut note, &mut refs);
         refs.sort_unstable();
         refs.dedup();
@@ -135,6 +150,7 @@ impl PageFacts {
                 .collect(),
             declares: declares.then(|| tine_core::refs::page_key(&entry.name)),
             refs: refs.into_boxed_slice(),
+            page_property_block,
         }
     }
 
@@ -156,6 +172,12 @@ impl PageFacts {
     /// The page's own `key:: value` properties, in source order and spelling.
     pub(crate) fn properties(&self) -> &[(String, String)] {
         &self.properties
+    }
+
+    /// The header page-property block, the synthetic first block of the page
+    /// for block-anchored queries (see the field).
+    pub(crate) fn page_property_block(&self) -> Option<&DocBlock> {
+        self.page_property_block.as_ref()
     }
 
     /// The page's own tags (the preamble's `tags::` values).
@@ -484,6 +506,20 @@ impl QueryIndex {
                 None => self.build_registry(pages),
             })
         }))
+    }
+
+    /// Every page key some page's `tags::` names (OG `rules.cljc:96-98`
+    /// `[_ :block/tags ?p]`, behind `(all-page-tags)`). One pass over the cached
+    /// per-page facts: O(pages + tag values), built per plan that reads it,
+    /// nothing persisted.
+    pub(crate) fn tag_targets(&self, pages: &Pages) -> HashSet<String> {
+        let mut targets = HashSet::new();
+        for (entry, doc) in pages {
+            for tag in self.facts(entry, doc).tags() {
+                targets.insert(tine_core::refs::normalize(tag));
+            }
+        }
+        targets
     }
 
     /// The page at `path` in this snapshot's vector.

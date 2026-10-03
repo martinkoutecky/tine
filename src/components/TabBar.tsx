@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
-import { Portal } from "solid-js/web";
+import { FloatingPortal } from "./FloatingPortal";
 import { resolveRouteBlock, routeTitle, type PaneRouter, type Route, type Tab } from "../router";
 import { formatForBlock, node as docNode } from "../document";
 import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
@@ -677,7 +677,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
           onClick={() => overviewOpen() ? dismissOverview() : setOverviewOpen(true)}
         >⌄</button>
         <Show when={overviewOpen()}>
-          <Portal>
+          <FloatingPortal>
           <div
             id={overviewId}
             class="tab-overview"
@@ -743,7 +743,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
               )}
             </For>
           </div>
-          </Portal>
+          </FloatingPortal>
         </Show>
       </Show>
     </div>

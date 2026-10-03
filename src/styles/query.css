@@ -557,6 +557,11 @@
 }
 /* --- menus (one listbox pattern, QuickSwitcher's) --- */
 .qs-menu {
+  /* GH #619: a popover is a bounded scroll surface. `popoverFit.ts` clamps `max-height` to the room the
+     viewport leaves; whatever does not fit scrolls INSIDE it (the list below shrinks first), and wheel/touch
+     scrolling stays in the popover rather than chaining to the fixed page. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
   position: absolute;
   top: 100%;
   left: 0;
@@ -588,6 +593,8 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+.qs-menu > * { flex: none; }
+.qs-menu > .qs-options { flex: 0 1 auto; min-height: 0; }
 .qs-menu-filter,
 .qs-input {
   border: 1px solid var(--border-color);
@@ -610,7 +617,12 @@
   gap: 1px;
   max-height: 280px;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
+/* GH #619: rows in a scrolling list NEVER shrink. A flex item with `overflow:hidden` has min-height 0, so
+   without this a 20-row list was squeezed to 5px rows instead of scrolling. */
+.qs-options > * { flex: none; }
 .qs-option {
   display: flex;
   align-items: baseline;
@@ -945,9 +957,13 @@
 .qd-row > span:first-child { flex: 1; overflow-wrap: anywhere; }
 .qd-panel input[aria-label="Sample size"] { width: 9rem; }
 .qs-vocab-options { max-height: 16rem; overflow-y: auto; }
-.qs-vocab-detail { display: block; opacity: .8; font-size: .75rem; }
-.qs-vocab-options .qs-option { width: 100%; height: 100%; text-align: left; }
-.qs-vocab-row { height: 48px; overflow: hidden; }
+.qs-vocab-spacer { flex: none; }
+.qs-vocab-detail { display: block; padding: 0 10px; opacity: .8; font-size: .75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qs-vocab-options .qs-option { width: 100%; text-align: left; }
+/* One-line label + one-line detail inside the fixed 48px slot: long text is ellipsised, never wrapped (a wrapped
+   detail overflowed the slot and was clipped). */
+.qs-vocab-row > .qs-option { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qs-vocab-row { height: 48px; min-height: 48px; flex: none; overflow: hidden; }
 .qb-prop-type { position: relative; display: inline-flex; gap: .25rem; align-items: center; flex-wrap: wrap; }
 .qb-prop-type-badge { font-size: .75rem; opacity: .8; }
 .qb-prop-type-mismatch { font-size: .75rem; color: var(--color-warning, #c80); }

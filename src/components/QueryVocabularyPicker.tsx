@@ -158,10 +158,23 @@ function VocabularyBody(props: { context: ListboxBody; entries: Accessor<Map<str
   createEffect(() => {
     const active = props.context.shown().findIndex((option) => option.key === props.context.activeKey());
     if (active < 0 || !scrollEl) return;
-    const top = active * 48;
-    if (top < scrollEl.scrollTop) scrollEl.scrollTop = top;
-    else if (top + 48 > scrollEl.scrollTop + scrollEl.clientHeight)
-      scrollEl.scrollTop = top + 48 - scrollEl.clientHeight;
+    if (props.context.shown().length > 40) {
+      // Virtualized: every slot is exactly 48px, so the offset is arithmetic.
+      const top = active * 48;
+      if (top < scrollEl.scrollTop) scrollEl.scrollTop = top;
+      else if (top + 48 > scrollEl.scrollTop + scrollEl.clientHeight)
+        scrollEl.scrollTop = top + 48 - scrollEl.clientHeight;
+      return;
+    }
+    // Not virtualized: rows are real elements of different heights (a section header is not 48px), so follow
+    // the ACTIVE ELEMENT by its measured box rather than by `index * 48` (GH #619).
+    const id = props.context.activeKey() ? props.context.optionId(props.context.activeKey()!) : null;
+    const row = id ? scrollEl.querySelector<HTMLElement>(`[id="${id}"]`)?.closest<HTMLElement>(".qs-vocab-row") : null;
+    if (!row) return;
+    const box = scrollEl.getBoundingClientRect();
+    const at = row.getBoundingClientRect();
+    if (at.top < box.top) scrollEl.scrollTop -= box.top - at.top;
+    else if (at.bottom > box.bottom) scrollEl.scrollTop += at.bottom - box.bottom;
   });
   const visible = createMemo(() => {
     const all = props.context.shown();
@@ -191,7 +204,7 @@ function VocabularyBody(props: { context: ListboxBody; entries: Accessor<Map<str
   return <div ref={scrollEl} id={props.context.listId} class="qs-options qs-vocab-options" role="listbox"
     aria-label={props.context.label} onScroll={(event) => setStart(Math.floor(event.currentTarget.scrollTop / 48))}>
     <Show when={props.context.shown().length > 40} fallback={<For each={props.context.shown()}>{row}</For>}>
-      <div style={{ height: `${props.context.shown().length * 48}px`, position: "relative" }}>
+      <div class="qs-vocab-spacer" style={{ height: `${props.context.shown().length * 48}px`, position: "relative" }}>
         <For each={visible()}>{({ option, i }) => <div style={{ position: "absolute", top: `${i * 48}px`, height: "48px", width: "100%" }}>
           {row(option)}
         </div>}</For>
