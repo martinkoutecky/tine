@@ -107,6 +107,7 @@ export function Lightbox(): JSX.Element {
     return list[at] !== undefined && list[at] === lightbox() ? list : lightbox() ? [lightbox()!] : [];
   });
   const slot = () => (gallery().length === 1 ? 0 : lightboxIndex());
+  const [controls, setControls] = createSignal(true);
   const [view, setView] = createSignal<{ t: Transform; dx: number; dy: number }>({ t: { scale: 1, x: 0, y: 0 }, dx: 0, dy: 0 });
   let overlayEl: HTMLDivElement | undefined;
   let imgEl: HTMLImageElement | undefined;
@@ -127,9 +128,12 @@ export function Lightbox(): JSX.Element {
       return true;
     },
     close: () => { setMenu(null); setLightbox(null); },
+    tap: () => setControls((v) => !v),
   });
-  // A new image always opens at rest.
+  // A new image always opens at rest, with the controls showing (PhotoSwipe
+  // starts with its UI visible; a tap toggles it, tapAction "toggle-controls").
   createEffect(() => { lightbox(); gestures.reset(); });
+  createEffect(() => { if (!lightbox()) setControls(true); });
   // Touch / pen only: a mouse keeps its click-to-close and context menu, and
   // never drags the image. touch-action:none (CSS) hands us the whole gesture.
   const bind = (el: HTMLDivElement) => {
@@ -137,9 +141,10 @@ export function Lightbox(): JSX.Element {
     const fromTouch = (e: PointerEvent) => e.pointerType === "touch" || e.pointerType === "pen";
     const on = (type: string, fn: (e: PointerEvent) => void) => el.addEventListener(type, fn as EventListener);
     on("pointerdown", (e) => {
+      lastPointerType = e.pointerType;
       if (!fromTouch(e)) return;
-      // Copy button / menu keep their own taps.
-      if ((e.target as HTMLElement | null)?.closest(".lightbox-copy, .lightbox-menu")) return;
+      // Copy / close buttons and the menu keep their own taps.
+      if ((e.target as HTMLElement | null)?.closest(".lightbox-copy, .lightbox-close, .lightbox-menu")) return;
       try { el.setPointerCapture?.(e.pointerId); } catch { /* synthetic pointer */ }
       gestures.down(e.pointerId, e.clientX, e.clientY, e.timeStamp);
     });
@@ -157,10 +162,16 @@ export function Lightbox(): JSX.Element {
     <Show when={lightbox()}>
       <div
         class="lightbox-overlay"
+        classList={{ "lightbox-ui-hidden": !controls() }}
         ref={bind}
-        style={{ "--lightbox-dim": String(Math.max(0.25, 1 - view().dy / 400)) }}
+        // PhotoSwipe's backdrop opacity during a vertical drag: 1 - |offset| / (viewport height / 3).
+        style={{ "--lightbox-dim": String(Math.max(0, 1 - Math.abs(view().dy) / ((overlayEl?.clientHeight || 800) / 3))) }}
         onClick={(e) => {
-          // The click that follows a drag / pinch / double-tap is not a close.
+          // A touch never closes by tapping (PhotoSwipe: a tap toggles the
+          // controls; the viewer closes by drag, pinch, the close button or
+          // Back). The click that follows a drag / pinch / double-tap is not a
+          // close either. A mouse click on the image or backdrop closes.
+          if (lastPointerType === "touch" || lastPointerType === "pen") return;
           if (gestures.swallowClick(e.timeStamp)) { e.stopPropagation(); return; }
           setMenu(null);
           setLightbox(null);
@@ -172,12 +183,6 @@ export function Lightbox(): JSX.Element {
           src={lightbox()!}
           alt=""
           style={imgStyle()}
-          onClick={(e) => {
-            // A tap on the image itself is not a close on touch (the backdrop is);
-            // a mouse click keeps closing as before.
-            if (lastPointerType === "touch" || lastPointerType === "pen") e.stopPropagation();
-          }}
-          onPointerDown={(e) => { lastPointerType = e.pointerType; }}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -187,6 +192,18 @@ export function Lightbox(): JSX.Element {
         <Show when={gallery().length > 1}>
           <span class="lightbox-count" aria-hidden="true">{slot() + 1} / {gallery().length}</span>
         </Show>
+        <button
+          class="lightbox-close"
+          title="Close"
+          aria-label="Close image viewer"
+          onClick={(e) => {
+            e.stopPropagation();
+            setMenu(null);
+            setLightbox(null);
+          }}
+        >
+          ×
+        </button>
         <button
           class="lightbox-copy"
           title="Copy image to clipboard"

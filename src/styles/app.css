@@ -6247,7 +6247,7 @@ body.file-drop-active::after {
 .lightbox-copy {
   position: fixed;
   top: 16px;
-  right: 16px;
+  right: 56px;
   z-index: 211;
   cursor: pointer;
   border: none;
@@ -6257,6 +6257,37 @@ body.file-drop-active::after {
   color: #fff;
   background: rgba(255, 255, 255, 0.16);
   backdrop-filter: blur(4px);
+}
+.lightbox-close {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 211;
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  width: 32px;
+  padding: 3px 0;
+  font-size: 18px;
+  line-height: 1;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(4px);
+}
+.lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+/* A tap toggles the controls (PhotoSwipe tapAction "toggle-controls"). */
+.lightbox-overlay .lightbox-count,
+.lightbox-overlay .lightbox-copy,
+.lightbox-overlay .lightbox-close {
+  transition: opacity 0.15s;
+}
+.lightbox-overlay.lightbox-ui-hidden .lightbox-count,
+.lightbox-overlay.lightbox-ui-hidden .lightbox-copy,
+.lightbox-overlay.lightbox-ui-hidden .lightbox-close {
+  opacity: 0;
+  pointer-events: none;
 }
 .lightbox-copy:hover {
   background: rgba(255, 255, 255, 0.28);

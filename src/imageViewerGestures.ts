@@ -1,16 +1,28 @@
 // Image viewer gestures (GH #501): pinch-zoom, double-tap zoom, swipe between
-// the page's images, swipe down to close. OG gets these from PhotoSwipe
-// (extensions/lightbox.cljs, defaults - OG has no gesture code of its own);
-// Tine hand-writes the small subset instead of bundling PhotoSwipe (~50 KB
-// min) because the lightbox is one fixed overlay with a fixed set of verbs.
+// the page's images, swipe to close, tap toggles the controls. OG gets these
+// from PhotoSwipe (extensions/lightbox.cljs passes only dataSource, pswpModule
+// and showHideAnimationType, so every gesture is a PhotoSwipe 5 default; the
+// lockfile resolves 5.4.4). Tine hand-writes the small subset instead of
+// bundling PhotoSwipe (~50 KB min) because the lightbox is one fixed overlay
+// with a fixed set of verbs. The rules below are PhotoSwipe's, ported from
+// its source (dist/photoswipe.esm.js: Gestures, DragHandler, TapHandler):
+//   - touch tap (after the 300 ms double-tap wait) runs `tapAction`
+//     "toggle-controls", on the image and on the backdrop alike; a touch never
+//     closes by tapping (the mouse click path, imageClickAction / bgClickAction,
+//     stays in Toasts.tsx);
+//   - a vertical drag at fit zoom closes in EITHER direction: the image follows
+//     the finger with VERTICAL_DRAG_FRICTION and closes when the projected
+//     release position passes MIN_RATIO_TO_CLOSE of a third of the viewport;
+//   - a horizontal drag at fit zoom, and a horizontal drag that STARTED at the
+//     edge of a zoomed image and continues past it (allowPanToNext), moves the
+//     page strip; release turns the page on PhotoSwipe's speed / half-width rule.
 //
 // This module is the pure state machine: pointer samples in, transform /
 // navigation / close out. It touches no DOM, so every threshold is unit-testable
 // just under and just over (src/imageViewerGestures.test.ts). Layout feel,
-// momentum and the OS compositor's handling of touch-action are device-only.
-//
-// Thresholds are Tine's, in the PhotoSwipe spirit; none is a user-visible
-// contract beyond "a deliberate gesture works, an accidental brush does not".
+// momentum, the neighbouring page sliding into view and the OS compositor's
+// handling of touch-action are device-only; Tine shows no neighbour image while
+// dragging and has no fling after a zoomed pan.
 
 export const MIN_SCALE = 1;
 export const MAX_SCALE = 5;
@@ -18,19 +30,24 @@ export const DOUBLE_TAP_SCALE = 2.5;
 /** Movement beyond which a touch is a drag, not a tap. */
 export const TAP_SLOP_PX = 10;
 export const TAP_MAX_MS = 300;
-/** Two taps within this window and radius are a double tap. */
+/** PhotoSwipe DOUBLE_TAP_DELAY: a single tap waits this long for a second one. */
 export const DOUBLE_TAP_MS = 300;
-export const DOUBLE_TAP_SLOP_PX = 30;
-/** Axis lock for a one-finger drag at scale 1. */
+/** PhotoSwipe MIN_TAP_DISTANCE: the second tap must land strictly nearer than this. */
+export const DOUBLE_TAP_SLOP_PX = 25;
+/** PhotoSwipe AXIS_SWIPE_HYSTERISIS: travel before a drag picks its axis. */
 export const AXIS_LOCK_PX = 10;
-/** Horizontal release distance that turns the page (or a flick past FLICK_MIN_PX). */
-export const NAV_SWIPE_PX = 50;
-export const FLICK_PX_PER_MS = 0.4;
-export const FLICK_MIN_PX = 20;
-/** Downward release distance that closes the viewer (or a fast flick past CLOSE_FLICK_MIN_PX). */
-export const CLOSE_SWIPE_PX = 80;
-export const CLOSE_FLICK_PX_PER_MS = 0.5;
-export const CLOSE_FLICK_MIN_PX = 30;
+/** PhotoSwipe VERTICAL_DRAG_FRICTION: the image moves this fraction of the finger. */
+export const VERTICAL_DRAG_FRICTION = 0.6;
+/** PhotoSwipe MIN_RATIO_TO_CLOSE (of a third of the viewport height). */
+export const MIN_RATIO_TO_CLOSE = 0.4;
+/** PhotoSwipe project(v, 0.995): where a release at velocity v (px/ms) would coast to. */
+export const PROJECT_MS = 0.995 / (1 - 0.995);
+/** PhotoSwipe MIN_NEXT_SLIDE_SPEED (px/ms). */
+export const MIN_NEXT_SLIDE_SPEED = 0.5;
+/** A slow release turns the page once more than this much of the viewport width is shifted. */
+export const NAV_HALF_RATIO = 0.5;
+/** ...and "slow" means not faster than this against the turn (px/ms). */
+export const NAV_SLOW_SPEED = 0.1;
 /** A release within this long of a drag/pinch swallows the browser's follow-up click. */
 export const CLICK_SWALLOW_MS = 400;
 const VELOCITY_WINDOW_MS = 100;
@@ -49,6 +66,8 @@ export interface ViewerHost {
   /** Turn the page by +1 / -1; false when there is no such image (edge). */
   step(delta: 1 | -1): boolean;
   close(): void;
+  /** A confirmed single tap (PhotoSwipe tapAction "toggle-controls"). */
+  tap(): void;
 }
 
 type Mode = "idle" | "pan" | "swipe" | "pinch";
@@ -61,7 +80,7 @@ export interface ImageViewerGestures {
   cancel(id: number): void;
   /** True when the click the browser emits after this pointer sequence must be ignored. */
   swallowClick(now: number): boolean;
-  /** Back to scale 1 (new image shown). */
+  /** Back to scale 1 (new image shown); drops a pending single tap. */
   reset(): void;
   transform(): Transform;
   mode(): Mode;
@@ -85,6 +104,7 @@ export function createImageViewerGestures(host: ViewerHost): ImageViewerGestures
   let dragY = 0;
   let samples: Pt[] = [];
   let lastTap: Pt | null = null;
+  let tapTimer: ReturnType<typeof setTimeout> | null = null;
   let moved = false; // the sequence was a drag/pinch (not a tap)
   let swallowUntil = -Infinity;
   // pinch bookkeeping: content point under the midpoint at pinch start
@@ -117,6 +137,54 @@ export function createImageViewerGestures(host: ViewerHost): ImageViewerGestures
     const dt = last.t - first.t;
     if (dt <= 0) return { vx: 0, vy: 0 };
     return { vx: (last.x - first.x) / dt, vy: (last.y - first.y) / dt };
+  }
+
+  const clearTapTimer = () => {
+    if (tapTimer !== null) clearTimeout(tapTimer);
+    tapTimer = null;
+  };
+  /** Pan bounds at the current scale (the clamp's, so the two cannot disagree). */
+  const panRange = () => {
+    const c = clampPan({ scale: tf.scale, x: 1e9, y: 1e9 }, host.box(), host.image());
+    return { mx: c.x, my: c.y };
+  };
+
+  /** PhotoSwipe DragHandler.change for one finger on a zoomed image: pan, and
+   *  past an edge the drag STARTED at, move the page strip (allowPanToNext). */
+  function panStep(stepX: number, stepY: number) {
+    const { mx, my } = panRange();
+    // PhotoSwipe does not pan vertically while the strip is shifted.
+    if (dragX === 0) tf = { ...tf, y: Math.min(my, Math.max(-my, tf.y + stepY)) };
+    if (lockAxis !== "h") {
+      tf = { ...tf, x: Math.min(mx, Math.max(-mx, tf.x + stepX)) };
+    } else if (dragX !== 0) {
+      // A shifted strip is brought back to rest before the image pans again.
+      dragX = dragX > 0 ? Math.max(0, dragX + stepX) : Math.min(0, dragX + stepX);
+    } else {
+      const nx = tf.x + stepX;
+      const from = panFrom?.tf.x ?? tf.x;
+      if (stepX > 0 && nx > mx && from >= mx) dragX += stepX;
+      else if (stepX < 0 && nx < -mx && from <= -mx) dragX += stepX;
+      else tf = { ...tf, x: Math.min(mx, Math.max(-mx, nx)) };
+    }
+    apply();
+  }
+
+  /** PhotoSwipe DragHandler.end for a shifted strip: which page, if any. */
+  function pageTurn(shift: number, vx: number): 1 | -1 | 0 {
+    const ratio = shift / Math.max(1, host.box().w);
+    if ((vx < -MIN_NEXT_SLIDE_SPEED && ratio < 0) || (vx < NAV_SLOW_SPEED && ratio < -NAV_HALF_RATIO)) return 1;
+    if ((vx > MIN_NEXT_SLIDE_SPEED && ratio > 0) || (vx > -NAV_SLOW_SPEED && ratio > NAV_HALF_RATIO)) return -1;
+    return 0;
+  }
+
+  /** PhotoSwipe's vertical-drag close test at release: the frictioned offset
+   *  plus where the release velocity would coast, past MIN_RATIO_TO_CLOSE of a
+   *  third of the viewport, in the direction the image already moved. */
+  function dragClosesViewer(pan: number, vy: number): boolean {
+    const third = Math.max(1, host.box().h) / 3;
+    const projected = (pan + vy * PROJECT_MS) / third;
+    return (pan < 0 && projected < -MIN_RATIO_TO_CLOSE) || (pan > 0 && projected > MIN_RATIO_TO_CLOSE);
   }
 
   function settleScale() {
@@ -175,16 +243,12 @@ export function createImageViewerGestures(host: ViewerHost): ImageViewerGestures
       if (!moved && Math.hypot(dx, dy) > TAP_SLOP_PX) moved = true;
       samples.push(p);
       if (samples.length > 16) samples = samples.slice(-16);
-      if (mode === "pan" && panFrom) {
-        tf = clampPan({ scale: panFrom.tf.scale, x: panFrom.tf.x + (x - panFrom.p.x), y: panFrom.tf.y + (y - panFrom.p.y) }, host.box(), host.image());
-        apply();
-      } else if (mode === "swipe") {
-        if (!lockAxis) {
-          if (Math.hypot(dx, dy) <= AXIS_LOCK_PX) return;
-          lockAxis = Math.abs(dx) >= Math.abs(dy) ? "h" : "v";
-        }
+      if (!lockAxis && Math.hypot(dx, dy) > AXIS_LOCK_PX) lockAxis = Math.abs(dx) >= Math.abs(dy) ? "h" : "v";
+      if (mode === "pan") {
+        panStep(x - prev.x, y - prev.y);
+      } else if (mode === "swipe" && lockAxis) {
         if (lockAxis === "h") dragX = dx;
-        else dragY = Math.max(0, dy); // only downward follows the finger
+        else dragY = dy * VERTICAL_DRAG_FRICTION; // both directions follow the finger
         apply();
       }
     },
@@ -194,8 +258,6 @@ export function createImageViewerGestures(host: ViewerHost): ImageViewerGestures
       pts.set(id, { x, y, t });
       const s0 = start.get(id)!;
       const wasMode = mode;
-      const dx = x - s0.x;
-      const dy = y - s0.y;
       const v = velocity();
       pts.delete(id);
       start.delete(id);
@@ -215,36 +277,38 @@ export function createImageViewerGestures(host: ViewerHost): ImageViewerGestures
       mode = "idle";
       const tapped = !moved && t - s0.t <= TAP_MAX_MS;
       if (tapped) {
-        if (lastTap && t - lastTap.t <= DOUBLE_TAP_MS && Math.hypot(x - lastTap.x, y - lastTap.y) <= DOUBLE_TAP_SLOP_PX) {
+        dragX = dragY = 0;
+        if (lastTap && tapTimer !== null && Math.hypot(x - lastTap.x, y - lastTap.y) < DOUBLE_TAP_SLOP_PX) {
+          clearTapTimer();
           lastTap = null;
           doubleTapAt({ x, y, t });
           swallowUntil = t + CLICK_SWALLOW_MS;
         } else {
+          // A far-away second tap does not cancel the first: it fires now and
+          // the new one starts its own wait.
+          if (tapTimer !== null) { clearTapTimer(); host.tap(); }
           lastTap = { x, y, t };
+          tapTimer = setTimeout(() => { tapTimer = null; lastTap = null; host.tap(); }, DOUBLE_TAP_MS);
         }
-        dragX = dragY = 0;
         return;
       }
-      lastTap = null;
       if (moved) swallowUntil = t + CLICK_SWALLOW_MS;
-      if (wasMode === "swipe") {
+      if (wasMode === "swipe" || wasMode === "pan") {
         const wasAxis = lockAxis;
-        const commitH = Math.abs(dx) >= NAV_SWIPE_PX || (Math.abs(v.vx) >= FLICK_PX_PER_MS && Math.abs(dx) >= FLICK_MIN_PX);
-        const commitV = dy >= CLOSE_SWIPE_PX || (v.vy >= CLOSE_FLICK_PX_PER_MS && dy >= CLOSE_FLICK_MIN_PX);
+        const shift = dragX;
+        const pan = dragY;
         dragX = dragY = 0;
-        if (wasAxis === "h" && commitH) {
-          // Page turned (or at the edge: snap back below).
-          const dir: 1 | -1 = dx < 0 ? 1 : -1;
-          if (host.step(dir)) tf = { scale: 1, x: 0, y: 0 };
-        } else if (wasAxis === "v" && commitV) {
+        if (wasAxis === "h" && shift !== 0) {
+          const dir = pageTurn(shift, v.vx);
+          // Past the last image (or a no-turn release) the strip snaps back.
+          if (dir !== 0 && host.step(dir)) tf = { scale: 1, x: 0, y: 0 };
+        } else if (wasMode === "swipe" && wasAxis === "v" && dragClosesViewer(pan, v.vy)) {
           apply();
           host.close();
           return;
         }
         apply();
-        return;
       }
-      if (wasMode === "pan") apply();
     },
 
     cancel(id) {
@@ -266,6 +330,7 @@ export function createImageViewerGestures(host: ViewerHost): ImageViewerGestures
       tf = { scale: 1, x: 0, y: 0 };
       dragX = dragY = 0;
       lastTap = null;
+      clearTapTimer();
       apply();
     },
     transform: () => tf,
