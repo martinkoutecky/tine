@@ -935,8 +935,9 @@ describe("a query never returns its own block (GH #469)", () => {
   });
 });
 
-// Ported from master QueryMacro.test.tsx (the field chooser is og's QueryListbox `.qs-menu`).
-it("choosing the Query slash command opens its sheet and field chooser", async () => {
+// Ported from master QueryMacro.test.tsx, then changed on purpose (Martin 2026-10-03, GH #619 comment 2): the sheet opens
+// on the empty condition list and the field chooser (og's QueryListbox `.qs-menu`) stays CLOSED until the user opens it.
+it("choosing the Query slash command opens its sheet on the condition list, chooser closed", async () => {
   vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => {
     const read = readQuery(text, dialect, properties);
     return { ...read, query: { ...read.query, filter: { kind: "and", items: [] } } };
@@ -963,7 +964,9 @@ it("choosing the Query slash command opens its sheet and field chooser", async (
     command.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(doc.byId.query.raw.trim()).toBe("{{query }}"));
     await vi.waitFor(() => expect(document.querySelector(".qs-sheet")).not.toBeNull());
-    await vi.waitFor(() => expect(document.querySelector(".qs-menu")).not.toBeNull());
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(document.querySelector(".qs-menu")).toBeNull();
+    expect(document.querySelectorAll(".qs-sheet .qs-row")).toHaveLength(0);
     expect(editingId()).toBeNull();
   } finally { dispose(); }
 });

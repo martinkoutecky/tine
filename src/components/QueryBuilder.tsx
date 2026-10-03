@@ -557,13 +557,12 @@ export function QueryBuilder(props: {
   const suggestions = createMemo(() => suggestedKeys(registry.rows()));
   const vocabulary = () => (registry.rows() ?? []).map((row) => row.normalized_name);
 
-  // Open the sheet with the field chooser focused when this block was just created via `/query` — consume the …
+  // Open the sheet (on its empty condition list, chooser CLOSED — Martin 2026-10-03, GH #619 comment 2) when this block was just created via `/query`.
   // **Consumed once this builder is CONNECTED, never at construction (GH #619).** The block swaps its edit
   // surface for its view surface right after `/query`, and a builder can be constructed into a subtree that is
   // thrown away or attached a frame later. The instance that took the one-shot flag at construction could be
   // the detached one: it opened a sheet no sentence anchored, which painted at the viewport's top-left. Waiting
   // for a connected sentence means the instance the user actually sees is the one that opens.
-  const [autoOpen, setAutoOpen] = createSignal(false);
   if (props.blockId) {
     createEffect(() => {
       if (queryBuilderAutoOpen() !== props.blockId) return;
@@ -576,7 +575,6 @@ export function QueryBuilder(props: {
           return;
         }
         setQueryBuilderAutoOpen(null);
-        setAutoOpen(true);
         setOpen(true);
       };
       take();
@@ -821,7 +819,6 @@ export function QueryBuilder(props: {
       setOpenMenu={setOpenMenu}
       // In the workspace the sheet is not a layer of its own: its menus parent to the Advanced modal exactly as …
       layerId={props.sheetAlwaysOpen ? props.parentTransientId : sheetLayerId}
-      autoOpenChooser={autoOpen()}
       footer={footer()}
       stale={stale()}
       sheetRef={(element) => {

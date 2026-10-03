@@ -12,17 +12,18 @@ import { resetQueryRegistryRevisionForTests, QueryBuilder, type BuilderSession }
 import { clearTransientLayersForTest } from "../transientLayers";
 import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
 import { taskFilter } from "../editor/queryBuilder";
+import type { Filter } from "../editor/queryIr";
 
 const BOX = { top: 100, bottom: 140, left: 60, right: 460, width: 400, height: 40, x: 60, y: 100 };
 
-function session(): BuilderSession {
-  return { query: { anchor: "block", filter: taskFilter(["TODO"]), source: { kind: "builder" } }, view: {} };
+function session(filter: Filter = taskFilter(["TODO"])): BuilderSession {
+  return { query: { anchor: "block", filter, source: { kind: "builder" } }, view: {} };
 }
 
 /** Mount a builder into a host that is NOT in the document yet. */
-function mountDetached(blockId?: string) {
+function mountDetached(blockId?: string, filter?: Filter) {
   const host = document.createElement("div");
-  const [current, setCurrent] = createSignal<BuilderSession>(session());
+  const [current, setCurrent] = createSignal<BuilderSession>(session(filter));
   const dispose = render(() => <QueryBuilder session={current} onChange={setCurrent} blockId={blockId} />, host);
   return { host, dispose };
 }
@@ -88,6 +89,23 @@ describe("query sheet placement (GH #619)", () => {
     expect(anchor).not.toBeNull();
     expect(anchor!.style.top).not.toBe("0px");
     expect(anchor!.style.left).not.toBe("0px");
+    dispose();
+  });
+
+  // Martin 2026-10-03 (GH #619 comment 2): `/query` opens the sheet on the empty condition list. The field
+  // chooser is an explicit user action; it must not open by itself.
+  it("/query opens the sheet with the chooser CLOSED and no condition rows", async () => {
+    setQueryBuilderAutoOpen("blk");
+    const { host, dispose } = mountDetached("blk", { kind: "and", items: [] });
+    document.body.append(host);
+    await frames(6);
+    const sheet = document.querySelector<HTMLElement>(".qs-sheet");
+    expect(sheet).not.toBeNull();
+    expect(sheet!.querySelectorAll(".qs-row").length).toBe(0);
+    const add = sheet!.querySelector<HTMLButtonElement>(".qs-add");
+    expect(add).not.toBeNull();
+    expect(add!.getAttribute("aria-expanded")).not.toBe("true");
+    expect(document.querySelector(".qs-menu")).toBeNull();
     dispose();
   });
 });

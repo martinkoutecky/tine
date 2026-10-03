@@ -1651,7 +1651,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       case "query-builder": {
         // Insert an empty query, commit it, and drop straight to the rendered
         // view so the visual builder appears — then flag this block so the
-        // builder opens its sheet with the field chooser focused (`/query` is one command).
+        // builder opens its sheet on the empty condition list. The field chooser stays CLOSED: opening it is an
+        // explicit user action (Martin 2026-10-03, GH #619 comment 2: a properties dialog that opens by itself
+        // "without doing anything" reads as a bug).
         const r = applyCompletion(ref.value, t.start, t.end, QUERY_MACRO_SCAFFOLD);
         commit(r.raw);
         closeAc();

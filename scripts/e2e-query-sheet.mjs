@@ -184,13 +184,14 @@ await withApp(0, async (browser) => {
   await browser.keys(["Enter"]);
   const pane = await browser.$(".qs-sheet .query-text-pane-input");
   await pane.waitForExist({ timeout: 15_000 });
-  // The field chooser opens first; Escape peels only that layer. Wait for the
-  // chooser to be open before Escape and closed after it, or the keypress can
-  // race the auto-open and leave the chooser over the pane.
+  // `/query` opens the sheet on the empty condition list. The field chooser is an explicit user action
+  // (Martin 2026-10-03, GH #619 comment 2), so it must stay closed and no condition rows exist yet. Give a
+  // late auto-open time to happen before asserting it did not.
+  await browser.pause(600);
   const chooserOpen = () => browser.execute(() => document.querySelector(".qs-sheet .qs-add")?.getAttribute("aria-expanded") === "true");
-  await browser.waitUntil(chooserOpen, { timeout: 10_000, interval: 100, timeoutMsg: "/query did not open the field chooser" });
-  await browser.keys(["Escape"]);
-  await browser.waitUntil(async () => !(await chooserOpen()), { timeout: 10_000, interval: 100, timeoutMsg: "Escape did not close the field chooser" });
+  if (await chooserOpen()) throw new Error("/query opened the field chooser by itself");
+  const rows = await browser.execute(() => document.querySelectorAll(".qs-sheet .qs-row").length);
+  if (rows !== 0) throw new Error(`/query produced ${rows} condition rows; expected an empty list`);
   await pane.scrollIntoView({ block: "center", inline: "nearest" });
   await pane.waitForClickable({ timeout: 10_000 });
   await browser.execute(() => {
