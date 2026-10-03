@@ -44,8 +44,10 @@ import { sharedQueryResult } from "../queryResultCache";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
+import { queryTextOpen, setQueryTextOpen as rememberTextOpen } from "../navSettings";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { QueryDisplay } from "./QueryDisplay";
+import { QueryLivePreview } from "./QueryLivePreview";
 import { readLatestOr } from "../resourceRead";
 
 /** One animation frame later (a timer where there is no rAF). */
@@ -90,6 +92,10 @@ const errorMessage = (error: unknown): string =>
 // **`+ sort` and `+ summarize` are gone** (P5B, Q3).
 
 // The text pane (§4.3.1, §7.1)
+
+/** GH #619 item 4: the query text is hidden behind an "Edit as text" toggle, and the toggle remembers its state.
+ *  It is a per-device preference persisted through the app-settings backend (`navSettings.ts`), so it survives a
+ *  restart; localStorage does not in the Tine app. A failed write rolls the toggle back and toasts. */
 
 /** How long the pane waits after the last keystroke before asking the engine. */
 const PANE_DEBOUNCE_MS = 150;
@@ -510,6 +516,10 @@ export function QueryBuilder(props: {
   /** The pane's text no longer parses, so the rows on screen are the LAST reading that ran. */
   onStale?: (stale: boolean) => void;
   blockId?: string;
+  /** The bindings a live preview runs under (the block's own run uses the same). */
+  previewContext?: () => import("../editor/queryIr").ExecutionContext | undefined;
+  /** The macro's "pages and blocks" choice (GH #619 item 9); absent on the workspace. */
+  both?: import("./querySheetParts").BothKindsControl;
   parentTransientId?: string;
   /** Display writes use the host's guarded query save. Workspace callers may
    * leave it absent until their route owns a display draft. */
@@ -520,6 +530,17 @@ export function QueryBuilder(props: {
   const [paneQuery, setPaneQuery] = createSignal<Query | null>(null);
   const [stale, setStale] = createSignal(false);
   const [open, setOpen] = createSignal(false);
+  // The text pane is mounted only while its toggle is on (default off, remembered).
+  // The remembered state is a durable device preference (navSettings), not localStorage.
+  const textOpen = queryTextOpen;
+  const setTextOpen = (next: boolean) => {
+    rememberTextOpen(next);
+    // A hidden pane cannot hold an unparsed draft, so nothing is left "stale" behind it.
+    if (!next) {
+      setStale(false);
+      props.onStale?.(false);
+    }
+  };
   const [openMenu, setOpenMenu] = createSignal<string | null>(null);
   const [anchorPrompt, setAnchorPrompt] = createSignal<AnchorPrompt | null>(null);
   const [previewError, setPreviewError] = createSignal<string | null>(null);
@@ -798,32 +819,53 @@ export function QueryBuilder(props: {
 
   const footer = () => (
     <>
+      {/* GH #619 item 7: the sheet covers the block's results, so it carries its own live ones. The
+          workspace shows its results beside the sheet already. */}
+      <Show when={!props.sheetAlwaysOpen}>
+        <QueryLivePreview
+          query={() => session()?.query}
+          view={() => session()?.view ?? {}}
+          context={props.previewContext}
+          hostBlockId={props.blockId}
+          both={props.both?.on}
+        />
+      </Show>
       <Show when={props.display}>{(display) => <QueryDisplay
         view={display().view} apply={display().apply} registry={registry} formulas={display().formulas}
         rowKind={() => session()?.query.anchor ?? "block"}
         parentTransientId={props.sheetAlwaysOpen ? props.parentTransientId : sheetLayerId} />}</Show>
-      {/* **Visible and editable, always, inside an open sheet (§7.5).** It was a
-          collapsed `<details>`, which meant the one control that can express
-          everything the rows cannot was the one control a user had to know to
-          look for. The sheet gates the cost: a resting sentence mounts no pane. */}
-      <QueryTextPane
-        session={props.session}
-        dialect={props.paneDialect ?? "tql"}
-        visible={sheetOpen}
-        vocabulary={vocabulary}
-        notice={props.notice}
-        handle={setPaneHandle}
-        onParsed={(parsed) => setPaneQuery(carryForward(parsed))}
-        onCommit={(parsed) => {
-          const current = props.session();
-          if (!current) return;
-          props.onChange({ query: carryForward(parsed), view: current.view });
-        }}
-        onStale={(value) => {
-          setStale(value);
-          props.onStale?.(value);
-        }}
-      />
+      {/* GH #619 item 4: the text is one toggle away, not in the way. The sheet's rows are the
+          primary editor; "Edit as text" opens the pane (remembered across sheets), and a
+          retained leaf that rows cannot edit opens it for the user. A resting sentence and a
+          closed toggle mount no pane at all. */}
+      <button
+        type="button"
+        class="qs-text-toggle"
+        aria-expanded={textOpen()}
+        onClick={() => setTextOpen(!textOpen())}
+      >
+        Edit as text
+      </button>
+      <Show when={textOpen()} fallback={<Show when={props.notice}>{(render) => render()()}</Show>}>
+        <QueryTextPane
+          session={props.session}
+          dialect={props.paneDialect ?? "tql"}
+          visible={sheetOpen}
+          vocabulary={vocabulary}
+          notice={props.notice}
+          handle={setPaneHandle}
+          onParsed={(parsed) => setPaneQuery(carryForward(parsed))}
+          onCommit={(parsed) => {
+            const current = props.session();
+            if (!current) return;
+            props.onChange({ query: carryForward(parsed), view: current.view });
+          }}
+          onStale={(value) => {
+            setStale(value);
+            props.onStale?.(value);
+          }}
+        />
+      </Show>
     </>
   );
 
@@ -831,12 +873,18 @@ export function QueryBuilder(props: {
     <QuerySheet
       anchor={() => session()?.query.anchor ?? "block"}
       onAnchor={(anchor) => void switchAnchor(anchor)}
+      both={props.both}
       anchorPrompt={anchorPrompt}
       root={root}
       query={() => session()?.query}
       apply={apply}
       registry={registry}
-      onEditText={() => paneHandle()?.focus()}
+      onEditText={() => {
+        if (textOpen()) return paneHandle()?.focus();
+        setTextOpen(true);
+        // The pane mounts on the next flush; focus its textarea once it has published its handle.
+        queueMicrotask(() => paneHandle()?.focus());
+      }}
       suggestions={suggestions}
       openMenu={openMenu}
       setOpenMenu={setOpenMenu}
@@ -858,6 +906,7 @@ export function QueryBuilder(props: {
           <Show when={!props.sheetAlwaysOpen}>
             <QuerySentence
               query={current().query}
+              both={props.both?.on}
               total={props.total}
               open={open()}
               onOpen={() => setOpen(!open())}

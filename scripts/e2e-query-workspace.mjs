@@ -234,7 +234,7 @@ await withApp(0, async (browser) => {
   await browser.waitUntil(async () => (await browser.$$(".query-search-results .query-search-hit")).length === 9, {
     timeout: 10_000, timeoutMsg: "Search presentation dropped ordinary DSL query results",
   });
-  const inlineProof = await browser.execute(() => ({
+  const readInlineProof = () => browser.execute(() => ({
     count: document.querySelector(".query-count")?.textContent?.trim(),
     rows: [...document.querySelectorAll(".query-search-results .query-search-hit")].map((row) => ({
       page: row.querySelector(".search-result-context")?.textContent,
@@ -242,6 +242,16 @@ await withApp(0, async (browser) => {
       marks: row.querySelectorAll("mark").length,
     })),
   }));
+  // Switching the view re-keys the query run, so for a frame the old rows are
+  // gone and the count reads 0 before the new run lands (observed on the base
+  // binary too, under load: 2 of 7 sampled runs). Wait for the settled state;
+  // the assertion below is unchanged and still fails on a wrong membership.
+  let inlineProof = await readInlineProof();
+  await browser.waitUntil(async () => {
+    inlineProof = await readInlineProof();
+    return inlineProof.rows.length === 9 && inlineProof.count === "9";
+  }, { timeout: 10_000, timeoutMsg: "Search presentation never settled on 9 results" })
+    .catch(() => {});
   if (inlineProof.count !== "9" || inlineProof.rows.length !== 9
     || inlineProof.rows.some((row) => row.page !== "Query parity" || !row.text?.includes("Included result") || row.marks !== 0)) {
     throw new Error(`DSL Search presentation changed membership or invented evidence: ${JSON.stringify(inlineProof)}`);

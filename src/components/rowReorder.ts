@@ -19,6 +19,8 @@ export interface RowDropTarget {
   /** Pointer x relative to where the drag STARTED (not the row's edge), so
    *  where the row was grabbed never decides a nesting depth. */
   dx: number;
+  /** The row element the pointer is over, for a caller whose rows live in several lists. */
+  row: HTMLElement;
 }
 
 /** Attach a reorder drag to a row's pointerdown. `onTarget` reports the live
@@ -44,7 +46,7 @@ export function beginRowReorderDrag(
     const row = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(rowSelector);
     if (row?.dataset.rowIndex !== undefined) {
       const rect = row.getBoundingClientRect();
-      target = { index: Number(row.dataset.rowIndex), before: ev.clientY < rect.top + rect.height / 2, dx: ev.clientX - startX };
+      target = { index: Number(row.dataset.rowIndex), before: ev.clientY < rect.top + rect.height / 2, dx: ev.clientX - startX, row };
     } else target = null;
     onTarget(target);
   };

@@ -11,9 +11,19 @@ export interface QuerySheetDropTarget {
   before: boolean;
 }
 
-/** The selector that matches the items of ONE list, and nothing else. */
-export function querySheetSiblingSelector(parent: string): string {
-  return `[data-qs-parent="${parent}"]`;
+/** The selector that matches the items of EVERY list in the sheet (GH #619 item 6: a condition can be dragged
+*  into another group). Each item carries its own list's `data-qs-parent`, and the nearest one under the pointer
+*  wins, so a row of a nested group answers for itself and the group's own item answers for its header. */
+export const QUERY_SHEET_ITEM_SELECTOR = "[data-qs-parent]";
+
+/** The loc a `data-qs-parent` key names (`""` is the root list). */
+export function parseLocKey(key: string): number[] {
+  return key === "" ? [] : key.split(".").map(Number);
+}
+
+/** Is the list `parent` the node `source` or somewhere inside it? A node cannot be dropped into its own subtree. */
+export function isInsideSubtree(parent: string, source: string): boolean {
+  return parent === source || parent.startsWith(`${source}.`);
 }
 
 let cancelInFlight: (() => void) | null = null;
@@ -24,7 +34,7 @@ export function cancelQuerySheetReorder(): void {
 }
 
 export interface QuerySheetReorderRequest {
-  /** `data-qs-parent` of the list this drag may reorder. */
+  /** `data-qs-parent` of the list the dragged item is in. */
   parent: string;
   from: number;
   /** Is the captured tree still the one on screen? */
@@ -32,6 +42,8 @@ export interface QuerySheetReorderRequest {
   setTarget: (target: QuerySheetDropTarget | null) => void;
   /** The index the dragged item ends at, in its own list. */
   commit: (to: number) => void;
+  /** Dropped into ANOTHER list: `parent` is that list's key and `slot` the position among its current items. */
+  commitAcross: (parent: string, slot: number) => void;
 }
 
 /** The index the dragged item ends at if dropped on `target` (its own index when the drop is a no-op). */
@@ -71,21 +83,34 @@ export function beginQuerySheetReorder(event: PointerEvent, request: QuerySheetR
   });
   cancelInFlight = cancel;
 
+  const source = [...parseLocKey(request.parent), request.from].join(".");
+  /** Where a pointer position lands: the item's own list, the slot in it, and whether that is a real move. */
+  const resolve = (target: { index: number; before: boolean; row: HTMLElement }) => {
+    const parent = target.row.dataset.qsParent;
+    if (parent === undefined) return null;
+    if (parent === request.parent) {
+      const to = endsAt(request.from, target);
+      return to === request.from ? null : { parent, to, slot: target.index + (target.before ? 0 : 1), same: true };
+    }
+    if (isInsideSubtree(parent, source)) return null;
+    return { parent, to: 0, slot: target.index + (target.before ? 0 : 1), same: false };
+  };
+
   beginRowReorderDrag(
     event,
-    querySheetSiblingSelector(request.parent),
-    (target) =>
+    QUERY_SHEET_ITEM_SELECTOR,
+    (target) => {
       // A slot next to the dragged item itself changes nothing, so it draws no bar (GH #619: with two conditions
       // the bar crept between them toward a "hidden" third, though the only real slot was above the first).
-      request.setTarget(
-        target && endsAt(request.from, target) !== request.from
-          ? { parent: request.parent, index: target.index, before: target.before }
-          : null,
-      ),
+      const drop = target && resolve(target);
+      request.setTarget(drop ? { parent: drop.parent, index: target!.index, before: target!.before } : null);
+    },
     (target) => {
       if (finished || !request.isCurrent()) return;
-      const adjusted = endsAt(request.from, target);
-      if (adjusted !== request.from) request.commit(adjusted);
+      const drop = resolve(target);
+      if (!drop) return;
+      if (drop.same) request.commit(drop.to);
+      else request.commitAcross(drop.parent, drop.slot);
     },
   );
 

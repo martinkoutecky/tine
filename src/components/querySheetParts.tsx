@@ -18,6 +18,7 @@ import {
 import { backend } from "../backend";
 import {
   MAX_QUERY_BUILDER_DEPTH,
+  anyTaskFilter,
   betweenFilter,
   contentFilter,
   encodePropertyLeaf,
@@ -178,9 +179,11 @@ export function QuerySentence(props: {
   onOpen: () => void;
   open?: boolean;
   sentenceRef?: (element: HTMLSpanElement) => void;
+  /** GH #619 item 9: the query lists pages AND blocks, so the sentence's subject says so. */
+  both?: () => boolean;
 }): JSX.Element {
   const segments = createMemo<PhraseSegment[]>(() =>
-    querySentence({ anchor: props.query.anchor, filter: props.query.filter }),
+    querySentence({ anchor: props.query.anchor, filter: props.query.filter, both: props.both?.() === true }),
   );
   // A retained leaf reads as its decoded text; the diagnostic is why it is red, so it is the hover text rather …
   const rawTitles = createMemo(() => {
@@ -258,7 +261,7 @@ export const FILTER_TYPES: { kind: BuilderLeafKind; label: string }[] = [
   { kind: "property", label: "Property" },
   { kind: "scheduled", label: "Scheduled" },
   { kind: "deadline", label: "Deadline" },
-  { kind: "journal", label: "On journal page" },
+  { kind: "journal", label: "In a journal page" },
   { kind: "between", label: "Between dates" },
   { kind: "content", label: "Full-text search" },
   { kind: "onPage", label: "On page" },
@@ -274,7 +277,7 @@ export const FIELD_LABELS: Record<BuilderLeafKind, string> = {
   property: "Property",
   scheduled: "Scheduled",
   deadline: "Deadline",
-  journal: "On journal page",
+  journal: "In a journal page",
   between: "Between dates",
   content: "Full-text search",
   onPage: "On page",
@@ -407,6 +410,13 @@ export function buildNodes(filter: Filter, loc: number[], depth: number, inherit
   return { kind: "row", loc, filter, core: node, negated, negLoc, disabled, inherited };
 }
 
+/** How many subtrees the sheet folds into an "advanced" chip because they sit past the drawing depth. */
+export function advancedCount(node: SheetNode): number {
+  if (node.kind === "advanced") return 1;
+  if (node.kind === "group") return node.children.reduce((sum, child) => sum + advancedCount(child), 0);
+  return 0;
+}
+
 // Selecting, disabling and reordering (§7.4 remainder, P6)
 
 /** A node's place among its siblings — everything selection, moving and
@@ -478,7 +488,7 @@ export function DragHandle(props: { pos: SiblingPos; label: string; controls: Sh
       data-qs-handle={locKey(loc())}
       aria-label={props.label}
       aria-keyshortcuts="ArrowUp ArrowDown"
-      title="Drag to reorder, or use the up and down arrow keys"
+      title="Drag to reorder or into another group, or use the up and down arrow keys"
       onPointerDown={(event) => props.controls.startDrag(event, props.pos)}
       onKeyDown={(event) => {
         if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
@@ -706,12 +716,19 @@ export function MultiPick(props: {
   options: string[];
   initial?: string[];
   onCommit: (picked: string[]) => void;
+  /** A one-click "everything" choice above the checkboxes (task: "Any status"). */
+  any?: { label: string; onPick: () => void };
 }): JSX.Element {
   const [picked, setPicked] = createSignal<string[]>(props.initial ?? []);
   const toggle = (o: string) =>
     setPicked(picked().includes(o) ? picked().filter((x) => x !== o) : [...picked(), o]);
   return (
     <div class="qs-value-editor">
+      <Show when={props.any}>
+        <button type="button" class="qs-option qs-any-option" onClick={() => props.any!.onPick()}>
+          {props.any!.label}
+        </button>
+      </Show>
       <For each={props.options}>
         {(o) => (
           <label class="qs-check">
@@ -841,7 +858,11 @@ export function ValueEditor(props: {
         <PageInput placeholder="Page or tag name" onCommit={(name) => props.onCommit(pageRefFilter(name))} />
       </Show>
       <Show when={props.kind === "task"}>
-        <MultiPick options={MARKERS} onCommit={(markers) => props.onCommit(taskFilter(markers))} />
+        <MultiPick
+          options={MARKERS}
+          any={{ label: "Any status", onPick: () => props.onCommit(anyTaskFilter()) }}
+          onCommit={(markers) => props.onCommit(taskFilter(markers))}
+        />
       </Show>
       <Show when={props.kind === "priority"}>
         <MultiPick options={PRIORITIES} onCommit={(levels) => props.onCommit(priorityFilter(levels))} />
@@ -888,9 +909,20 @@ export const ANCHOR_OPTIONS: { key: Anchor; label: string; hint: string }[] = [
   { key: "page", label: "pages", hint: "whole pages" },
 ];
 
+/** GH #619 item 9: the macro's third result choice, "pages and blocks". It is a
+ *  host-block setting beside the anchor, not an anchor: the anchor stays the query's
+ *  own and the host runs the other reading too. Absent where the surface has no host
+ *  block to store it on (the query workspace). */
+export interface BothKindsControl {
+  on: () => boolean;
+  set: (on: boolean) => void;
+}
+export const BOTH_KINDS_OPTION = "both";
+
 export interface QuerySheetProps {
   anchor: () => Anchor;
   onAnchor: (anchor: Anchor) => void;
+  both?: BothKindsControl;
   anchorPrompt: () => AnchorPrompt | null;
   /** The `and`/`or` root the sheet edits. */
   root: () => Filter;
@@ -916,6 +948,7 @@ export interface QuerySheetProps {
 export function AnchorLine(props: {
   anchor: () => Anchor;
   onAnchor: (anchor: Anchor) => void;
+  both?: BothKindsControl;
   empty: boolean;
   openMenu: () => string | null;
   setOpenMenu: (key: string | null) => void;
@@ -924,7 +957,19 @@ export function AnchorLine(props: {
   let triggerEl: HTMLButtonElement | undefined;
   const menuId = `qs-anchor-${createUniqueId()}`;
   const open = () => props.openMenu() === "anchor";
-  const label = () => (props.anchor() === "page" ? "pages" : "blocks");
+  const bothOn = () => props.both?.on() === true;
+  const label = () => (bothOn() ? "pages and blocks" : props.anchor() === "page" ? "pages" : "blocks");
+  const options = () => [
+    ...ANCHOR_OPTIONS.map((option) => ({
+      key: option.key as string,
+      label: option.label,
+      hint: option.hint,
+      active: !bothOn() && option.key === props.anchor(),
+    })),
+    ...(props.both
+      ? [{ key: BOTH_KINDS_OPTION, label: "pages and blocks", hint: "pages above, matching blocks below", active: bothOn() }]
+      : []),
+  ];
   return (
     <div class="qs-anchor">
       {/* Not a row and not deletable: it is the sentence's subject (§7.4). */}
@@ -956,14 +1001,17 @@ export function AnchorLine(props: {
               id={menuId}
               label="What this query selects"
               rootRef={rootRef}
-              options={ANCHOR_OPTIONS.map((option) => ({
-                key: option.key,
-                label: option.label,
-                hint: option.hint,
-                active: option.key === props.anchor(),
-              }))}
+              options={options()}
               onPick={(key) => {
                 props.setOpenMenu(null);
+                if (key === BOTH_KINDS_OPTION) {
+                  props.both?.set(true);
+                  return;
+                }
+                // Back to ONE family: drop the both-choice. The anchor switch is the
+                // engine's and a no-op for the query's own anchor, but it also cancels
+                // a pending anchor preview, so it is always asked.
+                if (bothOn()) props.both?.set(false);
                 props.onAnchor(key as Anchor);
               }}
             />

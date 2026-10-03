@@ -151,6 +151,7 @@ const OWNER_PARAM_HELPERS = new Set([
   "src/devtools/lsdoc-diff/orchestrator.ts#runComparison",
   "src/document/workingSet.ts#admitPageFile",
   "src/guide.ts#markGuideAnnounced",
+  "src/queryTwin.ts#bothFamilies",
 ]);
 
 function functionName(node: ts.Node): string {

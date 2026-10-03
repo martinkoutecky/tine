@@ -58,7 +58,8 @@ describe("og campaign enforcement", () => {
 
 it("I-4/I-12: edit only addressed content; imitate queryBuilder.ts edit and removeAt", () => {
   const source = (name: string) => readFileSync(path.join(root, "src", name), "utf8");
-  const query = source("editor/queryBuilder.ts");
+  // The tree edits live in queryTree.ts (re-exported by queryBuilder.ts): scan both.
+  const query = source("editor/queryBuilder.ts") + source("editor/queryTree.ts");
   expect(query, "Query edits must retain untouched groups; queryBuilder.ts edit is the answerer (I-4/I-12)").not.toContain("normalize(");
   expect(query, "Query edits must not globally prune; imitate queryBuilder.ts removeAt (I-4)").not.toContain("children.map(prune)");
   expect(source("editor/htmlPaste.ts"), "Preserve Turndown code bytes; imitate htmlPaste.ts (I-4)").toContain("service.turndown(doc.body).trim()");

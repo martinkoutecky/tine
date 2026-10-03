@@ -30,7 +30,7 @@ const blockBuiltins: [BuilderLeafKind, string][] = [
   ["content", "Full-text search"],
 ];
 const pageBuiltins: [BuilderLeafKind, string][] = [
-  ["journal", "On journal page"], ["onPage", "On page"],
+  ["journal", "In a journal page"], ["onPage", "On page"],
   ["namespace", "In namespace"], ["pageTags", "Page tags"],
 ];
 const phrase = (row: RegistryRow) => {

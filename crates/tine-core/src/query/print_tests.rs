@@ -463,6 +463,9 @@ fn og_expressible_queries_round_trip_through_the_og_printer() {
         "(journal)",
         "(page-tags public private)",
         "(between scheduled today +7d)",
+        // GH #619: the builder's "In a journal page" condition (OG's `between`
+        // over a range wider than any journal date; OG's rule needs a journal).
+        "(between -2000y +2000y)",
         "(between created-at -7d now)",
         "(between last-modified-at -3h +90n)",
         "(between created-at [[Jan 1st, 2024]] [[Jan 2nd, 2024]])",
@@ -1134,4 +1137,44 @@ fn a_page_property_under_a_block_anchor_prints_as_page_property() {
             Ok(printed)
         );
     }
+}
+
+/// GH #619 item 3: the wide journal range the builder writes for "In a journal
+/// page" parses to the journal-day `between` through the page, resolves to a
+/// range that contains every journal date, and prints back as the same OG text.
+#[test]
+fn the_wide_journal_range_resolves_around_every_journal_date() {
+    use crate::query::advanced_patterns::resolve_date_token;
+    let today = JournalDate::from_ordinal(20261003);
+    let low = resolve_date_token("-2000y", today).expect("low bound resolves");
+    let high = resolve_date_token("+2000y", today).expect("high bound resolves");
+    assert!(low < 10_000_000, "before year 1000: {low}");
+    assert!(high > 40_000_000, "after year 4000: {high}");
+    let (query, _) = og("(between -2000y +2000y)");
+    assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+    assert_eq!(
+        query.filter,
+        Filter::Leaf {
+            leaf: Leaf::Rel {
+                rel: Rel::Page,
+                quant: Quant::Any,
+                pred: Box::new(Filter::Leaf {
+                    leaf: Leaf::Attr {
+                        attr: Attr::Day,
+                        op: CmpOp::Between,
+                        value: Value::List {
+                            items: vec![
+                                Value::Date {
+                                    literal: "-2000y".into()
+                                },
+                                Value::Date {
+                                    literal: "+2000y".into()
+                                },
+                            ],
+                        },
+                    },
+                }),
+            },
+        }
+    );
 }

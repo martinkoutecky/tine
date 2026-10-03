@@ -2,12 +2,11 @@ import { For, Show, Switch, Match, createMemo, createResource, createSignal, use
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
-import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, pageIdentityKey, openQueryExport, switcherOpen } from "../ui";
+import { openPageInSidebar, openBlockInSidebar, pageIdentityKey, openQueryExport, switcherOpen } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
-import { blockProperty, blockWritable, formatForPage, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
+import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 import { resolveBlockBatched } from "../resolveBatch";
-import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { QueryGroups } from "./QueryGroup";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
@@ -23,28 +22,25 @@ import {
   sourceOptions,
   sourceOriginal,
   sourcePrintDialect,
-  type Diagnostic,
   type ExecutionContext,
   type ExplainEmptyResult,
-  type PageRow,
   type ParsedQuery,
   type Query,
   type QueryPrintDialect,
-  type QueryReport,
-  type QueryStatistics,
   type Source,
   type ViewSettings,
 } from "../editor/queryIr";
 import { visibleBody } from "../render/block";
 import { facetsOf } from "../render/facets";
 import { sheetConfig } from "../sheet/config";
-import { InlineText } from "../render/inline";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
+import { QueryResultSections } from "./QueryResultSections";
 import { QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
-import type { PageKind, QueryExecution, QueryHit, RefGroup } from "../types";
+import type { PageKind, QueryHit, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
+import { bothFamilies } from "../queryTwin";
 import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
 import { savedDslToFriendlySearch } from "../editor/searchQuery";
 import { displayPropertyPatch, isLegacyBareColumnList, mergeQueryAggregateValue } from "../editor/queryViewProperties";
@@ -57,6 +53,12 @@ import { focusedRouter, openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { pushToast, pushToastUnique } from "../toasts";
 import { ExternalLink } from "./ExternalLink";
+import {
+  boundedFeature, cellText, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY,
+  type BothFamilies, type QueryOperation, type Row,
+} from "./queryMacroSupport";
+export { boundedFeature, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY };
+import { QueryLegacyTable } from "./QueryLegacyTable";
 
 const QUERY_VIEWS: QueryView[] = ["search", "list", "table", "board"];
 const QUERY_VIEW_LABEL: Record<QueryView, string> = {
@@ -89,41 +91,10 @@ function saveCollapsed(key: string, v: boolean) {
   }
 }
 
-interface Row {
-  page: string;
-  kind: PageKind;
-  path?: string;
-  text: string;
-  props: Record<string, string>;
-  /** `props` under OG's normalised column key (`columnKey`), first spelling wins. */
-  byKey: Record<string, string>;
-}
-
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const sameJson = <T,>(a: T, b: T) => JSON.stringify(a) === JSON.stringify(b);
 const CURRENT_PAGE_RE = /<%\s*current page\s*%>/i;
 const BLOCK_CHANGED = "The block changed while saving. Try this edit again.";
-
-/** A bounded excerpt of the ENGINE-PRINTED text a crossing save wrote (master
- *  `boundedFeature`, I-22). It is labelled as an excerpt, never as "the
- *  unsupported feature": nothing in the engine answers that question. */
-export function boundedFeature(message: string): string | null {
-  const single = message.replace(/\s+/g, " ").trim();
-  if (!single) return null;
-  return single.length > 120 ? `${single.slice(0, 119)}…` : single;
-}
-
-/** Remove the block a query is written in from that query's own results
- *  (GH #469; OG `query/result.cljs` "exclude the current one, otherwise it'll
- *  loop forever"). Only the block goes; its children are ordinary results. */
-export function withoutHostBlock(groups: RefGroup[], hostBlockId: string | undefined): RefGroup[] {
-  if (!hostBlockId) return groups;
-  const hosts = (group: RefGroup) => group.blocks.some((block) => block.id === hostBlockId);
-  if (!groups.some(hosts)) return groups;
-  return groups
-    .map((group) => (hosts(group) ? { ...group, blocks: group.blocks.filter((block) => block.id !== hostBlockId) } : group))
-    .filter((group) => group.blocks.length > 0);
-}
 
 // Device-local dismissal keyed by graph (D-11): one read per graph binding,
 // shared by every crossing in this window (I-12/I-13).
@@ -186,17 +157,6 @@ function createQueryReading(request: () => ReadingRequest | undefined) {
   return resource;
 }
 
-interface QueryOperation {
-  requestKey: string;
-  groups: RefGroup[];
-  pages: PageRow[] | null;
-  diagnostics: Diagnostic[];
-  report: QueryReport | null;
-  statistics?: QueryStatistics;
-  search: QueryExecution | null;
-  matchedTotal: number | null;
-}
-
 /** Present a query macro through the Rust parse/run/print seam. Every mounted,
  *  expanded block re-runs a graph-wide evaluation on each graph save; identical
  *  requests share one in-flight run. Collapsed blocks retain their count without
@@ -251,6 +211,16 @@ export function QueryMacro(props: {
   const optionValues = createMemo(() => readEdnOptions(opts()));
   const titleOption = (): string | undefined => optionValues()?.title ?? undefined;
   const isAdvanced = () => source()?.kind === "advanced";
+  const bothKinds = (): boolean =>
+    hostProperties().some(([key, value]) => key.toLowerCase() === RESULT_KINDS_PROPERTY && value.trim().toLowerCase() === PAGES_AND_BLOCKS);
+  const setBothKinds = (on: boolean) => {
+    const blockId = props.blockId;
+    const node = blockId ? docNode(blockId) : undefined;
+    if (!blockId || !node || bothKinds() === on) return;
+    withUndoUnit(on ? "query:result-kinds:both" : "query:result-kinds:one", [node.page], () => {
+      setBlockProperty(blockId, RESULT_KINDS_PROPERTY, on ? PAGES_AND_BLOCKS : null);
+    });
+  };
 
   // GH #301: `<% current page %>` binds the FOCUSED pane's route page and re-runs
   // on navigation. Substitution is execution-only: the builder keeps the dyvar.
@@ -341,9 +311,10 @@ export function QueryMacro(props: {
     if (!query) return undefined;
     const context = executionContext();
     const search = friendlySearch();
-    const displayKey = JSON.stringify([graphEpoch(), query.query, query.view, context ?? null, search, collapsed()]);
+    const both = search === null && bothKinds();
+    const displayKey = JSON.stringify([graphEpoch(), query.query, query.view, context ?? null, search, collapsed(), both]);
     const key = `${displayKey}\0${collapsed() ? "collapsed" : dataRev()}`;
-    return { query, context, search, displayKey, key };
+    return { query, context, search, displayKey, key, both };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};
   const [operation] = createResource(runRequest, async (request): Promise<QueryOperation | undefined> => {
@@ -379,6 +350,7 @@ export function QueryMacro(props: {
         requestKey: request.displayKey,
         groups: [...grouped.values()], pages: null, diagnostics: [],
         report: null, search: hits.length === landed.value.hits.length ? landed.value : { ...landed.value, hits }, matchedTotal: null,
+        both: null,
       };
     }
     const landed = await readOwned(owner, sharedQueryResult(
@@ -388,15 +360,27 @@ export function QueryMacro(props: {
     ));
     if (landed.kind === "stale") return undefined;
     const result = landed.value;
+    let both: BothFamilies | null = null;
+    let twinGroups: RefGroup[] = [];
+    if (request.both) {
+      const twin = await bothFamilies(owner, {
+        scope, key: request.key, query: request.query.query, view: request.query.view,
+        context: request.context, own: result, hostBlockId: props.blockId, hostProperties: hostProperties(),
+      });
+      if (!twin) return undefined;
+      both = twin.both;
+      twinGroups = twin.blockGroups;
+    }
     return {
       requestKey: request.displayKey,
-      groups: result.anchor === "block" ? withoutHostBlock(result.groups, props.blockId) : [],
-      pages: result.anchor === "page" ? result.pages : null,
+      groups: both ? twinGroups : result.anchor === "block" ? withoutHostBlock(result.groups, props.blockId) : [],
+      pages: both ? null : result.anchor === "page" ? result.pages : null,
       diagnostics: result.diagnostics ?? [],
       report: result.report,
       statistics: result.statistics,
       search: null,
       matchedTotal: result.matched_total ?? null,
+      both,
     };
   });
   /** The last coherent answer; an errored run shows its error, not old rows. */
@@ -430,6 +414,8 @@ export function QueryMacro(props: {
     })));
   });
   const total = () => {
+    const both = displayed()?.both;
+    if (both) return both.pageTotal + groups().reduce((a, g) => a + g.blocks.length, 0);
     const pages = pageRows();
     if (pages) return displayed()?.matchedTotal ?? pages.length;
     if (friendlySearch() !== null || currentView() === "search") return searchPresentationHits().length;
@@ -732,7 +718,7 @@ export function QueryMacro(props: {
     for (const r of rows()) for (const k of Object.keys(r.props)) keys.add(k);
     return ["block", "page", ...keys];
   });
-  const cell = (r: Row, c: string): string => (c === "block" ? r.text : c === "page" ? r.page : r.byKey[columnKey(c)] ?? r.props[c] ?? "");
+  const cell = cellText;
   const sorted = createMemo(() => {
     const s = sortState();
     if (!s) return rows();
@@ -938,6 +924,8 @@ export function QueryMacro(props: {
                   formulas: () => [...formulasOf(hostProperties()).keys()] }}
                 paneDialect="tql"
                 blockId={props.blockId}
+                previewContext={executionContext}
+                both={props.blockId ? { on: bothKinds, set: setBothKinds } : undefined}
                 total={<span class="query-count">{total()}</span>}
                 onStale={setPaneStale}
                 onOpenChange={setSheetOpen}
@@ -976,6 +964,60 @@ export function QueryMacro(props: {
                 {(statistics) => <QueryStatisticsSummary statistics={statistics()} />}
               </Show>
               <Switch>
+                <Match when={displayed()?.both}>
+                  {(both) => (
+                    <QueryResultSections
+                      pending={false}
+                      failure={null}
+                      families={[
+                        {
+                          kind: "page",
+                          hits: both().pages.length,
+                          hasMore: both().pageMore,
+                          note: both().pageNote ?? undefined,
+                          body: (
+                            <QueryPageRows
+                              rows={both().pages}
+                              view={simpleView()}
+                              groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
+                              columns={runnable()?.view.columns}
+                            />
+                          ),
+                        },
+                        {
+                          kind: "block",
+                          hits: groups().reduce((a, g) => a + g.blocks.length, 0),
+                          hasMore: both().blockMore,
+                          note: both().blockNote ?? undefined,
+                          // The block presentation (list / table / board) is the one the blocks
+                          // family has on its own; the sheet footer's statistics belong to the
+                          // macro's OWN anchor, so a page-anchored macro's blocks get none.
+                          body: (
+                            <Switch fallback={
+                              <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} />}>
+                                <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} />
+                              </Show>
+                            }>
+                              <Match when={sheetFace() && !!props.blockId && blockFace() === "table"}>
+                                <SheetContainer>
+                                  <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
+                                    queryDisplay={{ view: reading()?.view ?? {},
+                                      ...(both().ownAnchor === "block" ? { statistics: displayed()?.statistics, statisticsView: runnable()?.view } : {}),
+                                      apply: (next) => void applyDisplay(next) }} />
+                                </SheetContainer>
+                              </Match>
+                              <Match when={sheetFace() && !!props.blockId && blockFace() === "board"}>
+                                <SheetContainer>
+                                  <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={runnable()?.view.group_by ?? sheet()?.groupBy} groups={groups()} />
+                                </SheetContainer>
+                              </Match>
+                            </Switch>
+                          ),
+                        },
+                      ]}
+                    />
+                  )}
+                </Match>
                 <Match when={pageRows()}>
                   {(pages) => (
                     <Show when={pages().length > 0} fallback={empty()}>
@@ -1090,67 +1132,7 @@ export function QueryMacro(props: {
                         </Show>
                       }
                     >
-                      <div class="md-table-wrap">
-                      <table class="md-table query-table">
-                        <thead>
-                          <tr onClick={stop}>
-                            <For each={cols()}>
-                              {(c) => (
-                                <th onClick={() => sortBy(c)}>
-                                  {c === "block" ? "Content" : c === "page" ? "Page" : c}{arrow(c)}
-                                </th>
-                              )}
-                            </For>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <For each={sorted()}>
-                            {(r) => (
-                              <tr>
-                                <For each={cols()}>
-                                  {(c) => (
-                                    <Switch fallback={<td>{cell(r, c)}</td>}>
-                                      <Match when={c === "block"}>
-                                        <td>
-                                          <InlineText text={r.text} format={formatForPage(r.page)} />
-                                        </td>
-                                      </Match>
-                                      <Match when={c === "page"}>
-                                        <td
-                                          class="qt-page"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            const target = { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) };
-                                            const dest = internalLinkDest(e);
-                                            if (dest === "sidebar") openPageInSidebar(target);
-                                            else if (dest === "background") openPageTargetInNewTab(target);
-                                            else if (dest === "pane") openRouteInOtherPane({ kind: "page", ...target });
-                                            else openPageTarget(target);
-                                          }}
-                                          onMouseDown={internalLinkMouseDown}
-                                          onAuxClick={(e) => {
-                                            e.stopPropagation();
-                                            internalLinkAuxClick(e, () => openPageTargetInNewTab({ name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) }));
-                                          }}
-                                          onContextMenu={(e) => {
-                                            if (!shouldOpenTextContextMenu(e.target)) return;
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            openPageContextMenu(e.clientX, e.clientY, { name: r.page, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
-                                          }}
-                                        >
-                                          {r.page}
-                                        </td>
-                                      </Match>
-                                    </Switch>
-                                  )}
-                                </For>
-                              </tr>
-                            )}
-                          </For>
-                        </tbody>
-                      </table>
-                      </div>
+                      <QueryLegacyTable cols={cols()} rows={sorted()} sortBy={sortBy} arrow={arrow} />
                     </Show>
                   </Show>
                 </Match>

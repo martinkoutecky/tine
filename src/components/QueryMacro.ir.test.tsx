@@ -17,7 +17,7 @@
 //      macro name is chosen from `query_og_expressible`, an OG refusal is
 //      answered by switching dialect, and any OTHER refusal writes nothing and
 //      shows the printer's own message (I-9).
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
@@ -33,9 +33,16 @@ import { resetTabsToJournals, route } from "../router";
 import { tryFreezeGraphRewrite } from "../document/graphRewriteState";
 import { toasts, setToasts } from "../toasts";
 import { bumpDataRev } from "../graphSession";
+import { resetQueryTextOpenForTests } from "../navSettings";
 
 beforeAll(async () => {
   await initParser();
+});
+
+// GH #619 item 4: the query text is behind an "Edit as text" toggle, closed by default. These
+// tests are about the text pane, so they open the toggle the way a user who wants the text has.
+beforeEach(() => {
+  resetQueryTextOpenForTests(true);
 });
 
 afterEach(() => {
@@ -1041,5 +1048,112 @@ describe("B7: an unknown head reads as 'returned no results', never as 'ignored'
     } finally {
       dispose();
     }
+  });
+});
+
+// GH #619 item 9: "Pages and blocks" — one query, both result families.
+describe("item 9: a query can show pages and blocks together", () => {
+  const pageAnswer = (): QueryResult => ({
+    anchor: "page",
+    pages: [{ path: "pages/Twin.md", name: "Twin", kind: "page", properties: [["tags", "gptpro"]] }],
+    diagnostics: [],
+    report: { ran: ["journal"], ignored: [], supported: true },
+    total: 1,
+    matched_total: 1,
+    exceeded: false,
+  });
+  /** The engine's answers by anchor: the macro's own text reads as blocks, and the
+   *  print-then-parse round trip the sheet uses for an anchor switch yields the page twin. */
+  function engineByAnchor() {
+    const parse = backend().parseQuery.bind(backend());
+    vi.spyOn(backend(), "parseQuery").mockImplementation(async (text, ...rest) => {
+      if (text.startsWith("@page")) {
+        const block = await parse("-- task TODO", ...rest);
+        return { ...block, query: { ...block.query, anchor: "page" as const } };
+      }
+      return parse(text, ...rest);
+    });
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("@page and task TODO");
+    const run = vi.spyOn(backend(), "queryRun").mockImplementation(async (query) =>
+      query.anchor === "page" ? pageAnswer() : blockRunResult(groups()));
+    return { run };
+  }
+
+  it("shows a Pages section above a Blocks section, with the total counting both", async () => {
+    load(`${TQL_MACRO}\ntine.result-kinds:: pages-and-blocks`);
+    const { run } = engineByAnchor();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-page-link")?.textContent).toContain("Twin"));
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      const sections = [...root.querySelectorAll<HTMLElement>("[data-query-result-kind]")];
+      expect(sections.map((section) => section.dataset.queryResultKind)).toEqual(["page", "block"]);
+      expect(sections[0].querySelector(".query-page-link")).not.toBeNull();
+      expect(sections[1].textContent).toContain("A tracked row");
+      expect(root.querySelector(".query-count")?.textContent).toBe("2");
+      // One run per family, never a flipped IR run: the page twin went through print/parse.
+      expect(run.mock.calls.map(([query]) => query.anchor).sort()).toEqual(["block", "page"]);
+    } finally { dispose(); }
+  });
+
+  it("says per family when a sample cut the answer short, and says nothing for a complete one", async () => {
+    load(`${TQL_MACRO}\ntine.result-kinds:: pages-and-blocks`);
+    engineByAnchor();
+    // Pages: 1 returned of 5 counted (a `sample`). Blocks: complete.
+    vi.spyOn(backend(), "queryRun").mockImplementation(async (query) =>
+      query.anchor === "page" ? { ...pageAnswer(), matched_total: 5 } : blockRunResult(groups()));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-page-link")?.textContent).toContain("Twin"));
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      const sections = [...root.querySelectorAll<HTMLElement>("[data-query-result-kind]")];
+      expect(sections[0].textContent).toContain("More pages match than are shown.");
+      expect(sections[1].textContent).not.toContain("match than are shown");
+    } finally { dispose(); }
+  });
+
+  it("a block family of a table-view block renders as a table, like blocks mode", async () => {
+    load(`${TQL_MACRO}\ntine.result-kinds:: pages-and-blocks\ntine.view:: table`);
+    engineByAnchor();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      const blockSection = root.querySelector<HTMLElement>('[data-query-result-kind="block"]')!;
+      expect(blockSection.querySelector('[data-sheet-field-header]')).not.toBeNull();
+    } finally { dispose(); }
+  });
+
+  it("without the property it stays a plain block query", async () => {
+    load(TQL_MACRO);
+    engineByAnchor();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      expect(root.querySelector("[data-query-result-kind]")).toBeNull();
+      expect(root.querySelector(".query-page-link")).toBeNull();
+    } finally { dispose(); }
+  });
+
+  it("the sheet's selector offers it, and choosing it stores the choice on the block", async () => {
+    load(TQL_MACRO);
+    engineByAnchor();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
+      root.querySelector<HTMLButtonElement>(".qs-gear")!.click();
+      await vi.waitFor(() => expect(document.querySelector(".qs-anchor-button")).not.toBeNull());
+      document.querySelector<HTMLButtonElement>(".qs-anchor-button")!.click();
+      const options = [...document.querySelectorAll<HTMLButtonElement>(".qs-option")];
+      expect(options.map((option) => option.textContent)).toEqual([
+        expect.stringContaining("blocks"), expect.stringContaining("pages"), expect.stringContaining("pages and blocks"),
+      ]);
+      options[2].click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.result-kinds")).toBe("pages-and-blocks"));
+      await vi.waitFor(() => expect(root.querySelector(".query-page-link")).not.toBeNull());
+      // And back to one family clears it.
+      document.querySelector<HTMLButtonElement>(".qs-anchor-button")!.click();
+      [...document.querySelectorAll<HTMLButtonElement>(".qs-option")][0].click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.result-kinds")).toBeNull());
+    } finally { dispose(); }
   });
 });

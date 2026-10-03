@@ -2,6 +2,7 @@ import { isLeafLike } from "./queryIr";
 // The visual builder's model — **over the IR, not over text** (SPEC §7.1, §7.4).
 
 import { MARKERS as TASK_MARKERS } from "../markers";
+import { DATE_PRESETS } from "./dateExpr";
 import type {
   Anchor,
   Attr,
@@ -89,6 +90,39 @@ export function pageRefFilter(name: string): Filter {
 export function taskFilter(markers: string[]): Filter {
   const picked = markers.length ? markers : ["TODO", "DOING", "NOW", "LATER"];
   return attr("task", "in", textList(picked));
+}
+
+/** Every task status OG knows: OG `logseq.db.default/built-in-markers`
+*  (`deps/db/src/logseq/db/default.cljs`). OG's `(task …)` rule needs a
+*  non-empty marker set, so "Any status" is spelled as this list — the one
+*  spelling OG reads as "every task". Tine's own marker list also has `STARTED`,
+*  which OG does not know; it is deliberately NOT written, so the text stays
+*  exactly what OG would run (GH #619, item 2). */
+export const OG_TASK_MARKERS: readonly string[] = [
+  "NOW",
+  "LATER",
+  "DOING",
+  "DONE",
+  "CANCELED",
+  "CANCELLED",
+  "IN-PROGRESS",
+  "TODO",
+  "WAIT",
+  "WAITING",
+];
+
+/** The "Any status" condition: `(task NOW LATER …)` over every OG marker. */
+export function anyTaskFilter(): Filter {
+  return taskFilter([...OG_TASK_MARKERS]);
+}
+
+/** Whether a marker list says "Any status": exactly OG's set, or every marker
+*  Tine itself knows (a hand-written list covering both reads the same). */
+export function isAnyTaskStatus(markers: string[]): boolean {
+  const have = new Set(markers.map((m) => m.toUpperCase()));
+  const covers = (all: readonly string[]) =>
+    have.size === all.length && all.every((m) => have.has(m));
+  return covers(OG_TASK_MARKERS) || covers(TASK_MARKERS);
 }
 
 /** `(priority …)` — `og.rs` `"priority"`. */
@@ -638,9 +672,30 @@ export function planningFilter(which: "scheduled" | "deadline"): Filter {
   return attr(which, "is_set", { kind: "none" });
 }
 
-/** `(journal)` — `og.rs` `"journal"`. */
+/** The range "In a journal page" writes: wider than any journal date, in OG's
+*  own relative-date spelling (`->journal-day-int` accepts a signed count and a
+*  `y` unit; `(t/years -2000)` is year 26, `(t/years 2000)` year 4026). */
+export const JOURNAL_ANY_RANGE: readonly [string, string] = ["-2000y", "+2000y"];
+
+/** "In a journal page" — `(between -2000y +2000y)`. OG has no `(journal)`
+*  filter; its `between` rule (`deps/db/src/logseq/db/rules.cljc`) requires the
+*  block's page to be a journal, so a range wider than every journal date IS
+*  "is on a journal page", and OG reads the text the same way Tine does
+*  (GH #619, item 3). The legacy `(journal)` text Tine used to write still
+*  reads as this condition ({@link builderLeafKind}). */
 export function journalFilter(): Filter {
-  return throughPage(attr("journal", "eq", { kind: "bool", bool: true }));
+  return throughPage(boundedFilter("day", JOURNAL_ANY_RANGE[0], JOURNAL_ANY_RANGE[1]));
+}
+
+/** Whether `pred` (a page-row predicate) is the wide journal range. */
+function isJournalAnyRange(pred: Filter): boolean {
+  const leaf = asAttrLeaf(pred);
+  if (leaf?.attr !== "day" || leaf.op !== "between") return false;
+  if (leaf.value.kind !== "list" || leaf.value.items.length !== 2) return false;
+  return (
+    dateOf(leaf.value.items[0]) === JOURNAL_ANY_RANGE[0] &&
+    dateOf(leaf.value.items[1]) === JOURNAL_ANY_RANGE[1]
+  );
 }
 
 /** `(page x)` — `og.rs` `"page"`. */
@@ -761,6 +816,17 @@ export function propertyLeafKey(filter: Filter): string | null {
   return parts && parts.key !== "tags" ? parts.key : null;
 }
 
+/** Which date a `between`-kind row ranges over, so the row can say "Scheduled" or "Deadline" instead of
+ *  the generic "Between dates" (GH #619 item 5). `null` for any other shape. */
+export function betweenRowField(filter: Filter): BetweenField | null {
+  if (builderLeafKind(filter) !== "between") return null;
+  const page = asRelLeaf(filter, "page");
+  const leaf = asAttrLeaf(page ? page.pred : filter);
+  if (!leaf) return null;
+  if (leaf.attr === "scheduled" || leaf.attr === "deadline") return leaf.attr;
+  return leaf.attr === "day" ? "journal" : null;
+}
+
 /** Which builder shape this filter is, or `null` for anything the pickers cannot re-collect. */
 export function builderLeafKind(filter: Filter): BuilderLeafKind | null {
   const page = asRelLeaf(filter, "page");
@@ -772,6 +838,7 @@ export function builderLeafKind(filter: Filter): BuilderLeafKind | null {
     if (leaf?.attr === "journal") return "journal";
     if (leaf?.attr === "name" && leaf.op === "eq") return "onPage";
     if (leaf?.attr === "name" && leaf.op === "starts_with") return "namespace";
+    if (isJournalAnyRange(page.pred)) return "journal";
     if (leaf?.attr === "day") return "between";
     return null;
   }
@@ -863,9 +930,48 @@ function valuePhrase(value: Value): string {
   }
 }
 
-function betweenPhrase(value: Value): string {
-  if (value.kind !== "list" || value.items.length !== 2) return valuePhrase(value);
-  return `${dateOf(value.items[0]) ?? valuePhrase(value.items[0])} ~ ${dateOf(value.items[1]) ?? valuePhrase(value.items[1])}`;
+/** A relative-date bound in plain words (`-7d` → "7 days ago"); anything else — an
+ *  ISO date, a journal title — is shown as typed. Pure display: the stored token
+ *  is never rewritten. */
+function boundWords(token: string): string {
+  const t = token.trim();
+  switch (t.toLowerCase()) {
+    case "today":
+    case "now":
+      return "today";
+    case "yesterday":
+    case "tomorrow":
+      return t.toLowerCase();
+  }
+  const rel = /^([+-]?)(\d+)([dwmy])$/i.exec(t);
+  if (!rel) return t;
+  const unit = { d: "day", w: "week", m: "month", y: "year" }[rel[3].toLowerCase() as "d" | "w" | "m" | "y"];
+  const n = parseInt(rel[2], 10);
+  if (n === 0) return "today";
+  return `${n} ${unit}${n === 1 ? "" : "s"} ${rel[1] === "-" ? "ago" : "ahead"}`;
+}
+
+/** The plain-words reading of a `between` pair: a preset's own name
+ *  ("next 7 days"), else "7 days ago to 7 days ahead". */
+function rangeWords(low: string, high: string): string {
+  const preset = DATE_PRESETS.find((p) => p.start === low.trim() && p.end === high.trim());
+  if (preset) return preset.label.toLowerCase();
+  return `${boundWords(low)} to ${boundWords(high)}`;
+}
+
+/** What a date condition on `attr` says — shared by the sentence, the row and the
+ *  value cell, so "scheduled: next 7 days" is spelled one way everywhere (GH #619). */
+function datePhrase(attr: Attr, leaf: Leaf & { kind: "attr" }): PhraseSegment[] | null {
+  const field = attr === "day" ? "journal date" : ATTR_PHRASE[attr];
+  if (leaf.op === "between" && leaf.value.kind === "list" && leaf.value.items.length === 2) {
+    const [low, high] = leaf.value.items.map((item) => dateOf(item) ?? valuePhrase(item));
+    return [words(`${field}: `), chip(rangeWords(low, high))];
+  }
+  if ((leaf.op === "ge" || leaf.op === "le") && leaf.value.kind === "date") {
+    const when = boundWords(leaf.value.literal);
+    return [words(`${field}: `), chip(leaf.op === "ge" ? `from ${when}` : `until ${when}`)];
+  }
+  return null;
 }
 
 /** One piece of a rendered phrase (SPEC §7.2). */
@@ -957,7 +1063,9 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
         break;
     }
     if (leaf.rel === "page") {
-      const inner = filterPhrase(leaf.pred, depth + 1);
+      // A shape the builder itself writes is ONE condition, however deep its group sits:
+      // only a predicate the builder cannot re-collect is a nested level (GH #619).
+      const inner = filterPhrase(leaf.pred, kind ? depth : depth + 1);
       return kind === "pageProperty" ? [words("page "), ...inner] : inner;
     }
     if (leaf.rel === "props") {
@@ -980,8 +1088,10 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
   }
   // An attribute leaf.
   switch (kind) {
-    case "task":
-      return [words("task: "), chip((listOf(leaf.value) ?? []).join(" | ") || "any")];
+    case "task": {
+      const markers = listOf(leaf.value) ?? [];
+      return [words("task: "), chip(isAnyTaskStatus(markers) ? "Any status" : markers.join(" | ") || "any")];
+    }
     case "priority":
       return [words("priority: "), chip((listOf(leaf.value) ?? []).join(" | ") || "any")];
     case "scheduled":
@@ -999,9 +1109,9 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
     default:
       break;
   }
-  if (leaf.op === "between") {
-    const field = leaf.attr === "day" ? "" : `${ATTR_PHRASE[leaf.attr]} `;
-    return [words(`${field}between: `), chip(betweenPhrase(leaf.value))];
+  if (leaf.attr === "day" || leaf.attr === "scheduled" || leaf.attr === "deadline") {
+    const phrase = datePhrase(leaf.attr, leaf);
+    if (phrase) return phrase;
   }
   if (leaf.op === "is_set" || leaf.op === "is_not_set" || leaf.op === "is_blank") {
     return [named(ATTR_PHRASE[leaf.attr]), words(` ${OP_PHRASE[leaf.op]}`)];
@@ -1076,7 +1186,7 @@ function clausePhrase(filter: Filter, depth: number, isRoot: boolean): PhraseSeg
 * **The resting sentence for a whole query (SPEC §7.2, design §2.1).**
 *
 * One plain-English line whose subject is the anchor — "Blocks where …" /
-* "Pages where …" — and whose predicate is the filter read as prose, values as
+* "Pages where …" ("Pages and blocks where …" in both-families mode) — and whose predicate is the filter read as prose, values as
 * soft chips. It says "where" because the sheet's anchor line says "Find
 * blocks where …": the resting line and the editing line are one sentence.
 * An empty filter reads "All blocks" / "All pages": the honest
@@ -1086,10 +1196,12 @@ function clausePhrase(filter: Filter, depth: number, isRoot: boolean): PhraseSeg
 * a user edits and the sentence they read are the same words, and it is bounded
 * by the same cap (I-22).
 */
-export function querySentence(query: { anchor: Anchor; filter: Filter }): PhraseSegment[] {
-  const plural = query.anchor === "page" ? "pages" : "blocks";
+export function querySentence(query: { anchor: Anchor; filter: Filter; both?: boolean }): PhraseSegment[] {
+  // GH #619 item 9: in "Pages and blocks" mode the subject is both families — never "Blocks where …"
+  // for a query that also lists pages.
+  const plural = query.both ? "pages and blocks" : query.anchor === "page" ? "pages" : "blocks";
   if (isEmptyFilter(query.filter)) return [words("All "), named(plural)];
-  const subject = plural === "pages" ? "Pages" : "Blocks";
+  const subject = query.both ? "Pages and blocks" : plural === "pages" ? "Pages" : "Blocks";
   return [named(subject), words(" where "), ...clausePhrase(query.filter, 0, true)];
 }
 
@@ -1116,337 +1228,21 @@ export function plainLikeSubstring(pattern: string): string | null {
 
 export { SORT_PRESETS, sortLabel, currentSort, withSort, currentAgg, withAgg, currentGroup, withGroup } from "./queryViewSettings";
 export type { SortPreset, AggState } from "./queryViewSettings";
-
-// Immutable tree edits.
-
-/** The child list of a boolean node, or `null` for a leaf/raw/true/false. */
-export function filterChildren(filter: Filter): Filter[] | null {
-  switch (filter.kind) {
-    case "and":
-    case "or":
-      return filter.items;
-    case "not":
-    case "off":
-      return [filter.inner];
-    default:
-      return null;
-  }
-}
-
-function withChildren(filter: Filter, children: Filter[]): Filter {
-  switch (filter.kind) {
-    case "and":
-      return { kind: "and", items: children };
-    case "or":
-      return { kind: "or", items: children };
-    case "not":
-      return children[0] ? { kind: "not", inner: children[0] } : { kind: "and", items: [] };
-    case "off":
-      return children[0] ? { kind: "off", inner: children[0] } : { kind: "and", items: [] };
-    default:
-      return filter;
-  }
-}
-
-/** The root the bar edits: always an `and`/`or` node, so "add a filter here" has somewhere to add. */
-export function builderRoot(filter: Filter): Filter {
-  if (filter.kind === "and" || filter.kind === "or") return filter;
-  if (filter.kind === "true") return { kind: "and", items: [] };
-  return { kind: "and", items: [filter] };
-}
-
-function clone(filter: Filter): Filter {
-  return structuredClone(filter);
-}
-
-/** Resolve `loc` to the node that CONTAINS the addressed child, plus the index within it. */
-function locate(root: Filter, loc: number[]): { parent: Filter; children: Filter[]; idx: number } | null {
-  if (loc.length === 0) return null;
-  let node = root;
-  for (let i = 0; i < loc.length - 1; i++) {
-    const kids = filterChildren(node);
-    if (!kids) return null;
-    const next = kids[loc[i]];
-    if (!next) return null;
-    node = next;
-  }
-  const children = filterChildren(node);
-  if (!children) return null;
-  return { parent: node, children, idx: loc[loc.length - 1] };
-}
-
-/** Resolve `loc` to the node it addresses (`[]` = root). */
-function nodeAt(root: Filter, loc: number[]): Filter | null {
-  let node = root;
-  for (const i of loc) {
-    const kids = filterChildren(node);
-    if (!kids) return null;
-    const next = kids[i];
-    if (!next) return null;
-    node = next;
-  }
-  return node;
-}
-
-/** **Put `next` where `loc` points, whatever kind of node holds that place.**
-*
-*  `locate` above answers a LIST question — it hands back the child array a
-*  splice needs — and `filterChildren` synthesizes a fresh one-element array for
-*  the unary `not`/`off`. That is right for a splice (you cannot splice two
-*  children into a `not`) and silently wrong for an assignment: writing into the
-*  synthesized array wrote into a copy, so every edit addressed at a child of a
-*  unary wrapper did nothing and STILL returned a new tree, which the sheet
-*  saved. The three group actions that address the `and`/`or` inside its
-*  wrapper — the all/any header, "None of" and "Ungroup" — were therefore dead
-*  clicks that wrote the block and pushed an empty step onto the undo stack, on
-*  every `none of` group and (since P6 let a group be switched off) on every
-*  disabled one. Assignment goes through here instead. */
-function assignAt(draft: Filter, loc: number[], next: Filter): boolean {
-  if (loc.length === 0) return false;
-  let node = draft;
-  for (let i = 0; i < loc.length - 1; i++) {
-    const kids = filterChildren(node);
-    const child = kids?.[loc[i]];
-    if (!child) return false;
-    node = child;
-  }
-  const index = loc[loc.length - 1];
-  if (node.kind === "and" || node.kind === "or") {
-    if (!node.items[index]) return false;
-    node.items[index] = next;
-    return true;
-  }
-  if (node.kind === "not" || node.kind === "off") {
-    if (index !== 0) return false;
-    node.inner = next;
-    return true;
-  }
-  return false;
-}
-
-/** Mutating a node the path does not address is a no-op that returns the input
-*  unchanged, so a stale `loc` from a popover that outlived its tree cannot
-*  corrupt the query. I-4: only addressed nodes change; authored empty groups
-*  elsewhere carry meaning and must survive every operation. */
-function edit(root: Filter, apply: (draft: Filter) => boolean): Filter {
-  const draft = clone(root);
-  return apply(draft) ? draft : root;
-}
-
-/** Append `filter` to the boolean node addressed by `opLoc` (`[]` = root). */
-export function addChild(root: Filter, opLoc: number[], filter: Filter): Filter {
-  return edit(root, (draft) => {
-    const node = nodeAt(draft, opLoc);
-    const children = node ? filterChildren(node) : null;
-    if (!node || !children || node.kind === "not" || node.kind === "off") return false;
-    children.push(filter);
-    return true;
-  });
-}
-
-export function removeAt(root: Filter, loc: number[]): Filter {
-  if (loc.length === 0 || !nodeAt(root, loc)) return root;
-  // Prune only ancestors emptied by THIS deletion. Never visit siblings.
-  const remove = (node: Filter, depth: number): Filter | null => {
-    const children = [...filterChildren(node)!];
-    const index = loc[depth];
-    const next = depth === loc.length - 1 ? null : remove(children[index], depth + 1);
-    if (next) children[index] = next;
-    else children.splice(index, 1);
-    if (children.length === 0) return depth === 0 ? { kind: node.kind === "or" ? "or" : "and", items: [] } : null;
-    return withChildren(node, children);
-  };
-  return remove(root, 0)!;
-}
-
-export function replaceAt(root: Filter, loc: number[], filter: Filter): Filter {
-  return edit(root, (draft) => assignAt(draft, loc, filter));
-}
-
-/** Wrap the node at `loc` in a new boolean node. */
-export function wrapAt(root: Filter, loc: number[], op: "and" | "or" | "not" | "off"): Filter {
-  return edit(root, (draft) => {
-    const current = nodeAt(draft, loc);
-    if (!current) return false;
-    return assignAt(
-      draft,
-      loc,
-      op === "not"
-        ? { kind: "not", inner: current }
-        : op === "off"
-          ? { kind: "off", inner: current }
-          : { kind: op, items: [current] },
-    );
-  });
-}
-
-// Grouping, reordering and disabling (SPEC §7.4 remainder, P6)
-
-/** The three group headers the sheet offers, in the sheet's own words. */
-export type GroupChoice = "all" | "any" | "none";
-
-const groupNode = (choice: GroupChoice, items: Filter[]): Filter =>
-  choice === "any"
-    ? { kind: "or", items }
-    : choice === "none"
-      ? { kind: "not", inner: { kind: "or", items } }
-      : { kind: "and", items };
-
-/** **Group the selected siblings into one group (§7.4, design §2.5).**
-*
-*  The ONE grouping operation: multi-select grouping, "group with the row
-*  above" and any future gesture all come through here, so the answer to "which
-*  rows end up where" is written once.
-*
-*  Three rules, and each of them is a way a selection can be quietly betrayed:
-*
-*   - **Selected items keep their original relative order.** Grouping is not a
-*     sort, and the order of an `and`/`or` list is the order the author typed
-*     (§3.5 keeps child order in the editable form).
-*   - **The group is inserted at the FIRST selected position**, and the
-*     unselected siblings keep their own order around it. A non-contiguous
-*     selection follows the same rule rather than a second one: the group lands
-*     where the topmost selected row was.
-*   - **Anything that is not a set of siblings is REFUSED**, not repaired. Locs
-*     from two different lists, a loc and its own descendant, a duplicate, an
-*     index past the end, a stale path from a menu that outlived its tree —
-*     each returns the tree unchanged, exactly as every other edit here does.
-*     Sibling-ness is what makes ancestor/descendant selection impossible: two
-*     locs with the same parent path can never nest.
-*
-*  Fewer than two locs is a refusal too: "group" of one row is a wrapper the
-*  user did not ask for. */
-export function groupSelected(root: Filter, locs: number[][], choice: GroupChoice): Filter {
-  if (locs.length < 2) return root;
-  const parent = locs[0].slice(0, -1);
-  const sibling = (loc: number[]) =>
-    loc.length === parent.length + 1 && parent.every((step, i) => loc[i] === step);
-  if (!locs.every(sibling)) return root;
-  const indices = [...new Set(locs.map((loc) => loc[loc.length - 1]))].sort((a, b) => a - b);
-  if (indices.length !== locs.length) return root;
-  return edit(root, (draft) => {
-    const node = nodeAt(draft, parent);
-    if (!node || (node.kind !== "and" && node.kind !== "or")) return false;
-    const children = node.items;
-    if (indices.some((index) => !Number.isInteger(index) || index < 0 || index >= children.length)) {
-      return false;
-    }
-    const picked = indices.map((index) => children[index]);
-    const chosen = new Set(indices);
-    const kept = children.filter((_, index) => !chosen.has(index));
-    // Where the group goes among what is LEFT: as many unselected siblings precede it as preceded the first …
-    const before = children.slice(0, indices[0]).filter((_, index) => !chosen.has(index)).length;
-    kept.splice(before, 0, groupNode(choice, picked));
-    node.items = kept;
-    return true;
-  });
-}
-
-/** **"Group with the row above" (§7.4, design §2.5).**
-*
-*  The addressed row and the sibling immediately before it, in place. It is
-*  {@link groupSelected} with the selection the menu implies rather than a
-*  second implementation of the same question — which is why it offers the same
-*  all/any/none choices and lands in the same place. The first row of a list has
-*  nothing above it, so it is a no-op, as is a stale `loc`. */
-export function groupWithPrevious(root: Filter, loc: number[], choice: GroupChoice = "all"): Filter {
-  if (loc.length === 0) return root;
-  const previous = [...loc.slice(0, -1), loc[loc.length - 1] - 1];
-  return groupSelected(root, [previous, loc], choice);
-}
-
-/** **Move a row or group among its own siblings (§7.4, P6).**
-*
-*  `to` is the index the node ends up at in the SAME list — the drop position a
-*  drag reports and the one step "move up"/"move down" ask for, which is why
-*  keyboard and pointer produce the same tree.
-*
-*  **Atomic against the original tree.** Removing the node and inserting it
-*  again are one edit over one draft, so the destination is computed against the
-*  list the user was looking at. A remove-then-insert built out of `removeAt`
-*  and `addChild` would normalize in between: `removeAt` PRUNES an `and`/`or`
-*  its last child just left, so moving the only row out of a group would delete
-*  the group and shift every path after it — including the one holding the
-*  destination. Boundary destinations are refused rather than clamped: a clamp
-*  turns "I pressed up on the first row" into a silent save of an unchanged
-*  tree. */
-export function moveSibling(root: Filter, loc: number[], to: number): Filter {
-  return edit(root, (draft) => {
-    const at = locate(draft, loc);
-    if (!at) return false;
-    const node = at.children[at.idx];
-    if (!node) return false;
-    if (!Number.isInteger(to) || to < 0 || to >= at.children.length || to === at.idx) return false;
-    at.children.splice(at.idx, 1);
-    at.children.splice(to, 0, node);
-    return true;
-  });
-}
-
-/** The path of the node's OWN `off` wrapper, relative to the node, or `null` when it has none. */
-function ownOffPath(node: Filter): number[] | null {
-  if (node.kind === "off") return [];
-  if (node.kind === "not" && node.inner.kind === "off") return [0];
-  return null;
-}
-
-/** Whether the node at `loc` carries its OWN `off` wrapper. */
-export function isDisabledAt(root: Filter, loc: number[]): boolean {
-  const node = nodeAt(root, loc);
-  return !!node && ownOffPath(node) !== null;
-}
-
-/** **The enabled control: add or remove this node's own `Off` (§3.5, §7.4).**
-*
-*  Disabling WRAPS the addressed node whole, so the `not` that spells the row's
-*  negative operator, the `raw` payload of a condition the parser could not
-*  read, an opaque advanced subtree past the rendering cap, and any `off` a
-*  DESCENDANT carries all travel inside it untouched. Enabling removes exactly
-*  the one wrapper the row draws as its greyed state and nothing else, so a
-*  disabled group full of individually disabled rows comes back as it went in.
-*
-*  Nothing is deleted, coerced or re-read: `Off` is structural omission, and a
-*  re-enabled `Raw` is the same bytes with the same diagnostic it always had
-*  (§4.3.2). */
-export function toggleDisabledAt(root: Filter, loc: number[]): Filter {
-  if (loc.length === 0) return root;
-  const node = nodeAt(root, loc);
-  if (!node) return root;
-  const off = ownOffPath(node);
-  if (off === null) return wrapAt(root, loc, "off");
-  // Enabling REBUILDS the row's whole node rather than addressing the `off` inside it.
-  const inner = off.length === 0
-    ? (node as Filter & { kind: "off" }).inner
-    : { kind: "not" as const, inner: ((node as Filter & { kind: "not" }).inner as Filter & { kind: "off" }).inner };
-  return replaceAt(root, loc, clone(inner));
-}
-
-/** Replace the boolean node at `loc` with its children spliced into the parent. */
-export function unwrapAt(root: Filter, loc: number[]): Filter {
-  const current = nodeAt(root, loc);
-  const kids = current ? filterChildren(current) : null;
-  if (!current || !kids || kids.length === 0) return root;
-  const parent = loc.length > 1 ? nodeAt(root, loc.slice(0, -1)) : root;
-  if (parent && (parent.kind === "not" || parent.kind === "off")) {
-    return kids.length === 1 ? replaceAt(root, loc, clone(kids[0])) : root;
-  }
-  return edit(root, (draft) => {
-    const at = locate(draft, loc);
-    if (!at || !at.children[at.idx]) return false;
-    at.children.splice(at.idx, 1, ...(filterChildren(at.children[at.idx]) ?? []));
-    return true;
-  });
-}
-
-/** Change `and` ↔ `or` on the node addressed by `loc` (`[]` = root). */
-export function setOp(root: Filter, loc: number[], op: "and" | "or"): Filter {
-  if (loc.length === 0) {
-    if (root.kind !== "and" && root.kind !== "or") return root;
-    return { kind: op, items: structuredClone(filterChildren(root) ?? []) };
-  }
-  return edit(root, (draft) => {
-    const current = nodeAt(draft, loc);
-    if (!current || (current.kind !== "and" && current.kind !== "or")) return false;
-    return assignAt(draft, loc, { kind: op, items: current.items });
-  });
-}
+// Immutable tree edits live in ./queryTree (re-exported here: one import site).
+export {
+  filterChildren,
+  builderRoot,
+  addChild,
+  removeAt,
+  replaceAt,
+  wrapAt,
+  groupSelected,
+  groupWithPrevious,
+  moveSibling,
+  moveAcross,
+  isDisabledAt,
+  toggleDisabledAt,
+  unwrapAt,
+  setOp,
+} from "./queryTree";
+export type { GroupChoice } from "./queryTree";

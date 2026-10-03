@@ -35,8 +35,25 @@ const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Queries]]\n");
 fs.writeFileSync(`${GRAPH}/pages/Tasks.md`, "- TODO alpha task\n- TODO beta task\n- DONE finished task\n");
-fs.writeFileSync(`${GRAPH}/pages/Book A.md`, "type:: book\n\n- A book page\n");
+fs.writeFileSync(`${GRAPH}/pages/Book A.md`, "type:: book\nowner:: Ada\n\n- A book page\n");
 fs.writeFileSync(`${GRAPH}/pages/Notes.md`, "type:: note\n\n- Not a book\n");
+// GH #619 item 9: a page and a block that both carry `type:: book`, so ONE `(property type book)`
+// query has a page answer (Book A, Library) and a block answer (the shelf item).
+fs.writeFileSync(`${GRAPH}/pages/Library.md`, "type:: book\n\n- {{query (property type book)}}\n- shelf item\n  type:: book\n");
+// GH #619 items 1, 4, 5: two TODOs under ONE parent, and a query made of builder-shaped planning dates.
+fs.writeFileSync(`${GRAPH}/pages/Shots.md`, [
+  "- Parent A",
+  "  - TODO one",
+  "  - TODO two",
+  "- {{query (task TODO)}}",
+  "- {{query (and (task TODO) (or (between scheduled today +7d) (between deadline today +7d)))}}",
+  "- {{query (and \"journalmark\" (between -2000y +2000y))}}",
+  "",
+].join("\n"));
+// GH #619 item 3: "In a journal page" writes (between -2000y +2000y); it must match ONLY blocks on a journal page.
+fs.writeFileSync(`${GRAPH}/journals/2025_03_04.md`, "- journalmark on a journal\n");
+fs.writeFileSync(`${GRAPH}/pages/Plain.md`, "- journalmark on a plain page\n");
+const LIBRARY_FILE = `${GRAPH}/pages/Library.md`;
 const QUERIES_FILE = `${GRAPH}/pages/Queries.md`;
 // Order matters: the journey finds each query block by its position.
 const INITIAL = [
@@ -182,6 +199,13 @@ await withApp(0, async (browser) => {
     timeout: 10_000, interval: 100, timeoutMsg: "the /query command was not offered",
   });
   await browser.keys(["Enter"]);
+  // GH #619 item 4: the query text is behind an "Edit as text" toggle, closed on a fresh profile.
+  const toggle = await browser.$(".qs-sheet .qs-text-toggle");
+  await toggle.waitForExist({ timeout: 15_000 });
+  if (await browser.execute(() => !!document.querySelector(".qs-sheet .query-text-pane-input"))) {
+    throw new Error("the query text was open by default; it should sit behind Edit as text");
+  }
+  await toggle.click();
   const pane = await browser.$(".qs-sheet .query-text-pane-input");
   await pane.waitForExist({ timeout: 15_000 });
   // `/query` opens the sheet on the empty condition list. The field chooser is an explicit user action
@@ -198,7 +222,25 @@ await withApp(0, async (browser) => {
     const input = document.querySelector(".qs-sheet .query-text-pane-input");
     if (input instanceof HTMLElement) input.focus();
   });
+  // GH #619 item 7: while the sheet is open the results show IN it and follow the conditions, before
+  // anything is saved. Type one draft, see its answer, type another, see the answer change.
+  const liveText = () => browser.execute(() => {
+    const region = document.querySelector('.qs-sheet [aria-label="Live results"]');
+    return region ? (region.textContent ?? "").replace(/\s+/g, " ") : null;
+  });
+  const waitLive = async (predicate, what) => {
+    let last = null;
+    await browser.waitUntil(async () => { last = await liveText(); return last !== null && predicate(last); },
+      { timeout: 20_000, interval: 150 }).catch(() => {
+      throw new Error(`live results: ${what}; the region said ${JSON.stringify(last)}`);
+    });
+  };
+  await pane.setValue("@block and content like '%beta%'");
+  await waitLive((t) => t.includes("beta task") && !t.includes("alpha task"), "the first draft's answer never showed in the sheet");
   await pane.setValue("@block and content like '%alpha%'");
+  await waitLive((t) => t.includes("alpha task") && !t.includes("beta task"), "the live results did not follow the edit");
+  if (disk().includes("alpha") || disk().includes("beta")) throw new Error(`previewing a draft wrote the page:\n${disk()}`);
+  try { await browser.saveScreenshot(`${ARTIFACTS}/item7-live-results.png`); } catch {}
   const save = await browser.$(".qs-sheet .query-text-pane-save");
   await browser.waitUntil(async () => save.isEnabled(), { timeout: 15_000, interval: 150, timeoutMsg: "Save query text never enabled" });
   await save.click();
@@ -224,6 +266,146 @@ await withApp(1, async (browser) => {
   const created = await waitForQuery(browser, 4, (t) => t.includes("alpha task"), "the created query did not answer after a restart");
   if (created.includes("beta task")) throw new Error(`the created query lost its filter after a restart: ${created}`);
   if (!disk().includes(createdLine)) throw new Error(`the created query's bytes changed across a restart:\n${disk()}`);
+});
+
+// 7. GH #619 item 9: the sheet's selector offers "pages and blocks"; choosing it shows a Pages section
+// above a Blocks section for the one query, stores the choice on the block, and survives a restart.
+const bothSections = (browser) => browser.execute(() => {
+  const block = document.querySelector(".page-blocks .query-block");
+  if (!block) return null;
+  const sections = [...block.querySelectorAll("[data-query-result-kind]")];
+  return sections.map((section) => ({
+    kind: section.getAttribute("data-query-result-kind"),
+    text: (section.textContent ?? "").replace(/\s+/g, " "),
+  }));
+});
+await withApp(2, async (browser) => {
+  await openPageByName(browser, "Library");
+  await waitForQuery(browser, 0, (t) => t.includes("shelf item"), "the block answer never landed");
+  if ((await bothSections(browser))?.length) throw new Error("an ordinary query showed result sections");
+  await browser.execute(() => {
+    for (const close of document.querySelectorAll(".toast-sticky .toast-close")) {
+      if (close instanceof HTMLElement) close.click();
+    }
+  });
+  await browser.execute(() => document.querySelector(".page-blocks .query-block .qs-sentence")?.click());
+  const anchor = await browser.$(".qs-sheet .qs-anchor-button");
+  await anchor.waitForExist({ timeout: 15_000 });
+  await anchor.click();
+  const picked = await browser.execute(() => {
+    const option = [...document.querySelectorAll(".qs-option")].find((o) => (o.textContent ?? "").trim().startsWith("pages and blocks"));
+    if (!(option instanceof HTMLElement)) return false;
+    option.click();
+    return true;
+  });
+  if (!picked) throw new Error("the anchor menu did not offer Pages and blocks");
+  let sections = null;
+  await browser.waitUntil(async () => {
+    sections = await bothSections(browser);
+    return !!sections && sections.length === 2 && sections[0].text.includes("Book A") && sections[1].text.includes("shelf item");
+  }, { timeout: 20_000, interval: 150 }).catch(() => {
+    throw new Error(`Pages and blocks never showed both families: ${JSON.stringify(sections)}`);
+  });
+  if (sections[0].kind !== "page" || sections[1].kind !== "block") throw new Error(`Pages must sit above Blocks: ${JSON.stringify(sections)}`);
+  try { await browser.saveScreenshot(`${ARTIFACTS}/item9-pages-and-blocks.png`); } catch {}
+  await browser.waitUntil(() => /tine\.result-kinds:: pages-and-blocks/.test(fs.readFileSync(LIBRARY_FILE, "utf8")), {
+    timeout: 15_000, interval: 150, timeoutMsg: "the choice never reached the file",
+  });
+  await browser.keys(["Escape"]);
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".qs-sheet")), {
+    timeout: 10_000, interval: 100, timeoutMsg: "Escape did not close the sheet",
+  });
+  // The closed-sheet view is recorded as text: a WebKit screenshot of it times out under this driver.
+  fs.writeFileSync(`${ARTIFACTS}/item9-sections.json`, `${JSON.stringify(await bothSections(browser), null, 2)}\n`);
+});
+await withApp(3, async (browser) => {
+  await openPageByName(browser, "Library");
+  let sections = null;
+  await browser.waitUntil(async () => {
+    sections = await bothSections(browser);
+    return !!sections && sections.length === 2 && sections[0].text.includes("Book A");
+  }, { timeout: 20_000, interval: 150 }).catch(() => {
+    throw new Error(`the Pages and blocks choice did not survive a restart: ${JSON.stringify(sections)}`);
+  });
+});
+
+// 8. GH #619 items 1, 4 and 5 against the real engine and renderer.
+await withApp(4, async (browser) => {
+  await openPageByName(browser, "Shots");
+  // Item 1: two matches under one parent show that parent's breadcrumb once, not once per match.
+  await waitForQuery(browser, 0, (t) => t.includes("one") && t.includes("two"), "the grouped answer never landed");
+  const crumbs = await browser.execute(() => [...document.querySelectorAll(".page-blocks .query-block")[0]
+    .querySelectorAll(".ref-breadcrumb")].map((c) => (c.textContent ?? "").replace(/\s+/g, " ").trim()).filter((t) => t.includes("Parent A")));
+  if (crumbs.length !== 1) throw new Error(`Parent A's breadcrumb should show once for its two matches; saw ${JSON.stringify(crumbs)}`);
+  try { await browser.saveScreenshot(`${ARTIFACTS}/item1-group-by-parent.png`); } catch {}
+  // Item 3: the wide journal range keeps journal blocks and drops the same text on an ordinary page.
+  await waitForQuery(browser, 2, (t) => t.includes("journalmark"), "the journal-range answer never landed");
+  const journalText = await browser.execute(() => document.querySelectorAll(".page-blocks .query-block")[2]?.textContent ?? "");
+  if (!/journalmark on a journal/.test(journalText) || /plain page/.test(journalText)) {
+    throw new Error(`the journal range should answer journal blocks only; saw ${journalText}`);
+  }
+  // Items 4 and 5: the sheet on a builder-shaped planning query has no "advanced" chip and keeps the text closed.
+  await browser.execute(() => {
+    for (const close of document.querySelectorAll(".toast-sticky .toast-close")) {
+      if (close instanceof HTMLElement) close.click();
+    }
+  });
+  await waitForQuery(browser, 1, (t) => t.length > 0, "the planning query never mounted");
+  await browser.execute(() => document.querySelectorAll(".page-blocks .query-block")[1]?.querySelector(".qs-sentence")?.click());
+  await (await browser.$(".qs-sheet .qs-text-toggle")).waitForExist({ timeout: 15_000 });
+  const sheet = await browser.execute(() => ({
+    text: (document.querySelector(".qs-sheet")?.textContent ?? "").replace(/\s+/g, " "),
+    textOpen: !!document.querySelector(".qs-sheet .query-text-pane-input"),
+  }));
+  if (/advanced/i.test(sheet.text)) throw new Error(`a builder-made planning condition read as advanced: ${sheet.text}`);
+  // Step 5 left "Edit as text" open, and the toggle remembers its state across a restart (item 4).
+  if (!sheet.textOpen) throw new Error("the Edit as text toggle did not remember being open across a restart");
+  await browser.execute(() => document.querySelector(".qs-sheet .qs-text-toggle")?.click());
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".qs-sheet .query-text-pane-input")), {
+    timeout: 10_000, interval: 100, timeoutMsg: "the Edit as text toggle did not close the query text",
+  });
+  if (!/scheduled/i.test(sheet.text)) throw new Error(`the scheduled condition did not show in plain words: ${sheet.text}`);
+  try { await browser.saveScreenshot(`${ARTIFACTS}/item45-plain-chips-text-closed.png`); } catch {}
+});
+
+// 9. GH #619 item 8 / follow-up B: a page result row shows the page's properties and lets the user EDIT
+// them from the row. The row only carries the answer, so the pencil loads the page and opens the existing
+// properties panel; the write is the ordinary guarded page-property write. The file and the row agree.
+const BOOK_FILE = `${GRAPH}/pages/Book A.md`;
+await withApp(5, async (browser) => {
+  await openPageByName(browser, "Queries");
+  await waitForQuery(browser, 1, (t) => t.includes("Book A") && /owner:\s*Ada/.test(t), "the page row did not show its properties as text");
+  const edit = await browser.execute(() => {
+    const block = document.querySelectorAll(".page-blocks .query-block")[1];
+    const li = [...block.querySelectorAll(".query-results-list > li")].find((item) => (item.textContent ?? "").includes("Book A"));
+    const pencil = li?.querySelector(".query-page-props-edit");
+    if (!(pencil instanceof HTMLElement)) return false;
+    pencil.scrollIntoView({ block: "center" });
+    pencil.click();
+    return true;
+  });
+  if (!edit) throw new Error("the Book A result row offered no way to edit its properties");
+  await browser.$(".page-props-panel").waitForExist({ timeout: 10_000 });
+  const marked = await browser.execute(() => {
+    const field = [...document.querySelectorAll(".page-props-panel .pp-field")].find((f) => f.querySelector(".pp-label")?.textContent?.trim() === "owner");
+    const input = field?.querySelector(".pp-input");
+    if (!(input instanceof HTMLElement)) return false;
+    input.setAttribute("data-e2e-target", "1");
+    return true;
+  });
+  if (!marked) throw new Error("the properties panel did not list the page's owner property");
+  const input = await browser.$('.page-props-panel [data-e2e-target="1"]');
+  await input.setValue("Grace");
+  await browser.keys("Enter");
+  await browser.$(".page-props-panel").waitForExist({ reverse: true, timeout: 10_000 });
+  await browser.waitUntil(() => /owner:: Grace/.test(fs.readFileSync(BOOK_FILE, "utf8")), {
+    timeout: 15_000, interval: 150, timeoutMsg: `the edited property never reached the file:\n${fs.readFileSync(BOOK_FILE, "utf8")}`,
+  });
+  const onDisk = fs.readFileSync(BOOK_FILE, "utf8");
+  if (/Ada/.test(onDisk) || !/type:: book/.test(onDisk) || !/- A book page/.test(onDisk)) throw new Error(`the property edit damaged the page:\n${onDisk}`);
+  // The row itself shows the new value (the query answered again after the save).
+  await waitForQuery(browser, 1, (t) => /owner:\s*Grace/.test(t) && !/owner:\s*Ada/.test(t), "the row did not show the edited value");
+  try { await browser.saveScreenshot(`${ARTIFACTS}/item8-edit-from-row.png`); } catch {}
 });
 
 console.log(`PASS query sheet journey (${createdLine})`);

@@ -8,11 +8,13 @@ import {
   filterValueLabel,
   propertyFilter,
   builderLeafKind,
+  betweenRowField,
   encodePropertyLeaf,
   filterLabel,
   filterPhrase,
   groupSelected,
   journalFilter,
+  moveAcross,
   moveSibling,
   planningFilter,
   propertyLeafTest,
@@ -31,7 +33,7 @@ import {
   type PropertyOperatorId,
 } from "../editor/queryBuilder";
 import type { Anchor, Filter } from "../editor/queryIr";
-import { beginQuerySheetReorder, cancelQuerySheetReorder, type QuerySheetDropTarget } from "./querySheetReorder";
+import { beginQuerySheetReorder, cancelQuerySheetReorder, parseLocKey, type QuerySheetDropTarget } from "./querySheetReorder";
 import {
   type RegistryAccess,
   locKey,
@@ -42,8 +44,10 @@ import {
   diagnosticFor,
   QuerySentence,
   FIELD_LABELS,
+  BETWEEN_FIELD_LABEL,
   KIND_PHRASE,
   type SheetNode,
+  advancedCount,
   buildNodes,
   type SiblingPos,
   posOf,
@@ -272,6 +276,15 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
         isCurrent: () => props.root() === root,
         setTarget: setDropTarget,
         commit: (to) => controls.move(pos, to),
+        commitAcross: (parent, slot) => {
+          const current = props.root();
+          const next = moveAcross(current, [...pos.parentLoc, pos.index], parseLocKey(parent), slot);
+          if (next === current) return;
+          // A move that pushes a subtree past the drawing depth would fold it into an "advanced" chip the user
+          // never asked for, so it is refused like any other move that cannot be shown honestly.
+          if (advancedCount(buildNodes(next, [], 0)) > advancedCount(buildNodes(current, [], 0))) return;
+          props.apply(next);
+        },
       });
     },
     dropTarget,
@@ -315,6 +328,7 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
       <AnchorLine
         anchor={props.anchor}
         onAnchor={props.onAnchor}
+        both={props.both}
         empty={isEmpty()}
         openMenu={props.openMenu}
         setOpenMenu={props.setOpenMenu}
@@ -709,6 +723,9 @@ function QueryRow(props: {
     const test = property();
     if (test) return test.throughPage ? "Page property" : "Property";
     const k = kind();
+    // A scheduled/deadline/journal-date range names its date, not the generic "Between dates" (GH #619 item 5).
+    const dated = betweenRowField(core());
+    if (dated && dated !== "any") return BETWEEN_FIELD_LABEL[dated];
     return k ? FIELD_LABELS[k] : "Condition";
   };
   const operatorLabel = () => {

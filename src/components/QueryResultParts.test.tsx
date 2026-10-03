@@ -13,9 +13,14 @@ import type { PageRow } from "../editor/queryIr";
 import { QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
 import * as router from "../router";
 import * as ui from "../ui";
+import { backend } from "../backend";
+import { pageByName, resetStore } from "../document";
+import type { PageRead } from "../types";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  ui.closePageProps();
+  resetStore();
   document.body.innerHTML = "";
 });
 
@@ -64,6 +69,61 @@ describe("QueryPageRows", () => {
       const columns = [...root.querySelectorAll<HTMLElement>(".query-board-column")];
       expect(columns.map((column) => column.getAttribute("aria-label"))).toEqual(["open", "done"]);
       expect(columns[0].querySelectorAll(".query-page-link")).toHaveLength(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  // GH #619 item 8: OG shows a page result with its page properties; the default list
+  // view showed only the name, so properties were visible only after switching to Table.
+  it("list view shows each page's own properties as selectable text beside its link", () => {
+    const rows = [
+      row("Alpha", "pages/Alpha.md", [["status", "open"], ["owner", "Ada"]]),
+      row("Beta", "pages/Beta.md"),
+    ];
+    const { root, dispose } = mount(() => <QueryPageRows rows={rows} view="list" />);
+    try {
+      const items = [...root.querySelectorAll(".query-results-list > li")];
+      expect(items).toHaveLength(2);
+      const props = [...items[0].querySelectorAll(".query-page-prop")].map((el) => el.textContent?.replace(/\s+/g, " ").trim());
+      expect(props).toEqual(["status: open", "owner: Ada"]);
+      // A page with no properties gets no empty property strip.
+      expect(items[1].querySelector(".query-page-props")).toBeNull();
+      // The values are plain, selectable content (no buttons inside the strip); the only
+      // buttons are the page link and the edit pencil (follow-up B: edit from the row).
+      expect(items[0].querySelector(".query-page-props")!.querySelectorAll("button")).toHaveLength(0);
+      expect([...items[0].querySelectorAll("button")].map((b) => b.className)).toEqual(["query-page-link", "query-page-props-edit"]);
+      expect(items[0].querySelector(".query-page-props")?.getAttribute("data-selectable")).toBe("text");
+    } finally {
+      dispose();
+    }
+  });
+
+  // GH #619 item 8 / follow-up B: the pencil LOADS the page (a read) and opens the existing
+  // properties panel; the panel's write is setPageProperty (covered by the real-app journey).
+  it("loads the page and opens the properties panel from the row's pencil", async () => {
+    const page = { id: "p1", name: "Alpha", kind: "page", title: "Alpha", pre_block: "status:: open", blocks: [], rev: "r1", format: "md" } as PageRead;
+    const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(page);
+    const { root, dispose } = mount(() => <QueryPageRows rows={[row("Alpha", "pages/Alpha.md", [["status", "open"]])]} view="list" />);
+    try {
+      expect(pageByName("Alpha")).toBeUndefined();
+      root.querySelector<HTMLButtonElement>(".query-page-props-edit")!.click();
+      await vi.waitFor(() => expect(ui.pagePropsPanel()?.scope).toEqual({ kind: "page", name: "Alpha" }));
+      expect(getPage).toHaveBeenCalledWith("Alpha", "page");
+      expect(pageByName("Alpha")?.name).toBe("Alpha");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("opens no panel when the page is gone, and says so", async () => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue(null as unknown as PageRead);
+    const { root, dispose } = mount(() => <QueryPageRows rows={[row("Gone", "pages/Gone.md")]} view="list" />);
+    try {
+      root.querySelector<HTMLButtonElement>(".query-page-props-edit")!.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(ui.pagePropsPanel()).toBeNull();
+      expect(pageByName("Gone")).toBeUndefined();
     } finally {
       dispose();
     }
