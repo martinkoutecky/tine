@@ -1,4 +1,4 @@
-import { Match, Show, Suspense, Switch, createEffect, createSignal, lazy, onCleanup, onMount, type JSX } from "solid-js";
+import { Match, Show, Suspense, Switch, createEffect, createSignal, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
@@ -60,6 +60,7 @@ import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishedPermalink } from "./publishedPermalink";
+import { maybeShowDefenderHint } from "./defenderHint";
 import { graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
@@ -767,6 +768,12 @@ export function App(): JSX.Element {
       dbg("data-home notice unavailable");
     }
   });
+
+  // GH #623: once per opened graph, ask whether Windows Defender is the likely
+  // reason the cold load was slow. The backend answers false everywhere else.
+  createEffect(on(() => graphMeta()?.root, (root) => {
+    if (root) void maybeShowDefenderHint();
+  }));
 
   // The updater owns preference loading, automatic scheduling and cancellation.
   onMount(() => onCleanup(scheduleAutomaticUpdateCheck()));

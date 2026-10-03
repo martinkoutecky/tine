@@ -640,6 +640,15 @@ export interface Backend {
    *  the key + default. Used by the copy-behavior options. */
   getAppBool(key: string, fallback: boolean): Promise<boolean>;
   setAppBool(key: string, value: boolean): Promise<void>;
+  /** GH #623: should the Windows Defender hint show for the open graph? Always
+   *  `{show:false}` off Windows. Per-graph dismissal lives in the backend. */
+  defenderHint(): Promise<{ show: boolean }>;
+  dismissDefenderHint(): Promise<void>;
+  /** Runs the UAC-elevated `Add-MpPreference` for the open graph's folder; only
+   *  ever called from the user's click on the hint. */
+  addDefenderExclusion(): Promise<
+    { outcome: "added" } | { outcome: "declined" } | { outcome: "failed"; code: number | null; message: string }
+  >;
   /** Generic device-local STRING preference (tine-settings.json); caller supplies
    *  the key + default. Used by the asset-filename format template. */
   getAppString(key: string, fallback: string): Promise<string>;
@@ -1442,6 +1451,15 @@ class TauriBackend implements Backend {
   }
   setAppBool(key: string, value: boolean) {
     return this.call<void>("set_app_bool", { key, value });
+  }
+  defenderHint() {
+    return this.call<{ show: boolean }>("defender_hint");
+  }
+  dismissDefenderHint() {
+    return this.call<void>("dismiss_defender_hint");
+  }
+  addDefenderExclusion() {
+    return this.call<Awaited<ReturnType<Backend["addDefenderExclusion"]>>>("add_defender_exclusion");
   }
   getAppString(key: string, fallback: string) {
     return this.call<string>("get_app_string", { key, default: fallback });

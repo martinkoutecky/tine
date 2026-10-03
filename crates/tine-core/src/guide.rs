@@ -929,6 +929,28 @@ mod og_20d_guide_tests {
         }
     }
 
+    /// GH #623: the Windows Defender hint and its opt-in exclusion are
+    /// user-visible: what triggers it, the click that is required, and each
+    /// outcome the user can see.
+    #[test]
+    fn troubleshooting_documents_the_windows_defender_hint() {
+        let recovery = page("Reference/Troubleshooting and recovery");
+        for detail in [
+            "Opening a large graph is slow on Windows",
+            "**Add an exclusion for this graph folder**",
+            "Windows asks for administrator approval",
+            "Tine never changes Defender without that choice",
+            "the notice returns the next time this graph opens slowly",
+            "`windowsDefenderRealtime`",
+            "never any path",
+        ] {
+            assert!(
+                recovery.contains(detail),
+                "missing Windows Defender hint detail: {detail}"
+            );
+        }
+    }
+
     #[test]
     fn guide_says_public_false_pages_are_never_exported() {
         let files = include_str!("templates/files-external-edits-backups.md");

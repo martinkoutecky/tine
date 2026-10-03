@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- Browsing no longer writes to your graph (GH #623): zooming into a block, jumping to one from Ctrl-K, and opening a block in the sidebar, a tab or a pane used to stamp an `id::` property into the block's page file just to remember where you were. Those places are now remembered by their position in the page (kept in the session file, not the graph), and a block gets an `id::` only when something actually references it. A saved session with an older block reference still restores.
 - Launch and focus return on large graphs (GH #623): the conflicts list no longer reads every page file (the store remembers which pages carry merge-conflict marker lines, kept in the launch checkpoint), the asset scan no longer opens every asset file while holding the store's writer lock, and the "Refreshing changes from disk…" notice moved beside the help button, dimmed and shown only after half a second; the diagnostic report now also carries per-command latency histograms and the focus-return phase split (numbers only).
 - **Raw HTML resources (UI-OG-DUPBL2-D29):** local images and sandboxed iframes use actual DOM attributes, so image text in comments and `data-src` lookalikes cannot select the wrong resource.
 - Uppercase `.ORG` files retain Org format in conflict diffs, PDF annotations and page rename/merge (REG-OG-DUPAL2-F12).
@@ -17,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Windows: the diagnostic report now records whether Windows Defender real-time protection is on (`windowsDefenderRealtime`: on, off, unknown or not-applicable; a flag only, never a path). When a graph's first open is slow and real-time protection is on, a one-time notice per graph says so and offers **Add an exclusion for this graph folder**, which asks for administrator approval and only then runs `Add-MpPreference -ExclusionPath`; nothing changes without that click, and a declined or refused attempt is reported (GH #623).
 - Settings → Help & diagnostics: the diagnostic report now carries launch timings (listing, file dates, reading vs parsing, index build, ready), recent full rescans and saves, and statistics-only graph-shape numbers (sizes and quantiles, never names or text), so a slow graph can be diagnosed without sharing it; **Rescan graph** forces a full rebuild: it ignores every remembered file date, size and checksum, re-reads and re-parses every file, and rebuilds the page, link and search state without blocking the app or touching what you are editing, then shows when it finished; the quick check on returning to the window is unchanged (GH #623).
 - Settings → About: **Check for updates automatically** can disable startup update checks and notifications on this device; manual checks remain available (GH #618).
 

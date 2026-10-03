@@ -1559,6 +1559,13 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setAppBool(key: string, value: boolean): Promise<void> {
       mockAppBools[key] = value;
     },
+    async defenderHint() {
+      return { show: false };
+    },
+    async dismissDefenderHint(): Promise<void> {},
+    async addDefenderExclusion() {
+      return { outcome: "declined" as const };
+    },
     async getAppString(key: string, fallback: string): Promise<string> {
       const v = mockAppStrings[key];
       return v === undefined ? fallback : v;
