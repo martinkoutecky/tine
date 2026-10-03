@@ -390,12 +390,18 @@ fn load_notices_at(path: &std::path::Path) -> serde_json::Value {
 }
 
 fn master_crossing_notice_dismissed(dir: &std::path::Path, root: &std::path::Path) -> bool {
+    notice_dismissed(dir, root, "query-crossing")
+}
+
+/// Whether the graph's notices record lists `notice` as dismissed.
+pub(crate) fn notice_dismissed(
+    dir: &std::path::Path,
+    root: &std::path::Path,
+    notice: &str,
+) -> bool {
     load_notices_at(&dir.join("sessions").join(notices_id(root)))["dismissed"]
         .as_array()
-        .is_some_and(|keys| {
-            keys.iter()
-                .any(|key| key.as_str() == Some("query-crossing"))
-        })
+        .is_some_and(|keys| keys.iter().any(|key| key.as_str() == Some(notice)))
 }
 
 static NOTICES_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -403,23 +409,32 @@ static NOTICES_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// One device-private, atomic read/modify/write; unknown notices/fields survive.
 /// Like master, malformed notice JSON costs one extra notice and is repaired by
 /// the next dismissal. I/O errors refuse the write and are reported to the user.
-fn set_crossing_notice_at(
+pub(crate) fn set_notice_at(
     dir: &std::path::Path,
     root: &std::path::Path,
+    notice: &str,
     value: bool,
 ) -> Result<(), String> {
     let path = dir.join("sessions").join(notices_id(root));
     crate::device_io::atomic_update(&path, &NOTICES_LOCK, |text| {
         let mut json = parse_notices(text);
         let mut keys = json["dismissed"].as_array().cloned().unwrap_or_default();
-        keys.retain(|key| key.as_str().is_some_and(|key| key != "query-crossing"));
+        keys.retain(|key| key.as_str().is_some_and(|key| key != notice));
         if value {
-            keys.push(serde_json::json!("query-crossing"));
+            keys.push(serde_json::json!(notice));
         }
         json["dismissed"] = serde_json::json!(keys);
         serde_json::to_string(&json).map_err(std::io::Error::other)
     })
     .map_err(|error| error.to_string())
+}
+
+fn set_crossing_notice_at(
+    dir: &std::path::Path,
+    root: &std::path::Path,
+    value: bool,
+) -> Result<(), String> {
+    set_notice_at(dir, root, "query-crossing", value)
 }
 
 #[tauri::command]
@@ -844,6 +859,40 @@ mod tests {
         std::fs::write(&path, b"{torn").unwrap();
         assert!(!master_crossing_notice_dismissed(temp.path(), root));
         assert_eq!(std::fs::read(&path).unwrap(), b"{torn");
+    }
+
+    #[test]
+    fn a_second_notice_is_independent_of_the_crossing_notice() {
+        let temp = tempfile::tempdir().unwrap();
+        let graph = std::path::Path::new("/one/graph");
+        let other = std::path::Path::new("/two/graph");
+        set_crossing_notice_at(temp.path(), graph, true).unwrap();
+        assert!(!notice_dismissed(
+            temp.path(),
+            graph,
+            "windows-defender-hint"
+        ));
+        set_notice_at(temp.path(), graph, "windows-defender-hint", true).unwrap();
+        assert!(notice_dismissed(
+            temp.path(),
+            graph,
+            "windows-defender-hint"
+        ));
+        // Dismissing one notice never un-dismisses or hides the other, and
+        // the dismissal is keyed by graph.
+        assert!(master_crossing_notice_dismissed(temp.path(), graph));
+        assert!(!notice_dismissed(
+            temp.path(),
+            other,
+            "windows-defender-hint"
+        ));
+        set_notice_at(temp.path(), graph, "windows-defender-hint", false).unwrap();
+        assert!(!notice_dismissed(
+            temp.path(),
+            graph,
+            "windows-defender-hint"
+        ));
+        assert!(master_crossing_notice_dismissed(temp.path(), graph));
     }
 
     #[test]

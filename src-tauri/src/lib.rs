@@ -17,6 +17,7 @@ mod concord;
 mod concord_ledger;
 mod data_home;
 mod debug;
+mod defender;
 mod device_io;
 mod drafts;
 #[cfg(test)]
@@ -991,6 +992,9 @@ pub fn run() {
             flight::diagnostic_session_active,
             flight::diagnostic_timing_event,
             flight::save_diagnostic_report,
+            defender::defender_hint,
+            defender::dismiss_defender_hint,
+            defender::add_defender_exclusion,
             tine_quit,
             close_graph_window,
             tine_open_devtools

@@ -614,6 +614,7 @@ fn build_diagnostic_report(
     graphs: Vec<Value>,
     build_commit: String,
     build_time: String,
+    defender: crate::defender::Realtime,
 ) -> DiagnosticReport {
     let parse = |lines: &mut dyn Iterator<Item = &String>| -> Vec<Value> {
         lines
@@ -662,6 +663,9 @@ fn build_diagnostic_report(
             "verboseDebugEnabled": crate::debug::debug_enabled(),
             "graphStateUnavailable": graph_bindings.is_none(),
             "graphBindings": graph_bindings.unwrap_or(0),
+            // Windows Defender real-time protection (GH #623): a closed token,
+            // `not-applicable` off Windows. Read-only probe, no administrator.
+            "windowsDefenderRealtime": defender.token(),
         },
         "graphs": graphs,
         // Fixed-size latency histograms of the closed TIMING_NAMES (GH #623).
@@ -701,6 +705,14 @@ async fn collect_graph_diagnostics(app: &tauri::AppHandle) -> (Option<usize>, Ve
     (Some(bindings), graphs)
 }
 
+/// Windows Defender real-time protection, probed off the async executor (a
+/// PowerShell start on Windows; a constant elsewhere).
+async fn probe_defender() -> crate::defender::Realtime {
+    tauri::async_runtime::spawn_blocking(crate::defender::probe)
+        .await
+        .unwrap_or(crate::defender::Realtime::Unknown)
+}
+
 /// Build the report: app version, build commit/time (dropped unless they are a
 /// hex commit and an ISO timestamp), OS/arch, privacy flags, the number of open
 /// graph bindings, per-graph launch timings and shape statistics, and every
@@ -713,7 +725,8 @@ pub(crate) async fn diagnostic_report(
     build_time: String,
 ) -> DiagnosticReport {
     let (graph_bindings, graphs) = collect_graph_diagnostics(&app).await;
-    build_diagnostic_report(graph_bindings, graphs, build_commit, build_time)
+    let defender = probe_defender().await;
+    build_diagnostic_report(graph_bindings, graphs, build_commit, build_time, defender)
 }
 
 /// Save a freshly built report where the user chooses (desktop save dialog).
@@ -725,7 +738,9 @@ pub(crate) async fn save_diagnostic_report(
     build_time: String,
 ) -> Result<bool, String> {
     let (graph_bindings, graphs) = collect_graph_diagnostics(&app).await;
-    let report = build_diagnostic_report(graph_bindings, graphs, build_commit, build_time);
+    let defender = probe_defender().await;
+    let report =
+        build_diagnostic_report(graph_bindings, graphs, build_commit, build_time, defender);
     #[cfg(desktop)]
     {
         use tauri_plugin_dialog::DialogExt as _;
@@ -810,8 +825,13 @@ mod tests {
             1,
             std::time::Duration::ZERO,
         );
-        let report =
-            build_diagnostic_report(Some(1), Vec::new(), "abcdef1".into(), "/home/x".into());
+        let report = build_diagnostic_report(
+            Some(1),
+            Vec::new(),
+            "abcdef1".into(),
+            "/home/x".into(),
+            crate::defender::Realtime::NotApplicable,
+        );
         let parsed: Value = serde_json::from_str(&report.text).unwrap();
         let events = parsed["sessions"]["current"].as_array().unwrap();
         assert!(events.iter().any(|event| event["event"] == "ipc.command"
@@ -833,17 +853,45 @@ mod tests {
     #[test]
     fn the_report_carries_each_graphs_statistics_and_says_so() {
         let graph = json!({ "launch": { "readyMs": 4200 }, "shape": { "pages": 1075 } });
-        let report =
-            build_diagnostic_report(Some(1), vec![graph.clone()], String::new(), String::new());
+        let report = build_diagnostic_report(
+            Some(1),
+            vec![graph.clone()],
+            String::new(),
+            String::new(),
+            crate::defender::Realtime::NotApplicable,
+        );
         let parsed: Value = serde_json::from_str(&report.text).unwrap();
         assert_eq!(parsed["graphs"], json!([graph]));
         assert_eq!(parsed["privacy"]["containsGraphStatistics"], true);
         // Statistics are not content: the other flags stay false.
         assert_eq!(parsed["privacy"]["containsGraphContent"], false);
         assert_eq!(parsed["privacy"]["containsPageTitles"], false);
-        let empty = build_diagnostic_report(None, Vec::new(), String::new(), String::new());
+        let empty = build_diagnostic_report(
+            None,
+            Vec::new(),
+            String::new(),
+            String::new(),
+            crate::defender::Realtime::NotApplicable,
+        );
         let parsed: Value = serde_json::from_str(&empty.text).unwrap();
         assert_eq!(parsed["graphs"], json!([]));
+    }
+
+    #[test]
+    fn the_report_names_defender_realtime_protection_as_a_closed_token() {
+        use crate::defender::Realtime;
+        for (state, token) in [
+            (Realtime::On, "on"),
+            (Realtime::Off, "off"),
+            (Realtime::Unknown, "unknown"),
+            (Realtime::NotApplicable, "not-applicable"),
+        ] {
+            let report =
+                build_diagnostic_report(Some(1), Vec::new(), String::new(), String::new(), state);
+            let parsed: Value = serde_json::from_str(&report.text).unwrap();
+            assert_eq!(parsed["runtime"]["windowsDefenderRealtime"], token);
+            assert_eq!(parsed["privacy"]["containsPaths"], false);
+        }
     }
 
     #[test]
@@ -877,7 +925,13 @@ mod tests {
             event_to_emit_ms: Some(731_018),
         };
         record_watcher_batch(3, true, Some(&timing));
-        let report = build_diagnostic_report(Some(1), Vec::new(), String::new(), String::new());
+        let report = build_diagnostic_report(
+            Some(1),
+            Vec::new(),
+            String::new(),
+            String::new(),
+            crate::defender::Realtime::NotApplicable,
+        );
         let report: Value = serde_json::from_str(&report.text).unwrap();
         let batch = report["sessions"]["current"]
             .as_array()
@@ -899,7 +953,13 @@ mod tests {
     }
 
     fn latency_report() -> Value {
-        let report = build_diagnostic_report(Some(1), Vec::new(), String::new(), String::new());
+        let report = build_diagnostic_report(
+            Some(1),
+            Vec::new(),
+            String::new(),
+            String::new(),
+            crate::defender::Realtime::NotApplicable,
+        );
         serde_json::from_str(&report.text).unwrap()
     }
 
@@ -1181,8 +1241,13 @@ mod tests {
         persist_init(PathBuf::from(dir));
         match std::env::var("TINE_FLIGHT_PROBE_MODE").unwrap().as_str() {
             "report" => {
-                let report =
-                    build_diagnostic_report(None, Vec::new(), String::new(), String::new());
+                let report = build_diagnostic_report(
+                    None,
+                    Vec::new(),
+                    String::new(),
+                    String::new(),
+                    crate::defender::Realtime::NotApplicable,
+                );
                 let compact: Value = serde_json::from_str(&report.text).unwrap();
                 println!("PROBE-REPORT {compact}");
                 mark_clean_shutdown();
