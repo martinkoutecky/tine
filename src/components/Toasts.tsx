@@ -1,7 +1,9 @@
-import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { toasts, dismissToast, pushToast } from "../toasts";
 import { writeClipboardText } from "../clipboard";
-import { lightbox, setLightbox } from "../ui";
+import { lightbox, setLightbox, lightboxGallery, lightboxIndex, setLightboxIndex } from "../ui";
+import { createImageViewerGestures, type Transform } from "../imageViewerGestures";
+import { stepIndex } from "../imageGallery";
 import { copyImageFromSrc as copyLightboxImage } from "../copyImage";
 import { registerTransientLayer } from "../transientLayers";
 
@@ -70,6 +72,7 @@ export function Toasts(): JSX.Element {
 // (or use the Copy button) to copy it to the OS clipboard.
 export function Lightbox(): JSX.Element {
   const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
+  let lastPointerType = "mouse";
   // Escape is owned by the application transient registry. Context-menu peeling
   // remains local to pointer interactions.
   const copy = async () => {
@@ -96,25 +99,94 @@ export function Lightbox(): JSX.Element {
     });
     onCleanup(unregister);
   });
+  // The page's images and the slot showing now (GH #501). A plain setLightbox(src)
+  // that matches no slot shows that one image alone.
+  const gallery = createMemo(() => {
+    const list = lightboxGallery();
+    const at = lightboxIndex();
+    return list[at] !== undefined && list[at] === lightbox() ? list : lightbox() ? [lightbox()!] : [];
+  });
+  const slot = () => (gallery().length === 1 ? 0 : lightboxIndex());
+  const [view, setView] = createSignal<{ t: Transform; dx: number; dy: number }>({ t: { scale: 1, x: 0, y: 0 }, dx: 0, dy: 0 });
+  let overlayEl: HTMLDivElement | undefined;
+  let imgEl: HTMLImageElement | undefined;
+  const gestures = createImageViewerGestures({
+    box: () => ({ w: overlayEl?.clientWidth ?? 0, h: overlayEl?.clientHeight ?? 0 }),
+    image: () => ({ w: imgEl?.clientWidth ?? 0, h: imgEl?.clientHeight ?? 0 }),
+    apply: (t, drag) => setView({ t, dx: drag.x, dy: drag.y }),
+    step: (delta) => {
+      const next = stepIndex(slot(), gallery().length, delta);
+      if (next === null) return false;
+      // Read the target before writing: the gallery memo is derived from both signals.
+      const target = gallery()[next];
+      batch(() => {
+        setLightboxIndex(next);
+        setLightbox(target);
+        setMenu(null);
+      });
+      return true;
+    },
+    close: () => { setMenu(null); setLightbox(null); },
+  });
+  // A new image always opens at rest.
+  createEffect(() => { lightbox(); gestures.reset(); });
+  // Touch / pen only: a mouse keeps its click-to-close and context menu, and
+  // never drags the image. touch-action:none (CSS) hands us the whole gesture.
+  const bind = (el: HTMLDivElement) => {
+    overlayEl = el;
+    const fromTouch = (e: PointerEvent) => e.pointerType === "touch" || e.pointerType === "pen";
+    const on = (type: string, fn: (e: PointerEvent) => void) => el.addEventListener(type, fn as EventListener);
+    on("pointerdown", (e) => {
+      if (!fromTouch(e)) return;
+      // Copy button / menu keep their own taps.
+      if ((e.target as HTMLElement | null)?.closest(".lightbox-copy, .lightbox-menu")) return;
+      try { el.setPointerCapture?.(e.pointerId); } catch { /* synthetic pointer */ }
+      gestures.down(e.pointerId, e.clientX, e.clientY, e.timeStamp);
+    });
+    on("pointermove", (e) => { if (fromTouch(e)) gestures.move(e.pointerId, e.clientX, e.clientY, e.timeStamp); });
+    on("pointerup", (e) => { if (fromTouch(e)) gestures.up(e.pointerId, e.clientX, e.clientY, e.timeStamp); });
+    on("pointercancel", (e) => { if (fromTouch(e)) gestures.cancel(e.pointerId); });
+  };
+  const imgStyle = () => {
+    const { t, dx, dy } = view();
+    const x = t.x + dx;
+    const y = t.y + dy;
+    return t.scale === 1 && x === 0 && y === 0 ? undefined : { transform: `translate(${x}px, ${y}px) scale(${t.scale})` };
+  };
   return (
     <Show when={lightbox()}>
       <div
         class="lightbox-overlay"
-        onClick={() => {
+        ref={bind}
+        style={{ "--lightbox-dim": String(Math.max(0.25, 1 - view().dy / 400)) }}
+        onClick={(e) => {
+          // The click that follows a drag / pinch / double-tap is not a close.
+          if (gestures.swallowClick(e.timeStamp)) { e.stopPropagation(); return; }
           setMenu(null);
           setLightbox(null);
         }}
       >
         <img
+          ref={imgEl}
           class="lightbox-img"
           src={lightbox()!}
           alt=""
+          style={imgStyle()}
+          onClick={(e) => {
+            // A tap on the image itself is not a close on touch (the backdrop is);
+            // a mouse click keeps closing as before.
+            if (lastPointerType === "touch" || lastPointerType === "pen") e.stopPropagation();
+          }}
+          onPointerDown={(e) => { lastPointerType = e.pointerType; }}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
             setMenu({ x: e.clientX, y: e.clientY });
           }}
         />
+        <Show when={gallery().length > 1}>
+          <span class="lightbox-count" aria-hidden="true">{slot() + 1} / {gallery().length}</span>
+        </Show>
         <button
           class="lightbox-copy"
           title="Copy image to clipboard"

@@ -6204,7 +6204,11 @@ body.file-drop-active::after {
   position: fixed;
   inset: 0;
   z-index: 210;
-  background: rgba(0, 0, 0, 0.8);
+  /* --lightbox-dim fades the backdrop while the image is dragged down to close. */
+  background: rgba(0, 0, 0, calc(0.8 * var(--lightbox-dim, 1)));
+  /* The viewer owns every touch gesture inside it (pinch, pan, swipe) - GH #501. */
+  touch-action: none;
+  overscroll-behavior: contain;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6224,6 +6228,20 @@ body.file-drop-active::after {
   border-radius: 6px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
   cursor: default;
+  transform-origin: center center;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+/* "2 / 5" position badge while a page has several images (GH #501). */
+.lightbox-count {
+  position: fixed;
+  top: 20px;
+  left: 16px;
+  z-index: 211;
+  font-size: 13px;
+  color: #fff;
+  opacity: 0.85;
+  pointer-events: none;
 }
 /* Copy-to-clipboard affordance for the lightbox image. */
 .lightbox-copy {

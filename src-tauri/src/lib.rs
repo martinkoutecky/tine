@@ -1209,6 +1209,29 @@ mod platform_lifecycle_guard_tests {
         );
     }
 
+    /// GH #501/#492: the native touch-gesture E2E asks for a platform through
+    /// `TINE_E2E_TOUCH_GESTURES`; it reaches the frontend ONLY as
+    /// `__TINE_E2E_TOUCH_GESTURES__`, never as `__TINE_PLATFORM__`, so desktop
+    /// chrome keeps its real identity.
+    #[test]
+    fn e2e_touch_gesture_override_never_rewrites_platform_identity() {
+        let source = lib_source();
+        assert!(
+            source.contains("globalThis.__TINE_E2E_TOUCH_GESTURES__ = {kind:?};")
+                && source.contains("std::env::var(\"TINE_E2E_TOUCH_GESTURES\")"),
+            "lib.rs must inject the touch-gesture E2E override as __TINE_E2E_TOUCH_GESTURES__"
+        );
+        let start = source
+            .find("match e2e_touch_gestures_platform() {")
+            .expect("override injection block");
+        let block = &source[start..];
+        let block = &block[..block.find("None => builder,").expect("block end")];
+        assert!(
+            !block.contains("__TINE_PLATFORM__"),
+            "the E2E override must not set __TINE_PLATFORM__ (GH #446)"
+        );
+    }
+
     /// GH #607: the frontend's calendar is the backend's. The launch offset is
     /// injected before frontend code runs, from the same zone source as
     /// `JournalDate::today`; `local_clock` keeps it current.

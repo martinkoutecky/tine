@@ -75,7 +75,7 @@ import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
 import { initDebug, dbg, recordDiagnostic, recordSessionActive } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
-import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls } from "./nativeChrome";
+import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls, touchGesturePlatform } from "./nativeChrome";
 import {
   PaneContext,
   closePane,
@@ -693,7 +693,10 @@ export function App(): JSX.Element {
     if (!isTauri()) return;
     let disposed = false;
     let uninstall: () => void = () => {};
-    void backend().appPlatform().then((platform) => {
+    void backend().appPlatform().then((native) => {
+      // touchGesturePlatform() is the real mobile platform, or - only under the
+      // TINE_E2E_TOUCH_GESTURES harness hook - the platform the journey asks for.
+      const platform = touchGesturePlatform() ?? native;
       if (disposed || platform === "desktop") return;
       uninstall = installEdgeSwipe({
         platform,
