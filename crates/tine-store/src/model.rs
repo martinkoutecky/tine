@@ -1669,6 +1669,13 @@ pub(crate) fn document_block_ref_counts(doc: &Document) -> HashMap<String, usize
         }
     }
     let mut counts = std::collections::HashMap::new();
+    // OG parity (#7): the header pre-block is a block with `:block/refs`, so a
+    // `((uuid))` in a page property is one referrer of that block.
+    if let Some(pre) = crate::query::document_page_property_block(doc) {
+        for id in &pre.projection().block_refs {
+            *counts.entry(id.clone()).or_insert(0) += 1;
+        }
+    }
     walk(&doc.roots, &mut counts);
     counts
 }

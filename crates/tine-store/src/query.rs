@@ -594,6 +594,32 @@ fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
     Some(block)
 }
 
+/// The header pre-block as a block, from the document alone (no page entry).
+/// I-12: the one projection of "the pre-block is a real block with `:block/refs`"
+/// for the walkers that have only a `Document` (block-ref badge counts, scoped
+/// referrer invalidation); the entry-taking `page_property_block` builds the
+/// same block with a page-scoped identity for the DTO-producing walkers.
+pub(crate) fn document_page_property_block(doc: &Document) -> Option<DocBlock> {
+    let pre = doc.pre_block.as_deref()?;
+    let is_org = page_document_is_org(doc);
+    let raw = page_property_raw(pre, is_org);
+    if raw.is_empty() {
+        return None;
+    }
+    Some(property_projection(&raw, is_org))
+}
+
+/// The header pre-block when it references block `uuid`, as a page-property row.
+fn page_property_referrer(entry: &PageEntry, pre: &str, uuid: &str) -> Option<BlockDto> {
+    let block = page_property_block(entry, pre)?;
+    if !block.projection().block_refs.iter().any(|r| r == uuid) {
+        return None;
+    }
+    let mut dto = block_to_shallow_dto(&block);
+    dto.page_property = true;
+    Some(dto)
+}
+
 /// Parser-owned explicit page-reference targets contributed by one physical
 /// cached page. This is the projection used by the reconstructible candidate
 /// index; query-time occurrence verification still uses the full evidence
@@ -1086,7 +1112,7 @@ pub(crate) fn block_referrers(graph: &impl GraphRead, uuid: &str) -> Vec<RefGrou
     collect(
         graph,
         |b| b.projection().block_refs.iter().any(|r| r == u),
-        |_, _| None,
+        |entry, pre| page_property_referrer(entry, pre, u),
         None,
     )
 }
@@ -1108,7 +1134,7 @@ pub(crate) fn block_referrers_bounded(
     collect_bounded(
         graph,
         |b| b.projection().block_refs.iter().any(|r| r == u),
-        |_, _| None,
+        |entry, pre| page_property_referrer(entry, pre, u),
         None,
         max_rows,
         max_bytes,
@@ -1269,6 +1295,15 @@ pub(crate) fn page_affects_block_referrers(uuid: &str, doc: &Document) -> bool {
     let uuid = uuid.trim();
     if uuid.is_empty() {
         return false;
+    }
+    if document_page_property_block(doc).is_some_and(|block| {
+        block
+            .projection()
+            .block_refs
+            .iter()
+            .any(|reference| reference == uuid)
+    }) {
+        return true;
     }
     let mut hit = false;
     walk(&doc.roots, &mut |block| {
@@ -1440,38 +1475,51 @@ pub(crate) fn property_facets_bounded(
     let mut exceeded = false;
     let facets = graph.with_pages(|pages| {
         let mut map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        for (_entry, doc) in pages {
+        // Returns false once the budget is exhausted.
+        let mut offer = |k: String, v: String| -> bool {
+            let k = property_key_norm(&k);
+            if tine_core::query::internal_property_keys()
+                .iter()
+                .any(|p| property_key_norm(p) == k)
+            {
+                return true;
+            }
+            if v.trim().is_empty() {
+                return true;
+            }
+            if map.get(&k).is_some_and(|set| set.contains(&v)) {
+                return true;
+            }
+            let key_bytes = if map.contains_key(&k) {
+                0
+            } else {
+                k.len() + 64
+            };
+            let next_bytes = bytes
+                .saturating_add(key_bytes)
+                .saturating_add(v.len())
+                .saturating_add(64);
+            if values >= max_values || next_bytes > max_bytes {
+                exceeded = true;
+                return false;
+            }
+            values += 1;
+            bytes = next_bytes;
+            map.entry(k).or_default().insert(v);
+            true
+        };
+        'pages: for (_entry, doc) in pages {
+            // OG parity (#7): the header pre-block is a block whose properties
+            // are among the graph's property names and values.
+            for (k, v) in page_facets(doc).0 {
+                if !offer(k, v) {
+                    break 'pages;
+                }
+            }
             if !walk_until(&doc.roots, &mut |b| {
                 for (k, v) in b.properties() {
-                    let k = property_key_norm(&k);
-                    if tine_core::query::internal_property_keys()
-                        .iter()
-                        .any(|p| property_key_norm(p) == k)
-                    {
-                        continue;
-                    }
-                    if v.trim().is_empty() {
-                        continue;
-                    }
-                    if map.get(&k).is_some_and(|set| set.contains(&v)) {
-                        continue;
-                    }
-                    let key_bytes = if map.contains_key(&k) {
-                        0
-                    } else {
-                        k.len() + 64
-                    };
-                    let next_bytes = bytes
-                        .saturating_add(key_bytes)
-                        .saturating_add(v.len())
-                        .saturating_add(64);
-                    if values >= max_values || next_bytes > max_bytes {
-                        exceeded = true;
+                    if !offer(k, v) {
                         return false;
-                    } else {
-                        values += 1;
-                        bytes = next_bytes;
-                        map.entry(k).or_default().insert(v);
                     }
                 }
                 true
@@ -2944,6 +2992,108 @@ mod tests {
                 "done-at".to_string(),
                 vec!["one".to_string(), "two".to_string()]
             )]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// OG parity (#7, I-12): the header pre-block is a real block with
+    /// `:block/refs`, so block referrers, block-ref badges and the query
+    /// builder's property pickers must see it exactly like the walkers that
+    /// already project it (backlinks, query execution).
+    #[test]
+    fn header_pre_block_is_a_block_referrer_and_counts_as_one() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join(format!(
+            "tine-header-preblock-block-refs-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        const ID: &str = "12345678-1234-4234-8234-123456789abc";
+        fs::write(
+            dir.join("pages/Source.md"),
+            format!("source:: (({ID}))\n\n- body\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Plain.md"),
+            format!("- body points at (({ID}))\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Target.md"),
+            format!("- target\n  id:: {ID}\n"),
+        )
+        .unwrap();
+
+        let graph = test_snapshot(&dir);
+        let groups = block_referrers(&graph, ID);
+        let pages: Vec<(&str, usize, bool)> = groups
+            .iter()
+            .map(|g| {
+                (
+                    g.page.as_str(),
+                    g.blocks.len(),
+                    g.blocks.iter().any(|b| b.page_property),
+                )
+            })
+            .collect();
+        assert!(
+            pages.contains(&("Source", 1, true)),
+            "the header property block referencing the id is a referrer: {pages:?}"
+        );
+        assert!(pages.contains(&("Plain", 1, false)), "{pages:?}");
+        let bounded = block_referrers_bounded(&graph, ID, usize::MAX, usize::MAX);
+        assert_eq!(bounded.total, 2);
+
+        // Badge counts and scoped invalidation use the same projection.
+        let source_doc = graph
+            .with_pages(|pages| {
+                pages
+                    .into_iter()
+                    .find(|(entry, _)| entry.name == "Source")
+                    .map(|(_, doc)| Document::clone(doc))
+            })
+            .unwrap();
+        assert_eq!(
+            crate::model::document_block_ref_counts(&source_doc).get(ID),
+            Some(&1),
+            "the pre-block counts once like any referring block"
+        );
+        assert!(page_affects_block_referrers(ID, &source_doc));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn property_facets_include_header_page_properties() {
+        use std::fs;
+
+        let dir = std::env::temp_dir().join(format!(
+            "tine-header-preblock-facets-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("pages/Header.md"),
+            "tags:: Target\nstatus:: Target\n\n- first\n  rank:: 1\n",
+        )
+        .unwrap();
+
+        let graph = test_snapshot(&dir);
+        let (facets, exceeded) = property_facets_bounded(&graph, usize::MAX, usize::MAX);
+        assert!(!exceeded);
+        assert_eq!(
+            facets,
+            vec![
+                ("rank".to_string(), vec!["1".to_string()]),
+                ("status".to_string(), vec!["Target".to_string()]),
+                ("tags".to_string(), vec!["Target".to_string()]),
+            ],
+            "OG lists page-header properties among the property names/values"
         );
         let _ = fs::remove_dir_all(&dir);
     }
