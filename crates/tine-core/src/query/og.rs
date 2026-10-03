@@ -676,7 +676,18 @@ impl<'a> OgParse<'a> {
         let filter = match head {
             "and" => Filter::and(lift_directives(self.list(depth + 1))),
             "or" => Filter::or(lift_directives(self.list(depth + 1))),
-            "not" => Filter::not(self.expr(depth + 1)?),
+            // OG `build-and-or-not` (`query_dsl.cljs:128-142,174-202`) emits a
+            // datalog `(not c1 c2 ...)`, which excludes a row only when ALL its
+            // clauses hold: `not` is variadic and negates their conjunction.
+            "not" => {
+                let operands = lift_directives(self.list(depth + 1));
+                // A `not` of nothing but directives has no clause (OG drops it).
+                match operands.len() {
+                    0 => Filter::True,
+                    1 => Filter::not(operands.into_iter().next().expect("one operand")),
+                    _ => Filter::not(Filter::and(operands)),
+                }
+            }
             "task" | "todo" => {
                 self.blocks = true;
                 let markers = self.vector_or_names();

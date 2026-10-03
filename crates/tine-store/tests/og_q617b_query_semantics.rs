@@ -271,3 +271,24 @@ fn a_nested_or_unclosed_collection_is_a_query_error_not_a_guess() {
         );
     }
 }
+
+/// Audit #5: OG `not` is variadic (`query_dsl.cljs:128-142`): `(not a b)` is
+/// datalog `(not a b)`, which drops a row only when ALL its clauses hold.
+#[test]
+fn not_negates_the_conjunction_of_all_its_operands() {
+    let (_dir, graph) = fixture();
+    let work = set(&graph, "(page \"Work\")");
+    let urgent: BTreeSet<String> = work.iter().filter(|b| b.contains("urgent")).cloned().collect();
+    assert_eq!(urgent.len(), 1, "{work:?}");
+    // One operand: the rows it matches go.
+    let minus_a = set(&graph, "(and (page \"Work\") (not (priority A)))");
+    assert_eq!(minus_a, work.difference(&urgent).cloned().collect::<BTreeSet<_>>());
+    // Two operands that no single row satisfies together drop nothing, although
+    // each alone would drop rows (the old reader dropped everything: a syntax error).
+    assert_eq!(set(&graph, "(and (page \"Work\") (not (priority A) (priority B)))"), work);
+    assert_eq!(set(&graph, "(and (page \"Work\") (not (task TODO) (priority A)))"), work);
+    // Operands that one row satisfies together drop exactly that row.
+    assert_eq!(set(&graph, "(and (page \"Work\") (not (priority A) \"urgent\"))"), minus_a);
+    // Variadic `not` also works at the top of the form and with a directive.
+    assert!(!set(&graph, "(not (priority A) \"urgent\" (sort-by priority))").is_empty());
+}
