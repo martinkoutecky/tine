@@ -1052,6 +1052,10 @@ pub(crate) fn backlink_filter_context(
                             context.truncated = true;
                         } else {
                             bytes += estimated;
+                            // Same flag propagation as the ordinary-root loop
+                            // below: an entry clipped at its own text/facet
+                            // budget marks the context (master 39791fba2e8f).
+                            context.truncated |= entry.truncated;
                             context.entries.push(entry);
                         }
                     }
@@ -2891,6 +2895,48 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// master 39791fba2e8f (DUP-6): a page-property root entry that hits its own
+    /// facet budget must mark the whole context truncated, as the ordinary-root
+    /// loop does; otherwise the reference filter presents a clipped facet list
+    /// as complete.
+    #[test]
+    fn backlink_filter_context_propagates_page_property_entry_truncation() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-backlink-filter-pp-trunc-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        std::fs::create_dir_all(dir.join("journals")).unwrap();
+        let tags = (0..BACKLINK_FILTER_MAX_FACETS + 20)
+            .map(|i| format!("facet{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        std::fs::write(
+            dir.join("pages/Source.md"),
+            format!("tags:: Target, {tags}\n\n- body\n"),
+        )
+        .unwrap();
+        let graph = test_snapshot(&dir);
+        let block_id = format!("page-property:{:?}:{}", PageKind::Page, refs::page_key("Source"));
+        let context = backlink_filter_context(
+            &graph,
+            "Target",
+            &[BacklinkFilterTarget {
+                page: "Source".into(),
+                kind: PageKind::Page,
+                block_id,
+            }],
+        );
+        assert_eq!(context.entries.len(), 1, "the page-property root is answered");
+        assert!(context.entries[0].truncated, "the entry itself hit its facet budget");
+        assert!(
+            context.truncated,
+            "a truncated page-property entry must mark the context truncated"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The unqualified two-bound form is OG's journal-page range. Scheduled and
