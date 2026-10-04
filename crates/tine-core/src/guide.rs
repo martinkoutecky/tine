@@ -251,6 +251,25 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn sidebar_and_direct_search_actions_are_documented() {
+        let tips = include_str!("templates/tips.md");
+        for control in [
+            "sidebar/grow-width",
+            "sidebar/shrink-width",
+            "right-sidebar/grow-width",
+            "right-sidebar/shrink-width",
+            "go/search-tab",
+            "All four start unbound",
+            "Titles that fit show no tooltip",
+        ] {
+            assert!(
+                tips.contains(control),
+                "missing sidebar/search Guide control: {control}"
+            );
+        }
+    }
+
+    #[test]
     fn journal_controls_are_documented_in_the_bundled_guide() {
         let tips = include_str!("templates/tips.md");
         for control in [

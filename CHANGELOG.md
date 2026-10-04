@@ -9,6 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 - Wide Markdown, Org, query and sheet tables now use free space on both sides of the text column before scrolling at the pane boundary (UI-OG-QBG-TABLE-BLEED).
+- Added remappable, initially unbound commands to grow/shrink either sidebar width (GH #425) and open a persistent search tab directly (GH #437).
+- Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
 - An unexpected rendering failure in a PDF pane, sidebar item, query result, plugin settings view or dialog now reports its error within that surface with **Retry** and **Copy details**, while sibling surfaces remain usable (GH #490, GH #332; UI-OG-GH490-QBE).

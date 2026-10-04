@@ -1,3 +1,4 @@
+import { adjustSidebarWidth } from "./sidebarSizing";
 import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
 // bindings; users override them via config.edn `:shortcuts {:cmd "binding"}`
@@ -8,7 +9,7 @@ import { browserPlatform } from "./browserPlatform";
 // (Block.tsx) resolve keys through the same merged binding table, so every
 // listed command is remappable from config.edn.
 
-import { openSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, dismissMobileDrawer } from "./ui";
+import { openSwitcher, closeSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, dismissMobileDrawer } from "./ui";
 import { pushToast } from "./toasts";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { zoomReset } from "./zoom";
@@ -16,6 +17,7 @@ import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
 import {
   openJournals,
+  openQueryInNewTab,
   openPage,
   goBack,
   goForward,
@@ -296,6 +298,11 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/split-down", binding: "mod+alt+shift+\\", label: "Split down", scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
   { id: "pane/close", binding: "", label: "Close pane", scope: "global", run: () => void closePane(focusedPaneId()), global: true },
   { id: "pane/toggle-maximize", binding: "mod+alt+m", label: "Toggle maximize active pane", scope: "global", run: () => { togglePaneMaximize(); }, global: true },
+  { id: "sidebar/grow-width", binding: "", label: "Grow left sidebar width", scope: "global", run: () => adjustSidebarWidth("left", true), global: true },
+  { id: "sidebar/shrink-width", binding: "", label: "Shrink left sidebar width", scope: "global", run: () => adjustSidebarWidth("left", false), global: true },
+  { id: "right-sidebar/grow-width", binding: "", label: "Grow right sidebar width", scope: "global", run: () => adjustSidebarWidth("right", true), global: true },
+  { id: "right-sidebar/shrink-width", binding: "", label: "Shrink right sidebar width", scope: "global", run: () => adjustSidebarWidth("right", false), global: true },
+  { id: "go/search-tab", binding: "", label: "Open search tab", scope: "global", run: () => { closeSwitcher(); openQueryInNewTab("", "search", true); }, global: true },
   { id: "pane/grow-width", binding: "", label: "Grow active pane width", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", true); }, global: true },
   { id: "pane/shrink-width", binding: "", label: "Shrink active pane width", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", false); }, global: true },
   { id: "pane/grow-height", binding: "", label: "Grow active pane height", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", true); }, global: true },

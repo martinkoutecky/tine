@@ -1,3 +1,4 @@
+import { resizeSidebar, commitSidebarWidth } from "./sidebarSizing";
 import { Match, Show, Suspense, Switch, createEffect, createSignal, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
@@ -46,7 +47,7 @@ import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
-import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, setSidebarWidth, persistSidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
+import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
@@ -1136,11 +1137,11 @@ export function App(): JSX.Element {
             onMouseDown={(e) => {
               e.preventDefault();
               const onMove = (ev: MouseEvent) =>
-                setSidebarWidth(Math.min(500, Math.max(180, ev.clientX)));
+                resizeSidebar("left", ev.clientX);
               const onUp = () => {
                 window.removeEventListener("mousemove", onMove);
                 window.removeEventListener("mouseup", onUp);
-                persistSidebarWidth();
+                commitSidebarWidth("left");
               };
               window.addEventListener("mousemove", onMove);
               window.addEventListener("mouseup", onUp);

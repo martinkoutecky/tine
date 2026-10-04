@@ -12,7 +12,7 @@ import { backend } from "../backend";
 import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { allPages as allGraphPages, pageListLabels } from "../pages";
 import { navigationName } from "../pageIndex";
-import { EmojiText } from "../render/emoji";
+import { SidebarTitle } from "./SidebarTitle";
 import { NamespaceTree } from "./Namespace";
 import { SidebarFavorites } from "./SidebarFavorites";
 import type { PageKind } from "../types";
@@ -212,7 +212,7 @@ export function Sidebar(props: {
                           openPageContextMenu(e.clientX, e.clientY, target());
                         }}
                       >
-                        <EmojiText text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
+                        <SidebarTitle text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
                       </div>
                     );
                   }}
@@ -253,7 +253,7 @@ export function Sidebar(props: {
                     openPageContextMenu(e.clientX, e.clientY, { name: p.name, pageKind: "page", path: p.path });
                   }}
                 >
-                  <EmojiText text={pageLabel()(p)} />
+                  <SidebarTitle text={pageLabel()(p)} />
                 </div>
               )}
             </For>

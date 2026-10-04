@@ -1,5 +1,6 @@
+import { resizeSidebar, commitSidebarWidth } from "../sidebarSizing";
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
-import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, setRightSidebarWidth, persistRightSidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, type SidebarBlock, type SidebarItem } from "../ui";
+import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, type SidebarBlock, type SidebarItem } from "../ui";
 import { beginRowReorderDrag, rowReorderClickSuppressed, type RowDropTarget } from "./rowReorder";
 import "../styles/rightSidebarReorder.css";
 import { graphEpoch } from "../graphSession";
@@ -126,11 +127,11 @@ export function RightSidebar(): JSX.Element {
           onMouseDown={(e) => {
             e.preventDefault();
             const onMove = (ev: MouseEvent) =>
-              setRightSidebarWidth(Math.min(800, Math.max(220, window.innerWidth - ev.clientX)));
+              resizeSidebar("right", window.innerWidth - ev.clientX);
             const onUp = () => {
               window.removeEventListener("mousemove", onMove);
               window.removeEventListener("mouseup", onUp);
-              persistRightSidebarWidth();
+              commitSidebarWidth("right");
             };
             window.addEventListener("mousemove", onMove);
             window.addEventListener("mouseup", onUp);
