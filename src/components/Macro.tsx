@@ -1,4 +1,5 @@
 import { FailureBoundary } from "./FailureBoundary";
+import { TableWrap } from "./TableWrap";
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { setBoardGroupBy } from "../sheet/mutations";
 import { backend } from "../backend";
@@ -768,7 +769,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
             {(notice) => <div class="query-why-empty-notice">{notice()}</div>}
           </Show>
           <Show when={(explanation()?.rows.length ?? 0) > 0}>
-            <table class="md-table query-why-empty-table">
+            <TableWrap><table class="md-table query-why-empty-table">
               <thead>
                 <tr><th>Condition</th><th>Alone</th><th>Without it</th></tr>
               </thead>
@@ -783,7 +784,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   )}
                 </For>
               </tbody>
-            </table>
+            </table></TableWrap>
           </Show>
         </div>
       </Show>

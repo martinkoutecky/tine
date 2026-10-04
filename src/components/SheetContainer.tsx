@@ -1,3 +1,4 @@
+import { tableBleedGeometry } from "./TableWrap";
 import {
   createSignal,
   onCleanup,
@@ -11,38 +12,9 @@ function px(value: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-const sheetContainerMeasures = new Set<() => void>();
-let mainContentObserver: ResizeObserver | null = null;
-let observedMainContent: HTMLElement | null = null;
-
-function scheduleAllSheetContainerMeasures(): void {
-  for (const schedule of sheetContainerMeasures) schedule();
-}
-
-function observeMainContentForSheets(main: HTMLElement | null, schedule: () => void): () => void {
-  sheetContainerMeasures.add(schedule);
-
-  if (typeof ResizeObserver !== "undefined" && main) {
-    if (observedMainContent !== main) {
-      mainContentObserver?.disconnect();
-      observedMainContent = main;
-      mainContentObserver = new ResizeObserver(scheduleAllSheetContainerMeasures);
-      mainContentObserver.observe(main);
-    }
-  }
-
-  return () => {
-    sheetContainerMeasures.delete(schedule);
-    if (sheetContainerMeasures.size === 0) {
-      mainContentObserver?.disconnect();
-      mainContentObserver = null;
-      observedMainContent = null;
-    }
-  };
-}
-
-/** A sheet viewport. Resets horizontal scroll when its view changes and measures
- * the current surface; work is local to the mounted sheet. */
+/** A sheet viewport. Resets horizontal scroll when its view changes and bleeds
+ * wider content within its own pane by default; nested cells stay contained.
+ * Measurement work is O(1), local to the mounted sheet, with no graph reads. */
 export function SheetContainer(props: { children: JSX.Element; allowBreakout?: boolean }): JSX.Element {
   let el: HTMLDivElement | undefined;
   let scrollEl: HTMLDivElement | undefined;
@@ -85,10 +57,9 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
       surface ? 0 : scrollEl?.scrollWidth ?? el.scrollWidth
     );
 
-    const main = el.closest(".main-content") as HTMLElement | null;
+    const main = el.closest(".main-content, .rs-item-body, .right-sidebar-body") as HTMLElement | null;
     if (main) {
       const mainRect = main.getBoundingClientRect();
-      const gutter = 20;
       const viewportRight = window.visualViewport?.width ?? (window.innerWidth || document.documentElement.clientWidth);
       const parentRight = main.parentElement?.getBoundingClientRect().right ?? 0;
       const stableRight = Math.min(
@@ -97,19 +68,18 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
       );
       const transientRightOverflow = Math.max(0, mainRect.right - stableRight);
       const mainLeft = mainRect.left - transientRightOverflow;
-      const fullSpan = Math.max(0, mainRect.width - gutter * 2);
       const normalLeft = el.getBoundingClientRect().left - effMarginLeft + marginLeft;
-      const breakoutWidth = Math.max(normalWidth, fullSpan > 0 ? Math.min(naturalWidth, fullSpan) : naturalWidth);
-      const spanLeft = mainLeft + gutter;
-      const spanRight = mainLeft + mainRect.width - gutter;
-      const centered = (spanLeft + spanRight) / 2 - breakoutWidth / 2;
-      const breakoutLeft = Math.min(Math.max(centered, spanLeft), Math.max(spanLeft, spanRight - breakoutWidth));
-      const breakoutShift = Math.round(normalLeft - breakoutLeft);
+      const column = el.closest<HTMLElement>(".main-content-inner");
+      const columnRect = column?.getBoundingClientRect();
+      const { width: breakoutWidth, shift: breakoutShift } = tableBleedGeometry(
+        normalLeft, normalWidth, naturalWidth, mainLeft, main.clientWidth || mainRect.width,
+        columnRect ? (columnRect.left + columnRect.right) / 2 : mainLeft + mainRect.width / 2
+      );
       el.style.setProperty("--sheet-breakout-width", `${Math.round(breakoutWidth)}px`);
       el.style.setProperty("--sheet-breakout-shift", `${breakoutShift}px`);
     }
 
-    el.classList.toggle("sheet-breakout", !!props.allowBreakout && !nested && naturalWidth > normalWidth + 1);
+    el.classList.toggle("sheet-breakout", props.allowBreakout !== false && !nested && (props.allowBreakout === true || !!surface?.matches(".sheet-table, .sheet-grid")) && naturalWidth > normalWidth + 1);
     scheduleVerify();
   };
 
@@ -118,17 +88,14 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
     verifyFrame = requestAnimationFrame(() => {
       verifyFrame = 0;
       if (!el || !el.classList.contains("sheet-breakout")) return;
-      const main = el.closest(".main-content") as HTMLElement | null;
+      const main = el.closest(".main-content, .rs-item-body, .right-sidebar-body") as HTMLElement | null;
       if (!main) return;
       const m = main.getBoundingClientRect();
       const r = el.getBoundingClientRect();
-      const gutter = 20;
-      const spanLeft = m.left + gutter;
-      const spanRight = m.right - gutter;
-      const expectedLeft = Math.min(
-        Math.max((spanLeft + spanRight) / 2 - r.width / 2, spanLeft),
-        Math.max(spanLeft, spanRight - r.width)
-      );
+      const column = el.closest<HTMLElement>(".main-content-inner")?.getBoundingClientRect();
+      const { shift } = tableBleedGeometry(r.left, r.width, r.width + 1, m.left, main.clientWidth || m.width,
+        column ? (column.left + column.right) / 2 : (m.left + m.right) / 2);
+      const expectedLeft = r.left - shift;
       if (Math.abs(r.left - expectedLeft) > 2 && verifyBudget > 0) {
         verifyBudget--;
         scheduleMeasureRaw();
@@ -192,7 +159,7 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
       scheduleMeasureAfterFrames(2);
       scheduleMeasureAfterDelay(150);
     }, () => scheduleMeasureAfterFrames(2));
-    const unobserveMain = observeMainContentForSheets(el.closest(".main-content") as HTMLElement | null, scheduleMeasure);
+    const main = el.closest<HTMLElement>(".main-content, .rs-item-body, .right-sidebar-body");
     let surface = scrollEl?.firstElementChild ?? null;
     let resizeObserver: ResizeObserver | null = null;
     const surfaceObserver = typeof MutationObserver === "undefined" || !scrollEl
@@ -213,12 +180,12 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
       onCleanup(() => {
         cancelScheduledMeasures();
         window.removeEventListener("resize", scheduleMeasure);
-        unobserveMain();
       });
       return;
     }
     resizeObserver = new ResizeObserver(scheduleMeasure);
     resizeObserver.observe(el);
+    if (main) resizeObserver.observe(main);
     if (scrollEl) resizeObserver.observe(scrollEl);
     if (surface) resizeObserver.observe(surface);
     if (el.parentElement) resizeObserver.observe(el.parentElement);
@@ -227,7 +194,6 @@ export function SheetContainer(props: { children: JSX.Element; allowBreakout?: b
       cancelScheduledMeasures();
       resizeObserver?.disconnect();
       window.removeEventListener("resize", scheduleMeasure);
-      unobserveMain();
     });
   });
 

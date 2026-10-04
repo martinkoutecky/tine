@@ -294,7 +294,7 @@ describe("SheetGrid", () => {
     dispose();
   });
 
-  it("keeps an overflowing block sheet aligned and internally scrollable", async () => {
+  it("bleeds an overflowing block sheet into its pane before scrolling", async () => {
     let naturalWidth = 640;
     const layout = mockSheetLayout(() => naturalWidth);
     loadMdSheetDoc();
@@ -307,7 +307,7 @@ describe("SheetGrid", () => {
       await settledMeasure();
       const container = root.querySelector(".block-sheet-container") as HTMLElement | null;
       expect(container).not.toBeNull();
-      expect(container!.classList.contains("sheet-breakout")).toBe(false);
+      expect(container!.classList.contains("sheet-breakout")).toBe(true);
       expect(container!.style.getPropertyValue("--sheet-breakout-width")).toBe("640px");
       expect(container!.style.getPropertyValue("--sheet-breakout-shift")).toBe("220px");
       expect(root.querySelector(".sheet-cell .block-sheet-container")).toBeNull();
