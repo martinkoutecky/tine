@@ -1957,6 +1957,7 @@ describe("SheetTable", () => {
       .find((el) => el.textContent?.trim() === "10") as HTMLButtonElement | undefined;
     expect(day10).not.toBeUndefined();
     day10!.click();
+    [...root.querySelectorAll<HTMLButtonElement>(".dp-btn")].find(button => button.textContent === "Done")!.click();
     expect(doc.byId.r1.raw).toContain("SCHEDULED: <2026-07-10 Fri>");
 
     (cell(root, 0, 3).querySelector(".date-chip") as HTMLElement).click();

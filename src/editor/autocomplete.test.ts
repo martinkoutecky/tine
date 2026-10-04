@@ -424,7 +424,7 @@ describe("filterCommands", () => {
     return [
       // The fixture predates this deliberately additive command; keep using it
       // to freeze all of the old command/template rankings.
-      ...COMMANDS.filter((command) => command.label !== "Heading (Auto)" && command.label !== "Embed Youtube timestamp" && command.label !== "That day").map((command) => ({
+      ...COMMANDS.filter((command) => command.label !== "Heading (Auto)" && command.label !== "Embed Youtube timestamp" && command.label !== "That day" && !["Tomorrow", "Yesterday", "Date picker"].includes(command.label)).map((command) => ({
         label: command.label,
         score: commandScore(query, command),
         index: command.matchTieOrder,
@@ -497,7 +497,7 @@ describe("filterCommands", () => {
     const all = filterCommands("");
     expect(all.map((command) => command.label)).toEqual([
       "Page reference", "Link", "Upload an asset", "Voice recording", "Draw.io diagram",
-      "Heading (Auto)", "Heading 1", "Heading 2", "Heading 3", "Heading 4", "Today", "That day", "Current time",
+      "Heading (Auto)", "Heading 1", "Heading 2", "Heading 3", "Heading 4", "Today", "Tomorrow", "Yesterday", "Date picker", "That day", "Current time",
       "TODO", "DOING", "LATER", "NOW", "DONE", "WAITING", "WAIT", "IN-PROGRESS", "CANCELED", "Scheduled", "Deadline",
       "Priority A", "Priority B", "Priority C", "Grid", "Table", "Board", "Code block", "Calculator", "Quote",
       "Admonition: note", "Admonition: tip", "Admonition: important", "Admonition: warning", "Admonition: caution",

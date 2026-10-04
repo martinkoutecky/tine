@@ -818,10 +818,12 @@ export function resetShortcutOverride(id: string) {
   persistShortcuts(next);
 }
 
-// Date picker popup for SCHEDULED / DEADLINE and typed sheet date properties.
+// Date picker: planning, journal-link insertion, and typed sheet date properties.
+// Journal callback receives the configured title only on commit, never cancellation.
 export type DatePickerTarget =
   | "scheduled"
   | "deadline"
+  | { insertJournal: (title: string) => void }
   | { field: `prop:${string}`; fieldType: "date" | "datetime" };
 export const [datePicker, setDatePicker] = graphScopedSignal<
   { blockId: string; which: DatePickerTarget; x: number; y: number }
