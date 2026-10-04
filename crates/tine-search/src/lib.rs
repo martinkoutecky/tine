@@ -115,6 +115,15 @@ pub fn literal_fold(value: &str) -> String {
     value.to_lowercase().nfkc().collect()
 }
 
+/// Content for [`Matcher::parse_exact`]: NFC only, borrowed when already NFC.
+pub fn exact_text(value: &str) -> std::borrow::Cow<'_, str> {
+    if unicode_normalization::is_nfc(value) {
+        std::borrow::Cow::Borrowed(value)
+    } else {
+        std::borrow::Cow::Owned(value.nfc().collect())
+    }
+}
+
 /// Lowercase plus NFC page identity, without compatibility or accent folding.
 pub fn identity_fold(value: &str) -> String {
     value.to_lowercase().nfc().collect()
@@ -254,11 +263,12 @@ impl Matcher {
         )
     }
 
-    /// Parse deliberate query content without case, accent or Unicode folding.
-    /// Pass raw content to both arguments of [`Self::matches`]. Search callers
-    /// continue to use [`Self::parse_with_policy`].
+    /// Parse deliberate query content without case or accent folding. Only
+    /// canonical composition is normalized (NFC), so `é` typed precomposed and
+    /// decomposed is the same text. Pass [`exact_text`] of the content to
+    /// [`Self::matches`]. Search callers continue to use [`Self::parse_with_policy`].
     pub fn parse_exact(query: &str) -> Matcher {
-        Self::parse_with_fold(query, str::to_string)
+        Self::parse_with_fold(query, |q| exact_text(q).into_owned())
     }
 
     fn parse_with_fold(query: &str, fold: fn(&str) -> String) -> Matcher {
@@ -292,7 +302,7 @@ impl Matcher {
 
     /// Does the body match? `lower` must use the same policy as the matcher:
     /// `canonical_fold` for `parse`/policy true, `literal_fold` for policy false.
-    /// For `parse_exact`, pass raw content as `lower`. `orig` is the
+    /// For `parse_exact`, pass [`exact_text`] of the content as `lower`. `orig` is the
     /// original body for regex; Empty/InvalidRegex match nothing.
     pub fn matches(&self, lower: &str, orig: &str) -> bool {
         match self {

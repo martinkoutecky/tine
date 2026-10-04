@@ -774,12 +774,20 @@ fn eval_content(op: CmpOp, value: &Value, block: &DocBlock, ctx: &EvalCtx) -> bo
     // OG query_dsl/build-block-content → rules.cljc block-content uses
     // includes? on raw :block/content. D4 keeps deliberate queries exact;
     // search and find keep their own folding policy.
-    let body = block.raw();
-    let text = || value.as_text();
-    let listed = |items: &[Value]| items.iter().any(|item| item.as_text() == Some(body));
+    // Only canonical composition is normalized (NFC): precomposed and
+    // decomposed `é` are the same text; case and accents stay significant.
+    use tine_core::search_query::exact_text;
+    let raw = block.raw();
+    let body = &*exact_text(raw);
+    let text = || value.as_text().map(exact_text);
+    let listed = |items: &[Value]| {
+        items
+            .iter()
+            .any(|item| item.as_text().map(exact_text).as_deref() == Some(body))
+    };
     match op {
-        CmpOp::Like => text().is_some_and(|pattern| ctx.cache.like(body, pattern)),
-        CmpOp::StartsWith => text().is_some_and(|prefix| body.starts_with(prefix)),
+        CmpOp::Like => text().is_some_and(|pattern| ctx.cache.like(body, &pattern)),
+        CmpOp::StartsWith => text().is_some_and(|prefix| body.starts_with(&*prefix)),
         CmpOp::Eq => text().is_some_and(|text| body == text),
         CmpOp::NotEq => text().is_some_and(|text| body != text),
         CmpOp::In => value.as_list().is_some_and(listed),
@@ -788,12 +796,12 @@ fn eval_content(op: CmpOp, value: &Value, block: &DocBlock, ctx: &EvalCtx) -> bo
         CmpOp::Match => value.as_text().is_some_and(|text| {
             ctx.compiled
                 .match_program(text)
-                .is_some_and(|m| m.matches(body, body))
+                .is_some_and(|m| m.matches(body, raw))
         }),
         // An invalid (or over-limit) regex is retained but matches nothing.
         CmpOp::Regex => value
             .as_text()
-            .is_some_and(|text| ctx.compiled.regex(text).is_some_and(|r| r.is_match(body))),
+            .is_some_and(|text| ctx.compiled.regex(text).is_some_and(|r| r.is_match(raw))),
         _ => false,
     }
 }

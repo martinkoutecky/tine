@@ -8750,7 +8750,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_pdf_creates_og_artifacts_in_preferred_org_format() {
+    fn first_annotation_creates_og_artifacts_in_preferred_org_format() {
         let dir = scratch("pdf-open-org");
         fs::create_dir_all(dir.join("logseq")).unwrap();
         fs::write(
@@ -8763,9 +8763,19 @@ mod tests {
         assert!(state.highlights.is_empty());
         assert_eq!(state.page, None);
         assert_eq!(state.scale, None);
+        // AP5 (2026-10-04): opening reads only; the first annotation creates
+        // the sidecar and the hls page in the preferred format.
+        assert!(!dir.join("assets").join("paper.edn").exists());
+        assert!(!dir.join("pages").join("hls__paper.org").exists());
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+        tine_graph_features::pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[])
+            .unwrap();
 
         let sidecar = fs::read_to_string(dir.join("assets").join("paper.edn")).unwrap();
-        assert_eq!(tine_core::pdf::parse_pdf_state(&sidecar), state);
+        assert_eq!(
+            tine_core::pdf::parse_pdf_state(&sidecar).highlights.len(),
+            1
+        );
         let org_path = dir.join("pages").join("hls__paper.org");
         assert!(org_path.exists());
         assert!(!dir.join("pages").join("hls__paper.md").exists());

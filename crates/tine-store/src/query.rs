@@ -2494,9 +2494,10 @@ mod tests {
         assert!(selects("\"C:\\tmp\"", "open C:\\tmp now"));
         assert!(selects("\"quick brown\"", "the quick brown fox"));
         assert!(!selects("\"slow\"", "the quick brown fox"));
-        // Canonical composition and the shared default search fold.
+        // D4 (2026-10-04): canonical composition only; no accent or case fold.
         assert!(selects("\"Résumé\"", "Re\u{301}sume\u{301}"));
-        assert!(selects("\"Resume\"", "Re\u{301}sume\u{301}"));
+        assert!(!selects("\"Resume\"", "Re\u{301}sume\u{301}"));
+        assert!(!selects("\"résumé\"", "Résumé"));
     }
 
     /// Macro arguments arrive without their source quotes after the parser has
