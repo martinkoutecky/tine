@@ -34,44 +34,39 @@ export function codeFenceOnly(text: string, format: "md" | "org"): CodeFenceShap
 // ---------------------------------------------------------------------------
 // GH #412/#413: the body-only projection behind the code editor.
 //
-// While the whole visible block is ONE COMPLETE code wrapper, the block editor
-// shows only the payload between the wrapper lines and commits re-attach the
-// exact wrapper bytes. The projection is the pure contract: it splits the raw
-// text into `open` (opening fence line, newline included), `body` (everything
-// between the wrapper lines, verbatim) and `close` (closer line through the
-// end of the block), so `open + body + close === text` always holds. Unlike
-// `codeFenceOnly` (a presentation-shape detector that tolerates an unclosed
-// fence while typing), the projection requires a CLOSED wrapper as lsdoc
-// closes it (OG/mldoc, not CommonMark: the closer's length and character are
-// not compared). Mixed content, incomplete/malformed wrappers and ```calc
-// (its own editor mode) return null and keep raw editing.
+// One complete code body, chosen by a raw caret for mixed blocks or by the
+// whole-block wrapper otherwise. open/body/close hold exact prefix/payload/suffix
+// bytes. Parser ranges own the boundaries; calc and incomplete wrappers stay raw.
 
 export interface CodeBodyProjection {
-  /** Opening fence/`#+begin` line bytes INCLUDING the trailing newline. */
+  /** Exact prefix through the opening line, INCLUDING the trailing newline. */
   open: string;
   /** Body bytes between the wrapper lines, verbatim (may be "" or end in "\n"). */
   body: string;
-  /** Closing fence/`#+end` line through the end of the text (trailing blank
-   *  lines after the closer included, exactly as authored). */
+  /** Exact suffix from the structural separator through the end of the text. */
   close: string;
   /** Info-string language id ("" when none). */
   lang: string;
 }
 
-/** Split a COMPLETE whole-block code wrapper into exact open/body/close
- *  bytes, or null for mixed, incomplete, malformed, calc, or non-code text. */
-export function codeBodyProjection(text: string, format: "md" | "org"): CodeBodyProjection | null {
-  const fence = wrapperOf(text, format);
+/** Split a complete code wrapper into exact prefix/body/suffix bytes. Without
+ *  a caret, require a whole-block wrapper; with a raw UTF-16 caret, select its
+ *  code body in mixed content. Null for incomplete, malformed, calc or non-code.
+ *  O(block text), using the cached parser regions; never recognizes syntax. */
+export function codeBodyProjection(text: string, format: "md" | "org", caret?: number): CodeBodyProjection | null {
+  const fence = caret === undefined ? wrapperOf(text, format) : codeFences(text, format).find(f =>
+    f.lang !== "calc" && f.openEnd <= caret && (caret < f.closeStart || f.openEnd === f.closeStart && caret === f.closeStart));
   // Incomplete wrappers (no closer yet) are still being authored; content after the
   // closer other than blank lines is mixed.
-  if (!fence || !fence.closed || text.slice(fence.end).trim() !== "") return null;
+  if (!fence || !fence.closed || (caret === undefined && text.slice(fence.end).trim() !== "")) return null;
   const open = text.slice(0, fence.openEnd);
   // The final newline before the closer is wrapper structure, not editable
   // payload. Keeping it in `body` made every one-character live commit project
   // a new trailing newline back into the controlled textarea, so the next
   // character landed on a fresh line. Preserve that exact byte in `close`
   // instead; explicit payload newlines remain in `body`.
-  const structuralSeparator = Math.max(open.length, fence.closeStart - 1);
+  const separatorSize = text.slice(fence.closeStart - 2, fence.closeStart) === "\r\n" ? 2 : 1;
+  const structuralSeparator = Math.max(open.length, fence.closeStart - separatorSize);
   return {
     open,
     body: text.slice(open.length, structuralSeparator),

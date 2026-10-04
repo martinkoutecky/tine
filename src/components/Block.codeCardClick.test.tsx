@@ -30,10 +30,10 @@ const BODY = "const a = 1;\nconst b = 2;\nconst c = 3;";
 function clickCode(
   raw: string,
   landOn: (code: Element) => { node: Node; offset: number },
-  init: { name: string },
+  init: { name: string; format?: "md" | "org"; card?: number },
 ): { root: HTMLElement; dispose: () => void } {
   const block: BlockDto = { id: `card-${init.name}`, raw, collapsed: false, children: [] };
-  const page: PageDto = { name: init.name, kind: "page", title: init.name, pre_block: null, blocks: [block] };
+  const page: PageDto = { name: init.name, format: init.format, kind: "page", title: init.name, pre_block: null, blocks: [block] };
   loadSingle(page);
   const root = document.createElement("div");
   document.body.appendChild(root);
@@ -41,7 +41,7 @@ function clickCode(
     <For each={pageByName(init.name)?.roots ?? []}>{(id) => <Block id={id} />}</For>
   ), root);
   const content = root.querySelector(".block-content") as HTMLElement;
-  const code = root.querySelector("pre.code-block > code")!;
+  const code = root.querySelectorAll("pre.code-block > code")[init.card ?? 0]!;
   const target = landOn(code);
   (document as unknown as { caretRangeFromPoint: () => Range }).caretRangeFromPoint = () => {
     const range = document.createRange();
@@ -99,14 +99,26 @@ describe("clicking a code block places the caret where clicked (GH #489)", () =>
       dispose();
     }
   });
-  it("mixed paragraph and code after a soft break uses the existing whole-block source editor (GH #510 question)", () => {
+  it("mixed paragraph and code after a soft break opens only the clicked body (GH #510)", () => {
     const raw = "paragraph\n```js\nconst x = 1;\n```";
     const { root, dispose } = clickCode(raw, code => ({ node: textNodeContaining(code, "const x"), offset: 0 }), { name: "Mixed code click" });
     try {
       const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
-      expect(ta.value).toBe(raw);
-      expect(ta.classList.contains("code-edit")).toBe(false);
+      expect(ta.value).toBe("const x = 1;");
+      expect(ta.selectionStart).toBe(0);
+      expect(ta.classList.contains("code-edit")).toBe(true);
     } finally { dispose(); }
   });
 
+});
+
+it.each(["md", "org"] as const)("clicks the second %s fence at its own column", format => {
+  const raw = format === "md" ? "α intro\n```js\nfirst\n```\nprose\n~~~py\nsecond\n~~~\nend"
+    : "α intro\n#+BEGIN_SRC js\nfirst\n#+END_SRC\nprose\n#+BEGIN_SRC python\nsecond\n#+END_SRC\nend";
+  const { root, dispose } = clickCode(raw, code => ({ node: textNodeContaining(code, "second"), offset: 3 }),
+    { name: `Second ${format}`, format, card: 1 });
+  try {
+    const ta = root.querySelector("textarea")!;
+    expect(ta.value).toBe("second"); expect(ta.selectionStart).toBe(3);
+  } finally { dispose(); }
 });

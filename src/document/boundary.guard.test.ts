@@ -82,7 +82,6 @@ function backendWriteViolations(all: Sources): string[] {
   const directKinds: Record<string, { index: number; kinds: string[] }> = {
     renamePage: { index: 2, kinds: ["rename-page"] },
     copyGuideIntoGraph: { index: 1, kinds: ["replace-page"] },
-    openPdf: { index: 2, kinds: ["create-page"] },
     restoreBackup: { index: 1, kinds: ["replace-page"] },
     trashJournalFile: { index: 1, kinds: ["delete-page"] },
     mergePages: { index: 2, kinds: ["insert-blocks", "delete-page"] },

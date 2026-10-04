@@ -119,7 +119,8 @@ import { propertyEditorSession } from "../editor/propertySession";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
 import { caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
-import { codeBodyExitTrim, codeBodyJoin, codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
+import { createCodeBodyEditor } from "../editor/codeBodyEditor";
+import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
@@ -597,8 +598,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const hideFn = () => (isAnnot() ? hideAll : sheetCell ? isSheetCellHidden : isBuiltinHidden);
   const editorParts = createMemo(() => propertySession.split(node().raw, hideFn(), pageFmt()));
   const editorValue = () => editorParts().visible;
-  const codeShape = createMemo(() => codeFenceOnly(editorValue(), pageFmt()));
-  const codeEditing = () => codeShape() !== null;
+  // GH #357: while the buffer IS one whole-block code fence the editor presents
+  // as the same mono, no-wrap card the rendered face is (no re-layout jump).
+  // Mixed content / ```calc keep their own modes; re-derived per keystroke.
   const editorHeadingLevel = createMemo(() => {
     const visible = editorValue();
     if (visible.includes("\n")) return null;
@@ -638,8 +640,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     if (!commitAsCalc && !codeShown() && text === editorValue()) return;
     // For a code wrapper `text` is the payload body: re-attach the exact wrapper
     // bytes (GH #412/#413: the body-only projection is reversible).
-    const visible = commitAsCalc ? serializeCalcExitCommit(text, editorValue()) : codeWrapCommit(text) ?? text;
-    const next = propertySession.join(visible, editorParts().hidden, node().raw, hideFn(), pageFmt());
+    const visible = commitAsCalc ? serializeCalcExitCommit(text, editorValue()) : text;
+    const next = (!commitAsCalc ? codeWrapCommit(text) : null) ?? propertySession.join(visible, editorParts().hidden, node().raw, hideFn(), pageFmt());
     if (next === node().raw) return;
     const setRawOpts = opts && "timetracking" in opts ? { timetracking: opts.timetracking } : undefined;
     // GH #515: capture once for the autosize frame, before live mirrors above react.
@@ -671,17 +673,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const [acBlockState, setAcBlockState] = createSignal<"pending" | "error" | "ready" | null>(null);
   const acVisible = () => !!ac() && (acItems().length > 0 || acBlockState() !== null);
   const [acIndex, setAcIndex] = createSignal(0);
-  // GH #412/#413: inside a COMPLETE whole-block code wrapper the editor shows
-  // only the payload between the wrapper lines (fences stay out of the editing
-  // surface, and select-all reaches only the payload); commits re-attach the
-  // exact raw wrapper bytes via the reversible projection. Mixed content,
-  // incomplete wrappers and ```calc keep raw editing. The code-language picker
-  // suppresses the swap while open: its query lives on the opener line.
-  const codeShown = createMemo(() => (ac()?.kind === "code-language" ? null : codeBodyProjection(editorValue(), pageFmt())));
-  const codeWrapCommit = (text: string): string | null => {
-    const p = codeShown();
-    return p ? codeBodyJoin(p, text) : null;
-  };
+  const codeView = createCodeBodyEditor(editorValue, pageFmt, () => !sheetCell && !isCalc() && ac()?.kind !== "code-language", () => node().raw);
+  const codeShown = codeView.shown;
+  const codeEditing = createMemo(() => codeShown() !== null || codeFenceOnly(editorValue(), pageFmt()) !== null);
+  const codeWrapCommit = codeView.join;
   // One door to the fence language picker: `/Code block` and the hand-typed ```
   // scaffold both come here (GH #507). While open `codeShown` keeps the raw
   // view so the opener line stays visible; choosing a language, or Escape,
@@ -973,6 +968,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const [selectionOverflowOpen, setSelectionOverflowOpen] = createSignal(false);
   let selectionOverflowRef: HTMLDivElement | undefined;
   const updateSel = () => {
+    if (!editorMounted || !ref.isConnected || !node()) return;
+    codeView.syncSelection(ref);
     const selected = ref.selectionStart !== ref.selectionEnd;
     setHasSel(selected);
     if (!selected) setSelectionOverflowOpen(false);
@@ -1767,11 +1764,16 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const focusNow = () => {
     const historySelection = takeHistoryEditorSelectionFor(props.id, surfaceKey);
     const want = takeCaretFor(props.id);
+    const rawCaret = historySelection && !codeBodyProjection(editorValue(), pageFmt()) ? historySelection.start
+      : typeof want === "number" ? want : null;
+    if (rawCaret !== null) codeView.enter(rawCaret, historySelection?.end ?? rawCaret);
+    ref.value = codeShown()?.body ?? (historySelection ? editorValue() : ref.value);
     ref.focus();
     const v = ref.value;
     if (historySelection) {
-      const end = Math.min(historySelection.end, v.length);
-      const start = Math.min(historySelection.start, end);
+      const offset = codeView.mixed() ? codeShown()!.open.length : 0;
+      const end = Math.min(historySelection.end - offset, v.length);
+      const start = Math.min(historySelection.start - offset, end);
       ref.setSelectionRange(start, end);
       revealCaretColumn(start);
       return;
@@ -1816,7 +1818,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       blockId: props.id,
       owner: editingOwner(),
       surface: surfaceKey,
-      selection: () => ({ start: ref.selectionStart, end: ref.selectionEnd }),
+      selection: () => codeView.selection(ref),
       viewport: () => ({ editor: ref, scroller: nearestScrollableY(ref) }),
       focused: () => typeof document !== "undefined" && document.activeElement === ref,
     });
@@ -2378,6 +2380,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // IME owns its key events until compositionend commits the finalized value.
     if (compositionActive || e.isComposing || e.keyCode === 229) return;
 
+    if (codeView.leaveOnKey(e, ref)) { autosize(); return; }
     const start = ref.selectionStart;
     const end = ref.selectionEnd;
     const raw = ref.value;
@@ -3061,7 +3064,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   return (
     <div class="editor-wrap" classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }}>
       <Show when={codeEditing()}>
-        <span class="code-language">{codeShape()?.lang.toLowerCase()}</span>
+        <span class="code-language">{(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang.toLowerCase()}</span>
         <LineGutter lines={(codeShown()?.body ?? editorValue()).split("\n")} code />
       </Show>
       <Show when={isCalc()}>
@@ -3081,6 +3084,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         onKeyDown={onKeyDown}
         onKeyUp={(e) => {
           if (e.key.toLowerCase() === "v") clearPasteRaw();
+          if (e.key.startsWith("Arrow")) updateSel();
         }}
         onFocus={() => {
           noteSurfaceFocused(surfaceKey);

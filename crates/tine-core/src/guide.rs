@@ -475,6 +475,8 @@ mod rename_guide_tests {
         let tips = include_str!("templates/tips.md");
         assert!(tips.contains("**Code blocks**: type ``` "));
         assert!(tips.contains("only the code itself is in the text box"));
+        assert!(tips.contains("clicking a code region edits only that region"));
+        assert!(tips.contains("edit the whole bullet as source; surrounding text stays intact"));
         assert!(
             tips.contains("**Drag a bullet onto another bullet and move a little to the right**")
         );

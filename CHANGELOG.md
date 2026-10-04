@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 - Query property commas now follow Logseq's configured keys; query text matches raw content with exact case and accents, while Search keeps folding (GH #624). Imported `query-table::` and trailing `table` choices are honored without writing Logseq view properties.
+- GH #510: edit a code region inside a mixed text block without exposing its fences; boundary navigation returns to source editing and preserves surrounding text.
 - Find searches main and split panes plus expanded right-sidebar items, with next/previous traversing them in order (GH #559).
 - Search-tab results open in new tabs while keeping Search; middle-click and modifiers choose background tabs, sidebar or another pane, and page results share the Quick Switcher context menu (GH #416).
 - Opening and reading graph PDFs leaves annotation files untouched; create the highlight sidecar and notes page on the first annotation (GH #577).
