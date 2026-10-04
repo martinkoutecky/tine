@@ -4,7 +4,7 @@
 // builds the tree from the live doc. The inline "remove" transforms are
 // policies over parser-owned spans, shared with markup export.
 
-import { cleanInline } from "./exportMarkup";
+import { cleanInline, expandExportNodes } from "./exportMarkup";
 import { editBlock } from "../render/parse";
 import { renderedBlockText, type RenderedTextOptions } from "../render/renderedText";
 import type { Format } from "../render/ast";
@@ -17,7 +17,7 @@ export type MaxDepth = "all" | number;
 
 // rendered = the text as displayed (glyphs, no markup markers) — lsdoc-AST
 //            flattening via render/renderedText.ts, never a regex re-scan.
-// source   = the raw markdown/org, with parser-owned cleanup spans.
+// source   = markup-preserving Markdown/Org with resolved refs/embeds and parser-owned cleanup.
 export type ExportContent = "rendered" | "source";
 
 export interface ExportOptions {
@@ -38,6 +38,7 @@ export interface ExportOptions {
   resolveRefsFully?: boolean;
   resolveBlockRef?: RenderedTextOptions["resolveBlockRef"];
   resolveMacro?: RenderedTextOptions["resolveMacro"];
+  resolveEmbed?: (name: string, args: string[]) => ExportNode[] | null;
 }
 
 export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
@@ -61,7 +62,7 @@ export interface ExportNode {
   children: ExportNode[];
 }
 
-/** One block's export lines: rendered (AST flattening) or source (raw + parser-owned cleanup). Both honor removeProperties/stripLinks/removeTags; emphasis
+/** One block's export lines: rendered (AST flattening) or source (resolved markup + parser-owned cleanup). Both honor removeProperties/stripLinks/removeTags; emphasis
  *  markers only exist in source. */
 function blockExportLines(n: ExportNode, opts: ExportOptions): string[] {
   if (opts.content === "rendered") {
@@ -77,7 +78,7 @@ function blockExportLines(n: ExportNode, opts: ExportOptions): string[] {
     }).split("\n");
   }
   const raw = opts.removeProperties ? editBlock(n.raw, n.format ?? "md", { kind: "visible" }) : n.raw;
-  return cleanInline(raw, n.format ?? "md", opts).split("\n");
+  return cleanInline(raw, n.format ?? "md", {...opts, resolveBlockRef:undefined}).split("\n");
 }
 
 /** Serialize an export-node forest to text per `opts`. */
@@ -112,7 +113,7 @@ export function exportOutline(nodes: ExportNode[], opts: ExportOptions): string 
       for (const c of n.children) walk(c, level + 1);
     }
   };
-  for (const n of nodes) walk(n, 0);
+  for (const n of opts.content === "source" ? expandExportNodes(nodes, opts) : nodes) walk(n, 0);
   while (out.length && out[out.length - 1] === "") out.pop();
   return out.join("\n");
 }

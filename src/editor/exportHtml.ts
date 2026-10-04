@@ -1,6 +1,7 @@
 import type { ExportNode } from "./exportText";
 import {
   includesChildren,
+  expandExportNodes,
   nodeHtml,
   type MarkupExportOptions,
 } from "./exportMarkup";
@@ -29,7 +30,7 @@ function listItem(node: ExportNode, options: MarkupExportOptions, level: number,
 export function exportHtml(nodes: ExportNode[], options: MarkupExportOptions): string {
   return [
     "<ul>",
-    ...nodes.flatMap((node) => listItem(node, options, 1, "  ")),
+    ...expandExportNodes(nodes, options).flatMap((node) => listItem(node, options, 1, "  ")),
     "</ul>",
   ].join("\n");
 }

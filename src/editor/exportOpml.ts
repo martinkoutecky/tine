@@ -3,6 +3,7 @@ import {
   escapeXmlAttribute,
   escapeXmlText,
   includesChildren,
+  expandExportNodes,
   nodeText,
   type MarkupExportOptions,
 } from "./exportMarkup";
@@ -37,7 +38,7 @@ export function exportOpml(
     `    <title>${escapeXmlText(title)}</title>`,
     "  </head>",
     "  <body>",
-    ...nodes.flatMap((node) => outline(node, options, 1, "    ")),
+    ...expandExportNodes(nodes, options).flatMap((node) => outline(node, options, 1, "    ")),
     "  </body>",
     "</opml>",
   ].join("\n");

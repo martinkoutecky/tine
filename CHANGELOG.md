@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Search-tab results open in new tabs while keeping Search; middle-click and modifiers choose background tabs, sidebar or another pane, and page results share the Quick Switcher context menu (GH #416).
 - Opening and reading graph PDFs leaves annotation files untouched; create the highlight sidecar and notes page on the first annotation (GH #577).
 - Date pickers keep a selected day open for time/repeat edits; Done or clicking outside applies the complete choice, while Escape cancels (GH #30).
+- GH #407: Markdown/Org copy export preserves formatting while resolving block refs and expanding embeds; HTML/OPML share resolution, hidden IDs are omitted, and plain text retains user property separators.
 - PDF `file://` links now open in the desktop's default viewer with their full path, without redirecting to graph assets or creating annotation pages (GH #577).
 - Android and iOS startup no longer shows “Couldn’t read the window state” from an unsupported desktop maximize query (GH #621).
 - Journals feed days now show Linked References with counts and the shared collapse/filter controls, loading as you scroll and hiding empty sections (GH #481).
