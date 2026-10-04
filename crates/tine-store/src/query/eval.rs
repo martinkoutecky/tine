@@ -16,8 +16,16 @@
 //! registry (§6.3). Only master's production comparison mode (`Both`) exists
 //! here; master's four counterfactual modes are an oracle-attribution device
 //! with no product caller, so they were not ported.
+//! Structural block relations share a page-local preorder fold: `parent` is
+//! to-zero-or-one; `ancestors` and `descendants` are strict, unbounded block
+//! sets. Related predicates see that block's own path refs. Each relation leaf
+//! costs O(page blocks * predicate cost + page reference occurrences) via the
+//! existing path-ref walk, and O(page blocks) temporary memory. No page or preamble
+//! is an ancestor. See `eval/hierarchy.rs` for the cost guard (I-25).
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
+
+mod hierarchy;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -208,6 +216,7 @@ impl EvalCache {
 /// Per-page evaluation context: the page row a block row belongs to, plus the
 /// evaluation's one `today` (relative date literals stay unresolved in the IR).
 pub(crate) struct EvalCtx<'a> {
+    hierarchy: OnceCell<hierarchy::Hierarchy<'a>>,
     /// The page's journal-day ordinal (`yyyymmdd`), or `None` for named pages.
     pub(crate) journal: Option<i64>,
     pub(crate) is_journal: bool,
@@ -252,6 +261,7 @@ impl<'a> EvalCtx<'a> {
         cache: &'a EvalCache,
     ) -> Self {
         EvalCtx {
+            hierarchy: OnceCell::new(),
             journal,
             is_journal: kind == PageKind::Journal,
             page_name: name,
@@ -381,11 +391,10 @@ fn eval_block_leaf(
                 eval_name_element(pred, tag)
             }),
             Rel::Props => eval_props(*quant, pred, &block.projection().properties(), ctx),
-            Rel::Children => quantify(*quant, block.children.iter(), |child| {
-                // A child is a fresh row: it keeps the anchor's ancestor context,
-                // matching the direct-children-only rule (A1).
-                eval_block(pred, child, ancestor_refs, ctx)
-            }),
+            Rel::Children | Rel::Parent | Rel::Ancestors | Rel::Descendants => ctx
+                .hierarchy
+                .get_or_init(|| hierarchy::Hierarchy::new(ctx.page_roots))
+                .evaluate(*rel, *quant, pred, block, ctx),
             // To-one: the page row is exactly one element.
             Rel::Page => {
                 let hit = eval_page(pred, ctx);

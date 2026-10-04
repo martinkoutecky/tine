@@ -56,6 +56,12 @@ icon:: 🔍
     @block and prop('cost') > 100 and scheduled between today and '+7d'
     ```
   - 4. Three forms are Tine's own. `any(children, …)` and `every(prop('tags'), …)` ask about the things a row contains — a block's children, a page's blocks, a key's values. `off(…)`, or a line beginning `-- `, keeps a condition in the query without running it. And `tag('x')` and `page_tag('x')` spell out what `#x` means on each kind of row.
+  - 5. Outline conditions use `any`, `none`, or `every` over `parent` (direct parent), `ancestors` (all parents above), `children` (direct children), or `descendants` (all blocks below, at any depth). The condition inside binds to each related block; the result is the anchor block. The anchor itself and the owning page are excluded. With no related blocks, `any` is false and `none` and `every` are true.
+  - For example, find an action mentioning a budget under a project whose branch contains an approved item:
+  - ```tql
+    @block and content match 'budget -draft' and any(ancestors, content match 'project') and any(parent, any(descendants, content match 'approved'))
+    ```
+  - `content match` accepts the same words, `OR`, exclusions, quoted phrases and `/regex/` as search. Combine conditions on ancestors and descendants to search both directions. These relations belong to TQL; ordinary quick-search syntax and the result layout stay as before.
   - What you should see: an unknown word is named, not swallowed. When the message comes with a place in the text, a **Show me** button beside it selects exactly that much of what you typed. A query with a word Tine could not read returns **no results** — its result area says "Tine didn't understand part of this query, so it returned no results" — rather than quietly running a shorter query.
 - ## Property types
   - 1. A property key means more when Tine knows what its values ARE. Open a property in **Edit as visual query** and Tine names the type it has observed across your graph — `text`, `number`, `date`, `checkbox`, or `ref` (a page link) — and says `list of …` when the key normally holds several values at once.

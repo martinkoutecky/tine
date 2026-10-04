@@ -396,7 +396,7 @@ fn tql_rel(rel: Rel, quant: Quant, pred: &Filter, through_page: bool) -> String 
             None => format!("any(tags, {})", tql_expr(pred, Prec::Or)),
         },
         Rel::Props => tql_props(quant, pred, through_page),
-        Rel::Children | Rel::Blocks => format!(
+        Rel::Children | Rel::Parent | Rel::Ancestors | Rel::Descendants | Rel::Blocks => format!(
             "{}({}, {})",
             quant_name(quant),
             rel.tql_name(),
@@ -788,9 +788,14 @@ fn og_rel(
             _ => None,
         },
         Rel::Props => og_props(pred, through_page || anchor == Anchor::Page),
-        // `tags` (the block's own inline tags), `children` and `blocks` are
-        // Tine-only relations: OG's DSL has no head for any of them.
-        Rel::Tags | Rel::Children | Rel::Blocks => None,
+        // Inline tags and structural block relations are Tine-only:
+        // OG's simple-query DSL has no head for any of them.
+        Rel::Tags
+        | Rel::Children
+        | Rel::Parent
+        | Rel::Ancestors
+        | Rel::Descendants
+        | Rel::Blocks => None,
     }
 }
 

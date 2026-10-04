@@ -297,6 +297,39 @@
         "kind": "leaf",
         "leaf": {
           "kind": "rel",
+          "rel": "parent",
+          "quant": "any",
+          "pred": {
+            "kind": "true"
+          }
+        }
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "rel",
+          "rel": "ancestors",
+          "quant": "none",
+          "pred": {
+            "kind": "false"
+          }
+        }
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "rel",
+          "rel": "descendants",
+          "quant": "every",
+          "pred": {
+            "kind": "true"
+          }
+        }
+      },
+      {
+        "kind": "leaf",
+        "leaf": {
+          "kind": "rel",
           "rel": "children",
           "quant": "any",
           "pred": {

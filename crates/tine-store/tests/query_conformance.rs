@@ -823,3 +823,194 @@ fn a_sampled_page_query_over_the_row_bound_returns_its_sample() {
     assert_eq!(page_names(&sampled).len(), 5);
     assert_eq!(sampled.matched_total, Some(20_001));
 }
+
+#[test]
+fn hierarchy_relations_select_anchors_through_tql() {
+    let fixture = open(&[(
+        "pages/Outline.md",
+        "- project [[RootRef]]\n\t- middle\n\t\t- TODO needle\n\t\t- DONE other\n- outside\n",
+    )]);
+    for (source, expected) in [
+        ("content match 'needle' and any(parent, content match 'middle')", vec!["TODO needle"]),
+        ("content match 'needle' and any(ancestors, content match 'project')", vec!["TODO needle"]),
+        ("content match 'project' and any(descendants, content match 'needle')", vec!["project [[RootRef]]"]),
+        ("content match 'project' and any(children, content match 'needle')", vec![]),
+        ("content match 'outside' and none(parent, true) and every(ancestors, false) and none(descendants, true)", vec!["outside"]),
+        ("content match 'needle' and any(parent, any(parent, content match 'project'))", vec!["TODO needle"]),
+        ("content match 'project' and any(descendants, any(parent, content match 'middle'))", vec!["project [[RootRef]]"]),
+        ("content match 'needle' and any(ancestors, any(descendants, task = 'DONE'))", vec!["TODO needle"]),
+        ("content match 'project' and every(descendants, [[RootRef]])", vec!["project [[RootRef]]"]),
+        ("content match 'needle' and none(parent, content match 'project')", vec!["TODO needle"]),
+    ] {
+        let (query, _) = parse_query_text(source, QueryDialect::Tql, JournalDate::today());
+        assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);
+        assert_eq!(block_lines(&run_text(&fixture.graph, source, QueryDialect::Tql)), expected, "{source}");
+        let printed = tine_core::query::print::print_tql(&query);
+        assert_eq!(block_lines(&run_text(&fixture.graph, &printed, QueryDialect::Tql)), expected, "printed {printed}");
+    }
+}
+
+#[test]
+fn hierarchy_quantifiers_agree_with_strict_tree_sets() {
+    let fixture = open(&[(
+        "pages/Tree.md",
+        "- root\n\t- TODO branch\n\t\t- DONE leaf\n\t- DONE sibling\n- TODO outside\n",
+    )]);
+    let names = [
+        "root",
+        "TODO branch",
+        "DONE leaf",
+        "DONE sibling",
+        "TODO outside",
+    ];
+    let parents = [None, Some(0), Some(1), Some(0), None];
+    for at in 0..names.len() {
+        let ancestors = |mut node: usize| {
+            let mut out = Vec::new();
+            while let Some(parent) = parents[node] {
+                out.push(parent);
+                node = parent;
+            }
+            out
+        };
+        for relation in ["parent", "ancestors", "children", "descendants"] {
+            let related: Vec<usize> = match relation {
+                "parent" => parents[at].into_iter().collect(),
+                "ancestors" => ancestors(at),
+                "children" => (0..names.len())
+                    .filter(|&node| parents[node] == Some(at))
+                    .collect(),
+                _ => (0..names.len())
+                    .filter(|&node| ancestors(node).contains(&at))
+                    .collect(),
+            };
+            for quant in ["any", "none", "every"] {
+                let hits = related.iter().map(|&node| names[node].starts_with("TODO"));
+                let expected = match quant {
+                    "any" => hits.clone().any(|hit| hit),
+                    "none" => !hits.clone().any(|hit| hit),
+                    _ => hits.clone().all(|hit| hit),
+                };
+                let source = format!(
+                    "content = '{}' and {quant}({relation}, task = 'TODO')",
+                    names[at]
+                );
+                let result = run_text(&fixture.graph, &source, QueryDialect::Tql);
+                assert_eq!(
+                    block_lines(&result),
+                    if expected {
+                        vec![names[at].to_string()]
+                    } else {
+                        vec![]
+                    },
+                    "{source}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn hierarchy_rows_use_their_own_refs_and_refresh_after_an_edit() {
+    let dir = TempDir::new();
+    std::fs::create_dir_all(dir.path().join("pages")).unwrap();
+    write(
+        dir.path(),
+        "pages/Outline.md",
+        "title:: Outline\n- project [[Top]]\n\t- middle [[Middle]]\n\t\t- needle\n",
+    );
+    let (store, _, _) = Store::open(dir.path(), OpenOptions::default()).unwrap();
+    let source = "content match 'needle' and any(parent, [[Middle]] and [[Top]]) and none(ancestors, [[Middle]] and content match 'project')";
+    assert_eq!(
+        block_lines(&run_text(
+            &store.whole_graph().unwrap(),
+            source,
+            QueryDialect::Tql
+        )),
+        vec!["needle"]
+    );
+    let old_source = "content match 'needle' and any(parent, content match 'middle')";
+    assert_eq!(
+        block_lines(&run_text(
+            &store.whole_graph().unwrap(),
+            old_source,
+            QueryDialect::Tql
+        )),
+        vec!["needle"]
+    );
+    let id = tine_store::PageId::from("pages/Outline.md");
+    let read = store.page(&id).unwrap();
+    let mut doc = read.doc;
+    doc.blocks[0].children[0].raw = "changed [[Middle]]".into();
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::SaveBlock,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &doc
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+    assert_eq!(
+        block_lines(&run_text(
+            &store.whole_graph().unwrap(),
+            "content match 'needle' and any(parent, content match 'changed')",
+            QueryDialect::Tql
+        )),
+        vec!["needle"]
+    );
+    assert!(block_lines(&run_text(
+        &store.whole_graph().unwrap(),
+        "content match 'needle' and any(parent, content match 'middle')",
+        QueryDialect::Tql
+    ))
+    .is_empty());
+}
+
+#[test]
+fn hierarchy_queries_work_in_org_and_crlf_markdown() {
+    for (path, text) in [
+        (
+            "pages/Outline.org",
+            "title:: Outline\n* project\n** middle\n*** TODO needle\n",
+        ),
+        (
+            "pages/Outline.md",
+            "title:: Outline\r\n- project\r\n\t- middle\r\n\t\t- TODO needle\r\n",
+        ),
+    ] {
+        let fixture = open(&[(path, text)]);
+        assert_eq!(block_lines(&run_text(&fixture.graph, "task = 'TODO' and any(parent, content match 'middle') and any(ancestors, content match 'project')", QueryDialect::Tql)), vec!["TODO needle"]);
+        assert_eq!(
+            block_lines(&run_text(
+                &fixture.graph,
+                "content match 'project' and any(descendants, task = 'TODO')",
+                QueryDialect::Tql
+            )),
+            vec!["project"]
+        );
+    }
+}
+
+#[test]
+fn hierarchy_guide_example_runs_with_search_syntax_inside_relations() {
+    let fixture = open(&[(
+        "pages/Project.md",
+        "- project\n\t- branch\n\t\t- budget action\n\t\t- approved\n\t\t- budget draft\n",
+    )]);
+    assert_eq!(block_lines(&run_text(&fixture.graph, "@block and content match 'budget -draft' and any(ancestors, content match 'project') and any(parent, any(descendants, content match 'approved'))", QueryDialect::Tql)), vec!["budget action"]);
+    for search in [
+        "budget action",
+        "budget OR irrelevant",
+        "\"budget action\"",
+        "/budget action/",
+    ] {
+        let source =
+            format!("content match 'branch' and any(descendants, content match '{search}')");
+        assert_eq!(
+            block_lines(&run_text(&fixture.graph, &source, QueryDialect::Tql)),
+            vec!["branch"],
+            "{source}"
+        );
+    }
+}
