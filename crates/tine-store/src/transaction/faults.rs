@@ -14,7 +14,7 @@ use crate::store::Store;
 #[cfg(any(test, feature = "test-faults"))]
 /// Deterministic one-shot failure hooks for tests. Indexed points use a
 /// zero-based transaction step index; an unreachable point stays armed in this
-/// Store. Multiple distinct points can be armed and each fires once. The two
+/// Store. Multiple distinct points can be armed and each fires once. The
 /// move-abort points require `test-faults` even in a plain unit-test build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FaultPoint {
@@ -53,14 +53,12 @@ pub enum FaultPoint {
     /// Abort the process after a rewritten move has renamed and synced the old
     /// bytes at the destination, before its trash copy; requires `test-faults`.
     AbortAfterMoveRename,
-    /// Abort with the case-only source safely staged in existing graph trash.
-    AbortAfterCaseMoveStage,
-    /// Abort after the second case-only move and its directory sync.
-    AbortAfterCaseMovePublish,
-    /// Fail between the two case-only moves to exercise rollback.
-    CaseMoveStageIo,
-    /// Create a competing destination between the two case-only moves.
-    CaseMoveStageCollision,
+    /// Abort immediately before a move attempts its atomic rename.
+    AbortBeforeMoveRename,
+    /// Model an already-exists refusal with destination resolving to source.
+    CaseMoveAliasRefusal,
+    /// Model a folded-alias rename succeeding without changing its spelling.
+    CaseMoveAliasNoop,
     /// Abort the process after a rewritten move has copied the old bytes to
     /// trash and published new destination bytes; requires `test-faults`.
     AbortAfterMoveRewrite,
@@ -94,14 +92,9 @@ pub(crate) enum FaultPoint {
     TwinAfterPublish,
     AbortAfterStep(usize),
     AbortAfterMoveRename,
-    /// Abort with the case-only source safely staged in existing graph trash.
-    AbortAfterCaseMoveStage,
-    /// Abort after the second case-only move and its directory sync.
-    AbortAfterCaseMovePublish,
-    /// Fail between the two case-only moves to exercise rollback.
-    CaseMoveStageIo,
-    /// Create a competing destination between the two case-only moves.
-    CaseMoveStageCollision,
+    AbortBeforeMoveRename,
+    CaseMoveAliasRefusal,
+    CaseMoveAliasNoop,
     AbortAfterMoveRewrite,
     MoveAfterTrashCopyIo,
     AbortAfterMarkerStage,

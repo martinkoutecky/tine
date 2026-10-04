@@ -69,17 +69,21 @@ fn case_only_rename_changes_filename_title_refs_and_namespace() {
 #[test]
 fn case_move_io_failure_restores_source_and_preserves_refs() {
     use tine_store::FaultPoint;
-    for point in [
-        FaultPoint::CaseMoveStageIo,
-        FaultPoint::DirectorySyncIo,
-        FaultPoint::MoveAfterTrashCopyIo,
-        FaultPoint::MidStepIoAt(0),
+    for (point, alias) in [
+        (FaultPoint::DirectorySyncIo, false),
+        (FaultPoint::MoveAfterTrashCopyIo, false),
+        (FaultPoint::MidStepIoAt(0), false),
+        (FaultPoint::MoveAfterTrashCopyIo, true),
+        (FaultPoint::MidStepIoAt(0), true),
     ] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
         fs::write(dir.path().join("pages/old.md"), "- [[old]]\n").unwrap();
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         store.inject_fault(point);
+        if alias {
+            store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
+        }
         assert!(rename_or_merge_page(&store, "old", "Old", None, None, &[]).is_err());
         assert_eq!(
             fs::read_to_string(dir.path().join("pages/old.md")).unwrap(),
@@ -131,8 +135,8 @@ fn case_rename_crash_worker() {
         .unwrap()
         .0;
     let point = match std::env::var("TINE_QD1_CRASH_POINT").unwrap().as_str() {
-        "stage" => tine_store::FaultPoint::AbortAfterCaseMoveStage,
-        "publish" => tine_store::FaultPoint::AbortAfterCaseMovePublish,
+        "before" => tine_store::FaultPoint::AbortBeforeMoveRename,
+        "publish" => tine_store::FaultPoint::AbortAfterMoveRename,
         "rewrite" => tine_store::FaultPoint::AbortAfterMoveRewrite,
         _ => unreachable!(),
     };
@@ -143,8 +147,7 @@ fn case_rename_crash_worker() {
 
 #[test]
 fn case_rename_kill_reopen_preserves_bytes_and_can_resume() {
-    use tine_store::{Area, EditKind, TxOutcome};
-    for point in ["stage", "publish", "rewrite"] {
+    for point in ["before", "publish", "rewrite"] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
         fs::write(dir.path().join("pages/old.md"), "title:: old\n- [[old]]\n").unwrap();
@@ -166,26 +169,13 @@ fn case_rename_kill_reopen_preserves_bytes_and_can_resume() {
         }
         let store = Store::open(dir.path(), Default::default()).unwrap().0;
         store.whole_graph().unwrap();
-        if point == "stage" {
-            assert_eq!(fs::read_dir(dir.path().join("pages")).unwrap().count(), 0);
-            let trash = fs::read_dir(dir.path().join("logseq/.tine-trash/pages"))
-                .unwrap()
-                .next()
-                .unwrap()
-                .unwrap()
-                .path();
+        if point == "before" {
             assert_eq!(
-                fs::read_to_string(&trash).unwrap(),
+                fs::read_to_string(dir.path().join("pages/old.md")).unwrap(),
                 "title:: old\n- [[old]]\n"
             );
-            // Recover through the same guarded store move door, no raw write.
-            let rel = format!("pages/{}", trash.file_name().unwrap().to_str().unwrap());
-            let source = store.file_id(Area::Trash, &rel).unwrap();
-            let rev = store.read(&source, None).unwrap().1;
-            let to = store.file_id(Area::Pages, "old.md").unwrap();
-            let mut tx = store.transaction(Some(EditKind::RenamePage));
-            tx.move_file(&source, rev, &to, None);
-            assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
+            assert_eq!(fs::read_dir(dir.path().join("pages")).unwrap().count(), 1);
+            assert!(!dir.path().join("logseq/.tine-trash").exists());
         } else {
             let expected = if point == "publish" {
                 "title:: old\n- [[old]]\n"
@@ -208,7 +198,7 @@ fn case_rename_kill_reopen_preserves_bytes_and_can_resume() {
 }
 
 #[test]
-fn a_competing_destination_between_case_moves_is_never_overwritten() {
+fn a_competing_destination_before_case_move_is_never_overwritten() {
     use tine_store::{Area, EditKind, FaultPoint, TxOutcome};
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();
@@ -217,7 +207,7 @@ fn a_competing_destination_between_case_moves_is_never_overwritten() {
     let src = store.file_id(Area::Pages, "old.md").unwrap();
     let dst = store.file_id(Area::Pages, "Old.md").unwrap();
     let rev = store.read(&src, None).unwrap().1;
-    store.inject_fault(FaultPoint::CaseMoveStageCollision);
+    store.inject_fault(FaultPoint::NoReplaceCollision);
     let mut tx = store.transaction(Some(EditKind::RenamePage));
     tx.move_file(&src, rev, &dst, None);
     assert!(matches!(tx.commit(), TxOutcome::NotCommitted { .. }));
@@ -225,21 +215,10 @@ fn a_competing_destination_between_case_moves_is_never_overwritten() {
         fs::read_to_string(dir.path().join("pages/Old.md")).unwrap(),
         "external collision"
     );
-    // On folding disks the competing spelling also occupies the original;
-    // rollback must preserve original bytes in trash instead of replacing it.
-    let listed = fs::read_dir(dir.path().join("pages"))
-        .unwrap()
-        .any(|entry| entry.unwrap().file_name() == "old.md");
-    if listed {
-        assert_eq!(
-            fs::read_to_string(dir.path().join("pages/old.md")).unwrap(),
-            "- original\n"
-        );
-    } else {
-        assert!(fs::read_dir(dir.path().join("logseq/.tine-trash/pages"))
-            .unwrap()
-            .any(|entry| fs::read(entry.unwrap().path()).unwrap() == b"- original\n"));
-    }
+    assert_eq!(
+        fs::read_to_string(dir.path().join("pages/old.md")).unwrap(),
+        "- original\n"
+    );
     store.close();
 }
 
@@ -320,6 +299,104 @@ fn successful_case_rename_retains_only_the_existing_old_byte_copy() {
         let live = fs::read(dir.path().join("pages/Old.md")).unwrap();
         assert_eq!(live, "- [[Old]]\n".repeat(blocks).as_bytes());
         eprintln!("case rename blocks={blocks}: live={} B, old-copy={} B, retained copies=1, staging copies=0", live.len(), old.len());
+        store.close();
+    }
+}
+
+#[test]
+fn unchanged_case_move_has_one_live_name_and_creates_no_staging_directory() {
+    use tine_store::{Area, EditKind, TxOutcome};
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir(dir.path().join("pages")).unwrap();
+    fs::write(dir.path().join("pages/old.md"), "- original\n").unwrap();
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let src = store.file_id(Area::Pages, "old.md").unwrap();
+    let dst = store.file_id(Area::Pages, "Old.md").unwrap();
+    let rev = store.read(&src, None).unwrap().1;
+    let mut tx = store.transaction(Some(EditKind::RenamePage));
+    tx.move_file(&src, rev, &dst, None);
+    assert!(matches!(tx.commit(), TxOutcome::Committed { .. }));
+    assert_eq!(
+        fs::read(dir.path().join("pages/Old.md")).unwrap(),
+        b"- original\n"
+    );
+    assert_eq!(fs::read_dir(dir.path().join("pages")).unwrap().count(), 1);
+    assert!(
+        !dir.path().join("logseq/.tine-trash").exists(),
+        "I-2: a spelling move must publish atomically, without withdrawing the live page to Trash"
+    );
+    store.close();
+}
+
+#[test]
+fn folded_alias_refusal_uses_atomic_rename_and_checks_the_result() {
+    use tine_store::{Area, EditKind, FaultPoint, TxOutcome};
+    for noop in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/old.md"), "- original\n").unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let src = store.file_id(Area::Pages, "old.md").unwrap();
+        let dst = store.file_id(Area::Pages, "Old.md").unwrap();
+        let rev = store.read(&src, None).unwrap().1;
+        store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
+        if noop {
+            store.inject_fault(FaultPoint::CaseMoveAliasNoop);
+        }
+        let mut tx = store.transaction(Some(EditKind::RenamePage));
+        tx.move_file(&src, rev, &dst, None);
+        let outcome = tx.commit();
+        assert_eq!(
+            matches!(outcome, TxOutcome::Committed { .. }),
+            !noop,
+            "{outcome:?}"
+        );
+        let names: Vec<_> = fs::read_dir(dir.path().join("pages"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [if noop { "old.md" } else { "Old.md" }]);
+        assert_eq!(
+            fs::read(dir.path().join("pages").join(&names[0])).unwrap(),
+            b"- original\n"
+        );
+        assert!(!dir.path().join("logseq/.tine-trash").exists());
+        store.close();
+    }
+}
+
+#[test]
+fn failed_case_move_undo_keeps_live_bytes_and_recovers_the_baseline() {
+    use tine_store::{Area, EditKind, FaultPoint, TxOutcome};
+    for alias in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pages")).unwrap();
+        fs::write(dir.path().join("pages/old.md"), "- original\n").unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let src = store.file_id(Area::Pages, "old.md").unwrap();
+        let dst = store.file_id(Area::Pages, "Old.md").unwrap();
+        let rev = store.read(&src, None).unwrap().1;
+        if alias {
+            store.inject_fault(FaultPoint::CaseMoveAliasRefusal);
+        }
+        store.inject_fault(FaultPoint::MidStepIoAt(0));
+        store.inject_fault(FaultPoint::UndoWithdrawalIo);
+        let mut tx = store.transaction(Some(EditKind::RenamePage));
+        tx.move_file(&src, rev, &dst, None);
+        let TxOutcome::NotCommitted { rollback, .. } = tx.commit() else {
+            panic!("must fail");
+        };
+        assert!(!rollback.undo_failed.is_empty());
+        assert_eq!(
+            fs::read(dir.path().join("pages/Old.md")).unwrap(),
+            b"- original\n"
+        );
+        assert_eq!(fs::read_dir(dir.path().join("pages")).unwrap().count(), 1);
+        assert!(
+            fs::read_dir(dir.path().join("logseq/.tine-trash/conflicts"))
+                .unwrap()
+                .any(|entry| fs::read(entry.unwrap().path()).unwrap() == b"- original\n")
+        );
         store.close();
     }
 }

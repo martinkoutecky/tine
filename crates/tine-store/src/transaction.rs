@@ -1286,7 +1286,6 @@ impl<'a> Transaction<'a> {
                         ));
                     }
                     self.undo_opaque_move(record, dst_id, &dst, &live)?;
-                    sync_move_dirs(self.store, &dst, &live)?;
                     Ok(())
                 })();
                 match result {

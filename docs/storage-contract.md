@@ -250,25 +250,36 @@ The feature layer uses the ordinary RenamePage transaction for filename,
 explicit title, references, namespace descendants and config home spelling.
 Identity stays normalized; there is no second page entity for a casing change.
 
-Case-only moves use the existing graph trash name and no-replace move primitive
-on Linux, Windows, macOS, Android and iOS. Before withdrawing the source, the
-trash directory ancestry is synced. Both moves sync changed directories, using
-existing unsupported-directory-sync policy; Windows moves remain write-through.
-Before staging, the guarded source is live. Between the two moves, its exact
-bytes are in `logseq/.tine-trash/<area>/<stamp>__<filename>` and can be restored
-with a guarded `move_file` from Trash to Pages. This recovery is explicit, not
-automatic at graph open. After the second move, the original bytes are live at
-the new spelling; after the existing atomic rewrite, updated title/ref bytes
-are live there. Retrying completes a moved file's old explicit title in place.
-An I/O failure attempts transaction undo; a concurrent target is never replaced
-by the second no-replace move (subject to the existing flag-refusal fallback
-policy), and original or racing staged bytes remain in recovery if undo fails.
+Case-only moves first try the existing atomic no-replace primitive on Linux,
+Windows, macOS, Android and iOS. Only an already-exists refusal permits an
+alias check: the requested destination spelling must be absent from the
+directory listing and resolve to the same file as the source (`same-file`:
+Unix device/inode, Windows volume serial/file index). For that unique folded
+alias, one plain `std::fs::rename` uses the atomic-write path's platform rename
+(rename(2) / MoveFileExW with REPLACE_EXISTING). A separately listed entry,
+including a hardlinked twin, stays an ordinary collision. After a case move,
+a fresh directory listing must contain the destination spelling and omit the
+source spelling (NFC/NFD normalization is accepted); failure uses transaction
+undo. These checks defend external-editor/sync-delivery collisions and a
+filesystem/provider silently retaining the old spelling.
 
-Unit cost: two namespace moves and directory syncs instead of one for case-only
-moves; no added payload copy or retained record on success. If content changes,
+Before the atomic rename, the source is live; after it, original bytes are
+live at the new spelling. There is no intermediate Trash-only window or
+manual page restoration step. After the existing atomic rewrite, updated
+title/reference bytes are live there. Retrying after the rename finishes an
+old explicit title in place. An I/O failure attempts ordinary transaction undo;
+failed undo keeps live or recoverable bytes. Changed directories use the
+existing sync policy. The no-replace primitive retains Windows write-through;
+the folded-alias fallback uses the same replacement/durability policy as
+atomic writes. The existing check-to-rename race with honest external writers
+and flag-refusal fallback policy remain.
+
+Unit cost: one namespace rename instead of two for case-only moves; no staging
+directory, added payload copy or retained record on success. If content changes,
 the existing rename old-byte trash copy remains O(page bytes), on both 1-block
-and 60-block pages; no sync transport. Process-abort tests exercise stage,
-publication and rewrite boundaries; platform alias coverage requires a
-case-folding filesystem run. The retained payload test measures 10 B live plus
-10 B old-copy for 1 block and 600 B plus 600 B for 60 blocks, with exactly one
-existing old-byte copy and no leftover staging copy in either case.
+and 60-block pages; no sync transport. Process-abort tests exercise before
+rename, after rename and after rewrite; Linux fault injection exercises the
+folded-alias refusal, plain rename and failed spelling post-check. Actual
+folding-filesystem platform runtime proof remains separate. The retained
+payload test measures 10 B live plus 10 B old for 1 block and 600 B live plus
+600 B old for 60 blocks, with exactly one old-byte copy and zero staging copies.

@@ -80,6 +80,12 @@ fn fit_name(prefix: &str, stem: &str, tail: &str, limit: usize) -> String {
     format!("{prefix}{}{tail}", &stem[..cut])
 }
 
+/// Shared replace-allowed platform rename (rename(2) / MoveFileExW with
+/// REPLACE_EXISTING). The caller owns its guard and directory durability.
+pub(crate) fn rename_replace(src: &Path, dst: &Path) -> io::Result<()> {
+    fs::rename(src, dst)
+}
+
 pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let tmp = temp_path(path, NEW_TMP_SEQ.fetch_add(1, Ordering::Relaxed), ".new");
@@ -124,7 +130,7 @@ pub(crate) fn atomic_write_with_check(
         on_file_sync();
         drop(file);
         check()?;
-        fs::rename(&tmp, path).map_err(at("rename temporary file over target"))
+        rename_replace(&tmp, path).map_err(at("rename temporary file over target"))
     })();
     if res.is_err() {
         let _ = fs::remove_file(&tmp);

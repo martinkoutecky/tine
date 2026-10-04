@@ -1,4 +1,4 @@
-//! Guarded move application, including recoverable case-only spelling changes.
+//! Guarded atomic moves, including case-only spelling changes.
 use super::*;
 use unicode_normalization::UnicodeNormalization;
 
@@ -49,17 +49,22 @@ impl Transaction<'_> {
     fn destination_is_source_spelling(&self, from: &FileId, to: &FileId) -> Result<bool, Why> {
         let src = self.path(from)?;
         let dst = self.spelled_path(to)?;
-        if src.parent() != dst.parent() || !case_only(&src, &dst) {
+        self.source_spelling_alias(&src, &dst, &dst).map_err(failed)
+    }
+
+    fn source_spelling_alias(
+        &self,
+        src: &Path,
+        dst: &Path,
+        resolved_dst: &Path,
+    ) -> io::Result<bool> {
+        if !case_only(src, dst) || self.listed_path(dst)?.is_some() {
             return Ok(false);
         }
-        match same_file::is_same_file(&src, &dst) {
-            Ok(true) => self
-                .listed_path(&dst)
-                .map(|listed| listed.is_none())
-                .map_err(failed),
-            Ok(false) => Ok(false),
+        match same_file::is_same_file(src, resolved_dst) {
+            Ok(same) => Ok(same),
             Err(error) if crate::atomic_file::names_nothing(&error) => Ok(false),
-            Err(error) => Err(failed(error)),
+            Err(error) => Err(error),
         }
     }
 
@@ -79,68 +84,56 @@ impl Transaction<'_> {
         }
     }
 
-    /// Use the existing trash name and audited platform move for both legs.
-    /// No replace onto an alias, no new journal or recovery format.
-    fn publish_move(
-        &self,
-        plan: &Prepared,
-        undo: &mut Undo,
-        src: &Path,
-        dst: &Path,
-    ) -> io::Result<()> {
-        if !case_only(src, dst) {
-            return move_file_noreplace(src, dst);
-        }
-        let trash_id = self.trash_id(&plan.src);
-        let trash = self
-            .path(&trash_id)
-            .map_err(|why| io::Error::other(format!("{why:?}")))?;
-        fs::create_dir_all(trash.parent().unwrap())?;
-        // Persist each newly created directory's entry before source withdrawal.
-        // Reuse the directory-durability owner, including its platform policy.
-        let mut ancestor = trash.parent();
-        while let Some(dir) = ancestor {
-            crate::directory_durability::sync_directory_entry(dir)?;
-            if dir == self.store.graph.root {
-                break;
-            }
-            ancestor = dir.parent();
-        }
-        undo.trash = Some(trash_id);
-        move_file_noreplace(src, &trash)?;
-        undo.moved = true;
-        sync_move_dirs(self.store, src, &trash)?;
+    /// First try the shared no-replace primitive. Only the source's own
+    /// unlisted folded alias permits the atomic-write path's plain rename.
+    /// Distinct entries (including hard links) remain collisions (GH #609).
+    fn publish_move(&self, undo: &mut Undo, src: &Path, dst: &Path) -> io::Result<()> {
         #[cfg(feature = "test-faults")]
-        if fault(self.store, FaultPoint::AbortAfterCaseMoveStage) {
+        if fault(self.store, FaultPoint::AbortBeforeMoveRename) {
             std::process::abort();
         }
-        if fault(self.store, FaultPoint::CaseMoveStageIo) {
-            return Err(io::Error::other("injected failure after case move stage"));
+        // Linux test fixtures model a folding filesystem's refusal and alias
+        // resolution while still executing the real plain rename and listing.
+        let alias_refusal =
+            case_only(src, dst) && fault(self.store, FaultPoint::CaseMoveAliasRefusal);
+        let result = if alias_refusal {
+            Err(io::Error::from(io::ErrorKind::AlreadyExists))
+        } else {
+            move_file_noreplace(src, dst)
+        };
+        if let Err(error) = result {
+            if error.kind() != io::ErrorKind::AlreadyExists || !case_only(src, dst) {
+                return Err(error);
+            }
+            self.spelling_entries
+                .borrow_mut()
+                .remove(src.parent().unwrap());
+            let resolved_dst = if alias_refusal { src } else { dst };
+            if !self.source_spelling_alias(src, dst, resolved_dst)? {
+                return Err(error);
+            }
+            if !fault(self.store, FaultPoint::CaseMoveAliasNoop) {
+                crate::atomic_file::rename_replace(src, dst).map_err(crate::platform_step::at(
+                    "rename source over its folded alias",
+                ))?;
+                undo.created = true;
+            }
+        } else {
+            undo.created = true;
         }
-        #[cfg(any(test, feature = "test-faults"))]
-        if fault(self.store, FaultPoint::CaseMoveStageCollision) {
-            self.store.inject_fault(FaultPoint::NoReplaceCollision);
-            self.fault_collision(dst);
+        if case_only(src, dst) {
+            self.spelling_entries
+                .borrow_mut()
+                .remove(src.parent().unwrap());
+            if self.listed_path(dst)?.is_none() || self.listed_path(src)?.is_some() {
+                return Err(io::Error::other(
+                    "case rename did not publish the destination spelling",
+                ));
+            }
         }
-        // An external writer may have replaced the source just before staging.
-        // Preserve those bytes in recovery and refuse to publish stale rewrites.
-        let expected = plan
-            .opaque_rev
-            .clone()
-            .unwrap_or_else(|| FileRev::from_bytes(plan.old.as_deref().unwrap()));
-        if FileRev::from_file(&trash)? != expected {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "source changed during case rename",
-            ));
-        }
-        move_file_noreplace(&trash, dst)?;
-        undo.moved = false;
-        undo.trash = None;
-        undo.created = true;
-        sync_move_dirs(self.store, &trash, dst)?;
+        sync_move_dirs(self.store, src, dst)?;
         #[cfg(feature = "test-faults")]
-        if fault(self.store, FaultPoint::AbortAfterCaseMovePublish) {
+        if fault(self.store, FaultPoint::AbortAfterMoveRename) {
             std::process::abort();
         }
         Ok(())
@@ -153,14 +146,6 @@ impl Transaction<'_> {
         dst: &Path,
         live: &Path,
     ) -> io::Result<()> {
-        let plan = Prepared {
-            src: dst_id.clone(),
-            dst: Some(record.src.clone()),
-            old: None,
-            new: None,
-            saved_page: None,
-            opaque_rev: record.opaque_rev.clone(),
-        };
         let mut undo = Undo {
             kind: UndoKind::Rename,
             src: dst_id.clone(),
@@ -173,7 +158,7 @@ impl Transaction<'_> {
             created: false,
             moved: false,
         };
-        self.publish_move(&plan, &mut undo, dst, live)
+        self.publish_move(&mut undo, dst, live)
     }
 
     pub(super) fn apply_move(
@@ -194,10 +179,9 @@ impl Transaction<'_> {
             undo.kind = UndoKind::Rename;
             undo.opaque_rev = Some(rev.clone());
             self.fault_collision(&dst);
-            self.publish_move(plan, undo, &src, &dst)
+            self.publish_move(undo, &src, &dst)
                 .map_err(|error| collision(dst_id, error, &dst))?;
             undo.created = true;
-            sync_move_dirs(self.store, &src, &dst).map_err(failed)?;
             self.fault_mid_step(index)?;
             self.fault_twin(dst_id);
             if let Some(twin) = self.disk_twin(dst_id)? {
@@ -232,10 +216,9 @@ impl Transaction<'_> {
                 self.store.graph.transaction_note_delete(&src);
             }
             self.fault_collision(&dst);
-            self.publish_move(plan, undo, &src, &dst)
+            self.publish_move(undo, &src, &dst)
                 .map_err(|error| collision(dst_id, error, &dst))?;
             undo.created = true;
-            sync_move_dirs(self.store, &src, &dst).map_err(failed)?;
             self.fault_mid_step(index)?;
             self.fault_twin(dst_id);
             if let Some(twin) = self.disk_twin(dst_id)? {
@@ -256,8 +239,7 @@ impl Transaction<'_> {
             });
         }
         // Publish the original bytes at the destination, then replace through
-        // the audited save primitive. Case-only staging may temporarily leave
-        // only the recoverable trash name; other moves keep one live name.
+        // the audited save primitive. Every move keeps one live name.
         // Before replacement the destination has old bytes; after it, new bytes.
         undo.kind = UndoKind::Rename;
         undo.new = Some(Expected::Bytes(old.to_vec()));
@@ -268,14 +250,9 @@ impl Transaction<'_> {
         if self.page(&plan.src) {
             self.store.graph.transaction_note_delete(&src);
         }
-        self.publish_move(plan, undo, &src, &dst)
+        self.publish_move(undo, &src, &dst)
             .map_err(|error| collision(dst_id, error, &dst))?;
         undo.created = true;
-        sync_move_dirs(self.store, &src, &dst).map_err(failed)?;
-        #[cfg(feature = "test-faults")]
-        if fault(self.store, FaultPoint::AbortAfterMoveRename) {
-            std::process::abort();
-        }
         self.fault_mid_step(index)?;
 
         // Preserve the original bytes for the same recovery affordance
