@@ -2,6 +2,7 @@ icon:: 📄
 
 - # PDF annotation
 	- Open a PDF that lives in your graph's `assets/` (or drop one in). On desktop it opens as a tab in a companion pane, keeping your notes visible. On a phone it opens in the same one-pane history.
+	- Opening and reading a PDF changes no graph files. Its highlight sidecar and notes page are created when you first highlight or annotate; existing highlights and notes stay available.
 	- **Select text** in the PDF to highlight it; click a highlight again to change its color.
 	- Hold **Shift** while dragging a rectangle on Linux or Windows, or **Command** on macOS, then choose a color to clip a figure or equation as an image highlight. Dismissing the color chooser writes nothing.
 	- Use the reader toolbar to choose a persistent **Light**, **Warm**, or **Dark** page theme, and open **Outline** to navigate a PDF's nested table of contents.

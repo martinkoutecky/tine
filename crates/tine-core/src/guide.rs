@@ -320,6 +320,8 @@ mod pdf_workspace_guide_tests {
     fn bundled_pdf_guide_describes_tab_and_mobile_reader() {
         let pdf = include_str!("templates/pdf.md");
         for detail in [
+            "Opening and reading a PDF changes no graph files",
+            "created when you first highlight or annotate",
             "tab in a companion pane",
             "same one-pane history",
             "page and zoom are restored",

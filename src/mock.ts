@@ -1603,7 +1603,6 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     },
     async openPdf(pdf: string, label: string): Promise<PdfState> {
       const current = mockHighlights[pdf] ?? { label, highlights: [] };
-      mockHighlights[pdf] = current;
       return {
         highlights: current.highlights,
         page: current.page ?? null,

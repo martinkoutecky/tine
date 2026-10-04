@@ -696,6 +696,85 @@ fn highlight(id: &str) -> Highlight {
 }
 
 #[test]
+fn pdf_open_is_read_only_until_first_annotation() {
+    let (root, store) = fixture("pdf-read-only");
+    let before = disk_tree(&root);
+    for _ in 0..2 {
+        let state = pdf::open_pdf(&store, "paper.pdf", "Paper").unwrap();
+        assert!(state.highlights.is_empty());
+        assert_eq!(state.page, None);
+        assert_eq!(
+            disk_tree(&root),
+            before,
+            "I-2: reading a PDF must write nothing"
+        );
+    }
+    let item = highlight("first");
+    pdf::write_highlights(&store, "paper.pdf", "Paper", &[item.clone()], &[]).unwrap();
+    let annotated = disk_tree(&root);
+    assert!(root.join("assets/paper.edn").exists());
+    assert!(root.join("pages/hls__paper.md").exists());
+    assert_eq!(
+        pdf::open_pdf(&store, "paper.pdf", "Paper")
+            .unwrap()
+            .highlights,
+        vec![item]
+    );
+    assert_eq!(disk_tree(&root), annotated);
+}
+
+#[test]
+fn pdf_open_preserves_sidecars_and_never_repairs_missing_notes() {
+    for pdf_name in ["paper.pdf", "My Paper.pdf"] {
+        for key in [
+            tine_core::pdf::asset_key(pdf_name),
+            tine_core::pdf::legacy_asset_key(pdf_name),
+        ] {
+            let (root, store) = fixture("pdf-existing-read-only");
+            let item = highlight("existing");
+            let raw = tine_core::pdf::write_highlights(&[item.clone()], "");
+            let raw = tine_core::pdf::write_pdf_view_state(&raw, 2, 1.5).unwrap();
+            fs::write(root.join("assets").join(format!("{key}.edn")), raw).unwrap();
+            for notes in [
+                None,
+                Some(("md", 1)),
+                Some(("md", 60)),
+                Some(("org", 1)),
+                Some(("org", 60)),
+            ] {
+                if let Some((ext, blocks)) = notes {
+                    fs::write(
+                        root.join("pages").join(format!("hls__{key}.{ext}")),
+                        format!("{} user notes\r\n", if ext == "org" { "*" } else { "-" })
+                            .repeat(blocks),
+                    )
+                    .unwrap();
+                }
+                let before = disk_tree(&root);
+                let mtimes: Vec<_> = before
+                    .iter()
+                    .map(|(rel, _)| fs::metadata(root.join(rel)).unwrap().modified().unwrap())
+                    .collect();
+                let state = pdf::open_pdf(&store, pdf_name, "Changed label").unwrap();
+                assert_eq!(state.highlights, vec![item.clone()]);
+                assert_eq!(state.page, Some(2));
+                assert_eq!(state.scale, Some(1.5));
+                assert_eq!(disk_tree(&root), before);
+                for ((rel, _), modified) in before.iter().zip(mtimes) {
+                    assert_eq!(
+                        fs::metadata(root.join(rel)).unwrap().modified().unwrap(),
+                        modified
+                    );
+                }
+                if let Some((ext, _)) = notes {
+                    fs::remove_file(root.join("pages").join(format!("hls__{key}.{ext}"))).unwrap();
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn highlights_first_write_and_update_persist_both_artifacts() {
     let (a, store) = fixture("hl-new");
     for (items, base) in [
@@ -834,8 +913,6 @@ fn old_vs_new_matrix_on_identical_fixtures() {
             "captured_stream",
             "first_area_image",
             "replaced_area_image",
-            "opened_pdf",
-            "opened_pdf_notes",
             "view_state",
             "first_highlight",
             "first_highlight_notes",
@@ -990,8 +1067,9 @@ fn old_vs_new_matrix_on_identical_fixtures() {
         format!("{:?}", pdf::open_pdf(&store, "paper.pdf", "Paper").unwrap()),
         "PdfState { highlights: [], page: None, scale: None }"
     );
-    same("assets/paper.edn");
-    same("pages/hls__paper.md");
+    // Martin 2026-10-04: opening intentionally differs from eager legacy writes.
+    assert!(!a.join("assets/paper.edn").exists());
+    assert!(!a.join("pages/hls__paper.md").exists());
     pdf::write_pdf_view_state(&store, "paper.pdf", 3, 1.5).unwrap();
     same("assets/paper.edn");
     assert_eq!(
