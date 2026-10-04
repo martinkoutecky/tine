@@ -17,6 +17,7 @@ import { captureBinding, stillBound } from "../binding";
 import { clearSelection, extendSelectionTo, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
 import { endEdit, startEditing } from "../editorController";
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
+import { codeFences } from "../editor/fences";
 import { codeBodyProjection } from "../editor/codeFence";
 import { blockDropPosition, type BlockDropPosition } from "../editor/blockDrag";
 import { textareaCaretPoints } from "../editor/caretRows";
@@ -216,25 +217,23 @@ export function beginEditGesture(
  *  keeps the old end-of-block behaviour. */
 export function renderedClickOffset(contentRef: HTMLElement, raw: string, fmt: "md" | "org", e: MouseEvent): number | null {
   const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
-  // GH #489: a whole-block code card is highlight.js markup with no span data,
-  // so the mapper below always declined and the caret fell to the end of the
-  // block, hundreds of lines from the click. Answer it first, from rendered text
-  // position; the past-the-end rule must not run for it (a click right of a
-  // SHORT line in a tall card means that line's end). Offsets leave here in
-  // visible-raw coordinates; the editor's `focusNow` maps them through the
-  // body-only wrapper.
-  const codeProjection = codeBodyProjection(splitProps(raw, isBuiltinHidden, fmt).visible, fmt);
-  if (codeProjection) {
-    const codeRange = d.caretRangeFromPoint?.(e.clientX, e.clientY);
-    const offset = codeRange ? codeCardOffsetFromRange(contentRef, codeRange) : null;
-    return offset === null ? null : codeProjection.open.length + Math.min(offset, codeProjection.body.length);
+  // GH #489/#510: highlight.js has no inline spans. Find the clicked card's
+  // parser-owned fence, then map its rendered body to visible-raw coordinates.
+  const visible = splitProps(raw, isBuiltinHidden, fmt).visible;
+  const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
+  if (range) {
+    const cards = Array.from(contentRef.querySelectorAll("pre.code-block > code"));
+    const index = cards.findIndex(card => card === range.startContainer || card.contains(range.startContainer));
+    const fence = codeFences(visible, fmt).filter(f => f.lang !== "calc")[index];
+    const projection = fence && codeBodyProjection(visible, fmt, fence.openEnd);
+    const offset = index < 0 ? null : codeCardOffsetFromRange(cards[index].parentElement!, range);
+    if (projection && offset !== null) return projection.open.length + Math.min(offset, projection.body.length);
   }
   // GH #465: a click in the empty run-out past the last glyph means "the end",
   // whatever the block ends with. Asked before the span map, because a trailing
   // construct with an invisible closing delimiter (`*italic*`) maps that click
   // to a legitimate-looking interior offset just before the delimiter.
   if (clickBeyondRenderedEnd(contentRef, e.clientX, e.clientY)) return splitProps(raw, isBuiltinHidden, fmt).visible.length;
-  const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
   if (!range) return null;
   return editorOffsetFromRenderedRange(contentRef, range, raw, isBuiltinHidden, fmt);
 }

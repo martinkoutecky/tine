@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- GH #510: edit a code region inside a mixed text block without exposing its fences; boundary navigation returns to source editing and preserves surrounding text.
 - Find searches main and split panes plus expanded right-sidebar items, with next/previous traversing them in order (GH #559).
 - Search-tab results open in new tabs while keeping Search; middle-click and modifiers choose background tabs, sidebar or another pane, and page results share the Quick Switcher context menu (GH #416).
 - Opening and reading graph PDFs leaves annotation files untouched; create the highlight sidecar and notes page on the first annotation (GH #577).

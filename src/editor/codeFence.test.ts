@@ -198,3 +198,14 @@ describe("codeBodyExitTrim", () => {
     expect(codeBodyExitTrim("\n\n\n", 3)).toBeNull();
   });
 });
+
+it.each(["md", "org"] as const)("mixed %s projection preserves CRLF outside the selected Unicode body", format => {
+  const opener = format === "md" ? "~~~js" : "#+BEGIN_SRC js";
+  const closer = format === "md" ? "~~~" : "#+END_SRC";
+  const prefix = `前 🐈\r\n${opener}\r\n`, suffix = `\r\n${closer}\r\nprose  `;
+  const raw = prefix + "body" + suffix;
+  const p = codeBodyProjection(raw, format, prefix.length + 2)!;
+  expect(p).toMatchObject({ open: prefix, body: "body", close: suffix });
+  expect(codeBodyJoin(p, "edited")).toBe(prefix + "edited" + suffix);
+  expect(codeBodyProjection(raw, format, 0)).toBeNull();
+});

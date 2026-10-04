@@ -1,0 +1,32 @@
+[
+  {
+    "format": "md",
+    "prefix": "préface 🐈\n```js\n",
+    "body": "one\ntwo",
+    "replacement": "- literal\n  code",
+    "suffix": "\n```\nuntouched  \n~~~py\nother\n~~~"
+  },
+  {
+    "format": "org",
+    "prefix": "préface 🐈\n#+BEGIN_SRC js\n",
+    "body": "one\ntwo",
+    "replacement": "- literal\n  code",
+    "suffix": "\n#+END_SRC\nuntouched  \n#+BEGIN_SRC python\nother\n#+END_SRC"
+  },
+  {
+    "format": "md",
+    "prefix": "préface 🐈\nid:: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n```js\n",
+    "body": "one\ntwo",
+    "replacement": "- literal\n  code",
+    "suffix": "\n```\nuntouched  \n~~~py\nother\n~~~",
+    "caret": 17
+  },
+  {
+    "format": "org",
+    "prefix": "préface 🐈\n:PROPERTIES:\n:id: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\n:END:\n#+BEGIN_SRC js\n",
+    "body": "one\ntwo",
+    "replacement": "- literal\n  code",
+    "suffix": "\n#+END_SRC\nuntouched  \n#+BEGIN_SRC python\nother\n#+END_SRC",
+    "caret": 26
+  }
+]
