@@ -122,7 +122,7 @@ export function renderInlines(
 ): JSX.Element {
   if (inlines.some((s) => s.k === "macro" && isQueryMacroName(s.name))) {
     const raw = sourceRaw ?? (blockId ? docNode(blockId)?.raw : undefined);
-    if (raw !== undefined) return <For each={queryMacroRenderRun(inlines, raw)}>{({ inline, extent }) => extent
+    if (raw !== undefined) return <For each={queryMacroRenderRun(inlines, raw, format)}>{({ inline, extent }) => extent
       ? renderMacroBody(`${extent.name} ${extent.argument}`, blockId, undefined, extent)
       : renderInline(inline, blockId, spanMode, macroExpansion, format)}</For>;
   }

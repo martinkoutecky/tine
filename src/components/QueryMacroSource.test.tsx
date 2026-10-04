@@ -80,6 +80,22 @@ function load(raw: string): void {
 const HOSTILE_ARGUMENT = '(and (task TODO) "a, b") {:title "Open, work"}';
 
 describe("a query macro is read from the block's raw source", () => {
+  it("keeps only the suffix when markup crosses a prematurely closed title", async () => {
+    const argument = '(task TODO) {:title "Sprint }} **inside"}';
+    const raw = `Before {{query ${argument}}} after** tail`;
+    load(raw);
+    backendReadsQueries({ [argument]: { form: "(task TODO)" } });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settle();
+      expect(root.querySelectorAll(".query-block")).toHaveLength(1);
+      const body = root.querySelector(".block-content")!.cloneNode(true) as HTMLElement;
+      body.querySelector(".query-block")!.remove();
+      expect(body.textContent).toBe("Before  after** tail");
+      expect(doc.byId.query.raw).toBe(raw);
+    } finally { dispose(); }
+  });
+
   for (const format of ["md", "org"] as const) {
     for (const argument of [
       '(task TODO) {:title "Sprint }} board"}',
