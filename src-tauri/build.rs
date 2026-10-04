@@ -59,6 +59,38 @@ fn main() {
         "cargo:rustc-env=TINE_APP_IDENTIFIER={}",
         text(shipped, "identifier")
     );
+    // The WebProcess loads this small module separately from the UI binary.
+    // Reuse rustc, with no new crate or system build dependency.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        let referer = format!("https://{}/", text(shipped, "identifier").to_ascii_lowercase());
+        println!("cargo:rustc-env=TINE_YOUTUBE_REFERER={referer}");
+        println!("cargo:rerun-if-changed=src/youtube_web_extension.rs");
+        let mut compiler = std::process::Command::new(std::env::var_os("RUSTC").expect("RUSTC"));
+        // Cargo selects this linker for Linux cross builds too.
+        if let Some(linker) = std::env::var_os("RUSTC_LINKER") {
+            compiler.arg("-C").arg(format!("linker={}", linker.to_string_lossy()));
+        }
+        let status = compiler
+            .args([
+                "src/youtube_web_extension.rs",
+                "--crate-type=cdylib",
+                "--edition=2021",
+                "-Copt-level=s",
+                "-Cpanic=abort",
+                "-Cstrip=symbols",
+                "--target",
+            ])
+            .arg(std::env::var_os("TARGET").expect("TARGET"))
+            .arg("-o")
+            .arg(
+                std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"))
+                    .join("libtine_youtube.so"),
+            )
+            .env("TINE_YOUTUBE_REFERER", referer)
+            .status()
+            .expect("compile YouTube WebProcess extension");
+        assert!(status.success(), "YouTube WebProcess extension compilation failed");
+    }
     println!(
         "cargo:rustc-env=TINE_PRODUCT_NAME={}",
         text(shipped, "productName")

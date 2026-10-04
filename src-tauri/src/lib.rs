@@ -48,6 +48,7 @@ mod settings;
 mod spellcheck;
 mod state;
 mod watcher;
+mod youtube_identity;
 
 use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
@@ -644,6 +645,8 @@ pub fn run() {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    let youtube_windows = youtube_identity::prepare(&mut context);
     let builder = tauri::Builder::default()
         .register_uri_scheme_protocol("tine-media", |ctx, request| {
             media_protocol::respond(ctx, request)
@@ -797,7 +800,7 @@ pub fn run() {
             #[cfg(desktop)]
             next_window: AtomicU64::new(1),
         })
-        .setup(|app| {
+        .setup(move |app| {
             // After the single-instance plugin: a forwarded second launch has
             // already exited and cannot rotate the primary's diagnostics.
             // Tauri's app-data path is the sandbox-private home on mobile too.
@@ -805,6 +808,8 @@ pub fn run() {
                 flight::persist_init(dir.join("diagnostics"));
             }
             diag("setup() begin");
+            #[cfg(target_os = "linux")]
+            youtube_identity::create_windows(app, &youtube_windows)?;
             graph::prepare_startup_graph(app.handle());
             #[cfg(target_os = "linux")]
             {
@@ -1030,6 +1035,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                youtube_identity::cleanup(app);
                 // Queued Concord base-ledger updates get one bounded drain
                 // (`EXIT_DRAIN_BUDGET`); the ledger is never a save authority.
                 concord_ledger::drain_all_for_exit(&app.state::<AppState>());
