@@ -144,13 +144,25 @@ fn install_into(
             bytes,
         )?;
     }
-    atomic_write_if_changed(&desktop_path, desktop_entry(executable).as_bytes())?;
+    let mut entry = desktop_entry(executable);
+    // Tauri's deb/rpm desktop basename is the product name, whereas Wayland
+    // resolves our window app ID. Keep the lookup entry but only show the
+    // package's launcher in the app grid (GH #626). Also updates older managed
+    // entries; a later unpackaged run restores their visible launcher.
+    if system_data_dirs.iter().any(|base| {
+        base.join("applications")
+            .join(format!("{PRODUCT_NAME}.desktop"))
+            .is_file()
+    }) {
+        entry.push_str("NoDisplay=true\n");
+    }
+    atomic_write_if_changed(&desktop_path, entry.as_bytes())?;
     Ok(InstallOutcome::Installed)
 }
 
 /// Make the desktop-entry/icon lookup available for unpackaged release binaries
-/// before the first Wayland window is mapped. Packages already provide these
-/// files and user-managed entries are never overwritten.
+/// before the first Wayland window is mapped. Product-named package launchers
+/// keep the app-ID lookup entry hidden; user-managed entries are never overwritten.
 pub(crate) fn install_desktop_identity() {
     if cfg!(debug_assertions)
         || env::var_os("FLATPAK_ID").is_some()
@@ -360,6 +372,55 @@ mod tests {
             InstallOutcome::PackagedEntry
         );
         assert!(!data_home.exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn product_named_package_keeps_one_visible_launcher() {
+        let root = temp_root("product-package");
+        let data_home = root.join("user");
+        let system_home = root.join("system");
+        let packaged = system_home
+            .join("applications")
+            .join(format!("{PRODUCT_NAME}.desktop"));
+        fs::create_dir_all(packaged.parent().unwrap()).unwrap();
+        let package_entry = format!("[Desktop Entry]\nName={PRODUCT_NAME}\nExec=tine\n");
+        fs::write(&packaged, &package_entry).unwrap();
+        // Covers an upgrade after an earlier raw/packaged run already published
+        // the managed app-ID launcher, as well as the first packaged launch.
+        for existing in [false, true] {
+            if existing {
+                fs::write(
+                    data_home.join("applications").join(DESKTOP_FILE),
+                    desktop_entry(Path::new("/old/tine")),
+                )
+                .unwrap();
+            }
+            install_into(
+                &data_home,
+                &[system_home.clone()],
+                Path::new("/usr/bin/tine"),
+            )
+            .unwrap();
+            let alias =
+                fs::read_to_string(data_home.join("applications").join(DESKTOP_FILE)).unwrap();
+            assert!(
+                alias.lines().any(|line| line == "NoDisplay=true"),
+                "GH #626: packaged and managed entries must not both appear in the app grid"
+            );
+            assert!(
+                alias.contains(&format!("Icon={APP_ID}\n")),
+                "Wayland app-ID lookup must retain its icon"
+            );
+            assert_eq!(fs::read_to_string(&packaged).unwrap(), package_entry);
+        }
+        fs::remove_file(&packaged).unwrap();
+        install_into(&data_home, &[], Path::new("/opt/tine")).unwrap();
+        assert!(
+            !fs::read_to_string(data_home.join("applications").join(DESKTOP_FILE))
+                .unwrap()
+                .contains("NoDisplay=true")
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

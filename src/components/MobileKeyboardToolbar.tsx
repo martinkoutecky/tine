@@ -95,9 +95,9 @@ function Icon(props: { name: ToolbarIcon }): JSX.Element {
     case "stop-recording":
       return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>;
     case "undo":
-      return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7H5v4M5 11a7 7 0 1 0 2-5" /></svg>;
+      return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14l-4-4 4-4M5 10h10a4 4 0 0 1 0 8h-2" /></svg>;
     case "redo":
-      return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 7h4v4M19 11a7 7 0 1 1-2-5" /></svg>;
+      return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14l4-4-4-4M19 10H9a4 4 0 0 0 0 8h2" /></svg>;
     case "date":
       return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M8 3v4M16 3v4M4 10h16" /></svg>;
     case "page-ref":

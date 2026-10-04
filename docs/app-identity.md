@@ -62,8 +62,13 @@ A few identity-bearing places need no file of their own:
 
 - The iOS bundle id is Tauri's `identifier`. No `gen/apple` project is
   checked in.
-- The Linux window class, Wayland `app_id` and `.desktop` file come from
-  `TINE_APP_IDENTIFIER`.
+- The Linux window class, Wayland `app_id` and runtime `.desktop` file come
+  from `TINE_APP_IDENTIFIER`. Tauri's deb/rpm launcher filename uses the
+  product name. When that packaged launcher is present, the runtime app-ID
+  entry has `NoDisplay=true`: it supplies Wayland icon lookup without adding
+  another app-grid launcher. Existing Tine-managed entries are updated too;
+  user-owned entries are preserved. An unpackaged run with no product-named
+  package launcher restores the runtime entry's visibility.
 - The Cargo binary is `tine` in both settings; only the deploy name differs.
 
 A desktop keyboard shortcut or dock pin bound to `page.tine.Tine.desktop` does
