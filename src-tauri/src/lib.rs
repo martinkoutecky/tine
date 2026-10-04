@@ -809,7 +809,7 @@ pub fn run() {
             }
             diag("setup() begin");
             #[cfg(target_os = "linux")]
-            youtube_identity::create_windows(app, &youtube_windows)?;
+            youtube_identity::create_windows(app, &youtube_windows);
             graph::prepare_startup_graph(app.handle());
             #[cfg(target_os = "linux")]
             {

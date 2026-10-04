@@ -29,7 +29,8 @@ describe("stable desktop startup reveal (GH #132)", () => {
   // The webview opens the startup graph through `load_graph` and shows the
   // Welcome open-failure card instead. Exemplar: master lib.rs setup.
   it("never opens a graph or propagates an error out of Tauri setup (I-22)", () => {
-    const setupStart = native.indexOf(".setup(|app|");
+    // Matched by shape, so a `move` closure cannot silently disable this guard.
+    const setupStart = native.search(/\.setup\((move\s+)?\|app\|/);
     const setupEnd = native.indexOf(".invoke_handler", setupStart);
     expect(setupStart).toBeGreaterThanOrEqual(0);
     expect(setupEnd).toBeGreaterThan(setupStart);

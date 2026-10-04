@@ -22,10 +22,7 @@ pub(crate) fn prepare(
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn create_windows(
-    app: &mut tauri::App,
-    windows: &[tauri::utils::config::WindowConfig],
-) -> tauri::Result<()> {
+pub(crate) fn create_windows(app: &mut tauri::App, windows: &[tauri::utils::config::WindowConfig]) {
     use tauri::Manager;
     let extract = || -> std::io::Result<tempfile::TempDir> {
         let dir = tempfile::Builder::new().prefix("tine-youtube-").tempdir()?;
@@ -41,14 +38,26 @@ pub(crate) fn create_windows(
         }
         Err(error) => crate::debug::diag_private("youtube-identity-unavailable", error.to_string()),
     }
+    // Never returns an error: Tauri panics on an error from `.setup` (I-22).
+    // A window the extension cannot accompany is retried without it, so
+    // YouTube identity is the only thing a failure here can cost.
     for config in windows {
-        configure(
-            tauri::WebviewWindowBuilder::from_config(app.handle(), config)?,
-            app.handle(),
-        )
-        .build()?;
+        let build = |with_identity: bool| -> tauri::Result<()> {
+            let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), config)?;
+            let builder = if with_identity {
+                configure(builder, app.handle())
+            } else {
+                builder
+            };
+            builder.build().map(|_| ())
+        };
+        if let Err(error) = build(true) {
+            crate::debug::diag_private("youtube-identity-window-failed", error.to_string());
+            if let Err(error) = build(false) {
+                crate::debug::diag_private("startup-window-failed", error.to_string());
+            }
+        }
     }
-    Ok(())
 }
 
 #[cfg(target_os = "linux")]

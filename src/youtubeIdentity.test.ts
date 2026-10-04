@@ -16,9 +16,9 @@ describe("native YouTube identity setup (I-21)", () => {
     const main = read("lib.rs");
     const graph = read("graph.rs");
     expect(main).toContain("youtube_identity::prepare(&mut context)");
-    expect(main).toContain("youtube_identity::create_windows(app, &youtube_windows)?");
+    expect(main).toContain("youtube_identity::create_windows(app, &youtube_windows);");
     expect(graph).toContain("youtube_identity::configure(builder, &app)");
-    expect(main.indexOf("youtube_identity::create_windows(app, &youtube_windows)?"))
+    expect(main.indexOf("youtube_identity::create_windows(app, &youtube_windows);"))
       .toBeLessThan(main.indexOf("graph::prepare_startup_graph(app.handle())"));
     expect(graph.indexOf("youtube_identity::configure(builder, &app)"))
       .toBeLessThan(graph.indexOf("let built = builder.build()"));
