@@ -17,6 +17,8 @@ import {
 import { bumpGraphEpoch, pageInventoryRev } from "../graphSession";
 import { backend } from "../backend";
 import { resetStore } from "../document";
+import { contextMenu, closeAllRightSidebarItems, rightSidebar } from "../ui";
+import { resetPaneLayoutToSingle, paneRouter, layoutPaneIds } from "../panes";
 import { resetQueryTextOpenForTests } from "../navSettings";
 
 afterEach(() => {
@@ -272,6 +274,7 @@ function routerMock(activeRoute: QueryRoute = { kind: "query", id: "query-mock",
     updateActiveQuery: vi.fn(),
     replaceActiveRoute: vi.fn(),
     openPage: vi.fn(),
+    openInNewTab: vi.fn(),
     openPageTarget: vi.fn(),
     openPageAtBlock: vi.fn(),
   } as unknown as PaneRouter;
@@ -437,7 +440,7 @@ describe("QueryWorkspace", () => {
       expect(root.querySelector('[data-query-result-kind="page"]')?.textContent).toContain("More pages match than are shown.");
       expect(root.querySelector('[data-query-result-kind="block"]')?.textContent).not.toContain("More blocks");
       root.querySelector<HTMLButtonElement>('[data-query-result-kind="page"] .query-result-row')!.click();
-      expect(router.openPageTarget).toHaveBeenCalledWith({ name: "Owner", pageKind: "page", path: "pages/owner.md" });
+      expect(router.openInNewTab).toHaveBeenCalledWith({ kind: "page", name: "Owner", pageKind: "page", path: "pages/owner.md" }, true);
     } finally { dispose(); }
   });
   it("shows the block excerpt that admitted a page by content", async () => {
@@ -665,6 +668,41 @@ describe("QueryWorkspace", () => {
     expect(router.updateActiveQuery).toHaveBeenLastCalledWith({ source: "  /(a)\\1/  ", sourceKind: "search" });
     dispose();
   });
+  it.each(["search", "list", "table", "board"] as const)("GH #416: preserves Search with result actions in %s presentation", async (presentation) => {
+    const route: QueryRoute = { kind: "query", id: "persistent", sourceKind: "search", source: "alpha", presentation };
+    resetPaneLayoutToSingle({ tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0 });
+    const router = paneRouter("main");
+    const searchId = router.activeId();
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={router} deps={workspaceDeps()} />, root);
+    try {
+      await waitFor(() => expect(root.querySelectorAll("[data-inpage-find-surface]")).toHaveLength(2));
+      const page = root.querySelector<HTMLButtonElement>('[data-query-result-kind="page"] button.query-result-row')!;
+      const blockSurface = root.querySelector<HTMLElement>('[data-query-result-kind="block"] [data-inpage-find-surface]')!;
+      const block = blockSurface instanceof HTMLButtonElement ? blockSurface : blockSurface.querySelector<HTMLButtonElement>("button")!;
+      page.click();
+      expect(router.route()).toMatchObject({ kind: "page", name: "Alpha notes", path: "pages/alpha.md" });
+      expect(router.tabs().find((tab) => tab.id === searchId)?.history).toEqual([route]);
+      router.setActiveTab(searchId);
+      block.dispatchEvent(new MouseEvent("auxclick", { button: 1, bubbles: true }));
+      expect(router.activeId()).toBe(searchId);
+      expect(router.tabs().some((tab) => tab.history.some((r) => r.kind === "page" && r.block === "authored-block-1"))).toBe(true);
+      page.dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true }));
+      expect(router.activeId()).toBe(searchId);
+      page.dispatchEvent(new MouseEvent("click", { shiftKey: true, bubbles: true }));
+      expect(rightSidebar()).toContainEqual(expect.objectContaining({ kind: "page", name: "Alpha notes", path: "pages/alpha.md" }));
+      block.dispatchEvent(new MouseEvent("click", { shiftKey: true, bubbles: true }));
+      expect(rightSidebar()).toContainEqual(expect.objectContaining({ kind: "block", uuid: "authored-block-1" }));
+      page.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 20 }));
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "Alpha notes", path: "pages/alpha.md" });
+      page.dispatchEvent(new MouseEvent("click", { altKey: true, bubbles: true }));
+      const other = layoutPaneIds().find((id) => id !== "main")!;
+      expect(paneRouter(other).route()).toMatchObject({ kind: "page", name: "Alpha notes", path: "pages/alpha.md" });
+      expect(router.route()).toEqual(route);
+      expect(root.querySelector<HTMLInputElement>(".query-workspace-source")!.value).toBe("alpha");
+    } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); }
+  });
+
   it("shows evidence, diagnostics and explanations, and switches presentations without changing membership", async () => {
     const route: QueryRoute = {
       kind: "query",
@@ -686,13 +724,13 @@ describe("QueryWorkspace", () => {
     expect(root.querySelectorAll(".query-result-row")).toHaveLength(2);
     const resultRows = [...root.querySelectorAll<HTMLButtonElement>(".query-result-row")];
     resultRows[0].click();
-    expect(router.openPageTarget).toHaveBeenCalledWith({
+    expect(router.openInNewTab).toHaveBeenCalledWith({ kind: "page",
       name: "Alpha notes", pageKind: "page", path: "pages/alpha.md",
-    });
+    }, true);
     resultRows[1].click();
-    expect(router.openPageAtBlock).toHaveBeenCalledWith({
+    expect(router.openInNewTab).toHaveBeenCalledWith({ kind: "page",
       name: "Research", pageKind: "page", path: "pages/client-b/Research.md", block: "authored-block-1",
-    });
+    }, true);
 
     for (const [label, selector] of [
       ["List", ".query-results-list"],

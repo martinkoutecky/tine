@@ -41,12 +41,14 @@ export function QueryPageResults(props: {
   view?: ViewSettings;
   surfaceId: (hit: QueryPageHit) => string;
   onOpen: (hit: QueryPageHit) => void;
+  /** Optional shared result gestures, supplied by the workspace owning navigation. */
+  actions?: (hit: QueryPageHit) => JSX.ButtonHTMLAttributes<HTMLButtonElement>;
 }): JSX.Element {
   const link = (hit: QueryPageHit) => <button
     type="button"
     class="query-result-row switcher-row"
     data-inpage-find-surface={props.surfaceId(hit)}
-    onClick={() => props.onOpen(hit)}
+    {...(props.actions?.(hit) ?? { onClick: () => props.onOpen(hit) })}
   ><span class="switcher-kind">page</span><span class="search-result-body">
     <span class="search-result-context">{hit.page.kind === "journal" ? "Journal" : "Page"}</span>
     <span class="search-result-excerpt"><PageText hit={hit} /></span>

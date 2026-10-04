@@ -1,16 +1,18 @@
 import { batch, createMemo, createRoot, createSignal } from "solid-js";
-import { mainPages, pageByName, revealNode, type FeedPage, node as docNode } from "./document";
+import { mainPages, pageByName, revealNode, resolveBlockRef, node as docNode } from "./document";
 import { renderedBlockText, type RenderedTextOptions } from "./render/renderedText";
 import { renderedBlocks } from "./lazyObserve";
 import type { Format } from "./types";
-import { focusedPaneId, layoutPaneIds, paneRouter } from "./panes";
+import { focusedPaneId, layoutPaneIds, visibleLayoutNode, paneRouter } from "./panes";
 import { sameRoute } from "./router";
 import { captureBinding, stillBound } from "./binding";
 import { searchSubstringSpans } from "./editor/searchQuery";
-import { searchRemoveAccents } from "./ui";
+import { rightSidebar, rightSidebarOpen, sidebarItemKey, searchRemoveAccents } from "./ui";
 
 export interface InPageFindMatch {
   blockId: string;
+  /** Owning pane or sidebar item; distinguishes repeated content across views. */
+  scopeId?: string;
   /** Present for visible non-outline surfaces such as query rows and references. */
   surfaceId?: string;
   ordinalInBlock: number;
@@ -152,21 +154,19 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
   const removeAccents = searchRemoveAccents();
   state.surfaceRevision();
   const out: InPageFindMatch[] = [];
-  for (const p of pagesForInPageFind()) appendOutlineMatches(p.roots, docNode, q, p.format, removeAccents, out);
-  const pane = currentFindPaneElement();
-  if (pane) {
-    for (const element of pane.querySelectorAll<HTMLElement>("[data-inpage-find-surface]")) {
-      const surfaceId = element.dataset.inpageFindSurface;
+  const scannedSurfaces = new Set<string>();
+  for (const scope of findScopes()) {
+    const start = out.length;
+    appendOutlineMatches(scope.roots, docNode, q, scope.format, removeAccents, out);
+    for (let i = start; i < out.length; i++) out[i].scopeId = scope.id;
+    const element = findScopeElement(scope.id);
+    if (!element || scannedSurfaces.has(scope.id)) continue;
+    scannedSurfaces.add(scope.id);
+    for (const surface of element.querySelectorAll<HTMLElement>("[data-inpage-find-surface]")) {
+      const surfaceId = surface.dataset.inpageFindSurface;
       if (!surfaceId) continue;
-      const text = searchableTextForRoot(element);
-      findTextOccurrences(text, q, removeAccents).forEach((match, ordinalInBlock) => {
-        out.push({
-          blockId: `surface:${surfaceId}`,
-          surfaceId,
-          ordinalInBlock,
-          start: match.start,
-          end: match.end,
-        });
+      findTextOccurrences(searchableTextForRoot(surface), q, removeAccents).forEach((match, ordinalInBlock) => {
+        out.push({ blockId: `surface:${surfaceId}`, scopeId: scope.id, surfaceId, ordinalInBlock, ...match });
       });
     }
   }
@@ -190,13 +190,30 @@ function currentFindPaneId(): string {
   return notesPaneId(state.paneId() ?? focusedPaneId());
 }
 
-function pagesForInPageFind(): readonly FeedPage[] {
-  const router = paneRouter(currentFindPaneId());
-  const r = router.route();
-  if (r.kind === "journals") return mainPages();
-  if (r.kind !== "page") return [];
-  const page = pageByName(r.name);
-  return page ? [page] : [];
+/** Visible layout order, then mounted sidebar stack order;
+ * outlines retain lazy/collapsed descendants so Find can reveal them. */
+function findScopes(): { id: string; roots: readonly string[]; format: Format }[] {
+  const scopes: { id: string; roots: readonly string[]; format: Format }[] = [];
+  for (const id of layoutPaneIds(visibleLayoutNode())) {
+    const r = paneRouter(id).route();
+    const pages = r.kind === "journals" ? mainPages() : r.kind === "page" ? [pageByName(r.name)].filter((p) => !!p) : [];
+    for (const page of pages) {
+      const root = r.kind === "page" && r.block ? resolveBlockRef({ uuid: r.block, page: r.name, pageKind: r.pageKind, path: r.path }, { navigation: true }) : null;
+      scopes.push({ id, roots: root ? [root] : page.roots, format: page.format });
+    }
+    // Non-outline panes (Search, etc.) opt rendered rows in via surface ids.
+    if (!pages.length) scopes.push({ id, roots: [], format: "md" });
+  }
+  if (rightSidebarOpen()) for (const item of rightSidebar()) {
+    if (item.collapsed) continue;
+    const id = `sidebar:${sidebarItemKey(item)}`;
+    if (!findScopeElement(id)) continue;
+    const page = pageByName(item.kind === "page" ? item.name : item.page);
+    if (!page || (item.path && page.id !== item.path)) continue;
+    const root = item.kind === "block" ? resolveBlockRef(item, { navigation: true }) : null;
+    scopes.push({ id, roots: item.kind === "block" ? root ? [root] : [] : page.roots, format: page.format });
+  }
+  return scopes;
 }
 
 export function openInPageFind() {
@@ -294,7 +311,7 @@ function blockSelector(id: string): string {
 
 function paneSelector(id: string): string {
   const esc = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"');
-  return `[data-pane-id="${esc}"]`;
+  return id.startsWith("sidebar:") ? `[data-sidebar-surface="${esc}"]` : `[data-pane-id="${esc}"]`;
 }
 
 function surfaceSelector(id: string): string {
@@ -302,8 +319,10 @@ function surfaceSelector(id: string): string {
   return `[data-inpage-find-surface="${esc}"]`;
 }
 
-export function inPageFindBlockElement(id: string, paneId = currentFindPaneId()): HTMLElement | null {
-  return (document.querySelector(paneSelector(paneId)) as HTMLElement | null)?.querySelector(blockSelector(id)) as HTMLElement | null;
+/** Resolve a rendered block in its pane or sidebar item. O(DOM in that view),
+ * returning null while a lazy block is unmounted; callers reveal/wait first. */
+export function inPageFindBlockElement(id: string, scopeId = currentFindPaneId()): HTMLElement | null {
+  return (document.querySelector(paneSelector(scopeId)) as HTMLElement | null)?.querySelector(blockSelector(id)) as HTMLElement | null;
 }
 
 function inPageFindSurfaceElement(id: string, paneId = currentFindPaneId()): HTMLElement | null {
@@ -320,9 +339,14 @@ function disconnectFindSurfaceObserver() {
 function observeCurrentFindSurfaces() {
   disconnectFindSurfaceObserver();
   if (!state.open() || typeof MutationObserver === "undefined") return;
-  const pane = currentFindPaneElement();
-  if (!pane) return;
-  surfaceObserver = new MutationObserver(() => {
+  const pane = document.body;
+  surfaceObserver = new MutationObserver((records) => {
+    if (records.every((record) => {
+      const target = record.target instanceof Element ? record.target : record.target.parentElement;
+      if (target?.closest(".inpage-find-overlays,.inpage-find-bar")) return true;
+      return record.type === "childList" && [...record.addedNodes, ...record.removedNodes].every((node) =>
+        node instanceof Element && node.matches(".inpage-find-overlays,.inpage-find-bar"));
+    })) return;
     if (surfaceObserverFrame) return;
     surfaceObserverFrame = requestAnimationFrame(() => {
       surfaceObserverFrame = 0;
@@ -347,17 +371,18 @@ function animationFrame(): Promise<void> {
 export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boolean> {
   const binding = captureBinding();
   const token = revealToken;
-  const paneId = currentFindPaneId();
+  const scopeId = match.scopeId ?? currentFindPaneId();
+  const paneId = scopeId.startsWith("sidebar:") ? currentFindPaneId() : scopeId;
   const tabId = paneRouter(paneId).activeId();
   const route = paneRouter(paneId).route();
   const current = () => state.open() && token === revealToken && stillBound(binding)
-    && currentFindPaneId() === paneId && paneRouter(paneId).activeId() === tabId
+    && !!findScopeElement(scopeId) && paneRouter(paneId).activeId() === tabId
     && sameRoute(paneRouter(paneId).route(), route);
   if (match.surfaceId) {
     for (let i = 0; i < 20; i++) {
       await animationFrame();
       if (!current()) return false;
-      const element = inPageFindSurfaceElement(match.surfaceId);
+      const element = inPageFindSurfaceElement(match.surfaceId, scopeId);
       if (element) {
         element.scrollIntoView({ block: "center", behavior: "smooth" });
         return true;
@@ -372,7 +397,7 @@ export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boo
   for (let i = 0; i < 20; i++) {
     await animationFrame();
     if (!current()) return false;
-    const el = inPageFindBlockElement(match.blockId);
+    const el = inPageFindBlockElement(match.blockId, scopeId);
     if (el) {
       if (!centerInPageFindOccurrence(el, match.ordinalInBlock)) {
         el.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -541,8 +566,16 @@ function blockIdForElement(el: Element): string | null {
   return el.getAttribute("data-block-id");
 }
 
-function currentFindPaneElement(): HTMLElement | null {
-  return document.querySelector(paneSelector(currentFindPaneId())) as HTMLElement | null;
+function findScopeElement(id: string): HTMLElement | null {
+  return typeof document === "undefined" ? null : document.querySelector(paneSelector(id));
+}
+
+function elementMatchKey(el: HTMLElement, id: string): string {
+  const scope = el.closest<HTMLElement>("[data-sidebar-surface],[data-pane-id]");
+  return `${scope?.dataset.sidebarSurface ?? scope?.dataset.paneId ?? currentFindPaneId()}\0${id}`;
+}
+function matchKey(match: InPageFindMatch): string {
+  return `${match.scopeId ?? currentFindPaneId()}\0${match.surfaceId ?? match.blockId}`;
 }
 
 function isViewportVisible(el: HTMLElement, clipRect?: DOMRect): boolean {
@@ -554,23 +587,19 @@ function isViewportVisible(el: HTMLElement, clipRect?: DOMRect): boolean {
   return rect.bottom >= clipRect.top && rect.top <= clipRect.bottom && rect.right >= clipRect.left && rect.left <= clipRect.right;
 }
 
-function visibleFindBlockElements(): HTMLElement[] {
-  const pane = currentFindPaneElement();
-  if (!pane) return [];
-  const paneRect = pane.getBoundingClientRect();
-  return Array.from(pane.querySelectorAll(".ls-block[data-block-id]")).filter((el): el is HTMLElement => {
-    const htmlEl = el as HTMLElement;
-    const content = htmlEl.querySelector(".block-content") as HTMLElement | null;
-    return !!content && isViewportVisible(htmlEl, paneRect);
+function visibleFindElements(selector: string): HTMLElement[] {
+  return [...new Set(findScopes().map((scope) => scope.id))].flatMap((id) => {
+    const scope = findScopeElement(id);
+    if (!scope) return [];
+    const rect = scope.getBoundingClientRect();
+    return Array.from(scope.querySelectorAll<HTMLElement>(selector)).filter((el) => isViewportVisible(el, rect));
   });
 }
-
+function visibleFindBlockElements(): HTMLElement[] {
+  return visibleFindElements(".ls-block[data-block-id]").filter((el) => !!el.querySelector(".block-content"));
+}
 function visibleFindSurfaceElements(): HTMLElement[] {
-  const pane = currentFindPaneElement();
-  if (!pane) return [];
-  const paneRect = pane.getBoundingClientRect();
-  return Array.from(pane.querySelectorAll<HTMLElement>("[data-inpage-find-surface]"))
-    .filter((element) => isViewportVisible(element, paneRect));
+  return visibleFindElements("[data-inpage-find-surface]");
 }
 
 function resetCssHighlights() {
@@ -597,14 +626,14 @@ export function refreshInPageFindHighlights() {
   const candidates = visibleFindBlockElements();
   const surfaceCandidates = visibleFindSurfaceElements();
   if (activeMatch?.surfaceId) {
-    const activeSurface = inPageFindSurfaceElement(activeMatch.surfaceId);
+    const activeSurface = inPageFindSurfaceElement(activeMatch.surfaceId, activeMatch.scopeId);
     if (activeSurface && !surfaceCandidates.includes(activeSurface)) surfaceCandidates.push(activeSurface);
   } else if (activeMatch) {
-    const activeBlock = inPageFindBlockElement(activeMatch.blockId);
+    const activeBlock = inPageFindBlockElement(activeMatch.blockId, activeMatch.scopeId);
     if (activeBlock && !candidates.includes(activeBlock)) candidates.push(activeBlock);
   }
-  const candidateIds = new Set(candidates.map(blockIdForElement).filter((id): id is string => !!id));
-  const candidateSurfaceIds = new Set(surfaceCandidates.map((element) => element.dataset.inpageFindSurface).filter((id): id is string => !!id));
+  const candidateIds = new Set(candidates.map((el) => elementMatchKey(el, blockIdForElement(el) ?? "")).filter((id): id is string => !!id));
+  const candidateSurfaceIds = new Set(surfaceCandidates.map((element) => elementMatchKey(element, element.dataset.inpageFindSurface ?? "")).filter((id): id is string => !!id));
   if (!candidateIds.size && !candidateSurfaceIds.size) {
     resetCssHighlights();
     clearOverlayHighlights();
@@ -615,16 +644,16 @@ export function refreshInPageFindHighlights() {
   for (let i = 0; i < matches.length; i++) {
     const m = matches[i];
     if (m.surfaceId) {
-      if (!candidateSurfaceIds.has(m.surfaceId)) continue;
-      const bucket = matchesBySurface.get(m.surfaceId);
+      if (!candidateSurfaceIds.has(matchKey(m))) continue;
+      const bucket = matchesBySurface.get(matchKey(m));
       if (bucket) bucket.push({ ordinalInBlock: m.ordinalInBlock, matchIndex: i });
-      else matchesBySurface.set(m.surfaceId, [{ ordinalInBlock: m.ordinalInBlock, matchIndex: i }]);
+      else matchesBySurface.set(matchKey(m), [{ ordinalInBlock: m.ordinalInBlock, matchIndex: i }]);
       continue;
     }
-    if (!candidateIds.has(m.blockId)) continue;
-    const bucket = matchesByBlock.get(m.blockId);
+    if (!candidateIds.has(matchKey(m))) continue;
+    const bucket = matchesByBlock.get(matchKey(m));
     if (bucket) bucket.push({ ordinalInBlock: m.ordinalInBlock, matchIndex: i });
-    else matchesByBlock.set(m.blockId, [{ ordinalInBlock: m.ordinalInBlock, matchIndex: i }]);
+    else matchesByBlock.set(matchKey(m), [{ ordinalInBlock: m.ordinalInBlock, matchIndex: i }]);
   }
   void refreshInPageFindHighlightsChunked(token, candidates, surfaceCandidates, matchesByBlock, matchesBySurface, query, activeIdx);
 }
@@ -653,7 +682,7 @@ async function refreshInPageFindHighlightsChunked(
     const block = candidates[i];
     const blockId = blockIdForElement(block);
     if (!blockId) continue;
-    const blockMatches = matchesByBlock.get(blockId);
+    const blockMatches = matchesByBlock.get(elementMatchKey(block, blockId));
     if (!blockMatches?.length) continue;
     const root = block?.querySelector(".block-content") as HTMLElement | null;
     if (!root) continue;
@@ -675,7 +704,7 @@ async function refreshInPageFindHighlightsChunked(
     const surface = surfaceCandidates[i];
     const surfaceId = surface.dataset.inpageFindSurface;
     if (!surfaceId) continue;
-    const surfaceMatches = matchesBySurface.get(surfaceId);
+    const surfaceMatches = matchesBySurface.get(elementMatchKey(surface, surfaceId));
     if (!surfaceMatches?.length) continue;
     const surfaceRanges = textRanges(surface, query);
     for (const match of surfaceMatches) {
