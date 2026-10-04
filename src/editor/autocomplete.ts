@@ -412,6 +412,9 @@ export type CommandAction =
   | "record"
   | "drawio"
   | "now-time"
+  | "date-picker"
+  | "tomorrow"
+  | "yesterday"
   | "today"
   | "thatday"
   | "query-builder"
@@ -508,6 +511,9 @@ const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
   { label: "Math block", insert: "$$$$", caret: 2 },
   { label: "Current time", action: "now-time" },
   { label: "Today", action: "today" },
+  { label: "Tomorrow", action: "tomorrow" },
+  { label: "Yesterday", action: "yesterday" },
+  { label: "Date picker", action: "date-picker" },
   { label: "That day", action: "thatday" },
   { label: "Page properties", action: "page-props" },
   // Template variables: insert the `<% … %>` placeholder (expanded when the
@@ -519,7 +525,7 @@ const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
 const BARE_ORDER = new Map<string, number>([
   "Page reference", "Link", "Upload an asset", "Voice recording", "Draw.io diagram",
   "Heading (Auto)", "Heading 1", "Heading 2", "Heading 3", "Heading 4",
-  "Today", "That day", "Current time",
+  "Today", "Tomorrow", "Yesterday", "Date picker", "That day", "Current time",
   "TODO", "DOING", "LATER", "NOW", "DONE", "WAITING", "WAIT", "IN-PROGRESS", "CANCELED", "Scheduled", "Deadline",
   "Priority A", "Priority B", "Priority C",
   "Grid", "Table", "Board",

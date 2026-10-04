@@ -8,11 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- `/Date picker`, `/Tomorrow`, and `/Yesterday` insert journal date links in the graph's configured title format (GH #485).
+
 - Wide Markdown, Org, query and sheet tables now use free space on both sides of the text column before scrolling at the pane boundary (UI-OG-QBG-TABLE-BLEED).
 - Added remappable, initially unbound commands to grow/shrink either sidebar width (GH #425) and open a persistent search tab directly (GH #437).
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- Date pickers keep a selected day open for time/repeat edits; Done or clicking outside applies the complete choice, while Escape cancels (GH #30).
 - PDF `file://` links now open in the desktop's default viewer with their full path, without redirecting to graph assets or creating annotation pages (GH #577).
 - Android and iOS startup no longer shows “Couldn’t read the window state” from an unsupported desktop maximize query (GH #621).
 - Journals feed days now show Linked References with counts and the shared collapse/filter controls, loading as you scroll and hiding empty sections (GH #481).

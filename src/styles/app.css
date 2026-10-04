@@ -4920,6 +4920,8 @@ body.file-drop-active::after {
   z-index: 60;
 }
 .date-picker {
+  max-height: calc(100dvh - 8px);
+  overflow-y: auto;
   position: fixed;
   /* Wide enough that the longest header title — the scheduled/deadline picker's
      "September 2026 · Scheduled" — stays on ONE line (measured single-line floor
@@ -5025,6 +5027,11 @@ body.file-drop-active::after {
 }
 .dp-empty {
   visibility: hidden;
+}
+.dp-help {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 .dp-foot {
   display: flex;

@@ -82,7 +82,7 @@ import { MEDIA_EDITORS } from "../mediaEditors";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
-import { runJournalSlash } from "../journalSlash";
+import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor } from "./Macro";
 import { Rendered, detectMacro } from "./Rendered";
@@ -1032,8 +1032,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // Insert `text` in place of the active trigger and restore the caret. If the
   // completion ends with a closing pair (`]]`/`))`/`}}`) and the same pair
   // sits at or later on this line after the caret (e.g. from a `[[ ]]` autopair
-  // or editing inside an existing ref), swallow it so we don't end up with stray
-  // ref text or `[[name]]]]`.
+  // or editing inside an existing ref), swallow it to avoid duplicate closers.
   const replaceTrigger = (text: string, caret?: number) => {
     const t = ac();
     if (!t) return;
@@ -1071,8 +1070,6 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     });
   };
 
-  // Open the native file picker, copy the chosen file into assets/, and insert
-  // its markdown at the caret. Uses the Tauri dialog plugin + import_asset.
   const captureAssetEditorToken = () => captureAssetEditor(ref);
   const assetEditorCurrent = (token: AssetEditorToken) => assetEditorIsCurrent(token, ref, editorMounted);
 
@@ -1617,8 +1614,6 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       }
       case "scheduled":
       case "deadline": {
-        // Drop the "/scheduled" trigger text, then open the calendar popup
-        // anchored under the editor.
         replaceTrigger("");
         const r = ref.getBoundingClientRect();
         openDatePicker(props.id, item.action, r.left, r.bottom + 4);
@@ -1676,8 +1671,6 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         return;
       }
       case "page-props": {
-        // Drop the trigger text, then open the page-properties panel for the
-        // page this block lives on (anchored under the editor).
         replaceTrigger("");
         const rect = ref.getBoundingClientRect();
         openPageProps(docNode(props.id).page, rect.left, rect.bottom + 4);
@@ -1692,6 +1685,12 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         applySheetViewSlashAction(props.id, view);
         return;
       }
+      case "date-picker":
+        replaceTrigger("");
+        queueMicrotask(() => { if (editorMounted) openJournalDatePicker(ref, commit, () => editorMounted, autosize); });
+        return;
+      case "tomorrow":
+      case "yesterday":
       case "today":
       case "thatday":
         runJournalSlash(item.action, docNode(props.id).page, replaceTrigger);
