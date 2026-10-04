@@ -154,8 +154,86 @@ function loadQueryDoc(queryRaw: string) {
   mockRun(queryGroups(["todo"]));
 }
 
+function loadDamagedQueryDoc(raw: string) {
+  loadQueryDoc(raw);
+  // State the native empty OG reading (og.rs::parse_og): pages, true filter.
+  // Before the fix the missing extent is converted to exactly this empty input.
+  vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => {
+    const parsed = readQuery(text, dialect, properties);
+    return text === "" ? { ...parsed, query: { ...parsed.query, anchor: "page", filter: { kind: "true" } } } : parsed;
+  });
+  vi.mocked(backend().queryRun).mockResolvedValue({
+    anchor: "page", pages: [
+      { path: "pages/Sheet.md", name: "Sheet", kind: "page", properties: [] },
+      { path: "pages/Other.md", name: "Other", kind: "page", properties: [] },
+    ], diagnostics: [], report: { ran: [], ignored: [], supported: true }, total: 2, exceeded: false,
+  });
+}
 
 describe("QueryMacro sheet integration", () => {
+  it("renders the reported options map without a stray brace", async () => {
+    const raw = '{{query (page-property tags gptpro) {:title "gptpro"}}}\ntine.group-field:: prop:anchor\ntine.view:: search';
+    loadQueryDoc(raw);
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      expect(root.querySelector(".query-title")?.textContent).toBe("gptpro");
+      expect(root.querySelector(".block-content")?.textContent).not.toContain("}");
+      expect(doc.byId.query.raw).toBe(raw);
+    } finally { dispose(); }
+  });
+
+  it("shows a source parse error instead of running the reported damaged macro as an empty query", async () => {
+    const raw = '{{query (page-property tags gptpro) {:title "gptpro"}}\ntine.group-field:: prop:anchor\ntine.view:: search';
+    loadDamagedQueryDoc(raw);
+    vi.mocked(backend().queryRun).mockClear();
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      expect(root.textContent).toMatch(/query source.*pars/i);
+      expect(backend().queryRun).not.toHaveBeenCalled();
+      expect(doc.byId.query.raw).toBe(raw);
+      startEditing("query");
+      await settleQuery();
+      expect(root.querySelector<HTMLTextAreaElement>("textarea.block-editor")?.value).toContain(raw.split("\n")[0]);
+    } finally { dispose(); }
+  });
+
+  it("reports unreadable source before offering a builder edit on the damaged block", async () => {
+    const raw = '{{query (page-property tags gptpro) {:title "gptpro"}}\ntine.group-field:: prop:anchor\ntine.view:: search';
+    loadDamagedQueryDoc(raw);
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue('(page-property tags gptpro)');
+    vi.spyOn(backend(), "queryRegistry").mockResolvedValue({ generation: 1, rows: [{
+      normalized_name: "tags", cardinality: "one", observed_type: "text",
+      count_blocks: 0, count_pages: 1, mismatch_count: 0,
+    }] });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      // Exercise Martin's edit if an invalid source is still allowed into the builder.
+      const gear = root.querySelector<HTMLButtonElement>(".qs-gear");
+      if (gear) {
+        gear.click();
+        await settleQuery();
+        document.querySelector<HTMLButtonElement>(".qs-add")!.click();
+        await settleQuery();
+        const tags = [...document.querySelectorAll<HTMLElement>("[role=option]")]
+          .find((option) => option.textContent?.trim() === "tags");
+        expect(tags).toBeDefined();
+        tags!.click();
+        const value = document.querySelector<HTMLInputElement>('.qs-input[aria-label="Value"]')!;
+        value.value = "gptpro";
+        value.dispatchEvent(new Event("input", { bubbles: true }));
+        document.querySelector<HTMLButtonElement>(".qs-commit")!.click();
+        await settleQuery();
+      }
+      expect(root.textContent).not.toContain("The block changed while saving");
+      expect(root.querySelector('[role="alert"]')?.textContent).toMatch(/query source.*pars/i);
+      expect(root.querySelector(".qs-gear")).toBeNull();
+      expect(doc.byId.query.raw).toBe(raw);
+    } finally { dispose(); }
+  });
   it("leaves background List mounts pending while the picker owns foreground input", async () => {
     loadQueryDoc("{{query (task TODO)}}");
     renderedBlocks.add("query");

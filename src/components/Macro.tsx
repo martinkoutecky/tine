@@ -187,6 +187,7 @@ export function QueryMacro(props: {
 
   // The macro name this query was AUTHORED under (§7.9): `query` or `tine-query`.
   const macroBody = createMemo(() => queryMacroExtent(`{{${props.body.trim()}}}`));
+  const sourceError = () => macroBody() === null ? "Query source could not be parsed. Edit the block text to repair the macro." : undefined;
   const macroName = (): string => macroBody()?.name ?? QUERY_MACRO_NAMES[0];
   const arg = () => macroBody()?.argument.trim() ?? "";
   const hostProperties = createMemo<[string, string][]>(() => {
@@ -195,14 +196,14 @@ export function QueryMacro(props: {
     if (!id || !node) return [];
     return facetsOf(node.raw, formatForBlock(id)).properties.filter(([key]) => key.startsWith("tine."));
   }, [], { equals: sameJson });
-  const parseRequest = createMemo<ReadingRequest>(
-    () => ({ argument: arg(), name: macroName(), properties: hostProperties(), epoch: graphEpoch() }),
-    { argument: "", name: "", properties: [], epoch: -1 },
+  const parseRequest = createMemo<ReadingRequest | undefined>(
+    () => sourceError() ? undefined : ({ argument: arg(), name: macroName(), properties: hostProperties(), epoch: graphEpoch() }),
+    undefined,
     { equals: sameJson },
   );
   const parsed = createQueryReading(parseRequest);
   /** The authoring reading. Every display and editing derivation uses it. */
-  const reading = (): ParsedQuery | undefined => (parsed.error === undefined ? parsed.latest?.reading : undefined);
+  const reading = (): ParsedQuery | undefined => (!sourceError() && parsed.error === undefined ? parsed.latest?.reading : undefined);
   const source = (): Source | undefined => reading()?.query.source;
   const form = () => { const s = source(); return (s ? sourceOriginal(s) : null) ?? ""; };
   const opts = () => { const s = source(); return s ? sourceOptions(s) : ""; };
@@ -233,7 +234,8 @@ export function QueryMacro(props: {
   });
   const executionRequest = createMemo<ReadingRequest | undefined>(() => {
     const argument = executionArg();
-    return argument === null ? undefined : { ...parseRequest(), argument };
+    const request = parseRequest();
+    return argument === null || !request ? undefined : { ...request, argument };
   }, undefined, { equals: sameJson });
   const executionParsed = createQueryReading(executionRequest);
   /** The reading the EXECUTION runs — for a substituted argument, only the
@@ -396,7 +398,7 @@ export function QueryMacro(props: {
   // as an empty graph.
   const blockingDiagnostics = () => (displayed()?.diagnostics ?? []).filter((d) => !d.disabled);
   const advInfo = () => (isAdvanced() ? displayed()?.report ?? null : null);
-  const readError = () => parsed.error ?? executionParsed.error;
+  const readError = () => sourceError() ?? parsed.error ?? executionParsed.error;
   const loadError = () => operation.error ?? readError();
   // Presentation never changes membership: ordinary DSL results adapt into
   // evidence-free search rows for the Search presentation.
