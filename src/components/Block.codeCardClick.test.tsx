@@ -99,4 +99,14 @@ describe("clicking a code block places the caret where clicked (GH #489)", () =>
       dispose();
     }
   });
+  it("mixed paragraph and code after a soft break uses the existing whole-block source editor (GH #510 question)", () => {
+    const raw = "paragraph\n```js\nconst x = 1;\n```";
+    const { root, dispose } = clickCode(raw, code => ({ node: textNodeContaining(code, "const x"), offset: 0 }), { name: "Mixed code click" });
+    try {
+      const ta = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      expect(ta.value).toBe(raw);
+      expect(ta.classList.contains("code-edit")).toBe(false);
+    } finally { dispose(); }
+  });
+
 });

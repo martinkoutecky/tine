@@ -4114,6 +4114,9 @@ html[data-system-insets="native-viewport"] {
    metrics), so clicking a code region no longer re-lays it out (GH #357).
    Font/line-height/padding numbers mirror .code-block exactly — keep them in
    sync. `wrap="off"` on the textarea is the functional side of no-soft-wrap. */
+.editor-wrap:has(> .block-editor.code-edit) {
+  padding: var(--ls-block-content-pad-y) 0;
+}
 .block-editor.code-edit {
   background: var(--code-bg);
   border: 1px solid var(--border-color);
@@ -5347,6 +5350,8 @@ body.file-drop-active::after {
   font-family: var(--ls-font-mono);
   font-size: 0.86em;
   line-height: 1.5;
+  /* An empty code card still reserves the editor's empty line. */
+  min-height: calc(1.5em + 22px);
 }
 .code-block code {
   font-family: inherit;

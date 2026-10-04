@@ -143,7 +143,7 @@ import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { wireBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
-import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, timeStamp } from "./blockParts";
+import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 
 type SheetSlashView = "grid" | "table" | "board";
 
@@ -1738,26 +1738,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     replaceTrigger(item.insert ?? "", item.caret);
   };
 
-  // Resize the textarea to fit its content. Setting height:auto then reading
-  // scrollHeight forces a synchronous layout, so doing it per keystroke thrashes
-  // layout; `autosize` coalesces to one resize per animation frame. `resizeNow`
-  // is the immediate variant for mount (avoids a one-frame collapsed flash).
-  const resizeNow = () => {
-    if (!ref || !ref.isConnected) return;
-    // Setting height:auto transiently collapses the textarea to measure its
-    // content height. When the block is TALLER than the viewport, that collapse
-    // makes WebKitGTK scroll-jump the enclosing scroller to keep the caret in
-    // view — so every keystroke pinned the caret to the bottom edge of the
-    // screen (Martin's report). Preserve the scroller's scrollTop across the
-    // measure so autosize stays visually invisible.
-    const scroller = nearestScrollableY(ref);
-    const prevTop = scroller?.scrollTop;
-    ref.style.height = "auto";
-    ref.style.height = `${ref.scrollHeight}px`;
-    if (scroller && prevTop !== undefined && scroller.scrollTop !== prevTop) {
-      scroller.scrollTop = prevTop;
-    }
-  };
+  // Coalesce layout measurements; mount uses the immediate version.
+  const resizeNow = () => resizeBlockEditor(ref);
   let autosizeRaf: number | undefined;
   const autosize = () => {
     if (autosizeRaf !== undefined) return; // already scheduled this frame
@@ -2401,6 +2383,16 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     const start = ref.selectionStart;
     const end = ref.selectionEnd;
     const raw = ref.value;
+    // Empty code payloads can leave their wrapper through the existing delete door.
+    if (e.key === "Backspace" && !e.ctrlKey && !e.metaKey && !e.altKey && !sheetCell && codeShown() && raw === "" && node().children.length === 0) {
+      e.preventDefault();
+      const adjacent = [prevVisible(props.id, structuralScope), nextVisible(props.id, structuralScope)].find(id => id && docNode(id)?.page === node().page);
+      if (adjacent) {
+        deleteBlock(props.id);
+        startEditing(adjacent, 0, null, editSurface());
+      } else { setRaw(props.id, "", { timetracking: false }); }
+      return;
+    }
 
     // Ctrl/Cmd+Shift+V is Logseq's universal raw-paste gesture.
     // ClipboardEvent does not expose modifier keys, so remember the preceding
