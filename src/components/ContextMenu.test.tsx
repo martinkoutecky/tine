@@ -86,7 +86,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     const dispose = mount(() => <ContextMenu />);
     openContextMenu(10, 10, "leaf");
     expect(menuLabels()).toEqual(
-      expect.arrayContaining(["Copy block", "Cut block", "Delete block", "Copy block ref", "Open in sidebar"]),
+      expect.arrayContaining(["Copy block", "Cut block", "Delete block", "Copy block ref", "Copy link", "Open in sidebar"]),
     );
     dispose();
   });
@@ -360,7 +360,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "open-sidebar",
       "open-new-tab",
       "favorite-toggle",
-      "copy-page-ref",
+      "copy-link", "copy-page-ref",
       "copy-export",
       "copy-page-markdown",
       "export-pdf",
@@ -394,7 +394,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     expect(activeId()).toBe("delete-page");
     press("Home");
     expect(activeId()).toBe("open");
-    expect(menu.querySelectorAll('[role="menuitem"]')).toHaveLength(13);
+    expect(menu.querySelectorAll('[role="menuitem"]')).toHaveLength(14);
     dispose();
   });
 
@@ -495,7 +495,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "P", "page", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
+      "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
       "show-in-folder", "open-default-app",
     ]);
     closeContextMenu();
@@ -507,7 +507,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "2000-01-01", "journal", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
+      "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
       "show-in-folder", "open-default-app", "page-properties",
       "carry-unfinished", "delete-journal",
     ]);

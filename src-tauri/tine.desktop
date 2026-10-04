@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name={{name}}
+Comment=Fast, local-first Logseq-compatible outliner
+Exec={{exec}} %U
+Icon={{icon}}
+Terminal=false
+Categories=Office;Utility;
+MimeType=x-scheme-handler/tine;

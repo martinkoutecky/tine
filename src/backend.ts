@@ -56,6 +56,8 @@ import { mockBackend } from "./mock";
 import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import { isPublishedExport, publishedBackend } from "./publishedBackend";
 
+import { nativeTineLinks, type NativeTineLinks } from "./nativeTineLinks";
+
 export interface SavePageEntry {
   id: string;
   page: PageDto;
@@ -143,6 +145,7 @@ export interface Backend {
   loadGraph(path: string): Promise<LoadGraphResult>;
   openGraphWindow(path: string): Promise<LoadGraphResult>;
   startupGraphPath(): Promise<string | null>;
+  tineLinks?: NativeTineLinks;
   captureTarget(): Promise<string>;
   /** Lease the graph selected for this Quick Capture show before issuing
    * graph-scoped reads from its independent WebView. */
@@ -842,6 +845,7 @@ class TauriBackend implements Backend {
   openGraphWindow(path: string) {
     return this.call<LoadGraphResult>("open_graph_window", { path });
   }
+  readonly tineLinks = nativeTineLinks((cmd, args) => this.call(cmd, args), (cb) => this.on<void>("tine-link-pending", cb));
   startupGraphPath() {
     return this.call<string | null>("startup_graph_path");
   }

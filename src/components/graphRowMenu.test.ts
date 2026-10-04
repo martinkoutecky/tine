@@ -10,14 +10,14 @@ it("keeps current graph actions visible but disabled and omits desktop actions o
   });
   expect(actions.map((action) => action.label)).toEqual([
     "Open in a new window (already open here)", "Open here (current graph)",
-    "Show in folder", "Copy path", "Remove from this list",
+    "Show in folder", "Copy link", "Copy path", "Remove from this list",
   ]);
   expect(actions.slice(0, 2).every((action) => action.disabled)).toBe(true);
   const mobile = graphRowMenuActions(graph, {
     openKnown: vi.fn(), reveal: vi.fn(), copyPath: vi.fn(), forget: vi.fn(),
     desktop: false, isCurrent: false,
   });
-  expect(mobile.map((action) => action.label)).toEqual(["Open here", "Copy path", "Remove from this list"]);
+  expect(mobile.map((action) => action.label)).toEqual(["Open here", "Copy link", "Copy path", "Remove from this list"]);
 });
 
 it("keeps a context-menu open failure sticky and retries the same graph (master 9a9122b1544d)", async () => {

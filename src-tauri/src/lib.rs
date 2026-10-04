@@ -19,6 +19,7 @@ mod concord_ledger;
 mod data_home;
 mod debug;
 mod defender;
+mod deep_links;
 mod device_io;
 mod drafts;
 #[cfg(test)]
@@ -664,6 +665,12 @@ pub fn run() {
         crate::graph::app_platform()
     ));
 
+    #[cfg(desktop)]
+    let builder = builder.append_invoke_initialization_script(format!(
+        "globalThis.__TINE_LINK_LAUNCH__ = {};",
+        matches!(cli::launch_request_env(), cli::LaunchRequest::Link(_))
+    ));
+
     let builder = match e2e_touch_gestures_platform() {
         Some(kind) => builder.append_invoke_initialization_script(format!(
             "globalThis.__TINE_E2E_TOUCH_GESTURES__ = {kind:?};"
@@ -703,6 +710,7 @@ pub fn run() {
                         let _ = open_graph_window(path, command_app.clone(), state).await;
                     });
                 }
+                cli::LaunchRequest::Link(url) => deep_links::receive_url(app, url),
                 cli::LaunchRequest::Focus => focus_last_graph_window(app),
             }
         }))
@@ -792,6 +800,7 @@ pub fn run() {
             }
         })
         .manage(graph::StartupGraph::default())
+        .manage(deep_links::PendingLinks::default())
         .manage(AppState {
             graphs: RwLock::new(state::GraphRegistry::default()),
             graph_load: Mutex::new(()),
@@ -810,6 +819,10 @@ pub fn run() {
             diag("setup() begin");
             #[cfg(target_os = "linux")]
             youtube_identity::create_windows(app, &youtube_windows);
+            #[cfg(desktop)]
+            if let cli::LaunchRequest::Link(url) = cli::launch_request_env() {
+                deep_links::receive_url(app.handle(), url);
+            }
             graph::prepare_startup_graph(app.handle());
             #[cfg(target_os = "linux")]
             {
@@ -860,6 +873,10 @@ pub fn run() {
             load_graph,
             inspect_graph_access,
             approve_external_assets,
+            deep_links::graph_link_identity,
+            deep_links::scan_known_graphs_for_link,
+            deep_links::take_tine_links,
+            deep_links::handoff_tine_link,
             open_graph_window,
             startup_graph_path,
             capture_target,
@@ -1034,6 +1051,10 @@ pub fn run() {
         .build(context)
         .expect("error while building tauri application")
         .run(|app, event| {
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+            if let tauri::RunEvent::Opened { ref urls } = event {
+                for url in urls { deep_links::receive_url(app, url.to_string()); }
+            }
             if matches!(event, tauri::RunEvent::Exit) {
                 youtube_identity::cleanup(app);
                 // Queued Concord base-ledger updates get one bounded drain

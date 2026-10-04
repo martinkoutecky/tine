@@ -1174,3 +1174,14 @@ mod i2_guide_sentence_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod external_link_guide_tests {
+    #[test]
+    fn guide_explains_external_copy_lazy_identity_and_missing_targets() {
+        let guide = include_str!("templates/find-and-revisit.md");
+        for outcome in ["**Copy link**", "`tine://`", "`logseq/tine-graph-id`", "saved ID alone", "missing graph or target", "remembers that choice"] {
+            assert!(guide.contains(outcome), "GH #181 Guide is missing {outcome}");
+        }
+    }
+}
