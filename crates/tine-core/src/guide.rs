@@ -535,7 +535,8 @@ mod rename_guide_tests {
         for outcome in [
             "Swipe a block **right** to indent it",
             "**left a short way** to outdent it",
-            "**left a long way** to select it and open its action menu",
+            "**left a longer way** to select it and open its action menu",
+            "The left-swipe outdent band is 40–139 px; actions start at 140 px",
             "**Swipe in from the left edge** to open the left drawer",
             "**Back is one ladder everywhere.**",
             "snapping back if you let go early",
