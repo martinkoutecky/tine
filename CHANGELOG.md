@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- Journal date-format parity: honor legacy `:date-formatter` after the modern key, offer all Logseq formats, and render `E`/`EE` as abbreviated weekdays while keeping old titles readable (GH #332 follow-ups).
 - Query property commas now follow Logseq's configured keys; query text matches raw content with exact case and accents, while Search keeps folding (GH #624). Imported `query-table::` and trailing `table` choices are honored without writing Logseq view properties.
 - GH #510: edit a code region inside a mixed text block without exposing its fences; boundary navigation returns to source editing and preserves surrounding text.
 - Find searches main and split panes plus expanded right-sidebar items, with next/previous traversing them in order (GH #559).

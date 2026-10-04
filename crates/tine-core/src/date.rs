@@ -1,4 +1,6 @@
-//! Journal dates and compiled Logseq filename/title formats.
+//! Journal dates and compiled Logseq filename/title formats. E/EE/EEE render
+//! abbreviated weekdays and EEEE full names; parsing also accepts old Tine
+//! one/two-letter weekday titles. Cost is O(pattern + title), without file I/O.
 
 /// A calendar date as (year, month, day). Stored as an ordinal key `yyyymmdd`
 /// for cheap sorting/comparison.
@@ -336,9 +338,7 @@ impl Format {
                 Tok::DayNum(false) => out.push_str(&d.day.to_string()),
                 Tok::DayOrd => out.push_str(&ordinal(d.day)),
                 Tok::Weekday(4) => out.push_str(WEEKDAYS_FULL[dow]),
-                Tok::Weekday(3) => out.push_str(WEEKDAYS_ABBR[dow]),
-                Tok::Weekday(2) => out.push_str(WEEKDAYS_2[dow]),
-                Tok::Weekday(_) => out.push_str(WEEKDAYS_1[dow]),
+                Tok::Weekday(_) => out.push_str(WEEKDAYS_ABBR[dow]),
             }
         }
         out

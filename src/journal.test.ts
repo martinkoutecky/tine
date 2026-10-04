@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import dateGoldenRaw from "./fixtures/date-golden.json?raw";
 import journalTitleGoldenRaw from "../tests/fixtures/i12-journal-title-golden.json?raw";
 import { JOURNAL_TITLE_FORMATS } from "./journalTitleFormats";
+import ogFormats from "../tests/fixtures/og-journal-formats.json";
 import {
   formatJournal,
   isJournalTitle,
@@ -39,6 +40,21 @@ type DateGoldenFixture = {
 
 const dateGolden = JSON.parse(dateGoldenRaw) as DateGoldenFixture;
 const journalTitleGolden = JSON.parse(journalTitleGoldenRaw) as { cases: { name: string; expected: boolean }[] };
+
+it("formats and parses every source-derived OG journal preset through wasm (I-12)", () => {
+  for (const { pattern, title } of ogFormats.formats) {
+    expect(formatJournal(new Date(2024, 0, 5), pattern), pattern).toBe(title);
+    expect(parseJournalWith(title, pattern), pattern).toEqual({ y: 2024, m: 1, d: 5 });
+  }
+  expect(formatJournal(new Date(2024, 0, 5), "EE, yyyy-MM-dd")).toBe("Fri, 2024-01-05");
+  for (const [pattern, title] of [["E, yyyy-MM-dd", "F, 2024-01-05"], ["EE, yyyy-MM-dd", "Fr, 2024-01-05"]]) {
+    expect(parseJournalWith(title, pattern)).toEqual({ y: 2024, m: 1, d: 5 });
+  }
+});
+
+it("offers exactly the source-derived OG preset list", () => {
+  expect([...JOURNAL_TITLE_FORMATS]).toEqual(ogFormats.formats.map(f => f.pattern));
+});
 
 function localDate({ y, m, d }: JournalDateParts): Date {
   return new Date(y, m - 1, d);
