@@ -24,6 +24,8 @@ function stubAdvancedEngine(groups: RefGroup[], report: { ran: string[]; ignored
         filter: { kind: "raw", text: original, diagnostic_kind: "not_applicable" },
         source: { kind: "advanced", original, og_options: options?.[1] ?? "" },
       },
+      // Rust answers OG's table? (wire_parse.rs); BEGIN_QUERY appends {:table-view? true}.
+      legacy_table: options !== null,
       view: {},
     };
   });

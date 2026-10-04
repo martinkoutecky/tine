@@ -463,6 +463,10 @@ function textPartsForRoot(root: HTMLElement): { parts: TextPart[]; text: string 
       const parent = node.parentElement;
       const control = parent?.closest("button,input,textarea,select");
       if (!parent) return NodeFilter.FILTER_REJECT;
+      // aria-hidden text is layout, not content: a code block's line gutter
+      // repeats every line invisibly to mirror soft wraps (LineGutter).
+      const hidden = parent.closest('[aria-hidden="true"]');
+      if (hidden && root.contains(hidden)) return NodeFilter.FILTER_REJECT;
       // A control is chrome ("Show full block", a jump circle), so find skips its
       // label. A control that CARRIES content opts in with data-inpage-find-text:
       // an unlinked-reference mention is a button, and those are the very words

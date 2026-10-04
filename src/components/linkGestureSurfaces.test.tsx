@@ -505,7 +505,7 @@ describe("query search-presentation rows follow the gesture contract (GH #207)",
       blocks: [{ id: "q1", raw: "TODO row", collapsed: false, children: [] }],
     }]));
     backendReadsQueries({
-      "(task TODO) {:table-view? true}": { form: "(task TODO)", opts: "{:table-view? true}" },
+      "(task TODO) {:table-view? true}": { form: "(task TODO)", opts: "{:table-view? true}", legacy_table: true },
       "(task DONE)": { form: "(task DONE)" },
     });
     loadQueryDoc("{{query (task TODO) {:table-view? true}}}");

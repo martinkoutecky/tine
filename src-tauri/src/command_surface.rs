@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 175] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 179] = [
     "add_defender_exclusion",
     "app_architecture",
     "app_platform",
@@ -63,8 +63,10 @@ pub(crate) const KNOWN_COMMANDS: [&str; 175] = [
     "get_unlinked_refs",
     "get_watch_mode",
     "gpu_env",
+    "graph_link_identity",
     "graph_source_files",
     "guide_pages",
+    "handoff_tine_link",
     "import_asset",
     "import_native_capture",
     "inspect_graph_access",
@@ -139,6 +141,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 175] = [
     "save_pdf_area_image",
     "save_session",
     "save_workspaces",
+    "scan_known_graphs_for_link",
     "search",
     "set_app_bool",
     "set_app_string",
@@ -171,6 +174,7 @@ pub(crate) const KNOWN_COMMANDS: [&str; 175] = [
     "sync_conflict_diff",
     "take_data_home_fallback_notice",
     "take_identifier_migration_notice",
+    "take_tine_links",
     "tine_open_devtools",
     "tine_quit",
     "trash_asset",

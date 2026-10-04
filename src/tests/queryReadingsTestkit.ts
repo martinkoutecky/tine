@@ -36,6 +36,9 @@ export interface QueryReading {
   /** The source variant. `og` unless stated; `advanced` is what makes the
    *  datalog path run. */
   kind?: Source["kind"];
+  /** OG's table? answer (`wire_parse.rs`: options, `query-table::` or a
+   *  trailing `table`), which the engine computes and a stub must declare. */
+  legacy_table?: boolean;
   /** The view settings the engine lifted out of the text and the block's
    *  `tine.*` properties. */
   view?: ViewSettings;
@@ -83,6 +86,7 @@ function readingToIr(reading: QueryReading): ParsedQuery {
   return {
     query,
     view: reading.view ?? {},
+    ...(reading.legacy_table !== undefined ? { legacy_table: reading.legacy_table } : {}),
     // `Object.hasOwn`, never `??`: a present-but-empty scoped draft is `{}`,
     // and `{} ?? x` is `{}` while `undefined ?? x` is `x` — the two readings a
     // truthiness copy cannot tell apart.

@@ -264,6 +264,26 @@ describe("in-page find model", () => {
     expect(scopedInPageFindMatchesForQuery("Show full block")).toEqual([]);
   });
 
+  it("counts code text once, not again in the hidden line-gutter mirror", () => {
+    setDoc({
+      loaded: true,
+      feed: ["Target"],
+      pages: [{ name: "Target", kind: "page", title: "Target", preBlock: null, roots: [], format: "md", readOnly: false, guide: false }],
+      byId: {},
+    });
+    resetPaneLayoutToSingle(pageSnapshot("Target"));
+    // A code block's gutter repeats each line invisibly to mirror soft wraps; that
+    // copy is aria-hidden layout, not content, so find must not count it.
+    document.body.innerHTML = `
+      <main data-pane-id="main">
+        <div class="reference-blocks" data-inpage-find-surface="unlinked:Source">
+          <pre class="code-block"><div class="calc-gutter code-gutter" aria-hidden="true"><div class="gutter-row"><span class="calc-lineno">1</span><span class="gutter-mirror">let needle = 1;</span></div></div><code class="hljs">let needle = 1;</code></pre>
+        </div>
+      </main>`;
+
+    expect(scopedInPageFindMatchesForQuery("needle")).toHaveLength(1);
+  });
+
   it("reveals the exact occurrence, not just the block, in a viewport-tall block (GH #253)", async () => {
     setDoc({
       loaded: true,

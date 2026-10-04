@@ -24,6 +24,9 @@ function textRange(root: Node, needle: string, offset: number): Range {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let node: Text | null;
   while ((node = walker.nextNode() as Text | null)) {
+    // A click never lands in aria-hidden layout copies (the code gutter mirror
+    // is pointer-events: none), so skip them like the browser would.
+    if (node.parentElement?.closest('[aria-hidden="true"]')) continue;
     const idx = (node.textContent ?? "").indexOf(needle);
     if (idx !== -1) {
       const range = document.createRange();

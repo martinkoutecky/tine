@@ -251,7 +251,7 @@ describe("modified-click contract on internal links (GH #283)", () => {
       blocks: [{ id: "query-hit", raw: "TODO row", collapsed: false, children: [] }],
     }]));
     backendReadsQueries({
-      "(task TODO) {:table-view? true}": { form: "(task TODO)", opts: "{:table-view? true}" },
+      "(task TODO) {:table-view? true}": { form: "(task TODO)", opts: "{:table-view? true}", legacy_table: true },
     });
     const m = mount(() => <QueryMacro body={'query (task TODO) {:table-view? true}'} />);
     try {
@@ -419,7 +419,7 @@ describe("Alt+click opens the link in the other pane (GH #438)", () => {
       blocks: [{ id: "query-hit", raw: "TODO row", collapsed: false, children: [] }],
     }]));
     backendReadsQueries({
-      "(task TODO) {:table-view? true}": { form: "(task TODO)", opts: "{:table-view? true}" },
+      "(task TODO) {:table-view? true}": { form: "(task TODO)", opts: "{:table-view? true}", legacy_table: true },
     });
     const m = mount(() => <QueryMacro body={'query (task TODO) {:table-view? true}'} />);
     try {
