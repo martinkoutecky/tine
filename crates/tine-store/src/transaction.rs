@@ -24,6 +24,7 @@ pub(crate) use faults::FaultPoint;
 
 mod faults;
 mod io_helpers;
+mod move_file;
 #[cfg(feature = "test-faults")]
 #[path = "../tests/support/og_k1_pause.rs"]
 mod og_k1_pause;
@@ -382,6 +383,9 @@ pub struct Transaction<'a> {
     /// has one; release builds do not refuse, because the kind is request
     /// metadata and refusing would strand the user's write.
     kinds: Vec<crate::EditKind>,
+    // Exact names sampled once per directory per commit phase.
+    spelling_entries:
+        std::cell::RefCell<BTreeMap<PathBuf, BTreeMap<std::ffi::OsString, std::ffi::OsString>>>,
 }
 
 impl Store {
@@ -394,6 +398,7 @@ impl Store {
             store: self,
             steps: Vec::new(),
             kinds: kind.into_iter().collect(),
+            spelling_entries: Default::default(),
         }
     }
 }
@@ -547,9 +552,13 @@ impl<'a> Transaction<'a> {
     /// `resolve` follows the destination; later referrers need a later query.
     /// Twin claims are refused. A read-only Org source may move without a
     /// rewrite; asking to rewrite its bytes invokes the round-trip check.
-    /// A case-only rename can succeed on a case-sensitive filesystem; on a
-    /// case-folding filesystem the destination can be seen as the guarded
-    /// source itself and return a conflict.
+    /// A case-only rename changes spelling on case-sensitive and case-folding
+    /// filesystems when the destination is absent or is the unique source's
+    /// alternate spelling. Distinct directory entries (including hard links)
+    /// refuse. It moves through existing graph trash with both moves synced:
+    /// a crash between them leaves bytes recoverable via a guarded move from trash; a
+    /// crash after publication leaves the page at its new spelling. An I/O
+    /// failure attempts ordinary transaction undo. See docs/storage-contract.md.
     /// Moves between pages and journals change the file's area identity and
     /// require a guarded source and free destination. Moving into graph
     /// trash is refused; use [`Self::trash`] for that operation. Commit hashes
@@ -1184,153 +1193,7 @@ impl<'a> Transaction<'a> {
                 }
                 unreachable!()
             }
-            Step::Move { .. } => {
-                let dst_id = plan.dst.as_ref().expect("move destination");
-                let dst = self.path(dst_id)?;
-                if let Some(rev) = &plan.opaque_rev {
-                    self.verify_opaque(&plan.src, rev)?;
-                    self.verify(dst_id, None, index)?;
-                    if let Some(parent) = dst.parent() {
-                        fs::create_dir_all(parent).map_err(failed)?;
-                    }
-                    undo.kind = UndoKind::Rename;
-                    undo.opaque_rev = Some(rev.clone());
-                    self.fault_collision(&dst);
-                    move_file_noreplace(&src, &dst)
-                        .map_err(|error| collision(dst_id, error, &dst))?;
-                    undo.created = true;
-                    sync_move_dirs(self.store, &src, &dst).map_err(failed)?;
-                    self.fault_mid_step(index)?;
-                    self.fault_twin(dst_id);
-                    if let Some(twin) = self.disk_twin(dst_id)? {
-                        return Err(Why::Conflict {
-                            file: twin.clone(),
-                            disk: disk_rev(&self.path(&twin)?),
-                        });
-                    }
-                    self.verify_opaque(dst_id, rev)?;
-                    return Ok(StepResult::Moved {
-                        to: dst_id.clone(),
-                        rev: rev.clone(),
-                    });
-                }
-                let old = plan.old.as_deref().expect("move baseline");
-                let new = plan.new.as_ref().expect("move bytes");
-                self.verify(&plan.src, Some(old), index)?;
-                self.verify(dst_id, None, index)?;
-                if let Some(parent) = dst.parent() {
-                    fs::create_dir_all(parent).map_err(failed)?;
-                }
-                if new.as_slice() == old {
-                    // Content unchanged: a guarded no-replace rename, so no copy
-                    // of the source is left in the trash. Undo withdraws the
-                    // destination and writes the baseline back under `src`.
-                    undo.kind = UndoKind::Rename;
-                    undo.new = Some(Expected::Bytes(old.to_vec()));
-                    if self.page(dst_id) {
-                        self.store.graph.transaction_note_page(&dst, old);
-                    }
-                    if self.page(&plan.src) {
-                        self.store.graph.transaction_note_delete(&src);
-                    }
-                    self.fault_collision(&dst);
-                    move_file_noreplace(&src, &dst)
-                        .map_err(|error| collision(dst_id, error, &dst))?;
-                    undo.created = true;
-                    sync_move_dirs(self.store, &src, &dst).map_err(failed)?;
-                    self.fault_mid_step(index)?;
-                    self.fault_twin(dst_id);
-                    if let Some(twin) = self.disk_twin(dst_id)? {
-                        return Err(Why::Conflict {
-                            file: twin.clone(),
-                            disk: disk_rev(&self.path(&twin)?),
-                        });
-                    }
-                    if fs::read(&dst).map_err(failed)? != old {
-                        return Err(Why::Conflict {
-                            file: plan.src.clone(),
-                            disk: disk_rev(&dst),
-                        });
-                    }
-                    return Ok(StepResult::Moved {
-                        to: dst_id.clone(),
-                        rev: FileRev::from_bytes(old),
-                    });
-                }
-                // Keep one live name through every crash point: rename the old
-                // page to its destination, then replace its bytes through the
-                // same audited atomic save primitive used for other rewrites.
-                // A crash before the replacement leaves the old page at the new
-                // name; after it, the rewritten page is there. Neither state
-                // exposes both source and destination as live pages.
-                undo.kind = UndoKind::Rename;
-                undo.new = Some(Expected::Bytes(old.to_vec()));
-                self.fault_collision(&dst);
-                if self.page(dst_id) {
-                    self.store.graph.transaction_note_page(&dst, new);
-                }
-                if self.page(&plan.src) {
-                    self.store.graph.transaction_note_delete(&src);
-                }
-                move_file_noreplace(&src, &dst).map_err(|error| collision(dst_id, error, &dst))?;
-                undo.created = true;
-                sync_move_dirs(self.store, &src, &dst).map_err(failed)?;
-                #[cfg(feature = "test-faults")]
-                if fault(self.store, FaultPoint::AbortAfterMoveRename) {
-                    std::process::abort();
-                }
-                self.fault_mid_step(index)?;
-
-                // Preserve the original bytes for the same recovery affordance
-                // as the old destination-first move.
-                let trash_id = self.trash_id(&plan.src);
-                let trash = self.write_trash_copy(&trash_id, old)?;
-                undo.trash = Some(trash_id);
-                if fault(self.store, FaultPoint::MoveAfterTrashCopyIo) {
-                    return Err(failed(io::Error::other(
-                        "injected failure after move trash copy",
-                    )));
-                }
-                self.arm_directory_sync_fault();
-                if let Err(error) = atomic_write_with_check(&dst, new, || {
-                    if fs::read(&dst)? == old {
-                        Ok(())
-                    } else {
-                        Err(io::Error::new(
-                            io::ErrorKind::AlreadyExists,
-                            "moved page changed before rewrite",
-                        ))
-                    }
-                }) {
-                    if crate::directory_durability::is_directory_sync_failure(&error) {
-                        undo.new = Some(Expected::Bytes(new.clone()));
-                    }
-                    return Err(failed(error));
-                }
-                undo.new = Some(Expected::Bytes(new.clone()));
-                #[cfg(feature = "test-faults")]
-                if fault(self.store, FaultPoint::AbortAfterMoveRewrite) {
-                    std::process::abort();
-                }
-                self.fault_mid_step(index)?;
-                self.fault_twin(dst_id);
-                if let Some(twin) = self.disk_twin(dst_id)? {
-                    return Err(Why::Conflict {
-                        file: twin.clone(),
-                        disk: disk_rev(&self.path(&twin)?),
-                    });
-                }
-                if fs::read(&trash).map_err(failed)? != old {
-                    return Err(Why::Conflict {
-                        file: plan.src.clone(),
-                        disk: disk_rev(&trash),
-                    });
-                }
-                Ok(StepResult::Moved {
-                    to: dst_id.clone(),
-                    rev: FileRev::from_bytes(new),
-                })
-            }
+            Step::Move { .. } => self.apply_move(plan, undo, index),
             Step::Trash { .. } => {
                 if let Some(rev) = &plan.opaque_rev {
                     self.verify_opaque(&plan.src, rev)?;
@@ -1393,7 +1256,14 @@ impl<'a> Transaction<'a> {
         if matches!(record.kind, UndoKind::Expect) {
             return;
         }
-        let live = match self.path(&record.src) {
+        let spelling_move = record.dst.as_ref().is_some_and(|dst| {
+            move_file::case_only(Path::new(record.src.as_str()), Path::new(dst.as_str()))
+        });
+        let live = match if spelling_move {
+            self.spelled_path(&record.src)
+        } else {
+            self.path(&record.src)
+        } {
             Ok(path) => path,
             Err(error) => {
                 rollback
@@ -1415,8 +1285,7 @@ impl<'a> Transaction<'a> {
                             "destination changed during undo",
                         ));
                     }
-                    move_file_noreplace(&dst, &live)?;
-                    sync_move_dirs(self.store, &dst, &live)?;
+                    self.undo_opaque_move(record, dst_id, &dst, &live)?;
                     Ok(())
                 })();
                 match result {
@@ -1716,6 +1585,7 @@ impl<'a> Transaction<'a> {
                 }
             }
         }
+        self.spelling_entries.borrow_mut().clear();
         let mut before = BTreeMap::new();
         for (plan, step) in plans.iter().zip(&self.steps) {
             if matches!(step, Step::Unique { .. } | Step::Expect { .. }) {
@@ -1847,13 +1717,24 @@ impl<'a> Transaction<'a> {
                 }
             }
         }
+        self.spelling_entries.borrow_mut().clear();
+        let spelling_moves: HashSet<FileId> = plans
+            .iter()
+            .filter(|plan| Self::spelling_move(plan))
+            .flat_map(|plan| [plan.src.clone(), plan.dst.as_ref().unwrap().clone()])
+            .collect();
         let mut changed_any = false;
         let mut publication_errors = Vec::new();
         let mut published_own = Vec::new();
         let mut published_external = Vec::new();
         for (name, baseline) in &before {
             let id = FileId::from(name.clone());
-            let path = match self.path(&id) {
+            let spelling_move = spelling_moves.contains(&id);
+            let mut path = match if spelling_move {
+                self.spelled_path(&id)
+            } else {
+                self.path(&id)
+            } {
                 Ok(path) => path,
                 Err(error) => {
                     publication_errors.push((id.clone(), publication_path_error(&error)));
@@ -1861,11 +1742,31 @@ impl<'a> Transaction<'a> {
                     continue;
                 }
             };
+            let missing_spelling = if spelling_move {
+                match self.listed_path(&path) {
+                    Ok(Some(actual)) => {
+                        path = actual;
+                        false
+                    }
+                    Ok(None) => true,
+                    Err(error) => {
+                        publication_errors.push((id.clone(), error.into()));
+                        self.store.graph.invalidate_cache();
+                        continue;
+                    }
+                }
+            } else {
+                false
+            };
             if let Some(plan) = plans.iter().find(|plan| {
                 plan.opaque_rev.is_some() && (plan.src == id || plan.dst.as_ref() == Some(&id))
             }) {
                 let before_rev = (plan.src == id).then(|| plan.opaque_rev.clone()).flatten();
-                let now_rev = match FileRev::from_file(&path) {
+                let now_rev = match if missing_spelling {
+                    Err(io::Error::from(io::ErrorKind::NotFound))
+                } else {
+                    FileRev::from_file(&path)
+                } {
                     Ok(rev) => Some(rev),
                     Err(error) if error.kind() == io::ErrorKind::NotFound => None,
                     Err(error) => {
@@ -1902,6 +1803,8 @@ impl<'a> Transaction<'a> {
             }
             let now = match if fault(self.store, FaultPoint::PublicationReadIo) {
                 Err(io::Error::other("injected publication read error"))
+            } else if missing_spelling {
+                Err(io::Error::from(io::ErrorKind::NotFound))
             } else if self.page(&id) {
                 crate::model::read_parse_bytes(&path)
             } else {
@@ -2031,9 +1934,22 @@ impl<'a> Transaction<'a> {
             && rollback.undo_failed.is_empty()
             && rollback.kept_external.is_empty()
             && before.iter().all(|(name, expected)| {
-                let Ok(path) = self.path(&FileId::from(name.clone())) else {
+                let id = FileId::from(name.clone());
+                let spelling_move = spelling_moves.contains(&id);
+                let Ok(mut path) = (if spelling_move {
+                    self.spelled_path(&id)
+                } else {
+                    self.path(&id)
+                }) else {
                     return false;
                 };
+                if spelling_move {
+                    match self.listed_path(&path) {
+                        Ok(Some(actual)) => path = actual,
+                        Ok(None) => return expected.is_none(),
+                        Err(_) => return false,
+                    }
+                }
                 match fs::read(path) {
                     Ok(bytes) => expected.as_ref() == Some(&bytes),
                     Err(error) if error.kind() == io::ErrorKind::NotFound => expected.is_none(),

@@ -1394,7 +1394,7 @@ fn page_rename_matches_legacy_for_refs_namespace_case_and_tags() {
                 .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
             names.sort();
-            assert_eq!(names, ["target.md"]);
+            assert_eq!(names, ["TARGET.md"]);
         }
     }
 }

@@ -315,14 +315,13 @@ fn reference_only_rename_onto_an_existing_page_needs_the_confirmation() {
     fs::remove_dir_all(root).unwrap();
 }
 
-/// Rule 2 B2: a case-only rename writes nothing and says so, instead of
-/// reporting a rename that did not happen.
+/// GH #609: a case-only rename changes spelling and reports the move.
 #[test]
-fn case_only_rename_reports_unchanged() {
+fn case_only_rename_reports_renamed() {
     let (root, store) = fixture("case-only", &[("pages/Old.md", "- body\n")]);
     let outcome = pages::rename_or_merge_page(&store, "Old", "old", None, None, &[]).unwrap();
-    assert_eq!(outcome.outcome, pages::RenameOutcome::Unchanged);
-    assert_eq!(read(&root, "pages/Old.md"), "- body\n");
+    assert_eq!(outcome.outcome, pages::RenameOutcome::Renamed);
+    assert_eq!(read(&root, "pages/old.md"), "- body\n");
     let renamed = pages::rename_or_merge_page(&store, "Old", "Fresh", None, None, &[]).unwrap();
     assert_eq!(renamed.outcome, pages::RenameOutcome::Renamed);
     drop(store);

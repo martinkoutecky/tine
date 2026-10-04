@@ -5,7 +5,7 @@ import { backend, type GraphConfigChange } from "./backend";
 import { captureBinding, stillBound } from "./binding";
 import { graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, bumpDataRev, graphMeta, graphEpoch } from "./graphSession";
-import { setWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer, pageIdentityKey } from "./ui";
+import { setWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { createSignal } from "solid-js";
 import { pushToast } from "./toasts";
 import { keepAtSwitch } from "./draftStore";
@@ -342,7 +342,7 @@ export async function renameOrMergePage(
 
 /** The user-facing message for a rename that did not rename, or null (for
  *  `renamed`, `merged` and `cancelled`). `unchanged` is worded by its cause: a
- *  case-only name change, or a name no file and no reference uses. */
+ *  spelling already in use, or a name no file and no reference uses. */
 export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: string): string | null {
   if (typeof outcome === "object") {
     return outcome.mentions
@@ -350,8 +350,8 @@ export function renameOutcomeMessage(outcome: RenameOutcome, from: string, to: s
       : `Couldn't rename: “${outcome.unsaved}” has changes Tine could not save. Save or discard them, then rename again. Your pending edits are still here.`;
   }
   switch (outcome) {
-    case "unchanged": return pageIdentityKey(from) === pageIdentityKey(to)
-      ? `Nothing renamed: “${to}” is the same page name as “${from}” (page names ignore letter case).`
+    case "unchanged": return from.trim() === to.trim()
+      ? `Nothing renamed: “${to}” already has that spelling.`
       : `Nothing renamed: no page file or reference uses “${from}” yet.`;
     case "busy": return "Another rename is still rewriting the graph. Try again when it finishes.";
     case "uncertain": return `The graph changed while renaming “${from}”. Check whether “${to}” exists before trying again.`;

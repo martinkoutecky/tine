@@ -4,10 +4,13 @@ import { renameOrMergePage, renameOutcomeMessage } from "./graph";
 import { tryFreezeGraphRewrite } from "./document/graphRewriteState";
 import { bumpGraphEpoch } from "./graphSession";
 import { resetStore } from "./document";
+import { recentPages, setRecentPages, rightSidebar, setRightSidebar } from "./ui";
 
 afterEach(() => {
   vi.restoreAllMocks();
   resetStore();
+  setRecentPages([]);
+  setRightSidebar([]);
 });
 
 // GH #327 / OG `merge-pages!`: renaming onto another page's name offers a merge.
@@ -31,15 +34,14 @@ it("declining the merge writes nothing", async () => {
 it("renames without asking when the name is free or is the page's own", async () => {
   const resolve = vi.spyOn(backend(), "resolvePage");
   const confirm = vi.spyOn(backend(), "confirm");
-  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [] }).mockResolvedValueOnce({ outcome: "unchanged", touched: [] });
+  const rename = vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched: [] }).mockResolvedValueOnce({ outcome: "renamed", touched: [] });
   resolve.mockResolvedValueOnce({ kind: "absent", id: "pages/New.md" });
   expect(await renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).toBe("renamed");
-  // A case-only rename resolves to the source itself; the backend writes
-  // nothing and the outcome says so (Rule 2 B2), never "renamed".
+  // GH #609: the same identity changes spelling without a merge prompt.
   resolve.mockResolvedValueOnce({ kind: "existing", id: "pages/Old.md", others: [] })
     .mockResolvedValueOnce({ kind: "existing", id: "pages/Old.md", others: [] });
-  expect(await renameOrMergePage("Old", "old")).toBe("unchanged");
-  expect(renameOutcomeMessage("unchanged", "Old", "old")).toContain("Nothing renamed");
+  expect(await renameOrMergePage("Old", "old")).toBe("renamed");
+  expect(renameOutcomeMessage("renamed", "Old", "old")).toBeNull();
   expect(confirm).not.toHaveBeenCalled();
   expect(rename).toHaveBeenNthCalledWith(1, "Old", "New", "rename-page", "pages/Old.md", undefined, []);
   expect(rename).toHaveBeenNthCalledWith(2, "Old", "old", "rename-page", undefined, undefined, []);
@@ -82,7 +84,7 @@ it("distinguishes a busy rewrite from an unsaved edit and an uncertain commit", 
 // og 12b Rule 2 B2: the backend also writes nothing for a name no file and no
 // reference uses (a never-saved page nobody links to), so the message may not
 // claim a case-only rename there.
-it("words an unchanged rename truthfully whether or not it was case-only", async () => {
+it("words unchanged spelling and absent source truthfully", async () => {
   vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Other.md" });
   vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "unchanged", touched: [] });
   const outcome = await renameOrMergePage("Draft", "Other");
@@ -90,5 +92,18 @@ it("words an unchanged rename truthfully whether or not it was case-only", async
   const message = renameOutcomeMessage(outcome, "Draft", "Other")!;
   expect(message).not.toContain("same page name");
   expect(message).toContain("“Draft”");
-  expect(renameOutcomeMessage("unchanged", "Old", "old")).toContain("same page name");
+  expect(renameOutcomeMessage("unchanged", "Old", "Old")).toContain("already has that spelling");
+  expect(renameOutcomeMessage("unchanged", "Old", "old")).toContain("no page file or reference");
+});
+
+it("a case-only rename refreshes recent and right-sidebar names through the ordinary intent", async () => {
+  setRecentPages([{ name: "my note", kind: "page", path: "pages/my note.md" }]);
+  setRightSidebar([{ kind: "page", name: "my note", pageKind: "page", path: "pages/my note.md" }]);
+  vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "existing", id: "pages/my note.md", others: [] });
+  vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "renamed", touched: [{ path: "pages/my note.md", moved: true }] });
+  const confirmed = vi.spyOn(backend(), "confirm");
+  expect(await renameOrMergePage("my note", "My Note", { name: "my note", pageKind: "page", path: "pages/my note.md" })).toBe("renamed");
+  expect(recentPages()).toEqual([{ name: "My Note", kind: "page" }]);
+  expect(rightSidebar()).toEqual([{ kind: "page", name: "My Note", pageKind: "page", path: undefined }]);
+  expect(confirmed).not.toHaveBeenCalled();
 });

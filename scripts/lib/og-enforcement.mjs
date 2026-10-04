@@ -96,7 +96,7 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   // Not a new format: the graph-text rewrite of a moved page, made crash-durable
   // by 3a40f0ca1 through the audited atomic_write_with_check, which this census
   // did not see until it learned that name (2026-10-02).
-  "crates/tine-store/src/transaction.rs": { sites: 1, approval: "graph text via the audited save path; 3a40f0ca1 crash-durable rewritten moves" },
+  "crates/tine-store/src/transaction/move_file.rs": { sites: 1, approval: "graph text via the audited save path; 3a40f0ca1 crash-durable rewritten moves" },
   // Compiled executable resource in a private temporary directory, removed on
   // exit; no durable layout or graph state. Uses the existing audited writer.
   "src-tauri/src/youtube_identity.rs": { sites: 1, approval: "Martin's OG-QBY native YouTube identity task; temporary bundled WebProcess module, no new persisted format" },

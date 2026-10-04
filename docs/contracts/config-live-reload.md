@@ -50,8 +50,7 @@ comment-only file gets a new map after its comments.
 
 Renaming the page `:default-home` names, or a namespace parent of it, rewrites
 `:default-home {:page …}` to the new name (OG `rename-page-aux`). A merge does
-not (OG `merge-pages!`). A case-only rename writes nothing, so home keeps its
-old spelling, which still resolves to the page.
+not (OG `merge-pages!`). A case-only rename updates `:default-home :page` to the new spelling too.
 
 ## 4. Refusals
 

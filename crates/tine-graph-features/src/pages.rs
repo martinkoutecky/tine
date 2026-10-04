@@ -335,9 +335,9 @@ pub fn delete_page_expected(
 /// `alias::` member stays, as in OG `replace-old-page!` (C3Y Y4). Non-UTF-8
 /// candidates are skipped as in v0.6.5; a non-round-tripping Org referrer
 /// refuses the entire rename (H1). An `old` with no file still rewrites its
-/// references; journal files never move. A case-only rename writes nothing
-/// ([`RenameOutcome::Unchanged`]). A target another page owns as a file or an
-/// alias refuses with `AlreadyExists` and writes nothing; [`rename_or_merge_page`]
+/// references; journal files never move. A case-only rename updates filename
+/// spelling, title and references through the same transaction. A target another
+/// page owns as a file or an alias refuses with `AlreadyExists` and writes nothing; [`rename_or_merge_page`]
 /// is the confirmed alternative. Planning costs O(P) plus the referrer query
 /// and O(referrer bytes) reads, followed by O(touched bytes) commit. A rename
 /// touching N files takes N+1 sorted path locks for one move; namespace moves
@@ -428,10 +428,7 @@ fn rename_page_after_inventory(
     if new.is_empty() {
         return Err(error(io::ErrorKind::InvalidInput, "empty name"));
     }
-    if old.is_empty() || refs::same_page(old, new) {
-        // v0.6.5 model.rs 3549: a case-only rename changes nothing. OG renames
-        // the page's display name; here the name is its file, and a case-only
-        // move is refused on case-folding filesystems, so it is reported.
+    if old.is_empty() || old == new {
         return Ok(RenameReport::unchanged());
     }
     crate::retry_on_conflict("page changed repeatedly during rename", || {
@@ -800,7 +797,7 @@ pub enum RenameOutcome {
     /// Merged into the confirmed page (for a file-less source: its references
     /// were repointed).
     Merged,
-    /// Nothing was written: a case-only rename, an empty `old`, or a name
+    /// Nothing was written: identical spelling, an empty `old`, or a name
     /// that no file or reference uses.
     Unchanged,
 }

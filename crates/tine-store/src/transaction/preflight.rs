@@ -276,12 +276,12 @@ impl<'a> Transaction<'a> {
                 } else {
                     Some(self.stage(file, expected)?)
                 };
-                self.absent(to)?;
+                self.available_move_destination(file, to)?;
                 self.twin(to, Some(file))?;
                 let new = match (&old, renames) {
                     (Some(old), Some(map)) => Some(rewrite_move(
                         old,
-                        &self.path(to)?,
+                        &self.spelled_path(to)?,
                         map,
                         self.store.config().file_name_format,
                     )?),
