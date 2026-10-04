@@ -32,20 +32,27 @@ extern "C" {
     fn g_uri_unref(uri: *mut c_void);
     fn webkit_uri_request_get_uri(request: *mut c_void) -> *const c_char;
     fn webkit_uri_request_get_http_headers(request: *mut c_void) -> *mut c_void;
-    fn soup_message_headers_replace(headers: *mut c_void, name: *const c_char, value: *const c_char);
+    fn soup_message_headers_replace(
+        headers: *mut c_void,
+        name: *const c_char,
+        value: *const c_char,
+    );
     fn soup_message_headers_get_one(headers: *mut c_void, name: *const c_char) -> *const c_char;
     fn soup_message_headers_remove(headers: *mut c_void, name: *const c_char);
 }
 
 fn youtube_host(host: &[u8]) -> bool {
-    [b"youtube.com".as_slice(), b"youtube-nocookie.com".as_slice()]
-        .iter()
-        .any(|domain| {
-            host.eq_ignore_ascii_case(domain)
-                || (host.len() > domain.len()
-                    && host[host.len() - domain.len() - 1] == b'.'
-                    && host[host.len() - domain.len()..].eq_ignore_ascii_case(domain))
-        })
+    [
+        b"youtube.com".as_slice(),
+        b"youtube-nocookie.com".as_slice(),
+    ]
+    .iter()
+    .any(|domain| {
+        host.eq_ignore_ascii_case(domain)
+            || (host.len() > domain.len()
+                && host[host.len() - domain.len() - 1] == b'.'
+                && host[host.len() - domain.len()..].eq_ignore_ascii_case(domain))
+    })
 }
 
 unsafe extern "C" fn send_request(
@@ -54,7 +61,11 @@ unsafe extern "C" fn send_request(
     redirect: *mut c_void,
     _data: *mut c_void,
 ) -> i32 {
-    let uri = g_uri_parse(webkit_uri_request_get_uri(request), 0, core::ptr::null_mut());
+    let uri = g_uri_parse(
+        webkit_uri_request_get_uri(request),
+        0,
+        core::ptr::null_mut(),
+    );
     if uri.is_null() {
         return 0;
     }
@@ -62,7 +73,9 @@ unsafe extern "C" fn send_request(
     let scheme = g_uri_get_scheme(uri);
     let youtube = !host.is_null()
         && !scheme.is_null()
-        && CStr::from_ptr(scheme).to_bytes().eq_ignore_ascii_case(b"https")
+        && CStr::from_ptr(scheme)
+            .to_bytes()
+            .eq_ignore_ascii_case(b"https")
         && youtube_host(CStr::from_ptr(host).to_bytes());
     let headers = webkit_uri_request_get_http_headers(request);
     if !headers.is_null() {
@@ -76,7 +89,9 @@ unsafe extern "C" fn send_request(
             // A redirect can carry the header injected into its prior request.
             // Do not forward our identity to a destination outside YouTube.
             let referer = soup_message_headers_get_one(headers, b"Referer\0".as_ptr().cast());
-            if !referer.is_null() && CStr::from_ptr(referer).to_bytes_with_nul() == REFERER.as_bytes() {
+            if !referer.is_null()
+                && CStr::from_ptr(referer).to_bytes_with_nul() == REFERER.as_bytes()
+            {
                 soup_message_headers_remove(headers, b"Referer\0".as_ptr().cast());
             }
         }
@@ -85,11 +100,7 @@ unsafe extern "C" fn send_request(
     0 // Do not cancel the request or suppress another extension's handler.
 }
 
-unsafe extern "C" fn page_created(
-    _extension: *mut c_void,
-    page: *mut c_void,
-    _data: *mut c_void,
-) {
+unsafe extern "C" fn page_created(_extension: *mut c_void, page: *mut c_void, _data: *mut c_void) {
     connect(page, b"send-request\0", send_request as *const ());
 }
 
@@ -131,12 +142,22 @@ mod tests {
         let other = CString::new("https://vimeo.com/123").unwrap();
         unsafe {
             let request = webkit_uri_request_new(youtube.as_ptr());
-            send_request(core::ptr::null_mut(), request, core::ptr::null_mut(), core::ptr::null_mut());
+            send_request(
+                core::ptr::null_mut(),
+                request,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            );
             let headers = webkit_uri_request_get_http_headers(request);
             assert!(!soup_message_headers_get_one(headers, b"Referer\0".as_ptr().cast()).is_null());
             webkit_uri_request_set_uri(request, other.as_ptr());
             // Only the non-null redirect indication is used, never dereferenced.
-            send_request(core::ptr::null_mut(), request, request, core::ptr::null_mut());
+            send_request(
+                core::ptr::null_mut(),
+                request,
+                request,
+                core::ptr::null_mut(),
+            );
             assert!(soup_message_headers_get_one(headers, b"Referer\0".as_ptr().cast()).is_null());
             g_object_unref(request);
         }
@@ -145,7 +166,10 @@ mod tests {
     #[test]
     fn native_request_hook_changes_only_youtube_referer() {
         for (url, youtube) in [
-            ("https://www.youtube.com/embed/JI-AyLv68Xs?enablejsapi=1", true),
+            (
+                "https://www.youtube.com/embed/JI-AyLv68Xs?enablejsapi=1",
+                true,
+            ),
             ("https://www.youtube.com/youtubei/v1/player", true),
             ("https://WWW.YouTube.COM/iframe_api", true),
             ("https://www.youtube-nocookie.com/embed/JI-AyLv68Xs", true),
@@ -160,13 +184,43 @@ mod tests {
                 let request = webkit_uri_request_new(uri.as_ptr());
                 let headers = webkit_uri_request_get_http_headers(request);
                 assert!(!headers.is_null());
-                soup_message_headers_replace(headers, b"Referer\0".as_ptr().cast(), b"https://existing.test/\0".as_ptr().cast());
-                soup_message_headers_replace(headers, b"Cookie\0".as_ptr().cast(), b"test=preserved\0".as_ptr().cast());
-                assert_eq!(send_request(core::ptr::null_mut(), request, core::ptr::null_mut(), core::ptr::null_mut()), 0);
-                let actual = CStr::from_ptr(soup_message_headers_get_one(headers, b"Referer\0".as_ptr().cast()));
-                let expected = if youtube { REFERER.trim_end_matches('\0') } else { "https://existing.test/" };
+                soup_message_headers_replace(
+                    headers,
+                    b"Referer\0".as_ptr().cast(),
+                    b"https://existing.test/\0".as_ptr().cast(),
+                );
+                soup_message_headers_replace(
+                    headers,
+                    b"Cookie\0".as_ptr().cast(),
+                    b"test=preserved\0".as_ptr().cast(),
+                );
+                assert_eq!(
+                    send_request(
+                        core::ptr::null_mut(),
+                        request,
+                        core::ptr::null_mut(),
+                        core::ptr::null_mut()
+                    ),
+                    0
+                );
+                let actual = CStr::from_ptr(soup_message_headers_get_one(
+                    headers,
+                    b"Referer\0".as_ptr().cast(),
+                ));
+                let expected = if youtube {
+                    REFERER.trim_end_matches('\0')
+                } else {
+                    "https://existing.test/"
+                };
                 assert_eq!(actual.to_str().unwrap(), expected, "{url}");
-                assert_eq!(CStr::from_ptr(soup_message_headers_get_one(headers, b"Cookie\0".as_ptr().cast())).to_bytes(), b"test=preserved");
+                assert_eq!(
+                    CStr::from_ptr(soup_message_headers_get_one(
+                        headers,
+                        b"Cookie\0".as_ptr().cast()
+                    ))
+                    .to_bytes(),
+                    b"test=preserved"
+                );
                 g_object_unref(request);
             }
         }
@@ -174,10 +228,24 @@ mod tests {
 
     #[test]
     fn identity_is_scoped_to_youtube_hosts() {
-        for host in ["youtube.com", "www.youtube.com", "WWW.YouTube.COM", "youtube-nocookie.com", "www.youtube-nocookie.com"] {
+        for host in [
+            "youtube.com",
+            "www.youtube.com",
+            "WWW.YouTube.COM",
+            "youtube-nocookie.com",
+            "www.youtube-nocookie.com",
+        ] {
             assert!(youtube_host(host.as_bytes()), "{host}");
         }
-        for host in ["youtube.com.evil.test", "notyoutube.com", "youtube-nocookie.com.evil.test", "youtu.be", "vimeo.com", "page.tine.tinebeta", ""] {
+        for host in [
+            "youtube.com.evil.test",
+            "notyoutube.com",
+            "youtube-nocookie.com.evil.test",
+            "youtu.be",
+            "vimeo.com",
+            "page.tine.tinebeta",
+            "",
+        ] {
             assert!(!youtube_host(host.as_bytes()), "{host}");
         }
     }

@@ -77,7 +77,11 @@ pub(crate) fn configure<'a>(
 pub(crate) fn cleanup(app: &tauri::AppHandle) {
     use tauri::Manager;
     if let Some(state) = app.try_state::<ExtensionDirectory>() {
-        state.0.lock().expect("YouTube extension directory lock").take();
+        state
+            .0
+            .lock()
+            .expect("YouTube extension directory lock")
+            .take();
     }
 }
 
