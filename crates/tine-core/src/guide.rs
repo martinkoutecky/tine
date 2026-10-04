@@ -324,6 +324,12 @@ mod pdf_workspace_guide_tests {
             .iter()
             .any(|page| page.title == "Features/PDF annotation"));
         assert!(include_str!("templates/guide.md").contains("[[Features/PDF annotation]]"));
+        let research = include_str!("templates/research-document.md");
+        assert!(research.contains("`file://` link"));
+        assert!(research.contains("operating system's default PDF viewer"));
+        assert!(
+            research.contains("without copying the file into assets or creating annotation files")
+        );
     }
 }
 

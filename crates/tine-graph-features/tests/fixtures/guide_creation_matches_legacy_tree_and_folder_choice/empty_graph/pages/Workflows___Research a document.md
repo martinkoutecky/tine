@@ -3,6 +3,7 @@ icon:: 📖
 - # Research a document
   - The short path: drop a PDF onto a page, read it in a companion pane, and highlight as you go. Each highlight becomes an ordinary bullet you can write under, quote anywhere, and follow back to the exact spot — so a paper turns into linked, searchable notes without leaving Tine. The precise highlight rules live in [[Features/PDF annotation]].
 - ## Bring the document in
+  - To keep a PDF outside your graph, use a `file://` link. On desktop it opens in your operating system's default PDF viewer, without copying the file into assets or creating annotation files in your graph. Upload it as an asset when you want to annotate it in Tine.
   - 1. Drag a PDF from your file manager onto any page and drop it on a block — or paste one you copied, or run the `/Upload an asset` slash command. Tine stores the file in your graph's `assets/` folder and inserts a link where you dropped it.
   - 2. Click the inserted link. On desktop the document opens as a normal tab in a companion pane beside your notes; drag its tab into another pane or split to move it. On a phone it opens in the current one-pane history, and **Back** returns to the source page.
   - What you should see: the PDF in an ordinary pane, with a toolbar holding a page-number box, a find button (**Ctrl+F** searches inside the document), zoom controls, an **Area highlight** toggle, a **Notes** button, **Outline**, a ⋯ menu, and the close control at the far edge. In a narrow pane the Area highlight, Notes and Outline buttons move into the ⋯ menu.

@@ -461,17 +461,19 @@ function renderLink(
     return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} />;
   }
   const dest = urlDest(url);
-  const remotePdf = /^https?:\/\//i.test(dest) && /\.pdf$/i.test(dest);
+  // File URLs use the OS viewer, preserving their full path (GH #577).
+  // File URLs must never enter the graph annotation reader.
+  const externalPdf = /^(?:https?:\/\/|file:)/i.test(dest) && /\.pdf$/i.test(dest);
   if (s.image) {
     const { width, height } = parseImageMetaBrace(s.metadata);
     const alt = s.label && s.label.length ? astText(s.label) : "";
-    if (!remotePdf && /\.pdf$/i.test(dest)) return <PdfAssetLink dest={dest} label={alt} spanAttrs={spanAttrs} />;
+    if (!externalPdf && /\.pdf$/i.test(dest)) return <PdfAssetLink dest={dest} label={alt} spanAttrs={spanAttrs} />;
     const k = mediaKind(dest);
     if (k === "video" || k === "audio")
       return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
-    if (!remotePdf) return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
+    if (!externalPdf) return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
-  if (!remotePdf && /\.pdf$/i.test(dest)) {
+  if (!externalPdf && /\.pdf$/i.test(dest)) {
     const labelStr = s.label && s.label.length ? astText(s.label) : pdfFilenameFromDest(dest);
     return <PdfAssetLink dest={dest} label={labelStr} spanAttrs={spanAttrs} />;
   }
