@@ -1,6 +1,7 @@
 import { createSignal, For, Show, type JSX } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { reportUiFailure } from "../uiFailure";
+import { isMobilePlatform } from "../nativeChrome";
 
 // Frameless-window chrome. Native decorations are off (so the toolbar doubles as
 // the title bar and we save a row), which means we must supply what the window
@@ -18,9 +19,11 @@ type Dir = "North" | "South" | "East" | "West" | "NorthEast" | "NorthWest" | "So
 const [maximized, setMaximized] = createSignal(false);
 export { maximized };
 
-/** Track maximized state with one native read per resize. Call once in Tauri;
- * returns a cleanup. A failed read keeps the last state and shows a fixed toast. */
+/** Desktop: track maximized state with one native read per resize. Call once
+ * in Tauri; mobile is a no-op because its OS owns the window. Returns a cleanup.
+ * A failed desktop read keeps the last state and shows a fixed toast. */
 export function installWindowChrome(): () => void {
+  if (isMobilePlatform) return () => {};
   const w = getCurrentWindow();
   const sync = () => void w.isMaximized().then(setMaximized).catch((error) => reportUiFailure("window-state", error));
   sync();
