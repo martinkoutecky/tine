@@ -22,7 +22,7 @@ import {
   friendlySearchToSavedDsl,
   parseSearchQuery,
 } from "../editor/searchQuery";
-import type { PaneRouter, QueryPresentation, QueryRoute } from "../router";
+import type { PaneRouter, QueryPresentation, QueryRoute, Route } from "../router";
 import type {
   MatchSpan,
   PageDto,
@@ -47,6 +47,10 @@ import { registerTransientLayer } from "../transientLayers";
 import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
 import { createPage, CreatePageRefusal, queryWorkspacePage } from "../document";
+import { internalLinkDest, internalLinkMouseDown, internalLinkAuxClick } from "../linkGesture";
+import { openRouteInOtherPane } from "../panes";
+import { openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { readLatestOr, readOr } from "../resourceRead";
 
 const PAGE_LIMIT = 40;
@@ -847,22 +851,29 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     setAdvancedOpen(false);
     queueMicrotask(() => advancedButton?.focus());
   };
-  const openHit = (hit: QueryHit) => {
-    if (hit.entity === "page") {
-      props.router.openPageTarget({
-        name: hit.page.name,
-        pageKind: hit.page.kind,
-        ...(hit.page.path ? { path: hit.page.path } : {}),
-      });
-    } else {
-      props.router.openPageAtBlock({
-        name: hit.page,
-        pageKind: hit.kind,
-        block: blockDtoExternalId(hit.block),
-        ...(hit.path ? { path: hit.path } : {}),
-      });
-    }
+  const hitRoute = (hit: QueryHit): Extract<Route, { kind: "page" }> => hit.entity === "page"
+    ? { kind: "page", name: hit.page.name, pageKind: hit.page.kind, path: hit.page.path || undefined }
+    : { kind: "page", name: hit.page, pageKind: hit.kind, path: hit.path || undefined, block: blockDtoExternalId(hit.block) };
+  const openHit = (hit: QueryHit, event?: MouseEvent) => {
+    const target = hitRoute(hit);
+    const dest = event ? internalLinkDest(event) : "default";
+    if (dest === "sidebar") {
+      if (target.block) openBlockInSidebar({ uuid: target.block, page: target.name, pageKind: target.pageKind, path: target.path });
+      else openPageInSidebar(target.name, target.pageKind, target.path);
+    } else if (dest === "pane") openRouteInOtherPane(target);
+    else props.router.openInNewTab(target, dest !== "background");
   };
+  const resultActions = (hit: QueryHit): JSX.ButtonHTMLAttributes<HTMLButtonElement> => ({
+    onMouseDown: internalLinkMouseDown,
+    onClick: (event) => openHit(hit, event),
+    onAuxClick: (event) => internalLinkAuxClick(event, () => props.router.openInNewTab(hitRoute(hit))),
+    onContextMenu: (event) => {
+      if (hit.entity !== "page" || !shouldOpenTextContextMenu(event)) return;
+      event.preventDefault(); event.stopPropagation();
+      const { kind: _kind, ...target } = hitRoute(hit);
+      openPageContextMenu(event.clientX, event.clientY, target);
+    },
+  });
   const hitSurfaceId = (hit: QueryHit) =>
     `query:${props.route.id}:${hit.entity}:${hit.entity === "page" ? hit.page.name : hit.block.id}`;
   /** Everything one save attempt publishes, frozen at submit. */
@@ -925,7 +936,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       type="button"
       class="query-result-row switcher-row"
       data-inpage-find-surface={hitSurfaceId(hit)}
-      onClick={() => openHit(hit)}
+      {...resultActions(hit)}
     >
       {body}
     </button>
@@ -1060,7 +1071,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         families={[
           { kind: "page", hits: pageHits().length, hasMore: !!executed()?.has_more?.pages,
             control: sectionControl("page"),
-            body: <QueryPageResults hits={pageHits()} presentation={pageView().view ?? "list"} view={pageView()} surfaceId={hitSurfaceId} onOpen={openHit} /> },
+            body: <QueryPageResults hits={pageHits()} presentation={pageView().view ?? "list"} view={pageView()} surfaceId={hitSurfaceId} onOpen={openHit} actions={resultActions} /> },
           { kind: "block", hits: blockHits().length, hasMore: !!executed()?.has_more?.blocks,
             control: sectionControl("block"),
             body: <Switch>
@@ -1083,7 +1094,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           <ul class="query-results-list" aria-label="Query results">
             <For each={blockHits()}>{(hit) => (
               <li>
-                <button type="button" data-inpage-find-surface={hitSurfaceId(hit)} onClick={() => openHit(hit)}>
+                <button type="button" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
                   <span class="query-list-context">{hitPage(hit)}</span>
                   <span class="query-list-text"><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></span>
                 </button>
@@ -1101,7 +1112,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
                 <For each={blockHits()}>{(hit) => (
                   <tr data-inpage-find-surface={hitSurfaceId(hit)}>
                     <td>{hitKind(hit)}</td>
-                    <td><button type="button" onClick={() => openHit(hit)}>{hitPage(hit)}</button></td>
+                    <td><button type="button" {...resultActions(hit)}>{hitPage(hit)}</button></td>
                     <td><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></td>
                   </tr>
                 )}</For>
@@ -1117,7 +1128,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
                 <h2>{page}<span class="query-board-count">{pageHits.length}</span></h2>
                 <div role="list">
                   <For each={pageHits}>{(hit) => (
-                    <button type="button" role="listitem" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} onClick={() => openHit(hit)}>
+                    <button type="button" role="listitem" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
                       <span class="sr-only">{hitKind(hit)}: </span><MarkedText text={hit.display_text} spans={hitSpans(hit)} />
                     </button>
                   )}</For>

@@ -172,7 +172,7 @@ describe("in-page find model", () => {
     expect(renderedBlockTextCallCountForTests()).toBe(80);
   });
 
-  it("searches the focused page pane instead of the journals feed", () => {
+  it("searches both the journals feed and the routed split page", () => {
     setDoc({
       loaded: true,
       feed: ["Feed"],
@@ -200,7 +200,7 @@ describe("in-page find model", () => {
     );
     focusPane("pane-2");
 
-    expect(scopedInPageFindMatchesForQuery("needle").map((m) => m.blockId)).toEqual(["pane-block"]);
+    expect(scopedInPageFindMatchesForQuery("needle").map((m) => m.blockId)).toEqual(["feed-block", "pane-block"]);
   });
 
   it("searches visible rows in a persistent query workspace", () => {

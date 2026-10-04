@@ -221,6 +221,18 @@ pub fn collect_guide_asset_refs(markdown: &str, into: &mut HashSet<String>) {
 #[cfg(test)]
 mod journal_guide_tests {
     #[test]
+    fn search_workspace_and_find_explain_visible_views_and_destinations() {
+        let reference = include_str!("templates/pages-links-references-search.md");
+        let tips = include_str!("templates/tips.md");
+        assert!(reference.contains("split panes and expanded right-sidebar items"));
+        assert!(reference.contains("pane order then sidebar stack order"));
+        assert!(reference.contains("Clicking a result opens a new tab and keeps Search unchanged"));
+        assert!(reference.contains("Page results offer the same right-click menu"));
+        assert!(tips.contains("**Enter** / **Shift+Enter** move forward / backward"));
+        assert!(tips.contains("In a Search tab, clicking a result opens a new tab"));
+    }
+
+    #[test]
     fn selection_menu_and_keyboard_calendar_are_documented() {
         let tips = include_str!("templates/tips.md");
         for action in [

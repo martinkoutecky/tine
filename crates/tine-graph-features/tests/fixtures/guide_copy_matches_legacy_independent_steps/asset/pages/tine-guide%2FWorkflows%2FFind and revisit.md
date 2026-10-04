@@ -6,7 +6,7 @@ icon:: 🔍
   - 1. Press **Ctrl+K** (Cmd on Mac) and type any words from the title or the text you remember. The switcher matches page titles and the visible text of blocks.
   - 2. Too many hits? Narrow with the **Search syntax** forms listed in the switcher footer: `-draft` excludes a word, `OR` offers alternatives, quotes pin an exact phrase, `/…/` is a case-sensitive regular expression.
   - 3. **Enter** opens the highlighted result; **Shift+Enter** opens it in the right sidebar beside your current page; **Ctrl/Cmd+Enter** or a middle-click opens it in a background tab without closing the search; **Alt+Enter** opens it in another pane.
-  - 4. Sure it's on the open page? **Ctrl+Shift+K** searches only that page's blocks, and **Ctrl+F** is the slim in-page find bar with match counts; it expands folded branches to show a match.
+  - 4. Sure it's on the open page? **Ctrl+Shift+K** searches only that page's blocks, and **Ctrl+F** searches the open main and split panes plus the right sidebar, in pane order then sidebar order. Its slim find bar shows match counts and expands folded branches to show a match.
   - If the switcher cannot read results, choose **Retry** to run the same search again without clearing what you typed.
   - What you should see: Tine jumps to the page or block. Exact title matches lead the list; over time Tine may prefer a result you deliberately picked before, but only among equally strong matches — Settings → **Editor** → Advanced → **Learn Ctrl+K choices** disables that, and **Reset ranking** clears it.
 - ## Follow the trail: links, tags, and references
