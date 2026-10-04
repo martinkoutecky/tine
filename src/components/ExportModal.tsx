@@ -9,8 +9,8 @@ import { backend } from "../backend";
 import { writeClipboardText } from "../clipboard";
 import { resolveBlockBatched, resolvedBlockRefSync } from "../resolveBatch";
 import { expandTemplate } from "../render/inline";
-import { visibleBody } from "../render/block";
-import { parseBlock } from "../render/parse";
+import { visibleBody, isRenderHiddenProp } from "../render/block";
+import { parseBlock, blockRegions, propertyValueInline } from "../render/parse";
 import { splitTrailingMap } from "../editor/edn";
 import {
   exportOutline,
@@ -54,7 +54,7 @@ function saveOptions(o: ExportOptions): void {
 // undiscoverable). Values stay "rendered"/"source" so saved settings still work.
 const CONTENT_STYLES: { value: ExportContent; label: string; hint: string }[] = [
   { value: "rendered", label: "Plain text", hint: "cleaned — the text as displayed, without markup markers (bold, highlighting, links)" },
-  { value: "source", label: "Markdown", hint: "preserved — original source syntax (bold, highlighting, links, properties)" },
+  { value: "source", label: "Markdown", hint: "formatting preserved — block references resolved and embeds expanded" },
 ];
 
 const FORMAT_STYLES: { value: ExportFormat; label: string }[] = [
@@ -251,6 +251,9 @@ function collectBlockTargets(block: Block, targets: WarmTargets): void {
 function collectRawTargets(raw: string, format: Format, targets: WarmTargets): void {
   try {
     parseBlock(raw, format === "org").forEach((b) => collectBlockTargets(b, targets));
+    for (const property of blockRegions(raw, format).properties) {
+      if (!isRenderHiddenProp(property.key)) collectInlineTargets(propertyValueInline(property, format), targets);
+    }
   } catch {
     /* keep export usable if a malformed block misses pre-warm */
   }
@@ -363,23 +366,34 @@ export function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, W
 async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<string, WarmedMacro>, owner: Owner): Promise<void> {
   const targets: WarmTargets = { refs: new Set(), macros: new Map() };
   const pages: PageReadCache = new Map();
+  const seenRefs = new Set<string>(), seenMacros = new Set<string>();
   collectNodeTargets(nodes, targets);
-  await Promise.all([...targets.refs].map((uuid) => readOwned(owner, resolveBlockBatched(uuid).catch(() => null))));
-  if (!owner()) return;
-  const macros = [...targets.macros.values()];
-  await warmQueryMacros(
-    macros.filter((macro) => macro.name.toLowerCase() === "query"),
-    warmed,
-    owner,
-  );
-  // Page embeds are intentionally whole-page exports, but run them after the
-  // globally bounded query batch so their PageDto cache cannot overlap query
-  // source-page hydration (which no longer uses getPage at all).
-  await Promise.all(
-    macros
-      .filter((macro) => macro.name.toLowerCase() !== "query")
-      .map((macro) => warmMacro(macro, warmed, pages, owner)),
-  );
+  // Follow resolved targets too: refs inside refs and embeds share the same
+  // graph-owned warming path. Bound work before each native read.
+  for (let depth = 0; depth < 6; depth++) {
+    for (let refDepth = 0; refDepth < 64; refDepth++) {
+      const refs = [...targets.refs].filter(uuid => !seenRefs.has(uuid)).slice(0, 2000 - seenRefs.size);
+      if (!refs.length) break;
+      refs.forEach(uuid => seenRefs.add(uuid));
+      await Promise.all(refs.map(uuid => readOwned(owner, resolveBlockBatched(uuid).catch(() => null))));
+      if (!owner()) return;
+      for (const uuid of refs) {
+        const resolved = resolveExportBlockRef(uuid);
+        if (resolved) collectRawTargets(resolved.raw, resolved.format, targets);
+      }
+    }
+    const macros = [...targets.macros.entries()].filter(([key]) => !seenMacros.has(key)).slice(0, 2000 - seenMacros.size);
+    macros.forEach(([key]) => seenMacros.add(key));
+    if (!macros.length) break;
+    await warmQueryMacros(macros.map(([,macro]) => macro).filter(macro => macro.name.toLowerCase() === "query"), warmed, owner);
+    await Promise.all(macros.map(([,macro]) => macro).filter(macro => macro.name.toLowerCase() !== "query")
+      .map(macro => warmMacro(macro, warmed, pages, owner)));
+    if (!owner()) return;
+    for (const [key] of macros) {
+      const result = warmed.get(key);
+      if (result?.kind === "nodes") collectNodeTargets(result.nodes, targets);
+    }
+  }
 }
 
 // "Copy / Export" modal — live-preview Text/OPML/HTML export of a block forest,
@@ -452,10 +466,20 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   const payload = createMemo(() => {
     warmRev();
     expansions = 0;
-    if (format() === "opml") return exportOpml(nodes, opts());
-    if (format() === "html") return exportHtml(nodes, opts());
+    const markupOptions = {
+      ...opts(), resolveBlockRef: resolveExportBlockRef,
+      resolveEmbed: (name: string, args: string[]) => {
+        const result = warmedMacros.get(macroKey(name, args));
+        return result?.kind === "nodes" ? [
+          ...result.nodes,
+          ...[result.note, result.truncation].filter((text): text is string => !!text).map(raw => ({raw, children:[]})),
+        ] : null;
+      },
+    };
+    if (format() === "opml") return exportOpml(nodes, markupOptions);
+    if (format() === "html") return exportHtml(nodes, markupOptions);
     return exportOutline(nodes, {
-      ...opts(),
+      ...markupOptions,
       typographicGlyphs: typographyMode() === "render",
       resolveBlockRef: resolveExportBlockRef,
       resolveMacro,
@@ -463,7 +487,7 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   });
 
   const copy = () => {
-    if (format() === "text" && opts().content === "rendered" && warming()) return;
+    if (warming()) return;
     const request = exportModal();
     void writeClipboardText(payload())
       .then(() => { pushToast("Copied to clipboard", "success"); if (exportModal() === request) closeExportModal(); })
@@ -605,10 +629,10 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
           <button class="export-btn-secondary" onClick={closeExportModal}>Close</button>
           <button
             class="export-btn-primary"
-            disabled={format() === "text" && opts().content === "rendered" && warming()}
+            disabled={warming()}
             onClick={copy}
           >
-            {format() === "text" && opts().content === "rendered" && warming() ? "Resolving..." : "Copy"}
+            {warming() ? "Resolving..." : "Copy"}
           </button>
         </div>
       </div>

@@ -53,7 +53,7 @@ describe("renderedBlockText", () => {
 
   it("flattens tables to cell rows and honors removeProperties", () => {
     expect(renderedBlockText("|a|b|\n|-|-|\n|1|2|", "md", O)).toBe("a | b\n1 | 2");
-    expect(renderedBlockText("text\nkey:: val", "md", O)).toBe("text\nkey val");
+    expect(renderedBlockText("text\nkey:: val", "md", O)).toBe("text\nkey:: val");
     expect(renderedBlockText("text\nkey:: val", "md", { ...O, removeProperties: true })).toBe("text");
   });
 

@@ -157,6 +157,7 @@ describe("ExportModal formats", () => {
     const preview = document.querySelector<HTMLTextAreaElement>(".export-preview")!.value;
     expect(preview).toContain("<opml");
     expect(preview).not.toContain("property");
+    await vi.waitFor(() => expect(byText("Copy")).toBeDefined());
     byText("Copy")!.click();
     expect(writeText).toHaveBeenCalledWith(preview);
     await Promise.resolve();
@@ -172,6 +173,7 @@ describe("ExportModal formats", () => {
     expect(htmlPreview).toContain("<ul>");
     expect(htmlPreview).toContain("<strong>bold</strong>");
     expect(htmlPreview).not.toContain("property");
+    await vi.waitFor(() => expect(byText("Copy")).toBeDefined());
     byText("Copy")!.click();
     expect(writeText).toHaveBeenLastCalledWith(htmlPreview);
     dispose();
@@ -189,6 +191,7 @@ describe("ExportModal formats", () => {
       .find((button) => button.textContent?.trim() === label);
     byText("OPML")!.click();
     await Promise.resolve();
+    await vi.waitFor(() => expect(byText("Copy")).toBeDefined());
     byText("Copy")!.click();
     expect(toasts().some((toast) => toast.message === "Copied to clipboard")).toBe(false);
     reject(new Error("clipboard denied"));

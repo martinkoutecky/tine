@@ -279,7 +279,7 @@ function blockLines(b: Block, o: RenderedTextOptions): string[] {
     }
     case "properties":
       if (o.removeProperties) return [];
-      return b.props.filter(([k]) => !isRenderHiddenProp(k)).map(([k, v]) => `${k} ${v}`);
+      return b.props.filter(([k]) => !isRenderHiddenProp(k)).map(([k, v]) => `${k}:: ${v}`);
     case "hr":
       return ["---"];
     case "displayed_math":
