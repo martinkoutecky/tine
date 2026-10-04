@@ -36,7 +36,7 @@ it.each([
   ["org", "body\n:PROPERTIES:\n:status: first\n:status: last\n:END:", "last"],
 ] as const)("loaded %s properties use the same linked rows (including a sole trailing group)", (format, raw, expected) => {
   loadSingle({ name: "Loaded properties", title: "Loaded properties", kind: "page", format, pre_block: null,
-    blocks: [{ id: "loaded-property", raw, children: [], collapsed: false }] });
+    blocks: [{ id: "loaded-property", has_id: false, properties: [["status", expected]], raw, children: [], collapsed: false }] });
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <Block id="loaded-property" />, host);
   try {
@@ -44,5 +44,18 @@ it.each([
     expect(host.querySelector(".prop-key .page-ref")?.textContent).toBe("status");
     expect(host.querySelector(".prop-value")?.textContent).toBe(expected);
     expect(doc.byId["loaded-property"].raw).toBe(raw);
+  } finally { dispose(); }
+});
+
+it("an edited native property-free block gains property rows without retaining its load-time negative", () => {
+  loadSingle({ name: "Draft properties", title: "Draft properties", kind: "page", pre_block: null,
+    blocks: [{ id: "draft-property", has_id: false, raw: "No properties", children: [], collapsed: false }] });
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <Block id="draft-property" />, host);
+  try {
+    expect(host.querySelector(".prop")).toBeNull();
+    setDoc("byId", "draft-property", "raw", "No properties\nstatus:: added");
+    expect(host.querySelector(".prop-key .page-ref")?.textContent).toBe("status");
+    expect(host.querySelector(".prop-value")?.textContent).toBe("added");
   } finally { dispose(); }
 });
