@@ -597,6 +597,28 @@ describe("block-selection commands", () => {
     dispose();
   });
 
+  it("Mod+X public text carries the whole subtree it deletes, under the selected-only copy default", async () => {
+    setGraphMeta(pluginGraphMeta);
+    loadSingle({
+      name: "Tasks", kind: "page", title: "Tasks", pre_block: null, format: "md", id: "pages/tasks.md",
+      blocks: [{
+        id: "cut-parent", raw: "Parent", collapsed: false,
+        children: [{ id: "cut-child", raw: "Child", collapsed: false, children: [] }],
+      }],
+    });
+    selectBlock("cut-parent");
+    const write = vi.spyOn(backend(), "writeRich").mockResolvedValue();
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "x", code: "KeyX", ctrlKey: true }).event);
+
+    await vi.waitFor(() => expect(doc.byId["cut-parent"]).toBeUndefined());
+    expect(doc.byId["cut-child"]).toBeUndefined();
+    expect(write).toHaveBeenCalledWith(expect.stringContaining("Child"), expect.any(String));
+    dispose();
+  });
+
   it("Mod+X keeps the selected block if the clipboard write rejects", async () => {
     setGraphMeta(pluginGraphMeta);
     loadSingle({ name: "Tasks", kind: "page", title: "Tasks", pre_block: null,

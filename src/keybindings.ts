@@ -840,9 +840,10 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   }
   if (mod && e.key.toLowerCase() === "x") {
     const ids = selectedIds();
-    const text = selectionMarkdown();
+    // Cut deletes whole subtrees, so its public text carries them regardless of the copy preference.
+    const text = selectionMarkdown(true);
     void cutBlocks(ids, text, () =>
-      JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown() : "",
+      JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown(true) : "",
       () => deleteSelection())
       .catch(() => pushToast("Couldn't cut selection: clipboard write failed.", "error"));
     return true;
