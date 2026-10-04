@@ -111,7 +111,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "applyJournalFilenameMigrations",
   "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveLiveConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
   "pasteImage", "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
-  "openPdf", "writeHighlights", "writePdfViewState", "savePdfAreaImage", "rollbackPdfAreaImage",
+  "writeHighlights", "writePdfViewState", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setCaptureEnterFiles", "setLinkFirstMatch", "setWatchMode", "restoreBackup",
   "saveSession", "saveWorkspaces", "storeDraft", "retireDraft", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
@@ -136,7 +136,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "listTemplates", "resolveBlock", "resolveBlocks", "previewBlock", "readAsset", "streamAsset",
   "readLocalImage", "readClipboardImage", "clipboardFiles", "readTextFile", "confirm", "pickFolder",
   "pickGraphFolder", "pickFile", "capturePhoto", "startRecording", "stopRecording", "cancelRecording",
-  "readHighlights", "onGraphChanged", "onGraphChangedBulk", "onGraphWatchStatus", "onGraphRescanComplete", "rescanGraphNow", "onGraphConfigChanged", "onAssetChanged", "getBackupKeep", "getCaptureEnterFiles", "getLinkFirstMatch",
+  "openPdf", "readHighlights", "onGraphChanged", "onGraphChangedBulk", "onGraphWatchStatus", "onGraphRescanComplete", "rescanGraphNow", "onGraphConfigChanged", "onAssetChanged", "getBackupKeep", "getCaptureEnterFiles", "getLinkFirstMatch",
   "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "localClock", "gpuEnv", "getSmoothScroll",
   "getAppBool", "getAppString", "listSpellcheckDictionaries", "debugInfo",
   "diagnosticReport", "defenderHint", "appArchitecture", "watcherLatencyRecent", "takeDataHomeFallbackNotice",
@@ -363,7 +363,8 @@ describe("I-20 owned backend completion syntax", () => {
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().setBackupKeep(3))")).toHaveLength(1);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().renamePage('A', 'B', 'rename-page'))")).toHaveLength(1);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().pasteImage(1))")).toHaveLength(1);
-    expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().openPdf('a.pdf', 'A', 'create-page', 1))")).toHaveLength(1);
+    expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().writeHighlights('a.pdf', 'A', [], [], 'replace-page', 1))")).toHaveLength(1);
+    expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().openPdf('a.pdf', 'A', 1))")).toHaveLength(0);
   });
   it("fails a planted old graph completion", () => {
     expect(() => assertLateLandings("src/planted.ts", "async function stale() { const dto = await backend().getPage('P', 'page'); reloadPage(dto); }")).toThrow(/I-20.*exemplar src\/components\/Page\.tsx/s);

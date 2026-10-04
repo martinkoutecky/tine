@@ -10,7 +10,7 @@ use tine_core::model::{Format, PageDto, PageKind};
 use tine_core::pdf::{self, Highlight, PdfState};
 use tine_store::{Area, Content, FileId, FileRev, PageId, SaveBase, Store, StoreError};
 
-use crate::{is_conflict, store_error, tx_error};
+use crate::store_error;
 
 fn asset(store: &Store, rel: &str) -> io::Result<FileId> {
     store.file_id(Area::Assets, rel).map_err(store_error)
@@ -216,55 +216,18 @@ pub fn read_highlights_checked(store: &Store, pdf_name: &str) -> io::Result<Vec<
     Ok(pdf::parse_highlights(&raw))
 }
 
-/// Open persisted PDF state, creating a sidecar/page only when no usable OG or
-/// legacy counterpart exists. Legacy files remain until a highlight write.
-/// Cost O(asset entries + sidecar + annotation page), plus a graph refresh
-/// when the page is absent.
-pub fn open_pdf(store: &Store, pdf_name: &str, label: &str) -> io::Result<PdfState> {
-    let key = pdf::asset_key(pdf_name);
-    let (sidecar_id, mut current) = sidecar(store, pdf_name, true)?;
-    if let Some((raw, _)) = &current {
-        valid_edn(raw)?;
-    }
-    if current.is_none() {
-        let skeleton = pdf::write_highlights(&[], "");
-        let mut tx = store.transaction(None);
-        tx.create(&sidecar_id, Content::Bytes(skeleton.clone().into_bytes()));
-        let outcome = tx.commit();
-        if !is_conflict(&outcome) {
-            tx_error(outcome)?;
-        }
-        current = optional(store, &sidecar_id)?;
-    }
+/// Read persisted PDF highlights and view state without creating, rewriting or
+/// moving any graph files. Prefer the OG-key sidecar; only when absent, consult
+/// legacy unless another PDF owns its key. An unavailable asset listing permits
+/// legacy lookup. Missing files return empty state; malformed nonblank EDN or
+/// sidecar I/O rejects. The label does not affect this read.
+/// Annotation pages are created only by the guarded highlight writer.
+/// Cost O(asset entries + sidecar bytes); no graph refresh is needed.
+pub fn open_pdf(store: &Store, pdf_name: &str, _label: &str) -> io::Result<PdfState> {
+    let (_, current) = sidecar(store, pdf_name, true)?;
     let raw = current.map(|(raw, _)| raw).unwrap_or_default();
     valid_edn(&raw)?;
-    let state = pdf::parse_pdf_state(&raw);
-    let name = pdf::hls_page_name(&key);
-    let (page, present) = page_id(store, &name)?;
-    let legacy_name = pdf::hls_page_name(&pdf::legacy_asset_key(pdf_name));
-    let legacy_page = if legacy_active(store, pdf_name) && legacy_name != name {
-        page_id(store, &legacy_name)?.1.is_some()
-    } else {
-        false
-    };
-    if present.is_none() && !legacy_page {
-        let doc =
-            pdf::hls_page_document_for_format(pdf_name, label, &state.highlights, format(&page));
-        let page_dto = dto(&page, &name, &doc);
-        let mut tx = store.transaction(Some(tine_store::EditKind::CreatePage));
-        tx.save_page(
-            &[tine_store::EditKind::CreatePage],
-            &page,
-            SaveBase::CreateNew,
-            &page_dto,
-        );
-        let outcome = tx.commit();
-        if is_conflict(&outcome) {
-            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
-        }
-        tx_error(outcome)?;
-    }
-    Ok(state)
+    Ok(pdf::parse_pdf_state(&raw))
 }
 
 /// Save page and scale while retaining all other sidecar fields. Concurrent

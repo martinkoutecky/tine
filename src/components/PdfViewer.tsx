@@ -4,9 +4,8 @@ import { sanitizeOutlineItems, type PdfOutlineItem } from "./pdfOutline";
 import { PdfViewerView } from "./pdfViewerView";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
-import { isPublishedExport } from "../publishedBackend";
 import { captureBinding } from "../binding";
-import { graphOwner, latestOwner, readOwned, serializeDurable, writeOwned } from "../owned";
+import { graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
 import { errorFamily } from "../errorFamily";
 import { writeClipboardText } from "../clipboard";
 import { activePane, requestBlockReferences } from "../ui";
@@ -42,8 +41,8 @@ export { PDF_CANVAS_CACHE_PIXEL_BUDGET, isPdfAreaModifier } from "./pdfViewerPri
 export { KeyedPdfViewer } from "./KeyedPdfViewer";
 
 /** Render the active PDF and its highlights through the owned document paths.
- * Opening may create annotation files and refresh graph state in O(graph pages),
- * plus asset listing and up to 256 MiB of PDF data. Annotation failures toast;
+ * Opening reads sidecar state, asset listing and up to 256 MiB of PDF data;
+ * reading reports position to the pane session without graph writes. Annotation failures toast;
  * failed highlight saves stay marked and block drain until resolved. */
 export function PdfViewer(props: {
   filename: string;
@@ -96,10 +95,8 @@ export function PdfViewer(props: {
   const [pageField, setPageField] = createSignal("1");
   let pageInputFocused = false;
   let scrollRaf: number | undefined;
-  let viewStateTimer: number | undefined;
   let viewStateReady = false;
   let viewStateBaseline: { page: number; scale: number } | null = null;
-  let pendingViewState: { page: number; scale: number } | null = null;
   const [theme, setTheme] = createSignal<PdfTheme>(storedPdfTheme());
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [outlineOpen, setOutlineOpen] = createSignal(false);
@@ -235,7 +232,6 @@ export function PdfViewer(props: {
     });
   }
 
-  const viewStateQueue = {};
   const highlightState = createPdfHighlightState({
     filename: props.filename,
     label: props.label,
@@ -302,44 +298,12 @@ export function PdfViewer(props: {
   const fitWidthScale = () => (dims[1] ? clampScale((scrollRef.clientWidth - 32) / dims[1].w) : 1);
   const fitHeightScale = () => (dims[1] ? clampScale((scrollRef.clientHeight - 24) / dims[1].h) : 1);
 
-  const flushViewState = async (): Promise<boolean> => {
-    if (viewStateTimer !== undefined) {
-      clearTimeout(viewStateTimer);
-      viewStateTimer = undefined;
-    }
-    const next = pendingViewState;
-    if (!next || (viewStateBaseline?.page === next.page && viewStateBaseline?.scale === next.scale)) {
-      pendingViewState = null;
-      return true;
-    }
-    try {
-      const result = await trackPdfMutation(owner, () => serializeDurable(viewStateQueue, highlightGraphOwner,
-        () => trackAssetWrite(backend().writePdfViewState(props.filename, next.page, next.scale, binding.backendGeneration))));
-      if (result.kind === "stale") return false;
-      viewStateBaseline = next;
-      if (pendingViewState === next) pendingViewState = null;
-      return true;
-    } catch (error) {
-      if (isPdfOwnershipCurrent(owner)) {
-        pushToast(`Couldn't save PDF view position. (${String(error)})`, "error");
-      }
-      return false;
-    }
-  };
-
   const scheduleViewState = (page: number, nextScale: number) => {
     if (!isPdfOwnershipCurrent(owner)) return;
     if (!viewStateReady || !Number.isFinite(nextScale) || nextScale <= 0) return;
     if (viewStateBaseline?.page === page && viewStateBaseline?.scale === nextScale) return;
-    props.onViewState?.({ page, scale: nextScale });
-    // A published export opens PDFs read-only: there is no sidecar to write, and
-    // the refused save toasted after every zoom or scroll (master GH #549).
-    if (isPublishedExport()) return;
-    pendingViewState = { page, scale: nextScale };
-    if (viewStateTimer !== undefined) clearTimeout(viewStateTimer);
-    viewStateTimer = window.setTimeout(() => {
-      if (isPdfOwnershipCurrent(owner)) void flushViewState();
-    }, 4000);
+    viewStateBaseline = { page, scale: nextScale };
+    props.onViewState?.(viewStateBaseline);
   };
 
   function failPdf(message: string) {
@@ -817,10 +781,6 @@ export function PdfViewer(props: {
     clearTimeout(zoomTimer);
     clearTimeout(textTimer);
     findController.cancel();
-    if (viewStateTimer !== undefined) {
-      clearTimeout(viewStateTimer);
-      viewStateTimer = undefined;
-    }
     if (scrollRaf !== undefined) {
       cancelAnimationFrame(scrollRaf);
       scrollRaf = undefined;
@@ -840,8 +800,7 @@ export function PdfViewer(props: {
     let restoredPage: number | null = null;
     let restoredScale: number | null = null;
     try {
-      const result = await writeOwned(loadOwner,
-        backend().openPdf(props.filename, props.label, "create-page", binding.backendGeneration));
+      const result = await readOwned(loadOwner, backend().openPdf(props.filename, props.label, binding.backendGeneration));
       if (result.kind === "stale") return;
       const state = result.value;
       highlightState.load(state.highlights);
@@ -926,10 +885,6 @@ export function PdfViewer(props: {
   });
 
   onCleanup(() => {
-    // Ordinary viewer close remains in the same graph and must persist its last
-    // location. Graph switch retired the owner first, so this branch is skipped
-    // there after the explicit awaited drain.
-    if (isPdfOwnershipCurrent(owner) && pendingViewState) void flushViewState();
     unregisterPdfParticipant();
     cancelOwnedWork();
     setOutlineOpen(false);
@@ -1407,7 +1362,7 @@ export function PdfViewer(props: {
   });
 
   unregisterPdfParticipant = registerPdfParticipant(owner, {
-    flush: async () => !highlightState.drainBlocked() && (await flushViewState()) && (!unsavedHighlights() || await persist()),
+    flush: async () => !highlightState.drainBlocked() && (!unsavedHighlights() || await persist()),
     cancel: cancelOwnedWork,
   });
 

@@ -530,13 +530,15 @@ export interface Backend {
    *  actually populate the clipboard, so paste yielded nothing). */
   copyImageToClipboard(bytes: Uint8Array): Promise<void>;
   readHighlights(pdf: string): Promise<Highlight[]>;
-  /** Open persisted PDF highlights and view state. Prefer OG-key sidecar and
-   * annotation-page files; consult the matching legacy counterpart only when the OG
-   * file is absent. Create missing files only when neither usable counterpart exists;
-   * legacy files remain until highlight write. Malformed sidecars, ambiguous page files, and Store failures reject.
-   * Cost O(asset entries + sidecar + annotation page); a missing page can require
-   * a graph refresh. */
-  openPdf(pdf: string, label: string, kind: "create-page", bindingGeneration: number): Promise<PdfState>;
+  /** Read PDF highlights and view state without creating, rewriting or moving
+   * graph files. Prefer the OG-key sidecar; only when absent, consult legacy
+   * unless another PDF owns its key. An unavailable asset listing permits legacy
+   * lookup. Missing files return empty state; malformed nonblank EDN and sidecar
+   * read failures reject. A stale graph binding rejects; label does not affect
+   * this read.
+   * Annotation pages are created by writeHighlights on annotation actions.
+   * Cost O(asset entries + sidecar bytes), with no graph refresh. */
+  openPdf(pdf: string, label: string, bindingGeneration: number): Promise<PdfState>;
   /** Native backend: merge caller changes by highlight ID against the current
    * sidecar. Changed color, text and image values win locally; unchanged values
    * follow disk. Page and position form one geometry value: changing either
@@ -1317,7 +1319,7 @@ class TauriBackend implements Backend {
   readHighlights(pdf: string) {
     return this.call<Highlight[]>("read_highlights", { pdf });
   }
-  openPdf(pdf: string, label: string, _kind: "create-page", bindingGeneration: number) {
+  openPdf(pdf: string, label: string, bindingGeneration: number) {
     return this.assetCall<PdfState>("open_pdf", { pdf, label }, bindingGeneration);
   }
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseHighlights: Highlight[], _kind: "replace-page", bindingGeneration: number) {

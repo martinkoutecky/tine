@@ -61,6 +61,21 @@ fn store_entries_take_a_kind(source: &str) -> Result<(), String> {
 }
 
 #[test]
+fn pdf_open_reads_state_without_a_graph_write() {
+    let source = include_str!("../../crates/tine-graph-features/src/pdf.rs");
+    let open = body(source, "open_pdf");
+    assert!(calls(open, "sidecar(store, pdf_name, true)"));
+    assert!(
+        !calls(open, "transaction("),
+        "I-2: PDF open is read-only; exemplar pdf::open_pdf"
+    );
+    assert!(
+        !calls(open, "page_id("),
+        "I-12: annotation creation belongs to write_highlights"
+    );
+}
+
+#[test]
 fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     const COMMANDS: &str = include_str!("commands.rs");
     const CONCORD: &str = include_str!("commands/concord.rs");
@@ -106,7 +121,6 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             "write_highlights",
             "tine_graph_features::pdf::write_highlights",
         ),
-        ("open_pdf", "tine_graph_features::pdf::open_pdf"),
     ];
     // Concord's writers live in their own command module (og family 8).
     let concord_routes = [
@@ -133,7 +147,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
     ];
     assert_eq!(
         routes.len() + concord_routes.len(),
-        15,
+        14,
         "OG-RULES Rule 8: update the page-writer census; exemplar src-tauri/src/commands.rs"
     );
     for (name, route) in routes {
@@ -198,11 +212,6 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
             PDF,
             "write_highlights",
             "tx.save_page(&[tine_store::EditKind::ReplacePage",
-        ),
-        (
-            PDF,
-            "open_pdf",
-            "transaction(Some(tine_store::EditKind::CreatePage))",
         ),
     ];
     for (source, name, marker) in destinations {

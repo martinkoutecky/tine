@@ -42,6 +42,7 @@ function PdfViewer(props: {
   owner?: PdfOwnership;
   page?: number;
   navigation?: () => any;
+  onViewState?: (state: { page: number; scale: number }) => void;
 }) {
   return <OwnedPdfViewer {...props} owner={props.owner ?? testPdfOwner()} />;
 }
@@ -1088,7 +1089,7 @@ describe("PdfViewer OG state and reference behavior", () => {
     } finally { dispose(); }
   });
 
-  it("restores OG page and scale then debounces changed view state", async () => {
+  it("restores OG position and reports reading position without writing graph annotations", async () => {
     const openPdf = vi.spyOn(backend() as any, "openPdf").mockResolvedValue({
       highlights: [],
       page: 2,
@@ -1101,10 +1102,11 @@ describe("PdfViewer OG state and reference behavior", () => {
 
     const host = document.createElement("div");
     document.body.appendChild(host);
-    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    const onViewState = vi.fn();
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" onViewState={onViewState} />, host);
     try {
       await flush();
-      expect(openPdf).toHaveBeenCalledWith("paper.pdf", "Paper", "create-page", 1);
+      expect(openPdf).toHaveBeenCalledWith("paper.pdf", "Paper", 1);
       expect((host.querySelector(".pdf-page-input") as HTMLInputElement).value).toBe("2");
       expect(host.querySelector(".pdf-zoom-level")?.textContent).toBe("200%");
       expect(writeState).not.toHaveBeenCalled();
@@ -1114,44 +1116,38 @@ describe("PdfViewer OG state and reference behavior", () => {
       await vi.advanceTimersByTimeAsync(3999);
       expect(writeState).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
-      expect(writeState).toHaveBeenCalledWith("paper.pdf", 2, 2.2, 1);
+      expect(onViewState).toHaveBeenLastCalledWith({ page: 2, scale: 2.2 });
+      await expect(drainPdfWork()).resolves.toBe(true);
+      expect(writeState).not.toHaveBeenCalled();
     } finally {
       dispose();
     }
   });
 
-  it("serializes view-position writes while an earlier save is pending", async () => {
+  it("keeps reading and drain independent of unavailable graph sidecar writes", async () => {
     vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
     vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
-    let finishFirst!: () => void;
-    const write = vi.spyOn(backend(), "writePdfViewState")
-      .mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirst = resolve; }))
-      .mockResolvedValue(undefined);
+    const write = vi.spyOn(backend(), "writePdfViewState").mockRejectedValue(new Error("disk full"));
+    const onViewState = vi.fn();
     getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
     const host = document.createElement("div");
     document.body.appendChild(host);
-    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" />, host);
+    const dispose = render(() => <PdfViewer filename="paper.pdf" label="Paper" onViewState={onViewState} />, host);
     try {
       await flush();
       vi.useFakeTimers();
       const zoom = host.querySelector<HTMLButtonElement>('button[title="Zoom in"]')!;
       zoom.click();
       await vi.advanceTimersByTimeAsync(4000);
-      expect(write).toHaveBeenCalledTimes(1);
       zoom.click();
       await vi.advanceTimersByTimeAsync(4000);
-      expect(write).toHaveBeenCalledTimes(1);
-      finishFirst();
-      await flush();
-      expect(write).toHaveBeenCalledTimes(2);
-      expect(write.mock.calls[1][2]).toBe(1.21);
-    } finally {
-      finishFirst?.();
-      dispose();
-    }
+      expect(onViewState).toHaveBeenLastCalledWith({ page: 1, scale: 1.21 });
+      await expect(drainPdfWork()).resolves.toBe(true);
+      expect(write).not.toHaveBeenCalled();
+    } finally { dispose(); }
   });
 
-  it("flushes same-name graph-A state before remounting graph B and cancels the old debounce", async () => {
+  it("remounts same-name PDFs across graphs without graph view-state writes", async () => {
     vi.useFakeTimers();
     resetPdfOwnershipForTest();
     const ownerA = activatePdfOwnership("/graphs/A");
@@ -1181,7 +1177,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       await flush();
 
       await expect(drainPdfWork()).resolves.toBe(true);
-      expect(writes).toEqual([{ root: "/graphs/A", pdf: "shared.pdf", page: 1, scale: 1.1 }]);
+      expect(writes).toEqual([]);
 
       retirePdfOwnership();
       setTarget(null);
@@ -1195,7 +1191,7 @@ describe("PdfViewer OG state and reference behavior", () => {
       expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename")).toBe("shared.pdf");
       await vi.advanceTimersByTimeAsync(4_000);
       await flush();
-      expect(writes).toEqual([{ root: "/graphs/A", pdf: "shared.pdf", page: 1, scale: 1.1 }]);
+      expect(writes).toEqual([]);
     } finally {
       dispose();
       resetPdfOwnershipForTest();
