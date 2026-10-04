@@ -107,6 +107,7 @@ import type { InvalidRoute } from "./routeTypes";
 import { installBackgroundFlush } from "./backgroundFlush";
 import { installSessionActivity } from "./sessionActivity";
 import { initSettingsLayout } from "./settingsLayout";
+import { initCodeDisplay } from "./codeDisplay";
 import { initContentWidths } from "./contentWidth";
 
 const Settings = lazy(() => import("./components/Settings").then((module) => ({ default: module.Settings })));
@@ -840,7 +841,7 @@ export function App(): JSX.Element {
   onMount(() => void initRefCompletionSettings());
   onMount(() => void initNavSettings());
   onMount(() => void initSettingsLayout());
-  onMount(() => void initContentWidths());
+  onMount(() => { void initContentWidths(); void initCodeDisplay(); });
   // Load the local-file images opt-in (Settings → Editing). Default off.
   onMount(() => void initLocalFileSettings());
   // A conflict copy appearing/vanishing on disk (watcher) refreshes the list.

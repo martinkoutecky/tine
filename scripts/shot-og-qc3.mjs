@@ -15,8 +15,10 @@ import { initParser } from "./src/render/parse";
 import { resetStore } from "./src/document";
 import { loadSingle } from "./src/document/workingSet";
 import { Block } from "./src/components/Block";
+import { changeCodeWrapping } from "./src/codeDisplay";
 import { endEdit } from "./src/editorController";
 await initParser();
+window.setWrapping = changeCodeWrapping;
 window.finishEdit = () => endEdit("page-navigation");
 let dispose;
 window.fixture = (raw, format) => { dispose?.(); endEdit("page-navigation"); resetStore(); loadSingle({ name: "QC3", title: "QC3", kind: "page", format, pre_block: null, blocks: [
@@ -54,20 +56,34 @@ try {
     const style = getComputedStyle(card);
     return { card: rect(card), after: rect(document.querySelector('[data-block-id="qc3-after"]')), scroll: document.getElementById("scroller").scrollTop, font: style.fontFamily, lineHeight: style.lineHeight, background: style.backgroundColor };
   });
-  for (const theme of ["light", "dark"]) for (const [name, raw, format] of cases) {
-    await tab.evaluate(([raw, format, theme]) => { document.documentElement.dataset.theme = theme; window.fixture(raw, format); }, [raw, format, theme]);
+  for (const wrap of [false, true]) for (const theme of ["light", "dark"]) for (const [name, raw, format] of cases) {
+    await tab.evaluate(([raw, format, theme, wrap]) => { document.documentElement.dataset.theme = theme; window.setWrapping(wrap); window.fixture(raw, format); }, [raw, format, theme, wrap]);
     await tab.evaluate(() => document.getElementById("scroller").scrollTop = 390);
     await tab.waitForSelector('[data-block-id="qc3-code"] pre.code-block');
     const before = await measure();
-    await tab.screenshot({ path: `/tmp/og-qc3-${theme}-${name}-view.png` });
+    const numbers = () => tab.locator('[data-block-id="qc3-code"] .calc-lineno').allTextContents();
+    const viewNumbers = await numbers();
+    await tab.screenshot({ path: `/tmp/og-qc3-${theme}-${name}-${wrap ? "wrap" : "scroll"}-view.png` });
     await tab.locator('[data-block-id="qc3-code"] pre.code-block').click({ position: { x: 35, y: 18 } });
     await tab.waitForSelector('textarea.code-edit');
     await tab.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const editing = await measure();
-    await tab.screenshot({ path: `/tmp/og-qc3-${theme}-${name}-edit.png` });
+    const body = await tab.locator("textarea.code-edit").inputValue();
+    assert.deepEqual(await numbers(), body.split("\n").map((_, i) => String(i + 1)));
+    assert.deepEqual(await numbers(), viewNumbers);
+    if (name === "long") {
+      await tab.evaluate(wrap => window.setWrapping(!wrap), wrap);
+      await tab.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const changed = await measure();
+      assert.ok(wrap ? changed.card.height < editing.card.height : changed.card.height > editing.card.height, "live wrap changes line layout");
+      await tab.evaluate(wrap => window.setWrapping(wrap), wrap);
+      await tab.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.ok(Math.abs((await measure()).card.height - editing.card.height) <= 1);
+    }
+    await tab.screenshot({ path: `/tmp/og-qc3-${theme}-${name}-${wrap ? "wrap" : "scroll"}-edit.png` });
     await tab.evaluate(() => window.finishEdit());
     const after = await measure();
-    evidence.push({ theme, name, before, editing, after });
+    evidence.push({ theme, name: `${name}/${wrap ? "wrap" : "scroll"}`, before, editing, after });
     console.log(JSON.stringify(evidence.at(-1)));
   }
   writeFileSync('/tmp/og-qc3-layout.json', JSON.stringify(evidence, null, 2));

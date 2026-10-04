@@ -56,12 +56,13 @@ describe("code-fence editor presentation", () => {
     try {
       const ta = root.querySelector("textarea")!;
       expect(ta.classList.contains("code-edit")).toBe(true);
-      // Hard requirement: no soft wrapping — long code lines scroll
-      // horizontally exactly like the rendered white-space:pre card.
+      // Default is horizontal scrolling, shared with the rendered code card.
       expect(ta.getAttribute("wrap")).toBe("off");
       // Body-only code view (GH #412/#413): the payload, without the fences;
       // the wrapper bytes are preserved on commit (see codeBodyEdit tests).
       expect(ta.value).toBe("const x = 1;\nconsole.log(x);");
+      expect.soft(root.querySelector(".code-language")?.textContent).toBe("js");
+      expect.soft([...root.querySelectorAll(".calc-lineno")].map(el => el.textContent)).toEqual(["1", "2"]);
     } finally {
       dispose();
     }
@@ -111,6 +112,8 @@ describe("code-fence editor presentation", () => {
       const ta = root.querySelector("textarea")!;
       expect(ta.classList.contains("code-edit")).toBe(true);
       expect(ta.getAttribute("wrap")).toBe("off");
+      expect(root.querySelector(".code-language")?.textContent).toBe("python");
+      expect(root.querySelector(".calc-lineno")?.textContent).toBe("1");
     } finally {
       dispose();
     }
