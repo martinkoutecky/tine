@@ -165,5 +165,18 @@ fn parse_vectors() -> Vec<ParseVector> {
         ));
     }
 
+    // Keep old Tine E/EE spellings readable after OG-compatible formatting.
+    for title in [
+        "Sunday Sun Su S 2024-01-07",
+        "Monday Mon Mo M 2024-01-08",
+        "Tuesday Tue Tu T 2024-01-09",
+        "Wednesday Wed We W 2024-01-10",
+        "Thursday Thu Th T 2024-01-11",
+        "Friday Fri Fr F 2024-01-12",
+        "Saturday Sat Sa S 2024-01-13",
+    ] {
+        vectors.push(parse_vector("EEEE EEE EE E yyyy-MM-dd", title));
+    }
+
     vectors
 }

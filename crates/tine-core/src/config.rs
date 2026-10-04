@@ -91,8 +91,9 @@ pub struct Config {
     /// Joda tokens). `None` uses `"yyyy_MM_dd"`. The store compiles a configured
     /// format and uses it to propose names for new journal files.
     pub journal_file_name_format: Option<String>,
-    /// `:journal/page-title-format` — Logseq's journal TITLE format. `None` = the
-    /// default `"MMM do, yyyy"`. See `journal_file_name_format`.
+    /// Journal TITLE format: nonempty `:journal/page-title-format`, then legacy
+    /// `:date-formatter`. Missing, malformed or empty strings use the next key,
+    /// then `"MMM do, yyyy"` for `None`; file naming is separate.
     pub journal_page_title_format: Option<String>,
     /// `:preferred-format` — the format ("Markdown"/"Org") for NEW pages and
     /// journals. Existing files keep their own format (decided per-file by
@@ -275,8 +276,9 @@ impl Config {
             string_value(edn, ":tine/favorites-page").filter(|s| !s.trim().is_empty());
         cfg.journal_file_name_format =
             string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
-        cfg.journal_page_title_format =
-            string_value(edn, ":journal/page-title-format").filter(|s| !s.is_empty());
+        cfg.journal_page_title_format = string_value(edn, ":journal/page-title-format")
+            .filter(|s| !s.is_empty())
+            .or_else(|| string_value(edn, ":date-formatter").filter(|s| !s.is_empty()));
         // OG stores `:preferred-format "Markdown"|"Org"` (a capitalized string), but
         // its schema also accepts the keyword form `:preferred-format :org` — read
         // both so a keyword-configured graph isn't silently treated as markdown.

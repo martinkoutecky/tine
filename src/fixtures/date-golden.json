@@ -242,7 +242,7 @@
         "m": 1,
         "d": 5
       },
-      "title": "Fr F 2024-01-05"
+      "title": "Fri Fri 2024-01-05"
     },
     {
       "fmt": "EEEE EEE EE E yyyy-MM-dd",
@@ -251,7 +251,7 @@
         "m": 1,
         "d": 7
       },
-      "title": "Sunday Sun Su S 2024-01-07"
+      "title": "Sunday Sun Sun Sun 2024-01-07"
     },
     {
       "fmt": "EEEE EEE EE E yyyy-MM-dd",
@@ -260,7 +260,7 @@
         "m": 1,
         "d": 8
       },
-      "title": "Monday Mon Mo M 2024-01-08"
+      "title": "Monday Mon Mon Mon 2024-01-08"
     },
     {
       "fmt": "EEEE EEE EE E yyyy-MM-dd",
@@ -269,7 +269,7 @@
         "m": 1,
         "d": 9
       },
-      "title": "Tuesday Tue Tu T 2024-01-09"
+      "title": "Tuesday Tue Tue Tue 2024-01-09"
     },
     {
       "fmt": "EEEE EEE EE E yyyy-MM-dd",
@@ -278,7 +278,7 @@
         "m": 1,
         "d": 10
       },
-      "title": "Wednesday Wed We W 2024-01-10"
+      "title": "Wednesday Wed Wed Wed 2024-01-10"
     },
     {
       "fmt": "EEEE EEE EE E yyyy-MM-dd",
@@ -287,7 +287,7 @@
         "m": 1,
         "d": 11
       },
-      "title": "Thursday Thu Th T 2024-01-11"
+      "title": "Thursday Thu Thu Thu 2024-01-11"
     },
     {
       "fmt": "EEEE EEE EE E yyyy-MM-dd",
@@ -296,7 +296,7 @@
         "m": 1,
         "d": 12
       },
-      "title": "Friday Fri Fr F 2024-01-12"
+      "title": "Friday Fri Fri Fri 2024-01-12"
     },
     {
       "fmt": "EEEE EEE EE E yyyy-MM-dd",
@@ -305,7 +305,7 @@
         "m": 1,
         "d": 13
       },
-      "title": "Saturday Sat Sa S 2024-01-13"
+      "title": "Saturday Sat Sat Sat 2024-01-13"
     }
   ],
   "parse": [
@@ -475,6 +475,69 @@
       "fmt": "yyyy/MM/dd",
       "input": "2026/06/00",
       "date": null
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Sunday Sun Sun Sun 2024-01-07",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 7
+      }
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Monday Mon Mon Mon 2024-01-08",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 8
+      }
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Tuesday Tue Tue Tue 2024-01-09",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 9
+      }
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Wednesday Wed Wed Wed 2024-01-10",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 10
+      }
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Thursday Thu Thu Thu 2024-01-11",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 11
+      }
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Friday Fri Fri Fri 2024-01-12",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 12
+      }
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Saturday Sat Sat Sat 2024-01-13",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 13
+      }
     },
     {
       "fmt": "EEEE EEE EE E yyyy-MM-dd",

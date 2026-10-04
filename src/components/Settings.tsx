@@ -596,7 +596,7 @@ function JournalTemplateField(): JSX.Element {
 function DateFormatSelect(): JSX.Element {
   const today = appNow();
   const current = () => graphMeta()?.journal_page_title_format || "MMM do, yyyy";
-  const options = () => (JOURNAL_TITLE_FORMATS.some((format) => format === current()) ? JOURNAL_TITLE_FORMATS : [current(), ...JOURNAL_TITLE_FORMATS]);
+  const options = () => [current(), ...JOURNAL_TITLE_FORMATS.filter((format) => format !== current())];
   return (
     <select
       class="settings-select"
