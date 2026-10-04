@@ -15,7 +15,8 @@ export type QueryView = "search" | "list" | "table" | "board";
 
 /** A page-anchored answer (K16): pages, not degenerate empty block groups.
  *  Table columns come off the rows' own page properties via `query_run`, never
- *  a name-only row. */
+ *  a name-only row. Search/List show titles and a one-click properties editor;
+ *  columns only affect Table. Cost O(returned rows and displayed cells). */
 export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy?: string; columns?: string[] }): JSX.Element {
   const target = (row: PageRow) => ({ name: row.name, pageKind: row.kind, path: row.path });
   const open = (row: PageRow, event: MouseEvent) => {
@@ -52,37 +53,26 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
       {row.name}
     </button>
   );
-  // GH #619 item 8: OG lists a page result with its page properties, as plain selectable
-  // text; the pencil edits them. The row only carries the query's answer, so the pencil first
-  // loads the page (a read) and then opens the existing properties panel, whose write is the
-  // guarded `setPageProperty` path (see ../queryPageProps).
-  const propertyStrip = (row: PageRow) => (
-    <>
-      <Show when={row.properties.length > 0}>
-        <span class="query-page-props" data-selectable="text">
-          <For each={row.properties}>{([key, val]) => (
-            <span class="query-page-prop"><span class="query-page-prop-key">{key}:</span> {val}</span>
-          )}</For>
-        </span>
-      </Show>
-      <button
-        type="button"
-        class="query-page-props-edit"
-        aria-label={`Edit properties of ${row.name}`}
-        title="Edit page properties"
-        onClick={(event) => {
-          event.stopPropagation();
-          const rect = event.currentTarget.getBoundingClientRect();
-          void openPagePropertiesFromRow(row, rect.left, rect.bottom + 4);
-        }}
-      >✎</button>
-    </>
+  // Search/List use master's title-only page rows; the existing pencil keeps
+  // the full properties one click away through the guarded page editor.
+  const propertyEditor = (row: PageRow) => (
+    <button
+      type="button"
+      class="query-page-props-edit"
+      aria-label={`Edit properties of ${row.name}`}
+      title="Edit page properties"
+      onClick={(event) => {
+        event.stopPropagation();
+        const rect = event.currentTarget.getBoundingClientRect();
+        void openPagePropertiesFromRow(row, rect.left, rect.bottom + 4);
+      }}
+    >✎</button>
   );
   return (
     <Switch
       fallback={
         <ul class="query-results-list" aria-label="Page results">
-          <For each={props.rows}>{(row) => <li>{link(row)}{propertyStrip(row)}</li>}</For>
+          <For each={props.rows}>{(row) => <li>{link(row)}{propertyEditor(row)}</li>}</For>
         </ul>
       }
     >
@@ -119,23 +109,36 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
 }
 
 /** The engine's statistics fold (`query_run` `statistics`), rendered — one
- *  answerer (I-12) instead of a frontend fold over the returned rows. Markup and
- *  wording are master's summary panel (Macro.tsx, `querySummary`). An absent
- *  answer is never a numeric zero. */
-export function QueryStatisticsSummary(props: { statistics: QueryStatistics }): JSX.Element {
+ *  answerer (I-12) instead of a frontend fold over the returned rows. An absent
+ *  answer is never a numeric zero. Grouping is named; a sole missing-value
+ *  group shows overall totals instead of a table. O(returned statistic cells);
+ *  the host supplies a clear action only on writable surfaces. */
+export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onClearGrouping?: () => void }): JSX.Element {
   const stop = (e: MouseEvent) => e.stopPropagation();
   const summary = createMemo(() => querySummary({ statistics: props.statistics })!);
   const groupLabel = () => {
     const field = props.statistics.group_by;
     return field && isFieldId(field) ? fieldLabel(field) : field;
   };
+  const breakdown = createMemo(() => {
+    const groups = summary().groups;
+    return groups?.length && !(groups.length === 1 && groups[0].key === null) ? groups : null;
+  });
   return (
     <>
+      <Show when={props.statistics.group_by}>
+        <div class="query-summary" onClick={stop}>
+          <span class="qs-label">Grouped by {groupLabel()}</span>
+          <Show when={props.onClearGrouping}>
+            <button type="button" class="query-grouping-clear" aria-label="Clear grouping" onClick={() => props.onClearGrouping?.()}>Clear</button>
+          </Show>
+        </div>
+      </Show>
       <Show when={summary().notice}>
         <p class="query-summary-note">{summary().notice}</p>
       </Show>
       <Show
-        when={summary().groups}
+        when={breakdown()}
         fallback={
           <div class="query-summary" onClick={stop}>
             <For each={summary().columns}>{(column, i) => (

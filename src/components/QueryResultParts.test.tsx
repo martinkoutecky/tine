@@ -74,29 +74,17 @@ describe("QueryPageRows", () => {
     }
   });
 
-  // GH #619 item 8: OG shows a page result with its page properties; the default list
-  // view showed only the name, so properties were visible only after switching to Table.
-  it("list view shows each page's own properties as selectable text beside its link", () => {
-    const rows = [
+  // QBV: current master's Search/List page rows show titles, not all properties.
+  it.each(["search", "list"] as const)("%s keeps page properties one click away even with table columns chosen", (view) => {
+    const { root, dispose } = mount(() => <QueryPageRows rows={[
       row("Alpha", "pages/Alpha.md", [["status", "open"], ["owner", "Ada"]]),
-      row("Beta", "pages/Beta.md"),
-    ];
-    const { root, dispose } = mount(() => <QueryPageRows rows={rows} view="list" />);
+    ]} view={view} columns={["prop:status"]} />);
     try {
-      const items = [...root.querySelectorAll(".query-results-list > li")];
-      expect(items).toHaveLength(2);
-      const props = [...items[0].querySelectorAll(".query-page-prop")].map((el) => el.textContent?.replace(/\s+/g, " ").trim());
-      expect(props).toEqual(["status: open", "owner: Ada"]);
-      // A page with no properties gets no empty property strip.
-      expect(items[1].querySelector(".query-page-props")).toBeNull();
-      // The values are plain, selectable content (no buttons inside the strip); the only
-      // buttons are the page link and the edit pencil (follow-up B: edit from the row).
-      expect(items[0].querySelector(".query-page-props")!.querySelectorAll("button")).toHaveLength(0);
-      expect([...items[0].querySelectorAll("button")].map((b) => b.className)).toEqual(["query-page-link", "query-page-props-edit"]);
-      expect(items[0].querySelector(".query-page-props")?.getAttribute("data-selectable")).toBe("text");
-    } finally {
-      dispose();
-    }
+      expect(names(root)).toEqual(["Alpha"]);
+      expect(root.querySelector(".query-page-props")).toBeNull();
+      expect(root.textContent).not.toContain("Ada");
+      expect(root.querySelector('[aria-label="Edit properties of Alpha"]')).not.toBeNull();
+    } finally { dispose(); }
   });
 
   // GH #619 item 8 / follow-up B: the pencil LOADS the page (a read) and opens the existing
