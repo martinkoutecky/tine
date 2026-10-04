@@ -140,7 +140,20 @@ pub fn literal_fold_with_map(value: &str) -> (String, Vec<Range<usize>>) {
     fold_with_map(value, false)
 }
 
+#[cfg(test)]
+thread_local! {
+    static MAPPED_UNICODE_GRAPHEMES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn fold_with_map(value: &str, remove_accents: bool) -> (String, Vec<Range<usize>>) {
+    if value.is_ascii() {
+        // CRLF is one source grapheme: both scalars keep its whole span.
+        let spans = value
+            .grapheme_indices(true)
+            .flat_map(|(at, grapheme)| std::iter::repeat_n(at..at + grapheme.len(), grapheme.len()))
+            .collect();
+        return (value.to_ascii_lowercase(), spans);
+    }
     let lowered = value.to_lowercase();
     let mut sources = Vec::new();
     let mut at = 0;
@@ -155,6 +168,8 @@ fn fold_with_map(value: &str, remove_accents: bool) -> (String, Vec<Range<usize>
     let mut spans = Vec::new();
     let mut source_at = 0;
     for grapheme in lowered.graphemes(true) {
+        #[cfg(test)]
+        MAPPED_UNICODE_GRAPHEMES.with(|count| count.set(count.get() + 1));
         let count = grapheme.chars().count();
         let contributors = &sources[source_at..source_at + count];
         source_at += count;
@@ -551,6 +566,21 @@ impl Matcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ascii_search_evidence_skips_unicode_normalization_and_keeps_crlf_spans() {
+        for fold in [canonical_fold_with_map, literal_fold_with_map] {
+            MAPPED_UNICODE_GRAPHEMES.with(|count| count.set(0));
+            let (folded, spans) = fold("AB\r\nCd");
+            assert_eq!(folded, "ab\r\ncd");
+            assert_eq!(spans, vec![0..1, 1..2, 2..4, 2..4, 4..5, 5..6]);
+            assert_eq!(
+                MAPPED_UNICODE_GRAPHEMES.with(|count| count.get()),
+                0,
+                "I-25: ASCII search evidence must skip per-grapheme Unicode normalization; see fold_with_map"
+            );
+        }
+    }
 
     fn m(q: &str) -> Matcher {
         Matcher::parse(q)
