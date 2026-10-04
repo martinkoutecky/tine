@@ -165,6 +165,12 @@ impl AssetPending {
             .all(|path| scope.strictly_inside(path).is_some())
     }
 
+    /// Registration cannot report changes made since the opening baseline.
+    /// Keep this obligation queued even while graph loading prevents a cycle.
+    pub(crate) fn scan_after_install(&mut self) {
+        self.full = true;
+    }
+
     pub(crate) fn drain(&mut self) -> (HashSet<PathBuf>, bool) {
         (
             std::mem::take(&mut self.exact),

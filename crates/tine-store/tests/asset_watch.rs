@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use tine_store::{ChangeKind, OpenOptions, Origin, Store, Subscription, WatchMode};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
-/// One test at a time: the lifecycle test counts this process's OS watches.
+/// Serialize these tests so a sibling cannot reuse the descriptor being observed.
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn scratch(name: &str) -> PathBuf {
@@ -200,41 +200,62 @@ fn an_own_asset_write_is_never_echoed_as_external() {
     store.close();
 }
 
+/// Identify the descriptor by a watch on this graph's root, rather than by
+/// the count of unrelated notify event-loop threads still shutting down.
+#[cfg(target_os = "linux")]
+fn inotify_descriptor_for(root: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let inode = format!("ino:{:x}", std::fs::metadata(root).unwrap().ino());
+    std::fs::read_dir("/proc/self/fdinfo")
+        .unwrap()
+        .flatten()
+        .find_map(|entry| {
+            let info = std::fs::read_to_string(entry.path()).ok()?;
+            info.lines()
+                .any(|line| {
+                    line.starts_with("inotify ")
+                        && line.split_whitespace().any(|field| field == inode)
+                })
+                .then(|| Path::new("/proc/self/fd").join(entry.file_name()))
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_watch_release(descriptor: &Path) {
+    // notify releases its descriptor on its backend event-loop thread after
+    // Drop posts Shutdown. Observe the actual release, with the same deadline.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while std::fs::read_link(descriptor)
+        .is_ok_and(|target| target.to_string_lossy().contains("inotify"))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "closing the store must release its OS watch: {descriptor:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn the_watch_is_released_when_the_store_closes() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    fn inotify_instances() -> usize {
-        std::fs::read_dir("/proc/self/fd")
-            .unwrap()
-            .flatten()
-            .filter(|fd| {
-                std::fs::read_link(fd.path())
-                    .is_ok_and(|target| target.to_string_lossy().contains("inotify"))
-            })
-            .count()
-    }
     let root = scratch("lifecycle");
     graph_at(&root);
     std::fs::create_dir_all(root.join("assets")).unwrap();
-    let before = inotify_instances();
     let (store, _subscription) = open(&root, WatchMode::Notify, None);
-    // Installation happens on the watcher thread.
     let deadline = Instant::now() + Duration::from_secs(10);
-    while inotify_instances() <= before {
-        assert!(Instant::now() < deadline, "no OS watch was installed");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    store.close();
-    // notify's inotify backend closes its descriptor on its own event-loop
-    // thread after the watcher is dropped, so allow it a moment to finish.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while inotify_instances() != before {
+    let descriptor = loop {
+        if let Some(descriptor) = inotify_descriptor_for(&root) {
+            break descriptor;
+        }
         assert!(
             Instant::now() < deadline,
-            "closing the store must release its OS watch ({} open, {before} before)",
-            inotify_instances()
+            "no OS watch was installed for this graph"
         );
         std::thread::sleep(Duration::from_millis(20));
-    }
+    };
+    store.close();
+    wait_for_watch_release(&descriptor);
+    std::fs::remove_dir_all(root).unwrap();
 }
