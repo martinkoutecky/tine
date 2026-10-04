@@ -1088,26 +1088,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       stored = result.value;
     } catch (error) { pushToast(`Couldn’t save to assets/: ${String(error)}`, "error"); return; }
     if (stored !== candidate) seedAssetBlob(stored, bytes);
-    const page = pageByName(docNode(props.id)?.page ?? "");
-    // Saved images embed inline; other assets, including PDFs, become links.
-    const md = assetMarkdown(stored, {
-      label: origName,
-      pagePath: page?.id,
-      format: formatForBlock(props.id),
-    });
-    // The user may have kept typing while a large capture was being fsynced; use
-    // the current selection instead of replaying a stale pre-write offset.
-    const start = ref.selectionStart;
-    const newRaw = ref.value.slice(0, start) + md + ref.value.slice(ref.selectionEnd);
-    commit(newRaw);
-    const pos = start + md.length;
-    queueMicrotask(() => {
-      if (!assetEditorCurrent(token) || ref.value !== newRaw) return;
-      ref.value = newRaw;
-      ref.setSelectionRange(pos, pos);
-      ref.focus();
-      autosize();
-    });
+    insertStoredAssets(token, [{ stored, label: origName }]);
   };
 
   const insertStoredAssets = (token: AssetEditorToken, assets: { stored: string; label?: string }[]): boolean => {
@@ -1272,20 +1253,23 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       }
     }
   };
-  // True while an external camera/file-picker activity covers the app (GH #493).
-  let nativeAssetPickerPending = false;
+  // I-21 / GH #622: the native operation owns blur through durable import and
+  // reference landing, not just while the chooser promise is pending. Count
+  // overlapping operations so one completion cannot retire another's ownership.
+  let nativeAssetPickers = 0;
+  const withNativeAssetPicker = async (work: (token: AssetEditorToken) => Promise<void>) => {
+    const token = captureAssetEditorToken();
+    nativeAssetPickers++;
+    try { await work(token); } finally { nativeAssetPickers--; }
+  };
   // Mobile: take/pick a photo (Android camera plugin) → insert at the caret.
-  const capturePhotoCmd = async () => {
-    const editorToken = captureAssetEditorToken();
+  const capturePhotoCmd = () => withNativeAssetPicker(async (editorToken) => {
     let res;
-    nativeAssetPickerPending = true;
     try {
       res = await backend().capturePhoto();
     } catch (err) {
       if (stillBound(editorToken.binding)) pushToast(`Couldn’t capture a photo (${String(err)})`, "error");
       return;
-    } finally {
-      nativeAssetPickerPending = false;
     }
     if (res.status === "ok" && res.path) {
       const candidate = captureAssetFileName(res.ext || "jpg");
@@ -1296,7 +1280,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         pushToast(`Couldn’t import the photo (${String(err)})`, "error");
       }
     }
-  };
+  });
 
   // Mobile: toggle voice-memo recording. First tap starts (prompts for mic
   // permission); second tap stops and inserts the recorded audio at the caret.
@@ -1367,8 +1351,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       pushToast(`Couldn’t access the microphone (${String(err)})`, "error");
     }
   };
-  const uploadAsset = async () => {
-    const editorToken = captureAssetEditorToken();
+  const uploadAsset = () => withNativeAssetPicker(async (editorToken) => {
     const owner = graphOwner();
     const picked = await readOwned(ownedWhen(() => editorMounted), backend().pickFile());
     if (picked.kind === "stale" || !picked.value) return; const path = picked.value;
@@ -1380,7 +1363,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     } catch (error) {
       pushToast(`Couldn’t import asset: ${String(error)}`, "error");
     }
-  };
+  });
 
   // `/drawio` creates an editable asset, inserts its reference, then opens the
   // editor. assetRefresh updates the image when Tine regains focus.
@@ -2820,10 +2803,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
     // Android can blur the WebView editor before document.hasFocus() reflects
     // that the external camera/file-picker activity covered the app. Still the
-    // same edit transaction: keep its identity and caret until the picker
-    // returns so the imported asset lands in the initiating block (GH #493).
+    // same edit transaction: keep its identity and caret until durable import
+    // and insertion finish (GH #493/#622), including a delayed return blur.
     // Graph/block changes stay guarded by assetEditorIsCurrent after the await.
-    if (nativeAssetPickerPending) {
+    if (nativeAssetPickers > 0) {
       commit(ref.value);
       savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
       return;
