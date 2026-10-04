@@ -58,6 +58,7 @@ import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
 import { galleryFor } from "../imageGallery";
+import { queryMacroRenderRun } from "./queryMacroRender";
 
 // ===========================================================================
 // AST renderer (lsdoc). Renders an `Inline[]` produced by the Rust parser to
@@ -117,7 +118,14 @@ export function renderInlines(
   spanMode = true,
   macroExpansion = false,
   format?: Format,
+  sourceRaw?: string,
 ): JSX.Element {
+  if (inlines.some((s) => s.k === "macro" && isQueryMacroName(s.name))) {
+    const raw = sourceRaw ?? (blockId ? docNode(blockId)?.raw : undefined);
+    if (raw !== undefined) return <For each={queryMacroRenderRun(inlines, raw)}>{({ inline, extent }) => extent
+      ? renderMacroBody(`${extent.name} ${extent.argument}`, blockId, undefined, extent)
+      : renderInline(inline, blockId, spanMode, macroExpansion, format)}</For>;
+  }
   return <For each={inlines}>{(s) => renderInline(s, blockId, spanMode, macroExpansion, format)}</For>;
 }
 
@@ -1214,7 +1222,7 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
   });
   return (
     <Show when={inlines() && inlines()!.length > 0} fallback={<EmojiText text={props.text} />}>
-      {renderInlines(inlines()!, props.blockId, false, props.macroExpansion ?? false, props.format)}
+      {renderInlines(inlines()!, props.blockId, false, props.macroExpansion ?? false, props.format, props.text)}
     </Show>
   );
 }

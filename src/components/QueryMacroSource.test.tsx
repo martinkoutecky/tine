@@ -80,6 +80,37 @@ function load(raw: string): void {
 const HOSTILE_ARGUMENT = '(and (task TODO) "a, b") {:title "Open, work"}';
 
 describe("a query macro is read from the block's raw source", () => {
+  for (const format of ["md", "org"] as const) {
+    for (const argument of [
+      '(task TODO) {:title "Sprint }} board"}',
+      '(task TODO) {:title "x" :meta {:x 1}}',
+      '(property x "}}")',
+      '(task TODO) {:title "{{query (task DONE)}}"}',
+    ]) {
+      it(`renders only the full parsed macro span in ${format}: ${argument}`, async () => {
+        const suffix = format === "md" ? "\\*literal\\*" : "literal";
+        const properties = format === "md" ? "tine.view:: search" : ":PROPERTIES:\r\n:tine.view: search\r\n:END:";
+        const raw = `  é𐐀 Before {{query ${argument}}} after ${suffix} {{query (task DONE)}}\r\n${properties}`;
+        load(raw);
+        setDoc("pages", 0, "format", format);
+        backendReadsQueries({
+          [argument]: { form: "(task TODO)", opts: "" },
+          "(task DONE)": { form: "(task DONE)" },
+        });
+        const { root, dispose } = mount(() => <Block id="query" />);
+        try {
+          await settle();
+          expect(root.querySelectorAll(".query-block")).toHaveLength(2);
+          expect(backend().parseQuery).toHaveBeenCalledWith(argument, "macro_query", [["tine.view", "search"]]);
+          const body = root.querySelector(".block-content")!.cloneNode(true) as HTMLElement;
+          body.querySelectorAll(".query-block").forEach((query) => query.remove());
+          expect(body.textContent).toBe(`é𐐀 Before  after ${format === "md" ? "*literal*" : "literal"} `);
+          expect(doc.byId.query.raw).toBe(raw);
+        } finally { dispose(); }
+      });
+    }
+  }
+
   it("hands the engine the exact bytes, options map and literal comma included", async () => {
     load(`Tasks: {{query ${HOSTILE_ARGUMENT}}} — see above`);
     backendReadsQueries({
