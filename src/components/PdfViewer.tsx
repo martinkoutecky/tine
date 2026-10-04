@@ -807,7 +807,8 @@ export function PdfViewer(props: {
       restoredPage = state.page;
       restoredScale = state.scale;
     } catch (error) {
-      if (loadOwner()) highlightState.load([]);
+      if (!loadOwner()) return;
+      highlightState.load([]);
       pushToast(`Couldn't load PDF annotations. (${String(error)})`, "error");
     }
     let bytes: Uint8Array;
