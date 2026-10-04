@@ -149,6 +149,10 @@ pub const GUIDE_TEMPLATES: &[GuideTemplate] = &[
         markdown: include_str!("templates/extend-tine.md"),
     },
     GuideTemplate {
+        title: "Reference/Tine query model",
+        markdown: include_str!("templates/query-model.md"),
+    },
+    GuideTemplate {
         title: "Reference/Command line",
         markdown: include_str!("templates/command-line.md"),
     },
@@ -965,6 +969,31 @@ mod og_20d_guide_tests {
                 );
             }
         }
+    }
+
+    /// AP2/D11 (Martin 2026-10-04): the query-model reference states the rule,
+    /// names the one "finds less" exception and the refusals, and is linked
+    /// from the Guide index and the Queries page.
+    #[test]
+    fn query_model_reference_states_the_rule_and_every_divergence_class() {
+        let model = page("Reference/Tine query model");
+        for promised in [
+            "never less",
+            "never changes your files",
+            "`cafe` does not find `café`",
+            "`(task)` with no marker",
+            "no datalog engine",
+            "`:view` and `:result-transform` never run",
+            "20,000 rows",
+            "Tine 0.6 (stable)",
+        ] {
+            assert!(
+                model.contains(promised),
+                "query model page lost: {promised}"
+            );
+        }
+        assert!(page("Tine Guide").contains("[[Reference/Tine query model]]"));
+        assert!(page("Features/Queries").contains("[[Reference/Tine query model]]"));
     }
 
     /// og-D D4 (master e7af4db9c): the command-line reference names every shipped

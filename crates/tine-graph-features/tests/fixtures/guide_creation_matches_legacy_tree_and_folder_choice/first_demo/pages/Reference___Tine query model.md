@@ -1,0 +1,37 @@
+icon:: 🧭
+
+- # Tine query model
+	- Tine reads Logseq's query syntax — `{{query …}}` blocks and the common advanced (datalog) queries — but runs them on its own engine, not on a datalog database. This page lists every place where the answer can differ from Logseq's, and why. How to write and display queries is on [[Features/Queries]].
+	- This page describes Tine Beta. Tine 0.6 (stable) gets several of these wrong in ways Beta has fixed; see the last section.
+- ## The rule
+	- **A query in Tine finds everything the same query finds in Logseq, and may find more — never less.** Someone moving a graph over from Logseq should never lose a result. The one exception is named below.
+	- **Looking at results never changes your files.** Sorting by a column heading, collapsing a query or opening a result changes only what you see; only settings you save on purpose (Display, the query text) are written to the block.
+- ## Where Tine behaves exactly like Logseq
+	- **Text is exact.** A bare word or quoted text in a query matches the raw block text, property lines included, with case and accents significant: `Alpha` does not find `alpha`, and `cafe` does not find `café`. A query is a deliberate filter, so it matches what you wrote. Ctrl+K, search tabs and in-page Find are for finding things quickly, and ignore case and accents.
+	- **References include the outline above a block.** `[[x]]`, `#x` and `(page-ref x)` match a block that references `x`, and also its child blocks, because a child sits under that reference. `#x` and `[[x]]` mean the same.
+	- **Page properties count as properties.** `(property type book)` also matches the first block of a page whose header says `type:: book`, as in Logseq. Use `(page-property type book)` to ask about pages.
+	- **Commas split only list properties.** `tags`, `alias` and keys listed in `:property/separated-by-commas` are lists; every other value is one piece of text, so `(property list "Foo, Bar")` finds `list:: Foo, Bar`.
+	- **Results sort newest first** unless you write `asc`, `(sample N)` picks before it sorts, and a query of only `sort-by`/`sample` shows nothing.
+	- **Table settings from Logseq are read**: `query-table::`, a query ending in `table`, `query-properties::` and `query-sort-by::` / `query-sort-desc::`.
+- ## Where Tine finds more
+	- **Property values ignore case.** `(property status Done)` also finds `status:: done`. Logseq requires the exact spelling.
+	- **Property names ignore case.** `(property Status x)` works; Logseq's parser lowercases names anyway, so this rarely shows.
+	- **Numbers and dates compare as numbers and dates** when a property holds them (or its page declares `tine.type::`), so `count:: 01` equals `1`. Logseq compares the stored value.
+	- **A single word finds every block containing it.** Logseq's desktop app runs a search instead and shows its top 30 hits.
+	- **`(sort-by …)` knows built-in fields**: priority, page, scheduled and deadline as well as any property. Logseq sorts only by a property of that name.
+- ## The one place Tine finds less
+	- **`(task)` with no marker means open tasks, and `(priority)` with no level means A, B or C.** In Logseq both drop the filter and return every block, which nobody writes on purpose. Existing Tine graphs rely on the shorter form.
+- ## What Tine does not run
+	- **There is no datalog engine.** An advanced query runs only if Tine understands every clause: task markers, priorities, page references, properties, pages, namespaces, page tags, scheduled and deadline, and journal dates. If any clause is outside that, the whole query is refused and the notice names the clauses — half an answer would look complete and be wrong.
+	- **`:view` and `:result-transform` never run**, because they are ClojureScript functions. Tine will not run them. Its own Display choices (List, Table, Board, grouping, totals) cover the common uses.
+	- **A query that would return more than 20,000 rows or 32 MiB is refused**, with a message to narrow it or add `(sample N)`. Logseq has no such limit; Tine stops instead of freezing.
+- ## Where Tine keeps things on your device instead of in the file
+	- **Clicking a table heading sorts** for as long as the page is open. Logseq writes `query-sort-by::` into the file.
+	- **Collapsing a query** is remembered on this device. Logseq writes `collapsed:: true` into the file.
+- ## Other differences
+	- **Queries are always live.** Logseq stops refreshing a query that takes longer than 50 ms and shows a refresh button; Tine keeps every query current.
+	- **`:current-page` in a split view** is the page in the pane you used last.
+	- **Pages and blocks are separate answers.** A query finds blocks or pages. To see both from the same conditions, choose **Pages and blocks** in the query sheet.
+	- **Tine-only features** (grouping, totals, typed comparisons, scheduled and deadline ranges, `search`, `content-regex`) have no `{{query}}` spelling. Saving one turns the block into `{{tine-query …}}`, says so, and offers **Undo that change**.
+- ## Tine 0.6 (stable)
+	- Tine 0.6 differs from this page where it has known bugs, fixed in Beta: it sorts ascending by default; `(sample N)` sorts first; a query of only directives returns everything; `(namespace x)` matches every depth; `(all-page-tags)` returns the tagged pages; `not` with several operands, `(priority [A])`, `(between created-at …)` and page-header properties misbehave; journal groups run oldest first; an advanced query with an unknown clause runs the clauses it understands; query text ignores case and accents; every property value is split on commas; Logseq's table settings are ignored.

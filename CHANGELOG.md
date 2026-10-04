@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Beta releases now include the experimental Windows 32-bit installer and portable ZIP, with manual updates as on stable (GH #275).
 ### Added
+- Guide page **Reference/Tine query model**: every way a query's answer can differ from Logseq's, and why — the "find more, never less; browsing never writes" rule, the one exception, what Tine refuses, and how Tine 0.6 differs (GH #422).
 - `/Date picker`, `/Tomorrow`, and `/Yesterday` insert journal date links in the graph's configured title format (GH #485).
 
 - Wide Markdown, Org, query and sheet tables now use free space on both sides of the text column before scrolling at the pane boundary (UI-OG-QBG-TABLE-BLEED).

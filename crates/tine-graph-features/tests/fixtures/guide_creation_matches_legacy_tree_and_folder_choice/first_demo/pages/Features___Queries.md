@@ -1,7 +1,7 @@
 icon:: 🔎
 
 - # Queries
-	- A **query block** is a live list of every block (or page) in your graph that matches a filter. Write it once with `{{query …}}`; Tine keeps the results current as you edit, and the file stays an ordinary Logseq query block.
+	- A **query block** is a live list of every block (or page) in your graph that matches a filter. Write it once with `{{query …}}`; Tine keeps the results current as you edit, and the file stays an ordinary Logseq query block. Where an answer can differ from Logseq's, [[Reference/Tine query model]] says how and why.
 - ## A query in action
 	- Every open task in this graph:
 	- {{query (task TODO DOING)}}
