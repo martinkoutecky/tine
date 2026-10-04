@@ -9,8 +9,8 @@
 //! * `build-block-content` (:373) + `rules.cljc:114` `block-content`:
 //!   `clojure.string/includes?` over the block's RAW `:block/content`, which
 //!   includes `key:: value` property lines. A bare string therefore finds text
-//!   that only occurs in a property line (#624). Tine keeps its documented
-//!   case-insensitive superset (SPEC); only the property lines are new.
+//!   that only occurs in a property line (#624). Martin D4 (2026-10-04)
+//!   also restored exact case and accents over the complete raw content.
 //! * `(and [[P]] (not (task TODO)))` (#619 4a): a bare page ref is OG's
 //!   `:page-ref` rule over `:block/path-refs`, which includes the block's own
 //!   page, so blocks of page P other than TODO tasks are returned.

@@ -701,7 +701,7 @@ mod tests {
     }
 
     /// The G8 repeated-row flattening fixture (§5.8): `k:: a` twice, `K:: b`,
-    /// `k:: a, c` → one atom list `[a, b, c]`, cardinality 3.
+    /// `k:: a, c` → one atom list `[a, b, "a, c"]`, cardinality 3 (D2).
     #[test]
     fn repeated_and_case_colliding_rows_flatten_into_one_atom_list() {
         let registry = build(vec![
@@ -714,7 +714,7 @@ mod tests {
         assert_eq!(k.cardinality, Cardinality::Many);
         assert_eq!(k.count_blocks, 1);
         let values: Vec<&str> = k.top_values.iter().map(|(text, _)| text.as_str()).collect();
-        assert_eq!(values, vec!["a", "b", "c"]);
+        assert_eq!(values, vec!["a", "a, c", "b"]);
     }
 
     #[test]

@@ -62,12 +62,18 @@ impl QueryTextDialect {
 pub struct ParsedQuery {
     pub query: Query,
     pub view: ViewSettings,
+    /// OG's read-only table request: options, query-table, or a trailing table.
+    /// Explicit Tine presentation properties override this in the renderer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub legacy_table: bool,
     #[serde(default, flatten)]
     pub scoped: ScopedDisplaySettings,
 }
 
 /// The whole of `query_parse` that is not slot plumbing: parse, then merge the
-/// host block's `tine.*` properties over the lifted directives (§4.1).
+/// host block's `tine.*` properties over the lifted directives (§4.1), and
+/// read OG table presentation from options, `query-table` and trailing `table`.
+/// Pure, O(source length + supplied properties); never changes source bytes.
 pub fn parse_query_pair(
     text: &str,
     dialect: QueryTextDialect,
@@ -80,9 +86,20 @@ pub fn parse_query_pair(
         crate::date::JournalDate::today(),
         registry,
     );
+    // OG components/query.cljs query: table? is options OR the host property
+    // OR ends-with? on the trimmed query string. Keep this answer in Rust.
+    let legacy_table = crate::query_edn::options(query.source.og_options())
+        .is_some_and(|options| options.table)
+        || block_properties.iter().any(|(key, value)| {
+            crate::doc::property_key_norm(key) == "query-table"
+                && !matches!(value.trim(), "false" | "nil")
+        })
+        || matches!(&query.source, super::ir::Source::Og { original, .. }
+            if original.trim_end().ends_with("table"));
     let scoped = super::view::read_scoped_display_settings(block_properties);
     ParsedQuery {
         query,
+        legacy_table,
         view: super::view::merge_block_property_view(&parsed_view, block_properties),
         scoped,
     }

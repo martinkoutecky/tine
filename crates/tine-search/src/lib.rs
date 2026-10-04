@@ -244,6 +244,24 @@ impl Matcher {
 
     /// Parse using the graph's OG accent-removal setting.
     pub fn parse_with_policy(query: &str, remove_accents: bool) -> Matcher {
+        Self::parse_with_fold(
+            query,
+            if remove_accents {
+                canonical_fold
+            } else {
+                literal_fold
+            },
+        )
+    }
+
+    /// Parse deliberate query content without case, accent or Unicode folding.
+    /// Pass raw content to both arguments of [`Self::matches`]. Search callers
+    /// continue to use [`Self::parse_with_policy`].
+    pub fn parse_exact(query: &str) -> Matcher {
+        Self::parse_with_fold(query, str::to_string)
+    }
+
+    fn parse_with_fold(query: &str, fold: fn(&str) -> String) -> Matcher {
         let q = query.trim_matches(is_search_whitespace);
         if q.is_empty() {
             return Matcher::Empty;
@@ -258,7 +276,7 @@ impl Matcher {
                 Err(e) => Matcher::InvalidRegex(e.to_string()),
             };
         }
-        let groups = parse_boolean(q, remove_accents);
+        let groups = parse_boolean(q, fold);
         // A group with no positive term (e.g. the whole query is `-foo`) would
         // match nearly everything — drop it; if none survive, the query is Empty.
         let groups: Vec<AndGroup> = groups
@@ -274,7 +292,7 @@ impl Matcher {
 
     /// Does the body match? `lower` must use the same policy as the matcher:
     /// `canonical_fold` for `parse`/policy true, `literal_fold` for policy false.
-    /// A mismatched fold silently misses accent-bearing terms. `orig` is the
+    /// For `parse_exact`, pass raw content as `lower`. `orig` is the
     /// original body for regex; Empty/InvalidRegex match nothing.
     pub fn matches(&self, lower: &str, orig: &str) -> bool {
         match self {
@@ -323,7 +341,7 @@ fn group_matches(group: &AndGroup, lower: &str) -> bool {
 
 /// Tokenize + group a boolean query. `OR` (bare, uppercase) starts a new group;
 /// other tokens accumulate into the current group.
-fn parse_boolean(q: &str, remove_accents: bool) -> Vec<AndGroup> {
+fn parse_boolean(q: &str, fold: fn(&str) -> String) -> Vec<AndGroup> {
     let tokens = tokenize(q);
     let mut groups: Vec<AndGroup> = Vec::new();
     let mut cur: AndGroup = Vec::new();
@@ -336,11 +354,7 @@ fn parse_boolean(q: &str, remove_accents: bool) -> Vec<AndGroup> {
             continue;
         }
         cur.push(Term {
-            text: if remove_accents {
-                canonical_fold(&tok.text)
-            } else {
-                literal_fold(&tok.text)
-            },
+            text: fold(&tok.text),
             negated: tok.negated,
             quoted: tok.quoted,
         });

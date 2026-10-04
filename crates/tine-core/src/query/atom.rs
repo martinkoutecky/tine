@@ -13,9 +13,7 @@
 //! 1. key ∈ `unparsed-built-in-properties` ∪ `config.ignored_page_references_keywords`
 //!    → **no reference parsing**: step 3 is skipped entirely and the value's
 //!    `[[x]]`/`#x` text stays literal inside the plain segments. Steps 2 and 4
-//!    still run — Q21's comma split is decided for EVERY key, and a literally
-//!    transcribed one-atom rule would silently remove matches today's
-//!    `value_matches` gives (it splits these keys too).
+//!    still run; the fallback value stays one string.
 //! 2. the value is wrapped in double quotes (`wrapped-by-quotes?`) → one
 //!    `Plain` atom, the trimmed raw text **including the quotes** (K19).
 //! 3. the value's page refs ∪, for a comma-configured key, the comma-split
@@ -23,8 +21,7 @@
 //!    text is dropped. **Ordering and collision are Tine's (K19, J8):** refs
 //!    first in document order, then comma segments in text order,
 //!    de-duplicated by [`atom_key`] with first occurrence winning.
-//! 4. else (**Q21**): split the trimmed text on `,`/`，` into `Plain` atoms —
-//!    Tine's intentional divergence from OG, which keeps one string here.
+//! 4. else: keep the trimmed value as one `Plain` atom (Martin D2, 2026-10-04).
 //!
 //! The value is parsed with `lsdoc::inline(value, format)` (through the bounded
 //! door `render::parse_inline_bounded`, I-22) — the transcription
@@ -312,7 +309,7 @@ pub enum CompareMode {
     Q21Only,
     /// Q20 and Q21, with OG's comparison otherwise — no coercion.
     BothUntyped,
-    /// Tine: Q20, Q21 and §6.3 effective-type coercion.
+    /// Tine: Q20, OG comma keys (D2), and §6.3 effective-type coercion.
     #[default]
     Both,
 }
@@ -321,10 +318,7 @@ impl CompareMode {
     /// Whether the comma split applies to EVERY key (Q21) or only to the keys
     /// OG splits.
     pub fn splits_every_key(self) -> bool {
-        matches!(
-            self,
-            CompareMode::Q21Only | CompareMode::BothUntyped | CompareMode::Both
-        )
+        matches!(self, CompareMode::Q21Only | CompareMode::BothUntyped)
     }
 
     /// Whether atom identity folds case and normalizes to NFC (Q20).
@@ -491,10 +485,8 @@ pub fn property_atoms_in(
         }
     }
 
-    // Step 4 — Q21: split on commas for every key. A value with no comma is one
-    // atom, which is exactly OG's single string for the keys OG does not split.
-    // Under an OG-ward mode without Q21 the value stays whole, which is what
-    // makes `Q21-sufficient` an attributable label rather than a guess.
+    // Step 4 — OG parse-property fallback: one string. Historical Q21 modes
+    // remain counterfactual oracle inputs; production follows D2.
     let segments: Vec<String> = if mode.splits_every_key() {
         sep_by_comma(trimmed)
             .into_iter()
@@ -770,17 +762,15 @@ mod tests {
     }
 
     #[test]
-    fn q21_splits_a_non_configured_key_too() {
-        // The intentional divergence: OG keeps `"a, b"` as one string here.
-        assert_eq!(texts(&md("k", "a, b", &config())), vec!["a", "b"]);
+    fn d2_keeps_a_non_configured_key_whole() {
+        assert_eq!(texts(&md("k", "a, b", &config())), vec!["a, b"]);
     }
 
     #[test]
-    fn q21_costs_a_decimal_comma_its_number() {
+    fn d2_keeps_a_decimal_comma_as_text() {
         let atoms = md("k", "1,5", &config());
-        assert_eq!(texts(&atoms), vec!["1", "5"]);
-        assert_eq!(atoms[0].num, Some(1.0));
-        assert_eq!(atoms[1].num, Some(5.0));
+        assert_eq!(texts(&atoms), vec!["1,5"]);
+        assert_eq!(atoms[0].num, None);
     }
 
     #[test]
@@ -824,11 +814,11 @@ mod tests {
     // --- v12 §6.2 step-1 fixtures (VERIFY-11 A1) ---------------------------
 
     #[test]
-    fn an_ignored_reference_key_keeps_its_brackets_literal_and_still_splits() {
+    fn an_ignored_reference_key_keeps_the_whole_value_literal() {
         let mut config = ParseConfig::default();
         config.ignored_page_references_keywords = vec!["url".into()];
         let atoms = md("url", "http://a.b/x, [[y]]", &config);
-        assert_eq!(texts(&atoms), vec!["http://a.b/x", "[[y]]"]);
+        assert_eq!(texts(&atoms), vec!["http://a.b/x, [[y]]"]);
         assert!(
             atoms.iter().all(|atom| atom.origin == AtomOrigin::Plain),
             "step 1 suppresses reference parsing, so `[[y]]` is literal text"
@@ -844,8 +834,8 @@ mod tests {
     }
 
     #[test]
-    fn an_unparsed_built_in_with_a_comma_still_splits_q21() {
-        assert_eq!(texts(&md("title", "A, B", &config())), vec!["A", "B"]);
+    fn an_unparsed_built_in_with_a_comma_stays_whole() {
+        assert_eq!(texts(&md("title", "A, B", &config())), vec!["A, B"]);
     }
 
     // --- classification ----------------------------------------------------
@@ -912,19 +902,16 @@ mod tests {
         );
     }
 
-    /// The accepted cost of Q21, stated as a test rather than left to be
-    /// discovered: the comma split runs BEFORE classification, so a journal
-    /// title whose format contains a comma (`MMM do, yyyy` — Logseq's default)
-    /// is two atoms in a property value and therefore not a date. Quoting opts
-    /// out, exactly as it does for `"Smith, John"`.
+    /// D2 preserves a comma-bearing journal title for date classification.
     #[test]
-    fn q21_splits_a_comma_bearing_journal_title_before_it_can_classify_as_a_date() {
+    fn d2_preserves_a_comma_bearing_journal_title_as_a_date() {
         let mut config = ParseConfig::default();
         config.journal_page_title_format = Some("MMM do, yyyy".into());
         assert_eq!(
             texts(&md("k", "Sep 4th, 2026", &config)),
-            vec!["Sep 4th", "2026"]
+            vec!["Sep 4th, 2026"]
         );
+        assert_eq!(md("k", "Sep 4th, 2026", &config)[0].day, Some(20260904));
         let quoted = md("k", "\"Sep 4th, 2026\"", &config);
         assert_eq!(texts(&quoted), vec!["\"Sep 4th, 2026\""]);
 

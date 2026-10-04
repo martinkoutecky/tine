@@ -183,6 +183,8 @@ export type GraphSearchConsumer = "non_interactive" | "ctrl_k" | "search_tab";
 
 /** `query_parse`'s answer. */
 export interface ParsedQuery extends ScopedDisplaySettings {
+  /** Rust reads Logseq options, query-table and the trailing table marker. */
+  legacy_table?: boolean;
   query: Query;
   view: ViewSettings;
 }

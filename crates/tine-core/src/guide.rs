@@ -421,7 +421,21 @@ mod search_guide_tests {
             );
         }
         let queries = include_str!("templates/queries.md");
-        assert!(queries.contains("Both respect `:feature/enable-search-remove-accents? false`"));
+        for contract in [
+            "Query text is case-sensitive and accent-sensitive",
+            "including property lines and drawers",
+            "Ctrl+K, search tabs and in-page Find still ignore case",
+            "Commas split values only for",
+            ":property/separated-by-commas",
+            "query-table:: true",
+            "a trailing `table`",
+            "never adds `query-table`",
+        ] {
+            assert!(
+                queries.contains(contract),
+                "missing query Guide contract: {contract}"
+            );
+        }
     }
     #[test]
     fn reference_panel_controls_are_documented() {
