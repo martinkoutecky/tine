@@ -7,6 +7,7 @@ import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from ".
 import { openPageInSidebar } from "../ui";
 import { allPageNames } from "../pages";
 import { EmojiText } from "../render/emoji";
+import { SidebarTitle } from "./SidebarTitle";
 import type { PageKind } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { readOr } from "../resourceRead";
@@ -117,7 +118,7 @@ function NsNodeView(props: {
             props.onPageContextMenu?.(e, props.node.full, "page");
           }}
         >
-          {props.node.seg}
+          <SidebarTitle text={props.node.seg} fullTitle={props.node.full} />
         </span>
       </div>
       <Show when={has() && open()}>

@@ -642,43 +642,7 @@ export function applySidebarSession(s: SidebarSessionState) {
   normalizeSidebarDrawers();
 }
 
-const SIDEBAR_W_KEY = "logseq-claude.sidebarWidth";
-function loadSidebarWidth(): number {
-  try {
-    const v = Number(localStorage.getItem(SIDEBAR_W_KEY));
-    if (v >= 180 && v <= 600) return v;
-  } catch {
-    if (typeof localStorage !== "undefined") pushToast("Could not load sidebar width.", "error");
-  }
-  return 246;
-}
-export const [sidebarWidth, setSidebarWidth] = createSignal(loadSidebarWidth());
-export function persistSidebarWidth() {
-  try {
-    localStorage.setItem(SIDEBAR_W_KEY, String(sidebarWidth()));
-  } catch {
-    pushToast("Could not save sidebar width.", "error");
-  }
-}
-
-const RS_W_KEY = "logseq-claude.rightSidebarWidth";
-function loadRsWidth(): number {
-  try {
-    const v = Number(localStorage.getItem(RS_W_KEY));
-    if (v >= 220 && v <= 800) return v;
-  } catch {
-    if (typeof localStorage !== "undefined") pushToast("Could not load right sidebar width.", "error");
-  }
-  return 360;
-}
-export const [rightSidebarWidth, setRightSidebarWidth] = createSignal(loadRsWidth());
-export function persistRightSidebarWidth() {
-  try {
-    localStorage.setItem(RS_W_KEY, String(rightSidebarWidth()));
-  } catch {
-    pushToast("Could not save right sidebar width.", "error");
-  }
-}
+export { sidebarWidth, setSidebarWidth, persistSidebarWidth, rightSidebarWidth, setRightSidebarWidth, persistRightSidebarWidth } from "./sidebarSizing";
 
 // Favorites live in ./favorites (one arrangement tree, one identity key).
 export { favorites, favoriteKey, isFavorite, seedFavorites, setFavorites, toggleFavorite, type FavItem } from "./favorites";

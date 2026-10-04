@@ -88,3 +88,13 @@ html.drag-selection-suppressed * {
   user-select: none !important;
   -webkit-user-select: none !important;
 }
+
+/* The label shrinks inside the full clickable row, including emoji runs. */
+.nav-page-label {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

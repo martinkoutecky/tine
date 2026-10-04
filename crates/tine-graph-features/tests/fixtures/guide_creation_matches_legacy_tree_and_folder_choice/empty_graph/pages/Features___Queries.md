@@ -44,6 +44,7 @@ icon:: 🔎
 	- A query runs only if Tine can read every clause of it. If any clause is outside the supported subset (a `:result-transform`, an input other than `:current-page`, a rule Tine does not know), the whole query is refused: a notice names the clauses Tine could not run and shows no results, because an answer to part of a query would be wrong.
 	- `:inputs [:current-page]` binds the page open in the focused pane, like Logseq: if no page is open it uses your configured home page, then today's journal. It is not the page the query block sits on.
 - ## When a query shows nothing
+	- **Query source could not be parsed** means the macro itself is damaged. Edit the block text to repair it; the visual builder becomes available once the source is readable. A query with a title such as `{{query (page-property tags gptpro) {:title "gptpro"}}}` needs all three final braces: one closes the title options and two close the macro.
 	- If Tine cannot read part of a query, the block says so — **Tine didn't understand part of this query, so it returned no results** — followed by what it could not read. An empty list without that message means the query is valid and nothing matches yet.
 	- An empty result offers **why empty?**: a table of the query's top-level conditions with how many rows each matches alone and how many the query would match without it, so the condition that emptied it stands out.
 	- A query that would return more than 20,000 rows (or 32 MiB) is refused with a message instead of being cut short. Narrow it, or add `(sample N)`.
