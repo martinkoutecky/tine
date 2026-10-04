@@ -485,6 +485,8 @@ pub(crate) async fn open_graph_window(
             } else {
                 builder
             };
+            #[cfg(target_os = "linux")]
+            let builder = crate::youtube_identity::configure(builder, &app);
             let built = builder.build();
             match built {
                 Ok(window) => {
