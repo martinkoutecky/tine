@@ -19,6 +19,12 @@ import { describe, expect, it } from "vitest";
 const REQUIRED_SEAMS: Array<{ file: string; component: string }> = [
   { file: "src/App.tsx", component: "PaneContent" },
   { file: "src/App.tsx", component: "Sidebar" },
+  ...["KeyedPdfViewer", "RightSidebar", "QuickSwitcher", "ContextMenu", "DatePicker", "FormulaEditor", "PageProps", "ExportModal", "UnsavedRecovery", "PdfExportDialog", "QueryExportDialog", "Settings", "HelpPopup", "WelcomeLayer", "Lightbox", "AudioOverlay", "CalendarJump", "WorkspaceSwitcher"].map(component => ({ file: "src/App.tsx", component })),
+  { file: "src/components/RightSidebar.tsx", component: "SidebarItemView" },
+  { file: "src/components/Macro.tsx", component: "QueryMacroContent" },
+  { file: "src/components/QueryLivePreview.tsx", component: "QueryLivePreviewContent" },
+  { file: "src/components/PluginsTab.tsx", component: "PluginsTabContent" },
+
   { file: "src/components/Page.tsx", component: "LinkedReferences" },
   { file: "src/components/Page.tsx", component: "UnlinkedReferences" },
   { file: "src/components/Page.tsx", component: "PageConflictResolution" },
@@ -67,7 +73,38 @@ export function unboundedMountSites(file: string, source: string, component: str
   return offending;
 }
 
+// App's structural shells coordinate layout/drawers; its independently loaded
+// child surfaces must own a boundary. Scan unknown mounts too, so adding a new
+// dialog without adding a name to REQUIRED_SEAMS still fails (I-20).
+const APP_SHELLS = new Set(["Show", "Suspense", "FailureBoundary", "DrawerBackground",
+  "MobileDrawerPanel", "MobileDrawerController", "PaneTree", "PaneEdgeHighlights",
+  "PaneSelectHint", "ResizeGrips", "Toasts"]);
+export function unboundedAppSurfaces(source: string): string[] {
+  const tree = parse("App.tsx", source);
+  const names = new Set<string>();
+  const visit = (node: ts.Node) => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "App") {
+      const mounts = (child: ts.Node) => {
+        const name = tagName(child);
+        if (name && /^[A-Z]/.test(name) && !APP_SHELLS.has(name)) names.add(name);
+        ts.forEachChild(child, mounts);
+      };
+      mounts(node);
+    } else ts.forEachChild(node, visit);
+  };
+  visit(tree);
+  return [...names].flatMap(name => unboundedMountSites("App.tsx", source, name).map(line => `${name}:${line}`));
+}
+
 describe("failure-boundary seams (GH #490/#332)", () => {
+  it("requires a boundary for every top-level app surface, including new mounts", () => {
+    expect(unboundedAppSurfaces(readFileSync(path.join(REPO_ROOT, "src/App.tsx"), "utf8")),
+      "I-20: independently loaded surfaces own failures; wrap the mount in FailureBoundary. Exemplar: src/App.tsx, QueryExportDialog.").toEqual([]);
+  });
+  it("detects a newly introduced top-level surface", () => {
+    expect(unboundedAppSurfaces("function App() { return <Show><NewPanel /></Show>; }")).toEqual(["NewPanel:1"]);
+    expect(unboundedAppSurfaces('function App() { return <FailureBoundary region="New"><NewPanel /></FailureBoundary>; }')).toEqual([]);
+  });
   for (const seam of REQUIRED_SEAMS) {
     it(`wraps every <${seam.component}> in ${seam.file}`, () => {
       const source = readFileSync(path.join(REPO_ROOT, seam.file), "utf8");
@@ -75,7 +112,7 @@ describe("failure-boundary seams (GH #490/#332)", () => {
       expect(
         mounts,
         `<${seam.component}> is mounted outside a <FailureBoundary> at ${seam.file}:${mounts.join(", ")}. `
-          + "A throw there blanks the whole window silently (solid-js runUpdates discards the effect "
+          + "I-20: a surface owns its failure. A throw there can blank unrelated surfaces (solid-js runUpdates discards the effect "
           + "queue and rethrows with no boundary registered). Wrap it, or argue in the packet why this "
           + "region may take the app down with it. Exemplar: src/components/Page.tsx, Unlinked References.",
       ).toEqual([]);

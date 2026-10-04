@@ -1,3 +1,4 @@
+import { FailureBoundary } from "./FailureBoundary";
 /** GH #619 item 7: the results of the query AS THE SHEET NOW SHOWS IT, inside the sheet.
  *
  *  The sheet covers the block's own results, so without this a user editing conditions sees nothing
@@ -66,6 +67,7 @@ function without(groups: RefGroup[], hostBlockId: string | undefined): RefGroup[
     .filter((group) => group.blocks.length > 0);
 }
 
+/** Unexpected render/resource failures stay within this preview; Retry remounts it. */
 export function QueryLivePreview(props: {
   query: () => Query | undefined;
   view: () => ViewSettings;
@@ -75,6 +77,10 @@ export function QueryLivePreview(props: {
   /** "Pages and blocks" mode: show both families of the query, as the block itself does. */
   both?: () => boolean;
 }): JSX.Element {
+  return <FailureBoundary region="Query preview"><QueryLivePreviewContent {...props} /></FailureBoundary>;
+}
+
+function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]): JSX.Element {
   const request = createMemo<PreviewRequest | undefined>(() => {
     const query = props.query();
     if (!query) return undefined;

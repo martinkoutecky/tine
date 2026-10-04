@@ -42,7 +42,8 @@ icon:: 🛟
 	- 3. Or open a different graph from the same screen and leave this one untouched.
 	- 4. What you should see: the card says nothing was changed on disk, and that is the case — retrying, opening another graph, or relaunching Tine are all safe before any manual recovery.
 - ## Part of the window says it could not be displayed
-	- Meaning: one region — the page, the sidebar, Linked or Unlinked References, the conflict panel — hit an error it could not render through. Tine reports it in place with a **Retry** button instead of blanking the app, and the rest of the window keeps working.
+	- Meaning: one region — a page or PDF pane, a sidebar item, query results, a dialog, plugin settings, or the conflict panel — hit an error it could not render through. Tine reports it in place with a **Retry** button instead of blanking the app, and the rest of the window keeps working.
+	- **Copy details** — copies the region and error details for a report. Review the copied text before sharing: an error may include a file path or your own content.
 	- 1. **Retry** — re-renders just that region. A failure caused by something transient, such as a command that lost a race with a slow startup, usually clears on the first retry.
 	- 2. If the card says Tine is still waiting on operations that have been running for a while, give it a moment and retry again: the region is failing because the backend has not answered yet, not because anything is wrong with your notes.
 	- 3. If it comes back every time, use **Create a privacy-safe diagnostic report** below and include the message shown in the region.

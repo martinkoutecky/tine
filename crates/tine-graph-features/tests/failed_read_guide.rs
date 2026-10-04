@@ -7,6 +7,11 @@ fn bundled_recovery_guide_explains_failed_reads_and_safe_retries() {
     assert!(guide.page.guide && guide.page.read_only);
     for outcome in [
         "graph opens read-only",
+        "Copy details",
+        "copies the region and error details",
+        "re-renders just that region",
+        "sidebar item",
+        "query results",
         "repair the file",
         "reopen the graph",
         "applies no custom CSS",
