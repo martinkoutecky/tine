@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   ACTIONS_PX,
@@ -36,8 +37,8 @@ function swipeBy(h: ReturnType<typeof harness>, dx: number, dy = 0, t = 100) {
 }
 
 describe("block swipe thresholds (OG block.cljs on-touch-move/end)", () => {
-  it("pins the OG constants", () => {
-    expect([SWIPE_RECOGNIZE_PX, VERTICAL_LIMIT_PX, INDENT_PX, OUTDENT_PX, ACTIONS_PX, RELEASE_MIN_PX, EDITING_WINDOW_MS]).toEqual([30, 30, 40, 40, 80, 10, 600]);
+  it("pins OG constants and Martin’s wider action-menu threshold", () => {
+    expect([SWIPE_RECOGNIZE_PX, VERTICAL_LIMIT_PX, INDENT_PX, OUTDENT_PX, ACTIONS_PX, RELEASE_MIN_PX, EDITING_WINDOW_MS]).toEqual([30, 30, 40, 40, 140, 10, 600]);
   });
 
   it("indent: just under 40px right does nothing, 40px right indents", () => {
@@ -46,7 +47,7 @@ describe("block swipe thresholds (OG block.cljs on-touch-move/end)", () => {
     const c = harness(); swipeBy(c, 200); expect(c.commits.map((x) => x.action)).toEqual(["indent"]);
   });
 
-  it("outdent: just under 40px left nothing, 40..79 outdent, 80+ the action menu", () => {
+  it("outdent: just under 40px left nothing, 40..139 outdent, 140+ the action menu", () => {
     const a = harness(); swipeBy(a, -(OUTDENT_PX - 1)); expect(a.commits).toEqual([]);
     const b = harness(); swipeBy(b, -OUTDENT_PX); expect(b.commits.map((c) => c.action)).toEqual(["outdent"]);
     const c = harness(); swipeBy(c, -(ACTIONS_PX - 1)); expect(c.commits.map((x) => x.action)).toEqual(["outdent"]);
@@ -58,7 +59,8 @@ describe("block swipe thresholds (OG block.cljs on-touch-move/end)", () => {
     expect(actionFor(1, 40)).toBe("indent");
     expect(actionFor(-1, -39)).toBeNull();
     expect(actionFor(-1, -40)).toBe("outdent");
-    expect(actionFor(-1, -80)).toBe("actions");
+    expect(actionFor(-1, -139)).toBe("outdent");
+    expect(actionFor(-1, -140)).toBe("actions");
     // A right-swipe never yields a left action and vice versa.
     expect(actionFor(1, -100)).toBeNull();
     expect(actionFor(-1, 100)).toBeNull();
@@ -238,4 +240,11 @@ describe("disabled situations", () => {
     h.swipe.start(100, 200, 0, 1, false); h.swipe.end(100, 200, 10);
     expect(h.commits).toHaveLength(1);
   });
+});
+
+it("the mobile Guide explains the revealed cue and wider outdent band", () => {
+  const guide = readFileSync(new URL("../crates/tine-core/src/templates/platforms-and-mobile.md", import.meta.url), "utf8");
+  expect(guide).toContain("A revealed arrow shows indent or outdent before you let go");
+  expect(guide).toContain("circled **more** icon");
+  expect(guide).toContain("40–139 px; actions start at 140 px");
 });

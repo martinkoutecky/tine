@@ -71,3 +71,24 @@ html[data-touch-gestures] .block-main[data-swipe] {
 html[data-touch-gestures] .block-main[data-swipe="indent"] { background: color-mix(in srgb, var(--accent, #4a90d9) 12%, transparent); }
 html[data-touch-gestures] .block-main[data-swipe="outdent"] { background: color-mix(in srgb, var(--accent, #4a90d9) 12%, transparent); }
 html[data-touch-gestures] .block-main[data-swipe="actions"] { background: color-mix(in srgb, var(--accent, #4a90d9) 22%, transparent); }
+
+/* OG block-left-menu/block-right-menu: reveal a direction-specific icon in
+   the space exposed beside the moving row; more replaces outdent for actions. */
+html[data-touch-gestures] .block-main[data-swipe] { position: relative; }
+.block-swipe-cue {
+  position: absolute;
+  top: 4px;
+  right: -26px;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  color: var(--accent, #4a90d9);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.3;
+}
+.block-swipe-cue[data-action="indent"] { right: auto; left: -26px; }
+.block-swipe-cue[data-armed="true"] { opacity: 1; }

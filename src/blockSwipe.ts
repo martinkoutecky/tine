@@ -7,8 +7,8 @@
  * contract:
  *   - recognised once the finger is more than 30px sideways and less than 30px
  *     vertically from the origin (`SWIPE_RECOGNIZE_PX`, `VERTICAL_LIMIT_PX`);
- *   - indent at >= 40px right (`INDENT_PX`), outdent at 40..79px left
- *     (`OUTDENT_PX`), the action menu at >= 80px left (`ACTIONS_PX`);
+ *   - indent at >= 40px right (`INDENT_PX`), outdent at >= 40px left
+ *     (`OUTDENT_PX`);
  *   - nothing happens when the release travelled <= 10px (`RELEASE_MIN_PX`);
  *   - the direction is fixed by the first move; pulling the finger back
  *     re-bases the origin at that point (so pulling back disarms);
@@ -19,6 +19,8 @@
  *     `EDITING_WINDOW_MS` of the touch start.
  *
  * Deliberately NOT OG:
+ *   - Martin (2026-10-04) widened the outdent band to 40..139px left and
+ *     actions to >= 140px: a natural swipe overshot OG’s 80px menu threshold.
  *   - OG decides scroll-versus-swipe only by the 30px vertical tolerance, so a
  *     sloppy vertical scroll can indent. Here the axis is locked within the
  *     first `AXIS_LOCK_PX` of travel: a vertical-dominant start is a scroll for
@@ -37,7 +39,7 @@ export const SWIPE_RECOGNIZE_PX = 30;
 export const VERTICAL_LIMIT_PX = 30;
 export const INDENT_PX = 40;
 export const OUTDENT_PX = 40;
-export const ACTIONS_PX = 80;
+export const ACTIONS_PX = 140;
 export const RELEASE_MIN_PX = 10;
 export const EDITING_WINDOW_MS = 600;
 /** Travel before the axis is decided (px). */
@@ -264,6 +266,10 @@ export interface BlockSwipeDeps {
   /** The user's tag opt-out verdict for this row, asked at touchstart. */
   disabledByTags?(row: Element): boolean;
   editing(): boolean;
+  /** Whether to reveal this action's cue. Asked at most once per action per
+   *  gesture, when first revealed; cached until the next touchstart.
+   *  Omitted: all cues available. Does not change command refusals. */
+  cueAllowed?(action: BlockSwipeAction): boolean;
   /** Run the action. `x`/`y` are the release point (the menu's anchor). */
   run(action: BlockSwipeAction, x: number, y: number): void;
 }
@@ -272,20 +278,50 @@ export interface BlockSwipeDeps {
  *  passive except touchmove, which claims the touch (preventDefault) only once
  *  the horizontal axis is locked; `touch-action: pan-y` keeps vertical scroll
  *  native. A completed swipe also swallows the click that follows it and any
- *  native context menu while tracking, so it cannot arm the long-press menu. */
+ *  native context menu while tracking, so it cannot arm the long-press menu.
+ *  Reveals an aria-hidden indent/outdent/more icon after recognition (dimmed
+ *  until armed). Release, cancellation and cleanup remove all feedback.
+ *  Attachment/frame work is O(1); cueAllowed's cost belongs to the caller. */
 export function attachBlockSwipe(row: HTMLElement, deps: BlockSwipeDeps): () => void {
   if (!deps.platform) return () => {};
   const doc = row.ownerDocument;
   let committedAt = -Infinity;
+  let allowed: Partial<Record<BlockSwipeAction, boolean>> = {};
+  let cue: SVGSVGElement | null = null;
+  const clearCue = () => { cue?.remove(); cue = null; };
+  const showCue = (action: BlockSwipeAction | null, dx: number) => {
+    const kind = action ?? (dx > 0 ? "indent" : "outdent");
+    const available = allowed[kind] ?? (allowed[kind] = deps.cueAllowed?.(kind) ?? true);
+    if (!available) { clearCue(); return; }
+    if (cue?.getAttribute("data-action") !== kind) {
+      clearCue();
+      cue = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+      cue.setAttribute("class", "block-swipe-cue");
+      cue.setAttribute("data-action", kind);
+      cue.setAttribute("aria-hidden", "true");
+      cue.setAttribute("viewBox", "0 0 24 24");
+      const path = doc.createElementNS(cue.namespaceURI, "path");
+      path.setAttribute("d", kind === "actions"
+        ? "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 M7 12h.01 M12 12h.01 M17 12h.01"
+        : kind === "indent"
+          ? "M4 5h16 M13 10h7 M13 14h7 M4 19h16 M4 9l3 3-3 3 M7 12H3"
+          : "M4 5h16 M13 10h7 M13 14h7 M4 19h16 M7 9l-3 3 3 3 M4 12h4");
+      cue.appendChild(path);
+      row.appendChild(cue);
+    }
+    cue!.setAttribute("data-armed", String(action !== null));
+  };
   const swipe = createBlockSwipe({
     editing: deps.editing,
     rangeSelected: () => doc.getSelection()?.type === "Range",
     progress: ({ action, recognized, dx }) => {
       if (!recognized) {
+        clearCue();
         row.removeAttribute("data-swipe");
         row.style.removeProperty("--swipe-dx");
         return;
       }
+      showCue(action, dx);
       row.setAttribute("data-swipe", action ?? "pending");
       row.style.setProperty("--swipe-dx", `${Math.round(dx)}px`);
     },
@@ -301,6 +337,7 @@ export function attachBlockSwipe(row: HTMLElement, deps: BlockSwipeDeps): () => 
   const onStart = (e: TouchEvent) => {
     const p = point(e);
     if (!p) return;
+    allowed = {};
     swipe.start(
       p.x,
       p.y,
@@ -343,6 +380,7 @@ export function attachBlockSwipe(row: HTMLElement, deps: BlockSwipeDeps): () => 
     row.removeEventListener("touchcancel", onCancel);
     row.removeEventListener("contextmenu", onContextMenu, true);
     row.removeEventListener("click", onClick, true);
+    clearCue();
     row.removeAttribute("data-swipe");
     row.style.removeProperty("--swipe-dx");
   };

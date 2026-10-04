@@ -251,7 +251,7 @@ await withApp(0, "ios", async (browser) => {
   const menuSel = blockSel(MENU);
   const mrect = await browser.execute((sel) => { const r = document.querySelector(sel).getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }, menuSel);
   const before = readPage();
-  await swipe(browser, { x: Math.max(160, mrect.x + 160), y: mrect.y + mrect.h / 2, path: steps(-110), selector: menuSel });
+  await swipe(browser, { x: Math.max(200, mrect.x + 200), y: mrect.y + mrect.h / 2, path: steps(-180), selector: menuSel });
   await browser.$(".ctx-menu").waitForExist({ timeout: 5_000 });
   const selected = await browser.execute((id) => {
     const el = document.querySelector(`[data-block-ref='${id}']`);

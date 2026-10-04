@@ -7,6 +7,7 @@ import { attachBlockSwipe, blockSwipeDisabledTarget, swipeDisabledByTags } from 
 import { setGraphMeta } from "./graphSession";
 import type { GraphMeta } from "./types";
 import { wireBlockSwipe } from "./components/blockSwipeWiring";
+import { OUTLINE_MAX_DEPTH } from "./editor/outline";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
 import { doc } from "./document/model";
@@ -95,13 +96,109 @@ describe("block swipe commands (real store)", () => {
     expect(shape()).toEqual([["a", [["b"]]]]);
   });
 
+  it.each([-80, -100, -139])("a natural %ipx left swipe outdents instead of opening actions", (dx) => {
+    loadPage([blk("a", [blk("b")])]);
+    wire(doc.byId[doc.pages[0].roots[0]].children[0]);
+    swipe(row, dx);
+    expect(shape()).toEqual([["a"], ["b"]]);
+    expect(contextMenu()).toBeNull();
+    expect(undo()).toBe(true);
+    expect(shape()).toEqual([["a", [["b"]]]]);
+  });
+
+  it.each(["android", "ios"])("%s reveals indent, outdent and more cues while the finger is down", (platform) => {
+    (globalThis as any).__TINE_E2E_TOUCH_GESTURES__ = platform;
+    loadPage([blk("a", [blk("b"), blk("c")])]);
+    wire(doc.byId[doc.pages[0].roots[0]].children[1]);
+    fire(row, "touchstart", 200, 300, 0);
+    fire(row, "touchmove", 260, 300, 20);
+    expect(row.querySelector(".block-swipe-cue")?.getAttribute("data-action")).toBe("indent");
+    fire(row, "touchcancel", 260, 300, 30);
+    expect(row.querySelector(".block-swipe-cue")).toBeNull();
+    fire(row, "touchstart", 200, 300, 0);
+    fire(row, "touchmove", 100, 300, 20);
+    expect(row.querySelector(".block-swipe-cue")?.getAttribute("data-action")).toBe("outdent");
+    fire(row, "touchmove", 60, 300, 30);
+    expect(row.querySelector(".block-swipe-cue")?.getAttribute("data-action")).toBe("actions");
+    fire(row, "touchend", 60, 300, 40);
+    expect(row.querySelector(".block-swipe-cue")).toBeNull();
+  });
+
+  it("unavailable indent/outdent cues stay hidden, but the root still offers actions", () => {
+    loadPage([blk("a")]);
+    wire(doc.pages[0].roots[0]);
+    fire(row, "touchstart", 200, 300, 0);
+    fire(row, "touchmove", 260, 300, 20);
+    expect(row.querySelector(".block-swipe-cue")).toBeNull();
+    fire(row, "touchcancel", 260, 300, 30);
+    fire(row, "touchstart", 200, 300, 0);
+    fire(row, "touchmove", 100, 300, 20);
+    expect(row.querySelector(".block-swipe-cue")).toBeNull();
+    fire(row, "touchmove", 40, 300, 30);
+    expect(row.querySelector(".block-swipe-cue")?.getAttribute("data-action")).toBe("actions");
+  });
+
+  it("a recognized but unarmed swipe has a dim cue; reversal and cleanup remove it", () => {
+    loadPage([blk("a"), blk("b")]);
+    const off = wire(doc.pages[0].roots[1]);
+    fire(row, "touchstart", 200, 300, 0);
+    fire(row, "touchmove", 231, 300, 20);
+    expect(row.querySelector(".block-swipe-cue")?.getAttribute("data-armed")).toBe("false");
+    fire(row, "touchmove", 260, 300, 30);
+    expect(row.querySelector(".block-swipe-cue")?.getAttribute("data-armed")).toBe("true");
+    fire(row, "touchmove", 250, 300, 40);
+    expect(row.querySelector(".block-swipe-cue")).toBeNull();
+    fire(row, "touchmove", 300, 300, 50);
+    expect(row.querySelector(".block-swipe-cue")).not.toBeNull();
+    off();
+    expect(row.querySelector(".block-swipe-cue")).toBeNull();
+  });
+
+  it("read-only and scoped-out moves have no misleading cues", () => {
+    loadPage([blk("a", [blk("b"), blk("c")])]);
+    const a = doc.pages[0].roots[0], c = doc.byId[a].children[1];
+    let readOnly = true;
+    wire(c, { readOnly: () => readOnly, scope: { roots: [a], forceExpandedRoot: a } });
+    fire(row, "touchstart", 200, 300, 0);
+    fire(row, "touchmove", 260, 300, 20);
+    expect(row.querySelector(".block-swipe-cue")).toBeNull();
+    fire(row, "touchcancel", 260, 300, 30);
+    readOnly = false;
+    fire(row, "touchstart", 200, 300, 0);
+    fire(row, "touchmove", 100, 300, 20);
+    expect(row.querySelector(".block-swipe-cue")).toBeNull();
+    fire(row, "touchend", 100, 300, 30);
+    expect(shape()).toEqual([["a", [["b"], ["c"]]]]);
+  });
+
+  it("an indent that would exceed the subtree depth cap has no cue", () => {
+    let deep = blk("leaf");
+    for (let i = 1; i < OUTLINE_MAX_DEPTH; i++) deep = blk("branch", [deep]);
+    loadPage([blk("a"), deep]);
+    wire(doc.pages[0].roots[1]);
+    fire(row, "touchstart", 200, 300, 0);
+    fire(row, "touchmove", 260, 300, 20);
+    expect(row.querySelector(".block-swipe-cue")).toBeNull();
+  });
+
+  it("a result scope omitting the previous sibling hides indent", () => {
+    loadPage([blk("a"), blk("b"), blk("c")]);
+    const [a, , c] = doc.pages[0].roots;
+    wire(c, { scope: { roots: [a, c], navOnly: true } });
+    fire(row, "touchstart", 200, 300, 0);
+    fire(row, "touchmove", 260, 300, 20);
+    expect(row.querySelector(".block-swipe-cue")).toBeNull();
+    fire(row, "touchend", 260, 300, 30);
+    expect(shape()).toEqual([["a"], ["b"], ["c"]]);
+  });
+
   it("long swipe left selects the block and opens its action menu at the release point", () => {
     loadPage([blk("a"), blk("b")]);
     const [, b] = doc.pages[0].roots;
     wire(b);
-    swipe(row, -90);
+    swipe(row, -160);
     expect(shape()).toEqual([["a"], ["b"]]);
-    expect(contextMenu()).toMatchObject({ kind: "block", blockId: b, x: 110, y: 300 });
+    expect(contextMenu()).toMatchObject({ kind: "block", blockId: b, x: 40, y: 300 });
     expect(selectedIds()).toEqual([b]);
   });
 
