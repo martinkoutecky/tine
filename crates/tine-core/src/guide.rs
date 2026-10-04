@@ -221,6 +221,36 @@ pub fn collect_guide_asset_refs(markdown: &str, into: &mut HashSet<String>) {
 #[cfg(test)]
 mod journal_guide_tests {
     #[test]
+    fn selection_menu_and_keyboard_calendar_are_documented() {
+        let tips = include_str!("templates/tips.md");
+        for action in [
+            "Copy blocks",
+            "Cut blocks",
+            "Copy block refs",
+            "Copy block embeds",
+            "Delete blocks",
+        ] {
+            assert!(tips.contains(action), "missing selection action: {action}");
+        }
+        assert!(tips.contains("one Undo step"));
+        assert!(tips.contains("complete subtrees for pasting"));
+        let calendar = include_str!("templates/journals-tasks-scheduling.md");
+        for behavior in [
+            "keyboard focus",
+            "**Left/Right**",
+            "**Up/Down**",
+            "**Enter**",
+            "**Escape**",
+            "same caret",
+        ] {
+            assert!(
+                calendar.contains(behavior),
+                "missing calendar behavior: {behavior}"
+            );
+        }
+    }
+
+    #[test]
     fn journal_controls_are_documented_in_the_bundled_guide() {
         let tips = include_str!("templates/tips.md");
         for control in [

@@ -14,7 +14,7 @@ import { backend } from "../backend";
 import { carryDay } from "../carry";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { ensureBlockId, blockSubtreeMarkdown, deleteBlock, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
+import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
@@ -26,39 +26,13 @@ import { startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
 import { copyBlockOutline, writeClipboardText } from "../clipboard";
 import { cutBlocks } from "../cut";
+import { copyBlockLink } from "./blockLinkCopy";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
-
-// Copy a block reference/embed — but only after the block's id:: is durably on
-// disk. ensureBlockId returns null if the save couldn't land (conflict/error), in
-// which case we must NOT copy a ref that would dangle after a restart.
-async function copyBlockRef(id: string, fmt: (uuid: string) => string, okMsg: string) {
-  let uuid: string | null;
-  try {
-    uuid = await ensureBlockId(id);
-  } catch {
-    uuid = null;
-  }
-  if (!uuid) {
-    pushToast("Couldn't save the block id — reference not copied (resolve the conflict first).", "error");
-    return;
-  }
-  try {
-    await writeClipboardText(fmt(uuid));
-    pushToast(okMsg, "success");
-  } catch {
-    pushToast("Couldn't copy: clipboard write failed.", "error");
-  }
-}
 
 function reportCopy(write: Promise<void>, okMsg: string): void {
   void write.then(() => pushToast(okMsg, "success"))
     .catch(() => pushToast("Couldn't copy: clipboard write failed.", "error"));
-}
-
-function copyBlock(id: string): void {
-  const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
-  reportCopy(copyBlockOutline("copy", text, buildClipboardPayload([id])), "Copied block");
 }
 
 // Right-click context menu. Universal over its target: a block (full editing
@@ -1088,22 +1062,33 @@ function RenamePage(props: {
 }
 
 function blockActions(id: string, x: number, y: number): { label: string; run: () => void; danger?: boolean }[] {
-  const numbered = blockProperty(id, "logseq.order-list-type") === "number";
+  const selected = selectedIds();
+  const multi = selected.length > 1 && selected.includes(id);
+  const ids = multi ? selected : [id];
+  const noun = multi ? "blocks" : "block";
+  const sameSelection = () => JSON.stringify(selectedIds()) === JSON.stringify(ids);
+  const text = (cut = false) => multi ? selectionMarkdown(cut || undefined) : blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
+  const copy = () => reportCopy(copyBlockOutline("copy", text(), buildClipboardPayload(ids)), `Copied ${noun}`);
+  const writable = ids.every(blockWritable);
+  const mutate = (tag: string, action: (target: string) => void) => {
+    if (ids.some((target) => !blockWritable(target))) return;
+    withUndoUnit(tag, [...new Set(ids.map((target) => docNode(target)!.page))], () => ids.forEach(action));
+  };
+  const numbered = ids.every((target) => blockProperty(target, "logseq.order-list-type") === "number");
   // If this block is itself a template (`template:: name`), offer to set it as the
   // new-journal default (or clear it if it already is) — right where templates live.
   const tmplName = blockProperty(id, "template");
   const isJournalTmpl = !!tmplName && graphMeta()?.default_journal_template === tmplName;
-  if (blockPageReadOnly(id)) {
+  if (!writable) {
     return [
       { label: "Open in sidebar", run: () => { openDurableBlock(id, "sidebar"); } },
       { label: "Zoom into block", run: () => zoomInto(id) },
       { label: "Open in new tab", run: () => { openDurableBlock(id, "tab"); } },
-      { label: "Copy block", run: () => copyBlock(id) },
+      { label: `Copy ${noun}`, run: copy },
       {
         label: "Copy / export as…",
         run: () => {
-          const sel = selectedIds();
-          openExportModal(sel.length > 1 && sel.includes(id) ? sel : [id]);
+          openExportModal(ids);
         },
       },
     ];
@@ -1124,35 +1109,33 @@ function blockActions(id: string, x: number, y: number): { label: string; run: (
         if (inserted) startEditing(inserted, 0);
       },
     },
-    { label: "Copy block ref", run: () => void copyBlockRef(id, (u) => `((${u}))`, "Copied block ref") },
-    { label: "Copy block embed", run: () => void copyBlockRef(id, (u) => `{{embed ((${u}))}}`, "Copied block embed") },
-    { label: "Copy block", run: () => copyBlock(id) },
+    { label: multi ? "Copy block refs" : "Copy block ref", run: () => void copyBlockLink(ids, "ref") },
+    { label: multi ? "Copy block embeds" : "Copy block embed", run: () => void copyBlockLink(ids, "embed") },
+    { label: `Copy ${noun}`, run: copy },
     // Open the export modal for the whole selection (if this block is part of a
     // multi-selection) or just this block's subtree — preview + indent/remove opts.
     {
       label: "Copy / export as…",
       run: () => {
-        const sel = selectedIds();
-        openExportModal(sel.length > 1 && sel.includes(id) ? sel : [id]);
+        openExportModal(ids);
       },
     },
     ...(canConvertPipeTableToGrid(id)
       ? [{ label: "Convert to grid", run: () => { convertPipeTableToGrid(id); } }]
       : []),
     {
-      label: "Cut block",
+      label: `Cut ${noun}`,
       run: () => {
-        const text = blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
-        void cutBlocks([id], text, () => blockSubtreeMarkdown(id, 0, true, copyStripCollapsed()), () => deleteBlock(id))
-          .catch(() => pushToast("Couldn't cut block: clipboard write failed.", "error"));
+        void cutBlocks(ids, text(true), () => !multi || sameSelection() ? text(true) : "", () => multi ? deleteSelection() : deleteBlock(id))
+          .catch(() => pushToast(`Couldn't cut ${noun}: clipboard write failed.`, "error"));
       },
     },
     {
       label: numbered ? "Remove numbered list" : "Numbered list",
-      run: () => toggleOwnNumberedList(id),
+      run: () => mutate("number-selection", toggleOwnNumberedList),
     },
-    { label: "Collapse all", run: () => setCollapsedDeep(id, true) },
-    { label: "Expand all", run: () => setCollapsedDeep(id, false) },
+    { label: "Collapse all", run: () => mutate("collapse-selection", (target) => setCollapsedDeep(target, true)) },
+    { label: "Expand all", run: () => mutate("expand-selection", (target) => setCollapsedDeep(target, false)) },
     ...(tmplName
       ? [
           {
@@ -1161,6 +1144,6 @@ function blockActions(id: string, x: number, y: number): { label: string; run: (
           },
         ]
       : []),
-    { label: "Delete block", run: () => deleteBlock(id), danger: true },
+    { label: `Delete ${noun}`, run: () => { if (multi ? sameSelection() : blockWritable(id)) multi ? deleteSelection() : deleteBlock(id); }, danger: true },
   ];
 }

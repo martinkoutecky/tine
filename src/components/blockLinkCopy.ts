@@ -5,6 +5,7 @@
 // points at an id that exists only in memory.
 import { writeClipboardText } from "../clipboard";
 import { ensureBlockId } from "../document";
+import { captureBinding, stillBound } from "../binding";
 import { pushToast } from "../toasts";
 
 export type BlockLinkKind = "ref" | "embed";
@@ -14,15 +15,34 @@ const TEXT: Record<BlockLinkKind, { wrap: (uuid: string) => string; ok: string; 
   embed: { wrap: (uuid) => `{{embed ((${uuid}))}}`, ok: "Copied block embed", noun: "embed" },
 };
 
-export function copyBlockLink(id: string, kind: BlockLinkKind): Promise<void> {
+/** Copy references/embeds for one block or an ordered selection. Every ID is
+ * saved before one clipboard write; a save/clipboard failure toasts without
+ * publishing a partial selection. Failures toast and resolve; previous ID saves
+ * remain. Empty arrays do nothing; repeats retain their input order. Multiple
+ * refs are Markdown bullets, embeds newline-separated; single output is bare.
+ * No undo step is added. Graph switches prevent subsequent saves/publication,
+ * but cannot cancel a native clipboard write already in flight.
+ * O(selected block bytes + their guarded page saves + clipboard bytes). */
+export async function copyBlockLink(target: string | readonly string[], kind: BlockLinkKind): Promise<void> {
+  const ids = typeof target === "string" ? [target] : [...target];
+  if (!ids.length) return;
+  const binding = captureBinding();
   const text = TEXT[kind];
-  return ensureBlockId(id).then((uuid) => {
-    if (!uuid) {
-      pushToast(`Couldn't save the block id — ${text.noun} not copied.`, "error");
-      return;
+  const refs: string[] = [];
+  try {
+    for (const id of ids) {
+      if (!stillBound(binding)) return;
+      const uuid = await ensureBlockId(id);
+      if (!stillBound(binding)) return;
+      if (!uuid) {
+        pushToast(`Couldn't save the block id — ${text.noun} not copied.`, "error");
+        return;
+      }
+      refs.push((ids.length > 1 && kind === "ref" ? "- " : "") + text.wrap(uuid));
     }
-    return writeClipboardText(text.wrap(uuid))
-      .then(() => { pushToast(text.ok, "success"); })
-      .catch(() => { pushToast(`Couldn't copy block ${kind}: clipboard write failed.`, "error"); });
-  });
+    await writeClipboardText(refs.join("\n"));
+    if (stillBound(binding)) pushToast(ids.length > 1 ? `${text.ok}s` : text.ok, "success");
+  } catch {
+    if (stillBound(binding)) pushToast(`Couldn't copy block ${kind}: save or clipboard write failed.`, "error");
+  }
 }

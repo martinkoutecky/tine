@@ -16,6 +16,11 @@
  * replacement leaves the current edit intact. Satellite/scratch loads use
  * `ensurePageLoaded` and cannot enable persistence.
  *
+ * `selectionMarkdown(includeSubtree?)` returns public clipboard Markdown in
+ * selected-root order, honoring the copy preference unless overridden. Cuts
+ * pass true to include every removed descendant. O(visible-order resolution + selected subtree bytes);
+ * an empty selection returns an empty string; no save or undo side effects.
+ *
  * Editing. Change a page only through an intent exported here (`setRaw`,
  * `splitBlock`, `moveBlock`, `setBlockProperty`, ...). An intent updates the
  * model and marks the page dirty; user edits also record undo (`ensureBlockId`
