@@ -1252,9 +1252,7 @@ export function VideoMacro(props: { body: string }): JSX.Element {
   const safeUrl = () => httpUrl(url());
   const embed = () => {
     const { name, arg } = parsed();
-    // `?enablejsapi=1` matches OG (youtube.cljs:58) and, together with the
-    // referrerpolicy below, is what makes the embed play under WebKitGTK — a bare
-    // src with no referrer is rejected by YouTube's player as error 153.
+    // `?enablejsapi=1` matches OG (youtube.cljs:58) and enables timestamps.
     const yt = safeUrl() && /(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/.exec(arg);
     if (yt) return `https://www.youtube.com/embed/${yt[1]}?enablejsapi=1`;
     if (name === "youtube" && /^[\w-]{11}$/.test(arg)) return `https://www.youtube.com/embed/${arg}?enablejsapi=1`;
@@ -1267,9 +1265,11 @@ export function VideoMacro(props: { body: string }): JSX.Element {
     return null;
   };
   // OG parity (og-1.0.0 6e7afa8eb): the embed iframe's `allow`/`referrerpolicy`.
-  // YouTube (youtube.cljs:54-70) sends a `strict-origin-when-cross-origin`
-  // referrer so the app origin reaches YouTube — without a referrer the player
-  // fails with error 153. Vimeo (block.cljs:1290-1305) gets the same `allow` list
+  // YouTube (youtube.cljs:54-70) preserves an HTTP(S) parent's origin referrer.
+  // A custom-protocol desktop parent still needs native WebView identification
+  // (GH #600); this policy cannot manufacture a missing HTTP Referer header.
+  // https://developers.google.com/youtube/terms/required-minimum-functionality
+  // Vimeo (block.cljs:1290-1305) gets the same `allow` list
   // minus picture-in-picture/web-share and NO referrerpolicy; bilibili sets
   // neither (the `.embed-iframe` class already removes the border).
   const embedAttrs = (): Record<string, string> => {
