@@ -405,7 +405,10 @@ mod tests {
     #[test]
     fn external_url_argv_never_becomes_a_relative_graph_path() {
         let url = "tine://block/11111111-1111-4111-8111-111111111111";
-        assert_eq!(launch_request(&argv(&["tine", url]), Path::new("/wrong")), LaunchRequest::Link(url.into()));
+        assert_eq!(
+            launch_request(&argv(&["tine", url]), Path::new("/wrong")),
+            LaunchRequest::Link(url.into())
+        );
     }
 
     #[test]

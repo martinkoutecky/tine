@@ -26,14 +26,21 @@ impl Store {
         match std::fs::symlink_metadata(&path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.to_string()),
-            Ok(meta) if !meta.is_file() || meta.len() > 128 => return Err("Invalid graph link identity file".into()),
+            Ok(meta) if !meta.is_file() || meta.len() > 128 => {
+                return Err("Invalid graph link identity file".into())
+            }
             Ok(_) => {}
         }
         use std::io::Read;
         let mut bytes = Vec::new();
-        std::fs::File::open(path).map_err(|e| e.to_string())?.take(129)
-            .read_to_end(&mut bytes).map_err(|e| e.to_string())?;
-        if bytes.len() > 128 { return Err("Graph link identity is too large".into()); }
+        std::fs::File::open(path)
+            .map_err(|e| e.to_string())?
+            .take(129)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() > 128 {
+            return Err("Graph link identity is too large".into());
+        }
         decode(&bytes).map(Some)
     }
 
@@ -44,7 +51,9 @@ impl Store {
     /// Only a clean create collision reads the concurrent winner. Other failed
     /// transactions reject, even when new bytes remain visible on disk.
     pub fn ensure_link_identity(&self) -> Result<String, String> {
-        let file = self.file_id(Area::Meta, NAME).map_err(|e| format!("{e:?}"))?;
+        let file = self
+            .file_id(Area::Meta, NAME)
+            .map_err(|e| format!("{e:?}"))?;
         match self.read(&file, Some(128)) {
             Ok((bytes, _)) => return decode(&bytes),
             Err(StoreError::NotFound) => {}
@@ -55,11 +64,15 @@ impl Store {
         tx.create(&file, Content::Bytes(format!("{id}\n").into_bytes()));
         match tx.commit() {
             TxOutcome::Committed { .. } => Ok(id),
-            TxOutcome::NotCommitted { why: Why::Conflict { disk: Some(_), .. }, rollback, publication_errors, .. }
-                if rollback.undo_failed.is_empty() && publication_errors.is_empty() => {
-                    self.read(&file, Some(128)).map_err(|e| format!("Couldn't read concurrent graph identity: {e:?}"))
-                        .and_then(|(bytes, _)| decode(&bytes))
-                }
+            TxOutcome::NotCommitted {
+                why: Why::Conflict { disk: Some(_), .. },
+                rollback,
+                publication_errors,
+                ..
+            } if rollback.undo_failed.is_empty() && publication_errors.is_empty() => self
+                .read(&file, Some(128))
+                .map_err(|e| format!("Couldn't read concurrent graph identity: {e:?}"))
+                .and_then(|(bytes, _)| decode(&bytes)),
             outcome => Err(format!("Couldn't save graph link identity: {outcome:?}")),
         }
     }
@@ -70,7 +83,9 @@ mod tests {
     use super::*;
     #[test]
     fn link_identity_crash_worker() {
-        let Ok(root) = std::env::var("TINE_LINK_CRASH_ROOT") else { return; };
+        let Ok(root) = std::env::var("TINE_LINK_CRASH_ROOT") else {
+            return;
+        };
         let (store, _, _) = Store::open(Path::new(&root), Default::default()).unwrap();
         store.inject_fault(crate::FaultPoint::AbortAfterStep(0));
         store.ensure_link_identity().unwrap();
@@ -82,13 +97,25 @@ mod tests {
         std::fs::create_dir_all(temp.path().join("pages")).unwrap();
         std::fs::write(temp.path().join("pages/A.md"), b"- no block id yet\n").unwrap();
         let result = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "link_identity::tests::link_identity_crash_worker", "--nocapture"])
-            .env("TINE_LINK_CRASH_ROOT", temp.path()).output().unwrap();
-        assert!(!result.status.success(), "worker must die after identity publication");
+            .args([
+                "--exact",
+                "link_identity::tests::link_identity_crash_worker",
+                "--nocapture",
+            ])
+            .env("TINE_LINK_CRASH_ROOT", temp.path())
+            .output()
+            .unwrap();
+        assert!(
+            !result.status.success(),
+            "worker must die after identity publication"
+        );
         let published = Store::read_link_identity_at(temp.path()).unwrap().unwrap();
         let (reopened, _, _) = Store::open(temp.path(), Default::default()).unwrap();
         assert_eq!(reopened.ensure_link_identity().unwrap(), published);
-        assert_eq!(std::fs::read(temp.path().join("pages/A.md")).unwrap(), b"- no block id yet\n");
+        assert_eq!(
+            std::fs::read(temp.path().join("pages/A.md")).unwrap(),
+            b"- no block id yet\n"
+        );
     }
     #[test]
     fn link_identity_failed_write_can_retry_without_partial_identity() {
@@ -102,14 +129,22 @@ mod tests {
     }
     #[test]
     fn link_identity_reports_sync_and_publication_failures() {
-        for point in [crate::FaultPoint::DirectorySyncIo, crate::FaultPoint::PublicationReadIo] {
+        for point in [
+            crate::FaultPoint::DirectorySyncIo,
+            crate::FaultPoint::PublicationReadIo,
+        ] {
             let temp = tempfile::tempdir().unwrap();
             let (store, _, _) = Store::open(temp.path(), Default::default()).unwrap();
             store.inject_fault(point);
-            assert!(store.ensure_link_identity().is_err(), "failed publication must not authorize clipboard copy");
+            assert!(
+                store.ensure_link_identity().is_err(),
+                "failed publication must not authorize clipboard copy"
+            );
             let existing = Store::read_link_identity_at(temp.path()).unwrap();
             let retried = store.ensure_link_identity().unwrap();
-            if let Some(existing) = existing { assert_eq!(retried, existing); }
+            if let Some(existing) = existing {
+                assert_eq!(retried, existing);
+            }
         }
     }
     #[test]
@@ -125,13 +160,21 @@ mod tests {
         assert!(!root.join("logseq/tine-graph-id").exists());
         let id = store.ensure_link_identity().unwrap();
         assert_eq!(store.ensure_link_identity().unwrap(), id);
-        assert_eq!(std::fs::read(root.join("logseq/tine-graph-id")).unwrap().len(), 37);
+        assert_eq!(
+            std::fs::read(root.join("logseq/tine-graph-id"))
+                .unwrap()
+                .len(),
+            37
+        );
         assert_eq!(std::fs::read_dir(root.join("logseq")).unwrap().count(), 1);
         drop(store);
         let moved = temp.path().join("renamed");
         std::fs::rename(root, &moved).unwrap();
         assert_eq!(Store::read_link_identity_at(&moved).unwrap(), Some(id));
-        assert_eq!(std::fs::read(moved.join("pages/A.md")).unwrap(), b"- unchanged\r\n");
+        assert_eq!(
+            std::fs::read(moved.join("pages/A.md")).unwrap(),
+            b"- unchanged\r\n"
+        );
     }
     #[test]
     fn malformed_identity_is_preserved() {

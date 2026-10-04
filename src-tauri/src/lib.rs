@@ -18,8 +18,8 @@ mod concord;
 mod concord_ledger;
 mod data_home;
 mod debug;
-mod defender;
 mod deep_links;
+mod defender;
 mod device_io;
 mod drafts;
 #[cfg(test)]
@@ -1053,7 +1053,9 @@ pub fn run() {
         .run(|app, event| {
             #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
             if let tauri::RunEvent::Opened { ref urls } = event {
-                for url in urls { deep_links::receive_url(app, url.to_string()); }
+                for url in urls {
+                    deep_links::receive_url(app, url.to_string());
+                }
             }
             if matches!(event, tauri::RunEvent::Exit) {
                 youtube_identity::cleanup(app);

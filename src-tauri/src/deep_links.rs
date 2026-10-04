@@ -3,12 +3,12 @@
 //! Store's existing identity/page/block doors; opening never writes graph data.
 //! Cost O(known graph paths) for graph URLs, O(all known graph blocks) for a
 //! block URL. Errors and ambiguous candidates are presented by the frontend.
+use crate::state::{slot_for_context, AppState, GraphContext};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
-use crate::state::{slot_for_context, AppState, GraphContext};
 use tine_core::model::PageKind;
-use tine_store::{Store, Resolved};
+use tine_store::{Resolved, Store};
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 pub(crate) struct LinkRequest {
@@ -38,13 +38,26 @@ pub(crate) enum Delivery {
 pub(crate) struct PendingLinks(Mutex<HashMap<String, Vec<Delivery>>>);
 
 fn queue(app: &tauri::AppHandle, label: &str, delivery: Delivery) {
-    app.state::<PendingLinks>().0.lock().unwrap().entry(label.into()).or_default().push(delivery);
+    app.state::<PendingLinks>()
+        .0
+        .lock()
+        .unwrap()
+        .entry(label.into())
+        .or_default()
+        .push(delivery);
     let _ = app.emit_to(label, "tine-link-pending", ());
 }
 pub(crate) fn receive_url(app: &tauri::AppHandle, url: String) {
-    if !url.starts_with("tine:") { return; }
+    if !url.starts_with("tine:") {
+        return;
+    }
     let state = app.state::<AppState>();
-    let label = state.last_focused.lock().unwrap().clone().unwrap_or_else(|| "main".into());
+    let label = state
+        .last_focused
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(|| "main".into());
     queue(app, &label, Delivery::Url { url });
     if let Some(window) = app.get_webview_window(&label) {
         let _ = window.show();
@@ -54,61 +67,132 @@ pub(crate) fn receive_url(app: &tauri::AppHandle, url: String) {
     }
 }
 #[tauri::command]
-pub(crate) fn take_tine_links(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Vec<Delivery> {
-    app.state::<PendingLinks>().0.lock().unwrap().remove(window.label()).unwrap_or_default()
+pub(crate) fn take_tine_links(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Vec<Delivery> {
+    app.state::<PendingLinks>()
+        .0
+        .lock()
+        .unwrap()
+        .remove(window.label())
+        .unwrap_or_default()
 }
 #[tauri::command]
-pub(crate) async fn graph_link_identity(path: Option<String>, context: GraphContext<'_>, app: tauri::AppHandle) -> Result<String, String> {
+pub(crate) async fn graph_link_identity(
+    path: Option<String>,
+    context: GraphContext<'_>,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     if let Some(path) = path {
-        if !crate::settings::list_known_graphs(app.clone()).iter().any(|known| known.path == path) {
+        if !crate::settings::list_known_graphs(app.clone())
+            .iter()
+            .any(|known| known.path == path)
+        {
             return Err("Graph is not in the known-graph list".into());
         }
         return tauri::async_runtime::spawn_blocking(move || {
-            let root = Store::canonical_root(std::path::Path::new(&path)).map_err(|e| e.to_string())?;
+            let root =
+                Store::canonical_root(std::path::Path::new(&path)).map_err(|e| e.to_string())?;
             let state = app.state::<AppState>();
             let owner = state.graphs.read().unwrap().owner(&root);
-            if let Some(slot) = owner.and_then(|label| crate::state::slot_for_window(&state, &label).ok()) {
+            if let Some(slot) =
+                owner.and_then(|label| crate::state::slot_for_window(&state, &label).ok())
+            {
                 return slot.store.ensure_link_identity();
             }
-            let (store, _, _) = Store::open(&root, tine_store::OpenOptions {
-                approved_external_assets: crate::settings::approved_external_assets(&app, &root), ..Default::default()
-            }).map_err(|e| e.to_string())?;
+            let (store, _, _) = Store::open(
+                &root,
+                tine_store::OpenOptions {
+                    approved_external_assets: crate::settings::approved_external_assets(
+                        &app, &root,
+                    ),
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| e.to_string())?;
             store.ensure_link_identity()
-        }).await.map_err(|e| e.to_string())?;
+        })
+        .await
+        .map_err(|e| e.to_string())?;
     }
     let slot = slot_for_context(&context)?;
     tauri::async_runtime::spawn_blocking(move || slot.store.ensure_link_identity())
-        .await.map_err(|e| e.to_string())?
+        .await
+        .map_err(|e| e.to_string())?
 }
 fn valid_id(text: &str) -> bool {
-    text.len() == 36 && text.bytes().enumerate().all(|(i, b)| {
-        if [8, 13, 18, 23].contains(&i) { b == b'-' } else { b.is_ascii_hexdigit() }
-    })
+    text.len() == 36
+        && text.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
 }
 fn validate(request: &LinkRequest) -> Result<(), String> {
     if request.graph.as_deref().is_some_and(|id| !valid_id(id))
         || request.block.as_deref().is_some_and(|id| !valid_id(id))
-        || request.page.as_ref().is_some_and(|name| name.is_empty() || name.len() > 8192)
-        || !matches!((&request.graph, &request.page, &request.block),
-            (Some(_), _, None) | (None, None, Some(_))) {
+        || request
+            .page
+            .as_ref()
+            .is_some_and(|name| name.is_empty() || name.len() > 8192)
+        || !matches!(
+            (&request.graph, &request.page, &request.block),
+            (Some(_), _, None) | (None, None, Some(_))
+        )
+    {
         return Err("Invalid Tine navigation target".into());
     }
     Ok(())
 }
-fn target_in_store(store: &Store, root: &str, request: &LinkRequest) -> Result<Option<LinkTarget>, String> {
+fn target_in_store(
+    store: &Store,
+    root: &str,
+    request: &LinkRequest,
+) -> Result<Option<LinkTarget>, String> {
     let view = store.whole_graph().map_err(|e| format!("{e:?}"))?;
-    let mut target = LinkTarget { root: root.into(), graph_id: None, name: None, page_kind: None, path: None, block: None, error: None };
+    let mut target = LinkTarget {
+        root: root.into(),
+        graph_id: None,
+        name: None,
+        page_kind: None,
+        path: None,
+        block: None,
+        error: None,
+    };
     let (name, kind, block) = if let Some(id) = &request.block {
-        let Some(group) = view.blocks(&[id.clone()]).map_err(|e| format!("{e:?}"))?.into_iter().next().flatten() else { return Ok(None); };
+        let Some(group) = view
+            .blocks(&[id.clone()])
+            .map_err(|e| format!("{e:?}"))?
+            .into_iter()
+            .next()
+            .flatten()
+        else {
+            return Ok(None);
+        };
         (group.page, group.kind, Some(id.clone()))
     } else if let Some(name) = &request.page {
         // One existing physical page; no alias guessing or virtual creation.
-        let kind = [PageKind::Page, PageKind::Journal].into_iter()
-            .find(|kind| matches!(view.resolve(name, *kind == PageKind::Journal), Resolved::Existing { .. }));
-        let Some(kind) = kind else { return Ok(None); };
+        let kind = [PageKind::Page, PageKind::Journal]
+            .into_iter()
+            .find(|kind| {
+                matches!(
+                    view.resolve(name, *kind == PageKind::Journal),
+                    Resolved::Existing { .. }
+                )
+            });
+        let Some(kind) = kind else {
+            return Ok(None);
+        };
         (name.clone(), kind, None)
-    } else { return Ok(Some(target)); };
-    let Resolved::Existing { id, .. } = view.resolve(&name, kind == PageKind::Journal) else { return Ok(None); };
+    } else {
+        return Ok(Some(target));
+    };
+    let Resolved::Existing { id, .. } = view.resolve(&name, kind == PageKind::Journal) else {
+        return Ok(None);
+    };
     let page = store.page(&id).map_err(|e| format!("{e:?}"))?;
     target.name = Some(page.doc.name);
     target.page_kind = Some(kind);
@@ -117,7 +201,10 @@ fn target_in_store(store: &Store, root: &str, request: &LinkRequest) -> Result<O
     Ok(Some(target))
 }
 #[tauri::command]
-pub(crate) async fn scan_known_graphs_for_link(request: LinkRequest, app: tauri::AppHandle) -> Result<Vec<LinkTarget>, String> {
+pub(crate) async fn scan_known_graphs_for_link(
+    request: LinkRequest,
+    app: tauri::AppHandle,
+) -> Result<Vec<LinkTarget>, String> {
     validate(&request)?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
@@ -181,8 +268,13 @@ pub(crate) async fn scan_known_graphs_for_link(request: LinkRequest, app: tauri:
     }).await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
-pub(crate) fn handoff_tine_link(target: LinkTarget, app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<bool, String> {
-    let root = Store::canonical_root(std::path::Path::new(&target.root)).map_err(|e| e.to_string())?;
+pub(crate) fn handoff_tine_link(
+    target: LinkTarget,
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<bool, String> {
+    let root =
+        Store::canonical_root(std::path::Path::new(&target.root)).map_err(|e| e.to_string())?;
     let owner = app.state::<AppState>().graphs.read().unwrap().owner(&root);
     if let Some(label) = owner.filter(|label| label != window.label()) {
         queue(&app, &label, Delivery::Target { target });
@@ -208,18 +300,42 @@ mod tests {
         let source = format!("- linked\n  id:: {id}\n");
         std::fs::write(temp.path().join("pages/A.md"), &source).unwrap();
         let (store, _, _) = Store::open(temp.path(), Default::default()).unwrap();
-        let block = LinkRequest { graph: None, page: None, block: Some(id.into()) };
-        assert_eq!(target_in_store(&store, "fixture", &block).unwrap().unwrap().name.as_deref(), Some("A"));
+        let block = LinkRequest {
+            graph: None,
+            page: None,
+            block: Some(id.into()),
+        };
+        assert_eq!(
+            target_in_store(&store, "fixture", &block)
+                .unwrap()
+                .unwrap()
+                .name
+                .as_deref(),
+            Some("A")
+        );
         drop(store);
-        std::fs::rename(temp.path().join("pages/A.md"), temp.path().join("pages/B.md")).unwrap();
+        std::fs::rename(
+            temp.path().join("pages/A.md"),
+            temp.path().join("pages/B.md"),
+        )
+        .unwrap();
         let (store, _, _) = Store::open(temp.path(), Default::default()).unwrap();
         let target = target_in_store(&store, "fixture", &block).unwrap().unwrap();
         assert_eq!(target.name.as_deref(), Some("B"));
         assert_eq!(target.block.as_deref(), Some(id));
-        let missing = LinkRequest { graph: Some(id.into()), page: Some("Missing".into()), block: None };
-        assert!(target_in_store(&store, "fixture", &missing).unwrap().is_none());
+        let missing = LinkRequest {
+            graph: Some(id.into()),
+            page: Some("Missing".into()),
+            block: None,
+        };
+        assert!(target_in_store(&store, "fixture", &missing)
+            .unwrap()
+            .is_none());
         assert!(!temp.path().join("pages/Missing.md").exists());
         assert!(!temp.path().join("logseq/tine-graph-id").exists());
-        assert_eq!(std::fs::read_to_string(temp.path().join("pages/B.md")).unwrap(), source);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("pages/B.md")).unwrap(),
+            source
+        );
     }
 }
