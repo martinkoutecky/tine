@@ -202,7 +202,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const id = props.blockId;
     const node = id ? docNode(id) : undefined;
     if (!id || !node) return [];
-    return facetsOf(node.raw, formatForBlock(id)).properties.filter(([key]) => key.startsWith("tine."));
+    return facetsOf(node.raw, formatForBlock(id)).properties.filter(([key]) => key.startsWith("tine.") || key === "query-table");
   }, [], { equals: sameJson });
   const parseRequest = createMemo<ReadingRequest | undefined>(
     () => sourceError() ? undefined : ({ argument: arg(), name: macroName(), properties: hostProperties(), epoch: graphEpoch() }),
@@ -215,8 +215,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const source = (): Source | undefined => reading()?.query.source;
   const form = () => { const s = source(); return (s ? sourceOriginal(s) : null) ?? ""; };
   const opts = () => { const s = source(); return s ? sourceOptions(s) : ""; };
-  // `:title` / `:collapsed?` / `:table-view?` are read out of the OPAQUE options
-  // map, which the engine carries verbatim and does not interpret (§4.3, Y2).
+  // Title and collapse are read from the source options map.
   const optionValues = createMemo(() => readEdnOptions(opts()));
   const titleOption = (): string | undefined => optionValues()?.title ?? undefined;
   const isAdvanced = () => source()?.kind === "advanced";
@@ -263,7 +262,6 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       : props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
     return page ? { current_page: page } : undefined;
   };
-  // A saved `(search "…")` query presents search hits with their evidence.
   const friendlySearch = createMemo(() => {
     const s = runnable()?.query.source;
     return s?.kind === "og" ? savedDslToFriendlySearch(s.original) : null;
@@ -280,16 +278,18 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   };
   const blockFace = (): QueryView => runnable()?.block_presentation ?? currentView();
   const sheetFace = () => blockFace() === "table" || blockFace() === "board";
-  const legacyTable = () => currentView() === "list" && (optionValues()?.table ?? false);
+  const legacyTable = () => blockFace() === "list"
+    && (!props.blockId || blockProperty(props.blockId, "tine.view") === null)
+    && (reading()?.legacy_table ?? false);
   const setQueryView = (next: QueryView) => {
     const blockId = props.blockId;
     const node = blockId ? docNode(blockId) : undefined;
     if (!blockId || !node) return;
     const storedView = blockProperty(blockId, "tine.view");
-    if ((next === "list" && storedView === null) || (next !== "list" && storedView === next)) return;
+    if ((next === "list" && storedView === null && !legacyTable()) || (next !== "list" && storedView === next)) return;
     withUndoUnit(`query:view:${next}`, [node.page], () => {
       if (next === "list") {
-        setBlockProperty(blockId, "tine.view", null);
+        setBlockProperty(blockId, "tine.view", reading()?.legacy_table ? "list" : null);
         return;
       }
       setBlockProperty(blockId, "tine.view", next);

@@ -15,6 +15,7 @@ import { editingId, startEditing } from "../editorController";
 import type { ParsedQuery, QueryResult, QueryTextDialect, Source } from "../editor/queryIr";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { searchFilter } from "../editor/queryBuilder";
+import { readEdnOptions } from "../editor/edn";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { bumpDataRev } from "../graphSession";
 import * as blockRender from "../render/block";
@@ -49,6 +50,7 @@ function readQuery(text: string, dialect: QueryTextDialect, properties: [string,
   return {
     query: { anchor: "block", filter: { kind: "raw", text: original, diagnostic_kind: "not_applicable" }, diagnostics: [], source: { kind, original, og_options } as Source },
     view,
+    legacy_table: readEdnOptions(og_options)?.table ?? false,
   } as ParsedQuery;
 }
 
@@ -754,6 +756,32 @@ describe("QueryMacro sheet integration", () => {
     expect(root.querySelector(".query-table")!.parentElement!.classList.contains("md-table-wrap")).toBe(true);
     expect(root.querySelectorAll(".sheet-table")).toHaveLength(0);
 
+    dispose();
+  });
+
+  it.each([
+    ["{{query (task TODO)}}\nquery-table:: true", true],
+    ["{{query (task TODO) table}}", false],
+  ])("reads legacy table mode without writing query-table: %s", async (raw, property) => {
+    loadQueryDoc(raw);
+    vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => {
+      if (property) expect(properties).toContainEqual(["query-table", "true"]);
+      return { ...readQuery(text, dialect, properties), legacy_table: true };
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await settleQuery();
+    expect(root.querySelectorAll(".query-table")).toHaveLength(1);
+    expect(doc.byId.query.raw).toBe(raw);
+    clickView(root, "Table");
+    expect(blockProperty("query", "tine.view")).toBe("table");
+    expect(blockProperty("query", "query-table")).toBe(property ? "true" : null);
+    undo();
+    expect(doc.byId.query.raw).toBe(raw);
+    clickView(root, "List");
+    expect(blockProperty("query", "tine.view")).toBe("list");
+    await settleQuery();
+    expect(root.querySelectorAll(".query-table")).toHaveLength(0);
+    expect(blockProperty("query", "query-table")).toBe(property ? "true" : null);
     dispose();
   });
 

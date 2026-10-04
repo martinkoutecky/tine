@@ -1106,8 +1106,14 @@ pub(crate) fn plain_like_substring(pattern: &str) -> Option<String> {
 /// dispatch may split first and still call in here.
 pub(crate) fn parse_og(text: &str, _today: JournalDate) -> (Query, ViewSettings) {
     let (form, og_options) = split_trailing_map(text);
+    let mut toks = tokenize(&form);
+    // OG reader/read-string reads the first form; the trailing table marker
+    // selects presentation in components/query.cljs, never another predicate.
+    if toks.len() > 1 && matches!(toks.last().map(|t| &t.tok), Some(Tok::Word(w)) if w == "table") {
+        toks.pop();
+    }
     let mut parse = OgParse {
-        toks: tokenize(&form),
+        toks,
         pos: 0,
         src: &form,
         view: ViewSettings::default(),

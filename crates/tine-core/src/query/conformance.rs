@@ -35,8 +35,8 @@ fn the_frozen_atom_fixture_vectors_hold() {
     assert_eq!(texts("k", "foo [[a]]"), vec!["a"]);
     assert_eq!(texts("k", "[[a]] #b"), vec!["a", "b"]);
     assert_eq!(texts("tags", "a, b"), vec!["a", "b"]);
-    assert_eq!(texts("k", "a, b"), vec!["a", "b"]);
-    assert_eq!(texts("k", "1,5"), vec!["1", "5"]);
+    assert_eq!(texts("k", "a, b"), vec!["a, b"]);
+    assert_eq!(texts("k", "1,5"), vec!["1,5"]);
     assert!(texts("k", "").is_empty());
     assert!(texts("k", "   ").is_empty());
     assert_eq!(texts("k", "[[a]] [[a]]"), vec!["a"]);
@@ -45,16 +45,15 @@ fn the_frozen_atom_fixture_vectors_hold() {
     assert_eq!(texts("k", "1.5"), vec!["1.5"]);
     assert_eq!(texts("tags", "[[a]], a"), vec!["a"]);
     assert_eq!(texts("template", "weekly review"), vec!["weekly review"]);
-    assert_eq!(texts("title", "A, B"), vec!["A", "B"]);
+    assert_eq!(texts("title", "A, B"), vec!["A, B"]);
 
-    // Step 1 (v12, VERIFY-11 A1): reference parsing suppressed, comma split
-    // still applied.
+    // Step 1: reference parsing suppressed; D2 keeps the value whole.
     let mut ignored = crate::query::atom::ParseConfig::default();
     ignored.ignored_page_references_keywords = vec!["url".into()];
     let atoms = property_atoms("url", "http://a.b/x, [[y]]", AtomFormat::Markdown, &ignored);
     assert_eq!(
         atoms.iter().map(|a| a.text.clone()).collect::<Vec<_>>(),
-        vec!["http://a.b/x", "[[y]]"]
+        vec!["http://a.b/x, [[y]]"]
     );
     assert!(atoms.iter().all(|a| a.origin == AtomOrigin::Plain));
 
@@ -75,7 +74,7 @@ fn the_frozen_atom_fixture_vectors_hold() {
         .into_iter()
         .map(|atom| atom.text)
         .collect();
-    assert_eq!(flattened, vec!["a", "b", "c"]);
+    assert_eq!(flattened, vec!["a", "b", "a, c"]);
 }
 
 // ---------------------------------------------------------------------------

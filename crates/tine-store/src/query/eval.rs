@@ -32,7 +32,7 @@ use tine_core::query::path_refs::{closure_contains, closure_names, dfs_path_refs
 use tine_core::query::registry::Registry;
 use tine_core::query::text::LikePattern;
 use tine_core::refs;
-use tine_core::search_query::{canonical_fold, literal_fold, Matcher};
+use tine_core::search_query::Matcher;
 use unicode_normalization::UnicodeNormalization;
 
 pub(crate) use tine_core::search_query::REGEX_PROGRAM_MAX_BYTES;
@@ -87,12 +87,12 @@ impl CompiledLeaves {
             })
     }
 
-    pub(crate) fn for_query(filter: &Filter, remove_accents: bool) -> CompiledLeaves {
+    pub(crate) fn for_query(filter: &Filter) -> CompiledLeaves {
         let mut out = CompiledLeaves::default();
         for source in filter.match_sources() {
             out.matchers
                 .entry(source.to_string())
-                .or_insert_with(|| Matcher::parse_with_policy(source, remove_accents));
+                .or_insert_with(|| Matcher::parse_exact(source));
         }
         filter.any_leaf(&mut |leaf| {
             if let Leaf::Attr {
@@ -222,7 +222,6 @@ pub(crate) struct EvalCtx<'a> {
     /// The instant `now` names in a `created_at` / `last_modified_at` bound,
     /// epoch milliseconds, read once when this page row's context is built.
     pub(crate) now_ms: i64,
-    pub(crate) remove_accents: bool,
     pub(crate) compiled: &'a CompiledLeaves,
     /// The page's on-disk format: the atomizer parses a property value with the
     /// page's own inline grammar (§6.2 E4).
@@ -246,7 +245,6 @@ impl<'a> EvalCtx<'a> {
         page_roots: &'a [DocBlock],
         format: AtomFormat,
         today: JournalDate,
-        remove_accents: bool,
         compiled: &'a CompiledLeaves,
         config: &'a ParseConfig,
         registry: &'a Registry,
@@ -262,7 +260,6 @@ impl<'a> EvalCtx<'a> {
             page_roots,
             today,
             now_ms: clock_now_ms(),
-            remove_accents,
             compiled,
             format,
             config,
@@ -774,53 +771,29 @@ fn compare_atom_text(op: CmpOp, value: &Value, key: &str, ctx: &EvalCtx) -> bool
 }
 
 fn eval_content(op: CmpOp, value: &Value, block: &DocBlock, ctx: &EvalCtx) -> bool {
-    let body = block.visible_folded(ctx.remove_accents);
-    let fold = |text: &str| {
-        if ctx.remove_accents {
-            canonical_fold(text)
-        } else {
-            literal_fold(text)
-        }
-    };
-    let folded = || value.as_text().map(fold);
-    // `content in (…)` is `=` against any one of the listed texts (§4.2.3).
-    let listed = |items: &[Value]| {
-        items
-            .iter()
-            .any(|item| item.as_text().is_some_and(|text| body == fold(text)))
-    };
+    // OG query_dsl/build-block-content → rules.cljc block-content uses
+    // includes? on raw :block/content. D4 keeps deliberate queries exact;
+    // search and find keep their own folding policy.
+    let body = block.raw();
+    let text = || value.as_text();
+    let listed = |items: &[Value]| items.iter().any(|item| item.as_text() == Some(body));
     match op {
-        // OG's bare-string search is `:block-content` over the block's RAW
-        // content (`query_dsl.cljs:build-block-content`, `rules.cljc:114` `block-content`; CONTENT
-        // includes the `key:: value` property lines), so a substring that
-        // only occurs in a property line must hit. Tine's body is the visible
-        // text (SPEC), so the property lines are tried as extra haystacks,
-        // one `key:: value` line each (a pattern never spans two lines).
-        CmpOp::Like => folded().is_some_and(|pattern| {
-            ctx.cache.like(body, &pattern)
-                || block
-                    .projection()
-                    .properties()
-                    .iter()
-                    .any(|(k, v)| ctx.cache.like(&fold(&format!("{k}:: {v}")), &pattern))
-        }),
-        CmpOp::StartsWith => folded().is_some_and(|prefix| body.starts_with(&prefix)),
-        CmpOp::Eq => folded().is_some_and(|text| body == text),
-        CmpOp::NotEq => folded().is_some_and(|text| body != text),
+        CmpOp::Like => text().is_some_and(|pattern| ctx.cache.like(body, pattern)),
+        CmpOp::StartsWith => text().is_some_and(|prefix| body.starts_with(prefix)),
+        CmpOp::Eq => text().is_some_and(|text| body == text),
+        CmpOp::NotEq => text().is_some_and(|text| body != text),
         CmpOp::In => value.as_list().is_some_and(listed),
         CmpOp::NotIn => value.as_list().is_some_and(|items| !listed(items)),
         // §5.10: an empty or invalid Match is a FALSE leaf.
         CmpOp::Match => value.as_text().is_some_and(|text| {
             ctx.compiled
                 .match_program(text)
-                .is_some_and(|m| m.matches(body, block.visible_text()))
+                .is_some_and(|m| m.matches(body, body))
         }),
         // An invalid (or over-limit) regex is retained but matches nothing.
-        CmpOp::Regex => value.as_text().is_some_and(|text| {
-            ctx.compiled
-                .regex(text)
-                .is_some_and(|r| r.is_match(block.visible_text()))
-        }),
+        CmpOp::Regex => value
+            .as_text()
+            .is_some_and(|text| ctx.compiled.regex(text).is_some_and(|r| r.is_match(body))),
         _ => false,
     }
 }

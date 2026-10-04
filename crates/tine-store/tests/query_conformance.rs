@@ -108,7 +108,8 @@ fn truth_graph() -> Fixture {
 - text property
   size:: large
 - mixed numeric and text
-  size:: 5, large
+  size:: 5
+  size:: large
 ",
         ),
         ("pages/Names.md", "- a block on a named page\n"),

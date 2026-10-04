@@ -124,7 +124,7 @@ impl Plan {
         Plan {
             anchor,
             page_property_rows: query.anchor == Anchor::Block,
-            compiled: CompiledLeaves::for_query(&filter, remove_accents),
+            compiled: CompiledLeaves::for_query(&filter),
             track: eval::uses_path_refs(&filter),
             filter,
             today,
@@ -180,7 +180,7 @@ impl Plan {
         Plan {
             anchor,
             page_property_rows,
-            compiled: CompiledLeaves::for_query(filter, remove_accents),
+            compiled: CompiledLeaves::for_query(filter),
             track,
             filter: filter.clone(),
             today,
@@ -218,7 +218,6 @@ impl Plan {
             &doc.roots,
             atom_format(entry),
             self.today,
-            self.remove_accents,
             &self.compiled,
             config,
             self.registry.as_deref().unwrap_or(Registry::none()),
