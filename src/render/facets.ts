@@ -362,9 +362,17 @@ export { EMPTY as EMPTY_FACETS };
 /** OG graph_parser/block.cljs extract-blocks keeps the earliest parsed property
  * group. PropertyRows folds duplicates to their last value (extract-properties).
  * Presentation only: raw text and query/edit facets retain every property. Cost
- * O(block text) for raw input (cached lsdoc parse), O(AST nodes) for a parsed
- * input; no file or store writes. */
+ * O(raw bytes) for a native empty-facet lookup; otherwise O(block text) for raw
+ * input (cached lsdoc parse), O(AST nodes) for parsed input. No writes. */
 export function renderedProperties(raw: string | readonly Block[], format: Format): [string, string][] {
+  if (typeof raw === "string") {
+    const native = seeded.get(keyOf(raw, format));
+    // hasId is present on complete native projections, absent on unprojected
+    // drafts. An empty native property set proves there is no display group;
+    // positive sets still use the AST's earliest-group presentation policy.
+    // Reuse the raw-keyed fact so edits cannot inherit a stale negative (I-12).
+    if (native?.hasId !== undefined && native.properties.length === 0) return [];
+  }
   const blocks = typeof raw === "string" ? parseBody(raw, format) : raw;
   const group = blocks.find((block) => block.kind === "properties");
   return group?.kind === "properties" ? group.props : [];
