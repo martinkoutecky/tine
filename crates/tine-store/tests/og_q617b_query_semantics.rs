@@ -104,7 +104,7 @@ fn priority_accepts_the_vector_form_like_og() {
     let (_dir, graph) = fixture();
     let a_only = set(&graph, "(priority A)");
     assert_eq!(a_only.len(), 2, "{a_only:?}");
-    for q in ["(priority [A])", "(priority [a])", "(priority [\"A\"])"] {
+    for q in ["(priority [A])", "(priority [a])", "(priority [\"A\"])", "(priority [#A])"] {
         assert_eq!(set(&graph, q), a_only, "{q}");
     }
     let ab = set(&graph, "(priority A B)");
