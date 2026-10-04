@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-page-file-identity.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "External namespace-file deletion removes its abandoned namespace, and accepting a pending page-menu Delete succeeds when that file is already gone.", "blocking": true }],
+      "acceptableVariations": ["Watcher latency, navigation destination after deletion and confirmation styling may vary."],
+      "nonRequirements": ["Removing a namespace still needed by surviving descendants or references.", "Case-only rename behavior, which remains an unresolved QC1 product question."],
+      "stability": "stable"
+    },
     "scripts/e2e-cross-page-move.mjs": {
       "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "A keyboard move across journal days, undo, redo, and relaunch leave the block exactly once in the expected saved file and rendered day.", "blocking": true, "authority": "Tine E-B2 destination-before-source hold-barrier and undo durability" }],
       "acceptableVariations": ["Journal styling and shortcut feedback may vary while the moved block remains durably owned by the expected day."],

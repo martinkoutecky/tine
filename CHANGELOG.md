@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Code cards keep their surrounding layout on entering/leaving edit, including empty code and long lines (GH #474, layout only). Empty code wrappers can be removed with Backspace, and right-click at a desktop code caret offers the existing block deletion action (GH #488).
 - Android's keyboard toolbar shows distinct return arrows for Undo and Redo (GH #599).
 - Linux deb/rpm installations no longer gain a second visible launcher on startup; the app-ID entry remains available for Wayland icon lookup (stable and Beta, GH #626).
+- Deleting a page or journal now succeeds if its file was deleted externally while the confirmation was open; a changed title or replacement file still cannot be deleted through a stale page target (GH #620).
 - Mobile block swipes reveal distinct indent, outdent and more icons before release; left swipes now have a wider outdent band (40–139 px), with actions at 140 px, so a natural swipe is less likely to open the menu (UI-OG-QBF-SWIPE).
 - Render block properties as linked keys on separate rows with OG duplicate/group precedence, shade block embeds in both themes, and show pages tagged with the current page before references (GH #612, GH #610, GH #214).
 - An unexpected rendering failure in a PDF pane, sidebar item, query result, plugin settings view or dialog now reports its error within that surface with **Retry** and **Copy details**, while sibling surfaces remain usable (GH #490, GH #332; UI-OG-GH490-QBE).

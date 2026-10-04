@@ -279,7 +279,11 @@ fn text_file(store: &Store, rel: &str) -> io::Result<FileId> {
 
 /// Delete one named page or journal into recoverable trash. A supplied revision
 /// pins the displayed version; without one the current version is read and
-/// guarded. An absent reference-only page is a no-op. Cost O(P + file bytes)
+/// guarded. An absent reference-only page is a no-op. With an expected path,
+/// an absent identity succeeds only after a fresh read confirms that file is
+/// also absent (external deletion during confirmation); a live file at the
+/// path or a replacement claimant still refuses as a stale target. No file is
+/// written in the absent case. Cost O(P + file bytes)
 /// per try; a conflict is replanned at most four times.
 pub fn delete_page_expected(
     store: &Store,
@@ -291,10 +295,18 @@ pub fn delete_page_expected(
     crate::retry_on_conflict("page changed repeatedly during delete", || {
         let graph = refreshed_view(store)?;
         let ids = existing(graph.resolve(name, kind == PageKind::Journal));
-        validate_target(&ids, expected_path)?;
         let Some(id) = ids.first() else {
+            if let Some(path) = expected_path.filter(|path| !path.trim().is_empty()) {
+                let file = text_file(store, path)?;
+                match store.read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+                    Err(StoreError::NotFound) => {}
+                    Err(error) => return Err(store_error(error)),
+                    Ok(_) => return Err(error(io::ErrorKind::NotFound, "stale page target")),
+                }
+            }
             return Ok(Some(()));
         };
+        validate_target(&ids, expected_path)?;
         let file = id.file();
         let (_, rev) = store
             .read(&file, Some(tine_store::PARSE_INPUT_MAX_BYTES))
