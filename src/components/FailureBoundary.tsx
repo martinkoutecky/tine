@@ -1,35 +1,22 @@
 import { ErrorBoundary, Show, createMemo, type JSX } from "solid-js";
+import { writeClipboardText } from "../clipboard";
 import { slowBackendState } from "../slowBackend";
 import { dbg, recordDiagnostic } from "../debug";
 import { pushToastUnique } from "../toasts";
 
 /**
- * A region that fails says so, in place, and offers to try again.
- *
- * Why this exists at all. Solid discards the WHOLE pending effect queue when a
- * render throws — `runUpdates` (solid-js 1.9.13, dist/solid.js:820) does
- * `if (!wait) Effects = null;` before it calls `handleError`, and `handleError`
- * RETHROWS when no boundary is registered. Tine registered none anywhere, so a
- * single unreadable value had three consequences at once: every effect batched
- * with it was dropped, including effects belonging to components that were
- * fine; the throw left the window as an uncaught error, which a Tauri webview
- * shows the user nothing about; and nothing rescheduled the discarded work, so
- * the app stayed blank until restart. GH #490 diagnosed exactly this inside the
- * conflict panel and worked around it locally; GH #332 is a user who has been
- * on an old release since August because his whole app came up empty and told
- * him nothing.
- *
- * What a boundary does and does not buy. `Effects = null` runs BEFORE
- * `handleError`, so co-batched effects are still lost — a boundary does not
- * make the tear disappear. What it does is stop the rethrow, render this
- * fallback, and let later updates run normally: permanent silent blank becomes
- * a visible message plus a way forward.
- *
- * Retry is the point, not a decoration. Solid's reset re-evaluates
- * `props.children`, so the subtree remounts and the resources inside it are
- * created afresh and refetch. For a failure whose cause was transient — a
- * command that lost a race with a 37-second startup — retrying is the whole
- * fix, and the user can apply it without knowing any of the above.
+ * Independently loaded/rendered surfaces own their failure (I-20).
+ * Wrap the component mount, not only its returned JSX: resource creation and
+ * render effects must belong to this boundary. Cost O(rendered subtree); no
+ * graph writes. Initial/reactive throws show a logged error and sticky toast.
+ * Solid may discard co-batched effects before error handling; the boundary
+ * stops the escaping throw and permits later updates, not atomic batching.
+ * Retry remounts only the failed subtree and reissues its resources. Event
+ * handlers and detached promises retain their explicit failure handlers.
+ * Copy details sends the region and error stack/message to the clipboard; a
+ * failed clipboard write reports a sticky error. Diagnostic records use only
+ * the fixed uncaught_error kind; free text stays in opt-in logs and local UI.
+ * Exemplar mounts: RightSidebar.tsx's SidebarItemView and App.tsx's dialogs.
  */
 export function FailureBoundary(props: {
   /** Stable, human-readable name of what failed. Shown and logged. */
@@ -92,6 +79,10 @@ function FailureRegion(props: {
         )}
       </Show>
       <div class="region-failure-actions">
+        <button type="button" onClick={() => {
+          const details = `${props.region} could not be displayed.\n${props.error instanceof Error ? props.error.stack || message() : message()}`;
+          void writeClipboardText(details).catch(() => pushToastUnique("Couldn’t copy error details: clipboard write failed.", "error"));
+        }}>Copy details</button>
         <button type="button" class="region-failure-retry" onClick={() => props.onRetry()}>
           Retry
         </button>

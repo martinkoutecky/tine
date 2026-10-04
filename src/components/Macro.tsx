@@ -1,3 +1,4 @@
+import { FailureBoundary } from "./FailureBoundary";
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
@@ -164,6 +165,7 @@ function createQueryReading(request: () => ReadingRequest | undefined) {
  *  search instead. Saves write the printed macro and any view facts the printer
  *  cannot carry as `tine.*` properties in one undo unit. A refused print or
  *  changed source extent leaves the block untouched and shows an error. */
+/** Unexpected render/resource failures stay within this query; Retry remounts it. */
 export function QueryMacro(props: {
   body: string;
   blockId?: string;
@@ -182,6 +184,10 @@ export function QueryMacro(props: {
   // Render nothing when there are no results (the app-inserted journal agenda).
   hideWhenEmpty?: boolean;
 }): JSX.Element {
+  return <FailureBoundary region="Query results"><QueryMacroContent {...props} /></FailureBoundary>;
+}
+
+function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
 

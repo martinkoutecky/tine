@@ -1,3 +1,4 @@
+import { FailureBoundary } from "./FailureBoundary";
 // Plugins tab of Settings: the installed/community plugin lists, detail page and
 // per-plugin settings form. Split out of Settings.tsx (2072 lines, over the og size
 // ratchet's growth line) so the busy-ownership fix below is not another edit to the
@@ -155,7 +156,12 @@ function PluginSettingsForm(props: {
   );
 }
 
+/** Plugin settings rendering fails locally; Retry remounts only this tab. */
 export function PluginsTab(): JSX.Element {
+  return <FailureBoundary region="Plugins"><PluginsTabContent /></FailureBoundary>;
+}
+
+function PluginsTabContent(): JSX.Element {
   let alive = true;
   onCleanup(() => { alive = false; });
   let packageInput: HTMLInputElement | undefined;

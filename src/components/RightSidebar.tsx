@@ -190,7 +190,7 @@ export function RightSidebar(): JSX.Element {
                 // Each sidebar item is its own editing surface, so a block that
                 // also shows in the main pane doesn't fight it for the caret.
                 <SurfaceContext.Provider value={key}>
-                  <SidebarItemView item={item} surfaceKey={key} collapsed={!!item.collapsed} onToggle={collapse} onClose={close} row={rowAttrs(i())} />
+                  <FailureBoundary region="This sidebar item"><SidebarItemView item={item} surfaceKey={key} collapsed={!!item.collapsed} onToggle={collapse} onClose={close} row={rowAttrs(i())} /></FailureBoundary>
                 </SurfaceContext.Provider>
                 );
               }}

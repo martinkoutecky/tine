@@ -377,7 +377,7 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
     }>
       {(pdf) => <div class="pdf-pane pdf-route-pane" classList={{ "pdf-pane-mobile": isMobilePlatform }}
         data-pane-id={props.scrollerClass ? undefined : props.paneId} data-pdf-view-id={pdf().viewId}>
-        <Suspense fallback={<div class="pdf-loading" />}>
+        <FailureBoundary region="This PDF"><Suspense fallback={<div class="pdf-loading" />}>
           <KeyedPdfViewer route={() => props.router.route() as PdfRoute} owner={currentPdfOwnership}
             focused={() => focusedPaneId() === props.paneId}
             onClose={() => { void props.router.closePdf(); }}
@@ -386,7 +386,7 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
               if (current.kind === "pdf") openPdfNotes(props.paneId, hlsPageName(current.filename), block);
             }}
             onViewState={(state) => props.router.updateActivePdfViewState(state)} />
-        </Suspense>
+        </Suspense></FailureBoundary>
       </div>}
     </Show>
   );
@@ -436,12 +436,12 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
           >
             <PaneTabSplitPreview paneId={props.paneId} />
             <PaneEdgeSegHighlight paneId={props.paneId} />
-            <TabBar
+            <FailureBoundary region="The tabs"><TabBar
               router={router}
               dragRegion={false}
               paneStrip
               focused={focusedPaneId() === props.paneId}
-            />
+            /></FailureBoundary>
             <PaneRouteBody paneId={props.paneId} router={router} scrollerClass="pane-main-content" />
           </div>
         </Show>
@@ -1122,7 +1122,7 @@ export function App(): JSX.Element {
         >
           <div class="left-sidebar-scroll">
             <div class="sidebar-header workspace-sidebar-header" data-workspace-switcher-sidebar>
-              <Show when={!isPublishedExport()}><WorkspaceSwitcher /></Show>
+              <Show when={!isPublishedExport()}><FailureBoundary region="The workspace switcher"><WorkspaceSwitcher /></FailureBoundary></Show>
             </div>
             <Show when={mobileDrawerMode()}>
               <button class="mobile-drawer-close" type="button" aria-label="Close navigation sidebar" onClick={() => dismissDrawerAndRestore("explicit")}>Close</button>
@@ -1210,7 +1210,7 @@ export function App(): JSX.Element {
               one-tap workspace path in the toolbar without putting its full
               non-shrinking label back in this no-wrap row. */}
           <Show when={!sidebarOpen() && !isPublishedExport()}>
-            <WorkspaceSwitcher compact />
+            <FailureBoundary region="The workspace switcher"><WorkspaceSwitcher compact /></FailureBoundary>
           </Show>
           {/* The tab strip is a desktop feature; on a phone it only crowds the
               single-row toolbar (and its pill clips). Hide it there, keeping a
@@ -1219,11 +1219,11 @@ export function App(): JSX.Element {
             {/* Keyed on the SOLE pane's id: after closing panes the survivor
                 need not be "main", and TabBar freezes its router at mount. */}
             <Show when={firstPaneId(layoutRoot()) ?? "main"} keyed>
-              {(soloId) => <TabBar router={paneRouter(soloId)} />}
+              {(soloId) => <FailureBoundary region="The tabs"><TabBar router={paneRouter(soloId)} /></FailureBoundary>}
             </Show>
           </Show>
           <div class="topbar-right">
-            <CalendarJump triggerClass="topbar-optional-action" onOpenReady={(open) => { openCalendarJump = open; }} />
+            <FailureBoundary region="The calendar"><CalendarJump triggerClass="topbar-optional-action" onOpenReady={(open) => { openCalendarJump = open; }} /></FailureBoundary>
             <button class="icon-btn topbar-optional-action" title="Journals" data-pane-focus-neutral onClick={topbarActions.journals}>
               <svg viewBox="0 0 24 24" class="nav-icon">
                 <path d="M4 5h11a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
@@ -1266,7 +1266,7 @@ export function App(): JSX.Element {
                 <line x1="15" y1="4" x2="15" y2="20" stroke="currentColor" stroke-width="1.7" />
               </svg>
             </button>
-            <TopbarOverflowMenu
+            <FailureBoundary region="The toolbar menu"><TopbarOverflowMenu
               onCalendar={topbarActions.calendar}
               onJournals={topbarActions.journals}
               onToggleTheme={topbarActions.theme}
@@ -1275,7 +1275,7 @@ export function App(): JSX.Element {
               onForward={topbarActions.forward}
               canGoBack={canGoBack}
               canGoForward={canGoForward}
-            />
+            /></FailureBoundary>
             {/* Settings sits apart at the far right (separated by a divider) so
                 it reads as app-level config, not another content control. */}
             <Show when={!isPublishedExport()}><span class="topbar-sep" />
@@ -1293,15 +1293,15 @@ export function App(): JSX.Element {
                 is on). */}
             <Show when={isTauri() && !osDrawsWindowControls()}>
               <span class="topbar-sep" />
-              <WindowControls />
+              <FailureBoundary region="Window controls"><WindowControls /></FailureBoundary>
             </Show>
           </div>
         </header>
-        <ConflictBar />
+        <FailureBoundary region="The conflict notice"><ConflictBar /></FailureBoundary>
         <Show when={refreshingFromDisk()}>
           <div class="focus-refresh-status" role="status" aria-live="polite">Refreshing changes from disk…</div>
         </Show>
-        <InPageFind />
+        <FailureBoundary region="Find in page"><InPageFind /></FailureBoundary>
         </DrawerBackground>
         {/* Everything below the topbar lives in this row, so the topbar (and its
             window controls at the far right) spans the full window width and the
@@ -1312,7 +1312,7 @@ export function App(): JSX.Element {
           <PaneSelectHint />
           <PaneTree node={visibleLayoutNode()} path={[]} />
           </DrawerBackground>
-          <RightSidebar />
+          <FailureBoundary region="The reference sidebar"><RightSidebar /></FailureBoundary>
         </div>
       </DrawerBackground>
       <MobileDrawerController />
@@ -1328,36 +1328,36 @@ export function App(): JSX.Element {
           <ResizeGrips />
         </Show>
       </DrawerBackground>
-      <QuickSwitcher />
-      <ContextMenu />
-      <DatePicker />
-      <FormulaEditor />
+      <FailureBoundary region="Search"><QuickSwitcher /></FailureBoundary>
+      <FailureBoundary region="The context menu"><ContextMenu /></FailureBoundary>
+      <FailureBoundary region="The date picker"><DatePicker /></FailureBoundary>
+      <FailureBoundary region="The formula editor"><FormulaEditor /></FailureBoundary>
       <DrawerBackground class="drawer-floating-background" blockedBy="any">
-        <MobileKeyboardToolbar />
+        <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar /></FailureBoundary>
       </DrawerBackground>
-      <PageProps />
-      <ExportModal />
-      <UnsavedRecovery />
-      <PdfExportDialog />
-      <QueryExportDialog request={queryExportRequest} />
+      <FailureBoundary region="Page properties"><PageProps /></FailureBoundary>
+      <FailureBoundary region="Export"><ExportModal /></FailureBoundary>
+      <FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>
+      <FailureBoundary region="PDF export"><PdfExportDialog /></FailureBoundary>
+      <FailureBoundary region="Query export"><QueryExportDialog request={queryExportRequest} /></FailureBoundary>
       <Show when={settingsOpen()}>
         <Suspense>
-          <Settings />
+          <FailureBoundary region="Settings"><Settings /></FailureBoundary>
         </Suspense>
       </Show>
-      <HelpPopup />
+      <FailureBoundary region="Help"><HelpPopup /></FailureBoundary>
       {/* First-run onboarding: covers the (empty) app when no graph is configured.
           Rendered before Toasts so a "couldn't create graph" toast still shows on top. */}
-      <WelcomeLayer
+      <FailureBoundary region="Welcome"><WelcomeLayer
         mandatory={(globalThis as any).__FORCE_WELCOME__ === true || (firstLoadDone() && !graphMeta())}
         optionalOpen={welcomeOpen()}
         onClose={closeWelcome}
-      />
+      /></FailureBoundary>
       <DrawerBackground class="drawer-floating-background" blockedBy="any">
         <Toasts />
       </DrawerBackground>
-      <Lightbox />
-      <AudioOverlay />
+      <FailureBoundary region="This image"><Lightbox /></FailureBoundary>
+      <FailureBoundary region="This audio"><AudioOverlay /></FailureBoundary>
     </div>
   );
 }
