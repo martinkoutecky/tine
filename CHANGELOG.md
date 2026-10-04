@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- Mobile block swipes reveal distinct indent, outdent and more icons before release; left swipes now have a wider outdent band (40–139 px), with actions at 140 px, so a natural swipe is less likely to open the menu (UI-OG-QBF-SWIPE).
 - An unexpected rendering failure in a PDF pane, sidebar item, query result, plugin settings view or dialog now reports its error within that surface with **Retry** and **Copy details**, while sibling surfaces remain usable (GH #490, GH #332; UI-OG-GH490-QBE).
 - Contributor instructions, harness scripts and historical records use portable paths, with a tracked-file guard against personal checkout paths (GH #579).
 - Multi-block context-menu copy, cut, references, embeds and delete now act on the whole selection and use plural labels (GH #591).
