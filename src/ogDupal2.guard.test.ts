@@ -10,7 +10,7 @@ it("I-12: visible preorder belongs to document/tree.ts visitVisible; find traver
   const find = read("src/inpageFind.ts");
   expect(find).not.toContain("const walk =");
   expect(find).toContain("appendOutlineMatches(blocks, dtoFindNode");
-  expect(find).toContain("appendOutlineMatches(p.roots, docNode");
+  expect(find).toContain("appendOutlineMatches(scope.roots, docNode");
 });
 it("I-12: imported outline construction is blocks.ts createOutline; deletion is subtree.ts removeSubtree; page mutation is moves.ts reassignPage", () => {
   const blocks = read("src/document/edits/blocks.ts");
