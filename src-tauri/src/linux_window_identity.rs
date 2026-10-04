@@ -67,6 +67,7 @@ GenericName=Outliner\n\
 Comment=Fast, local-first Logseq-compatible outliner\n\
 Exec={} %U\n\
 Icon={APP_ID}\n\
+MimeType=x-scheme-handler/tine;\n\
 Terminal=false\n\
 Categories=Office;Utility;\n\
 Keywords=outliner;logseq;markdown;notes;org;journal;\n\
@@ -303,6 +304,7 @@ mod tests {
         )
         .unwrap();
         assert!(desktop.contains("Exec=\"/opt/Tine Builds/tine%%preview\" %U"));
+        assert!(desktop.contains("MimeType=x-scheme-handler/tine;\n"));
         assert!(desktop.contains(&format!("Name={PRODUCT_NAME}\n")));
         assert!(desktop.contains(&format!("Icon={APP_ID}\n")));
         assert!(desktop.contains(&format!("StartupWMClass={APP_ID}\n")));

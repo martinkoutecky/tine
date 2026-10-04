@@ -1,6 +1,13 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-tine-links.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Cold and forwarded Tine URLs open existing graph/page/block targets, graph copies ask once, and menu copies publish only durable identities.","blocking":false}],
+      "acceptableVariations":["Pane tab placement, toast wording and chooser styling may vary."],
+      "nonRequirements":["Logseq schemes, capture, or native runtime certification outside Linux."],
+      "stability":"burn-in"
+    },
+
     "scripts/e2e-page-file-identity.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "External namespace-file deletion removes its abandoned namespace, and accepting a pending page-menu Delete succeeds when that file is already gone.", "blocking": true }],
       "acceptableVariations": ["Watcher latency, navigation destination after deletion and confirmation styling may vary."],

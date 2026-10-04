@@ -1,6 +1,7 @@
 import type { KnownGraph } from "../backend";
 import type { LoadGraphPathOutcome } from "../graph";
 import type { ContextMenuAction } from "../ui";
+import { copyTineLink } from "../deepLinkNavigation";
 import { pushToast } from "../toasts";
 import { graphOwner, writeOwned } from "../owned";
 import { reportGraphOpenFailure } from "../graphOpenFailure";
@@ -33,6 +34,7 @@ export function graphRowMenuActions(graph: KnownGraph, deps: GraphRowMenuDeps): 
     ...(deps.desktop ? [{ label: "Show in folder", run: () => {
       void writeOwned(owner, deps.reveal(graph.path)).catch((error) => pushToast(`Could not show the graph folder: ${String(error)}`, "error"));
     } }] : []),
+    { label: "Copy link", run: () => void copyTineLink({ root: graph.path }) },
     { label: "Copy path", run: () => {
       void writeOwned(owner, deps.copyPath(graph.path)).catch((error) => pushToast(`Could not copy graph path: ${String(error)}`, "error"));
     } },

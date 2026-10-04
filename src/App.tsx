@@ -1,3 +1,5 @@
+import { installTineLinks } from "./deepLinkNavigation";
+import { DeepLinkGraphChoice } from "./components/DeepLinkGraphChoice";
 import { resizeSidebar, commitSidebarWidth } from "./sidebarSizing";
 import { Match, Show, Suspense, Switch, createEffect, createSignal, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
@@ -734,7 +736,8 @@ export function App(): JSX.Element {
 
   onMount(async () => {
     let alive = true;
-    onCleanup(() => { alive = false; });
+    let disposeLinks = () => {};
+    onCleanup(() => { alive = false; disposeLinks(); });
     const owner = graphOwner(() => alive);
     const injected = (window as any).__GRAPH_PATH__ ?? "";
     let startup = "";
@@ -748,7 +751,7 @@ export function App(): JSX.Element {
     const graphPath = injected || startup || persistedGraphPath();
     dbg(`loading graph: ${graphPath || "(default/configured)"}`);
     try {
-      await loadGraphPath(graphPath);
+      if (!(window as any).__TINE_LINK_LAUNCH__ || injected) await loadGraphPath(graphPath);
       dbg("graph load call returned");
     } catch (e) {
       // No graph configured (fresh install), or it failed to open. Fall through to
@@ -763,6 +766,10 @@ export function App(): JSX.Element {
         } catch { console.error("published permalink unavailable"); }
       }
       if (owner()) setFirstLoadDone(true);
+      if (!isPublishedExport() && alive) {
+        disposeLinks = await installTineLinks(() => alive);
+        if (!alive) disposeLinks();
+      }
     }
   });
 
@@ -1331,6 +1338,7 @@ export function App(): JSX.Element {
         </Show>
       </DrawerBackground>
       <FailureBoundary region="Search"><QuickSwitcher /></FailureBoundary>
+      <DeepLinkGraphChoice />
       <FailureBoundary region="The context menu"><ContextMenu /></FailureBoundary>
       <FailureBoundary region="The date picker"><DatePicker /></FailureBoundary>
       <FailureBoundary region="The formula editor"><FormulaEditor /></FailureBoundary>

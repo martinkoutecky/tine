@@ -56,11 +56,15 @@
     "active": true,
     "targets": ["appimage", "deb", "rpm", "nsis", "dmg"],
     "createUpdaterArtifacts": true,
+    "macOS": { "infoPlist": "Info.plist" },
+    "iOS": { "infoPlist": "Info.plist" },
+    "windows": { "nsis": { "installerHooks": "tine-url-hooks.nsh" } },
     "android": {
       "versionCode": 7001
     },
     "linux": {
       "deb": {
+        "desktopTemplate": "tine.desktop",
         "files": {
           "usr/share/man/man1/tine.1": "../docs/tine.1",
           "usr/share/man/man1/tine-open.1": "../docs/tine-open.1",
@@ -73,6 +77,7 @@
         }
       },
       "rpm": {
+        "desktopTemplate": "tine.desktop",
         "files": {
           "/usr/share/man/man1/tine.1": "../docs/tine.1",
           "/usr/share/man/man1/tine-open.1": "../docs/tine-open.1",

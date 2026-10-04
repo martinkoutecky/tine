@@ -89,6 +89,7 @@ mod atomic_file;
 pub mod cost_counters;
 pub mod directory_durability;
 mod launch_diag;
+mod link_identity;
 mod no_replace;
 #[cfg(test)]
 mod no_replace_tests;

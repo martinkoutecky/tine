@@ -109,6 +109,7 @@ pub(crate) enum LaunchRequest {
     Focus,
     Open(PathBuf),
     Capture,
+    Link(String),
 }
 
 fn terminal_stdout(arguments: std::fmt::Arguments<'_>) {
@@ -279,6 +280,9 @@ pub(crate) fn dispatch() -> Option<i32> {
 /// The GUI request in `argv`, with a relative graph resolved against `cwd`
 /// (the sender's, for a forwarded launch). Unparseable argv only focuses.
 pub(crate) fn launch_request(argv: &[String], cwd: &Path) -> LaunchRequest {
+    if let Some(url) = argv.iter().skip(1).find(|arg| arg.starts_with("tine:")) {
+        return LaunchRequest::Link(url.clone());
+    }
     let Ok(cli) = Cli::try_parse_from(argv) else {
         return LaunchRequest::Focus;
     };
@@ -396,6 +400,12 @@ mod tests {
                 "{form:?}"
             );
         }
+    }
+
+    #[test]
+    fn external_url_argv_never_becomes_a_relative_graph_path() {
+        let url = "tine://block/11111111-1111-4111-8111-111111111111";
+        assert_eq!(launch_request(&argv(&["tine", url]), Path::new("/wrong")), LaunchRequest::Link(url.into()));
     }
 
     #[test]

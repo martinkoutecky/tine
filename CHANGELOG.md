@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+- Added open-only `tine://` graph, page and block links, with Copy link actions and lazy stable graph identity (GH #181).
+
 - Code blocks show line numbers and a language label; Settings → Appearance offers one device-wide wrap preference shared by reading and editing (GH #474).
 
 - Beta releases now include the experimental Windows 32-bit installer and portable ZIP, with manual updates as on stable (GH #275).

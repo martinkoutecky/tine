@@ -1,6 +1,6 @@
 # og persisted-format census (batch 5b)
 
-The pinned count is **28 durable layouts** in `scripts/lib/og-enforcement.mjs`.
+The pinned count is **29 durable layouts** in `scripts/lib/og-enforcement.mjs`.
 Several rows share a low-level writer. A format means a byte layout or durable
 directory convention, not each JSON key or filename. Temporary files used for
 atomic publication have the same payload as their final name.
@@ -10,6 +10,7 @@ atomic publication have the same payload as their final name.
 | Page Markdown | configured pages and journals directories, `.md` | `crates/tine-store/src/transaction.rs:403`, `:739`; `crates/tine-store/src/atomic_file.rs:34` |
 | Page Org | configured pages and journals directories, `.org` | `crates/tine-store/src/transaction.rs:403`, `:739`; `crates/tine-core/src/org.rs:210` |
 | Graph configuration EDN | `logseq/config.edn` | `crates/tine-store/src/store.rs:837`, `:844`; `crates/tine-graph-features/src/config.rs:35`, `:193` |
+| Graph link identity | `logseq/tine-graph-id`, one UUID + LF (37 ASCII bytes), created only on explicit Copy link | `crates/tine-store/src/link_identity.rs::ensure_link_identity`, through the existing guarded `Transaction::create` (ADR 0071; Martin 2026-10-04) |
 | Graph stylesheet | `logseq/custom.css` | `crates/tine-store/src/store.rs:878` (graph seed); `crates/tine-graph-features/src/config.rs:51` reads it |
 | Graph assets | configured assets directory, original binary bytes | `crates/tine-graph-features/src/assets.rs:133`, `:137`, `:150`; `crates/tine-store/src/model.rs:4771` |
 | Asset sidecar EDN | assets `*.edn`, including PDF metadata | `crates/tine-graph-features/src/pdf.rs:299`, `:340` |
@@ -71,3 +72,5 @@ byte for byte (device settings, graph sessions, workspace registry, plugin packa
 webview's own store) from the released Tine's app-data dir into the experiment's. Its
 writer sites are approved in `APPROVED_WRITER_SITES`. The same document classifies each
 app-data entry the released Tine writes as read as-is or master-only.
+
+Graph link identity costs one tiny file per graph written once, zero bytes/files per ordinary 1- or 60-block edit and zero transport. Opening and browsing only read it; a copied graph shares it, with a device-local choice remembered in the existing settings JSON. Existing malformed identity is preserved and reported.

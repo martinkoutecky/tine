@@ -5,6 +5,7 @@ GenericName=Outliner
 Comment=Fast, local-first Logseq-compatible outliner
 Exec=tine %U
 Icon=page.tine.Tine
+MimeType=x-scheme-handler/tine;
 Terminal=false
 Categories=Office;Utility;
 Keywords=outliner;logseq;markdown;notes;org;journal;

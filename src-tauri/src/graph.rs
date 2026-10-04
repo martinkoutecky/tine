@@ -53,6 +53,8 @@ pub(crate) fn usable_last_graph_path(path: Option<String>) -> Option<String> {
 
 #[tauri::command]
 pub(crate) fn startup_graph_path(app: tauri::AppHandle) -> Option<String> {
+    #[cfg(desktop)]
+    if matches!(crate::cli::launch_request_env(), crate::cli::LaunchRequest::Link(_)) { return None; }
     resolve_root("").or_else(|| usable_last_graph_path(crate::settings::last_graph_path(&app)))
 }
 

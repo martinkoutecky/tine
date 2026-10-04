@@ -27,6 +27,7 @@ import { copyStripCollapsed } from "../copySettings";
 import { copyBlockOutline, writeClipboardText } from "../clipboard";
 import { cutBlocks } from "../cut";
 import { copyBlockLink } from "./blockLinkCopy";
+import { copyTineLink } from "../deepLinkNavigation";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 
@@ -657,6 +658,7 @@ function BlockRefMenu(props: {
       run: () => openBlockInSidebar({ uuid: props.uuid, page: props.page, pageKind: props.pageKind, path: props.path }),
     },
     { label: "Go to block", run: () => openPageAtBlock({ name: props.page, pageKind: props.pageKind, block: props.uuid, path: props.path }) },
+    { label: "Copy link", run: () => void copyTineLink({ blockUuid: props.uuid }) },
     {
       label: "Copy block ref",
       run: () => reportCopy(writeClipboardText(`((${props.uuid}))`), "Copied block ref"),
@@ -864,6 +866,7 @@ function PageMenu(props: {
     { id: "open-sidebar", label: "Open in sidebar", run: () => openPageInSidebar(target()) },
     { id: "open-new-tab", label: "Open in new tab", run: () => openPageTargetInNewTab(target()) },
     { id: "favorite-toggle", label: fav() ? "Remove from favorites" : "Add to favorites", run: () => toggleFavorite(props.name, props.pageKind) },
+    { id: "copy-link", label: "Copy link", run: () => void copyTineLink({ page: props.name }) },
     { id: "copy-page-ref", label: "Copy page ref", run: () => reportCopy(writeClipboardText(`[[${props.name}]]`), "Copied page ref") },
     {
       id: "copy-export",
@@ -1109,6 +1112,7 @@ function blockActions(id: string, x: number, y: number): { label: string; run: (
         if (inserted) startEditing(inserted, 0);
       },
     },
+    { label: "Copy link", run: () => void copyTineLink({ blocks: ids }) },
     { label: multi ? "Copy block refs" : "Copy block ref", run: () => void copyBlockLink(ids, "ref") },
     { label: multi ? "Copy block embeds" : "Copy block embed", run: () => void copyBlockLink(ids, "embed") },
     { label: `Copy ${noun}`, run: copy },

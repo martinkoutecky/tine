@@ -292,6 +292,10 @@ pub(crate) fn external_open_plan(url: &str) -> Result<ExternalOpen, String> {
 /// UI thread (GH #623, I-21).
 #[tauri::command]
 pub(crate) async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    if url.starts_with("tine:") {
+        crate::deep_links::receive_url(&app, url);
+        return Ok(());
+    }
     tauri::async_runtime::spawn_blocking(move || {
         if let ExternalOpen::LocalPath(path) = external_open_plan(&url)? {
             // Every OS opener accepts a path that is not there — `explorer.exe` even
