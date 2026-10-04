@@ -1,3 +1,4 @@
+import { TableWrap } from "./TableWrap";
 import { For, Match, Switch, type JSX } from "solid-js";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
@@ -17,7 +18,7 @@ export function QueryLegacyTable(props: {
   arrow: (column: string) => string;
 }): JSX.Element {
   return (
-  <div class="md-table-wrap">
+  <TableWrap>
   <table class="md-table query-table">
     <thead>
       <tr onClick={(e) => e.stopPropagation()}>
@@ -77,6 +78,6 @@ export function QueryLegacyTable(props: {
       </For>
     </tbody>
   </table>
-  </div>
+  </TableWrap>
   );
 }

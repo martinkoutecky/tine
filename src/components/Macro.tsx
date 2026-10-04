@@ -1,3 +1,4 @@
+import { TableWrap } from "./TableWrap";
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
@@ -761,7 +762,7 @@ export function QueryMacro(props: {
             {(notice) => <div class="query-why-empty-notice">{notice()}</div>}
           </Show>
           <Show when={(explanation()?.rows.length ?? 0) > 0}>
-            <table class="md-table query-why-empty-table">
+            <TableWrap><table class="md-table query-why-empty-table">
               <thead>
                 <tr><th>Condition</th><th>Alone</th><th>Without it</th></tr>
               </thead>
@@ -776,7 +777,7 @@ export function QueryMacro(props: {
                   )}
                 </For>
               </tbody>
-            </table>
+            </table></TableWrap>
           </Show>
         </div>
       </Show>

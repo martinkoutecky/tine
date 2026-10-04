@@ -1,3 +1,4 @@
+import { TableWrap } from "../components/TableWrap";
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
 
@@ -309,10 +310,9 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string, 
     const align = b.aligns[i] ?? null;
     return align ? { "text-align": align } : undefined;
   };
-  // Wrap in a horizontal-scroll container (mirrors OG's `div.table-wrapper`):
-  // a wide table scrolls instead of cram-wrapping its cells down to nothing.
+  // One pane-bounded viewport for Markdown and Org tables (I-12).
   return (
-    <div class="md-table-wrap">
+    <TableWrap>
       <table class="md-table" {...(coarseSpanAttrs(b.span) ?? {})}>
         <Show when={b.header}>
           <thead>
@@ -331,7 +331,7 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string, 
           </For>
         </tbody>
       </table>
-    </div>
+    </TableWrap>
   );
 }
 

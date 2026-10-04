@@ -2,6 +2,7 @@ icon:: ▦
 
 - # Sheets
 	- Sheets turn ordinary outline branches into 2-D views — tables, boards, and grids. The same file still opens in Logseq as nested bullets with harmless `tine.*` properties.
+	- Wide Markdown, Org and sheet tables stay centered on the text column and use the free space in their pane. They scroll horizontally only when wider than the pane; tables inside a sheet cell stay within that cell.
 	- This page starts with the easiest path — viewing bullets you already have — and shows fields, formulas, and grids after.
 - ## Start from bullets you already have
 	- Sheets never move your data: rows are child bullets, columns are their properties, cards are child bullets. Nothing is converted or copied.

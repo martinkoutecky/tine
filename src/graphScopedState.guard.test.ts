@@ -201,7 +201,6 @@ const LEGACY_COLLECTIONS = new Set([
   "src/assetRefresh.ts#pending",
   "src/binding.ts#scopedClears",
   "src/components/Macro.tsx#youtubePlayers",
-  "src/components/SheetContainer.tsx#sheetContainerMeasures",
   "src/conflictQueue.ts#arrivalNotices",
   "src/document/save/engine.ts#kindLedger",
   "src/document/save/engine.ts#titleIdentityIntents",

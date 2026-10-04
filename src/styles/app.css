@@ -5385,13 +5385,16 @@ body.file-drop-active::after {
   color: var(--marker-now);
 }
 
-/* markdown tables — matches OG's default look: no per-cell grid, just zebra
-   rows + a 2px header underline, wrapped in a horizontal-scroll container so a
-   wide table scrolls instead of cram-wrapping its cells (OG's div.table-wrapper;
-   see GH #16). */
+/* TableWrap owns pane-bounded centered bleed (I-12); scroll only beyond the
+   pane. Zebra rows and the header underline retain the OG v1 presentation. */
 .md-table-wrap {
   overflow-x: auto;
-  margin: 1rem 0;
+  width: var(--table-bleed-width, 100%);
+  margin: 1rem 0 1rem calc(-1 * var(--table-bleed-shift, 0px));
+}
+.md-table-wrap > .md-table {
+  width: max-content;
+  min-width: var(--table-column-width, 100%);
 }
 .md-table {
   width: 100%;

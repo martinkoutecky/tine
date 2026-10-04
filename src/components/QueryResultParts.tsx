@@ -1,3 +1,4 @@
+import { TableWrap } from "./TableWrap";
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
 import { pageRowFieldValue, type PageRow, type QueryStatistics } from "../editor/queryIr";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
@@ -87,7 +88,7 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
       }
     >
       <Match when={props.view === "table"}>
-        <table class="md-table query-table query-page-table">
+        <TableWrap><table class="md-table query-table query-page-table">
           <thead>
             <tr>
               <th>Page</th>
@@ -102,7 +103,7 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
               </tr>
             )}</For>
           </tbody>
-        </table>
+        </table></TableWrap>
       </Match>
       <Match when={props.view === "board"}>
         <div class="query-results-board" aria-label="Page results grouped">
@@ -152,7 +153,7 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics }): 
       >
         {(groups) => (
           <>
-            <table class="md-table query-summary-table" onClick={stop}>
+            <TableWrap><table class="md-table query-summary-table" onClick={stop}>
               <thead>
                 <tr>
                   <th>{groupLabel()}</th>
@@ -172,7 +173,7 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics }): 
                   </tr>
                 )}</For>
               </tbody>
-            </table>
+            </table></TableWrap>
             <Show when={summary().multiMembership}>
               <p class="query-summary-note" onClick={stop}>
                 A row with several tags appears in every matching group, so these counts can add up to more than the result.
