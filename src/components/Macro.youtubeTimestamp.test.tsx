@@ -29,6 +29,15 @@ afterEach(() => {
 });
 
 describe("YouTube timestamp macros", () => {
+  it.each(["video https://youtu.be/JI-AyLv68Xs", "youtube JI-AyLv68Xs"])("renders the GH #600 video through %s", (body) => {
+    const { root, dispose } = mount(() => <VideoMacro body={body} />);
+    try {
+      const iframe = root.querySelector("iframe")!;
+      expect(iframe.src).toBe("https://www.youtube.com/embed/JI-AyLv68Xs?enablejsapi=1");
+      expect(iframe.getAttribute("referrerpolicy")).toBe("strict-origin-when-cross-origin");
+    } finally { dispose(); }
+  });
+
   it("renders a clickable timestamp that seeks the later YouTube player", async () => {
     const player: MockPlayer = {
       seekTo: vi.fn(),
