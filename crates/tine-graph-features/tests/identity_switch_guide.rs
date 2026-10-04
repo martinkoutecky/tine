@@ -31,6 +31,8 @@ fn update_guide_explains_device_opt_out_and_manual_checks() {
         "stop startup checks and update notifications on this device",
         "still use **Check for updates** manually",
         "package-manager or manual-download installs",
+        "Undo uses an arrow bending left",
+        "Redo uses an arrow bending right",
     ] {
         assert!(
             guide.markdown.contains(outcome),
