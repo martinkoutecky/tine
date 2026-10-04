@@ -16,6 +16,7 @@ icon:: ⌨️
 - ## Select whole blocks — Ctrl+A
 	- While editing, **Ctrl+A** first selects the block's text; press it again to select the block with its children, and keep pressing to widen the selection to each parent and finally the whole page. **Shift+Up** onto a parent always takes all of that parent's children with it.
 - ## Copy a link to a block — Ctrl+C
+	- With several blocks selected, right-click any selected bullet: **Copy blocks**, **Cut blocks**, **Copy block refs**, **Copy block embeds**, and **Delete blocks** act on the selection. Cut and delete take one Undo step; cutting keeps the complete subtrees for pasting. Right-clicking an unselected bullet acts on that bullet.
 	- While editing with no text selected, **Ctrl/Cmd+C** copies a reference `((id))` to the block and **Ctrl/Cmd+Shift+C** copies an embed `{{embed ((id))}}`. With text selected, both keep their ordinary copy meaning.
 - ## Insert a block above
 	- To put a bullet *above* an existing one, press **Enter** with the caret at its very start. Some bullets keep Enter for themselves — inside a code block it adds a line of code — so for those, right-click the bullet's dot and choose **Insert block above**. That works on any bullet, including the first one on a page.

@@ -420,12 +420,15 @@ export function deleteSelection() {
   reselectSurvivingBlock(survivor);
 }
 
-export function selectionMarkdown(): string {
+/** Public clipboard text for the selected roots; O(visible-order resolution + selected subtree bytes).
+ * Defaults to the copy preference; cuts request complete subtrees so their
+ * public clipboard flavor includes everything deletion removes. */
+export function selectionMarkdown(includeSubtree = copyIncludeSubtree()): string {
   // Clipboard → always strip id:: (OG parity). collapsed:: and whole-subtree vs
   // selected-only are user-configurable (see copySettings): OG copies the full
   // sub-tree of a selected parent; Tine's default copies only the selected blocks.
   const stripCollapsed = copyStripCollapsed();
-  const onlySel = copyIncludeSubtree() ? undefined : new Set(selectedIds());
+  const onlySel = includeSubtree ? undefined : new Set(selectedIds());
   return topSelected()
     .map((id) => blockSubtreeMarkdown(id, 0, true, stripCollapsed, onlySel))
     .join("\n");

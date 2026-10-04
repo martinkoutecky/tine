@@ -189,7 +189,6 @@ describe("only reference creation may stamp an id:: (guard, I-2, I-21)", () => {
       + "like src/blockRefActions.ts openDurableBlock; do not add a stamping call to a navigation path.",
     ).toEqual([
       "components/Block.tsx",
-      "components/ContextMenu.tsx",
       "components/blockLinkCopy.ts",
       "document/edits/identity.ts",
       "document/index.ts",

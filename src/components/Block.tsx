@@ -2808,7 +2808,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
   };
 
-  const onBlur = () => {
+  const onBlur = (e: FocusEvent) => {
     clearPasteRaw();
     unregisterFocusedEditor();
     if (sheetCanceling) return;
@@ -2818,10 +2818,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       commit(ref.value);
       return;
     }
-    // Ctrl+F moves focus into Tine's find bar, but the block should remain in
-    // edit mode so Escape can restore the caret instead of remounting rendered
-    // content underneath the user.
-    if (inPageFindPreservesEditorBlur()) {
+    // Find and the date picker temporarily own focus; keep this editor and its
+    // caret mounted so dismissal can return to the same editing transaction.
+    if ((e.relatedTarget as HTMLElement | null)?.closest?.(".date-picker") || inPageFindPreservesEditorBlur()) {
       commit(ref.value);
       savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
       return;

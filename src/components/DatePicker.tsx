@@ -5,7 +5,7 @@ import { readSchedule, setSchedule } from "../document";
 import { fieldLabel, readField, writeFieldVisibly, type FieldId } from "../sheet/fields";
 import { daysInCalendarMonth, parseIsoDateLike, utcCalendarMillis } from "../sheet/typed";
 import { registerTransientLayer } from "../transientLayers";
-import { refuseStaleWrite } from "../binding";
+import { captureBinding, stillBound, refuseStaleWrite } from "../binding";
 
 import { parseRepeater, type RepMode } from "../editor/repeat";
 import { appNow } from "../journal";
@@ -24,8 +24,8 @@ const fieldDate = (y: number, m: number, d: number) => `${y}-${pad2(m + 1)}-${pa
 // store; opening on an existing date pre-fills the shown month + selection.
 export function DatePicker(): JSX.Element {
   return (
-    <Show when={datePicker()}>
-      {(dp) => <Picker bid={dp().blockId} which={dp().which} x={dp().x} y={dp().y} />}
+    <Show when={datePicker()} keyed>
+      {(dp) => <Picker bid={dp.blockId} which={dp.which} x={dp.x} y={dp.y} />}
     </Show>
   );
 }
@@ -41,15 +41,22 @@ function propDateSelection(bid: string, field: FieldId): { y: number; m: number;
 
 function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: number }): JSX.Element {
   let root: HTMLDivElement | undefined;
-  // I-20: writes go to the graph the picker was opened in; a switch retires it.
-  // (`datePicker()` reads null once its binding is stale; Show is not keyed, so
-  // a reopen for another block keeps this Picker with new props.)
+  const binding = captureBinding();
+  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const close = () => {
+    closeDatePicker();
+    queueMicrotask(() => {
+      if (stillBound(binding) && !datePicker() && opener?.isConnected) opener.focus();
+    });
+  };
+  // I-20: writes and focus restoration belong to the opening graph.
   const bound = () => datePicker() !== null || (refuseStaleWrite("The date"), false);
   createEffect(() => {
     const unregister = registerTransientLayer({
       id: "date-picker",
       root: () => root ?? null,
-      dismiss: () => { closeDatePicker(); return true; },
+      trigger: () => stillBound(binding) ? opener : null,
+      dismiss: () => { close(); return true; },
     });
     onCleanup(unregister);
   });
@@ -60,6 +67,19 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
     y: sel?.y ?? today.getFullYear(),
     m: sel?.m ?? today.getMonth(),
   });
+
+  const [cursor, setCursor] = createSignal({
+    y: sel?.y ?? today.getFullYear(), m: sel?.m ?? today.getMonth(), d: sel?.d ?? today.getDate(),
+  });
+  const focusDay = () => root?.querySelector<HTMLButtonElement>(`[data-day="${cursor().d}"]`)?.focus();
+  const moveDay = (delta: number) => {
+    const current = cursor();
+    const next = new Date(utcCalendarMillis(current.y, current.m, current.d + delta));
+    const value = { y: next.getUTCFullYear(), m: next.getUTCMonth(), d: next.getUTCDate() };
+    setCursor(value);
+    setView({ y: value.y, m: value.m });
+    queueMicrotask(focusDay);
+  };
 
   // Recurrence: a unit ("" = no repeat), an interval N, and whether the next due
   // date counts from the completion day (`.+`) or the scheduled date (`+`).
@@ -94,7 +114,11 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
     return cells;
   });
 
-  const step = (delta: number) => setView(stepMonth(view(), delta));
+  const step = (delta: number) => {
+    const next = stepMonth(view(), delta);
+    setCursor({ ...next, d: Math.min(cursor().d, daysInCalendarMonth(next.y, next.m)) });
+    setView(next);
+  };
   const writePickedDate = (y: number, m: number, d: number) => {
     if (!bound()) return;
     const picked = fieldDate(y, m, d);
@@ -107,11 +131,11 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
   };
   const pick = (d: number) => {
     writePickedDate(view().y, view().m, d);
-    closeDatePicker();
+    close();
   };
   const pickToday = () => {
     writePickedDate(today.getFullYear(), today.getMonth(), today.getDate());
-    closeDatePicker();
+    close();
   };
   const isToday = (d: number) =>
     view().y === today.getFullYear() && view().m === today.getMonth() && d === today.getDate();
@@ -128,6 +152,7 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
   const left = () => Math.max(4, Math.min(props.x, winW() - 300));
   const top = () => Math.max(4, Math.min(props.y, winH() - 300));
   onMount(() => {
+    queueMicrotask(focusDay);
     const onResize = () => {
       setWinW(window.innerWidth);
       setWinH(window.innerHeight);
@@ -139,8 +164,17 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
   });
 
   return (
-    <div class="dp-overlay" onClick={closeDatePicker} onContextMenu={(e) => { e.preventDefault(); closeDatePicker(); }}>
-      <div ref={root} class="date-picker" style={{ left: `${left()}px`, top: `${top()}px` }} onClick={(e) => e.stopPropagation()}>
+    <div class="dp-overlay" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }}>
+      <div ref={root} class="date-picker" style={{ left: `${left()}px`, top: `${top()}px` }} onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-label={`Choose ${label()} date`}
+        onKeyDown={(e) => {
+          if (e.isComposing || e.keyCode === 229) return;
+          if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
+          if (!(e.target as HTMLElement).matches(".dp-cell")) return;
+          const delta = ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 } as Record<string, number>)[e.key];
+          if (delta !== undefined) { e.preventDefault(); e.stopPropagation(); moveDay(delta); }
+          else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); pick(cursor().d); }
+        }}>
         <div class="dp-head">
           <button class="dp-nav" onClick={() => step(-1)} title="Previous month">‹</button>
           <span class="dp-title">
@@ -157,6 +191,9 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
               <Show when={d !== null} fallback={<span class="dp-cell dp-empty" />}>
                 <button
                   class="dp-cell"
+                  data-day={d!}
+                  tabIndex={cursor().y === view().y && cursor().m === view().m && cursor().d === d ? 0 : -1}
+                  onFocus={() => setCursor({ ...view(), d: d! })}
                   classList={{ today: isToday(d!), selected: isSel(d!) }}
                   onClick={() => pick(d!)}
                 >
@@ -233,10 +270,10 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
             <button
               class="dp-btn dp-clear"
               onClick={() => {
-                if (!bound()) return closeDatePicker();
+                if (!bound()) return close();
                 if (isScheduleTarget(props.which)) writeFieldVisibly(props.bid, props.which, "");
                 else writeFieldVisibly(props.bid, props.which.field, "");
-                closeDatePicker();
+                close();
               }}
             >
               Clear

@@ -72,7 +72,7 @@ describe("clipboard writer facade guard", () => {
       "src/sheet/mutations.ts": /copyRich\(text, html\)/,
       "src/components/ContextMenu.tsx": /writeClipboardText\(/,
       "src/components/Block.tsx": /copyBlockLink\(props\.id, "ref"\)/,
-      "src/components/blockLinkCopy.ts": /writeClipboardText\(text\.wrap\(uuid\)\)/,
+      "src/components/blockLinkCopy.ts": /writeClipboardText\(refs\.join\("\\n"\)\)/,
       "src/components/PdfViewer.tsx": /writeClipboardText\(/,
       "src/components/ImproveTab.tsx": /writeClipboardTextStrict\(/,
     };
