@@ -1,3 +1,5 @@
+import { codeWrapping } from "../codeDisplay";
+import { LineGutter } from "../render/LineGutter";
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
 import { autocompleteFacets, backend } from "../backend";
 import { reportUiFailure } from "../uiFailure";
@@ -590,16 +592,13 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       && page.roots[0] === props.id
       && (node().originatedFromPageHeader || (!page.preBlock && propertyDraft));
   };
-
   // Parsed editor facts travel with the committed buffer; hidden bytes survive.
   const isAnnot = () => annotationInfo(propertySession.facets(node().raw, pageFmt()).properties) !== null;
   const hideFn = () => (isAnnot() ? hideAll : sheetCell ? isSheetCellHidden : isBuiltinHidden);
   const editorParts = createMemo(() => propertySession.split(node().raw, hideFn(), pageFmt()));
   const editorValue = () => editorParts().visible;
-  // GH #357: while the buffer IS one whole-block code fence the editor presents
-  // as the same mono, no-wrap card the rendered face is (no re-layout jump).
-  // Mixed content / ```calc keep their own modes; re-derived per keystroke.
-  const codeEditing = createMemo(() => codeFenceOnly(editorValue(), pageFmt()) !== null);
+  const codeShape = createMemo(() => codeFenceOnly(editorValue(), pageFmt()));
+  const codeEditing = () => codeShape() !== null;
   const editorHeadingLevel = createMemo(() => {
     const visible = editorValue();
     if (visible.includes("\n")) return null;
@@ -1736,7 +1735,6 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
     replaceTrigger(item.insert ?? "", item.caret);
   };
-
   // Coalesce layout measurements; mount uses the immediate version.
   const resizeNow = () => resizeBlockEditor(ref);
   let autosizeRaf: number | undefined;
@@ -1750,6 +1748,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     });
   };
 
+  createEffect(() => { codeWrapping(); if (ref && codeEditing()) autosize(); });
   // A `wrap="off"` editor (a code card) mounts with its whole value assigned,
   // which parks the selection at the end; focusing reveals that end and the
   // later setSelectionRange does not scroll back, so a long line opened the
@@ -3059,19 +3058,20 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     if (prepared instanceof Promise) void prepared.then(insert);
     else insert(prepared);
   }
-
   return (
-    <div class="editor-wrap" classList={{ "calc-wrap": isCalc() }}>
+    <div class="editor-wrap" classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }}>
+      <Show when={codeEditing()}>
+        <span class="code-language">{codeShape()?.lang.toLowerCase()}</span>
+        <LineGutter lines={(codeShown()?.body ?? editorValue()).split("\n")} code />
+      </Show>
       <Show when={isCalc()}>
-        <div class="calc-gutter" aria-hidden="true">
-          <For each={calcRows()}>{(_, i) => <div class="calc-lineno">{i() + 1}</div>}</For>
-        </div>
+        <LineGutter lines={calcRows().map(row => row.input)} />
       </Show>
       <textarea
         ref={ref}
         class="block-editor"
         classList={{ [`h${editorHeadingLevel()}`]: editorHeadingLevel() != null, "code-edit": codeEditing() }}
-        wrap={codeEditing() ? "off" : "soft"}
+        wrap={codeEditing() && !codeWrapping() ? "off" : "soft"}
         spellcheck={spellcheckEnabled()}
         value={isCalc() ? (calcLive() ?? "") : (codeShown()?.body ?? editorValue())}
         placeholder={cap?.bulletHint?.()}

@@ -1,3 +1,4 @@
+import { codeWrapping, changeCodeWrapping } from "../codeDisplay";
 import { graphConfigProblem } from "../graph";
 import { ResourceFailure } from "./ResourceFailure";
 import { reportUiFailure } from "../uiFailure";
@@ -432,11 +433,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       <Field label="Wide mode" hint="Drops the reading-width cap.">
         <Toggle on={wideMode()} onClick={toggleWideMode} />
       </Field>
-
       <Field label="Document mode" hint="Hides bullets and indent guides for a cleaner prose view.">
         <Toggle on={documentMode()} onClick={toggleDocumentMode} />
       </Field>
-
       <Field
         label="Document-mode Enter creates a new block"
         hint={<>Keep the normal Enter = new block and Shift + Enter = line break mapping while Document mode is on. Off (the default) swaps them, like Logseq. Saved to <code>:shortcut/doc-mode-enter-for-new-block?</code> in <code>config.edn</code>.</>}
@@ -446,14 +445,12 @@ function AppearanceTab(props: { search: string }): JSX.Element {
           onClick={() => changeDocModeEnterForNewBlock(!docModeEnterForNewBlock())}
         />
       </Field>
-
       <Field
         label="Show brackets"
         hint={<>Show the <code>[[ ]]</code> around page references. Saved to <code>:ui/show-brackets?</code> in <code>config.edn</code>; toggle with <code>mod+c mod+b</code>.</>}
       >
         <Toggle on={showBrackets()} onClick={() => changeShowBrackets(!showBrackets())} />
       </Field>
-
       <Field
         label="Typographic replacements"
         hint="Show arrows and dashes as glyphs — `->` → →, `-->` → ⟶, `--` → – (en dash), `---` → — (em dash). “While reading” keeps your Markdown as ASCII and only changes the rendered view (like `\Delta` → Δ); “While typing” rewrites the source itself as you type. A Tine touch, not Logseq."
@@ -472,6 +469,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
         </select>
       </Field>
 
+      <Field label="Wrap code lines" hint="Wrap long code lines in every code block while reading and editing. Off by default, as in Logseq. Saved on this device.">
+        <Toggle on={codeWrapping()} onClick={() => changeCodeWrapping(!codeWrapping())} />
+      </Field>
       <Field
         label="Auto-pair brackets & quotes"
         hint="Typing ( [ { &quot; ` inserts the matching closer with the caret between, wraps a selection, types through a closer, and Backspace on an empty pair clears both. (Page-ref `[[ ]]` always auto-closes.) On by default, as in Logseq."

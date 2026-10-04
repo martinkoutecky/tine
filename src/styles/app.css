@@ -4109,31 +4109,25 @@ html[data-system-insets="native-viewport"] {
   display: block;
 }
 
-/* While the block being edited IS one fenced code block, the editor wears the
-   same card as the rendered .code-block (mono, no soft wrap, same padding and
-   metrics), so clicking a code region no longer re-lays it out (GH #357).
-   Font/line-height/padding numbers mirror .code-block exactly — keep them in
-   sync. `wrap="off"` on the textarea is the functional side of no-soft-wrap. */
-.editor-wrap:has(> .block-editor.code-edit) {
-  padding: var(--ls-block-content-pad-y) 0;
-}
+/* Code view/editor share card metrics and the calculator's numbered gutter. */
+.editor-wrap:has(> .block-editor.code-edit) { position: relative; padding: var(--ls-block-content-pad-y) 0; }
 .block-editor.code-edit {
-  background: var(--code-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  padding: 10px 12px;
-  margin: 4px 0;
-  /* Editable fonts are set via the !important textarea rule above — override
-     the --tine-editable-font variable like .calc-wrap does, not font-family. */
+  background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 6px;
+  padding: 30px 12px 10px 48px; margin: 4px 0;
   --tine-editable-font: "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco,
     Consolas, "Courier New", var(--tine-editable-emoji-font), monospace;
-  font-size: 0.86em;
-  line-height: 1.5;
-  white-space: pre;
-  overflow-x: auto;
-  overflow-y: hidden;
-  min-height: 0;
+  font-size: 0.86em; line-height: 1.5; white-space: pre;
+  overflow-x: auto; overflow-y: hidden; min-height: 0;
 }
+.code-language { position: absolute; top: 9px; right: 48px; color: var(--text-muted); font: 11px/16px var(--ls-font-mono); pointer-events: none; }
+.code-gutter { position: absolute; top: 30px; left: 48px; right: 12px; pointer-events: none; font: inherit; white-space: pre; }
+.gutter-row { position: relative; }
+.code-gutter .calc-lineno { position: absolute; right: calc(100% + 14px); }
+.gutter-mirror { visibility: hidden; }
+.editor-wrap > .code-gutter { top: calc(35px + var(--ls-block-content-pad-y)); left: 49px; right: 13px; font-family: var(--ls-font-mono); font-size: 0.86em; line-height: 1.5; }
+.editor-wrap > .code-language { top: calc(14px + var(--ls-block-content-pad-y)); }
+.code-wrapping .code-gutter, .code-wrapping.code-block code,
+.code-wrapping > .block-editor.code-edit { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .block-editor.h1 { font-size: 1.7em; font-weight: 600; line-height: 1.3; }
 .block-editor.h2 { font-size: 1.4em; font-weight: 600; line-height: 1.3; }
@@ -5351,16 +5345,17 @@ body.file-drop-active::after {
   background: var(--code-bg);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  padding: 10px 12px;
+  padding: 30px 12px 10px 48px;
   margin: 4px 0;
   overflow-x: auto;
   font-family: var(--ls-font-mono);
   font-size: 0.86em;
   line-height: 1.5;
   /* An empty code card still reserves the editor's empty line. */
-  min-height: calc(1.5em + 22px);
+  min-height: calc(1.5em + 42px);
 }
 .code-block code {
+  display: block;
   font-family: inherit;
   background: none;
   padding: 0;

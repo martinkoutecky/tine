@@ -1,3 +1,5 @@
+import { codeWrapping } from "../codeDisplay";
+import { LineGutter } from "./LineGutter";
 import { TableWrap } from "../components/TableWrap";
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
@@ -49,7 +51,9 @@ function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs
     }
   });
   return (
-    <pre class="code-block" {...(props.spanAttrs ?? {})}>
+    <pre class="code-block" classList={{ "code-wrapping": codeWrapping() }} {...(props.spanAttrs ?? {})}>
+      <Show when={props.lang}><span class="code-language">{props.lang.toLowerCase()}</span></Show>
+      <LineGutter lines={(props.code.endsWith("\n") ? props.code.slice(0, -1) : props.code).split("\n")} code />
       <CopyButton text={props.code} title="Copy code" class="code-copy" />
       <code class="hljs" innerHTML={html()} />
     </pre>
