@@ -79,7 +79,7 @@ jobs:
     needs: preflight
     strategy:
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 6
       matrix:
         include:
           - platform: ubuntu-22.04
@@ -107,6 +107,14 @@ jobs:
             rust-targets: ""
             win-arch: x64
             win-exe-dir: target/release
+          # Experimental Windows 32-bit pilot (GH #275), as on stable:
+          # installer + portable ZIP, with manual updates only.
+          - platform: windows-latest
+            lane: windows-x86
+            args: "--target i686-pc-windows-msvc --features custom-protocol"
+            rust-targets: "i686-pc-windows-msvc"
+            win-arch: x86
+            win-exe-dir: target/i686-pc-windows-msvc/release
           # Windows ARM64 (Surface Pro X, Snapdragon X laptops): CROSS-compiled from
           # the x86_64 windows runner. rustup adds the target; the VS 2022 ARM64 MSVC
           # tools are preinstalled on the windows-latest image. A `--target <triple>`
@@ -244,7 +252,7 @@ jobs:
         if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
-          # A cross-target build (ARM64) outputs under target/<triple>/release/, a
+          # A cross-target build (x86/ARM64) outputs under target/<triple>/release/, a
           # native build (x64) under target/release/ — matrix.win-exe-dir carries the
           # right one. Tauri v2 may rename the main binary to productName;
           # the cargo bin name is "tine.exe". Pick whichever exists — and NOT the

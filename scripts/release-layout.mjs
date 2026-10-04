@@ -8,6 +8,7 @@ export const RELEASE_LANES = [
   "linux-arm64",
   "macos-universal",
   "windows-x64",
+  "windows-x86",
   "windows-arm64",
   "android",
 ];
@@ -89,6 +90,15 @@ export function releaseLayout(version, identity = IDENTITY) {
           `${product}_${version}_x64-setup.exe.sig`,
         ],
       },
+    },
+    "windows-x86": {
+      assets: [
+        `${product}_${version}_x86-setup.exe`,
+        `${product}_${version}_x86-setup.exe.sig`,
+        `${product}_${version}_x86-portable.zip`,
+      ],
+      // Experimental GH #275 lane: updates remain manual, as on stable.
+      platforms: {},
     },
     "windows-arm64": {
       assets: [

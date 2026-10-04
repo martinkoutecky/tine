@@ -2,8 +2,8 @@
 
 **Status:** implemented on `master` in `dd6e0e0` (2026-07-11). Manual release
 run [29165451611](https://github.com/martinkoutecky/tine/actions/runs/29165451611)
-proved all five desktop builds + Android overlap, the real Flatpak build passes,
-and candidate assembly produces the layout's exact 23-asset inventory / 12 updater entries without
+proved the original five desktop builds + Android overlap, the real Flatpak build passes,
+and candidate assembly produced the then-current exact inventory without
 touching GitHub Releases. The first real tagged publisher run is intentionally
 the next explicitly authorized release; no dummy public version was cut.
 
@@ -129,7 +129,7 @@ lists that can drift.
 
 ### 2. Parallel build jobs stage workflow artifacts
 
-Keep one five-entry desktop matrix, but use `max-parallel: 5` for both manual and
+Keep one desktop matrix and match `max-parallel` to its lane count for both manual and
 tag runs. The build step invokes the Tauri CLI without a release ID and without
 GitHub-release upload behavior.
 

@@ -68,8 +68,24 @@ const successfulFullCiRun = {
 };
 const successfulFullCiJobs = REQUIRED_FULL_CI_JOBS.map((name) => ({ name, conclusion: "success" }));
 
-assert.equal(layout.allAssets.length, 23, "release layout must retain its exact 23-asset inventory");
-assert.equal(layout.platformAssets.length, 22, "release layout must retain its exact platform-asset inventory");
+// GH #275: retain the Windows x86 release on both app identities.
+for (const identity of Object.values(IDENTITIES)) {
+  const names = releaseLayout(version, identity);
+  const product = identity.productName.replace(/\s+/g, "-");
+  assert.deepEqual(names.lanes["windows-x86"]?.assets, [
+    `${product}_${version}_x86-setup.exe`,
+    `${product}_${version}_x86-setup.exe.sig`,
+    `${product}_${version}_x86-portable.zip`,
+  ], "GH #275: Windows x86 must ship installer and portable assets; imitate release-layout.mjs");
+  assert.deepEqual(names.lanes["windows-x86"].platforms, {},
+    "experimental x86 remains manual-update only");
+}
+assert.match(releaseWorkflow,
+  /lane: windows-x86[\s\S]*?--target i686-pc-windows-msvc[\s\S]*?rust-targets: "i686-pc-windows-msvc"[\s\S]*?win-arch: x86[\s\S]*?win-exe-dir: target\/i686-pc-windows-msvc\/release/,
+  "GH #275: release.yml must retain the Windows x86 cross-build");
+
+assert.equal(layout.allAssets.length, 26, "release layout must retain its exact 26-asset inventory");
+assert.equal(layout.platformAssets.length, 25, "release layout must retain its exact platform-asset inventory");
 assert.equal(
   Object.keys(layout.updaterPlatforms).length,
   12,

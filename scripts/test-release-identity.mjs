@@ -68,6 +68,13 @@ try {
     run("assemble-release-candidate.mjs", "candidate-input", "assembled");
     assert.deepEqual(fs.readdirSync(path.join(root, "assembled")).sort(), layout.allAssets.slice().sort());
     const updater = JSON.parse(fs.readFileSync(path.join(root, "assembled/latest.json"), "utf8"));
+    assert.deepEqual(layout.lanes["windows-x86"].assets, [
+      `${identity.productName.replace(/\s+/g, "-")}_${version}_x86-setup.exe`,
+      `${identity.productName.replace(/\s+/g, "-")}_${version}_x86-setup.exe.sig`,
+      `${identity.productName.replace(/\s+/g, "-")}_${version}_x86-portable.zip`,
+    ], "actual staging and assembly must deliver x86 assets for both identities");
+    assert.ok(!Object.keys(updater.platforms).some((platform) => /^windows-(i686|x86)(-|$)/.test(platform)),
+      "assembled latest.json must keep experimental x86 updates manual");
     for (const [platform, entry] of Object.entries(updater.platforms)) {
       assert.equal(entry.url, `https://github.com/owner/repo/releases/download/beta/${layout.updaterPlatforms[platform][0]}`);
     }
