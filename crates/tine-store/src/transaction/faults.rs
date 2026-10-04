@@ -53,6 +53,14 @@ pub enum FaultPoint {
     /// Abort the process after a rewritten move has renamed and synced the old
     /// bytes at the destination, before its trash copy; requires `test-faults`.
     AbortAfterMoveRename,
+    /// Abort with the case-only source safely staged in existing graph trash.
+    AbortAfterCaseMoveStage,
+    /// Abort after the second case-only move and its directory sync.
+    AbortAfterCaseMovePublish,
+    /// Fail between the two case-only moves to exercise rollback.
+    CaseMoveStageIo,
+    /// Create a competing destination between the two case-only moves.
+    CaseMoveStageCollision,
     /// Abort the process after a rewritten move has copied the old bytes to
     /// trash and published new destination bytes; requires `test-faults`.
     AbortAfterMoveRewrite,
@@ -86,6 +94,14 @@ pub(crate) enum FaultPoint {
     TwinAfterPublish,
     AbortAfterStep(usize),
     AbortAfterMoveRename,
+    /// Abort with the case-only source safely staged in existing graph trash.
+    AbortAfterCaseMoveStage,
+    /// Abort after the second case-only move and its directory sync.
+    AbortAfterCaseMovePublish,
+    /// Fail between the two case-only moves to exercise rollback.
+    CaseMoveStageIo,
+    /// Create a competing destination between the two case-only moves.
+    CaseMoveStageCollision,
     AbortAfterMoveRewrite,
     MoveAfterTrashCopyIo,
     AbortAfterMarkerStage,

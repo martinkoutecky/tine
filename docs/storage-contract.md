@@ -240,3 +240,35 @@ Unit cost: no per-edit publication records or writes; export emits one staged
 file per final output file, plus copied asset bytes. Replace renames the old leaf
 once into existing recovery (no copying of old bytes). 1/60-block measured artifact
 bytes and files are recorded in the OG-R3C2 receipt; transport per edit is zero.
+
+## Case-only page moves (GH #609)
+
+`Transaction::move_file` accepts a destination spelling that resolves to its
+unique source, but refuses a separately listed destination entry even when it
+is a hard link to the same inode (external-editor/sync-delivery collision).
+The feature layer uses the ordinary RenamePage transaction for filename,
+explicit title, references, namespace descendants and config home spelling.
+Identity stays normalized; there is no second page entity for a casing change.
+
+Case-only moves use the existing graph trash name and no-replace move primitive
+on Linux, Windows, macOS, Android and iOS. Before withdrawing the source, the
+trash directory ancestry is synced. Both moves sync changed directories, using
+existing unsupported-directory-sync policy; Windows moves remain write-through.
+Before staging, the guarded source is live. Between the two moves, its exact
+bytes are in `logseq/.tine-trash/<area>/<stamp>__<filename>` and can be restored
+with a guarded `move_file` from Trash to Pages. This recovery is explicit, not
+automatic at graph open. After the second move, the original bytes are live at
+the new spelling; after the existing atomic rewrite, updated title/ref bytes
+are live there. Retrying completes a moved file's old explicit title in place.
+An I/O failure attempts transaction undo; a concurrent target is never replaced
+by the second no-replace move (subject to the existing flag-refusal fallback
+policy), and original or racing staged bytes remain in recovery if undo fails.
+
+Unit cost: two namespace moves and directory syncs instead of one for case-only
+moves; no added payload copy or retained record on success. If content changes,
+the existing rename old-byte trash copy remains O(page bytes), on both 1-block
+and 60-block pages; no sync transport. Process-abort tests exercise stage,
+publication and rewrite boundaries; platform alias coverage requires a
+case-folding filesystem run. The retained payload test measures 10 B live plus
+10 B old-copy for 1 block and 600 B plus 600 B for 60 blocks, with exactly one
+existing old-byte copy and no leftover staging copy in either case.

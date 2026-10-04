@@ -14,7 +14,7 @@ atomic publication have the same payload as their final name.
 | Graph assets | configured assets directory, original binary bytes | `crates/tine-graph-features/src/assets.rs:133`, `:137`, `:150`; `crates/tine-store/src/model.rs:4771` |
 | Asset sidecar EDN | assets `*.edn`, including PDF metadata | `crates/tine-graph-features/src/pdf.rs:299`, `:340` |
 | Asset trash | `logseq/.tine-trash/assets/` | `crates/tine-graph-features/src/assets.rs:205`; `crates/tine-store/src/store.rs:1635` |
-| Graph trash | `logseq/.tine-trash/`, retired page/config bytes; entries are `<stamp>__[<reason>__]<name>`, a long name's stem cut to fit 255 bytes (`atomic_file.rs::prefixed_name`, C3Y) | `crates/tine-store/src/transaction.rs:545`; `crates/tine-store/src/model.rs:5163` |
+| Graph trash | `logseq/.tine-trash/`, retired page/config bytes; entries are `<stamp>__[<reason>__]<name>`, a long name's stem cut to fit 255 bytes (`atomic_file.rs::prefixed_name`, C3Y) | `crates/tine-store/src/transaction.rs::trash_id`, `transaction/move_file.rs::publish_move` (case-only temporary recovery); `crates/tine-store/src/model.rs:5163` |
 | Device settings JSON | app data `tine-settings.json` | `src-tauri/src/settings.rs:18`, `:84`; `src-tauri/src/device_io.rs:149` |
 | Graph session JSON | app data `sessions/<graph-id>.json` (legacy `tine-session.json`) | `src-tauri/src/settings.rs:329`, `:347`, `:526`, `:544` |
 | Workspace registry JSON | app data `sessions/<graph-id>-workspaces.json` | `src-tauri/src/settings.rs:361`, `:425`, `:442`, `:479` |
