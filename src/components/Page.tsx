@@ -1,5 +1,5 @@
 import { reportUiFailure } from "../uiFailure";
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
@@ -17,6 +17,7 @@ import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, s
 import { Block, OutlineScopeContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
 import { LinkedReferences } from "./LinkedReferences";
+import { observeNear, unobserveNear } from "../lazyObserve";
 import { FailureBoundary } from "./FailureBoundary";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
@@ -630,6 +631,9 @@ export function PageView(): JSX.Element {
                     />
                   </div>
                 </Show>
+                <Show when={currentRoute().kind === "journals"}>
+                  <JournalLinkedReferences name={p.name} />
+                </Show>
               </PageSection>
             )}
           </For>
@@ -679,6 +683,25 @@ export function PageView(): JSX.Element {
     </Show>
     </Show>
   );
+}
+
+// OG journal-cp mounts the same references section after each day's agenda.
+// Keep its resource and result trees unmounted until this day approaches the
+// viewport, using the same one-shot observer as block bodies/reference groups.
+function JournalLinkedReferences(props: { name: string }): JSX.Element {
+  const [near, setNear] = createSignal(false);
+  let el!: HTMLDivElement;
+  onMount(() => {
+    observeNear(el, () => setNear(true));
+    onCleanup(() => unobserveNear(el));
+  });
+  return <div ref={el} class="journal-linked-references">
+    <Show when={near()}>
+      <FailureBoundary region="Linked References">
+        <LinkedReferences name={props.name} />
+      </FailureBoundary>
+    </Show>
+  </div>;
 }
 
 // A single zoomed-in block (its subtree) with an ancestor breadcrumb.
