@@ -7,7 +7,7 @@
 // are the grammar's sqrt/log/ln/exp/abs/trig/inverse-trig set, plus Tine's
 // floor/ceil/round extensions (kept as a deliberate superset of calc.bnf so
 // existing Tine graphs don't break; OG shows an error for these). PI and E.
-// The upstream source is /aux/koutecky/logseq/og at 6e7afa8eb; precise semantic
+// The upstream source is Logseq at 6e7afa8eb; precise semantic
 // citations appear alongside each grammar/evaluation transcription below.
 
 import { codeFences, type LiteralContainer } from "./fences";
@@ -62,7 +62,7 @@ export function serializeCalcExitCommit(text: string, previousRaw?: string): str
 
 // This is intentionally a local decimal implementation rather than a dependency.
 // OG uses bignumber.js values and default division precision in its evaluator
-// (/aux/koutecky/logseq/og/src/main/frontend/extensions/calc.cljc:41-117).
+// (upstream Logseq src/main/frontend/extensions/calc.cljc:41-117).
 const TEN = 10n;
 const DIVISION_PLACES = 20;
 const MAX_CALC_DIGITS = 10_000;
@@ -507,7 +507,7 @@ interface CalcEnvironment {
 }
 
 // The production forms and precedence below transcribe OG's grammar exactly:
-// /aux/koutecky/logseq/og/src/resources/grammar/calc.bnf:1-52.
+// upstream Logseq src/resources/grammar/calc.bnf:1-52.
 class Parser {
   pos = 0;
   constructor(
@@ -602,7 +602,7 @@ class Parser {
 
 // OG accepts only non-negative integer factorial inputs below 254; its
 // `isPositive` check includes BigNumber's positive zero, so 0! is 1
-// (/aux/koutecky/logseq/og/src/main/frontend/extensions/calc.cljc:58-61).
+// (upstream Logseq src/main/frontend/extensions/calc.cljc:58-61).
 function factorial(value: Decimal): Decimal {
   const n = value.integerValue();
   if (n === null || n < 0n || n >= 254n) return Decimal.nan();

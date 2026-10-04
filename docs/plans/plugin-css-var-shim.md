@@ -37,7 +37,7 @@ colors as intended, without the user editing anything.
   `read_custom_css` (`src-tauri/src/commands.rs:280` → graph's `logseq/custom.css`)
   and sets `.textContent` on a single `<style id="tine-custom-css">` appended to
   `document.head`.
-- **OG `--ls-*` names** the themes target (from `/aux/koutecky/logseq/og`
+- **OG `--ls-*` names** the themes target (from the upstream Logseq checkout
   `resources/css/shui.css`, `src/main/frontend/common.css`): backgrounds
   `--ls-primary/secondary/tertiary/quaternary-background-color`; text
   `--ls-primary/secondary/title-text-color`; links/accent `--ls-link-text-color`,

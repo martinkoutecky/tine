@@ -52,7 +52,7 @@ rtk proxy npx vitest run --config vitest.render.config.ts src/components/transie
 Exited 1: 2/7 tests failed. Both literal mounted no-global paths left Help open
 after Escape at the Find/PageProps input, proving the current direct target
 close bypassed the newer registered owner. Raw output:
-`/aux/koutecky/logseq/tine-agents/specs/implementation/evidence/2026-07-16-issue-161-p1d2-fallbacks-fail-before.txt`.
+the private implementation evidence record `2026-07-16-issue-161-p1d2-fallbacks-fail-before.txt`.
 
 ## Candidate verification
 

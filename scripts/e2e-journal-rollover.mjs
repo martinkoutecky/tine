@@ -10,11 +10,17 @@
 // set E2E_LIBFAKETIME to libfaketime.so.1. Monotonic clocks and file stat times
 // stay real, so timers, WebDriver and the watcher are unaffected.
 import { spawn } from "node:child_process";
-import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { FEED_LOAD_FAILURE, watchErrorToasts } from "./lib/e2e-toasts.mjs";
+
+if (process.argv.includes("--help")) {
+  console.log("Usage: node scripts/e2e-journal-rollover.mjs\nE2E_LIBFAKETIME: libfaketime.so.1 path (default: system Debian/Ubuntu faketime library)\nTAURI_DRIVER: default CARGO_HOME/bin/tauri-driver, or PATH\nTINE_APP: default $HOME/research/tine");
+  process.exit(0);
+}
+
+const { remote } = await import("webdriverio");
 
 // Every Date below is UTC; re-exec with TZ set before the first Date is built.
 if (process.env.TZ !== "UTC") {
@@ -25,8 +31,7 @@ if (process.env.TZ !== "UTC") {
 }
 
 async function main() {
-  const FAKETIME_LIB = [process.env.E2E_LIBFAKETIME, "/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1",
-    "/aux/koutecky/logseq/.codex-deps/faketime/src/src/libfaketime.so.1"].find((file) => file && fs.existsSync(file));
+  const FAKETIME_LIB = [process.env.E2E_LIBFAKETIME, "/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1"].find((file) => file && fs.existsSync(file));
   if (!FAKETIME_LIB) {
     console.error("FAIL: libfaketime.so.1 not found, so this journey cannot move the app's clock to midnight."
       + " Remedy: install it (Debian/Ubuntu: `sudo apt-get install faketime`, which provides"

@@ -9,7 +9,14 @@ import { APP_ID } from "./lib/app-identity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
-const TD = process.env.TAURI_DRIVER || path.join(process.env.CARGO_HOME || "/aux/koutecky/logseq/.toolchain/cargo", "bin", "tauri-driver");
+const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver") : "tauri-driver");
+// TAURI_DRIVER overrides CARGO_HOME/bin/tauri-driver; otherwise search PATH.
+if (process.argv.includes("--help")) {
+  console.log(`Usage: node scripts/e2e-plugin-graph-ownership.mjs
+TINE_APP: ${APP}
+TAURI_DRIVER: ${TD} (default: CARGO_HOME/bin/tauri-driver, or PATH)`);
+  process.exit(0);
+}
 const WD = process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver";
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4494);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4495);

@@ -6,7 +6,6 @@
 // it was typed in, never in the new one, and nothing from the old graph may
 // paint into the window after the switch has settled.
 import { spawn } from "node:child_process";
-import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
@@ -14,10 +13,18 @@ import { APP_ID } from "./lib/app-identity.mjs";
 import { openJournals, openPageByName } from "./lib/e2e-navigation.mjs";
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 
+const APP = process.env.TINE_APP || "/tmp/tine-multiprocess";
+const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver") : "tauri-driver");
+// TAURI_DRIVER overrides CARGO_HOME/bin/tauri-driver; otherwise search PATH.
+if (process.argv.includes("--help")) {
+  console.log(`Usage: node scripts/e2e-multigraph.mjs
+TINE_APP: ${APP}
+TAURI_DRIVER: ${TD} (default: CARGO_HOME/bin/tauri-driver, or PATH)`);
+  process.exit(0);
+}
+const { remote } = await import("webdriverio");
 ensurePrivateSessionBus();
 
-const APP = process.env.TINE_APP || "/tmp/tine-multiprocess";
-const TD = process.env.TAURI_DRIVER || "/aux/koutecky/logseq/.toolchain/cargo/bin/tauri-driver";
 const WD = process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver";
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4454);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4455);

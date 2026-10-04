@@ -31,7 +31,7 @@ Remember them; they go in the properties file below.
 **2. Create `src-tauri/gen/android/keystore.properties`** (gitignored) with:
 
 ```properties
-storeFile=/home/koutecky/.android-keys/tine-release.jks
+storeFile=/absolute/path/to/tine-release.jks
 storePassword=YOUR_STORE_PASSWORD
 keyAlias=tine
 keyPassword=YOUR_KEY_PASSWORD

@@ -1,17 +1,22 @@
 // GH #619 repro driver. env: APP, KEYS (distinct property keys), WIN ("1280x900"), OUT (dir), GRAPH_SRC (copy an existing graph instead)
 import { spawn } from "node:child_process";
-import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
-const WDIO_ROOT = "/aux/koutecky/logseq/tine-og-gh619";
+import os from "node:os";
 const APP = process.env.APP;
 const KEYS = Number(process.env.KEYS ?? 300);
 const [W, H] = (process.env.WIN ?? "1280x900").split("x").map(Number);
-const OUT = process.env.OUT ?? "/tmp/gh619-out"; fs.mkdirSync(OUT, { recursive: true });
-const TD = "/aux/koutecky/logseq/.toolchain/cargo/bin/tauri-driver";
+const OUT = process.env.OUT ?? path.join(os.tmpdir(), "gh619-out");
+const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver") : "tauri-driver");
+if (process.argv.includes("--help")) {
+  console.log(`Usage: APP=/path/to/tine node scripts/gh619-repro.mjs\nTAURI_DRIVER: ${TD} (default: CARGO_HOME/bin/tauri-driver, or PATH)\nOUT: ${OUT} (default: OS temporary directory/gh619-out)\nKEYS: 300; WIN: 1280x900; PORT: 4600; GRAPH_SRC: optional fixture graph`);
+  process.exit(0);
+}
+const { remote } = await import("webdriverio");
+fs.mkdirSync(OUT, { recursive: true });
 const PORT = Number(process.env.PORT ?? 4600);
-const TMP = fs.mkdtempSync("/aux/koutecky/logseq/tmp-gh619-");
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "tmp-gh619-"));
 const GRAPH = `${TMP}/graph`;
 for (const d of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${d}`, { recursive: true });
 for (const d of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${d}`, { recursive: true });

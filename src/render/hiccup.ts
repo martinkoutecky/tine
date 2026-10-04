@@ -1,6 +1,6 @@
 // Bounded, data-only Hiccup transcription for configured macro expansions.
 // OG safe-reads Hiccup, serializes it, then sanitizes the HTML at
-// /aux/koutecky/logseq/og/src/main/frontend/components/block.cljs:1554-1562.
+// upstream Logseq src/main/frontend/components/block.cljs:1554-1562.
 // This module deliberately implements only the frozen supported subset; it never
 // evaluates ClojureScript, and its output is still untrusted until DOMPurify runs.
 

@@ -1,7 +1,7 @@
 //! OG DSL ⇄ IR (SPEC §4.1, §4.3).
 //!
 //! Transcribed (D-9) from OG `src/main/frontend/db/query_dsl.cljs` at the
-//! read-only checkout `/aux/koutecky/logseq/og` commit `6e7afa8eb`
+//! read-only checkout of upstream Logseq commit `6e7afa8eb`
 //! (`git describe`: `1.0.0-12-g6e7afa8eb`): `pre-transform` (`:452-472`),
 //! `simplify-query` (`:505-516`), `build-query` (`:377-445`) and its
 //! `build-*` helpers, `parse-property-value` (`:242-252`),

@@ -1500,4 +1500,4 @@ fn page_rename_leaves_query_only_mentions_alone() {
 }
 
 // `corpus_renames_match_legacy` retired after parity passed at 9c3d7c376.
-// Receipt: /aux/koutecky/logseq/tine-agents/evidence/og/b15a/corpus-parity-receipt.txt
+// Receipt: private campaign evidence, og/b15a/corpus-parity-receipt.txt
