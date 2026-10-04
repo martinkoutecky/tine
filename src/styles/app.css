@@ -8369,19 +8369,19 @@ img.emoji {
   padding: 8px 10px;
   text-align: left;
 }
-.query-page-props {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 14px;
-  padding: 0 10px 6px;
-  font-size: 12.5px;
-  color: var(--text-secondary);
-  user-select: text;
-  -webkit-user-select: text;
-  cursor: text;
+.query-results-list > li:has(.query-page-link) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
 }
-.query-page-prop-key {
-  color: var(--text-muted);
+.query-results-list .query-page-link {
+  display: block;
+  overflow-wrap: anywhere;
+  border: 0;
+  background: transparent;
+}
+.query-grouping-clear {
+  margin-left: 8px;
 }
 .query-results-list .query-page-props-edit,
 .query-page-props-edit {

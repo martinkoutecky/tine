@@ -19,7 +19,7 @@ import { Block } from "./Block";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { resetStore } from "../document";
+import { blockProperty, resetStore } from "../document";
 import { setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import type { BlockDto, RefGroup } from "../types";
 import type { ParsedQuery, ViewSettings, QueryResult, QueryStatisticsCell } from "../editor/queryIr";
@@ -331,4 +331,27 @@ describe("the grouped breakdown", () => {
       dispose();
     }
   });
+});
+
+// QBV: exercise the real macro surface, including the guarded clear action.
+it.each(["search", "list", "table", "board"] as const)("labels and clears grouping in %s", async (view) => {
+  load(`{{query (task TODO)}}\ntine.view:: ${view}\ntine.group-field:: prop:state`, { view, group_by: "prop:state" });
+  vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+  vi.spyOn(backend(), "printQuery").mockResolvedValue("(task TODO)");
+  const { root, dispose } = await mountQuery();
+  try {
+    expect(root.textContent).toContain("Grouped by state");
+    root.querySelector<HTMLButtonElement>('[aria-label="Clear grouping"]')!.click();
+    await vi.waitFor(() => expect(blockProperty("query", "tine.group-field")).toBe(""));
+  } finally { dispose(); }
+});
+
+it("shows overall statistics instead of a table for only missing grouping values", async () => {
+  load("{{query (task TODO)}}\ntine.view:: search\ntine.group-field:: prop:anchor", { view: "search", group_by: "prop:anchor" });
+  const { root, dispose } = await mountQuery();
+  try {
+    expect(root.querySelector(".query-summary-table")).toBeNull();
+    expect(cells(root, ".query-summary .qs-value")).toEqual(["4"]);
+    expect(root.textContent).toContain("Grouped by anchor");
+  } finally { dispose(); }
 });

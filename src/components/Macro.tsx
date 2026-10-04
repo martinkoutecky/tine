@@ -1,4 +1,5 @@
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { setBoardGroupBy } from "../sheet/mutations";
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
@@ -951,8 +952,6 @@ export function QueryMacro(props: {
                 </div>
               )}
             </Show>
-            {/* The part below was not understood, so the query returned nothing
-                — not "ignored", which would imply the rest ran (I-9). */}
             <Show when={blockingDiagnostics().length > 0}>
               <div class="query-unsupported query-diagnostics" role="alert">
                 <span class="query-diagnostics-lead">
@@ -963,7 +962,8 @@ export function QueryMacro(props: {
             </Show>
             <Show when={!collapsed()}>
               <Show when={displayed()?.statistics}>
-                {(statistics) => <QueryStatisticsSummary statistics={statistics()} />}
+                {(statistics) => <QueryStatisticsSummary statistics={statistics()} onClearGrouping={props.blockId && blockWritable(props.blockId) && !isPublishedExport()
+                  ? () => setBoardGroupBy(props.blockId!, "") : undefined} />}
               </Show>
               <Switch>
                 <Match when={displayed()?.both}>
