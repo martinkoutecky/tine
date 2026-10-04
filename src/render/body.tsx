@@ -4,18 +4,18 @@ import { TableWrap } from "../components/TableWrap";
 
 import { For, Show, createContext, createMemo, createResource, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { InlineText, renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
+import { renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
 import { EmojiText } from "./emoji";
 import type { Block as AstBlock, Inline as AstInline, ListItem as AstListItem, Format } from "./ast";
 import { hiccupToHtml } from "./hiccup";
 import { coarseSpanAttrs, rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
 import { evalCalc } from "../editor/calc";
 import { toggleListItemAtIndex, formatForBlock, node as docNode } from "../document";
-import { graphMeta } from "../graphSession";
-import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "./block";
+import { PropertyRows } from "./PropertyRows";
+import { isPropertyLine } from "./block";
 import { TableV2, tableV2Options, type TableV2Options } from "./tableV2";
 import { isQuarantined, parserReady } from "./parse";
-import { parseBody, stripPlanningLines } from "./facets";
+import { parseBody, renderedProperties, stripPlanningLines } from "./facets";
 import { createNearBlockMount } from "../createNearBlockMount";
 import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
 import { readOr } from "../resourceRead";
@@ -145,11 +145,13 @@ export function renderBlocks(
   format: Format = "md",
   tableOptions?: TableV2Options,
 ): JSX.Element {
+  const propertyEntries = renderedProperties(blocks, format);
+  const displayBlocks = blocks.filter(block => block.kind !== "properties" || block.props === propertyEntries);
   const content = (
-    <For each={blocks}>
+    <For each={displayBlocks}>
       {(b, i) => (
         <>
-          <Show when={i() > 0 && isInlineFlow(b) && isInlineFlow(blocks[i() - 1])}>
+          <Show when={i() > 0 && isInlineFlow(b) && isInlineFlow(displayBlocks[i() - 1])}>
             <br />
           </Show>
           {/* A `# heading` block's size applies ONLY to the heading's own line (the
@@ -336,22 +338,7 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string, 
 }
 
 function renderProps(b: Extract<AstBlock, { kind: "properties" }>, blockId?: string, macroExpansion = false, format: Format = "md"): JSX.Element {
-  const visible = b.props.filter(([k]) => !isRenderHiddenProp(k, graphMeta()?.block_hidden_properties ?? []));
-  const fmt = formatForBlock(blockId) ?? format; // parse org property values as org
-  return (
-    <Show when={visible.length > 0}>
-      <span class="block-properties">
-        <For each={visible}>
-          {([k, v]) => (
-            <span class="block-property">
-              <span class="block-property-key">{propertyKeyNorm(k)}</span>{" "}
-              <span class="block-property-val"><InlineText text={v} format={fmt} macroExpansion={macroExpansion} /></span>
-            </span>
-          )}
-        </For>
-      </span>
-    </Show>
-  );
+  return <PropertyRows entries={b.props} format={formatForBlock(blockId) ?? format} blockId={blockId} macroExpansion={macroExpansion} />;
 }
 
 // The raw text this body was parsed from. A checkbox click maps its item to a raw

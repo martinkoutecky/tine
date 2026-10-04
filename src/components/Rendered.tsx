@@ -1,13 +1,12 @@
-import { Show, Switch, Match, For, type JSX } from "solid-js";
+import { Show, Switch, Match, type JSX } from "solid-js";
 import { pageByName, blockPageReadOnly, blockExternalId, type OutlineScope, type Node as ReadonlyNode } from "../document";
-import { isRenderHiddenProp, isPropertyLine, propertyKeyNorm } from "../render/block";
-import type { Facets } from "../render/facets";
+import { isPropertyLine } from "../render/block";
+import { renderedProperties, type Facets } from "../render/facets";
 import { AstBody } from "../render/body";
-import { InlineText } from "../render/inline";
 import { DeferredStandaloneMacro } from "./DeferredStandaloneMacro";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { timetrackingEnabled, openDatePicker } from "../ui";
-import { graphMeta } from "../graphSession";
+import { PropertyRows } from "../render/PropertyRows";
 import { taskCheckboxState } from "../markers";
 import { markerLabelClickable } from "../editor/repeat";
 import { logbookInfo, type LogbookInfo } from "../logbook";
@@ -110,10 +109,7 @@ export function Rendered(props: {
     );
   };
 
-  const displayProps = () => {
-    const extra = graphMeta()?.block_hidden_properties ?? [];
-    return facets().properties.filter(([k]) => !isRenderHiddenProp(k, extra));
-  };
+  const displayProps = () => renderedProperties(node().raw, fmt());
   const bgColor = () => {
     return blockBackgroundColor(facets().properties);
   };
@@ -227,21 +223,7 @@ export function Rendered(props: {
           <CalGlyph /> {facets().deadline}
         </span>
       </Show>
-      <Show when={displayProps().length > 0}>
-        <span class="block-properties">
-          <For each={displayProps()}>
-            {([k, v]) => (
-              <span class="prop">
-                <span class="prop-key">{propertyKeyNorm(k)}</span>
-                {/* Render the value through the inline parser so a `[[wiki]]`/`#tag`
-                    property value becomes a clickable link, matching OG and the
-                    page-property path (Page.tsx). Issue #10. */}
-                <span class="prop-value"><InlineText text={v} format={fmt()} /></span>
-              </span>
-            )}
-          </For>
-        </span>
-      </Show>
+      <PropertyRows entries={displayProps()} format={fmt()} blockId={props.id} />
       </Show>
     </div>
     </Show>

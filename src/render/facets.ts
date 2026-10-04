@@ -358,3 +358,14 @@ function planningDates(blocks: Block[], raw: string): { scheduled: string | null
 }
 
 export { EMPTY as EMPTY_FACETS };
+
+/** OG graph_parser/block.cljs extract-blocks keeps the earliest parsed property
+ * group. PropertyRows folds duplicates to their last value (extract-properties).
+ * Presentation only: raw text and query/edit facets retain every property. Cost
+ * O(block text) for raw input (cached lsdoc parse), O(AST nodes) for a parsed
+ * input; no file or store writes. */
+export function renderedProperties(raw: string | readonly Block[], format: Format): [string, string][] {
+  const blocks = typeof raw === "string" ? parseBody(raw, format) : raw;
+  const group = blocks.find((block) => block.kind === "properties");
+  return group?.kind === "properties" ? group.props : [];
+}

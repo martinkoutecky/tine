@@ -15,6 +15,7 @@ import { isPublishedExport } from "../publishedBackend";
 import { pushToast } from "../toasts";
 import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
+import { TaggedPages } from "./TaggedPages";
 import { LinkedReferences } from "./LinkedReferences";
 import { FailureBoundary } from "./FailureBoundary";
 import { UnlinkedReferences } from "./UnlinkedReferences";
@@ -651,6 +652,7 @@ export function PageView(): JSX.Element {
           <Show when={currentRoute().kind === "page" && pagesToRender()[0]}>
             <Show when={pagesToRender()[0].kind === "page" && !pagesToRender()[0].guide}>
               <NamespaceHierarchy name={pagesToRender()[0].name} />
+              <FailureBoundary region="Tagged Pages"><TaggedPages name={pagesToRender()[0].name} /></FailureBoundary>
             </Show>
             <Show
               when={pagesToRender()[0].kind === "page" && !pagesToRender()[0].guide && tagTableEnabled(pagesToRender()[0].name) && !isPublishedExport()}
