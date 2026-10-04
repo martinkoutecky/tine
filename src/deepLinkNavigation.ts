@@ -1,18 +1,17 @@
 /** External navigation over the existing backend, graph-switch and pane route
- * doors. Scans only on explicit opening; identity writes only on explicit copy.
+ * doors. Scans only on explicit opening and never writes; Copy link (which may
+ * stamp identity) lives in components/blockLinkCopy.ts with the other reference creators.
  * A stale graph binding cancels outstanding resolution/copy. Errors are shown,
  * with no creation or current-graph fallback. Native queue installation returns
  * an idempotent disposer and drains again after subscription (cold/warm race). */
 import { ownedWhen, readOwned, writeOwned, readOwnedResource } from "./owned";
 import { backend, isTauri } from "./backend";
 import { captureBinding, stillBound } from "./binding";
-import { writeClipboardText } from "./clipboard";
-import { ensureBlockId } from "./document";
 import { loadGraphPath } from "./graph";
 import { graphMeta } from "./graphSession";
 import { focusedRouter } from "./panes";
 import { pushToast } from "./toasts";
-import { blockLink, graphLink, pageLink, parseTineLink } from "./deepLinks";
+import { parseTineLink } from "./deepLinks";
 import { chooseLinkGraph } from "./components/DeepLinkGraphChoice";
 
 export interface LinkTarget {
@@ -25,43 +24,6 @@ export interface LinkTarget {
   error?: string | null;
 }
 export type LinkDelivery = { kind: "url"; url: string } | { kind: "target"; target: LinkTarget };
-
-/** Copy external links. O(selection saves + graph identity + clipboard bytes).
- * Blocks assign id:: via the existing document door; publication waits for all
- * saves. Graph/page copy never changes page content. Failures toast and resolve. */
-export async function copyTineLink(target: { page: string } | { blocks: readonly string[] } | { blockUuid: string } | { root?: string }): Promise<void> {
-  const binding = captureBinding();
-  const owner = ownedWhen(() => stillBound(binding));
-  try {
-    const api = backend();
-    if (!api.tineLinks?.identity) throw new Error("Copy link is available in the Tine app");
-    const identity = await writeOwned(owner, api.tineLinks.identity("root" in target ? target.root : undefined));
-    if (identity.kind === "stale") return;
-    const id = identity.value;
-    let text: string;
-    if ("page" in target) text = pageLink(target.page, id);
-    else if ("blocks" in target) {
-      const links: string[] = [];
-      for (const block of target.blocks) {
-        const uuid = await ensureBlockId(block);
-        if (!stillBound(binding)) return;
-        if (!uuid) throw new Error("Couldn't save the block id");
-        links.push(blockLink(uuid));
-      }
-      if (!links.length) return;
-      text = links.join("\n");
-    } else if ("blockUuid" in target) {
-      const found = await readOwned(owner, api.resolveBlocks([target.blockUuid]));
-      if (found.kind === "stale") return;
-      if (!found.value[0]) throw new Error("Block no longer exists");
-      text = blockLink(target.blockUuid);
-    } else text = graphLink(id);
-    await writeOwned(owner, writeClipboardText(text));
-    if (stillBound(binding)) pushToast("Copied Tine link", "success");
-  } catch (error) {
-    if (stillBound(binding)) pushToast(`Couldn't copy Tine link: ${String(error)}`, "error");
-  }
-}
 
 /** Resolve one URL and open its existing destination in the focused pane.
  * O(known graph paths/pages/blocks), native scans off the UI thread. A copy

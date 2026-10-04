@@ -1,7 +1,7 @@
 import type { KnownGraph } from "../backend";
 import type { LoadGraphPathOutcome } from "../graph";
 import type { ContextMenuAction } from "../ui";
-import { copyTineLink } from "../deepLinkNavigation";
+import { copyTineLink } from "./blockLinkCopy";
 import { pushToast } from "../toasts";
 import { graphOwner, writeOwned } from "../owned";
 import { reportGraphOpenFailure } from "../graphOpenFailure";

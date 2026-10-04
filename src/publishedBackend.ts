@@ -193,6 +193,8 @@ const OPTIONAL_METHODS = new Set([
   "loadDrafts",
   "storeDraft",
   "retireDraft",
+  // GH #181: external Tine links need the native URL handler; a published guide has none.
+  "tineLinks",
 ]);
 
 /** Build the snapshot backend. `load` is awaited lazily by every method. */

@@ -62,8 +62,12 @@ fn hierarchy_work_is_linear_for_small_wide_and_deep_pages() {
 #[test]
 #[ignore = "explicit anonymized-graph cost acceptance, outside the fast loop"]
 fn hierarchy_anonymized_graph_work() {
-    probe(
-        std::path::Path::new("/home/koutecky/research/logseq-anonymized"),
-        None,
-    );
+    // TINE_OG_BENCH_ANON, default ~/research/logseq-anonymized (as scripts/bench-og-parity.mjs).
+    let corpus = std::env::var_os("TINE_OG_BENCH_ANON")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(std::env::var_os("HOME").expect("HOME"))
+                .join("research/logseq-anonymized")
+        });
+    probe(&corpus, None);
 }

@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "./backend";
-import { openTineLink, copyTineLink } from "./deepLinkNavigation";
+import { openTineLink } from "./deepLinkNavigation";
+import { copyTineLink } from "./components/blockLinkCopy";
 import { pageLink, blockLink } from "./deepLinks";
 import { DeepLinkGraphChoice } from "./components/DeepLinkGraphChoice";
 import { ContextMenu } from "./components/ContextMenu";

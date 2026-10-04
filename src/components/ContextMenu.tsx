@@ -26,8 +26,7 @@ import { startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
 import { copyBlockOutline, writeClipboardText } from "../clipboard";
 import { cutBlocks } from "../cut";
-import { copyBlockLink } from "./blockLinkCopy";
-import { copyTineLink } from "../deepLinkNavigation";
+import { copyBlockLink, copyTineLink } from "./blockLinkCopy";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 

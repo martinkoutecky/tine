@@ -1338,7 +1338,7 @@ export function App(): JSX.Element {
         </Show>
       </DrawerBackground>
       <FailureBoundary region="Search"><QuickSwitcher /></FailureBoundary>
-      <DeepLinkGraphChoice />
+      <FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>
       <FailureBoundary region="The context menu"><ContextMenu /></FailureBoundary>
       <FailureBoundary region="The date picker"><DatePicker /></FailureBoundary>
       <FailureBoundary region="The formula editor"><FormulaEditor /></FailureBoundary>

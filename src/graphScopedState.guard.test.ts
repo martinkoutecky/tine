@@ -29,6 +29,7 @@ const CLASSIFIED: Record<string, string> = {
   "src/components/blockGestures.ts#dropInd": "drop indicator of the same drag",
   "src/components/RightSidebar.tsx#rsDropTarget": "right-sidebar drag state (a row index and side, not graph content); pointerup ends the drag in the old graph first",
   "src/components/SidebarFavorites.tsx#dropTarget": "favorites drag state; a click ends the drag in the old graph first (K17b, no user path)",
+  "src/components/DeepLinkGraphChoice.tsx#choice": "a pending choice among known graph roots for an external link (paths, not graph content); the chosen target is re-resolved through the graph-switch door, which refuses a missing page or block",
   "src/components/TabBar.tsx#currentTabDropTarget": "tab drop target (pane/tab ids, not graph content)",
   "src/document/model.ts#collapseEpochState": "a counter compared for equality by embed folds, never written back to a graph; cleared by resetStore (clearCollapseEpochs)",
   "src/document/edits/selection.ts#selAnchor": "cleared by clearOnBindingInvalidated",
