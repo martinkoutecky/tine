@@ -14,6 +14,7 @@ import { backend } from "../backend";
 import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, node as docNode } from "../document";
 import { visibleBody } from "../render/block";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
+import { TaggedPages } from "./TaggedPages";
 import { LinkedReferences } from "./LinkedReferences";
 import { PageTypingTarget } from "./Page";
 import { UnlinkedReferences } from "./UnlinkedReferences";
@@ -324,6 +325,9 @@ function PageItem(props: {
             <PageTypingTarget page={page} surface={props.surfaceKey} />
             {/* OG shows a page's Linked/Unlinked References in the sidebar view too,
                 not just the main pane. Same lazy components, so this stays cheap. */}
+            <Show when={props.item.pageKind !== "journal"}>
+              <FailureBoundary region="Tagged Pages"><TaggedPages name={props.item.name} /></FailureBoundary>
+            </Show>
             <FailureBoundary region="Linked References">
               <LinkedReferences name={props.item.name} />
             </FailureBoundary>

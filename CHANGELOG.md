@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Fixed
+- Render block properties as linked keys on separate rows with OG duplicate/group precedence, shade block embeds in both themes, and show pages tagged with the current page before references (GH #612, GH #610, GH #214).
 - An unexpected rendering failure in a PDF pane, sidebar item, query result, plugin settings view or dialog now reports its error within that surface with **Retry** and **Copy details**, while sibling surfaces remain usable (GH #490, GH #332; UI-OG-GH490-QBE).
 - Contributor instructions, harness scripts and historical records use portable paths, with a tracked-file guard against personal checkout paths (GH #579).
 - Multi-block context-menu copy, cut, references, embeds and delete now act on the whole selection and use plural labels (GH #591).

@@ -4289,7 +4289,13 @@ html[data-system-insets="native-viewport"] {
 }
 
 .block-properties .prop {
-  margin-right: 12px;
+  display: block;
+}
+
+.tagged-pages .references-header {
+  border: 0;
+  background: transparent;
+  padding: 0;
 }
 
 /* ---------------------------------------------------------------- inline */
@@ -7418,6 +7424,8 @@ img.emoji {
 }
 
 .embed-block {
+  background: var(--bg-secondary);
+  border-radius: 4px;
   border-left: 3px solid var(--border-color);
   padding-left: 12px;
   margin: 2px 0;
