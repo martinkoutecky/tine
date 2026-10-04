@@ -432,3 +432,24 @@ fn guide_says_the_launch_backup_waits_for_a_quiet_start() {
     );
     assert!(!files.contains("about a second after opening"));
 }
+
+#[test]
+fn guide_explains_hierarchy_queries_and_empty_relations() {
+    let page = bundled_guide_pages()
+        .into_iter()
+        .find(|page| page.title == "Workflows/Find and revisit")
+        .unwrap();
+    for meaning in [
+        "`parent` (direct parent)",
+        "`ancestors` (all parents above)",
+        "`descendants` (all blocks below, at any depth)",
+        "the result is the anchor block",
+        "`any` is false and `none` and `every` are true",
+        "any(ancestors, content match 'project')",
+    ] {
+        assert!(
+            page.markdown.contains(meaning),
+            "missing hierarchy query guidance: {meaning}"
+        );
+    }
+}

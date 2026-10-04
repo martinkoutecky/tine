@@ -249,13 +249,13 @@ impl Plan {
                 out.push(Hit::PageProperty);
             }
         }
-        struct Roots<'a, 'o, 'c> {
+        struct Roots<'a, 'o, 'c, 'data> {
             filter: &'c Filter,
-            ctx: &'c EvalCtx<'c>,
+            ctx: &'c EvalCtx<'data>,
             matched: Vec<bool>,
             out: &'o mut Vec<Hit<'a>>,
         }
-        impl<'a> PathRefVisitor<'a, DocBlock> for Roots<'a, '_, '_> {
+        impl<'a> PathRefVisitor<'a, DocBlock> for Roots<'a, '_, '_, '_> {
             fn enter(&mut self, block: &'a DocBlock, ancestors: &PathRefCounts) {
                 let hit = eval::eval_block(self.filter, block, ancestors, self.ctx);
                 if hit && !self.matched.last().copied().unwrap_or(false) {
@@ -418,7 +418,7 @@ fn cost(filter: &Filter) -> u8 {
                 Rel::Refs | Rel::Tags => 1,
                 Rel::Page => 2,
                 Rel::Props => 3,
-                Rel::Children | Rel::Blocks => 6,
+                Rel::Children | Rel::Parent | Rel::Ancestors | Rel::Descendants | Rel::Blocks => 6,
             },
         },
         _ => 0,

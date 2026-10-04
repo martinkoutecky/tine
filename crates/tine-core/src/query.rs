@@ -52,6 +52,8 @@ pub mod print;
 #[allow(missing_docs)]
 pub mod registry;
 #[allow(missing_docs)]
+mod relations;
+#[allow(missing_docs)]
 pub mod sort;
 #[allow(missing_docs)]
 pub mod statistics;

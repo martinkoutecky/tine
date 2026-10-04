@@ -121,6 +121,9 @@ fn every_filter_variant() -> Filter {
                 Filter::attr(Attr::AtomCount, CmpOp::Lt, Value::Number { number: 5.0 }),
             ]),
         ),
+        Filter::rel(Rel::Parent, Quant::Any, Filter::True),
+        Filter::rel(Rel::Ancestors, Quant::None, Filter::False),
+        Filter::rel(Rel::Descendants, Quant::Every, Filter::True),
         Filter::rel(
             Rel::Children,
             Quant::Any,

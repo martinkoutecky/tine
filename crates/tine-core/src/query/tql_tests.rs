@@ -949,3 +949,20 @@ fn door2_nested_sql_is_bounded_while_wide_lists_and_long_literals_remain_valid()
     assert!(!parse(&format!("task in ({list})")).is_invalid());
     assert!(!parse(&format!("content = '{}'", "x".repeat(50_000))).is_invalid());
 }
+
+#[test]
+fn hierarchy_relations_bind_block_predicates_and_refuse_page_scope() {
+    for relation in ["parent", "ancestors", "descendants"] {
+        for quant in ["any", "none", "every"] {
+            let source = format!("{quant}({relation}, task = 'TODO')");
+            let query = parse(&source);
+            assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+            let page = parse(&format!("@page and {source}"));
+            assert!(page.is_invalid());
+            assert!(page
+                .diagnostics
+                .iter()
+                .any(|d| d.kind == DiagnosticKind::NotApplicable));
+        }
+    }
+}

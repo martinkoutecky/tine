@@ -65,6 +65,19 @@ impl Dialect for BooleanDialect {
         left: &Expr,
         precedence: u8,
     ) -> Option<Result<Expr, ParserError>> {
+        // sqlparser's SQLite MATCH hook uses parse_expr(), swallowing a
+        // following AND/OR into the right operand. Respect infix precedence.
+        if parser.parse_keyword(Keyword::MATCH) {
+            return Some(
+                parser
+                    .parse_subexpr(precedence)
+                    .map(|right| Expr::BinaryOp {
+                        left: Box::new(left.clone()),
+                        op: BinaryOperator::Match,
+                        right: Box::new(right),
+                    }),
+            );
+        }
         let (keyword, tag) = match &parser.peek_token().token {
             Token::Word(word) if word.keyword == Keyword::AND => (Keyword::AND, AND),
             Token::Word(word) if word.keyword == Keyword::OR => (Keyword::OR, OR),

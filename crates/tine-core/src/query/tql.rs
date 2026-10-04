@@ -945,16 +945,26 @@ impl Lower<'_> {
             );
         };
         match (ident.value.to_ascii_lowercase().as_str(), scope) {
-            ("children", Scope::Block) => {
+            (name @ ("children" | "parent" | "ancestors" | "descendants"), Scope::Block) => {
                 let pred = self.filter(pred, Scope::Block);
-                Filter::rel(Rel::Children, quant, pred)
+                Filter::rel(
+                    match name {
+                        "parent" => Rel::Parent,
+                        "ancestors" => Rel::Ancestors,
+                        "descendants" => Rel::Descendants,
+                        _ => Rel::Children,
+                    },
+                    quant,
+                    pred,
+                )
             }
             ("blocks", Scope::Page) => {
                 let pred = self.filter(pred, Scope::Block);
                 Filter::rel(Rel::Blocks, quant, pred)
             }
             // The relation exists — on the other row (§7.4).
-            (name @ "children", Scope::Page) | (name @ "blocks", Scope::Block) => {
+            (name @ ("children" | "parent" | "ancestors" | "descendants"), Scope::Page)
+            | (name @ "blocks", Scope::Block) => {
                 self.park_not_applicable(name, scope, Vec::new());
                 Filter::False
             }
