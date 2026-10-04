@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - PDF `file://` links now open in the desktop's default viewer with their full path, without redirecting to graph assets or creating annotation pages (GH #577).
 - Android and iOS startup no longer shows “Couldn’t read the window state” from an unsupported desktop maximize query (GH #621).
 - Journals feed days now show Linked References with counts and the shared collapse/filter controls, loading as you scroll and hiding empty sections (GH #481).
+- Code cards keep their surrounding layout on entering/leaving edit, including empty code and long lines (GH #474, layout only). Empty code wrappers can be removed with Backspace, and right-click at a desktop code caret offers the existing block deletion action (GH #488).
 - Mobile block swipes reveal distinct indent, outdent and more icons before release; left swipes now have a wider outdent band (40–139 px), with actions at 140 px, so a natural swipe is less likely to open the menu (UI-OG-QBF-SWIPE).
 - Render block properties as linked keys on separate rows with OG duplicate/group precedence, shade block embeds in both themes, and show pages tagged with the current page before references (GH #612, GH #610, GH #214).
 - An unexpected rendering failure in a PDF pane, sidebar item, query result, plugin settings view or dialog now reports its error within that surface with **Retry** and **Copy details**, while sibling surfaces remain usable (GH #490, GH #332; UI-OG-GH490-QBE).

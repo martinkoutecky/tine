@@ -1,7 +1,7 @@
 /** Small stateless pieces of the block view and editor, split out of Block.tsx:
  * task-marker/checkbox toggles on one block (each one `setRaw` of that block),
  * the clock badge and calendar glyph, and pure text/DOM helpers the editor uses
- * (in-block list line detection, first visible line, nearest vertical scroller,
+ * (in-block list line detection, first visible line, nearest vertical scroller, scroll-preserving textarea sizing,
  * HH:MM stamp). None of them reads or writes anything beyond its arguments and,
  * for the two toggles, the block they name. */
 import { For, type JSX } from "solid-js";
@@ -85,6 +85,23 @@ export function nearestScrollableY(el: HTMLElement): HTMLElement | null {
     n = n.parentElement;
   }
   return null;
+}
+
+/** Fit a border-box textarea's rendered content, O(editor content), preserving the
+ * nearest vertically scrollable ancestor's scrollTop across measurement and the
+ * final height assignment. Detached editors are ignored; uses current CSS/width. */
+export function resizeBlockEditor(editor: HTMLTextAreaElement): void {
+  if (!editor?.isConnected) return;
+  // WebKitGTK can reveal the caret during the transient height:auto collapse.
+  const scroller = nearestScrollableY(editor);
+  const top = scroller?.scrollTop;
+  editor.style.height = "auto";
+  // scrollHeight excludes borders even though the height uses border-box.
+  const style = getComputedStyle(editor);
+  const borders = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+  const scrollbar = Math.max(0, editor.offsetHeight - editor.clientHeight - borders);
+  editor.style.height = `${editor.scrollHeight + borders + scrollbar}px`;
+  if (scroller && top !== undefined && scroller.scrollTop !== top) scroller.scrollTop = top;
 }
 
 /** First visible (non-`key:: value`) line of a block's raw markdown — what the
