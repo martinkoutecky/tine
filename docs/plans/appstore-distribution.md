@@ -84,7 +84,7 @@ verification (routine) and, if we later want it, reproducible-builds.
   ("unable to write credential store: Device or resource busy"). Fixed by pointing git at a
   writable temp config: `GIT_CONFIG_GLOBAL=<tmp> GIT_CONFIG_SYSTEM=/dev/null` with
   `credential.helper=` empty. Also pre-clone into `build/dev.tine.app` to satisfy
-  fdroidserver's `SOURCE_DATE_EPOCH` step. Reusable harness: `/aux/koutecky/logseq/fdroid-work/`.
+  fdroidserver's `SOURCE_DATE_EPOCH` step. Reusable harness kept in the private F-Droid work directory.
 
 ### A2 details
 
@@ -161,7 +161,7 @@ minor·1e3 + patch`, per `release.yml`), **NDK `26.3.11579264`**, `compileSdk 36
    from source.
 2. ✅ **Metadata written + recipe validated.** `fdroid lint`/scanner/`fdroid build` all pass
    locally (fdroidserver 2.4.5) → valid unsigned APK `dev.tine.app_4000.apk`
-   (`versionCode=4000 versionName=0.4.0`). Harness kept at `/aux/koutecky/logseq/fdroid-work/`
+   (`versionCode=4000 versionName=0.4.0`). Harness kept in the private F-Droid work directory
    (venv + `fdroiddata/` + `run-build.sh`) to re-run after any change. **Re-validate at the
    v0.4.2 tag** (versionCode 4002, no toolchain file) before the MR.
 3. **Point the metadata `commit:`/`versionCode:` at the latest complete release tag** (v0.4.2 /

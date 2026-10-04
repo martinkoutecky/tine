@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 - An unexpected rendering failure in a PDF pane, sidebar item, query result, plugin settings view or dialog now reports its error within that surface with **Retry** and **Copy details**, while sibling surfaces remain usable (GH #490, GH #332; UI-OG-GH490-QBE).
+- Contributor instructions, harness scripts and historical records use portable paths, with a tracked-file guard against personal checkout paths (GH #579).
 - Query blocks with title options no longer leave a stray `}` below their results. A damaged macro now reports that its source could not be parsed and stays editable, instead of showing All pages or failing a builder edit with “The block changed while saving” (UI-OG-QUERY-MACRO-BRACE).
 - A page containing a lone carriage return (a CR not followed by LF, for example `key::` ended by CR) no longer shows "This page could not be displayed. Unreachable code should not be executed" and no longer breaks every later page: the lsdoc parser (v0.5.8) now handles bare CRs as Logseq's parser does, and any future parser panic is confined to the one call that caused it.
 - Saving on a network or FUSE filesystem that cannot sync directories (some NFS mounts, Android shared storage) no longer fails: as on master, the errors such filesystems give for a directory sync (EBADF, EACCES, EISDIR, EINVAL) are tolerated, while a real I/O failure or a full disk still fails the save.

@@ -2,8 +2,8 @@
 //!
 //! **Atomization is transcribed (D-9, M22); typing is Tine's own — OG is
 //! untyped.** Every transcribed rule cites `deps/graph-parser/src/logseq/
-//! graph_parser/text.cljs` (and `property.cljs`) at the read-only OG checkout
-//! `/aux/koutecky/logseq/og` commit `6e7afa8eb` (`git describe`:
+//! graph_parser/text.cljs` (and `property.cljs`) in upstream Logseq at
+//! commit `6e7afa8eb` (`git describe`:
 //! `1.0.0-12-g6e7afa8eb`; the spec's "0.10.15" label is imprecise — Wave A
 //! recorded the correction).
 //!

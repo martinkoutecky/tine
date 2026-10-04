@@ -2,27 +2,24 @@
 """Generate an Ellis-shaped synthetic Logseq Markdown graph (GH #623).
 
 Input : nodes.csv, edges.csv, totals.txt (anonymous shape export; this directory)
-Output: /aux/koutecky/logseq/ds/ellis-graph/   (the graph)
-        /aux/koutecky/logseq/ds/ellis-graph-manifest.json (node id -> name/file, outside the graph)
+Output: target/ellis-graph/ (repository-relative default; override with --out)
+        target/ellis-graph-manifest.json (node id -> name/file, outside the graph)
 
 Stdlib only, deterministic (SEED). All text is synthetic: nothing is taken from the
 original graph (the export carries no text).  Assets are SPARSE files (truncate) so they
 cost no disk; the manifest records that.
 
-Usage: python3 generate.py [--out DIR] [--seed N]
+Usage: python3 .github/scripts/ellis-generate.py [--out DIR] [--seed N]
 """
-import csv, collections, datetime, json, math, os, random, sys, uuid
+import argparse, csv, collections, datetime, json, math, os, random, sys, uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = "/aux/koutecky/logseq/ds/ellis-graph"
-SEED = 623
-args = sys.argv[1:]
-while args:
-    a = args.pop(0)
-    if a == "--out":
-        OUT = args.pop(0)
-    elif a == "--seed":
-        SEED = int(args.pop(0))
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--out", default=os.path.abspath(os.path.join(HERE, "../../target/ellis-graph")))
+parser.add_argument("--seed", type=int, default=623)
+args = parser.parse_args()
+OUT = args.out
+SEED = args.seed
 MANIFEST = os.path.join(os.path.dirname(OUT.rstrip("/")), os.path.basename(OUT.rstrip("/")) + "-manifest.json")
 
 rng = random.Random(SEED)
