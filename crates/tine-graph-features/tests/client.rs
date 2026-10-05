@@ -158,34 +158,96 @@ fn source_scan_guard_clients_touch_no_path() {
     }
 }
 
+/// Canonical bytes of every Guide page, paired with its title, read from the
+/// bundled templates. The Guide's text lives in exactly one place (the
+/// templates); no test restates it.
+fn guide_pages() -> impl Iterator<Item = (&'static str, &'static str)> {
+    tine_core::guide::GUIDE_TEMPLATES
+        .iter()
+        .map(|template| (template.title, template.markdown))
+}
+
+/// Independent oracle for the page file names: the folder's file-name format
+/// is spelled out here (`/` -> `___` for the triple-lowbar config the demo
+/// ships, `/` -> `%2F` for a graph with no config) instead of calling the
+/// encoder under test. Titles outside the plain alphabet below would need real
+/// escaping, so the oracle refuses them rather than guessing.
+fn guide_file_name(title: &str, separator: &str) -> String {
+    assert!(
+        title
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || " /&,-".contains(c)),
+        "extend the independent file-name oracle for {title:?}"
+    );
+    format!("{}.md", title.replace('/', separator))
+}
+
+/// Every file of a freshly seeded Guide graph, expected from the canonical
+/// template bytes only.
+fn expected_demo_tree() -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut tree = std::collections::BTreeMap::new();
+    tree.insert(
+        "logseq/config.edn".to_string(),
+        tine_core::guide::CONFIG_EDN.as_bytes().to_vec(),
+    );
+    tree.insert(
+        "assets/quick-capture.png".to_string(),
+        tine_core::guide::QUICK_CAPTURE_PNG.to_vec(),
+    );
+    for (title, markdown) in guide_pages() {
+        tree.insert(
+            format!("pages/{}", guide_file_name(title, "___")),
+            markdown.as_bytes().to_vec(),
+        );
+    }
+    tree
+}
+
+fn assert_tree_is(root: &std::path::Path, expected: &std::collections::BTreeMap<String, Vec<u8>>) {
+    let actual: std::collections::BTreeMap<String, Vec<u8>> = disk_tree(root).into_iter().collect();
+    for (path, bytes) in expected {
+        match actual.get(path) {
+            Some(found) => assert!(found == bytes, "first differing path: {path}"),
+            None => panic!("first differing path: {path} (missing)"),
+        }
+    }
+    if let Some(path) = actual.keys().find(|path| !expected.contains_key(*path)) {
+        panic!("first differing path: {path} (unexpected)");
+    }
+}
+
 #[test]
-fn guide_creation_matches_legacy_tree_and_folder_choice() {
+fn guide_creation_writes_the_bundled_templates_and_chooses_a_folder() {
+    // Literal spot checks pin the independent file-name oracle itself.
+    let tree = expected_demo_tree();
+    assert_eq!(
+        tree.len(),
+        26 + 2,
+        "26 Guide pages, config.edn and the screenshot"
+    );
+    for name in [
+        "pages/Welcome to Tine.md",
+        "pages/Features___Sheets.md",
+        "pages/Feature showcase.md",
+        "pages/Reference___Files, external edits, and backups.md",
+        "pages/Features___Tips & shortcuts.md",
+    ] {
+        assert!(tree.contains_key(name), "{name}");
+    }
     let (empty, _) = fixture("demo-empty-new");
     fs::remove_dir(empty.join("pages")).unwrap();
     fs::remove_dir(empty.join("assets")).unwrap();
     assert_eq!(guide::create_demo_graph(&empty).unwrap(), empty);
-    assert_disk_tree(
-        &empty,
-        "guide_creation_matches_legacy_tree_and_folder_choice",
-        "empty_graph",
-    );
+    assert_tree_is(&empty, &tree);
 
     let (parent, _) = fixture("demo-parent");
     fs::write(parent.join("keep"), b"keep").unwrap();
     let first = guide::create_demo_graph(&parent).unwrap();
     assert_eq!(first, parent.join("tine-demo"));
-    assert_disk_tree(
-        &first,
-        "guide_creation_matches_legacy_tree_and_folder_choice",
-        "first_demo",
-    );
+    assert_tree_is(&first, &tree);
     let second = guide::create_demo_graph(&parent).unwrap();
     assert_eq!(second, parent.join("tine-demo-2"));
-    assert_disk_tree(
-        &second,
-        "guide_creation_matches_legacy_tree_and_folder_choice",
-        "second_demo",
-    );
+    assert_tree_is(&second, &tree);
     assert_eq!(fs::read(parent.join("keep")).unwrap(), b"keep");
 
     let file = parent.join("file");
@@ -224,12 +286,69 @@ fn guide_creation_matches_legacy_tree_and_folder_choice() {
 }
 
 #[test]
-fn guide_copy_matches_legacy_independent_steps() {
+fn guide_copy_rewrites_inter_guide_links_and_keeps_existing_files() {
+    // Independent rewrite oracle: a Guide link `[[T]]` to a bundled page T
+    // becomes `[[tine-guide/T]]` everywhere except inside fenced code, and a
+    // leading `title:: T` line is renamed. Plain string work, no parser.
+    fn rewritten(title: &str, markdown: &str, fenced_links: &mut usize) -> String {
+        let mut out = String::new();
+        let mut in_fence = false;
+        for line in markdown.split_inclusive('\n') {
+            if line.trim_start().starts_with("```") || line.trim_start().starts_with("- ```") {
+                in_fence = !in_fence;
+            }
+            let mut line = line.to_string();
+            for (other, _) in guide_pages() {
+                let link = format!("[[{other}]]");
+                if in_fence {
+                    *fenced_links += line.matches(&link).count();
+                } else {
+                    line = line.replace(&link, &format!("[[tine-guide/{other}]]"));
+                }
+            }
+            out.push_str(&line);
+        }
+        match out.strip_prefix(&format!("title:: {title}\n")) {
+            Some(rest) => format!("title:: tine-guide/{title}\n{rest}"),
+            None => out,
+        }
+    }
+    let mut fenced_links = 0;
+    let mut copies = std::collections::BTreeMap::new();
+    for (title, markdown) in guide_pages() {
+        copies.insert(
+            format!(
+                "pages/{}",
+                guide_file_name(&format!("tine-guide/{title}"), "%2F")
+            ),
+            rewritten(title, markdown, &mut fenced_links).into_bytes(),
+        );
+    }
+    assert!(
+        fenced_links > 0,
+        "the oracle's fenced-code branch must be exercised by a real Guide page"
+    );
+    // Literal anchors, so the oracle cannot drift together with the rewrite.
+    let welcome =
+        String::from_utf8_lossy(&copies["pages/tine-guide%2FWelcome to Tine.md"]).into_owned();
+    assert!(welcome.contains("[[tine-guide/Project/Roadmap]] \u{2014} click it."));
+    let showcase =
+        String::from_utf8_lossy(&copies["pages/tine-guide%2FFeature showcase.md"]).into_owned();
+    assert!(showcase.starts_with("title:: tine-guide/Feature showcase\n"));
+    assert!(showcase
+        .contains("- Labelled page link: [read the welcome]([[tine-guide/Welcome to Tine]])."));
+
+    let sheets = "pages/tine-guide%2FFeatures%2FSheets.md";
     for (case_idx, case) in ["empty", "page", "asset", "asset_dir"]
         .into_iter()
         .enumerate()
     {
         let (new_root, store) = fixture(&format!("guide-{case}-new"));
+        let mut expected = copies.clone();
+        expected.insert(
+            "assets/quick-capture.png".to_string(),
+            tine_core::guide::QUICK_CAPTURE_PNG.to_vec(),
+        );
         if case == "page" {
             let name = tine_core::guide::guide_copy_page_name("Features/Sheets");
             let file = format!(
@@ -240,12 +359,15 @@ fn guide_copy_matches_legacy_independent_steps() {
                 )
             );
             fs::write(new_root.join("pages").join(&file), b"existing").unwrap();
+            expected.insert(sheets.to_string(), b"existing".to_vec());
         }
         if case == "asset" {
             fs::write(new_root.join("assets/quick-capture.png"), b"existing").unwrap();
+            expected.insert("assets/quick-capture.png".to_string(), b"existing".to_vec());
         }
         if case == "asset_dir" {
             fs::create_dir(new_root.join("assets/quick-capture.png")).unwrap();
+            expected.remove("assets/quick-capture.png");
         }
         store.scan_refresh().unwrap();
         let actual = guide::copy_guide_into_graph(&store, "Features/Sheets").unwrap();
@@ -270,17 +392,7 @@ fn guide_copy_matches_legacy_independent_steps() {
                 _ => unreachable!(),
             },
         );
-        assert_disk_tree(
-            &new_root,
-            "guide_copy_matches_legacy_independent_steps",
-            match case_idx {
-                0 => "empty",
-                1 => "page",
-                2 => "asset",
-                3 => "asset_dir",
-                _ => unreachable!(),
-            },
-        );
+        assert_tree_is(&new_root, &expected);
     }
     let (_, store) = fixture("guide-unknown");
     assert_eq!(
