@@ -142,7 +142,6 @@ fn store::Store::path_for_os_handoff
 fn store::Store::asset_trash_location_for_user
 fn store::Store::read
 fn store::Store::scan_area
-fn store::Store::save
 fn store::Store::save_pages
 fn store::Store::trash_stats
 fn store::Store::purge_asset_trash

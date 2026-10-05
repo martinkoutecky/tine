@@ -102,8 +102,11 @@ pub fn source_path_for_os_handoff(
         })
 }
 
-/// Keep-mine reads the current UTF-8 revision and lets the save guard reject
-/// later edits. Cost O(page bytes + transaction publication).
+/// Test oracle: one-page save over tine-store's test-only `Store::save`.
+/// Production saves use [`save_pages`]. Keep-mine reads the current UTF-8
+/// revision and lets the save guard reject later edits. Cost O(page bytes +
+/// transaction publication).
+#[cfg(any(test, feature = "test-faults"))]
 pub fn save_page(
     store: &Store,
     kind: tine_store::EditKind,

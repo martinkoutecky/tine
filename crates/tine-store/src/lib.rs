@@ -6,7 +6,7 @@
 //! [`Store::read`] and [`Store::open_read`] provide raw file data. These calls
 //! are synchronous and should run off a UI thread.
 //!
-//! Use [`Store::save`] for one guarded page edit, or [`Transaction`] for a set
+//! Use [`Store::save_pages`] for guarded page edits, or [`Transaction`] for a set
 //! of guarded file changes, including a read-only revision expectation that
 //! can precede a dependent write. Structured page saves require an [`EditKind`]; raw
 //! page-file changes use [`Store::transaction`] with `Some(kind)`, while

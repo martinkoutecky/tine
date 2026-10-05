@@ -118,11 +118,12 @@ fn main() {
             doc.blocks[0].raw = format!("after {round}");
             measure(&format!("save-{blocks}-{round}"), || {
                 assert!(matches!(
-                    store.save(
-                        EditKind::ReplacePage,
-                        &id,
+                    single_save(
+                        &store,
+                        id.clone(),
                         SaveBase::Existing(read.rev),
-                        &doc
+                        doc.clone(),
+                        EditKind::ReplacePage
                     ),
                     SaveOutcome::Saved(_)
                 ));
@@ -139,4 +140,18 @@ fn main() {
     }
     std::hint::black_box(held);
     store.close();
+}
+
+/// One-page save through the production door, `Store::save_pages`.
+fn single_save(
+    store: &tine_store::Store,
+    id: tine_store::PageId,
+    base: tine_store::SaveBase,
+    doc: tine_core::model::PageDto,
+    kind: tine_store::EditKind,
+) -> tine_store::SaveOutcome {
+    match store.save_pages(&[(id, base, doc, vec![kind])]) {
+        tine_store::SavePagesOutcome::Ok { mut outcomes, .. } => outcomes.remove(0),
+        tine_store::SavePagesOutcome::Failed { outcome, .. } => outcome,
+    }
 }

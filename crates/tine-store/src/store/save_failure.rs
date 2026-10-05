@@ -1,6 +1,6 @@
-//! Page-save adapters over the guarded transaction path. A single save returns
-//! one revision or a refusal; a group save keeps failed rollback and publication
-//! file locations for recovery. Existing-page writes can copy O(P) page pointers
+//! Page-save adapters over the guarded transaction path. A group save keeps
+//! failed rollback and publication file locations for recovery; the test-only
+//! single save oracle returns one revision or a refusal. Existing-page writes can copy O(P) page pointers
 //! while a graph view is held. Callers retain unsaved edits on every failure.
 //! Group success includes its published Change: serialization carries bounded
 //! reference-count updates and name-inventory invalidation, shared with watchers.
@@ -8,6 +8,9 @@
 use super::*;
 
 impl Store {
+    /// Test oracle (og-surface rule 4): production saves go through
+    /// [`Store::save_pages`]; this one-entry adapter exists for tests only.
+    ///
     /// Save one page with a raw-byte [`SaveBase`] guard. Revalidates the
     /// caller-constructible identity, reads current disk bytes, and uses
     /// temporary-file replacement; the temp file is synced before rename and
@@ -73,6 +76,7 @@ impl Store {
     /// republished as an external watcher echo. Keep unsaved edits on every
     /// refusal.
     /// An incomplete rollback or publication returns `Io` naming the page; inspect disk before retrying.
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn save(
         &self,
         kind: crate::EditKind,
@@ -189,6 +193,7 @@ impl Store {
 /// Return outcome unchanged when no undo step or publication failed. Otherwise
 /// return Io naming the page and what is incomplete, asking the caller to inspect
 /// disk before retrying, regardless of the original refusal. No I/O; O(1).
+#[cfg(any(test, feature = "test-faults"))]
 fn single_page_failure(
     outcome: SaveOutcome,
     undo_failed: &[FileId],
