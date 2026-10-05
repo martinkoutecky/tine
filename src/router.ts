@@ -24,11 +24,9 @@ import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./e
 import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 export type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 
-const QUERY_PRESENTATIONS: ReadonlySet<string> = new Set(VIEW_KINDS);
-
 /** The one reader of a query presentation; null is "unreadable". */
 export function normalizeQueryPresentation(value: unknown): QueryPresentation | null {
-  return typeof value === "string" && QUERY_PRESENTATIONS.has(value) ? value as QueryPresentation : null;
+  return typeof value === "string" && (VIEW_KINDS as readonly string[]).includes(value) ? value as QueryPresentation : null;
 }
 
 /** What one atomic edit to the active query workspace may change. For each display
