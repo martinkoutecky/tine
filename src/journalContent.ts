@@ -1,21 +1,20 @@
-// Shared fixture with tine-store::model::doc_has_content:
-// tests/fixtures/journal-content.json. Keep this DTO-side predicate aligned
-// with Rust because both decide whether a journal template may replace a page.
+// The journal-template guard (graph.ts ensureJournalTemplateForDay). It answers a
+// different question from tine-store's `doc_has_content` (which journal days the
+// calendar and carry treat as written): a template may replace a journal only when
+// the user has written nothing in it at all. Port of master's `blockTreeHasText`
+// (GH #550). OG goes further and fills only an absent or blank file.
 interface ContentBlock { raw: string; children: readonly ContentBlock[] }
 
-/** True when any block in this page contains text a template must not replace, including
- * descendants. Cost: O(blocks and text of one page). Pure; no I/O or failure
- * fallback. Callers do not need to know the nesting or property-line grammar.
- * Keep the shared fixture aligned with tine-store::model::doc_has_content. */
+/** True when any block in this page, including descendants, holds any
+ * non-whitespace text. Deliberately format- and grammar-free: Org prose, a
+ * property-shaped line and a root-level `id::` are all the user's (OG-C5
+ * L12-S1), and the template replaces every root. Cost O(blocks + text of one
+ * page), iterative so nesting depth cannot overflow the stack; pure. */
 export function journalHasContent(blocks: readonly ContentBlock[]): boolean {
-  const propertyLine = /^[ \t\x1a\x0c]*[^: \t\x1a\x0c\r\n]+::(?: |[ \t\x1a\x0c]*$)/u;
   const pending = [...blocks];
   while (pending.length) {
     const block = pending.pop()!;
-    if (block.raw.split("\n").some((line: string) => {
-      const trimmed = line.trim();
-      return trimmed !== "" && (line.trimStart().startsWith("#") || !propertyLine.test(line));
-    })) return true;
+    if (block.raw.trim() !== "") return true;
     pending.push(...block.children);
   }
   return false;
