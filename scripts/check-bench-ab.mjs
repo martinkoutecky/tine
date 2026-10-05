@@ -49,14 +49,20 @@ for (const [name, budget] of Object.entries(policy.metrics)) {
     failures.push(`${name}: missing or invalid median-of-round-mins measurement`);
     continue;
   }
-  const vsOld = ((value / old) - 1) * 100;
-  const vsPrev = ((value / prev) - 1) * 100;
+  // A metric may carry a fixed allowance for a deliberate, measured cost
+  // (bounded to one 60 Hz frame by check-bench-policy.mjs). It is subtracted
+  // from the candidate before the percentage budgets apply, so any growth
+  // beyond that one cost still fails against both unchanged anchors.
+  const allowance = budget.allowanceMs ?? 0;
+  if (allowance) console.log(`${name}: ${allowance} ms allowance (${budget.allowanceReason})`);
+  const vsOld = (((value - allowance) / old) - 1) * 100;
+  const vsPrev = (((value - allowance) / prev) - 1) * 100;
   const candidateRoundMins = candidate.metrics?.[name]?.roundMins;
   const candidateSlowest = Array.isArray(candidateRoundMins) && candidateRoundMins.length > 0
     ? Math.max(...candidateRoundMins)
     : Number.NaN;
-  const slowestVsOld = ((candidateSlowest / old) - 1) * 100;
-  const slowestVsPrev = ((candidateSlowest / prev) - 1) * 100;
+  const slowestVsOld = (((candidateSlowest - allowance) / old) - 1) * 100;
+  const slowestVsPrev = (((candidateSlowest - allowance) / prev) - 1) * 100;
   // Full max/min spread is still useful diagnostic evidence, but it is
   // symmetric: one unusually fast round can exceed the threshold even when
   // every regression comparison is safe. Tolerate high spread only when the

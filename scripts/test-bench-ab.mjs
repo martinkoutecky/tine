@@ -62,7 +62,10 @@ try {
   // flipped run 29395811537. Its median comparison is harmless, but reliability
   // must fail independently.
   const unstableImmutable = measurement("immutable", [100, 101, 99], [75.4, 100, 100.2]);
-  const unstable = check(stableCandidate, unstableImmutable, stablePrevious);
+  // Candidate stays above the anchor after scrollBig's one-frame allowance,
+  // so the favorable-candidate waiver cannot mask the anchor's spread.
+  const unfavorableCandidate = measurement("candidate", [110, 111, 109], [130, 131, 129]);
+  const unstable = check(unfavorableCandidate, unstableImmutable, stablePrevious);
   assert.notEqual(unstable.status, 0);
   assert.match(`${unstable.stdout}\n${unstable.stderr}`, /immutable\/scrollBig: .*round spread exceeds/);
 
@@ -91,6 +94,23 @@ try {
   const regressed = check(regressedCandidate, stableImmutable, stablePrevious);
   assert.notEqual(regressed.status, 0);
   assert.match(`${regressed.stdout}\n${regressed.stderr}`, /slower than immutable/);
+
+  // scrollBig carries a one-frame allowance (ADR 0072): one extra frame
+  // passes, anything more still fails against the unchanged anchors.
+  assert.equal(policy.metrics.scrollBig.allowanceMs, 17);
+  const oneFrame = check(
+    measurement("candidate", [110, 111, 109], [117, 118, 116]),
+    stableImmutable,
+    stablePrevious,
+  );
+  assert.equal(oneFrame.status, 0, oneFrame.stderr || oneFrame.stdout);
+  const beyondFrame = check(
+    measurement("candidate", [110, 111, 109], [150, 151, 149]),
+    stableImmutable,
+    stablePrevious,
+  );
+  assert.notEqual(beyondFrame.status, 0);
+  assert.match(`${beyondFrame.stdout}\n${beyondFrame.stderr}`, /scrollBig: .*slower than/);
 
   assert.equal(policy.reliability.rounds, 3);
   console.log("Performance A/B multi-round reliability fixtures passed.");

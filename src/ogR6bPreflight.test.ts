@@ -17,5 +17,10 @@ it("keeps every inherited performance budget and the immutable anchor", () => {
   const after = JSON.parse(readFileSync("scripts/bench-policy.json", "utf8"));
   delete before.previousRelease;
   delete after.previousRelease;
+  // The only added term: scrollBig's one-frame ADR 0072 allowance (Martin
+  // 2026-10-05). Anchors and percentage budgets stay exactly as inherited.
+  expect(after.metrics.scrollBig.allowanceMs).toBe(17);
+  delete after.metrics.scrollBig.allowanceMs;
+  delete after.metrics.scrollBig.allowanceReason;
   expect(after).toEqual(before);
 });

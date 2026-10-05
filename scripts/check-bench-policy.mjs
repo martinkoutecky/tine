@@ -22,6 +22,16 @@ for (const [name, budget] of Object.entries(policy.metrics ?? {})) {
   if (!Number.isFinite(budget.maxRoundSpreadPct) || budget.maxRoundSpreadPct <= 0) {
     problems.push(`${name} is missing a positive maxRoundSpreadPct reliability budget`);
   }
+  if (budget.allowanceMs !== undefined) {
+    // One frame at 60 Hz, for a deliberate cost recorded in an ADR; never a
+    // general loosening.
+    if (!Number.isFinite(budget.allowanceMs) || budget.allowanceMs <= 0 || budget.allowanceMs > 17) {
+      problems.push(`${name} allowanceMs must be in (0, 17]`);
+    }
+    if (!/ADR \d{4}/.test(budget.allowanceReason ?? "")) {
+      problems.push(`${name} allowanceMs needs an allowanceReason citing its ADR`);
+    }
+  }
 }
 
 function argument(name) {
