@@ -238,7 +238,10 @@ fn linux_copy_image(bytes: &[u8]) -> Result<(), String> {
             "xsel" => &["--clipboard", "--input"],
             _ => &[],
         };
-        (prog.to_string(), args.iter().map(|a| a.to_string()).collect())
+        (
+            prog.to_string(),
+            args.iter().map(|a| a.to_string()).collect(),
+        )
     };
     let names: [&str; 3] = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         ["wl-copy", "xclip", "xsel"]
@@ -945,8 +948,11 @@ mod file_url_tests {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod clipboard_tool_tests {
+    // Script tools need a POSIX shell; an inner cfg keeps the module visible to
+    // the production-source scan (og-enforcement) as test code.
+    #![cfg(target_os = "linux")]
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use std::time::{Duration, Instant};
@@ -958,7 +964,11 @@ mod clipboard_tool_tests {
         (path.to_string_lossy().into_owned(), Vec::new())
     }
     fn pid_of(dir: &std::path::Path, file: &str) -> u32 {
-        std::fs::read_to_string(dir.join(file)).unwrap().trim().parse().unwrap()
+        std::fs::read_to_string(dir.join(file))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
     }
     /// The process still has a /proc entry: running, or a zombie nobody waited for.
     fn lingers(pid: u32) -> bool {
@@ -1003,12 +1013,19 @@ mod clipboard_tool_tests {
         let pidfile = dir.path().join("pid");
         let tools = vec![
             // Records its pid and exits without reading: the 4 MiB write hits EPIPE.
-            script(dir.path(), "deaf", &format!("echo $$ > {}", pidfile.display())),
+            script(
+                dir.path(),
+                "deaf",
+                &format!("echo $$ > {}", pidfile.display()),
+            ),
             script(dir.path(), "good", "cat >/dev/null"),
         ];
         assert!(copy_with_tools(&tools, &vec![0u8; 4 << 20], QUICK).is_ok());
         let pid = pid_of(dir.path(), "pid");
-        assert!(!lingers(pid), "the abandoned tool {pid} was left as a zombie");
+        assert!(
+            !lingers(pid),
+            "the abandoned tool {pid} was left as a zombie"
+        );
     }
 
     #[test]
@@ -1018,7 +1035,10 @@ mod clipboard_tool_tests {
         let tools = vec![script(
             dir.path(),
             "server",
-            &format!("echo $$ > {}; cat >/dev/null; exec sleep 30", pidfile.display()),
+            &format!(
+                "echo $$ > {}; cat >/dev/null; exec sleep 30",
+                pidfile.display()
+            ),
         )];
         let started = Instant::now();
         assert!(copy_with_tools(&tools, b"png", Duration::from_millis(200)).is_ok());
@@ -1031,14 +1051,21 @@ mod clipboard_tool_tests {
         while lingers(pid) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(!lingers(pid), "an exited serving tool {pid} was never reaped");
+        assert!(
+            !lingers(pid),
+            "an exited serving tool {pid} was never reaped"
+        );
     }
 
     #[test]
     fn spawn_reaped_collects_a_finished_opener() {
         let dir = tempfile::tempdir().unwrap();
         let pidfile = dir.path().join("pid");
-        let (prog, _) = script(dir.path(), "opener", &format!("echo $$ > {}", pidfile.display()));
+        let (prog, _) = script(
+            dir.path(),
+            "opener",
+            &format!("echo $$ > {}", pidfile.display()),
+        );
         spawn_reaped(&mut std::process::Command::new(prog)).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         while !pidfile.exists() && Instant::now() < deadline {

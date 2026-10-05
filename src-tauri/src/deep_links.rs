@@ -150,7 +150,10 @@ fn validate(request: &LinkRequest) -> Result<(), String> {
 fn page_holds_block(blocks: &[tine_core::model::BlockDto], wanted: &str) -> bool {
     blocks.iter().any(|block| {
         block.id == wanted
-            || block.properties.iter().any(|(key, value)| key == "id" && value == wanted)
+            || block
+                .properties
+                .iter()
+                .any(|(key, value)| key == "id" && value == wanted)
             || page_holds_block(&block.children, wanted)
     })
 }
