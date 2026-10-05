@@ -454,6 +454,12 @@ pub(crate) trait GraphRead {
             .map(|(alias, owner, _)| (alias, owner))
             .collect()
     }
+    /// The alias relation, indexed (see [`crate::query::AliasEdges`]). A
+    /// snapshot builds it once and carries it across saves that moved no
+    /// alias; the default builds it from the alias list on every call.
+    fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
+        Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))
+    }
     fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>>;
     fn block_page_hint(&self, uuid: &str) -> Option<String>;
     fn page_list_arc(&self) -> Arc<Vec<PageEntry>>;
@@ -480,6 +486,9 @@ impl<R: GraphRead> GraphRead for Arc<R> {
     }
     fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
         self.as_ref().page_aliases_with_owners()
+    }
+    fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
+        self.as_ref().alias_edges()
     }
     fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
         self.as_ref().observed_page_mtimes()
@@ -516,9 +525,12 @@ pub(crate) struct ReadSnapshot {
     alias_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     referenced_name_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     real_page_names: Arc<crate::query::RealPageNames>,
-    aliases: std::sync::OnceLock<Vec<(String, String, String)>>,
+    /// Shared so a save that moved no alias carries it by refcount (I-25).
+    aliases: std::sync::OnceLock<Arc<Vec<(String, String, String)>>>,
+    /// The alias relation indexed for component walks; derived from `aliases`.
+    alias_edges: std::sync::OnceLock<Arc<crate::query::AliasEdges>>,
     /// Alias owner paths keyed by `page_key(alias)`, in `aliases` order.
-    alias_owner_paths_by_key: std::sync::OnceLock<HashMap<String, Vec<String>>>,
+    alias_owner_paths_by_key: std::sync::OnceLock<Arc<HashMap<String, Vec<String>>>>,
     referenced_names: std::sync::OnceLock<Vec<String>>,
     block_ref_counts: std::sync::OnceLock<Arc<SharedMap<String, usize>>>,
     public_block_ref_counts: std::sync::OnceLock<Arc<HashMap<String, usize>>>,
@@ -544,7 +556,7 @@ impl ReadSnapshot {
                         .or_default()
                         .push(path);
                 }
-                map
+                Arc::new(map)
             })
             .get(key)
     }
@@ -715,6 +727,7 @@ impl ReadSnapshot {
             referenced_name_index,
             real_page_names,
             aliases: std::sync::OnceLock::new(),
+            alias_edges: std::sync::OnceLock::new(),
             alias_owner_paths_by_key: std::sync::OnceLock::new(),
             referenced_names: std::sync::OnceLock::new(),
             block_ref_counts: std::sync::OnceLock::new(),
@@ -870,10 +883,13 @@ impl ReadSnapshot {
     /// names, paths and per-page aliases, so it is unchanged.
     fn carry_alias_list_from(&self, old: &Self) {
         if let Some(aliases) = old.aliases.get() {
-            let _ = self.aliases.set(aliases.clone());
+            let _ = self.aliases.set(Arc::clone(aliases));
+        }
+        if let Some(edges) = old.alias_edges.get() {
+            let _ = self.alias_edges.set(Arc::clone(edges));
         }
         if let Some(by_key) = old.alias_owner_paths_by_key.get() {
-            let _ = self.alias_owner_paths_by_key.set(by_key.clone());
+            let _ = self.alias_owner_paths_by_key.set(Arc::clone(by_key));
         }
     }
 
@@ -1127,6 +1143,12 @@ impl GraphRead for ReadSnapshot {
             }
         }
     }
+    fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
+        Arc::clone(
+            self.alias_edges
+                .get_or_init(|| Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))),
+        )
+    }
     fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
         self.aliases
             .get_or_init(|| {
@@ -1153,11 +1175,14 @@ impl GraphRead for ReadSnapshot {
                     }
                 }
                 owned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-                owned
-                    .into_iter()
-                    .map(|(_, alias, owner, path)| (alias, owner, path))
-                    .collect()
+                Arc::new(
+                    owned
+                        .into_iter()
+                        .map(|(_, alias, owner, path)| (alias, owner, path))
+                        .collect(),
+                )
             })
+            .as_ref()
             .clone()
     }
     fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
@@ -3480,9 +3505,12 @@ impl SnapshotMemos {
         // Resolve aliases BEFORE taking the derived lock (page_aliases may take the
         // cache lock); never hold derived while taking cache.
         let (aliases, real_pages) = if scope == Scope::Predicates {
-            (graph.page_aliases(), crate::query::real_page_names(graph))
+            (graph.alias_edges(), crate::query::real_page_names(graph))
         } else {
-            (Vec::new(), Arc::new(crate::query::RealPageNames::new()))
+            (
+                Arc::new(crate::query::AliasEdges::default()),
+                Arc::new(crate::query::RealPageNames::new()),
+            )
         };
         let journal = crate::query::journal_format(graph.config());
         let today = tine_core::date::JournalDate::today().ordinal_key();
@@ -5752,11 +5780,16 @@ mod tests {
             has("linear ip", "Linear IP"),
             "bracketed tags:: value should appear"
         );
-        assert!(has("lp survey", "LP Survey"), "alias:: value should appear");
-        assert!(
-            has("paper notes", "Paper Notes"),
-            "aliases:: value should appear"
-        );
+        for alias in ["LP Survey", "Paper Notes"] {
+            let hit = crate::query::quick_switch(&snapshot, alias, 8)
+                .into_iter()
+                .find(|entry| tine_core::refs::same_page(&entry.name, alias));
+            assert_eq!(
+                hit.as_ref().map(|entry| entry.rel_path_str()),
+                Some("pages/paper.md"),
+                "an authored alias should be inserted while retaining its owning page identity"
+            );
+        }
         assert!(
             !has("private", "Private"),
             "quoted custom value stays literal"
@@ -5791,7 +5824,7 @@ mod tests {
         names: &[String],
         kind: ReferenceKind,
     ) {
-        let aliases = graph.page_aliases();
+        let aliases = graph.alias_edges();
         let real_pages = crate::query::real_page_names(graph);
         let journal = crate::query::journal_format(graph.config());
         let exact_paths = |pages: &[(PageEntry, Arc<Document>)]| {

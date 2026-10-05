@@ -422,40 +422,64 @@ fn sorted_alias_owners(
 mod page_names;
 pub(crate) use page_names::{real_page_names, RealPageNames};
 
+/// The alias relation of one generation, indexed once: normalized name to its
+/// alias-adjacent normalized names, and to the spellings it was written with.
+/// A component walk then costs O(component), not O(every alias in the graph)
+/// (I-25); a save that moves no alias carries the whole value by `Arc`.
+#[derive(Default)]
+pub(crate) struct AliasEdges {
+    neighbors: std::collections::HashMap<String, Vec<String>>,
+    originals: std::collections::HashMap<String, Vec<String>>,
+}
+
+impl AliasEdges {
+    pub(crate) fn new(aliases: &[(String, String)]) -> Self {
+        let mut edges = Self::default();
+        for (alias, owner) in aliases {
+            let alias_norm = refs::page_key(alias);
+            let owner_norm = refs::page_key(owner);
+            edges
+                .neighbors
+                .entry(alias_norm.clone())
+                .or_default()
+                .push(owner_norm.clone());
+            edges
+                .neighbors
+                .entry(owner_norm.clone())
+                .or_default()
+                .push(alias_norm.clone());
+            edges
+                .originals
+                .entry(alias_norm)
+                .or_default()
+                .push(alias.clone());
+            edges
+                .originals
+                .entry(owner_norm)
+                .or_default()
+                .push(owner.clone());
+        }
+        edges
+    }
+}
+
 /// Resolve a requested page/alias to its canonical display name, the complete
 /// alias-connected component, and the real page to exclude as self. The
 /// normalized component is shared by backlinks, unlinked references, and their
 /// scoped-invalidation predicates so those paths cannot drift.
 fn equivalent_page_names(
     real_pages: &RealPageNames,
-    aliases: &[(String, String)],
+    edges: &AliasEdges,
     target: &str,
 ) -> (String, Vec<String>, String) {
     let target_norm = refs::page_key(target);
-    let mut neighbors = std::collections::HashMap::<String, Vec<String>>::new();
-    let mut original_names = vec![(target_norm.clone(), target.to_string())];
-    for (alias, owner) in aliases {
-        let alias_norm = refs::page_key(alias);
-        let owner_norm = refs::page_key(owner);
-        neighbors
-            .entry(alias_norm.clone())
-            .or_default()
-            .push(owner_norm.clone());
-        neighbors
-            .entry(owner_norm.clone())
-            .or_default()
-            .push(alias_norm.clone());
-        original_names.push((alias_norm, alias.clone()));
-        original_names.push((owner_norm, owner.clone()));
-    }
-
     let mut component = std::collections::BTreeSet::new();
     let mut pending = vec![target_norm.clone()];
     while let Some(name) = pending.pop() {
         if !component.insert(name.clone()) {
             continue;
         }
-        if let Some(adjacent) = neighbors.get(&name) {
+        if let Some(adjacent) = edges.neighbors.get(&name) {
             pending.extend(adjacent.iter().cloned());
         }
     }
@@ -466,12 +490,18 @@ fn equivalent_page_names(
         .min()
         .cloned()
         .or_else(|| {
-            original_names
-                .iter()
-                .filter(|(key, _)| component.contains(key))
-                .map(|(_, original)| original)
+            // No real page in the component: the least spelling any member
+            // was written with, including the requested one.
+            std::iter::once(target)
+                .chain(
+                    component
+                        .iter()
+                        .filter_map(|name| edges.originals.get(name))
+                        .flatten()
+                        .map(String::as_str),
+                )
                 .min()
-                .cloned()
+                .map(str::to_owned)
         })
         .unwrap_or_else(|| target.to_string());
     let self_page = real_pages
@@ -483,10 +513,9 @@ fn equivalent_page_names(
 
 fn graph_equivalent_page_names(
     graph: &impl GraphRead,
-    aliases: &[(String, String)],
     target: &str,
 ) -> (String, Vec<String>, String) {
-    let mut resolved = equivalent_page_names(&real_page_names(graph), aliases, target);
+    let mut resolved = equivalent_page_names(&real_page_names(graph), &graph.alias_edges(), target);
     let format = journal_format(graph.config());
     let Some(target_day) = format.parse(target) else {
         return resolved;
@@ -857,8 +886,7 @@ fn collect_reference_occurrences_bounded(
 
 #[cfg(test)]
 pub(crate) fn backlinks(graph: &impl GraphRead, target: &str) -> Vec<RefGroup> {
-    let aliases = graph.page_aliases();
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
+    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target);
     collect_reference_occurrences(
         graph,
         &canonical,
@@ -874,8 +902,7 @@ pub(crate) fn backlinks_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
-    let aliases = graph.page_aliases();
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
+    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target);
     collect_reference_occurrences_bounded(
         graph,
         &canonical,
@@ -1009,8 +1036,7 @@ pub(crate) fn backlink_filter_context(
     target: &str,
     targets: &[BacklinkFilterTarget],
 ) -> BacklinkFilterContext {
-    let aliases = graph.page_aliases();
-    let (_, names_norm, _) = graph_equivalent_page_names(graph, &aliases, target);
+    let (_, names_norm, _) = graph_equivalent_page_names(graph, target);
     let excluded_refs = names_norm
         .into_iter()
         .collect::<std::collections::HashSet<_>>();
@@ -1160,8 +1186,7 @@ pub(crate) fn block_referrers_bounded(
 /// with the corresponding occurrence evidence.
 #[cfg(test)]
 pub(crate) fn unlinked_refs(graph: &impl GraphRead, target: &str) -> Vec<RefGroup> {
-    let aliases = graph.page_aliases();
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
+    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target);
     collect_reference_occurrences(
         graph,
         &canonical,
@@ -1177,8 +1202,7 @@ pub(crate) fn unlinked_refs_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
-    let aliases = graph.page_aliases();
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
+    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target);
     collect_reference_occurrences_bounded(
         graph,
         &canonical,
@@ -1220,7 +1244,7 @@ pub(crate) fn run_query_bounded(
 
 pub(crate) fn page_affects_backlinks(
     real_pages: &RealPageNames,
-    aliases: &[(String, String)],
+    aliases: &AliasEdges,
     journal: &JournalFormat,
     target: &str,
     entry: &PageEntry,
@@ -1263,7 +1287,7 @@ pub(crate) fn page_affects_backlinks(
 /// `unlinked_refs(target)`. Mirrors `unlinked_refs`'s matcher.
 pub(crate) fn page_affects_unlinked(
     real_pages: &RealPageNames,
-    aliases: &[(String, String)],
+    aliases: &AliasEdges,
     journal: &JournalFormat,
     target: &str,
     entry: &PageEntry,
@@ -4250,7 +4274,7 @@ mod tests {
             "every path-sorted alias edge must reach component resolution"
         );
         assert_eq!(
-            equivalent_page_names(&RealPageNames::new(), &aliases, "Z").0,
+            equivalent_page_names(&RealPageNames::new(), &AliasEdges::new(&aliases), "Z").0,
             "A"
         );
     }

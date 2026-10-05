@@ -317,8 +317,13 @@ impl Graph {
             alias_index: cell(state.alias_index),
             referenced_name_index: cell(derived.referenced_name_index),
             real_page_names: state.real_page_names,
-            aliases: cell(derived.aliases),
-            alias_owner_paths_by_key: cell(derived.alias_owner_paths_by_key.map(Sorted::into_map)),
+            aliases: cell(derived.aliases.map(Arc::new)),
+            alias_edges: std::sync::OnceLock::new(),
+            alias_owner_paths_by_key: cell(
+                derived
+                    .alias_owner_paths_by_key
+                    .map(|sorted| Arc::new(Sorted::into_map(sorted))),
+            ),
             referenced_names: cell(derived.referenced_names),
             block_ref_counts: cell(state.block_ref_counts),
             public_block_ref_counts: cell(derived.public_block_ref_counts.map(|counts| counts.0)),
@@ -363,11 +368,11 @@ impl DerivedState {
                 root: root.to_path_buf(),
             }),
             referenced_name_index: read.referenced_name_index.get().cloned(),
-            aliases: read.aliases.get().cloned(),
+            aliases: read.aliases.get().map(|aliases| aliases.as_ref().clone()),
             alias_owner_paths_by_key: read
                 .alias_owner_paths_by_key
                 .get()
-                .map(|map| Sorted(Arc::new(map.clone()))),
+                .map(|map| Sorted(Arc::clone(map))),
             referenced_names: read.referenced_names.get().cloned(),
             public_block_ref_counts: read.public_block_ref_counts.get().cloned().map(Sorted),
             derived_cache: read

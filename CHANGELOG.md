@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- Saving a page no longer re-walks every alias in the graph for each remembered backlinks answer, and an authored alias still appears in the quick switcher under its own spelling on its owning page (REG-OG-C5-Q-ALIAS-EDGES).
 - A query with a now bound (for example created_at between -1d and now) is recomputed on each run instead of repeating a stale answer for the rest of the day (REG-OG-C5-Q-MEMO-NOW).
 - Copying or exporting a block query result now includes the page-properties row when the query matched it, instead of reporting it as omitted (REG-OG-C5-Q-EXPORT-HEADER).
 - Editing a page so it gains a property that many pages already have no longer copies the whole list of those pages in the query index (REG-OG-C5-Q-POSTINGS-COST).
