@@ -146,10 +146,17 @@ function pageTexts(name: string): { raw: string; format: Format }[] {
  * way: replaying it would restore the pre-rename text. */
 function forgetMovedPages(touched: readonly RenameTouchedPage[]): { name: string; path: string }[] {
   const reloads: { name: string; path: string }[] = [];
+  const loadedByPath = new Map<string, (typeof doc.pages)[number]>();
+  for (const page of doc.pages) {
+    if (page.id !== undefined && !loadedByPath.has(page.id)) loadedByPath.set(page.id, page);
+  }
   for (const page of touched) {
-    const loaded = doc.pages.find((candidate) => candidate.id === page.path);
+    const loaded = loadedByPath.get(page.path);
     if (!loaded) continue;
-    if (page.moved) forgetPage(loaded.name);
+    if (page.moved) {
+      loadedByPath.delete(page.path);
+      forgetPage(loaded.name);
+    }
     else {
       invalidateUndoForPage(loaded.name);
       reloads.push({ name: loaded.name, path: page.path });

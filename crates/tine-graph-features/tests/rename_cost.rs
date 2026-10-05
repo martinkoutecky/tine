@@ -56,7 +56,7 @@ fn rename(pages_count: usize, referrers: usize) -> Counts {
 
 #[test]
 fn rename_cost_is_linear_in_referrers_and_flat_in_graph_size() {
-    let _case = CASE_LOCK.lock().unwrap();
+    let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let few = rename(60, 2);
     let many = rename(60, 30);
     let large = rename(600, 2);
@@ -89,4 +89,58 @@ fn rename_cost_is_linear_in_referrers_and_flat_in_graph_size() {
         "I-25: each extra referrer costs at most four whole-file reads (stage, verify, \
          pre-rename check, publication)"
     );
+}
+
+#[test]
+fn rename_publication_work_is_linear() {
+    let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    for referrers in [8, 64] {
+        let counts = rename(80, referrers);
+        assert!(counts.transaction_record_probes <= 6 * (referrers as u64 + 2),
+            "GH #623/I-25: final publication must inspect transaction records O(touched files), not O(referrers²); exemplar transaction/publication.rs: {counts:?}");
+    }
+}
+
+#[test]
+fn rename_publication_parses_only_changed_documents() {
+    let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    for referrers in [8, 64] {
+        let counts = rename(80, referrers);
+        assert!(counts.parses <= referrers as u64 + 2,
+            "GH #623/I-25: own reference rewrites must parse the new document once, without serializing/parsing the old one; exemplar model/transaction_publish.rs: {counts:?}");
+    }
+}
+
+#[test]
+fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
+    let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    for (blocks, bytes) in [(1, 22), (60, 1320)] {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("pages")).unwrap();
+        fs::write(root.path().join("pages/Target.md"), "- target\n").unwrap();
+        fs::write(
+            root.path().join("pages/Ref.md"),
+            "- links [[Target]] 0\n".repeat(blocks),
+        )
+        .unwrap();
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        cost_counters::reset();
+        pages::rename_page_expected(&store, "Target", "Renamed", None).unwrap();
+        let cost = cost_counters::snapshot();
+        assert_eq!(cost.files_written, 1);
+        assert_eq!(cost.bytes_written, bytes);
+        assert_eq!(
+            cost.fsyncs, 3,
+            "one temp sync + one referrer directory sync + source move directory sync"
+        );
+        assert_eq!(
+            fs::read_to_string(root.path().join("pages/Ref.md")).unwrap(),
+            "- links [[Renamed]] 0\n".repeat(blocks)
+        );
+        // The documented unit-cost values are pinned to this actual write path.
+        let contract = include_str!("../../../docs/storage-contract.md");
+        assert!(contract.contains("22/1,320 bytes"));
+        store.close();
+    }
 }

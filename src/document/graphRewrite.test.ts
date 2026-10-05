@@ -128,3 +128,36 @@ it("keeps rewritten referrers frozen until their disk reload lands (OG-P10C)", a
   finish(null); expect(await pending).toBe("renamed");
   expect(doc.pages).toHaveLength(0);
 });
+
+it("GH #623 refresh matches each loaded page once across a large touched set", async () => {
+  const loaded = Array.from({ length: 100 }, (_, i) => ({ name: `Ref${i}`, id: `pages/Ref${i}.md`, kind: "page" as const,
+    title: `Ref${i}`, preBlock: null, roots: [], format: "md" as const, readOnly: false, guide: false }));
+  const loadedCount = loaded.length;
+  setDoc({ byId: {}, pages: loaded, feed: [], loaded: true });
+  const touched = Array.from({ length: 200 }, (_, i) => ({ path: `pages/Ref${i}.md`, moved: false }));
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed", touched });
+  const reload = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
+  installRenameRefreshHandler(() => {});
+  // Count visits at the literal intent, before unreadable reloads drop pages.
+  let visits = 0;
+  const originalFind = doc.pages.find;
+  const find = vi.spyOn(doc.pages, "find").mockImplementation((predicate, thisArg) =>
+    originalFind.call(doc.pages, (page, index, array) => { visits++; return predicate.call(thisArg, page, index, array); }));
+  expect(await renamePageOnDisk("Old", "New")).toBe("renamed");
+  expect(reload).toHaveBeenCalledTimes(100);
+  expect(doc.pages).toHaveLength(0);
+  find.mockRestore();
+  expect(visits).toBeLessThanOrEqual(loadedCount + touched.length);
+});
+
+it("does not reload a moved page reported again in the touched set", async () => {
+  setDoc({ byId: {}, pages: [{ name: "Old", id: "pages/Old.md", kind: "page", title: "Old",
+    preBlock: null, roots: [], format: "md", readOnly: false, guide: false }], feed: [], loaded: true });
+  vi.spyOn(backend(), "renamePage").mockResolvedValueOnce({ outcome: "renamed",
+    touched: [{ path: "pages/Old.md", moved: true }, { path: "pages/Old.md", moved: false }] });
+  const reload = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
+  installRenameRefreshHandler(() => {});
+  expect(await renamePageOnDisk("Old", "New")).toBe("renamed");
+  expect(doc.pages).toHaveLength(0);
+  expect(reload).not.toHaveBeenCalled();
+});

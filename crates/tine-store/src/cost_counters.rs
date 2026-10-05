@@ -1,6 +1,7 @@
 //! Test-only accounting for the waited save and print paths.
 use std::sync::atomic::{AtomicU64, Ordering};
 
+static TRANSACTION_RECORD_PROBES: AtomicU64 = AtomicU64::new(0);
 static READDIR: AtomicU64 = AtomicU64::new(0);
 static FULL_READS: AtomicU64 = AtomicU64::new(0);
 static PREAMBLE_READS: AtomicU64 = AtomicU64::new(0);
@@ -29,6 +30,8 @@ static STORE_READS: AtomicU64 = AtomicU64::new(0);
 /// Primitive counts since the last reset. The fixture uses one process per case.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Counts {
+    /// Transaction plan/undo records inspected for final per-file publication.
+    pub transaction_record_probes: u64,
     /// Directory enumerations.
     pub readdir: u64,
     /// Complete page file reads.
@@ -92,6 +95,7 @@ pub struct Counts {
 /// O(number of counters), using relaxed atomic stores.
 pub fn reset() {
     for counter in [
+        &TRANSACTION_RECORD_PROBES,
         &READDIR,
         &FULL_READS,
         &PREAMBLE_READS,
@@ -125,6 +129,7 @@ pub fn reset() {
 /// multi-counter snapshot; concurrent activity may mix intervals. O(counters).
 pub fn snapshot() -> Counts {
     Counts {
+        transaction_record_probes: TRANSACTION_RECORD_PROBES.load(Ordering::Relaxed),
         readdir: READDIR.load(Ordering::Relaxed),
         full_reads: FULL_READS.load(Ordering::Relaxed),
         preamble_reads: PREAMBLE_READS.load(Ordering::Relaxed),
@@ -235,4 +240,9 @@ pub(crate) fn query_registry_pages_read() {
 }
 pub(crate) fn hash_read() {
     HASH_READS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(feature = "test-faults")]
+pub(crate) fn transaction_record_probe() {
+    TRANSACTION_RECORD_PROBES.fetch_add(1, Ordering::Relaxed);
 }

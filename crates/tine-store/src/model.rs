@@ -15,6 +15,7 @@ mod page_identity;
 mod page_parse;
 mod parse_depth;
 pub(crate) mod shape_stats;
+mod transaction_publish;
 pub(crate) use page_identity::configured_hidden;
 #[cfg(test)]
 use page_identity::effective_page_name;
@@ -4201,71 +4202,6 @@ impl Graph {
 
     pub(crate) fn transaction_note_delete(&self, path: &Path) {
         self.note_self_write(path, "<tx-deleted>".into());
-    }
-
-    pub(crate) fn transaction_publish_page(
-        &self,
-        path: &Path,
-        bytes: Option<&[u8]>,
-        saved: Option<&Document>,
-        file_set_changed: bool,
-    ) {
-        let before_gen = self.cache_generation();
-        match bytes {
-            Some(bytes) => {
-                if validate_parse_bytes_for_path(bytes, path).is_err() {
-                    self.invalidate_cache();
-                    return;
-                }
-                let Ok(content) = std::str::from_utf8(bytes) else {
-                    self.invalidate_cache();
-                    return;
-                };
-                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    if let Some(saved) = saved {
-                        #[cfg(test)]
-                        if self.cache.read().unwrap().is_none() {
-                            crate::store::pause_at_hook(&self.cold_cache_reconcile_pause);
-                        }
-                        if let Some(entry) = self.cacheable_page_entry(path) {
-                            self.cache_upsert(entry, saved.clone(), DiskObs::of(content));
-                        }
-                    } else {
-                        self.reconcile_page_content(path, content, false);
-                    }
-                }))
-                .is_err()
-                {
-                    self.invalidate_cache();
-                    self.page_index_failures
-                        .write()
-                        .unwrap()
-                        .push(self.rel_path(path));
-                }
-            }
-            None => {
-                let _ = self.forget_file_internal(path);
-            }
-        }
-        if file_set_changed {
-            *self.page_list_cache.write().unwrap() = None;
-            *self.find_entry_cache.write().unwrap() = None;
-        } else {
-            let after_gen = self.cache_generation();
-            if after_gen == before_gen || after_gen == before_gen + 1 {
-                if let Some((gen, _)) = self.page_list_cache.write().unwrap().as_mut() {
-                    if *gen == before_gen {
-                        *gen = after_gen;
-                    }
-                }
-                if let Some((gen, _)) = self.find_entry_cache.write().unwrap().as_mut() {
-                    if *gen == before_gen {
-                        *gen = after_gen;
-                    }
-                }
-            }
-        }
-        self.recent_writes.lock().unwrap().remove(path);
     }
 
     pub(crate) fn transaction_clear_page_marker(&self, path: &Path) {

@@ -29,6 +29,7 @@ mod move_file;
 #[path = "../tests/support/og_k1_pause.rs"]
 mod og_k1_pause;
 mod preflight;
+mod publication;
 mod read_checks;
 mod validation;
 use io_helpers::{
@@ -1718,191 +1719,21 @@ impl<'a> Transaction<'a> {
             }
         }
         self.spelling_entries.borrow_mut().clear();
-        let spelling_moves: HashSet<FileId> = plans
-            .iter()
-            .filter(|plan| Self::spelling_move(plan))
-            .flat_map(|plan| [plan.src.clone(), plan.dst.as_ref().unwrap().clone()])
-            .collect();
-        let mut changed_any = false;
-        let mut publication_errors = Vec::new();
-        let mut published_own = Vec::new();
-        let mut published_external = Vec::new();
-        for (name, baseline) in &before {
-            let id = FileId::from(name.clone());
-            let spelling_move = spelling_moves.contains(&id);
-            let mut path = match if spelling_move {
-                self.spelled_path(&id)
-            } else {
-                self.path(&id)
-            } {
-                Ok(path) => path,
-                Err(error) => {
-                    publication_errors.push((id.clone(), publication_path_error(&error)));
-                    self.store.graph.invalidate_cache();
-                    continue;
-                }
-            };
-            let missing_spelling = if spelling_move {
-                match self.listed_path(&path) {
-                    Ok(Some(actual)) => {
-                        path = actual;
-                        false
-                    }
-                    Ok(None) => true,
-                    Err(error) => {
-                        publication_errors.push((id.clone(), error.into()));
-                        self.store.graph.invalidate_cache();
-                        continue;
-                    }
-                }
-            } else {
-                false
-            };
-            if let Some(plan) = plans.iter().find(|plan| {
-                plan.opaque_rev.is_some() && (plan.src == id || plan.dst.as_ref() == Some(&id))
-            }) {
-                let before_rev = (plan.src == id).then(|| plan.opaque_rev.clone()).flatten();
-                let now_rev = match if missing_spelling {
-                    Err(io::Error::from(io::ErrorKind::NotFound))
-                } else {
-                    FileRev::from_file(&path)
-                } {
-                    Ok(rev) => Some(rev),
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                    Err(error) => {
-                        publication_errors.push((id.clone(), error.into()));
-                        self.store.graph.invalidate_cache();
-                        continue;
-                    }
-                };
-                if before_rev != now_rev {
-                    let kind = match (&before_rev, &now_rev) {
-                        (None, Some(_)) => ChangeKind::Created,
-                        (Some(_), None) => ChangeKind::Removed,
-                        _ => ChangeKind::Modified,
-                    };
-                    let own = done.iter().any(|record| {
-                        record.opaque_rev.is_some()
-                            && ((record.src == id
-                                && now_rev.is_none()
-                                && (record.moved || record.created))
-                                || (record.dst.as_ref() == Some(&id)
-                                    && record.created
-                                    && record.opaque_rev == now_rev))
-                    });
-                    let tuple = (id.clone(), kind, now_rev);
-                    if failure.is_some() && !own {
-                        published_external.push(tuple);
-                    } else {
-                        published_own.push(tuple);
-                    }
-                    changed_any = true;
-                    self.store.graph.invalidate_cache();
-                }
-                continue;
-            }
-            let now = match if fault(self.store, FaultPoint::PublicationReadIo) {
-                Err(io::Error::other("injected publication read error"))
-            } else if missing_spelling {
-                Err(io::Error::from(io::ErrorKind::NotFound))
-            } else if self.page(&id) {
-                crate::model::read_parse_bytes(&path)
-            } else {
-                fs::read(&path)
-            } {
-                Ok(bytes) => Some(bytes),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                Err(error) => {
-                    publication_errors.push((id.clone(), error.into()));
-                    self.store.graph.invalidate_cache();
-                    continue;
-                }
-            };
-            let own_final = done.iter().any(|record| {
-                if record.src != id && record.dst.as_ref() != Some(&id) {
-                    return false;
-                }
-                match (&record.new, &now) {
-                    (Some(Expected::Bytes(written)), Some(bytes)) => written == bytes,
-                    (Some(Expected::File(stage)), Some(bytes)) => {
-                        let now_rev = FileRev::from_bytes(bytes);
-                        record.new_rev.as_ref().is_some_and(|rev| *rev == now_rev)
-                            || (record.new_rev.is_none()
-                                && FileRev::from_file(stage).is_ok_and(|rev| rev == now_rev))
-                    }
-                    (_, None) => record.moved,
-                    _ => false,
-                }
-            });
-            if failure.is_some() && baseline.is_none() && now.is_some() && !own_final {
-                if !rollback.kept_external.iter().any(|(kept, _)| *kept == id) {
-                    rollback.kept_external.push((id.clone(), None));
-                }
-            }
-            if failure.is_some()
-                && baseline
-                    .as_ref()
-                    .is_some_and(|old| now.as_ref() != Some(old))
-            {
-                if now.is_some()
-                    && !own_final
-                    && !rollback.kept_external.iter().any(|(kept, _)| *kept == id)
-                {
-                    rollback.kept_external.push((id.clone(), None));
-                }
-                if !kept_old.contains(&id) {
-                    self.preserve_old(&id, baseline.as_ref().unwrap(), &mut rollback);
-                }
-            }
-            self.store.watch.settle_asset(&path);
-            if now.as_ref() != baseline.as_ref() {
-                let kind = match (baseline, &now) {
-                    (None, Some(_)) => ChangeKind::Created,
-                    (Some(_), None) => ChangeKind::Removed,
-                    _ => ChangeKind::Modified,
-                };
-                let tuple = (
-                    id.clone(),
-                    kind,
-                    now.as_ref().map(|bytes| FileRev::from_bytes(bytes)),
-                );
-                let external_after_undo = failure.is_some()
-                    && (rollback
-                        .kept_external
-                        .iter()
-                        .any(|(kept, recovery)| kept == &id && recovery.is_none())
-                        || !own_final);
-                if external_after_undo {
-                    published_external.push(tuple);
-                } else {
-                    published_own.push(tuple);
-                }
-            }
-            if self.page(&id) {
-                if now.as_ref() != baseline.as_ref() {
-                    changed_any = true;
-                    let saved_page = if failure.is_none() {
-                        plans
-                            .iter()
-                            .find(|plan| plan.src == id)
-                            .filter(|plan| plan.new.as_deref() == now.as_deref())
-                            .and_then(|plan| plan.saved_page.as_ref())
-                    } else {
-                        None
-                    };
-                    self.store.graph.transaction_publish_page(
-                        &path,
-                        now.as_deref(),
-                        saved_page,
-                        baseline.is_none() || now.is_none(),
-                    );
-                } else {
-                    self.store.graph.transaction_clear_page_marker(&path);
-                }
-            } else if now.as_ref() != baseline.as_ref() {
-                changed_any = true;
-            }
-        }
+        let publication::FilePublication {
+            changed_any,
+            spelling_moves,
+            publication_errors,
+            published_own,
+            published_external,
+        } = self.publish_final_files(
+            &plans,
+            &done,
+            &before,
+            failure.is_some(),
+            &mut rollback,
+            &kept_old,
+            &steps,
+        );
         if changed_any && self.store.graph.cache_generation() == starting_rev {
             self.store.graph.transaction_bump_generation();
         }

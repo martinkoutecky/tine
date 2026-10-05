@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- Page rename publication skips reparsing the old document and repeated transaction-record searches; loaded-page refresh uses one path lookup per touched page (GH #623).
 - Closing or switching PDFs no longer shows an annotation-loading error from a retired reader (GH #557).
 - Image picker and Upload keep the initiating editor through asset import, so delayed native blur does not discard the saved image link (GH #622, GH #493).
 - Journal date-format parity: honor legacy `:date-formatter` after the modern key, offer all Logseq formats, and render `E`/`EE` as abbreviated weekdays while keeping old titles readable (GH #332 follow-ups).

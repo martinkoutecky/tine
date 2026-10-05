@@ -1,23 +1,23 @@
 //! I-15/I-12: parsers at preparation, indexed identity at move preflight.
 #[test]
 fn save_publication_reuses_only_verified_prepared_bytes() {
-    let tx = include_str!("../src/transaction.rs");
+    let tx = include_str!("../src/transaction/publication.rs");
     assert!(tx.contains(".filter(|plan| plan.new.as_deref() == now.as_deref())"),
-        "I-4/I-15: publish a prepared parse only for its exact final bytes; exemplar transaction.rs post-apply sweep");
-    let model = include_str!("../src/model.rs");
+        "I-4/I-15: publish a prepared parse only for its exact final bytes; exemplar transaction/publication.rs post-apply sweep");
+    let model = include_str!("../src/model/transaction_publish.rs");
     let publish = model
-        .split("pub(crate) fn transaction_publish_page(")
+        .split("if let Some(saved) = saved {")
         .nth(1)
         .unwrap()
-        .split("pub(crate) fn transaction_clear_page_marker")
+        .split("} else if own_rename")
         .next()
         .unwrap();
     assert!(
         publish.contains("self.cache_upsert(entry, saved.clone(), DiskObs::of(content))"),
-        "I-15: publish the checked serialization parse; exemplar model.rs transaction_publish_page"
+        "I-15: publish the checked serialization parse; exemplar model/transaction_publish.rs verified saved branch"
     );
-    assert!(!publish.contains("parse_doc("),
-        "I-15: do not reparse a verified prepared page during publication; exemplar model.rs transaction_publish_page");
+    assert!(!publish.contains("parse_doc(") && !publish.contains("parse_page_content("),
+        "I-15: do not reparse a verified prepared page during publication; exemplar model/transaction_publish.rs verified saved branch");
     let layout = include_str!("../src/model/layout_retention.rs");
     assert!(layout.contains("let reparsed = super::parse_doc"),
         "I-4: retained layout must reparse the splice before publication; exemplar model/layout_retention.rs");

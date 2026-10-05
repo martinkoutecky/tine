@@ -283,3 +283,20 @@ folded-alias refusal, plain rename and failed spelling post-check. Actual
 folding-filesystem platform runtime proof remains separate. The retained
 payload test measures 10 B live plus 10 B old for 1 block and 600 B live plus
 600 B old for 60 blocks, with exactly one old-byte copy and zero staging copies.
+
+## Rename publication work (GH #623)
+
+Final publication indexes transaction plans and undo records once and matches
+each observed file only against its records. A successful own reference rewrite
+whose final bytes equal the guarded output parses the changed document once;
+there is no old-document serialization/parse comparison. Failed transactions
+and external bytes keep ordinary reconciliation. The revision observations,
+publication error reporting, path locks, ordered writes and undo remain the same.
+`rename_cost.rs` checks bounded record probes and changed-document parses at the
+literal feature/store entry. The frontend matches touched paths against loaded
+pages once; it still reloads only clean rewritten pages and discards moved pages.
+
+Unit cost: unchanged full referrer payload per file, one temporary payload file
+and two syncs per rewritten referrer, plus the source move's directory sync.
+The 1-/60-block referrer fixtures write 22/1,320 bytes respectively, measured by
+the temporary-payload counter; no new persisted record or transport bytes.
