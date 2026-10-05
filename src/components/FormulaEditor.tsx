@@ -106,9 +106,15 @@ function isKnownMember(ast: Ast): boolean {
 }
 
 function isSimpleValueAst(ast: Ast): boolean {
-  if (ast.kind === "literal" || ast.kind === "field" || ast.kind === "formulaRef") return true;
-  if (ast.kind === "call") return (ast.name === "now" || ast.name === "today") && ast.args.length === 0;
-  if (ast.kind === "member") return isKnownMember(ast) && isSimpleValueAst(ast.object) && ast.args?.every(isSimpleValueAst) !== false;
+  // A member chain is walked iteratively: the parser builds it in a loop, so it
+  // may be thousands of links long within the source cap (og C, I-22).
+  let cursor = ast;
+  while (cursor.kind === "member") {
+    if (!isKnownMember(cursor) || cursor.args?.every(isSimpleValueAst) === false) return false;
+    cursor = cursor.object;
+  }
+  if (cursor.kind === "literal" || cursor.kind === "field" || cursor.kind === "formulaRef") return true;
+  if (cursor.kind === "call") return (cursor.name === "now" || cursor.name === "today") && cursor.args.length === 0;
   return false;
 }
 

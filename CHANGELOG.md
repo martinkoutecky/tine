@@ -90,6 +90,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Backspace or Delete at a block edge no longer merges a block whose children would land deeper than the 128-level outline limit, which left the page unsavable; the merge is refused with an error (UI-OG-C5-C-MERGE-DEPTH).
 - A session or workspace whose saved pane layout is nested thousands of splits deep no longer loses the whole restore; the panes within the depth and pane bounds are restored (UI-OG-C5-C-LAYOUT-DEPTH).
 - Convert to pipe table on a grid with more than 200 rows shows its size refusal instead of failing with an internal error (UI-OG-C5-C-GRID-PIPE-BOUND).
+- The formula editor opens and saves a valid formula with a very long sum or transform chain instead of failing with an internal error (UI-OG-C5-C-FORMULA-CHAIN).
 
 ### Added
 
