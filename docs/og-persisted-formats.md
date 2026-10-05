@@ -26,7 +26,7 @@ atomic publication have the same payload as their final name.
 | Backup graph-text copy | schema-3 snapshot `graph/<graph-relative path>`: every file in the graph-text scope (`Area::Graph`), original Markdown/Org bytes (ADR 0062) | `src-tauri/src/backup.rs` `copy_store_area(Area::Graph)` → `write_payload` |
 | PDF highlights EDN | PDF `*.edn` sidecar and generated `hls__` notes page | `crates/tine-graph-features/src/pdf.rs:299`, `:340`, `:378`, `:398`; `src-tauri/src/commands.rs:2498` |
 | Published site | export HTML/CSS/assets under publish destination | `crates/tine-store/src/publish.rs:329`, `:337`; `crates/tine-graph-features/src/publish.rs:38` |
-| Restore recovery | retired files under `logseq/.tine-trash/<id>` (schema-3 whole-graph text under `<id>/graph/<graph-relative path>`) and `assets/.tine-restore-recovery/<id>` | `crates/tine-store/src/restore.rs:97`, `:260`, `:265`, `:518`, `:589` |
+| Restore recovery | retired files under `logseq/.tine-trash/<id>` (schema-3 whole-graph text under `<id>/graph/<graph-relative path>`) and `assets/.tine-restore-recovery/<id>` | `crates/tine-store/src/restore.rs:97`, `:565` (`reserve`), `:672` (retirement rename), `:691` (copy fallback), `:752` (`retire_extras`) |
 | Plugin package | app data package `manifest.json` and `plugin.wasm` | `src-tauri/src/plugins.rs:420`, `:422` |
 | Desktop launcher | Linux icon and `.desktop` entry | `src-tauri/src/linux_window_identity.rs:80`, `:138`, `:147` |
 | Debug log | optional `tine-debug.log` or `TINE_DEBUG_LOG` | `src-tauri/src/debug.rs:27`, `:36`, `:66` |

@@ -50,6 +50,18 @@ pub(crate) fn fail_next_sync() {
     FAIL_NEXT_SYNC.with(|fail| fail.set(true));
 }
 
+#[cfg(feature = "test-faults")]
+thread_local! {
+    static SYNCED: std::cell::RefCell<Vec<std::path::PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Test-only: the directories this thread asked to sync, in order, since the
+/// last call. Lets a crash-ordering test name which entries were made durable.
+#[cfg(feature = "test-faults")]
+pub fn take_synced_directories() -> Vec<std::path::PathBuf> {
+    SYNCED.with(|synced| std::mem::take(&mut *synced.borrow_mut()))
+}
+
 /// Synchronize the supplied directory where the platform supports it.
 /// Errors that mean "this filesystem does not offer directory sync" are
 /// tolerated ([`dir_sync_is_unsupported`]); a real failure (`EIO`, `ENOSPC`, …)
@@ -57,6 +69,8 @@ pub(crate) fn fail_next_sync() {
 /// without a directory flush; standard file opening cannot flush its directory
 /// handles, and the caller is responsible for its own rename durability protocol.
 pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
+    #[cfg(feature = "test-faults")]
+    SYNCED.with(|synced| synced.borrow_mut().push(dir.to_path_buf()));
     #[cfg(all(feature = "test-faults", unix))]
     if FAIL_NEXT_SYNC.with(|fail| fail.replace(false)) {
         return Err(report_failure(io::Error::other(
@@ -98,6 +112,32 @@ pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
             "directory sync unsupported on this target",
         ))
     }
+}
+
+/// `fs::create_dir_all(dir)`, then sync the parent of every directory it
+/// created, so a file published into `dir` afterwards survives power loss
+/// with its whole directory chain. Scenario: power loss after a move into a
+/// new trash/recovery or page subdirectory — the source parent's sync makes the
+/// removal durable while the new directory's own entry is not, losing the file.
+/// Cost: one `metadata` per missing ancestor plus the existing one, and one
+/// sync per created directory; nothing beyond one `metadata` when `dir` exists.
+pub(crate) fn create_dir_all_durable(dir: &Path) -> io::Result<()> {
+    let mut missing = Vec::new();
+    let mut probe = dir;
+    while std::fs::metadata(probe).is_err() {
+        missing.push(probe);
+        match probe.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => probe = parent,
+            _ => break,
+        }
+    }
+    std::fs::create_dir_all(dir)?;
+    for created in missing.into_iter().rev() {
+        if let Some(parent) = created.parent().filter(|p| !p.as_os_str().is_empty()) {
+            sync_directory_entry(parent)?;
+        }
+    }
+    Ok(())
 }
 
 /// True for directory-sync errors that mean "this filesystem does not offer

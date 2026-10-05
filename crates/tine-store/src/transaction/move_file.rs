@@ -174,7 +174,7 @@ impl Transaction<'_> {
             self.verify_opaque(&plan.src, rev)?;
             self.verify_move_destination(&plan.src, dst_id, index)?;
             if let Some(parent) = dst.parent() {
-                fs::create_dir_all(parent).map_err(failed)?;
+                crate::directory_durability::create_dir_all_durable(parent).map_err(failed)?;
             }
             undo.kind = UndoKind::Rename;
             undo.opaque_rev = Some(rev.clone());
@@ -201,7 +201,7 @@ impl Transaction<'_> {
         self.verify(&plan.src, Some(old), index)?;
         self.verify_move_destination(&plan.src, dst_id, index)?;
         if let Some(parent) = dst.parent() {
-            fs::create_dir_all(parent).map_err(failed)?;
+            crate::directory_durability::create_dir_all_durable(parent).map_err(failed)?;
         }
         if new.as_slice() == old {
             // Content unchanged: a guarded no-replace rename, so no copy

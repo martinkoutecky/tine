@@ -143,7 +143,11 @@ impl Store {
     /// watcher wait for the writer lock; `scan_area()` can observe intermediate
     /// files because it reads disk without that lock.
     /// A crash can leave a partial restore with whole individual files and
-    /// recovery directories; there is no store import or cleanup call.
+    /// recovery directories; there is no store import or cleanup call. Each
+    /// retired entry, and every recovery directory created for it, is synced
+    /// before any replacement is published, so power loss cannot keep the
+    /// replacement while losing the retired original (one directory sync per
+    /// retired file plus one per created directory).
     /// An editor must separately
     /// preserve its unsaved buffer and compare its base revision before saving.
     ///
@@ -404,7 +408,7 @@ impl Store {
         }
         if let Some(file) = files.iter_mut().find(|file| file.area == Area::Meta) {
             let live = Path::new("logseq/config.edn");
-            if let Err(error) = real_parent(&graph.root, Path::new("logseq"), true) {
+            if let Err(error) = real_parent(&graph.root, Path::new("logseq"), Some(&root_path)) {
                 if changed {
                     self.graph.invalidate_cache();
                     done.graph_rev = self.watch.publish_restore(&baseline);
@@ -552,10 +556,23 @@ fn ensure_target_within_root(root: &Path, target: &Path) -> io::Result<()> {
     }
 }
 
+/// Create the recovery root `<parent_rel>/<id>` and make its entry, and every
+/// ancestor entry up to `root_path`, durable before any file is retired into
+/// it. Scenario: power loss after restore published the replacement bytes —
+/// a recovery tree whose directory entries never reached disk loses the only
+/// copy of a retired file (an external editor's edit made after the safety
+/// snapshot). One sync per path component, once per restore.
 fn reserve(root_path: &Path, parent_rel: &Path, id: &str) -> io::Result<Recovery> {
     let root = Dir::open_ambient_dir(root_path, ambient_authority())?;
-    let parent = real_parent(&root, parent_rel, true)?;
+    let parent = real_parent(&root, parent_rel, Some(root_path))?;
     parent.create_dir(id)?;
+    let mut synced = root_path.join(parent_rel);
+    loop {
+        crate::directory_durability::sync_directory_entry(&synced)?;
+        if synced == root_path || !synced.pop() {
+            break;
+        }
+    }
     let dir = parent.open_dir(id)?;
     Ok(Recovery {
         root_path: root_path.to_path_buf(),
@@ -565,9 +582,14 @@ fn reserve(root_path: &Path, parent_rel: &Path, id: &str) -> io::Result<Recovery
     })
 }
 
-fn real_parent(root: &Dir, rel: &Path, create: bool) -> io::Result<Dir> {
+/// Open `rel` under `root` without following symlinks. `create: Some(base)`
+/// (`base` is `root`'s own path) creates missing components and syncs the
+/// parent of each one it creates, so a file later published inside survives
+/// power loss together with its directory chain (scenario as in [`reserve`]).
+fn real_parent(root: &Dir, rel: &Path, create: Option<&Path>) -> io::Result<Dir> {
     let mut current = root.try_clone()?;
-    let path_kind = if create {
+    let mut current_path = create.map(Path::to_path_buf);
+    let path_kind = if create.is_some() {
         "restore recovery"
     } else {
         "live restore"
@@ -579,12 +601,13 @@ fn real_parent(root: &Dir, rel: &Path, create: bool) -> io::Result<Dir> {
                 format!("{path_kind} path is not relative"),
             ));
         };
-        if create {
+        if let Some(parent_path) = current_path.as_mut() {
             match current.create_dir(name) {
-                Ok(()) => {}
+                Ok(()) => crate::directory_durability::sync_directory_entry(parent_path)?,
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => return Err(error),
             }
+            parent_path.push(name);
         }
         let meta = current.symlink_metadata(name)?;
         if !meta.is_dir() || meta.file_type().is_symlink() {
@@ -602,15 +625,12 @@ fn move_if_present(recovery: &Recovery, live: &Path, recover: &Path) -> io::Resu
     let name = live
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing live file name"))?;
-    let live_parent = match real_parent(
-        &recovery.root,
-        live.parent().unwrap_or(Path::new("")),
-        false,
-    ) {
-        Ok(parent) => parent,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error),
-    };
+    let live_parent =
+        match real_parent(&recovery.root, live.parent().unwrap_or(Path::new("")), None) {
+            Ok(parent) => parent,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
     match live_parent.symlink_metadata(name) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
         Ok(meta) if meta.file_type().is_symlink() => {
@@ -628,10 +648,13 @@ fn move_if_present(recovery: &Recovery, live: &Path, recover: &Path) -> io::Resu
     let recovery_name = recover
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing recovery file name"))?;
+    let recovery_parent_path = recovery
+        .path
+        .join(recover.parent().unwrap_or(Path::new("")));
     let recovery_parent = real_parent(
         &recovery.dir,
         recover.parent().unwrap_or(Path::new("")),
-        true,
+        Some(&recovery.path),
     )?;
     match recovery_parent.symlink_metadata(recovery_name) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -650,6 +673,10 @@ fn move_if_present(recovery: &Recovery, live: &Path, recover: &Path) -> io::Resu
         recovery_name,
     ) {
         Ok(()) => {
+            // The retired file is protected only once its recovery entry is
+            // durable; the caller publishes the replacement after this
+            // (power-loss scenario in [`reserve`]).
+            crate::directory_durability::sync_directory_entry(&recovery_parent_path)?;
             #[cfg(feature = "test-faults")]
             restore_abort_boundary();
             Ok(true)
@@ -663,6 +690,7 @@ fn move_if_present(recovery: &Recovery, live: &Path, recover: &Path) -> io::Resu
                 .into_std();
             io::copy(&mut source, &mut copy)?;
             copy.sync_all()?;
+            crate::directory_durability::sync_directory_entry(&recovery_parent_path)?;
             Err(io::Error::new(rename_error.kind(), format!(
                 "live file copied to recovery but could not be atomically detached: {rename_error}")))
         }
@@ -673,7 +701,11 @@ fn copy_new(recovery: &Recovery, live: &Path, source: &mut File, len: u64) -> io
     let name = live
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "missing live file name"))?;
-    let parent = real_parent(&recovery.root, live.parent().unwrap_or(Path::new("")), true)?;
+    let parent = real_parent(
+        &recovery.root,
+        live.parent().unwrap_or(Path::new("")),
+        Some(&recovery.root_path),
+    )?;
     let temp = format!(
         ".tine-restore-{}-{}.tmp",
         std::process::id(),
@@ -736,7 +768,7 @@ fn retire_extras(
     let mut pending: Vec<(PathBuf, Option<Dir>)> = vec![(PathBuf::new(), None)];
     while let Some((rel, handle)) = pending.pop() {
         let current = match handle.map_or_else(
-            || real_parent(&recovery.root, &live_dir.join(&rel), false),
+            || real_parent(&recovery.root, &live_dir.join(&rel), None),
             Ok,
         ) {
             Ok(value) => value,

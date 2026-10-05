@@ -1014,3 +1014,74 @@ fn create_over_a_directory_reports_is_a_directory_on_every_platform() {
     }
     assert!(f.root.join("assets").join("taken.png").is_dir());
 }
+
+/// Bytes this thread has read through `read`-family syscalls (Linux).
+#[cfg(target_os = "linux")]
+fn thread_read_bytes() -> u64 {
+    let io = fs::read_to_string("/proc/thread-self/io").unwrap();
+    io.lines()
+        .find_map(|line| line.strip_prefix("rchar: "))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+/// REG-OG-C5-L06-S2 (I-22): saving an asset whose name is held by a large
+/// file probes the name; it must not read the occupant. Before the fix the
+/// unique-name probe loaded the whole occupant into memory to hash a revision
+/// it then discarded, so a 1 GiB video under the name could OOM the app.
+/// A sparse 256 MiB occupant stands in (no disk cost); the bound is the
+/// per-thread read count, which a whole-file read exceeds by 256 MiB.
+#[cfg(target_os = "linux")]
+#[test]
+fn unique_asset_name_probe_never_reads_the_occupant() {
+    let f = Fixture::new();
+    let big = File::create(f.root.join("assets/movie.mp4")).unwrap();
+    big.set_len(256 * 1024 * 1024).unwrap();
+    drop(big);
+    let before = thread_read_bytes();
+    let saved = tine_graph_features::assets::save_asset(&f.store, "movie.mp4", b"small").unwrap();
+    let read = thread_read_bytes() - before;
+    assert_eq!(saved, "movie_1.mp4");
+    assert_eq!(f.bytes("assets/movie_1.mp4").unwrap(), b"small");
+    assert!(
+        read < 16 * 1024 * 1024,
+        "I-22: the unique-name probe read {read} bytes of an occupied 256 MiB asset; exemplar transaction.rs Transaction::occupied"
+    );
+}
+
+/// REG-OG-C5-L06-S1 sibling (I-1, I-2): trashing an asset moves its only copy
+/// into `logseq/.tine-trash/...`, creating the trash directories on first
+/// use. Scenario: power loss after the move — the source directory's sync makes
+/// the removal durable, so every directory created for the destination must
+/// have its own entry synced too, or the asset is lost.
+#[cfg(feature = "test-faults")]
+#[test]
+fn trash_into_new_directories_syncs_every_created_entry() {
+    let f = Fixture::with_watch(WatchMode::Notify, &[("assets/clip.bin", b"only copy")]);
+    let clip = f.id(Area::Assets, "clip.bin");
+    assert!(!f.root.join("logseq/.tine-trash").exists());
+    tine_store::directory_durability::take_synced_directories();
+    let mut tx = f.store.transaction(None);
+    tx.trash(&clip, f.rev(&clip));
+    let steps = committed(tx.commit());
+    let synced = tine_store::directory_durability::take_synced_directories();
+    let StepResult::Trashed { trashed, .. } = &steps[0] else {
+        panic!("expected trash: {steps:?}");
+    };
+    let canonical = fs::canonicalize(&f.root).unwrap();
+    let trash = canonical.join(trashed.as_str());
+    assert_eq!(fs::read(&trash).unwrap(), b"only copy");
+    let mut dir = trash.parent().unwrap().to_path_buf();
+    while dir != canonical.join("logseq") {
+        let parent = dir.parent().unwrap().to_path_buf();
+        assert!(
+            synced.iter().any(|path| fs::canonicalize(path).ok().as_ref() == Some(&parent)),
+            "I-2: created directory {} was never made durable in {}; exemplar directory_durability::create_dir_all_durable; synced {synced:?}",
+            dir.display(),
+            parent.display()
+        );
+        dir = parent;
+    }
+}

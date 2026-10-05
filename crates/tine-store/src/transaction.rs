@@ -459,8 +459,8 @@ impl<'a> Transaction<'a> {
     /// includes its leading dot, or is empty. An invalid name is refused.
     /// `Area::Trash` and `Area::Meta` with `config` + `.edn` are refused.
     /// The chosen id appears in the step result.
-    /// Cost O(new bytes + total bytes of occupied candidates + collisions),
-    /// because each occupied candidate is read to report its revision.
+    /// Cost O(new bytes + collisions): an occupied candidate costs one
+    /// `metadata` call; its content is never read.
     /// A page target uses the same raw UTF-8 and
     /// target-safety and indexed twin checks as `create`, not `PageDto`
     /// serialization. An exact occupied candidate tries the next suffix;
@@ -784,12 +784,34 @@ impl<'a> Transaction<'a> {
         Ok(Some(disk))
     }
 
-    fn absent(&self, file: &FileId) -> Result<(), Why> {
+    /// Whether `file`'s name is taken, from one `metadata` call: never its
+    /// content, so probing a name held by a large opaque asset costs no
+    /// memory or reads (I-22). A directory at the name is a failure, as when
+    /// [`Self::absent`] reads it.
+    fn occupied(&self, file: &FileId) -> Result<bool, Why> {
         let path = self.path(file)?;
-        match fs::read(&path) {
-            Ok(bytes) => Err(Why::Conflict {
+        match fs::metadata(&path) {
+            Ok(meta) if meta.is_dir() => Err(Why::Failed(
+                directory_read_error(io::Error::from(io::ErrorKind::IsADirectory), &path).into(),
+            )),
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(Why::Failed(directory_read_error(error, &path).into())),
+        }
+    }
+
+    /// `Ok` when `file` does not exist; otherwise a conflict carrying its
+    /// revision, hashed by streaming in 64 KiB chunks (bounded memory for any
+    /// occupant size).
+    fn absent(&self, file: &FileId) -> Result<(), Why> {
+        if !self.occupied(file)? {
+            return Ok(());
+        }
+        let path = self.path(file)?;
+        match FileRev::from_file(&path) {
+            Ok(rev) => Err(Why::Conflict {
                 file: file.clone(),
-                disk: Some(FileRev::from_bytes(&bytes)),
+                disk: Some(rev),
             }),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(Why::Failed(directory_read_error(error, &path).into())),
@@ -944,7 +966,8 @@ impl<'a> Transaction<'a> {
     fn write_trash_copy(&self, id: &FileId, old: &[u8]) -> Result<PathBuf, Why> {
         let path = self.path(id)?;
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| failed_trash_dir(error, parent))?;
+            crate::directory_durability::create_dir_all_durable(parent)
+                .map_err(|error| failed_trash_dir(error, parent))?;
         }
         atomic_write_new(&path, old).map_err(failed)?;
         Ok(path)
@@ -1026,7 +1049,7 @@ impl<'a> Transaction<'a> {
                     });
                 }
                 if let Some(parent) = src.parent() {
-                    fs::create_dir_all(parent).map_err(failed)?;
+                    crate::directory_durability::create_dir_all_durable(parent).map_err(failed)?;
                 }
                 if self.page(&plan.src) {
                     self.store.graph.transaction_note_page(&src, new);
@@ -1118,7 +1141,8 @@ impl<'a> Transaction<'a> {
                     }
                     let path = self.path(&file)?;
                     if let Some(parent) = path.parent() {
-                        fs::create_dir_all(parent).map_err(failed)?;
+                        crate::directory_durability::create_dir_all_durable(parent)
+                            .map_err(failed)?;
                     }
                     let expected = match content {
                         Content::Bytes(bytes) => {
@@ -1201,7 +1225,7 @@ impl<'a> Transaction<'a> {
                     let trash_id = self.trash_id(&plan.src);
                     let trash = self.path(&trash_id)?;
                     if let Some(parent) = trash.parent() {
-                        fs::create_dir_all(parent)
+                        crate::directory_durability::create_dir_all_durable(parent)
                             .map_err(|error| failed_trash_dir(error, parent))?;
                     }
                     undo.trash = Some(trash_id.clone());
@@ -1223,7 +1247,8 @@ impl<'a> Transaction<'a> {
                 let trash_id = self.trash_id(&plan.src);
                 let trash = self.path(&trash_id)?;
                 if let Some(parent) = trash.parent() {
-                    fs::create_dir_all(parent).map_err(|error| failed_trash_dir(error, parent))?;
+                    crate::directory_durability::create_dir_all_durable(parent)
+                        .map_err(|error| failed_trash_dir(error, parent))?;
                 }
                 undo.trash = Some(trash_id.clone());
                 if self.page(&plan.src) {
@@ -1445,7 +1470,7 @@ impl<'a> Transaction<'a> {
         self.store.graph.ensure_write_target(&recovery)?;
         recovery
             .parent()
-            .map(fs::create_dir_all)
+            .map(crate::directory_durability::create_dir_all_durable)
             .unwrap_or(Ok(()))?;
         atomic_write_new(&recovery, bytes)?;
         Ok(copy)

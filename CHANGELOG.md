@@ -23,6 +23,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- Restore makes its recovery copies durable before writing backup files, and trash/move into a new folder syncs that folder, so a power cut cannot lose the original (REG-OG-C5-L06-S1).
+- Importing or saving an asset whose name is taken by a large file no longer reads that file into memory (REG-OG-C5-L06-S2).
+- A backup that cannot read the graph, and a focus or Settings rescan that fails, now report the real error instead of a generic failure or a silent success (REG-OG-C5-L07-B1, REG-OG-C5-L08-B1).
 - Page rename publication skips reparsing the old document and repeated transaction-record searches; loaded-page refresh uses one path lookup per touched page (GH #623).
 - Closing or switching PDFs no longer shows an annotation-loading error from a retired reader (GH #557).
 - Image picker and Upload keep the initiating editor through asset import, so delayed native blur does not discard the saved image link (GH #622, GH #493).
