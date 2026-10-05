@@ -21,6 +21,7 @@ import { browserPlatform } from "./browserPlatform";
 
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { advanceRevision, currentRevision, ownedWhen, readOwned, revisionOwner, serializeDurable } from "./owned";
 
 export const KEY_NATIVE_FRAME = "native_window_frame";
 
@@ -136,23 +137,37 @@ export const osDrawsWindowControls = (): boolean =>
  *  Meaningless on macOS (where the native frame is always on). */
 export const nativeFrameEnabled = nativeFramePreference;
 
+// One revision/queue key for the device-local preference: writes run in call
+// order, and a startup read that lands after a newer choice never overwrites it
+// (I-20/I-21).
+const nativeFramePref = {};
+
 /** Persist the Linux/Windows native-frame preference. It takes effect at the next
- *  normal app start, when Rust can construct all graph windows consistently. */
+ *  normal app start, when Rust can construct all graph windows consistently.
+ *  Writes are ordered; the switch shows the newest choice only once it is on
+ *  disk, and a write failure rejects (Settings reports it). O(1). */
 export async function setNativeFrame(on: boolean): Promise<void> {
   if (isMac) return;
-  await backend().setAppBool(KEY_NATIVE_FRAME, on);
-  setNativeFramePreferenceSig(on);
+  const revision = advanceRevision(nativeFramePref);
+  await serializeDurable(nativeFramePref, ownedWhen(), () => backend().setAppBool(KEY_NATIVE_FRAME, on));
+  if (currentRevision(nativeFramePref) === revision) setNativeFramePreferenceSig(on);
 }
 
 /** Read the saved preference for the Settings switch. Rust already applied the
- *  startup value before constructing this window. */
+ *  startup value before constructing this window. A choice made while the read
+ *  was pending wins over the read. */
 export async function initNativeChrome(): Promise<void> {
   if (isMac) return; // Overlay frame is fixed in tauri.macos.conf.json
+  const owner = revisionOwner(nativeFramePref, currentRevision(nativeFramePref));
   let on = startupNativeFrame;
   try {
-    on = await backend().getAppBool(KEY_NATIVE_FRAME, startupNativeFrame);
+    const read = await readOwned(owner, backend().getAppBool(KEY_NATIVE_FRAME, startupNativeFrame));
+    if (read.kind === "stale") return;
+    on = read.value;
   } catch {
+    // The applied frame is the truth for this window; an unreadable saved
+    // preference only affects the restart toggle, which shows the applied state.
     on = startupNativeFrame;
   }
-  setNativeFramePreferenceSig(on);
+  if (owner()) setNativeFramePreferenceSig(on);
 }
