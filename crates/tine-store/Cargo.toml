@@ -41,3 +41,7 @@ pretty_assertions = "1"
 [[example]]
 name = "checkpoint_launch_bench"
 required-features = ["test-faults"]
+
+[[example]]
+name = "qf2_native_bench"
+required-features = ["test-faults"]

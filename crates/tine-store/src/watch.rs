@@ -14,6 +14,7 @@ use notify::Watcher;
 mod launch;
 mod racy;
 mod rebuild;
+mod reconcile;
 mod restore;
 mod runtime;
 use runtime::run;
@@ -442,6 +443,10 @@ pub(crate) struct Core {
     /// about 2 s later (§5.4; `Core::launch_diff`).
     pub(crate) follow_up: Mutex<Option<Instant>>,
     config_stamp: Mutex<Option<Stamp>>,
+    #[cfg(test)]
+    full_walk_locked_files: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    full_walk_pause: Mutex<Option<crate::store::TestPause>>,
     unreadable_dirs: Mutex<HashMap<PathBuf, String>>,
     closed: AtomicBool,
     #[cfg(test)]
@@ -586,33 +591,6 @@ impl Core {
         let _ = self.reconcile(None, true, false, DiffTrigger::RacyFollowUp);
     }
 
-    fn reconcile(
-        &self,
-        paths: Option<&HashSet<PathBuf>>,
-        include_config: bool,
-        scan_semantics: bool,
-        trigger: DiffTrigger,
-    ) -> Result<(), LoadError> {
-        let _writer = self.writer.lock().unwrap();
-        self.reconcile_locked(paths, include_config, scan_semantics, trigger)
-    }
-
-    /// One watcher cycle; its publication carries `batch` for latency receipts.
-    fn reconcile_batch(
-        &self,
-        paths: Option<&HashSet<PathBuf>>,
-        include_config: bool,
-        batch: WatchBatch,
-    ) -> Result<(), LoadError> {
-        let _writer = self.writer.lock().unwrap();
-        let trigger = if batch.poll {
-            DiffTrigger::Poll
-        } else {
-            DiffTrigger::WatchEvent
-        };
-        self.reconcile_inner(paths, include_config, false, Some(batch), trigger)
-    }
-
     /// One asset-lane cycle: metadata-only, publishes `Origin::External`
     /// `assets/<rel>` tuples without revisions. Writer-ordered like every
     /// publication so an own asset write and its baseline update cannot
@@ -639,344 +617,6 @@ impl Core {
             self.changes
                 .publish_watched(Origin::External, files, false, Vec::new(), || {}, None);
         }
-    }
-
-    // Caller holds writer through reconciliation and any recovery publication.
-    fn reconcile_locked(
-        &self,
-        paths: Option<&HashSet<PathBuf>>,
-        include_config: bool,
-        scan_semantics: bool,
-        trigger: DiffTrigger,
-    ) -> Result<(), LoadError> {
-        self.reconcile_inner(paths, include_config, scan_semantics, None, trigger)
-    }
-
-    /// Times the cycle and records it when it was a full stat diff (a config
-    /// change widens a path-scoped cycle into one, so that is known only
-    /// after the body ran). Instants only: nothing is allocated per file.
-    fn reconcile_inner(
-        &self,
-        paths: Option<&HashSet<PathBuf>>,
-        include_config: bool,
-        scan_semantics: bool,
-        batch: Option<WatchBatch>,
-        trigger: DiffTrigger,
-    ) -> Result<(), LoadError> {
-        self.reconcile_timed(paths, include_config, scan_semantics, batch, trigger, None)
-    }
-
-    fn reconcile_timed(
-        &self,
-        paths: Option<&HashSet<PathBuf>>,
-        include_config: bool,
-        scan_semantics: bool,
-        batch: Option<WatchBatch>,
-        trigger: DiffTrigger,
-        deferred: Option<&mut Deferred>,
-    ) -> Result<(), LoadError> {
-        let began = Instant::now();
-        let mut walk = CollectTimes::default();
-        // A rebuild ignores the stamp shortcut: every file is hashed.
-        let force = matches!(trigger, DiffTrigger::Rebuild);
-        let result = self.reconcile_walk(
-            paths,
-            include_config,
-            scan_semantics,
-            batch,
-            force,
-            &mut walk,
-            deferred,
-        );
-        if walk.full {
-            self.graph
-                .diag
-                .diff(DiffStats::new(trigger, began.elapsed(), &walk));
-        }
-        result
-    }
-
-    fn reconcile_walk(
-        &self,
-        paths: Option<&HashSet<PathBuf>>,
-        include_config: bool,
-        scan_semantics: bool,
-        batch: Option<WatchBatch>,
-        force: bool,
-        walk: &mut CollectTimes,
-        deferred: Option<&mut Deferred>,
-    ) -> Result<(), LoadError> {
-        // §5.4: observation time of this cycle's stamps, taken before any is.
-        let observed = SystemTime::now();
-        if self.closed.load(Ordering::Acquire) {
-            return Err(LoadError::Closed);
-        }
-        if !self.graph.root.is_dir() {
-            return Err(LoadError::Failed {
-                reason: "graph root is unavailable".into(),
-            });
-        }
-        let mut config_changed = false;
-        let mut config_file = None;
-        if include_config {
-            let path = self.graph.root.join("logseq/config.edn");
-            let mut current = stamp(&path);
-            let mut previous = self.config_stamp.lock().unwrap();
-            // A stamp without a hash means the file vanished (or failed to
-            // read) between its metadata and its bytes: a sync delivery or
-            // external editor removing it mid-cycle. Look again so a removal
-            // reads as one; otherwise it passed as a hashless "modification"
-            // and the later real removal compared hashless to absent, unseen.
-            if (current.is_none() && previous.is_some())
-                || current.as_ref().is_some_and(|value| value.rev.is_none())
-            {
-                current = stamp(&path);
-            }
-            // Byte-identity gate: taking in a config discards every parsed
-            // page, so only a changed revision is read.
-            let moved = previous.as_ref().and_then(|value| value.rev.as_ref())
-                != current.as_ref().and_then(|value| value.rev.as_ref());
-            match moved.then(|| self.read_config(&path)) {
-                None => *previous = current,
-                Some(Ok(())) => {
-                    config_changed = true;
-                    let kind = match (previous.as_ref(), current.as_ref()) {
-                        (None, Some(_)) => ChangeKind::Created,
-                        (Some(_), None) => ChangeKind::Removed,
-                        _ => ChangeKind::Modified,
-                    };
-                    config_file = Some((
-                        FileId::from("logseq/config.edn".to_owned()),
-                        kind,
-                        current.as_ref().and_then(|value| value.rev.clone()),
-                    ));
-                    *previous = current;
-                }
-                Some(Err(error)) if scan_semantics => return Err(error),
-                // Refusal (sync delivery / external-editor race): the delivered
-                // config names a page or journal directory that escapes the
-                // graph. A watcher cycle keeps serving the last good config,
-                // keeps the old stamp so a later cycle re-checks, and still
-                // observes page files: a bad config must not blind the
-                // watcher. Contract `docs/contracts/config-live-reload.md` §5.
-                Some(Err(_)) => {}
-            }
-        }
-        // A changed config can change which files are graph text (`:hidden`,
-        // page and journal directories), so it takes a full scan.
-        let paths = if config_changed { None } else { paths };
-        let dirs = self.dirs.read().unwrap().clone();
-        let mut snapshot = self.snapshot.lock().unwrap();
-        let (mut now, mut unreadable) = if let Some(paths) = paths {
-            (
-                paths
-                    .iter()
-                    .filter(|path| {
-                        if path.starts_with(self.graph.assets_path()) {
-                            self.graph.ensure_asset_write_target(path).is_ok()
-                        } else {
-                            self.graph.ensure_write_target(path).is_ok()
-                        }
-                    })
-                    .filter_map(|path| stamp(path).map(|value| (path.clone(), value)))
-                    .collect(),
-                Some(self.unreadable_dirs.lock().unwrap().clone()),
-            )
-        } else {
-            let (files, errors, times) = collect_with_errors(&dirs, &self.graph.current_config());
-            *walk = times;
-            walk.full = true;
-            (files, Some(errors))
-        };
-        #[cfg(test)]
-        if snapshot.keys().any(|path| !now.contains_key(path)) {
-            crate::store::pause_at_hook(&self.after_collect_pause);
-        }
-        if let Some(errors) = unreadable.as_ref() {
-            for (path, value) in &*snapshot {
-                if path
-                    .ancestors()
-                    .any(|ancestor| errors.contains_key(ancestor))
-                {
-                    now.entry(path.clone()).or_insert_with(|| value.clone());
-                }
-            }
-        }
-        let names: HashSet<PathBuf> = if let Some(paths) = paths {
-            paths.clone()
-        } else {
-            now.keys().chain(snapshot.keys()).cloned().collect()
-        };
-        let mut names: Vec<_> = names.into_iter().collect();
-        names.sort();
-        let mut files = Vec::new();
-        if let Some(config_file) = config_file {
-            files.push(config_file);
-        }
-        let mut pages = Vec::new();
-        let mut racy = self.racy.lock().unwrap();
-        for path in names {
-            let before = snapshot.get(&path);
-            if before.is_some() && !now.contains_key(&path) {
-                if let Some(value) = stamp(&path) {
-                    now.insert(path.clone(), value);
-                }
-            }
-            if paths.is_none() {
-                if let (Some(old), Some(new)) = (before, now.get_mut(&path)) {
-                    let same = !force
-                        && old.modified == new.modified
-                        && old.len == new.len
-                        && (scan_semantics
-                            || (old.identity == new.identity && old.changed == new.changed));
-                    if same && !racy.contains(&path) {
-                        new.rev = old.rev.clone();
-                        continue;
-                    }
-                    let moved = racy::hash_settled(&path, new);
-                    if same && !moved {
-                        // §5.4: a racy stamp cannot vouch for the bytes, so
-                        // they were reread; it stops being racy once observed
-                        // outside the window.
-                        if !new.racy_at(observed) {
-                            racy.remove(&path);
-                        }
-                        // A baseline entry recorded without a revision (a
-                        // file the load pass did not read) only learns it.
-                        if old.rev.is_none() || old.rev == new.rev {
-                            if old.rev.is_none() && new.rev.is_none() {
-                                racy.insert(path.clone());
-                            }
-                            continue;
-                        }
-                    }
-                } else if let Some(new) = now.get_mut(&path) {
-                    racy::hash_settled(&path, new);
-                }
-            }
-            match now.get(&path) {
-                Some(value) if value.rev.is_some() && value.racy_at(observed) => {
-                    racy.insert(path.clone());
-                }
-                Some(value) if value.rev.is_some() => {
-                    racy.remove(&path);
-                }
-                Some(_) => {}
-                None => {
-                    racy.remove(&path);
-                }
-            }
-            let after = now.get(&path);
-            let kind = match (before, after) {
-                (None, Some(_)) => Some(ChangeKind::Created),
-                (Some(_), None) => Some(ChangeKind::Removed),
-                (Some(a), Some(b)) if a.rev != b.rev => Some(ChangeKind::Modified),
-                (Some(a), Some(b)) if a.modified != b.modified => Some(ChangeKind::Touched),
-                _ => None,
-            };
-            let Some(kind) = kind else {
-                continue;
-            };
-            let Some(id) = self.file_id(&path) else {
-                continue;
-            };
-            if tine_core::model::path_is_sync_conflict(&path) {
-                // Conflict copies are in the file feed so the window adapter can
-                // refresh the conflicts panel, but never enter the page cache.
-            } else if matches!(kind, ChangeKind::Removed) {
-                if let Some(entry) = self.graph.forget_file_internal(&path) {
-                    pages.push((id.clone(), entry.kind, entry.name));
-                }
-            } else if matches!(kind, ChangeKind::Touched) {
-                self.graph
-                    .observe_page_mtime(&path, after.and_then(|value| value.modified));
-            } else {
-                let observed_rev = after.and_then(|value| value.rev.clone());
-                #[cfg(test)]
-                let observed_rev = if self.force_mismatched_rev_once.swap(false, Ordering::AcqRel) {
-                    Some(FileRev::from_bytes(b"injected mismatched hash"))
-                } else {
-                    observed_rev
-                };
-                let Some(expected_rev) = observed_rev.as_ref() else {
-                    unreadable
-                        .as_mut()
-                        .unwrap()
-                        .insert(path.clone(), "file hash failed".into());
-                    retry_baseline(&mut now, &path, before);
-                    continue;
-                };
-                match self.graph.sync_file_internal(&path, Some(expected_rev)) {
-                    SyncFileResult::Reconciled { entry, rev } => {
-                        debug_assert_eq!(&rev, expected_rev);
-                        unreadable.as_mut().unwrap().remove(&path);
-                        if let Some(entry) = entry {
-                            pages.push((id.clone(), entry.kind, entry.name));
-                        }
-                    }
-                    SyncFileResult::ChangedDuringRead => {
-                        unreadable.as_mut().unwrap().remove(&path);
-                        retry_baseline(&mut now, &path, before);
-                        continue;
-                    }
-                    SyncFileResult::ReadFailed(error) => {
-                        unreadable
-                            .as_mut()
-                            .unwrap()
-                            .insert(path.clone(), error.to_string());
-                        retry_baseline(&mut now, &path, before);
-                        continue;
-                    }
-                    SyncFileResult::Excluded => {
-                        unreadable.as_mut().unwrap().remove(&path);
-                    }
-                }
-            }
-            files.push((id, kind, after.and_then(|value| value.rev.clone())));
-        }
-        if paths.is_none() {
-            racy.retain(|path| now.contains_key(path));
-            *snapshot = now;
-        } else {
-            for path in paths.unwrap() {
-                if let Some(value) = now.get(path) {
-                    snapshot.insert(path.clone(), value.clone());
-                } else {
-                    snapshot.remove(path);
-                }
-            }
-        }
-        let unreadable_changed = if let Some(errors) = unreadable {
-            let mut previous = self.unreadable_dirs.lock().unwrap();
-            let changed = *previous != errors;
-            if changed {
-                self.graph
-                    .replace_unreadable_walk_errors(&previous, &errors);
-                *previous = errors;
-            }
-            changed
-        } else {
-            false
-        };
-        drop(racy);
-        drop(snapshot);
-        walk.changed = files.len() as u64;
-        if let Some(deferred) = deferred {
-            // The launch diff: its findings ride the Ready publication.
-            deferred.files.extend(files);
-            deferred.config_changed |= config_changed;
-            deferred.pages.extend(pages);
-        } else if !files.is_empty() || config_changed || unreadable_changed {
-            self.changes.publish_watched(
-                Origin::External,
-                files,
-                config_changed,
-                pages,
-                || {},
-                batch,
-            );
-        }
-        Ok(())
     }
 
     fn read_config(&self, path: &Path) -> Result<(), LoadError> {
@@ -1128,6 +768,10 @@ impl WatchHandle {
             racy: Mutex::new(HashSet::new()),
             follow_up: Mutex::new(None),
             config_stamp: Mutex::new(config_stamp),
+            #[cfg(test)]
+            full_walk_locked_files: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            full_walk_pause: Mutex::new(None),
             unreadable_dirs: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
             #[cfg(test)]

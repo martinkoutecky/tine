@@ -30,6 +30,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A Favorites (or other) settings edit no longer deletes an unrelated `config.edn` setting when an earlier entry's value is the same keyword; config keys are found only at key positions (REG-OG-C5-L01-S1).
 - Saving a PDF highlight keeps `file::`/`file-path::` example lines inside a code fence at the top of the annotation page; a failed cleanup of a leftover legacy sidecar, page or area image is now logged instead of silent (REG-OG-C5-L01-S2).
 - Page rename publication skips reparsing the old document and repeated transaction-record searches; loaded-page refresh uses one path lookup per touched page (GH #623).
+- Ordinary focus refreshes enumerate graph metadata outside the page/save writer and sort only changed paths, reducing waits while preserving freshness; config changes and failed-load recovery retain their full writer-ordered scans (GH #623).
+- Graph search measures text rank only for matches, avoiding a full Unicode-length pass over rejected blocks (GH #623).
+- Page-search results read properties only for their selected pages, avoiding unrelated graph-query initialization (GH #623).
+- Page-scoped simple and TQL queries select owners through the existing name map and derive facts only for those pages (GH #623).
 - Closing or switching PDFs no longer shows an annotation-loading error from a retired reader (GH #557).
 - Image picker and Upload keep the initiating editor through asset import, so delayed native blur does not discard the saved image link (GH #622, GH #493).
 - Journal date-format parity: honor legacy `:date-formatter` after the modern key, offer all Logseq formats, and render `E`/`EE` as abbreviated weekdays while keeping old titles readable (GH #332 follow-ups).

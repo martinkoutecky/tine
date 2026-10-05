@@ -47,6 +47,13 @@ use super::index::{atom_format, PageFacts, QueryIndex};
 use super::{result_dto, shallow_dto_estimated_bytes, BoundedGroups, ConstructionBudget};
 use crate::model::GraphRead;
 
+#[path = "exec_candidates.rs"]
+mod candidates;
+
+#[cfg(test)]
+#[path = "exec_scope_tests.rs"]
+mod scope_tests;
+
 /// One query, ready to evaluate against pages: the anchor-adjusted evaluable
 /// filter, its compiled patterns and the registry snapshot it coerces by.
 pub(crate) struct Plan {
@@ -662,7 +669,6 @@ pub(crate) fn page_sort_decor(
 /// Execute one plan over the graph's current generation.
 pub(crate) fn execute(
     graph: &impl GraphRead,
-    index: &QueryIndex,
     plan: &Plan,
     query: &Query,
     view: &ViewSettings,
@@ -703,13 +709,14 @@ pub(crate) fn execute(
     let sample = view.sample.map(|n| n as usize);
     let mut fold = StatisticsFold::new(view, bounds.max_bytes)?;
     graph.with_pages(|pages| -> Result<(), StatisticsResourceLimit> {
-        let config = index.parse_config();
+        let candidates = candidates::Candidates::new(graph, pages, plan);
+        let config = candidates.config();
         let atoms = EvalCache::default();
         match plan.anchor {
             Anchor::Block => {
                 let mut groups: Vec<(&PageEntry, Arc<PageFacts>, Vec<Hit>)> = Vec::new();
-                for (entry, doc) in pages {
-                    let facts = index.facts(entry, doc);
+                for (entry, doc) in candidates.pages() {
+                    let facts = candidates.facts(entry, doc);
                     if plan.skips(entry, &facts) {
                         continue;
                     }
@@ -826,8 +833,8 @@ pub(crate) fn execute(
             }
             Anchor::Page => {
                 let mut matches: Vec<(&PageEntry, Arc<PageFacts>)> = Vec::new();
-                for (entry, doc) in pages {
-                    let facts = index.facts(entry, doc);
+                for (entry, doc) in candidates.pages() {
+                    let facts = candidates.facts(entry, doc);
                     if eval::eval_page(&plan.filter, &plan.ctx(entry, doc, &facts, config, &atoms))
                     {
                         matches.push((entry, facts));
@@ -931,14 +938,15 @@ pub(crate) fn execute(
 }
 
 /// Count the rows a plan matches, constructing nothing (explain-empty's probe).
-fn count(graph: &impl GraphRead, index: &QueryIndex, plan: &Plan) -> usize {
+fn count(graph: &impl GraphRead, plan: &Plan) -> usize {
     graph.with_pages(|pages| {
-        let config = index.parse_config();
+        let candidates = candidates::Candidates::new(graph, pages, plan);
+        let config = candidates.config();
         let atoms = EvalCache::default();
         let mut count = 0usize;
         let mut hits = Vec::new();
-        for (entry, doc) in pages {
-            let facts = index.facts(entry, doc);
+        for (entry, doc) in candidates.pages() {
+            let facts = candidates.facts(entry, doc);
             if plan.skips(entry, &facts) {
                 continue;
             }
@@ -960,7 +968,6 @@ fn count(graph: &impl GraphRead, index: &QueryIndex, plan: &Plan) -> usize {
 /// `props` leaf needs it.
 pub(crate) fn plan(
     graph: &impl GraphRead,
-    index: &QueryIndex,
     query: &Query,
     today: JournalDate,
     block_rows: bool,
@@ -970,8 +977,8 @@ pub(crate) fn plan(
         today,
         block_rows,
         graph.config().enable_search_remove_accents,
-        || graph.with_pages(|pages| index.registry(pages)),
-        || graph.with_pages(|pages| Arc::new(index.tag_targets(pages))),
+        || graph.with_pages(|pages| graph.query_index().registry(pages)),
+        || graph.with_pages(|pages| Arc::new(graph.query_index().tag_targets(pages))),
     )
 }
 
@@ -1029,20 +1036,12 @@ pub(crate) fn run_resolved(
     view: &ViewSettings,
     bounds: Bounds,
 ) -> (Result<QueryResult, StatisticsResourceLimit>, Arc<Plan>) {
-    let index = graph.query_index();
     let view = statistics_execution_view(resolved.query(), view);
-    let plan = Arc::new(plan(
-        graph,
-        &index,
-        resolved.query(),
-        resolved.today(),
-        false,
-    ));
-    let result =
-        execute(graph, &index, &plan, resolved.query(), &view, bounds).map(|mut result| {
-            result.report = resolved.report().clone();
-            result
-        });
+    let plan = Arc::new(plan(graph, resolved.query(), resolved.today(), false));
+    let result = execute(graph, &plan, resolved.query(), &view, bounds).map(|mut result| {
+        result.report = resolved.report().clone();
+        result
+    });
     (result, plan)
 }
 
@@ -1051,14 +1050,13 @@ pub(crate) fn explain_empty(
     graph: &impl GraphRead,
     resolved: &ResolvedQuery,
 ) -> ExplainEmptyResult {
-    let index = graph.query_index();
     let explain = explain_empty_plan(resolved);
     let counts: Vec<usize> = explain
         .probes
         .iter()
         .map(|probe| {
-            let plan = plan(graph, &index, probe, resolved.today(), false);
-            count(graph, &index, &plan)
+            let plan = plan(graph, probe, resolved.today(), false);
+            count(graph, &plan)
         })
         .collect();
     explain
@@ -1075,14 +1073,7 @@ pub(crate) fn run_block_groups(
     max_rows: usize,
     max_bytes: usize,
 ) -> (BoundedGroups, Arc<Plan>) {
-    let index = graph.query_index();
-    let plan = Arc::new(plan(
-        graph,
-        &index,
-        resolved.query(),
-        resolved.today(),
-        true,
-    ));
+    let plan = Arc::new(plan(graph, resolved.query(), resolved.today(), true));
     let view = ViewSettings {
         aggregates: Vec::new(),
         group_by: None,
@@ -1092,7 +1083,7 @@ pub(crate) fn run_block_groups(
         max_rows,
         max_bytes,
     };
-    let result = execute(graph, &index, &plan, resolved.query(), &view, bounds)
+    let result = execute(graph, &plan, resolved.query(), &view, bounds)
         .expect("no statistics were requested");
     let groups = BoundedGroups {
         groups: match result.rows {

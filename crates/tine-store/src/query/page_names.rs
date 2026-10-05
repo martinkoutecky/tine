@@ -21,6 +21,14 @@ impl RealPageNames {
             .get(key)
             .and_then(|bucket| bucket.first_entry())
     }
+    /// Every physical owner of this normalized name, including duplicates.
+    /// Reuses the publication's claimant tree; no new query index is built.
+    pub(crate) fn paths(&self, key: &str) -> impl Iterator<Item = &std::path::PathBuf> {
+        self.claimants
+            .get(key)
+            .into_iter()
+            .flat_map(|bucket| bucket.iter().map(|(path, _)| path))
+    }
     fn update(&mut self, entry: &PageEntry, added: bool) {
         let key = refs::page_key(&entry.name);
         let mut bucket = self.claimants.get(&key).cloned().unwrap_or_default();

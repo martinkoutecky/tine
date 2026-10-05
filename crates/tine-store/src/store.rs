@@ -1269,13 +1269,14 @@ impl Store {
     }
 
     /// Wait for the initial graph parse, retrying it if it previously failed,
-    /// then reconcile page, journal and
-    /// config files. Assets are not scanned. A file is considered unchanged
+    /// then reconcile page, journal and config files. Normal runtime calls
+    /// also reconcile configured asset metadata; failed-load recovery leaves asset
+    /// catch-up to the watcher. A graph-text file is considered unchanged
     /// when its modification time and length both match the previous scan;
     /// same-length edits with preserved timestamps can therefore be missed.
     /// Cost O(P metadata + bytes of files detected as changed + config bytes
-    /// hashed), plus the initial load wait. An external config change reparses
-    /// O(P + B) pages and blocks under the writer lock before publication.
+    /// hashed + asset metadata), plus load wait. Unchanged-config runtime graph-text walks run off-writer and retry on change.
+    /// Config changes enumerate and reparse O(P + B) pages/blocks under the writer before publication.
     /// Recovery from a failed initial load also parses the whole graph
     /// synchronously before reconciliation. A concurrent edit can make that
     /// recovery parse fail; retry with another explicit call after edits settle.
@@ -3032,8 +3033,8 @@ impl WholeGraph {
     /// `QueryError::Parse`; advanced unsupported clauses appear in its
     /// diagnostics. Exceeding 20,000 rows or 32 MiB returns
     /// `QueryError::ResultTooLarge` without a partial answer. Query cost
-    /// depends on the evaluated clauses; a cold full-graph query can visit
-    /// O(P + B) pages and blocks before result materialization.
+    /// is O(P + B) graph-wide; exact page-name scopes visit only their owners
+    /// unless property coercions or used-as-tag require graph-wide facts.
     pub fn query(&self, source: &str, dialect: QueryDialect) -> Result<QueryResult, QueryError> {
         if let Err(reason) = tine_core::query::admit_source(source) {
             return Err(QueryError::Parse(match reason {
@@ -3082,10 +3083,9 @@ impl WholeGraph {
     /// without constructing any (N19); `Registry` is the observed property
     /// registry (§6.1). Only a statistics fold over its memory budget fails.
     ///
-    /// Cost: a cold `Run` visits every page its plan cannot rule out
-    /// (O(P + B)) and is memoized per snapshot with scoped invalidation;
-    /// `ExplainEmpty` is O(probes × (P + B)); the registry is built once per
-    /// generation (O(P + B)) when first needed and then shared.
+    /// Cost: graph-wide `Run`/`ExplainEmpty` is O(P + B) per plan/probe, memoized.
+    /// Exact page-name scopes visit their owners unless global coercions/tag
+    /// facts are needed. Registry build is O(P + B) once per generation, then shared.
     pub fn query_ir(
         &self,
         request: IrRequest<'_>,

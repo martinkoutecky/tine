@@ -35,7 +35,7 @@ pub(crate) fn page_document_is_org(doc: &Document) -> bool {
 /// Extract property pairs and comma-separated tags only from document preblock.
 /// A properties-only first root is excluded, unlike document_aliases. Malformed
 /// lines are skipped. O(preblock text), without external I/O.
-pub(super) fn page_facets(doc: &Document) -> (Vec<(String, String)>, Vec<String>) {
+pub(crate) fn page_facets(doc: &Document) -> (Vec<(String, String)>, Vec<String>) {
     let mut props = Vec::new();
     let mut tags = Vec::new();
     if let Some(pre) = doc.pre_block.as_deref() {
