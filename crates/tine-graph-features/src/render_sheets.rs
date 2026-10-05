@@ -19,8 +19,8 @@
 //! `MAX_TOTAL_CELLS` cells of data are accepted (I-22).
 
 use super::{
-    ast_plain_text, body_blocks, decorate, esc, esc_attr, render_opts, publish_page_allowed,
-    render_block, render_facets, Ctx, PageAnchors, PrintOpts, RenderGraph,
+    ast_plain_text, body_blocks, decorate, esc, esc_attr, publish_page_allowed, render_block,
+    render_facets, render_opts, Ctx, PageAnchors, PrintOpts, RenderGraph,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;

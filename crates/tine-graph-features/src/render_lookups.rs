@@ -97,7 +97,8 @@ impl Lookups {
             count_page_probes(corpus.pages.len());
             let mut map = HashMap::new();
             for (i, page) in corpus.pages.iter().enumerate() {
-                map.entry(tine_core::refs::page_key(&page.name)).or_insert(i);
+                map.entry(tine_core::refs::page_key(&page.name))
+                    .or_insert(i);
             }
             map
         });

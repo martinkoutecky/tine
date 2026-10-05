@@ -223,7 +223,8 @@ impl PrintAssetBudget {
 fn inline_asset_uri(ctx: &Ctx, src: &str) -> Option<String> {
     let graph = ctx.graph?;
     let budget_cell = ctx.print_asset_budget?;
-    // Only local asset references; leave remote/data URLs untouched.
+    // Only local asset references inline; a remote/data URL is refused (None),
+    // and the caller then emits the omission marker.
     if src.contains("://") || src.starts_with("data:") {
         return None;
     }
@@ -965,7 +966,8 @@ struct Ctx<'a> {
 impl Ctx<'_> {
     /// The graph's hidden property keys; none without a graph (decorator tests).
     fn hidden_props(&self) -> &[String] {
-        self.graph.map_or(&[], |graph| graph.hidden_props.as_slice())
+        self.graph
+            .map_or(&[], |graph| graph.hidden_props.as_slice())
     }
 }
 
@@ -986,17 +988,6 @@ fn macro_args(attr: Option<&str>) -> Vec<String> {
     attr.map(unescape)
         .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
         .unwrap_or_default()
-}
-
-/// A task marker's checkbox state, mirroring the app's `taskCheckboxState`
-/// (`src/markers.ts`): DONE = checked, CANCELED/CANCELLED = no box, any other
-/// marker = an empty box.
-fn checkbox_state(marker: &str) -> Option<bool> {
-    match marker {
-        "DONE" => Some(true),
-        "CANCELED" | "CANCELLED" => None,
-        _ => Some(false),
-    }
 }
 
 /// Render one block's inner: header facets + the decorated body + trailer facets.

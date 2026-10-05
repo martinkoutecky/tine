@@ -6,14 +6,14 @@
 //! an ordinal marker, computed here from the same run + depth-cycle rule as the
 //! app's `orderedListMarker` (`src/document/edits/properties.ts`).
 
-use super::{checkbox_state, esc};
+use super::esc;
 use tine_core::doc::DocBlock;
 
 /// The header-line facet chrome that precedes a block's body text: the task
 /// checkbox + marker badge and the `[#A]` priority badge (matches the app's Block header).
 pub(super) fn emit_header_facets(marker: Option<&str>, priority: Option<&str>, out: &mut String) {
     if let Some(m) = marker {
-        match checkbox_state(m) {
+        match tine_core::render_facets::task_checkbox_state(m) {
             Some(true) => out.push_str("<span class=\"task-checkbox checked\"></span>"),
             Some(false) => out.push_str("<span class=\"task-checkbox\"></span>"),
             None => {}

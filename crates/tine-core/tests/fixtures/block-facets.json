@@ -1,0 +1,336 @@
+[
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [],
+      "scheduled": null,
+      "tags": []
+    },
+    "format": "md",
+    "raw": "plain block"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": "TODO",
+      "priority": null,
+      "properties": [],
+      "scheduled": null,
+      "tags": []
+    },
+    "format": "md",
+    "raw": "TODO ship it"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": "DOING",
+      "priority": "A",
+      "properties": [],
+      "scheduled": null,
+      "tags": []
+    },
+    "format": "md",
+    "raw": "DOING [#A] write the doc"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": "TODO",
+      "priority": "B",
+      "properties": [],
+      "scheduled": null,
+      "tags": []
+    },
+    "format": "md",
+    "raw": "TODO [#B] ## heading after marker"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": 2,
+      "marker": null,
+      "priority": null,
+      "properties": [],
+      "scheduled": null,
+      "tags": [
+        "tag1",
+        "multi word"
+      ]
+    },
+    "format": "md",
+    "raw": "## Heading #tag1 and #[[multi word]] tag"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [],
+      "scheduled": null,
+      "tags": [
+        "tagged"
+      ]
+    },
+    "format": "md",
+    "raw": "body with [[Page]] and #tagged text"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [
+        [
+          "tags",
+          "alpha, [[Beta]]"
+        ]
+      ],
+      "scheduled": null,
+      "tags": []
+    },
+    "format": "md",
+    "raw": "tags:: alpha, [[Beta]]\nbody"
+  },
+  {
+    "expected": {
+      "deadline": "2026-07-01 Wed",
+      "heading": null,
+      "marker": "TODO",
+      "priority": null,
+      "properties": [],
+      "scheduled": "2026-06-28 Sun",
+      "tags": []
+    },
+    "format": "md",
+    "raw": "TODO ship it\nSCHEDULED: <2026-06-28 Sun>\nDEADLINE: <2026-07-01 Wed>"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [],
+      "scheduled": "2026-06-28 Sun",
+      "tags": []
+    },
+    "format": "md",
+    "raw": "SCHEDULED: <2026-06-28 Sun> DEADLINE: <2026-07-01 Wed>\nbody"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [],
+      "scheduled": "2026-07-13 Mon",
+      "tags": []
+    },
+    "format": "md",
+    "raw": "Task\nSCHEDULED: <2026-07-13 Mon>\nnotes after the schedule"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [],
+      "scheduled": null,
+      "tags": []
+    },
+    "format": "md",
+    "raw": "Discuss SCHEDULED: <2026-07-13 Mon> inline\nnotes after the timestamp"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [],
+      "scheduled": null,
+      "tags": []
+    },
+    "format": "md",
+    "raw": "look at `DEADLINE: <2026-06-28 Sun>` here"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [],
+      "scheduled": "2026-07-14 Tue",
+      "tags": []
+    },
+    "format": "md",
+    "raw": "Überblick\nSCHEDULED: <2026-07-14 Tue>\n続き"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [
+        [
+          "status",
+          "open"
+        ],
+        [
+          "id",
+          "11111111-1111-4111-8111-111111111111"
+        ]
+      ],
+      "scheduled": null,
+      "tags": []
+    },
+    "format": "md",
+    "raw": "status:: open\nid:: 11111111-1111-4111-8111-111111111111\nbody"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [
+        [
+          "key",
+          "v"
+        ],
+        [
+          "later",
+          "w"
+        ]
+      ],
+      "scheduled": null,
+      "tags": []
+    },
+    "format": "md",
+    "raw": "first\nkey:: v\nmore text\nlater:: w"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [],
+      "scheduled": null,
+      "tags": []
+    },
+    "format": "md",
+    "raw": "```\nTODO not a task\n#nottag\n```"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [
+        [
+          "heading",
+          "true"
+        ]
+      ],
+      "scheduled": null,
+      "tags": []
+    },
+    "format": "md",
+    "raw": "heading:: true\ntext"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [],
+      "scheduled": null,
+      "tags": [
+        "x"
+      ]
+    },
+    "format": "md",
+    "raw": "- [ ] checkbox-ish #x\n  continuation"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [],
+      "scheduled": null,
+      "tags": [
+        "real"
+      ]
+    },
+    "format": "md",
+    "raw": "[label](https://example.org/#frag) and #real"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [],
+      "scheduled": null,
+      "tags": [
+        "tag-with.dot/slash",
+        "double"
+      ]
+    },
+    "format": "md",
+    "raw": "#tag-with.dot/slash and ##double"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": "TODO",
+      "priority": "A",
+      "properties": [],
+      "scheduled": "2026-06-28 Sun",
+      "tags": [
+        "tag1",
+        "tag2"
+      ]
+    },
+    "format": "org",
+    "raw": "TODO [#A] org heading :tag1:tag2:\nSCHEDULED: <2026-06-28 Sun>"
+  },
+  {
+    "expected": {
+      "deadline": null,
+      "heading": null,
+      "marker": null,
+      "priority": null,
+      "properties": [
+        [
+          "ID",
+          "11111111-1111-4111-8111-111111111111"
+        ]
+      ],
+      "scheduled": null,
+      "tags": []
+    },
+    "format": "org",
+    "raw": "org plain with [[Page]]\n:PROPERTIES:\n:ID: 11111111-1111-4111-8111-111111111111\n:END:"
+  }
+]

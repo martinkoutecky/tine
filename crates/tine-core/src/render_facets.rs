@@ -1,5 +1,5 @@
-//! Which block properties are chrome rather than content, for every renderer
-//! (I-12). The live app (through the WASM bridge) and the static export ask
+//! Render facts every renderer answers identically (I-12): which block
+//! properties are chrome, and which checkbox a task marker draws. The live app (through the WASM bridge) and the static export ask
 //! this one predicate, so a property chip hidden in the app is hidden in a
 //! published page and the reverse.
 //!
@@ -12,7 +12,7 @@
 
 /// Built-in keys that are never shown as a rendered chip (id/collapsed, Logseq
 /// internals, display-only keys), already in `normalize` form.
-const RENDER_HIDDEN: &[&str] = &[
+pub const RENDER_HIDDEN: &[&str] = &[
     "id",
     "collapsed",
     "hl-page",
@@ -35,8 +35,9 @@ const RENDER_HIDDEN: &[&str] = &[
 ];
 
 /// A property key's comparison form: trimmed, ASCII-lowercased, spaces and
-/// underscores as hyphens. Byte-for-byte `doc::property_key_norm`; a test in
-/// this file pins the two together because this file cannot depend on `doc`.
+/// underscores as hyphens. Byte-for-byte `doc::property_key_norm`;
+/// `tests/og_r_render_facets.rs` pins the two together because this file cannot
+/// depend on `doc`.
 pub fn normalize(key: &str) -> String {
     key.trim().to_ascii_lowercase().replace([' ', '_'], "-")
 }
@@ -54,38 +55,17 @@ pub fn is_render_hidden_prop(key: &str, user_hidden: &[String]) -> bool {
         || user_hidden.iter().any(|hidden| normalize(hidden) == key)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn built_in_keys_tine_and_table_settings_are_hidden() {
-        for key in ["id", "Collapsed", "Created_At", "hl color", "tine.view", "logseq.table.version", "Title"] {
-            assert!(is_render_hidden_prop(key, &[]), "{key}");
+/// The checkbox a task marker draws: `Some(true)` checked (`DONE`),
+/// `Some(false)` an empty box (every open marker), `None` no box (`CANCELED`,
+/// `CANCELLED`, anything that is not a task marker). OG `block-checkbox`.
+/// `tests/og_r_render_facets.rs` pins the marker set to `doc::MARKERS` and the
+/// app's `taskCheckboxState` (`src/markers.ts`) tests assert the same table.
+pub fn task_checkbox_state(marker: &str) -> Option<bool> {
+    match marker {
+        "DONE" => Some(true),
+        "TODO" | "DOING" | "NOW" | "LATER" | "WAITING" | "WAIT" | "STARTED" | "IN-PROGRESS" => {
+            Some(false)
         }
-        for key in ["logseq.custom", "status", "tags", "alias", "public"] {
-            assert!(!is_render_hidden_prop(key, &[]), "{key}");
-        }
-    }
-
-    #[test]
-    fn the_graphs_hidden_list_applies_after_normalization() {
-        let user = vec!["My_Prop".to_owned()];
-        assert!(is_render_hidden_prop("my-prop", &user));
-        assert!(!is_render_hidden_prop("other", &user));
-    }
-
-    #[test]
-    fn normalize_is_the_documents_property_key_norm() {
-        for key in ["Id", " Hl_Color ", "A B_c", "ÉCOLE_x", "", "tine.View"] {
-            assert_eq!(normalize(key), crate::doc::property_key_norm(key), "{key:?}");
-        }
-    }
-
-    #[test]
-    fn every_built_in_key_is_already_normalized() {
-        for key in RENDER_HIDDEN {
-            assert_eq!(normalize(key), *key);
-        }
+        _ => None,
     }
 }

@@ -41,7 +41,11 @@ fn site(root: &Path) -> BTreeMap<String, String> {
     out
 }
 
-fn published(label: &str, config: &str, pages: &[(&str, &str)]) -> (BTreeMap<String, String>, usize) {
+fn published(
+    label: &str,
+    config: &str,
+    pages: &[(&str, &str)],
+) -> (BTreeMap<String, String>, usize) {
     let dir = graph(label, config, pages);
     let store = Store::open(&dir, Default::default()).unwrap().0;
     let (out, count) = publish::publish_html(&store).unwrap();
@@ -123,10 +127,16 @@ fn export_hides_the_property_chips_the_app_hides() {
         "CREATED_TOKEN",
         "USERHIDDEN_TOKEN",
     ] {
-        assert!(!html.contains(hidden), "{hidden} is hidden in the app: {html}");
+        assert!(
+            !html.contains(hidden),
+            "{hidden} is hidden in the app: {html}"
+        );
     }
     for shown in ["CUSTOM_VISIBLE_TOKEN", "VISIBLE_TOKEN"] {
-        assert!(html.contains(shown), "{shown} is a visible chip in the app: {html}");
+        assert!(
+            html.contains(shown),
+            "{shown} is a visible chip in the app: {html}"
+        );
     }
 }
 
@@ -198,4 +208,25 @@ fn org_publish_renders_org_markup() {
     assert!(html.contains(">code-org</code>"), "{html}");
     assert!(html.contains("<em>italic-org</em>"), "{html}");
     assert!(!html.contains(":PROPERTIES:"), "drawer is metadata: {html}");
+}
+
+// ---- render_facets.rs own_ordered vs properties.ts orderedFromProperties ----
+
+/// An own-numbered block is recognised under the property-key fold the whole
+/// system shares (`property_key_norm`): `logseq.order_list_type` and a mixed-case
+/// spelling number the run exactly like `logseq.order-list-type` (the app's
+/// `src/render/ogRTwins.test.ts` asserts the same spellings).
+#[test]
+fn ordered_blocks_number_under_the_shared_property_key_fold() {
+    let html = printed(
+        "ordered-fold",
+        "{}\n",
+        &[(
+            "Steps.md",
+            "- first\n  logseq.order_list_type:: number\n- second\n  Logseq.Order-List-Type:: number\n- plain\n",
+        )],
+        "Steps",
+    );
+    assert_eq!(html.matches("class=\"ord-marker\"").count(), 2, "{html}");
+    assert!(html.contains(">1.<") && html.contains(">2.<"), "{html}");
 }

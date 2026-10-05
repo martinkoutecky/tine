@@ -8,7 +8,11 @@ use tine_store::cost_counters;
 use tine_store::Store;
 
 fn graph(pages: &[(String, String)]) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("tine-ogr-cost-{}-{}", std::process::id(), pages.len()));
+    let dir = std::env::temp_dir().join(format!(
+        "tine-ogr-cost-{}-{}",
+        std::process::id(),
+        pages.len()
+    ));
     let _ = fs::remove_dir_all(&dir);
     for sub in ["pages", "journals", "logseq"] {
         fs::create_dir_all(dir.join(sub)).unwrap();
@@ -53,5 +57,8 @@ fn single_page_print_does_no_graph_wide_disk_work() {
         many.stamps_by_path, few.stamps_by_path,
         "I-13: a single-page print must not stat every graph file; exemplar print.rs page_print_html"
     );
-    assert_eq!(many.readdir, few.readdir, "I-13: no directory walk per print");
+    assert_eq!(
+        many.readdir, few.readdir,
+        "I-13: no directory walk per print"
+    );
 }
