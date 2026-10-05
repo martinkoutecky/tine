@@ -61,7 +61,10 @@ fn bounded_records<'de, D: serde::Deserializer<'de>>(
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
             write!(f, "at most {MAX_RECORDS} draft records")
         }
-        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<Value>, A::Error> {
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> Result<Vec<Value>, A::Error> {
             let mut records = Vec::new();
             while let Some(record) = seq.next_element::<Value>()? {
                 if records.len() == MAX_RECORDS {
@@ -354,7 +357,10 @@ mod tests {
         fs::write(&path, &bytes).unwrap();
         assert!(load_at(&path).unwrap().is_empty());
         assert!(!path.exists());
-        assert_eq!(fs::read(path.with_extension("json.unreadable-0")).unwrap(), bytes);
+        assert_eq!(
+            fs::read(path.with_extension("json.unreadable-0")).unwrap(),
+            bytes
+        );
         store_at(&path, record("s:0", "after")).unwrap();
         assert_eq!(load_at(&path).unwrap(), vec![record("s:0", "after")]);
     }

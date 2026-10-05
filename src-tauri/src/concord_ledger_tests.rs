@@ -634,7 +634,13 @@ fn unit_cost_per_recorded_save_is_one_blob_plus_one_index() {
         // Work count (og C, I-25 wording): exactly one new blob, one evicted
         // blob removed, and one index rewrite (atomic rename = new inode).
         let names_after = listing(&dir);
-        assert_eq!(names_after.difference(&names_before).cloned().collect::<Vec<_>>(), vec![sha(text.as_bytes())]);
+        assert_eq!(
+            names_after
+                .difference(&names_before)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![sha(text.as_bytes())]
+        );
         assert_eq!(names_before.difference(&names_after).count(), 1);
         if cfg!(unix) {
             assert_ne!(index_inode(), inode_before, "the index is rewritten once");

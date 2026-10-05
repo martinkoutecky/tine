@@ -246,7 +246,8 @@ mod tests {
                 .0;
             let started = std::time::Instant::now();
             let result = import_asset_from_path(&store, &path, None);
-            tx.send((result.map_err(|e| format!("{e:?}")), started.elapsed())).unwrap();
+            tx.send((result.map_err(|e| format!("{e:?}")), started.elapsed()))
+                .unwrap();
         });
         // Store::open may take a while on a loaded machine; the claim is about
         // the import call itself, which the worker times.
@@ -258,8 +259,14 @@ mod tests {
         let (result, elapsed) = outcome.expect("asset import hung on a FIFO with no writer");
         worker.join().unwrap();
         assert!(result.unwrap_err().contains("not a file"));
-        assert!(elapsed < Duration::from_secs(5), "import waited {elapsed:?}");
-        assert_eq!(fs::read_dir(graph.path().join("assets")).unwrap().count(), 0);
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "import waited {elapsed:?}"
+        );
+        assert_eq!(
+            fs::read_dir(graph.path().join("assets")).unwrap().count(),
+            0
+        );
     }
 }
 
