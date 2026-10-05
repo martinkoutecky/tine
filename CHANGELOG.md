@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- The query builder's date-range preview now resolves a typed bound exactly as the query engine does: `-7D` is no longer previewed as a date, `2026_01_05` and `2026-1-5` now are, and offsets past 10,000 years or a month clamp in year 0 no longer disagree (REG-OG-C5-Q-DATE-TWIN).
 - Clicking a query table column header now sorts only the view you are looking at. It no longer rewrites the query block and its display properties; a saved sort is still set from the query's sort control (UI-OG-C5-Q-HEADER-SORT).
 - A query row switched off with `-- ` no longer invalidates the whole query when it holds an unquoted relative date, a stray `@page`/`@block` or another refused shape (REG-OG-C5-Q-TQL-DISABLED).
 - Searching for a page alias (Ctrl+K and the page autocomplete) lists the page that owns the alias once, with an "aka" hint, and no longer also lists a separate page named after the alias when that text is referenced elsewhere; ASCII and fullwidth comma alias lists both work (GH #623, GH #353; REG-OG-GH623-ALIAS-353).
