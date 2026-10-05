@@ -3,10 +3,11 @@ import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink"
 import * as router from "./router";
 import * as ui from "./ui";
 import { backend } from "./backend";
+import { setToasts, toasts } from "./toasts";
 
 const read = (text: string, caret: number, format: "md" | "org" = "md") => () => ({ text, caret, format });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); setToasts([]); });
 
 // GH #274. OG parity: :editor/follow-link (mod+o) and
 // :editor/open-link-in-sidebar (mod+shift+o).
@@ -70,6 +71,33 @@ describe("follow a block ref at the caret", () => {
     expect(followLinkUnderCaret({ read: read(`x ((${uuid}))`, 3) })).toBe(true);
     await vi.waitFor(() => expect(openAt).toHaveBeenCalled());
     expect(openAt).toHaveBeenCalledWith({ name: "Owner", pageKind: "page", block: uuid });
+  });
+});
+
+describe("I-20/I-9: a block-ref follow is owned by the surface that asked", () => {
+  const uuid = "6a1b2c3d-0000-4000-8000-000000000002";
+  it("does not navigate after the user moved to another route", async () => {
+    let finish!: (groups: never) => void;
+    vi.spyOn(backend(), "resolveBlocks").mockImplementation(() => new Promise((resolve) => { finish = resolve as never; }));
+    const openAt = vi.spyOn(router, "openPageAtBlock").mockImplementation(() => {});
+    expect(followLinkUnderCaret({ read: read(`x ((${uuid}))`, 3) })).toBe(true);
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    router.openPage("Elsewhere");
+    finish([{ page: "Owner", kind: "page", blocks: [] }] as never);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(openAt).not.toHaveBeenCalled();
+  });
+  it("reports a failed resolver read as a failure, not as a missing block", async () => {
+    vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);
+    vi.spyOn(backend(), "resolveBlocks").mockRejectedValue(new Error("io:Broken"));
+    // A fresh id: the resolver memoizes answers per id.
+    const failing = "6a1b2c3d-0000-4000-8000-000000000003";
+    expect(followLinkUnderCaret({ read: read(`x ((${failing}))`, 3) })).toBe(true);
+    await vi.waitFor(() => expect(toasts().some((t) => t.kind === "error")).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const messages = toasts().map((t) => t.message);
+    expect(messages).toContain("Couldn't resolve block references. Try again.");
+    expect(messages).not.toContain("Couldn't find the referenced block");
   });
 });
 

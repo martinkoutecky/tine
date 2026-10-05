@@ -1,5 +1,6 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import { openPageAtBlock } from "../router";
+import { focusedSurfaceOwner } from "../focusedSurface";
 import { formatForPage, resolveBlockRef, node as docNode } from "../document";
 import { startEditing, type EditorSelection } from "../editorController";
 import type { BlockDto, MatchSpan, PageKind, ReferenceBlockEvidence } from "../types";
@@ -29,8 +30,14 @@ function focusMainOccurrence(
   path?: string,
 ) {
   openPageAtBlock(page, kind, blockId, path);
+  // The retry loop below waits for the target page to load. It belongs to the
+  // surface the click opened, so a later navigation, tab or pane change, or a
+  // graph switch, ends it instead of grabbing the editor from wherever the user
+  // went (I-20). Captured AFTER the navigation it performs.
+  const owner = focusedSurfaceOwner();
   let attempts = 0;
   const focus = () => {
+    if (!owner()) return;
     const runtimeId = resolveBlockRef({ uuid: blockId, page, pageKind: kind, ...(path ? { path } : {}) });
     if (runtimeId && docNode(runtimeId)) {
       const block = docNode(runtimeId);

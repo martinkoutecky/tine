@@ -17,7 +17,8 @@ import { openPageInSidebar, openBlockInSidebar } from "./ui";
 import { pushToast } from "./toasts";
 import { backend } from "./backend";
 import { blockRefTarget, resolveBlockBatched } from "./resolveBatch";
-import { graphOwner, ownedWhen, readOwned } from "./owned";
+import { ownedWhen, readOwned } from "./owned";
+import { focusedSurfaceOwner } from "./focusedSurface";
 
 type CaretContext = { text: string; caret: number; format: Format };
 
@@ -79,9 +80,15 @@ function dispatch(link: NearestLink, where: "here" | "sidebar"): boolean {
     // ref does (working set first, then the backend), so a block outside the
     // loaded pages is still found — master gave up there.
     const uuid = link.value;
-    void readOwned(graphOwner(), resolveBlockBatched(uuid)).then((result) => {
+    // The key press acts on the surface in front of the user; if they move to
+    // another pane, tab or route before the resolver answers, the answer must
+    // not navigate them back (I-20). `undefined` is a FAILED read that the
+    // resolver already reported (I-9); only `null` means the block is absent.
+    const owner = focusedSurfaceOwner();
+    void readOwned(owner, resolveBlockBatched(uuid)).then((result) => {
       if (result.kind === "stale") return;
       const g = result.value;
+      if (g === undefined) return;
       if (!g) { pushToast("Couldn't find the referenced block", "error"); return; }
       const ref = blockRefTarget(uuid, g);
       if (where === "sidebar") openBlockInSidebar(ref);
