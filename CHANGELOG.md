@@ -8,17 +8,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
-- Added open-only `tine://` graph, page and block links, with Copy link actions and lazy stable graph identity (GH #181).
-
-- Code blocks show line numbers and a language label; Settings → Appearance offers one device-wide wrap preference shared by reading and editing (GH #474).
-
-- Beta releases now include the experimental Windows 32-bit installer and portable ZIP, with manual updates as on stable (GH #275).
+## [0.7.0-beta.2] - 2026-10-05
 
 ### Added
+- Added open-only `tine://` graph, page and block links, with Copy link actions and lazy stable graph identity (GH #181).
+- Code blocks show line numbers and a language label; Settings → Appearance offers one device-wide wrap preference shared by reading and editing (GH #474).
+- Beta releases now include the experimental Windows 32-bit installer and portable ZIP, with manual updates as on stable (GH #275).
 - Guide page **Reference/Tine query model**: every way a query's answer can differ from Logseq's, and why — the "find more, never less; browsing never writes" rule, the one exception, what Tine refuses, and how Tine 0.6 differs (GH #422).
 - Added TQL `parent`, `ancestors`, and unbounded `descendants` relations with `any`, `none`, and `every` quantifiers (GH #551).
 - `/Date picker`, `/Tomorrow`, and `/Yesterday` insert journal date links in the graph's configured title format (GH #485).
-
 - Wide Markdown, Org, query and sheet tables now use free space on both sides of the text column before scrolling at the pane boundary (UI-OG-QBG-TABLE-BLEED).
 - Added remappable, initially unbound commands to grow/shrink either sidebar width (GH #425) and open a persistent search tab directly (GH #437).
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
@@ -30,7 +28,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 - Large outlines window offscreen block shells, speeding page open, revisit and cleanup while retaining editing and navigation (GH #623).
-
 - Android Back follows the one Back ladder used everywhere (GH #492): it dismisses an open dialog, menu or image first, then closes an open drawer, then steps back through page history, and exits only at the root; a failed exit keeps the screen shield up and the next Back retries only the exit.
 - Launch: Tine reopens a graph from a checkpoint of its last state in app data, then checks every file's date and size and rereads only what changed before the graph is ready; the checkpoint includes remembered query and backlinks answers, and is written about a minute after editing pauses (at most every 5 minutes), or 5 seconds after a launch that had none (GH #623).
 - Query sheet rows no longer say *advanced* for anything the builder wrote, and Scheduled/Deadline/journal date ranges read as Scheduled, Deadline or journal date instead of *Between dates* (GH #619, UI-OG-GH619-NO-ADVANCED).
@@ -157,35 +154,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - The formula editor opens and saves a valid formula with a very long sum or transform chain instead of failing with an internal error (UI-OG-C5-C-FORMULA-CHAIN).
 - Importing a dropped or picked file that is a named pipe is refused at once instead of hanging the app (REG-OG-C5-C-ASSET-FIFO).
 - A draft store file past its 64-record bound (for example delivered by a sync tool from another build) is set aside with its bytes kept, instead of being loaded into a store that then refused every draft write (REG-OG-C5-C-DRAFT-RECORDS).
-### Added
-- Touch gestures on a phone (GH #492, GH #501): swipe a block right to indent it, a short way left to outdent it, or a long way left to select it and open its action menu; swipe in from the left edge to open the left drawer (a mostly-vertical swipe is ordinary scrolling and does nothing); on iOS the same edge swipe goes Back when there is something to go back to, following your finger and snapping back if you let go early; and the image viewer takes pinch-to-zoom, double-tap zoom, drag-to-pan, a sideways swipe between the page's images and a drag up or down to close (modelled on Logseq's PhotoSwipe viewer: a tap shows or hides the buttons instead of closing, a new × button closes, and dragging a zoomed image past its edge turns to the next image). Swiping is off while typing, in tables, code, queries, drawings and media, and with more than one finger. Logseq's `:mobile {:gestures/disabled-in-block-with-tags [...]}` setting in `config.edn` also turns the block swipe off in any block that references a listed page, and in the blocks nested under it. Documented in Reference > Platforms and mobile.
-- Windows: the diagnostic report now records whether Windows Defender real-time protection is on (`windowsDefenderRealtime`: on, off, unknown or not-applicable; a flag only, never a path). When a graph's first open is slow and real-time protection is on, a one-time notice per graph says so and offers **Add an exclusion for this graph folder**, which asks for administrator approval and only then runs `Add-MpPreference -ExclusionPath`; nothing changes without that click, and a declined or refused attempt is reported (GH #623).
-- Settings → Help & diagnostics: the diagnostic report now carries launch timings (listing, file dates, reading vs parsing, index build, ready), recent full rescans and saves, and statistics-only graph-shape numbers (sizes and quantiles, never names or text), so a slow graph can be diagnosed without sharing it; **Rescan graph** forces a full rebuild: it ignores every remembered file date, size and checksum, re-reads and re-parses every file, and rebuilds the page, link and search state without blocking the app or touching what you are editing, then shows when it finished; the quick check on returning to the window is unchanged (GH #623).
-- Query sheet, from hestratos's design list (GH #619, UI-OG-GH619-*): the Task field has **Any status** (writes every task marker OG knows) and a new **In a journal page** condition (writes `(between -2000y +2000y)`, which Logseq reads as journal-only); a condition can be dragged into another group and a group left with one condition dissolves; the query text is hidden behind an **Edit as text** toggle that is remembered across restarts (stored in the app settings, not localStorage); results show and follow your edits inside the open sheet before you save (debounced, latest answer only); page results show the page's own properties and a pencil that edits them through the page's property panel; and the Find menu has **Pages and blocks**, showing both answers with Pages above Blocks (the sentence reads *Pages and blocks where …*, the Blocks section follows your List/Table/Board choice, a sample that cuts a section short says so, and the open sheet previews both), stored as `tine.result-kinds:: pages-and-blocks` which Logseq ignores.
-- Settings → About: **Check for updates automatically** can disable startup update checks and notifications on this device; manual checks remain available (GH #618).
-### Changed
-- Large outlines window offscreen block shells, speeding page open, revisit and cleanup while retaining editing and navigation (GH #623).
-- Android Back follows the one Back ladder used everywhere (GH #492): it dismisses an open dialog, menu or image first, then closes an open drawer, then steps back through page history, and exits only at the root; a failed exit keeps the screen shield up and the next Back retries only the exit.
-- Launch: Tine reopens a graph from a checkpoint of its last state in app data, then checks every file's date and size and rereads only what changed before the graph is ready; the checkpoint includes remembered query and backlinks answers, and is written about a minute after editing pauses (at most every 5 minutes), or 5 seconds after a launch that had none (GH #623).
-- Query sheet rows no longer say *advanced* for anything the builder wrote, and Scheduled/Deadline/journal date ranges read as Scheduled, Deadline or journal date instead of *Between dates* (GH #619, UI-OG-GH619-NO-ADVANCED).
-- REG-OG-P12B-PAGE-HEADER: A Markdown page header is now exactly the leading properties the parser accepts, so a no-space `key::value` line is page text rather than a property, in the editor, page promotion on save and alias lookup alike.
-- REG-OG-P12B-FENCES: Fence-aware editing (property and language autocomplete, code-body editing, calc blocks, hidden metadata) follows Logseq's parser instead of CommonMark: any fence run closes a fence, whatever its length.
-### Fixed
 - Sheet date footers skip impossible calendar dates, and typed cells and formulas preserve years below 100 (UI-OG-DUPD3-DATE-FOOTER, REG-OG-DUPD3-CALENDAR).
-
 - REG-OG-DUPF05-UNICODE-IDENTITY: Page-name lookup and query grouping use the native Unicode whitespace policy in the frontend too, so U+0085 and BOM no longer produce different identities or accepted grouping fields.
 - Annotation editing and PDF targets respect parsed properties, including empty results, and ignore metadata inside code (UI-OG-DUPD1-D08).
 - Outline insertion no longer treats literal `id::` examples as live block identities; merge identity recovery also uses accepted properties (REG-OG-DUPD1-D09).
 - Caret link navigation ignores code and follows parser-accepted tag boundaries, including punctuation (UI-OG-DUPD1-D10).
-
 - REG-OG-P12B-CONFLICT-PREAMBLE: Merging a conflict copy's page preamble no longer treats property-looking lines inside code blocks as page properties, and keeps differing code blocks whole instead of merging them line by line.
 - REG-OG-P12B-MARKERS: Task markers and priorities share one parser-derived span for reading and writing, and the demo graph reads them once the parser is ready.
 - Published block previews copy only the requested nodes, avoiding full-subtree allocation while keeping snapshot metadata independent (REG-OG-DUPF03-PREVIEW).
-
 - Property readers and sheet field rename now use accepted parser properties and source spans, including Unicode keys and literal-code protection (REG-OG-P12-PROPERTY-SPANS).
 - Page aliases and titles ignore metadata-looking source-block contents (REG-OG-P12-PREAMBLE-LITERALS).
 - Page-reference candidates share native target classification, exclude unlabeled local assets, and include nested links; Org filename candidates retain their existing selection policy (REG-OG-P12-REFERENCE-TARGETS).
-
 - REG-OG-P11B-BEGIN-QUERY: Static BEGIN_QUERY export uses the live EDN inspector, preserving escaped titles, discarded forms and typed positional inputs.
 - REG-OG-P11B-OUTLINE-LITERALS: Outline paste keeps parser-owned literal blocks and bullet continuations intact while preserving ordered list recognition.
 

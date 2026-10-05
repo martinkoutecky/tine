@@ -45,7 +45,7 @@ if (section && fs.existsSync(impactPath)) {
   const impact = JSON.parse(fs.readFileSync(impactPath, "utf8"));
   if (impact.schemaVersion !== 1) problems.push("impact schemaVersion must be 1");
   if (impact.version !== version) problems.push(`impact version ${impact.version} does not match ${version}`);
-  if (!/^v\d+\.\d+\.\d+$/.test(impact.baseTag ?? "")) problems.push("impact baseTag is invalid");
+  if (!/^v\d+\.\d+\.\d+(-beta\.\d+)?$/.test(impact.baseTag ?? "")) problems.push("impact baseTag is invalid");
   if (!Array.isArray(impact.items)) problems.push("impact items must be an array");
   else {
     const expected = changelogItems(section).map((item) => `${item.section}\0${normalizeItemText(item.text)}`);
