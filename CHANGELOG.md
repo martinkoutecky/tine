@@ -42,6 +42,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Importing or saving an asset whose name is taken by a large file no longer reads that file into memory (REG-OG-C5-L06-S2).
 - A backup that cannot read the graph, and a focus or Settings rescan that fails, now report the real error instead of a generic failure or a silent success (REG-OG-C5-L07-B1, REG-OG-C5-L08-B1).
 - Page rename publication skips reparsing the old document and repeated transaction-record searches; loaded-page refresh uses one path lookup per touched page (GH #623).
+- Page renames open each rewritten referrer four times instead of eight and plan without building the whole-graph name list, with every revision and pre-rename guard kept (GH #623).
 - Ordinary focus refreshes enumerate graph metadata outside the page/save writer and sort only changed paths, reducing waits while preserving freshness; config changes and failed-load recovery retain their full writer-ordered scans (GH #623).
 - Graph search measures text rank only for matches, avoiding a full Unicode-length pass over rejected blocks (GH #623).
 - Page-search results read properties only for their selected pages, avoiding unrelated graph-query initialization (GH #623).

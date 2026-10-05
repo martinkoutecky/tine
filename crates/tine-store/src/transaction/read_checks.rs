@@ -72,6 +72,104 @@ impl Transaction<'_> {
         Ok(())
     }
 }
+impl Transaction<'_> {
+    /// Stage-2 test injections for `file`, then its path.
+    pub(super) fn stage2_faults(
+        &self,
+        file: &FileId,
+        old: Option<&[u8]>,
+        index: usize,
+    ) -> Result<PathBuf, Why> {
+        let path = self.path(file)?;
+        if fault(self.store, FaultPoint::Stage2ConfigExternal) {
+            atomic_write(&path, b"{:external true :start-of-week 1}\n").map_err(failed)?;
+        }
+        if fault(self.store, FaultPoint::Stage2ValidSidecar) {
+            let external = b"{:highlights [] :foreign \"external\"}";
+            let result = if old.is_some() {
+                atomic_write(&path, external)
+            } else {
+                atomic_write_new(&path, external)
+            };
+            result.map_err(failed)?;
+        }
+        if fault(self.store, FaultPoint::Stage2Mismatch)
+            || fault(self.store, FaultPoint::Stage2MismatchAt(index))
+        {
+            let result = if old.is_some() {
+                atomic_write(&path, b"external stage-2")
+            } else {
+                atomic_write_new(&path, b"external stage-2")
+            };
+            result.map_err(failed)?;
+        }
+        if fault(self.store, FaultPoint::Stage2ExternalDelete) {
+            #[cfg(any(test, feature = "test-faults"))]
+            inject_external_delete(&path).map_err(failed)?;
+        }
+        Ok(path)
+    }
+
+    /// Stage-2 base-revision check: `file` still holds `old` (absent for
+    /// `None`). Scenario: an external editor or sync service wrote the file
+    /// after preflight staged it (refusal table: base-revision conflict).
+    pub(super) fn verify(
+        &self,
+        file: &FileId,
+        old: Option<&[u8]>,
+        index: usize,
+    ) -> Result<(), Why> {
+        let path = self.stage2_faults(file, old, index)?;
+        match if self.page(file) {
+            crate::model::read_parse_bytes(&path)
+        } else {
+            fs::read(path)
+        } {
+            Ok(now) if old == Some(now.as_slice()) => Ok(()),
+            Ok(now) => Err(Why::Conflict {
+                file: file.clone(),
+                disk: Some(FileRev::from_bytes(&now)),
+            }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound && old.is_none() => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(Why::Conflict {
+                file: file.clone(),
+                disk: None,
+            }),
+            Err(error) => Err(Why::Failed(error.into())),
+        }
+    }
+
+    /// Whether `apply` may skip the separate stage-2 read. A reference rewrite that
+    /// changes an existing page skips the separate read: `apply` writes it
+    /// with `atomic_write_with_check`, whose final pre-rename guard reads the
+    /// same file through the same `read_parse_bytes` and compares it with the
+    /// same `old` bytes before the rename, refusing a mismatch or absence as
+    /// the same `Why::Conflict` (via `collision`). The external-editor/sync
+    /// race this check defends against is therefore caught later in the same
+    /// step, before anything becomes visible; only a temp file is written
+    /// and withdrawn first (GH #623: one fewer open per referrer). Saves and
+    /// replacements keep both checks: an unchanged or new file has no final
+    /// guard, and their callers' contracts are not narrowed here.
+    pub(super) fn final_guard_covers(step: &Step, old: Option<&[u8]>, new: &[u8]) -> bool {
+        matches!(step, Step::Rewrite { .. }) && old.is_some_and(|old| old != new)
+    }
+
+    pub(super) fn verify_opaque(&self, file: &FileId, expected: &FileRev) -> Result<(), Why> {
+        let path = self.path(file)?;
+        match FileRev::from_file(&path) {
+            Ok(rev) if rev == *expected => Ok(()),
+            Ok(rev) => Err(Why::Conflict {
+                file: file.clone(),
+                disk: Some(rev),
+            }),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(Why::Conflict {
+                file: file.clone(),
+                disk: None,
+            }),
+            Err(error) => Err(failed(error)),
+        }
+    }
+}
 impl Store {
     /// Whether a streaming descriptor still names the live validated file.
     /// Cost O(1) open/identity checks, no content read. IO/path failures are

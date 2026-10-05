@@ -177,11 +177,18 @@ fn public_items(src: &Path) -> BTreeSet<String> {
         "store/save_failure.rs",
         "store/page_identity.rs",
         "store/diagnostics.rs",
+        "store/inventory.rs",
     ] {
         let file = src.join(child);
         let parsed = syn::parse_file(&std::fs::read_to_string(&file).unwrap())
             .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
         collect("store", &parsed.items, &mut out);
+    }
+    for child in ["transaction/prepared.rs"] {
+        let file = src.join(child);
+        let parsed = syn::parse_file(&std::fs::read_to_string(&file).unwrap())
+            .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+        collect("transaction", &parsed.items, &mut out);
     }
     out
 }

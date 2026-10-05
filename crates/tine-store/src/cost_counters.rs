@@ -26,6 +26,8 @@ static HASH_READS: AtomicU64 = AtomicU64::new(0);
 static STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 static ASSET_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 static STORE_READS: AtomicU64 = AtomicU64::new(0);
+static NAME_INVENTORY_ENTRIES: AtomicU64 = AtomicU64::new(0);
+static TRANSACTION_REWRITES: AtomicU64 = AtomicU64::new(0);
 
 /// Primitive counts since the last reset. The fixture uses one process per case.
 #[derive(Clone, Copy, Debug, Default)]
@@ -89,6 +91,13 @@ pub struct Counts {
     /// file read: conflict markers, sync copies), which the load pass's own
     /// `full_reads` does not include.
     pub store_reads: u64,
+    /// Entries built by the whole-graph name inventory
+    /// (`WholeGraph::inventory`: every claimed, alias and reference-only
+    /// name), which grows with the graph rather than with the operation.
+    pub name_inventory_entries: u64,
+    /// Reference rewrites computed inside a transaction (preflight, under the
+    /// writer and page locks) rather than handed over prepared.
+    pub transaction_rewrites: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -120,6 +129,8 @@ pub fn reset() {
         &STAMPS_BY_PATH,
         &ASSET_STAMPS_BY_PATH,
         &STORE_READS,
+        &NAME_INVENTORY_ENTRIES,
+        &TRANSACTION_REWRITES,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -154,9 +165,17 @@ pub fn snapshot() -> Counts {
         stamps_by_path: STAMPS_BY_PATH.load(Ordering::Relaxed),
         asset_stamps_by_path: ASSET_STAMPS_BY_PATH.load(Ordering::Relaxed),
         store_reads: STORE_READS.load(Ordering::Relaxed),
+        name_inventory_entries: NAME_INVENTORY_ENTRIES.load(Ordering::Relaxed),
+        transaction_rewrites: TRANSACTION_REWRITES.load(Ordering::Relaxed),
     }
 }
 
+pub(crate) fn name_inventory_entries(count: usize) {
+    NAME_INVENTORY_ENTRIES.fetch_add(count as u64, Ordering::Relaxed);
+}
+pub(crate) fn transaction_rewrite() {
+    TRANSACTION_REWRITES.fetch_add(1, Ordering::Relaxed);
+}
 pub(crate) fn store_read() {
     STORE_READS.fetch_add(1, Ordering::Relaxed);
 }

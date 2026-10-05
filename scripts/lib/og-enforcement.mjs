@@ -132,6 +132,10 @@ export function readWriterSiteCounts(root) {
   // Transfer their allowance; neither the total nor the persisted formats grow.
   baseline["src/ui.ts"] -= 2;
   baseline["src/sidebarSizing.ts"] = 2;
+  // QF3b moved stage-2 verification, with its five test-fault writes of
+  // simulated external edits, out of transaction.rs. Transfer their allowance.
+  baseline["crates/tine-store/src/transaction.rs"] -= 5;
+  baseline["crates/tine-store/src/transaction/read_checks.rs"] = 5;
   const current = Object.fromEntries(currentFiles(root).map((file) => [file, writerSiteCounts(fs.readFileSync(path.join(root, file), "utf8"))]));
   return { current, baseline };
 }

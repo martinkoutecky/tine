@@ -12,7 +12,7 @@
 //! read or revision check returns the affected file locations and makes the
 //! publication incomplete; callers inspect disk and refresh before retrying.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use faults::fault;
 #[cfg(any(test, feature = "test-faults"))]
@@ -29,6 +29,8 @@ mod move_file;
 #[path = "../tests/support/og_k1_pause.rs"]
 mod og_k1_pause;
 mod preflight;
+mod prepared;
+use prepared::PreparedRewrite;
 mod publication;
 mod read_checks;
 mod validation;
@@ -40,8 +42,8 @@ use std::fs::{self, File};
 use std::io::{self, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use validation::{
-    rewrite, rewrite_move, valid_utf8_file, validate_config_bytes, validate_config_content,
-    validate_page_content, validate_stream,
+    refuse_read_only_org, rewrite, rewrite_move, valid_utf8_file, validate_config_bytes,
+    validate_config_content, validate_page_content, validate_stream,
 };
 
 use tine_core::doc::Document;
@@ -324,6 +326,7 @@ enum Step {
         expected: FileRev,
         renames: RenameMap,
         rebind_title: bool,
+        prepared: Option<Box<PreparedRewrite>>,
     },
     Move {
         file: FileId,
@@ -387,6 +390,8 @@ pub struct Transaction<'a> {
     // Exact names sampled once per directory per commit phase.
     spelling_entries:
         std::cell::RefCell<BTreeMap<PathBuf, BTreeMap<std::ffi::OsString, std::ffi::OsString>>>,
+    // Reference rewrites prepared from the caller's planning read (GH #623).
+    prepared: HashMap<FileId, PreparedRewrite>,
 }
 
 impl Store {
@@ -400,6 +405,7 @@ impl Store {
             steps: Vec::new(),
             kinds: kind.into_iter().collect(),
             spelling_entries: Default::default(),
+            prepared: HashMap::new(),
         }
     }
 }
@@ -525,18 +531,21 @@ impl<'a> Transaction<'a> {
     /// mode: omit that referrer from the queued steps if leaving its old link
     /// is acceptable. This rewrites file content,
     /// not an unsaved editor buffer. Commit reads, parses, rewrites and writes
-    /// each named referrer, O(its text bytes), plus publication metadata.
+    /// each named referrer, O(its text bytes), plus publication metadata; a
+    /// rewrite kept by [`Self::prepare_ref_rewrite`] is reused, not recomputed.
     pub fn rewrite_refs(
         &mut self,
         id: &PageId,
         expected: FileRev,
         renames: &RenameMap,
     ) -> &mut Self {
+        let prepared = self.take_prepared(&id.file(), renames);
         self.steps.push(Step::Rewrite {
             id: id.clone(),
             expected,
             renames: renames.clone(),
             rebind_title: false,
+            prepared,
         });
         self
     }
@@ -579,6 +588,7 @@ impl<'a> Transaction<'a> {
                     expected,
                     renames: renames.clone(),
                     rebind_title: true,
+                    prepared: None,
                 });
                 return self;
             }
@@ -818,69 +828,6 @@ impl<'a> Transaction<'a> {
         }
     }
 
-    fn verify(&self, file: &FileId, old: Option<&[u8]>, index: usize) -> Result<(), Why> {
-        let path = self.path(file)?;
-        if fault(self.store, FaultPoint::Stage2ConfigExternal) {
-            atomic_write(&path, b"{:external true :start-of-week 1}\n").map_err(failed)?;
-        }
-        if fault(self.store, FaultPoint::Stage2ValidSidecar) {
-            let external = b"{:highlights [] :foreign \"external\"}";
-            let result = if old.is_some() {
-                atomic_write(&path, external)
-            } else {
-                atomic_write_new(&path, external)
-            };
-            result.map_err(failed)?;
-        }
-        if fault(self.store, FaultPoint::Stage2Mismatch)
-            || fault(self.store, FaultPoint::Stage2MismatchAt(index))
-        {
-            let result = if old.is_some() {
-                atomic_write(&path, b"external stage-2")
-            } else {
-                atomic_write_new(&path, b"external stage-2")
-            };
-            result.map_err(failed)?;
-        }
-        if fault(self.store, FaultPoint::Stage2ExternalDelete) {
-            #[cfg(any(test, feature = "test-faults"))]
-            inject_external_delete(&path).map_err(failed)?;
-        }
-        match if self.page(file) {
-            crate::model::read_parse_bytes(&path)
-        } else {
-            fs::read(path)
-        } {
-            Ok(now) if old == Some(now.as_slice()) => Ok(()),
-            Ok(now) => Err(Why::Conflict {
-                file: file.clone(),
-                disk: Some(FileRev::from_bytes(&now)),
-            }),
-            Err(error) if error.kind() == io::ErrorKind::NotFound && old.is_none() => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(Why::Conflict {
-                file: file.clone(),
-                disk: None,
-            }),
-            Err(error) => Err(Why::Failed(error.into())),
-        }
-    }
-
-    fn verify_opaque(&self, file: &FileId, expected: &FileRev) -> Result<(), Why> {
-        let path = self.path(file)?;
-        match FileRev::from_file(&path) {
-            Ok(rev) if rev == *expected => Ok(()),
-            Ok(rev) => Err(Why::Conflict {
-                file: file.clone(),
-                disk: Some(rev),
-            }),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Err(Why::Conflict {
-                file: file.clone(),
-                disk: None,
-            }),
-            Err(error) => Err(failed(error)),
-        }
-    }
-
     fn fixed_step_names(&self) -> HashSet<FileId> {
         let mut names = HashSet::new();
         for step in &self.steps {
@@ -1041,7 +988,11 @@ impl<'a> Transaction<'a> {
                 og_k1_pause::before_apply(&src);
                 let new = plan.new.as_ref().expect("prepared write");
                 let old = plan.old.as_deref();
-                self.verify(&plan.src, old, index)?;
+                if Self::final_guard_covers(step, old, new) {
+                    self.stage2_faults(&plan.src, old, index)?;
+                } else {
+                    self.verify(&plan.src, old, index)?;
+                }
                 if old == Some(new.as_slice()) {
                     return Ok(StepResult::Unchanged {
                         file: plan.src.clone(),
@@ -1750,6 +1701,7 @@ impl<'a> Transaction<'a> {
             publication_errors,
             published_own,
             published_external,
+            observations,
         } = self.publish_final_files(
             &plans,
             &done,
@@ -1765,7 +1717,7 @@ impl<'a> Transaction<'a> {
         let mut published_rev = self.store.changes.rev();
         let mut change = None;
         if !published_own.is_empty() {
-            (published_rev, change) = self.store.publish_own(published_own);
+            (published_rev, change) = self.store.publish_own(published_own, observations);
         }
         if !published_external.is_empty() {
             let pages = published_external
@@ -1777,9 +1729,12 @@ impl<'a> Transaction<'a> {
                         .map(|entry| (id.clone(), entry.kind, entry.name.clone()))
                 })
                 .collect();
-            let (rev, _) =
-                self.store
-                    .publish_transaction_change(Origin::External, published_external, pages);
+            let (rev, _) = self.store.publish_transaction_change(
+                Origin::External,
+                published_external,
+                pages,
+                Default::default(),
+            );
             published_rev = rev;
         }
         // A clean rollback needs no second copy of bytes written by this

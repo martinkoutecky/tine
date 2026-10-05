@@ -56,6 +56,12 @@ struct transaction::RenameMap
 struct transaction::Rollback
 struct transaction::Transaction
 use crate::transaction::{Content,IoError,Refusal,RenameMap,Rollback,StepResult,Transaction,TxOutcome,Why,}
+# QF3b (GH #623): the rename planner asks the transaction whether a reference
+# rewrite changes a file (the transaction keeps it for preflight, which does not
+# compute it again) and asks for the page files under one key instead of the
+# whole-graph inventory.
+fn transaction::Transaction::prepare_ref_rewrite
+fn store::WholeGraph::page_files_at_or_under
 fn publish::publication_assets
 fn publish::publication_block_ref_counts
 fn publish::publish_site_external

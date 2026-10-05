@@ -115,7 +115,7 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::commit_timed::RepeatedFile` | 1 | A multi-step action names one file twice; refuse before any write. |
 | `transaction.rs::rewrite::Undecodable` | 1 | Sync makes a referrer invalid UTF-8 before rename rewrite; keep that file and refuse the rename. |
 | `transaction.rs::rewrite_move::Undecodable` | 2 | Sync leaves a title-owned move source or its rewritten bytes invalid UTF-8; refuse the rename before moving the file or publishing a new title. |
-| `transaction.rs::rewrite::ReadOnly` | 1 | An Org referrer is not round-trip editable; keep its bytes instead of rewriting it. |
+| `transaction.rs::refuse_read_only_org::ReadOnly` | 1 | An Org referrer is not round-trip editable (malformed imported Org); keep its bytes instead of rewriting it, whether preflight computes the rewrite or reuses one prepared by the rename planner (GH #623). |
 | `transaction.rs::rewrite_move::ReadOnly` | 1 | An imported Org page named by `#+TITLE:` or a `:title:` drawer is not round-trip editable; refuse the rename rather than rebind its title in bytes Tine cannot reproduce. |
 | `transaction.rs::content_refusal::Undecodable` | 1 | An existing or imported page has invalid UTF-8; refuse the write without reporting a transient I/O failure. |
 | `transaction.rs::content_refusal::InvalidTarget` | 1 | Existing or serialized page content exceeds the byte or nesting parse bound; refuse while retaining unsaved edits. |
@@ -317,3 +317,32 @@ Unit cost: unchanged full referrer payload per file, one temporary payload file
 and two syncs per rewritten referrer, plus the source move's directory sync.
 The 1-/60-block referrer fixtures write 22/1,320 bytes respectively, measured by
 the temporary-payload counter; no new persisted record or transport bytes.
+
+### Rename reads (GH #623, QF3b)
+
+A rename opens each rewritten referrer four times: the planner's read, the
+preflight base-revision stage, the final pre-rename guard inside
+`atomic_write_with_check`, and the publication read. The planner names only
+the renamed page's own files (`WholeGraph::page_files_at_or_under`), not the
+whole-graph inventory. It asks the transaction whether each referrer's
+rewrite changes it (`Transaction::prepare_ref_rewrite`, the store's own
+rewriter); the transaction keeps a changing rewrite for that file and rename
+map, and preflight still stages the file against the expected revision and
+reuses the kept bytes only when the staged bytes are byte-identical to the
+prepared old bytes and the filename format is unchanged, otherwise it
+recomputes; the read-only Org and
+VCS-marker refusals run on the staged bytes either way. A changing reference
+rewrite has no separate stage-2 read: the final pre-rename guard compares the
+same file with the same baseline and refuses a mismatch as the same conflict
+(external-editor or sync race), after writing only a temporary file.
+Publication names the page from the bytes it read, and the name index reuses
+that entry unless the transaction changed `config.edn`. The own-write stamp
+takes its metadata from the publication read's handle; the watcher re-hashes
+the file only when a later `symlink_metadata` differs from it, and a racy
+stamp is reread on the next poll as for every other file.
+
+Unit cost: unchanged bytes, files and syncs per edit (22/1,320 bytes on the
+1-/60-block fixtures, one temporary file and two syncs per referrer); per
+rewritten referrer four whole-file opens instead of eight and one metadata
+stamp, no preamble open and no own-write re-hash, measured by
+`rename_io.rs` cost counters; no persisted record or transport bytes.

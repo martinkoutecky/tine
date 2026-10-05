@@ -576,8 +576,17 @@ impl Graph {
         path: &Path,
         stem: &str,
         fmt: FileNameFormat,
+        text: Option<&str>,
     ) -> Option<String> {
-        match effective_page_name(path, stem, fmt) {
+        let name = match text {
+            Some(text) => Ok(effective_page_name_from_text(
+                path,
+                &decode_page_name(stem, fmt),
+                text,
+            )),
+            None => effective_page_name(path, stem, fmt),
+        };
+        match name {
             Ok(name) => {
                 let id = crate::FileId::from(self.rel_path(path));
                 self.discovery_errors

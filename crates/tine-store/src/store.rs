@@ -328,10 +328,12 @@ pub(crate) mod checkpoint;
 mod diagnostics;
 #[cfg(test)]
 mod fold_save_tests;
+mod inventory;
 #[cfg(test)]
 mod page_open_tests;
 mod page_read;
 mod snapshot;
+pub(crate) use snapshot::PublishedObservations;
 
 impl ChangeFeed {
     /// Record the watcher's live-notification state. A new refusal message is
@@ -389,6 +391,7 @@ impl ChangeFeed {
             false,
             false,
             GraphRev(0),
+            &HashMap::new(),
         );
         *self.snapshot.write().unwrap() = Some(Arc::new(snapshot));
     }
@@ -401,6 +404,28 @@ impl ChangeFeed {
         pages: Vec<(FileId, PageKind, String)>,
     ) -> GraphRev {
         self.publish_with(origin, files, config_changed, pages, || {})
+    }
+
+    /// [`Self::publish`] with page entries a transaction's publication named
+    /// from the bytes it read, which the name index reuses (GH #623).
+    pub(crate) fn publish_observed(
+        &self,
+        origin: Origin,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        config_changed: bool,
+        pages: Vec<(FileId, PageKind, String)>,
+        published: &HashMap<FileId, PageEntry>,
+    ) -> GraphRev {
+        self.publish_inner(
+            origin,
+            files,
+            config_changed,
+            pages,
+            || {},
+            None,
+            false,
+            published,
+        )
     }
 
     // `before_notify` runs after the new snapshot exists, but before the
@@ -433,6 +458,7 @@ impl ChangeFeed {
             before_notify,
             watch,
             false,
+            &HashMap::new(),
         )
     }
 
@@ -448,6 +474,7 @@ impl ChangeFeed {
             || {},
             None,
             true,
+            &HashMap::new(),
         );
     }
 
@@ -461,6 +488,7 @@ impl ChangeFeed {
         before_notify: impl FnOnce(),
         watch: Option<WatchBatch>,
         rebuild: bool,
+        published: &HashMap<FileId, PageEntry>,
     ) -> GraphRev {
         let old = self.snapshot.read().unwrap().clone();
         let journals_dir = self.graph.current_config().journals_dir.clone();
@@ -484,6 +512,7 @@ impl ChangeFeed {
             config_changed,
             rebuild,
             rev,
+            published,
         ));
         // A fold leaves the launch checkpoint's derived state true; its file
         // stamp is stale, so the next launch diff rereads that one file
@@ -2785,121 +2814,6 @@ impl WholeGraph {
             }
         });
         Arc::new(names)
-    }
-
-    /// Names and file claimants in this view. Physical twins with the same
-    /// decoded spelling produce one name entry whose target contains the
-    /// canonical id and the other claimants; `scan_area` lists physical files.
-    /// Ordinary page twins can both contribute parsed search and backlink
-    /// content; duplicate-day journal strays are absent from view queries but
-    /// can be read directly by file id. Such a read does not add them to this
-    /// view or publish a change; they do not contribute references or backlinks.
-    /// They still appear as `others` of the day's `Resolved::Existing` target.
-    // The parsed whole-graph cache omits duplicate-day journal strays.
-    /// A first call can traverse all
-    /// page blocks and reference text to build indexes; later calls cost
-    /// O(P + B + aliases + R + N log N) on the first call, where R is
-    /// reference-only names and N is inventory entries. Alias owners are
-    /// indexed once per snapshot instead of rescanned for every name.
-    /// The result is stable in this view.
-    pub fn inventory(&self) -> Arc<Inventory> {
-        let mut entries = Vec::new();
-        let mut visited = HashSet::new();
-        let mut claimed_names = HashSet::new();
-        let mut page_claimed_names = HashSet::new();
-        for page in self.list.iter() {
-            let key = tine_core::refs::page_key(&page.name);
-            if !visited.insert((page.kind == PageKind::Journal, key.clone())) {
-                continue;
-            }
-            // One entry per spelling, each with the same target `resolve`
-            // gives: the bucket's first claimant, then every other claimant.
-            let mut names: Vec<String> = Vec::new();
-            let mut ids: Vec<PageId> = Vec::new();
-            if let Some(claimants) = self
-                .claimants
-                .get(&(page.kind == PageKind::Journal, key.clone()))
-            {
-                for claimant in claimants {
-                    if let Some(id) = &claimant.rel_path {
-                        if !names.contains(&claimant.name) {
-                            names.push(claimant.name.clone());
-                        }
-                        ids.push(id.clone());
-                    }
-                }
-            }
-            for name in names {
-                let key = tine_core::refs::page_key(&name);
-                if page.kind == PageKind::Page {
-                    page_claimed_names.insert(key.clone());
-                }
-                claimed_names.insert(key);
-                entries.push(InventoryEntry {
-                    name,
-                    target: Resolved::Existing {
-                        id: ids[0].clone(),
-                        others: ids[1..].to_vec(),
-                    },
-                    is_journal: page.kind == PageKind::Journal,
-                    day: page.date_key.map(Day),
-                });
-            }
-        }
-        let references = self.graph.referenced_page_names();
-        let reference_spelling: HashMap<_, _> = references
-            .iter()
-            .map(|name| (tine_core::refs::page_key(name), name.as_str()))
-            .collect();
-        // One entry per alias name, owners sorted by path (rev 5
-        // `Resolved::Alias`). An alias that is also a page file's name gets no
-        // entry: `resolve` prefers the file, and every entry's target must be
-        // the answer `resolve` gives for its name.
-        let mut alias_owners: BTreeMap<String, (String, Vec<PageId>)> = BTreeMap::new();
-        for (alias, _, owner) in self.graph.page_aliases_with_owners() {
-            let key = tine_core::refs::page_key(&alias);
-            if page_claimed_names.contains(&key) {
-                continue;
-            }
-            let spelling = reference_spelling
-                .get(&key)
-                .copied()
-                .unwrap_or(&alias)
-                .to_owned();
-            let slot = alias_owners
-                .entry(key)
-                .or_insert_with(|| (spelling, Vec::new()));
-            let owner = PageId::from(owner);
-            if !slot.1.contains(&owner) {
-                slot.1.push(owner);
-            }
-        }
-        let alias_names: HashSet<String> = alias_owners.keys().cloned().collect();
-        for (_, (name, mut owners)) in alias_owners {
-            owners.sort();
-            entries.push(InventoryEntry {
-                name,
-                target: Resolved::Alias { owners },
-                is_journal: false,
-                day: None,
-            });
-        }
-        for name in references {
-            let key = tine_core::refs::page_key(&name);
-            if claimed_names.contains(&key) || alias_names.contains(&key) {
-                continue;
-            }
-            entries.push(InventoryEntry {
-                target: self.resolve(&name, false),
-                name,
-                is_journal: false,
-                day: None,
-            });
-        }
-        entries.sort_by_cached_key(|entry| {
-            (tine_core::refs::page_key(&entry.name), entry.name.clone())
-        });
-        Arc::new(Inventory(entries))
     }
 
     /// Pages whose explicit references name any of `names` (page keys, compared

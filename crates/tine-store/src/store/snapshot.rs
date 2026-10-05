@@ -78,6 +78,7 @@ impl Snapshot {
         config_changed: bool,
         rebuild: bool,
         rev: GraphRev,
+        published: &HashMap<FileId, PageEntry>,
     ) -> Self {
         // The publication caller holds the store writer lock. A load worker
         // publishes only after its initial parse has finished.
@@ -97,7 +98,13 @@ impl Snapshot {
                 {
                     return None;
                 }
-                let entry = graph.entry_for_path(&path)?;
+                // A transaction's own publication named the page from the
+                // bytes it cached, under the same writer lock and config; an
+                // external write since then is the watcher's next change.
+                let entry = match published.get(id) {
+                    Some(entry) if !config_changed => entry.clone(),
+                    _ => graph.entry_for_path(&path)?,
+                };
                 if *kind == ChangeKind::Modified && entry.kind == PageKind::Journal {
                     return None;
                 }
@@ -254,12 +261,24 @@ impl Snapshot {
     }
 }
 
+/// What final publication already observed of the files it published, so
+/// the own-write stamp and the name index need not reopen them (GH #623).
+#[derive(Default)]
+pub(crate) struct PublishedObservations {
+    /// Per file: metadata stamped before the publication read, with the
+    /// revision of the bytes that read returned.
+    pub(crate) stamps: HashMap<FileId, crate::watch::Stamp>,
+    /// Per page file: the cacheable entry named from those same bytes.
+    pub(crate) entries: HashMap<FileId, PageEntry>,
+}
+
 impl Store {
     pub(crate) fn publish_own(
         &self,
         files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        observations: PublishedObservations,
     ) -> (GraphRev, Option<Change>) {
-        self.publish_transaction_change(Origin::Own, files, Vec::new())
+        self.publish_transaction_change(Origin::Own, files, Vec::new(), observations)
     }
 
     pub(crate) fn publish_transaction_change(
@@ -267,12 +286,15 @@ impl Store {
         origin: Origin,
         files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
         pages: Vec<(FileId, PageKind, String)>,
+        observations: PublishedObservations,
     ) -> (GraphRev, Option<Change>) {
         let observed: Vec<_> = files
             .iter()
             .map(|(id, _, rev)| (id.clone(), rev.clone()))
             .collect();
-        let raced = self.watch.note_own(&observed);
+        let raced = self
+            .watch
+            .note_own_observed(&observed, &observations.stamps);
         let config_changed = observed
             .iter()
             .any(|(id, _)| id.as_str() == "logseq/config.edn");
@@ -288,9 +310,13 @@ impl Store {
             }
             return (self.changes.rev(), None);
         }
-        let rev = self
-            .changes
-            .publish(origin, files.clone(), config_changed, pages.clone());
+        let rev = self.changes.publish_observed(
+            origin,
+            files.clone(),
+            config_changed,
+            pages.clone(),
+            &observations.entries,
+        );
         let answers = self
             .changes
             .snapshot
