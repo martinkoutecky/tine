@@ -88,6 +88,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Preserve code literals during text, HTML and OPML export cleanup; recognize standalone embeds from parsed content; preserve early journal years and advance timed repeaters (REG-OG-DUPD2-D15–D19).
 - Typing in an expanded parent block no longer recomputes the visible order of every loaded journal page on each keystroke (REG-OG-C5-C-TYPING-ORDER).
 - Backspace or Delete at a block edge no longer merges a block whose children would land deeper than the 128-level outline limit, which left the page unsavable; the merge is refused with an error (UI-OG-C5-C-MERGE-DEPTH).
+- A session or workspace whose saved pane layout is nested thousands of splits deep no longer loses the whole restore; the panes within the depth and pane bounds are restored (UI-OG-C5-C-LAYOUT-DEPTH).
 
 ### Added
 
