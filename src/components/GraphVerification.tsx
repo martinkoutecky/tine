@@ -43,6 +43,15 @@ export function GraphVerification(): JSX.Element {
   onCleanup(() => {
     disposed = true;
     stopProgress?.();
+    // The backend keeps reading and hashing every graph file until told to
+    // stop; closing the tab must not leave that work (and its progress events)
+    // running for an answer nobody can receive (I-21).
+    const running = operation();
+    if (running) {
+      void backend().cancelGraphVerification(running).catch((error) => {
+        dbg(`graph verification cancel on close failed: ${String(error)}`);
+      });
+    }
   });
 
   const create = async () => {

@@ -51,6 +51,31 @@ describe("Verify synchronized graph (master 749bfb2b1)", () => {
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));
   };
 
+  it("I-21: cancels the running verification when the tab closes", async () => {
+    let id = "";
+    vi.spyOn(backend(), "createGraphVerification").mockImplementation((operationId) => { id = operationId; return new Promise(() => {}); });
+    const cancel = vi.spyOn(backend(), "cancelGraphVerification").mockResolvedValue(undefined);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => <DiagnosticsTab />, host);
+    button(host, "Create graph verification report").click();
+    await flush();
+    expect(id).not.toBe("");
+    expect(cancel).not.toHaveBeenCalled();
+    dispose();
+    expect(cancel).toHaveBeenCalledExactlyOnceWith(id);
+  });
+
+  it("does not cancel anything when the tab closes with no verification running", async () => {
+    const cancel = vi.spyOn(backend(), "cancelGraphVerification").mockResolvedValue(undefined);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => <DiagnosticsTab />, host);
+    await flush();
+    dispose();
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
   it("compares graph bytes and names the exact differing source path", async () => {
     const { host, dispose } = await mountWithReport(manifest("a"));
     expect(host.textContent).toContain("1 files");
