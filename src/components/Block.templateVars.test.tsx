@@ -93,3 +93,32 @@ it("does not offer the previous graph's cached templates after a graph switch", 
     b.dispose();
   }
 });
+
+it("reports a failed template listing and retries it instead of caching 'no templates' (C5 I-9)", async () => {
+  const { toasts, setToasts } = await import("../toasts");
+  setToasts([]);
+  const list = vi.spyOn(backend(), "listTemplates")
+    .mockRejectedValueOnce(new Error("templates unreadable"))
+    .mockResolvedValueOnce([{ name: "Later", page: "Templates", kind: "page", blocks: [] }]);
+  setGraphMeta({ ...META, root: "/tmp/template-fail" });
+  bumpGraphEpoch();
+  loadSingle({ name: "Shared", kind: "page", title: "Shared", pre_block: null,
+    blocks: [{ id: "host-fail", raw: "/", collapsed: false, children: [] }] });
+  startEditing("host-fail", 1);
+  const root = document.createElement("div");
+  document.body.append(root);
+  const dispose = render(() => <Block id="host-fail" />, root);
+  try {
+    const textarea = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+    textarea.focus();
+    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "L" }));
+    await vi.waitFor(() => expect(toasts().some((t) => t.kind === "error" && t.message.includes("templates unreadable"))).toBe(true));
+    textarea.value = "/La";
+    textarea.setSelectionRange(3, 3);
+    textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "a" }));
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+  } finally {
+    dispose();
+    setToasts([]);
+  }
+});

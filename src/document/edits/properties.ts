@@ -1,7 +1,7 @@
 import type { PageDto } from "../../types";
 import { ordered_list_glyph } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
-import { blockRegions, editBlock } from "../../render/parse";
+import { blockRegions, editBlock, parserReady } from "../../render/parse";
 import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { pushUndo } from "../history";
@@ -382,13 +382,20 @@ export function toggleListItemAtIndex(id: string, lineIndex: number, column: num
 
 export type HeadingState = number | true | null;
 
-const MARKDOWN_HEADING = /^#+\s+/;
-const clearMarkdownHeading = (raw: string): string => raw.replace(MARKDOWN_HEADING, "");
+// The ATX marker is the parser's to find (I-12): `header.heading` is the `#` count lsdoc accepted for
+// the block's first line, so `#tag`, a `#` run inside prose and a heading-looking line in a later
+// line are never mistaken for one. Only the whitespace after the known-length marker is removed here.
+const markdownHeadingLevel = (raw: string): number =>
+  parserReady() && raw.includes("#") ? blockRegions(raw, "md").header.heading ?? 0 : 0;
+const afterMarkdownHeading = (raw: string, level: number): string => raw.slice(level).replace(/^[ \t]+/, "");
+const clearMarkdownHeading = (raw: string): string => {
+  const level = markdownHeadingLevel(raw);
+  return level ? afterMarkdownHeading(raw, level) : raw;
+};
 const setMarkdownHeading = (raw: string, level: number): string => {
   const prefix = `${"#".repeat(level)} `;
-  return MARKDOWN_HEADING.test(raw)
-    ? raw.replace(MARKDOWN_HEADING, prefix)
-    : prefix + raw.trimStart();
+  const current = markdownHeadingLevel(raw);
+  return current ? prefix + afterMarkdownHeading(raw, current) : prefix + raw.trimStart();
 };
 
 /** Pure format-aware heading transition shared by single-block and selection

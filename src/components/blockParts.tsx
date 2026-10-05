@@ -7,6 +7,7 @@
 import { For, type JSX } from "solid-js";
 import { node as docNode, pageByName, setRaw } from "../document";
 import { literalBlockOfLine } from "../editor/literalLines";
+import { hideAll, splitProps } from "../editor/properties";
 import { toggleMarkerLabel, toggleTaskDone } from "../editor/repeat";
 import type { LogbookInfo } from "../logbook";
 import { logbookWithSecondSupport, timetrackingEnabled, workflow } from "../ui";
@@ -105,11 +106,12 @@ export function resizeBlockEditor(editor: HTMLTextAreaElement): void {
   if (scroller && top !== undefined && scroller.scrollTop !== top) scroller.scrollTop = top;
 }
 
-/** First visible (non-`key:: value`) line of a block's raw markdown — what the
- *  block-reference picker shows as the candidate's label. */
-export function blockFirstLine(raw: string): string {
-  for (const line of raw.split("\n")) {
-    if (!/^\s*[\w-]+:: /.test(line) && line.trim() !== "") return line.trim();
+/** First visible (non-property) line of a block's raw text - what the block-reference picker shows as
+ *  the candidate's label. Which lines are properties is lsdoc's (`splitProps` over the block-region
+ *  door), so a `key:: value` line inside a code fence is content, not skipped metadata (I-12). */
+export function blockFirstLine(raw: string, format: "md" | "org" = "md"): string {
+  for (const line of splitProps(raw, hideAll, format).visible.split("\n")) {
+    if (line.trim() !== "") return line.trim();
   }
   return "";
 }

@@ -4,6 +4,8 @@ import { resolveRouteBlock, routeTitle, type PaneRouter, type Route, type Tab } 
 import { formatForBlock, node as docNode } from "../document";
 import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
+import { parseBlock, parserReady } from "../render/parse";
+import { inlineText } from "../render/facets";
 import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes } from "../panes";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 
@@ -19,25 +21,20 @@ const DRAG_THRESHOLD_PX = 4;
 const EDGE_ZONE_PX = 24;
 
 // A short, plain-text summary of a zoomed-into block, for the tab label. Drops
-// the hidden id::/collapsed:: lines, takes the first non-empty line, and strips
-// the common markdown decorations so the pill reads like the block's text.
-function blockSummary(raw: string, format: PropFormat, truncate = true): string {
+// the hidden id::/collapsed:: lines, takes the first non-empty line, and reads it
+// as the PARSER does (I-12): links show their label, page refs their name, emphasis
+// and code spans their text, and a heading its title - no regex over the markup.
+export function blockSummary(raw: string, format: PropFormat, truncate = true): string {
   const { visible } = splitProps(raw, isBuiltinHidden, format);
   const line =
     visible
       .split("\n")
       .map((s) => s.trim())
       .find((s) => s.length > 0) ?? "";
-  const plain = line
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1") // image → alt text
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // link → label
-    .replace(/\[\[([^\]]+)\]\]/g, "$1") // page ref → name
-    .replace(/\(\(([^)]+)\)\)/g, "$1") // block ref → inner
-    .replace(/==/g, "") // highlight markers
-    .replace(/[*_~`]{1,3}/g, "") // bold / italic / strike / code
-    .replace(/^#{1,6}\s+/, "") // markdown heading
-    .replace(/\s+/g, " ")
-    .trim();
+  const first = line && parserReady() ? parseBlock(line, format === "org")[0] : undefined;
+  const text = first && "inline" in first && Array.isArray(first.inline) ? inlineText(first.inline) : line;
+  const marker = first && "marker" in first && first.marker ? `${first.marker} ` : "";
+  const plain = (marker + text).replace(/\s+/g, " ").trim();
   return truncate && plain.length > MAX_TITLE ? plain.slice(0, MAX_TITLE - 1).trimEnd() + "…" : plain;
 }
 

@@ -14,18 +14,20 @@ import type { Format } from "../render/ast";
 
 const CLOSERS: Record<Format, readonly string[]> = { md: ["`", "``"], org: ["~", "="] };
 
-function literalRanges(text: string, format: Format): [number, number][] {
+/** The parser's literal ranges of `text` as UTF-16 `[start, end)` pairs; empty before the parser is ready. */
+export function literalSpans(text: string, format: Format): [number, number][] {
+  if (!parserReady()) return [];
   const at = utf8ToUtf16Cursor(text);
   return blockRegions(text, format).literals.map(([a, b]) => [at(a), at(b)]);
 }
 
 export function rangeInLiteral(text: string, format: Format, from: number, to: number): boolean {
   if (!parserReady()) return true;
-  if (literalRanges(text, format).some(([a, b]) => a < to && b > from)) return true;
+  if (literalSpans(text, format).some(([a, b]) => a < to && b > from)) return true;
   // A literal that opens strictly before the range and closes after it once its closer is typed.
   for (const closer of CLOSERS[format]) {
     const closed = text.slice(0, to) + closer + text.slice(to);
-    if (literalRanges(closed, format).some(([a, b]) => a < from && b > from)) return true;
+    if (literalSpans(closed, format).some(([a, b]) => a < from && b > from)) return true;
   }
   return false;
 }
@@ -33,5 +35,5 @@ export function rangeInLiteral(text: string, format: Format, from: number, to: n
 /** Whether UTF-16 offset `at` of `text` lies inside literal source (a parser literal as it stands). */
 export function offsetInLiteral(text: string, format: Format, at: number): boolean {
   if (!parserReady()) return true;
-  return literalRanges(text, format).some(([a, b]) => a <= at && at < b);
+  return literalSpans(text, format).some(([a, b]) => a <= at && at < b);
 }

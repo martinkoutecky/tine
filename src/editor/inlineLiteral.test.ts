@@ -41,3 +41,31 @@ describe("on-type typography leaves literal source alone", () => {
     expect(typed("a-", 2, ">", "org")).toEqual({ value: "a→", caret: 2 });
   });
 });
+
+// C5 B fences.ts:100,110,145: a `$$` that is literal source opens no display-math environment.
+describe("display math ignores literal `$$`", () => {
+  it("inline code `$$` does not open math, so Enter still splits there", async () => {
+    const { caretInDisplayMath } = await import("./fences");
+    const raw = "use `$$` to open\nnext";
+    expect(caretInDisplayMath(raw, raw.length)).toBe(false);
+    expect(caretInDisplayMath("$$\nx = 1", 8)).toBe(true);
+  });
+  it("Org ~$$~ is literal too, and a real $$ after it still opens", async () => {
+    const { caretInDisplayMath } = await import("./fences");
+    const raw = "~$$~ then\n$$\nx";
+    expect(caretInDisplayMath(raw, raw.length, "org")).toBe(true);
+    expect(caretInDisplayMath("~$$~ then\nx", 11, "org")).toBe(false);
+  });
+});
+
+// C5 B properties.ts:392: the ATX heading marker is the parser's (header.heading), not a `^#+\s+` regex.
+describe("markdown heading edits ask the parser for the marker", () => {
+  it("a `#tag` first word is not a heading; a heading keeps only whitespace-trimmed text", async () => {
+    const { rawWithHeading } = await import("../document/edits/properties");
+    expect(rawWithHeading("#tag item", "md", 2)).toBe("## #tag item");
+    expect(rawWithHeading("## Title", "md", 3)).toBe("### Title");
+    expect(rawWithHeading("##  Title", "md", null)).toBe("Title");
+    // A blank-after-marker heading must not swallow the next line's text: `\s+` crossed the newline.
+    expect(rawWithHeading("# \nbody", "md", null)).toBe("\nbody");
+  });
+});

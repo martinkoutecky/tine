@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { backend } from "../backend";
 import type { BlockDto, PageDto } from "../types";
@@ -141,5 +142,16 @@ describe("outline depth cap", () => {
     const text = Array.from({ length: OUTLINE_MAX_DEPTH + 1 }, (_, level) => `${"  ".repeat(level)}- n${level}`).join("\n");
     expect(await captureToPage("Captured", text)).toBe(false);
     expect(pageByName("Captured")?.roots.length ?? 0).toBe(0);
+  });
+});
+
+// C5 I-12 twin pin: the TypeScript ceiling and the Rust admission cap are one number. A guard, not a
+// shared constant, because the wasm crossing per insert is too hot; this fails on drift in either file.
+describe("outline depth ceiling twin", () => {
+  it("OUTLINE_MAX_DEPTH equals tine-store PARSE_INPUT_MAX_DEPTH (crates/tine-store/src/model.rs)", () => {
+    const rust = readFileSync("crates/tine-store/src/model.rs", "utf8");
+    const match = /const PARSE_INPUT_MAX_DEPTH: usize = (\d+);/.exec(rust);
+    expect(match, "I-12: the Rust cap constant moved; update this pin and OUTLINE_MAX_DEPTH together").not.toBeNull();
+    expect(OUTLINE_MAX_DEPTH).toBe(Number(match![1]));
   });
 });

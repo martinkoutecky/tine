@@ -59,7 +59,7 @@ function outlineLiteralScanners(source: string): string[] {
 describe("OG-P11B one parser door", () => {
   it("I-12: outline literals belong to render/parse.ts blockRegions, never a fence/src recognizer", () => {
     const source = readFileSync("src/editor/outline.ts", "utf8");
-    expect(source).toContain("blockRegions(normalized).literals");
+    expect(source).toContain("blockRegions(normalized, format).literals");
     expect(outlineLiteralScanners(source)).toEqual([]);
   });
   it("detects planted fence and src recognition in outline paste", () => {

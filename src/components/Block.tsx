@@ -534,7 +534,12 @@ async function getTemplates(): Promise<import("../types").TemplateDto[]> {
     templateCacheRev = rev;
     templateCacheEpoch = epoch;
     if (templateCache.length) await prepareTemplateVars();
-  } catch { if (owner()) templateCache = []; }
+  } catch (error) {
+    // I-9: a failed template listing is reported (sticky red toast with Copy, recorded in the error
+    // log) and the last good list, if any, is kept; it is NOT replaced by "no templates", so the
+    // next `/` retries once the cause is fixed. The slash menu still lists its commands.
+    if (owner()) pushToast(`Couldn't load templates: ${String(error)}`, "error");
+  }
   return templateCache ?? [];
 }
 function templateToOutline(
@@ -759,7 +764,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const detectEditorTrigger = (value = ref.value, caret = ref.selectionStart): Trigger | null =>
     isCalc() || isAnnot() || !!sheetCell
       ? null
-      : detectTrigger(value, caret, propertyValueKey());
+      : detectTrigger(value, caret, propertyValueKey(), pageFmt());
   const propertyValueItems = (key: string, query: string, used: readonly string[] = []): AcItem[] => {
     const values = propertyFacets.find(([candidate]) => candidate === key)?.[1] ?? [];
     const q = query.trim();
@@ -919,7 +924,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       for (const g of result.value) {
         for (const b of g.blocks) {
           items.push({
-            label: blockFirstLine(b.raw) || g.page,
+            label: blockFirstLine(b.raw, pageByName(g.page)?.format === "org" ? "org" : "md") || g.page,
             sub: g.page,
             blockRef: { uuid: b.id, externalId: blockDtoExternalId(b), page: g.page, kind: g.kind },
           });
@@ -1074,8 +1079,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const captureAssetEditorToken = () => captureAssetEditor(ref);
   const assetEditorCurrent = (token: AssetEditorToken) => assetEditorIsCurrent(token, ref, editorMounted);
 
-  // Seed + insert an asset from raw bytes at the caret, then persist to assets/
-  // in the background (repointing the link if the backend de-dups the name).
+  // Seed the preview cache, persist the bytes to assets/ (awaited: data before reference), then
+  // insert a link to the STORED name at the caret (the backend may de-dup the candidate name).
   // Shared by clipboard-image paste and mobile capture (camera / voice memo).
   const insertAssetBytes = async (token: AssetEditorToken, bytes: Uint8Array, origName?: string, captureExt?: string) => {
     const owner = graphOwner(() => assetEditorCurrent(token));
@@ -1466,7 +1471,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const capturedSurfaceKey = surfaceKey;
       const trigger = { ...t };
       const editorIsCurrent = () => {
-        const liveTrigger = detectTrigger(textarea.value, textarea.selectionStart, propertyValueKey());
+        const liveTrigger = detectTrigger(textarea.value, textarea.selectionStart, propertyValueKey(), pageFmt());
         const liveNode = docNode(props.id);
         return editorMounted
           && token === pluginSlashInvocation
@@ -2535,10 +2540,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       e.key === "Enter" && !e.ctrlKey && !e.metaKey &&
       (!e.shiftKey || (docModeEnterForNewLine && !e.altKey))
     ) {
-      const inFence = !isAnnot() && caretInFence(raw, start);
+      const inFence = !isAnnot() && caretInFence(raw, start, pageFmt());
       // GH #278: a multi-line `$$ … $$` environment behaves like a fence for
       // Enter. See caretInDisplayMath — a deliberate divergence from OG.
-      const inMath = !isAnnot() && !inFence && caretInDisplayMath(raw, start);
+      const inMath = !isAnnot() && !inFence && caretInDisplayMath(raw, start, pageFmt());
       const inPageProperties = !isAnnot() && isFirstPagePropertiesBlock(raw);
       // GH #412/#413: a body-only code editor has no fence lines in view, so
       // `caretInFence` cannot see it; gate on the projection directly.
@@ -2549,7 +2554,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       // exact pre-exit special block and removes the sibling.
       if ((isCalc() || inFence || inMath || inPageProperties || inCode) && start === end) {
         const kind = isCalc() ? "calc" : inFence ? "fence" : inMath ? "math" : inCode ? "code" : "properties";
-        const trimmed = kind === "code" ? codeBodyExitTrim(raw, start) : multilineExitTrim(raw, start, kind);
+        const trimmed = kind === "code" ? codeBodyExitTrim(raw, start) : multilineExitTrim(raw, start, kind, pageFmt());
         if (trimmed !== null) {
           e.preventDefault();
           let newId: string | null = props.id;
@@ -2587,7 +2592,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       // — GH #66). caretInFence treats a still-unterminated fence (being typed) as
       // inside too, and returns false when the caret sits on a ``` delimiter line,
       // so Enter on the closing fence still exits the block.
-      if (!isAnnot() && (inFence || inMath || caretOnOpeningFence(raw, start))) {
+      if (!isAnnot() && (inFence || inMath || caretOnOpeningFence(raw, start, pageFmt()))) {
         softNewlineCmd();
         return;
       }
@@ -2882,8 +2887,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       return;
     }
     const start = ref.selectionStart;
-    const syntaxSensitive = sheetCell || isCalc() || codeShown() !== null || caretInFence(ref.value, start)
-      || caretOnOpeningFence(ref.value, start) || caretInDisplayMath(ref.value, start);
+    const syntaxSensitive = sheetCell || isCalc() || codeShown() !== null || caretInFence(ref.value, start, pageFmt())
+      || caretOnOpeningFence(ref.value, start, pageFmt()) || caretInDisplayMath(ref.value, start, pageFmt());
     const slot = peekClipboardSlot();
     if (!syntaxSensitive) {
       if (slot && text !== "" && normalize(text) === normalize(slot.text)) {
@@ -2953,8 +2958,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         !isPasteableUrl(ref.value.slice(start, end)) &&
         !isCalc() &&
         codeShown() === null &&
-        !caretInFence(ref.value, start) &&
-        !caretOnOpeningFence(ref.value, start)
+        !caretInFence(ref.value, start, pageFmt()) &&
+        !caretOnOpeningFence(ref.value, start, pageFmt())
       ) {
         e.preventDefault();
         applyEdit(wrapLink(ref.value, start, end, url, pageFmt()));

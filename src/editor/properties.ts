@@ -2,6 +2,7 @@
 // continuation lines or a page's pre-block. No store/DOM, so unit-testable.
 
 import { displayMathOpenAfter, closesDisplayMath, fenceExitTrim } from "./fences";
+import type { Format } from "../render/ast";
 import { blockRegions, editBlock, parserReady } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
 
@@ -124,7 +125,8 @@ export const hideAll = (_key: string): boolean => true;
 export function multilineExitTrim(
   text: string,
   caret: number,
-  kind: "calc" | "fence" | "math" | "properties"
+  kind: "calc" | "fence" | "math" | "properties",
+  format: Format = "md",
 ): string | null {
   const c = Math.max(0, Math.min(caret, text.length));
   const lineStart = text.lastIndexOf("\n", c - 1) + 1;
@@ -136,12 +138,12 @@ export function multilineExitTrim(
     if (text.slice(lineEnd).trim() !== "") return null;
     return text.slice(0, lineStart - 1);
   }
-  if (kind === "fence") return fenceExitTrim(text, lineStart, lineEnd);
+  if (kind === "fence") return fenceExitTrim(text, lineStart, lineEnd, format);
 
   const after = text.slice(lineEnd + 1);
   const nextNewline = after.indexOf("\n");
   const nextLine = nextNewline === -1 ? after : after.slice(0, nextNewline);
-  if (!displayMathOpenAfter(text.slice(0, lineStart)) || !closesDisplayMath(nextLine)) return null;
+  if (!displayMathOpenAfter(text.slice(0, lineStart), format) || !closesDisplayMath(nextLine)) return null;
   const afterClosing = nextNewline === -1 ? "" : after.slice(nextNewline + 1);
   if (afterClosing.trim() !== "") return null;
   return text.slice(0, lineStart - 1) + text.slice(lineEnd);

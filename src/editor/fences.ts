@@ -7,6 +7,7 @@
  *  text, skipped when the text holds none of the fence delimiters. */
 import { blockRegions, parserReady } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
+import { literalSpans } from "./inlineLiteral";
 import type { Format } from "../render/ast";
 
 export interface LiteralContainer {
@@ -94,28 +95,26 @@ export function fenceExitTrim(text: string, lineStart: number, lineEnd: number, 
 
 const MATH_DELIM = "$$";
 
-/** Advance display-math state across text known not to be inside a code fence.
- * Every `$$` toggles, so `$$x$$` on one line opens and closes again (net
- * outside) while a lone `$$` opens a multi-line environment. */
-function toggleDisplayMath(open: boolean, text: string): boolean {
-  let at = text.indexOf(MATH_DELIM);
-  while (at !== -1) {
-    open = !open;
-    at = text.indexOf(MATH_DELIM, at + MATH_DELIM.length);
+/** Display-math state after `raw[0, limit)`. Every `$$` toggles, so `$$x$$` on one line opens and
+ * closes again (net outside) while a lone `$$` opens a multi-line environment. A `$$` that lsdoc
+ * reads as literal source (a code fence, `` `$$` `` inline code, Org `~$$~`) toggles nothing: the
+ * literal ranges are the parser's (I-12), not a scan for backticks here. */
+function displayMathOpenBefore(raw: string, limit: number, format: Format): boolean {
+  if (!raw.includes(MATH_DELIM)) return false;
+  // lsdoc's literal ranges include math itself, whose own delimiters sit at a range's edges, so a
+  // delimiter counts as literal text only when it lies strictly inside a range (code span or
+  // container that opens before it and closes after it).
+  const literals = literalSpans(raw, format);
+  const fences = codeFences(raw, format);
+  const literalAt = (p: number) =>
+    literals.some(([a, b]) => a < p && p + MATH_DELIM.length < b) || fences.some((f) => f.start <= p && p < f.end);
+  let open = false;
+  let at = raw.indexOf(MATH_DELIM);
+  while (at !== -1 && at < limit) {
+    if (!literalAt(at)) open = !open;
+    at = raw.indexOf(MATH_DELIM, at + MATH_DELIM.length);
   }
   return open;
-}
-
-/** Display-math state after `raw[0, limit)`, ignoring everything inside code fences. */
-function displayMathOpenBefore(raw: string, limit: number): boolean {
-  let open = false;
-  let from = 0;
-  for (const f of codeFences(raw)) {
-    if (f.start >= limit) break;
-    open = toggleDisplayMath(open, raw.slice(from, f.start));
-    from = Math.max(from, Math.min(f.end, limit));
-  }
-  return toggleDisplayMath(open, raw.slice(from, limit));
 }
 
 /** Whether a caret offset sits inside an open `$$ … $$` display-math environment.
@@ -131,19 +130,19 @@ function displayMathOpenBefore(raw: string, limit: number): boolean {
  * disk, and property classification (`classifyLines`) are untouched, so nothing
  * about how a block is stored or read changes. `$$` inside a code fence is
  * literal text and opens nothing. */
-export function caretInDisplayMath(raw: string, offset: number): boolean {
+export function caretInDisplayMath(raw: string, offset: number, format: Format = "md"): boolean {
   const at = clamp(offset, 0, raw.length);
-  const inFenceLines = codeFences(raw).some((f) => {
+  const inFenceLines = codeFences(raw, format).some((f) => {
     const closerEnd = f.closed ? raw.indexOf("\n", f.closeStart) : -1;
     return f.start <= at && at <= (closerEnd === -1 ? raw.length : closerEnd);
   });
-  return !inFenceLines && displayMathOpenBefore(raw, at);
+  return !inFenceLines && displayMathOpenBefore(raw, at, format);
 }
 
 /** Display-math state after consuming `text` whole — for the double-Enter exit,
  * which asks "was the environment open before this blank line?". */
-export function displayMathOpenAfter(text: string): boolean {
-  return displayMathOpenBefore(text, text.length);
+export function displayMathOpenAfter(text: string, format: Format = "md"): boolean {
+  return displayMathOpenBefore(text, text.length, format);
 }
 
 /** Whether a line closes an open display-math environment. */
