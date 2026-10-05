@@ -192,6 +192,14 @@ export function PdfViewer(props: {
   // cheaply via .update({viewport}) instead of re-extracting text and recreating
   // every glyph span (the expensive work that made zoom-in janky).
   const textLayerObjs: Record<number, any> = {};
+  // Owner of a page's text-layer build. Bumped by each build and by freePage, so
+  // a pdf.js TextLayer render/update that completes after its page was evicted,
+  // re-rastered, re-laid-out or the viewer retired never installs itself
+  // (I-20/I-21).
+  const textGeneration: Record<number, number> = {};
+  // The TextLayer whose render() is still running, so eviction, a newer build or
+  // teardown can cancel it instead of letting it finish into a retired page.
+  const textInflight: Record<number, { cancel?: () => void }> = {};
   const pendingText = new Set<number>();
   let textTimer: number | undefined;
 
@@ -343,6 +351,7 @@ export function PdfViewer(props: {
     for (const k of Object.keys(canvasPixels)) delete canvasPixels[Number(k)];
     for (const k of Object.keys(textScale)) delete textScale[Number(k)];
     for (const k of Object.keys(textLayerObjs)) delete textLayerObjs[Number(k)];
+    for (const k of Object.keys(textInflight)) cancelInflightText(Number(k));
     pendingText.clear();
     clearTimeout(textTimer);
     lru.length = 0;
@@ -617,8 +626,11 @@ export function PdfViewer(props: {
     delete renderedScale[n];
     delete renderedPixelRatio[n];
     if (textLayers[n]) textLayers[n].innerHTML = "";
+    textLayerObjs[n]?.cancel?.();
+    cancelInflightText(n);
     delete textLayerObjs[n];
     delete textScale[n];
+    textGeneration[n] = (textGeneration[n] ?? 0) + 1;
     pendingText.delete(n);
   }
   function releaseAllCanvases() {
@@ -652,8 +664,18 @@ export function PdfViewer(props: {
       await buildTextLayer(n, r);
     }
   }
+  function cancelInflightText(n: number) {
+    textInflight[n]?.cancel?.();
+    delete textInflight[n];
+  }
   async function buildTextLayer(n: number, atScale: number) {
     if (!pdfDoc || !textLayers[n]) return;
+    cancelInflightText(n);
+    const generation = (textGeneration[n] = (textGeneration[n] ?? 0) + 1);
+    const layout = layoutGeneration;
+    const container = textLayers[n];
+    const buildCurrent = () => !disposed && layoutGeneration === layout && textGeneration[n] === generation
+      && renderedScale[n] === atScale && textLayers[n] === container;
     let page: pdfjs.PDFPageProxy;
     try {
       page = await pdfDoc.getPage(n);
@@ -669,9 +691,11 @@ export function PdfViewer(props: {
     if (existing) {
       try {
         await existing.update({ viewport });
+        if (!buildCurrent()) return;
         textScale[n] = atScale;
         return;
-      } catch {
+      } catch (err) {
+        if (!buildCurrent()) return;
         // pdf.js API mismatch — fall through to a full rebuild.
       }
     }
@@ -680,14 +704,24 @@ export function PdfViewer(props: {
     try {
       textContent = await page.getTextContent();
     } catch (err) {
-      failPdf(errorMessage("Couldn't read this PDF text", err));
+      if (buildCurrent()) failPdf(errorMessage("Couldn't read this PDF text", err));
       return;
     }
-    if (renderedScale[n] !== atScale || !textLayers[n]) return;
+    if (!buildCurrent()) return;
     const tl = textLayers[n];
     tl.innerHTML = "";
     const layer = new (pdfjs as any).TextLayer({ textContentSource: textContent, container: tl, viewport });
-    await layer.render();
+    textInflight[n] = layer;
+    try {
+      await layer.render();
+    } catch (err) {
+      // A superseded build cancels its layer; only the current build reports.
+      if (textInflight[n] === layer) delete textInflight[n];
+      if (buildCurrent()) failPdf(errorMessage("Couldn't draw this PDF text", err));
+      return;
+    }
+    if (textInflight[n] === layer) delete textInflight[n];
+    if (!buildCurrent()) return;
     textLayerObjs[n] = layer;
     textScale[n] = atScale;
   }
@@ -786,6 +820,7 @@ export function PdfViewer(props: {
       scrollRaf = undefined;
     }
     for (const k of Object.keys(tasks)) tasks[Number(k)]?.cancel();
+    for (const k of Object.keys(textInflight)) cancelInflightText(Number(k));
     window.removeEventListener("mousemove", onAreaMove);
     window.removeEventListener("mouseup", onAreaUp);
     areaDrag?.band.remove();

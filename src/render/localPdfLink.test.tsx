@@ -63,6 +63,37 @@ describe("GH #577: file PDF links are reads through the OS opener (I-2, I-4)", (
     });
   }
 
+  // UI-OG-C5-P6-PDFLINK: the reader's filename is the path under assets/, because
+  // highlights, sidecar and hls page are keyed from it. The old basename helper
+  // opened (and wrote highlights to) the root report.pdf instead.
+  for (const [destination, filename, label] of [
+    ["../assets/nested/report.pdf", "nested/report.pdf", "report.pdf"],
+    ["./assets/a/b/report.pdf", "a/b/report.pdf", "report.pdf"],
+    ["..\\assets\\nested\\report.pdf", "nested/report.pdf", "report.pdf"],
+  ] as const) {
+    it(`keeps the directory of ${destination} in the reader route`, () => {
+      const reader = vi.spyOn(panes, "openPdf").mockReturnValue(null);
+      const host = document.createElement("div");
+      document.body.append(host);
+      const dispose = render(() => <InlineText text={`[](<${destination}>)`} />, host);
+      try {
+        (host.querySelector("a") as HTMLAnchorElement).click();
+        expect(reader).toHaveBeenCalledExactlyOnceWith(filename, label);
+      } finally { dispose(); }
+    });
+  }
+
+  it("labels a nested PDF link by its file name but routes the path", () => {
+    const reader = vi.spyOn(panes, "openPdf").mockReturnValue(null);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => <InlineText text="[nested](../assets/nested/report.pdf)" />, host);
+    try {
+      (host.querySelector("a") as HTMLAnchorElement).click();
+      expect(reader).toHaveBeenCalledExactlyOnceWith("nested/report.pdf", "nested");
+    } finally { dispose(); }
+  });
+
   for (const surface of ["page", "sidebar", "embed"] as const) {
     it(`opens a PDF file link from ${surface} without a reader route`, async () => {
       const external = vi.spyOn(backend(), "openExternal").mockResolvedValue(undefined);

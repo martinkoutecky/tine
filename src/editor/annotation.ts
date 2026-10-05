@@ -6,6 +6,7 @@
 import { readPageProperty, pageHeaderProperties } from "../document";
 import type { BlockDto, Format } from "../types";
 import { facetsOf } from "../render/facets";
+import { assetRelPath } from "../media";
 
 /** True for a PDF highlight (annotation) block. */
 export function isAnnotationBlock(raw: string, format: Format): boolean {
@@ -49,9 +50,19 @@ export function pdfFileFromPreBlock(preBlock: string | null | undefined, format:
   return pdfBasename(properties.find(([key]) => key === "file-path")?.[1]);
 }
 
+/** The PDF's name for the reader and the sidecar keys: its path under
+ * `assets/` (`nested/report.pdf`), because the highlight, sidecar and hls page
+ * identities are derived from it. A path with no `assets/` directory (an
+ * absolute path elsewhere) keeps only its basename. O(path bytes). */
+export function pdfAssetFile(path: string): string {
+  const rel = assetRelPath(path);
+  if (rel) return rel;
+  return path.split(/[\\/]/).pop() || path;
+}
+
 function pdfBasename(path: string | null | undefined): string | null {
   if (!path) return null;
-  return path.split(/[\\/]/).pop() || null;
+  return pdfAssetFile(path) || null;
 }
 
 /** Resolve the PDF filename for an annotation block from its owning hls__ page's

@@ -2,6 +2,7 @@ import { createSignal } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
 import { latestOwner, type Owner } from "../owned";
 import { isMobilePlatform } from "../nativeChrome";
+import { reportUiFailure } from "../uiFailure";
 
 export const PDF_FIND_TEXT_CACHE_BYTES = isMobilePlatform ? 4 * 1024 * 1024 : 8 * 1024 * 1024;
 export const PDF_FIND_PAGE_TEXT_BYTES = 1024 * 1024;
@@ -72,23 +73,37 @@ export function createPdfFind(ctx: {
     admit(n, value);
     return value;
   }
+  /** A newer scan, a closed Find or a teardown retires the scan AND any
+   * navigation it started (I-20/I-21). */
+  function retireNavigation() { latestOwner(ctx.requests, "find-goto"); }
+  function clearResults() {
+    matches = [];
+    setFindCount(0);
+    setFindCur(0);
+    setFindTruncated(false);
+    window.getSelection()?.removeAllRanges();
+  }
   async function run(query: string) {
     const current = latestOwner(ctx.requests, "find", ctx.owner);
+    retireNavigation();
     if (!current()) return;
     const q = query.trim().toLowerCase();
     const doc = ctx.document();
     if (!q || !doc) {
-      matches = [];
-      setFindCount(0);
-      setFindCur(0);
-      setFindTruncated(false);
-      window.getSelection()?.removeAllRanges();
+      clearResults();
       return;
     }
     const acc: { page: number }[] = [];
     setFindTruncated(false);
     for (let n = 1; n <= doc.numPages; n++) {
-      const loaded = await pageText(n, current);
+      let loaded: string | null;
+      try { loaded = await pageText(n, current); }
+      catch (error) {
+        // A page pdf.js cannot read: say so and drop the previous query's
+        // results instead of leaving them as if they answered this query (I-9).
+        if (current()) { clearResults(); reportUiFailure("pdf-find", error); }
+        return;
+      }
       if (loaded === null) return;
       const text = loaded.toLowerCase();
       if (!current()) return;
@@ -103,32 +118,44 @@ export function createPdfFind(ctx: {
     if (!current()) return;
     matches = acc;
     setFindCount(acc.length);
-    if (acc.length) void gotoMatch(0);
+    if (acc.length) navigate(0);
     else { setFindCur(0); window.getSelection()?.removeAllRanges(); }
+  }
+  function runReported(query: string) {
+    run(query).catch((error) => reportUiFailure("pdf-find", error));
   }
   function scheduleFind(query: string) {
     setFindQuery(query);
     clearTimeout(debounce);
-    debounce = window.setTimeout(() => void run(query), 180);
+    debounce = window.setTimeout(() => runReported(query), 180);
   }
   function nextMatch(delta: number) {
-    if (matches.length) void gotoMatch(findCur() - 1 + delta);
+    if (matches.length) navigate(findCur() - 1 + delta);
+  }
+  function navigate(index: number) {
+    gotoMatch(index).catch((error) => reportUiFailure("pdf-find", error));
   }
   async function gotoMatch(index: number) {
     const length = matches.length;
     if (!length) return;
+    // The newest navigation owns the selection; a closed Find, a new query or a
+    // teardown retires it, and it never rereads the mutable `matches` after an
+    // await (I-20/I-21).
+    const current = latestOwner(ctx.requests, "find-goto", ctx.owner, findOpen);
     const i = ((index % length) + length) % length;
     setFindCur(i + 1);
     const match = matches[i];
+    let occurrence = -1;
+    for (let j = 0; j <= i; j++) if (matches[j].page === match.page) occurrence++;
     ctx.scrollToPage(match.page);
     const s = ctx.scale();
     if (ctx.renderedScale(match.page) !== s) await ctx.renderPage(match.page);
+    if (!current()) return;
     const rendered = ctx.renderedScale(match.page);
     if (rendered !== undefined && ctx.textScale(match.page) !== rendered) {
       await ctx.buildTextLayer(match.page, rendered);
+      if (!current()) return;
     }
-    let occurrence = -1;
-    for (let j = 0; j <= i; j++) if (matches[j].page === match.page) occurrence++;
     selectOccurrence(match.page, occurrence);
   }
   function selectOccurrence(page: number, occurrence: number) {
@@ -173,10 +200,15 @@ export function createPdfFind(ctx: {
   function openFind() {
     setFindOpen(true);
     queueMicrotask(() => { input?.focus(); input?.select(); });
-    if (findQuery().trim()) void run(findQuery());
+    if (findQuery().trim()) runReported(findQuery());
   }
-  function closeFind() { setFindOpen(false); window.getSelection()?.removeAllRanges(); }
-  function cancel() { clearTimeout(debounce); latestOwner(ctx.requests, "find"); }
+  function closeFind() {
+    setFindOpen(false);
+    // Closing retires the pending debounce, any running scan and navigation.
+    cancel();
+    window.getSelection()?.removeAllRanges();
+  }
+  function cancel() { clearTimeout(debounce); latestOwner(ctx.requests, "find"); retireNavigation(); }
   return { findOpen, findQuery, findCount, findCur, findTruncated,
     scheduleFind, nextMatch, openFind, closeFind, cancel,
     setInput: (el: HTMLInputElement) => { input = el; } };

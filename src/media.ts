@@ -283,3 +283,12 @@ export function removeInsertedAssetMarkdown(
   const afterOriginalOffset = positions.find((p) => p >= target.insertedAt);
   return replaceAt(raw, afterOriginalOffset ?? positions[0], from.length, "");
 }
+
+/** Resolve a graph asset relative to `assets/`, normalizing separators and case
+ * of the directory name in O(URL bytes). Null when no asset directory occurs;
+ * the backend validates the returned path before reading. */
+export function assetRelPath(url: string): string | null {
+  const normalized = url.replace(/\\/g, "/");
+  const i = normalized.toLowerCase().indexOf("assets/");
+  return i === -1 ? null : normalized.slice(i + "assets/".length);
+}

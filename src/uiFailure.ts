@@ -13,6 +13,8 @@ export type UiFailureFamily =
   | "audio-play"
   | "clipboard-association"
   | "window-state"
+  | "window-action"
+  | "pdf-find"
   | "query-hydration"
   | "page-inventory"
   | "session-read"
@@ -55,6 +57,8 @@ const MESSAGES: Record<UiFailureFamily, string> = {
   "audio-play": "Couldn't play this audio file.",
   "clipboard-association": "Couldn't paste these blocks.",
   "window-state": "Couldn't read the window state.",
+  "window-action": "Couldn't change the window.",
+  "pdf-find": "Couldn't search this PDF. The search results were cleared.",
   "query-hydration": "Couldn't load this query page for editing.",
 };
 

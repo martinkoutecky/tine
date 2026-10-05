@@ -28,8 +28,17 @@ export function installWindowChrome(): () => void {
   const sync = () => void w.isMaximized().then(setMaximized).catch((error) => reportUiFailure("window-state", error));
   sync();
   let un = () => {};
-  void w.onResized(sync).then((u) => (un = u));
-  return () => un();
+  let closed = false;
+  // A listener that registers after cleanup is released at once, so a late
+  // registration never outlives the installer (I-20/I-21).
+  void w.onResized(sync).then((u) => { if (closed) u(); else un = u; })
+    .catch((error) => reportUiFailure("window-state", error));
+  return () => { closed = true; un(); un = () => {}; };
+}
+
+/** Run one native window action; a rejected request is reported, never lost. */
+function windowAction(request: () => Promise<unknown>): void {
+  void request().catch((error) => reportUiFailure("window-action", error));
 }
 
 /** Minimize / maximize-restore / close cluster for the far right of the toolbar. */
@@ -37,7 +46,7 @@ export function WindowControls(): JSX.Element {
   const w = getCurrentWindow();
   return (
     <div class="win-controls">
-      <button class="win-btn" title="Minimize" onClick={() => void w.minimize()}>
+      <button class="win-btn" title="Minimize" onClick={() => windowAction(() => w.minimize())}>
         <svg viewBox="0 0 12 12" width="11" height="11">
           <line x1="2.5" y1="6" x2="9.5" y2="6" stroke="currentColor" stroke-width="1.1" />
         </svg>
@@ -45,7 +54,7 @@ export function WindowControls(): JSX.Element {
       <button
         class="win-btn"
         title={maximized() ? "Restore" : "Maximize"}
-        onClick={() => void w.toggleMaximize()}
+        onClick={() => windowAction(() => w.toggleMaximize())}
       >
         <Show
           when={maximized()}
@@ -61,7 +70,7 @@ export function WindowControls(): JSX.Element {
           </svg>
         </Show>
       </button>
-      <button class="win-btn win-close" title="Close" onClick={() => void w.close()}>
+      <button class="win-btn win-close" title="Close" onClick={() => windowAction(() => w.close())}>
         <svg viewBox="0 0 12 12" width="11" height="11">
           <path d="M3 3 L9 9 M9 3 L3 9" stroke="currentColor" stroke-width="1.1" />
         </svg>
@@ -92,7 +101,7 @@ export function ResizeGrips(): JSX.Element {
           onMouseDown={(e) => {
             if (e.button !== 0) return;
             e.preventDefault();
-            void w.startResizeDragging(g.dir);
+            windowAction(() => w.startResizeDragging(g.dir));
           }}
         />
       )}

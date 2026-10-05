@@ -7,7 +7,7 @@ import { createExpansionGate, MACRO_EXPANSION_LIMIT_LABEL } from "./expansionBud
 import { leadingMarker, matchLeadingMarker } from "../markers";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { extOf, mediaKind } from "../media";
+import { assetRelPath, extOf, mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock, openInNewTab, focusBlock } from "../router";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { refClickZoom } from "../copySettings";
@@ -32,6 +32,7 @@ import { coarseSpanAttrs, literalSpanAttrs, plainSpanAttrs, rebulletedSourceByte
 import { literalBlockOfLine } from "../editor/literalLines";
 import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
+import { parseImageMetaBrace } from "./imageMeta";
 import { AstBody } from "./body";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
@@ -51,7 +52,7 @@ import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, Cloze
 import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
-import { annotationInfoForBlock, pdfFileFromPreBlock } from "../editor/annotation";
+import { annotationInfoForBlock, pdfAssetFile, pdfFileFromPreBlock } from "../editor/annotation";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { createLongPress } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
@@ -511,34 +512,23 @@ function renderLink(
   );
 }
 
+/** The file name shown for a PDF link that has no label. The reader route
+ * keeps the whole assets-relative path (`pdfAssetFile`), not this. */
 function pdfFilenameFromDest(dest: string): string {
-  const normalized = dest.replace(/\\/g, "/");
-  const rel = assetRelPath(normalized);
-  const path = rel ?? normalized;
+  const path = dest.replace(/\\/g, "/");
   return path.split("/").pop() || path;
 }
 
 function PdfAssetLink(props: { dest: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
-  const filename = pdfFilenameFromDest(props.dest);
-  const label = props.label || filename;
+  // The route names the PDF by its path under assets/: highlights, sidecar and
+  // hls page are keyed from it, so dropping `nested/` opened another resource.
+  const filename = pdfAssetFile(props.dest);
+  const label = props.label || pdfFilenameFromDest(props.dest);
   return (
     <a class="external-link pdf-link" {...(props.spanAttrs ?? {})} onClick={(e) => { e.stopPropagation(); openPdf(filename, label); }}>
       📄 {label}
     </a>
   );
-}
-
-// Logseq image-metadata brace reader (`{:width 200, :height 100}` or
-// `{:width "40%"}`) — same logic the old parseInline used; kept here so it
-// survives parseInline.ts's eventual removal.
-function parseImageMetaBrace(brace: string | undefined): { width?: string; height?: string } {
-  if (!brace) return {};
-  const out: { width?: string; height?: string } = {};
-  const w = /:width\s+"?([0-9]+%?|[0-9]+px)"?/.exec(brace);
-  const h = /:height\s+"?([0-9]+%?|[0-9]+px)"?/.exec(brace);
-  if (w) out.width = /^\d+$/.test(w[1]) ? `${w[1]}px` : w[1];
-  if (h) out.height = /^\d+$/.test(h[1]) ? `${h[1]}px` : h[1];
-  return out;
 }
 
 // Org timestamp inline → the styled `<…>`(active)/`[…]`(inactive) badge. The
@@ -679,14 +669,9 @@ export function MathView(props: { tex: string; display: boolean; spanAttrs?: Spa
   );
 }
 
-/** Resolve a graph asset relative to `assets/`, normalizing separators and case
- * of the directory name in O(URL bytes). Null when no asset directory occurs;
- * the backend validates the returned path before reading. */
-export function assetRelPath(url: string): string | null {
-  const normalized = url.replace(/\\/g, "/");
-  const i = normalized.toLowerCase().indexOf("assets/");
-  return i === -1 ? null : normalized.slice(i + "assets/".length);
-}
+// `assetRelPath` lives in ../media (shared with the PDF annotation reader);
+// re-exported so existing importers keep one door.
+export { assetRelPath };
 
 // A clicked link into `assets/` (file, nested directory, or the assets root)
 // decoded for the OS opener (GH #367); the root is "" (`[p](./assets/)` or bare

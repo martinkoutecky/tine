@@ -23,6 +23,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- A PDF link into a nested assets folder (`../assets/nested/report.pdf`) opens that PDF, not a same-named one in the assets root, and highlights made in it are saved under the nested PDF's own page and sidecar; opening the PDF from a highlight's page does the same (UI-OG-C5-P6-PDFLINK).
+- Image `{:width ...}` / `{:height ...}` metadata is read as EDN, so a quoted title that contains `:width 999` no longer sets the image width (UI-OG-C5-P6-IMAGEMETA).
+- PDF Find shows an error and clears stale results when a page cannot be read, and closing Find or changing the query stops a pending search from moving the reader (UI-OG-C5-P6-FIND); a PDF text layer that finishes after its page was re-rendered or the reader closed no longer installs, and a failed text render shows the PDF error (UI-OG-C5-P6-TEXTLAYER).
+- A rejected native window request (minimize, maximize, close, resize drag) now shows an error instead of failing silently, and a resize listener registered after the window chrome was removed is released (UI-OG-C5-P6-WINDOW).
 - Page rename publication skips reparsing the old document and repeated transaction-record searches; loaded-page refresh uses one path lookup per touched page (GH #623).
 - Closing or switching PDFs no longer shows an annotation-loading error from a retired reader (GH #557).
 - Image picker and Upload keep the initiating editor through asset import, so delayed native blur does not discard the saved image link (GH #622, GH #493).

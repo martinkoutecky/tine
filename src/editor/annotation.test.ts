@@ -35,6 +35,16 @@ describe("pdfFileForPage", () => {
     expect(pdfFileForPage("hls__book")).toBe("A Book With Spaces.pdf");
   });
 
+  // UI-OG-C5-P6-PDFLINK: the hls page's file-path keeps the directory under assets/,
+  // so reopening a nested PDF's highlight opens the nested PDF, not the root one.
+  it("keeps the directory under assets/ so a nested PDF reopens as itself", () => {
+    seed("file-path:: ../assets/nested/report.pdf");
+    expect(pdfFileForPage("hls__book")).toBe("nested/report.pdf");
+    seed("file-path:: ..\\assets\\nested\\report.pdf");
+    expect(pdfFileForPage("hls__book")).toBe("nested/report.pdf");
+    expect(pdfFileFromPreBlock("file-path:: ../assets/nested/report.pdf")).toBe("nested/report.pdf");
+  });
+
   it("returns null when the page has no file-path", () => {
     seed("some:: other\n");
     expect(pdfFileForPage("hls__book")).toBeNull();
