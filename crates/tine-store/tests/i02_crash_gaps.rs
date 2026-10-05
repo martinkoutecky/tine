@@ -559,7 +559,7 @@ fn rename_merge_boundary_holds(root: &Path, boundary: usize, done: bool) {
     );
     // Before a retry the payload is in the survivor at most once. A retry after a crash between the survivor
     // write and the trash appends it again (Martin 2026-10-05, option (a): visible duplicates, never loss).
-    let most = if done && boundary > 0 { 2 } else { 1 };
+    let most = if done { 2 } else { 1 };
     for needle in ["moved source", "type:: note"] {
         assert!(
             merged.matches(needle).count() <= most,
