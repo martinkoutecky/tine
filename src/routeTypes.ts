@@ -1,5 +1,5 @@
 import type { PageKind } from "./types";
-import type { FriendlyPageMatchScope } from "./editor/queryIr";
+import type { FriendlyPageMatchScope, ViewKind } from "./editor/queryIr";
 import type { QueryDisplayDraft } from "./editor/queryDisplayDraft";
 
 export interface PageTarget {
@@ -8,7 +8,7 @@ export interface PageTarget {
   path?: string;
 }
 
-export type QueryPresentation = "search" | "list" | "table" | "board";
+export type QueryPresentation = ViewKind;
 
 export interface QueryRoute {
   kind: "query";

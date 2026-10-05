@@ -14,7 +14,7 @@ import type {
   ViewSettings,
   ViewKind,
 } from "./editor/queryIr";
-import { sourceOptions, sourceOriginal } from "./editor/queryIr";
+import { VIEW_KINDS, sourceOptions, sourceOriginal } from "./editor/queryIr";
 
 function refusal(reason: "not_applicable" | "syntax", message: string): Error {
   return new Error(`query-print-refused:${reason}:${JSON.stringify({ kind: reason, message, suggestions: [], disabled: false })}`);
@@ -27,7 +27,7 @@ export const mockQueryCommands = {
     const kind: Source["kind"] = dialect === "macro_tql" || dialect === "tql" ? "tql" : dialect === "advanced" ? "advanced" : "og";
     const view: ViewSettings = {};
     for (const [key, value] of blockProperties ?? []) {
-      if (key === "tine.view" && ["search", "list", "table", "board"].includes(value)) view.view = value as ViewKind;
+      if (key === "tine.view" && (VIEW_KINDS as readonly string[]).includes(value)) view.view = value as ViewKind;
     }
     const query: Query = {
       anchor: "block",

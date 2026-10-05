@@ -25,6 +25,7 @@ import {
   sourceOptions,
   sourceOriginal,
   sourcePrintDialect,
+  VIEW_KINDS,
   type ExecutionContext,
   type ExplainEmptyResult,
   type ParsedQuery,
@@ -63,7 +64,6 @@ import {
 export { boundedFeature, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY };
 import { QueryLegacyTable } from "./QueryLegacyTable";
 
-const QUERY_VIEWS: QueryView[] = ["search", "list", "table", "board"];
 const QUERY_VIEW_LABEL: Record<QueryView, string> = {
   search: "Search",
   list: "List",
@@ -907,7 +907,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               </Show>
               <Show when={props.blockId && !isPublishedExport()}>
                 <div class="query-view-switcher" role="group" aria-label="Query view" onClick={stop}>
-                  <For each={QUERY_VIEWS}>
+                  <For each={VIEW_KINDS}>
                     {(view) => (
                       <button
                         type="button"

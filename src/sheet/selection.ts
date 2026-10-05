@@ -465,17 +465,6 @@ export function focusCell(sel: CellSel | RangeSel): CellSel {
   );
 }
 
-export function sheetSelectionRect(sel: SheetSel | null): SheetRect | null {
-  if (!sel || isSeamSel(sel)) return null;
-  return rectForSheetSelection(sel);
-}
-
-export function sheetSelectionRectForGrid(gridId: string, surfaceId?: string): SheetRect | null {
-  const sel = cellSel();
-  if (!sel || sel.gridId !== gridId || sel.surfaceId !== surfaceId || isSeamSel(sel)) return null;
-  return rectForSheetSelection(sel);
-}
-
 /** Focus highlight for legacy selections with no surface id. O(1). */
 export function cellIsSelected(gridId: string, row: number, col: number, surfaceId: string): boolean {
   const sel = cellSel();

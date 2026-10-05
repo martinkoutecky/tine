@@ -1,6 +1,6 @@
 import { TableWrap } from "./TableWrap";
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
-import { pageRowFieldValue, type PageRow, type QueryStatistics } from "../editor/queryIr";
+import { pageRowFieldValue, type PageRow, type QueryStatistics, type ViewKind } from "../editor/queryIr";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkDest } from "../linkGesture";
@@ -12,7 +12,7 @@ import { openPagePropertiesFromRow } from "../queryPageProps";
 // Presentation parts of a query block's answer: page rows and the engine's
 // statistics. Neither decides membership or computes an answer (I-12).
 
-export type QueryView = "search" | "list" | "table" | "board";
+export type QueryView = ViewKind;
 
 /** A page-anchored answer (K16): pages, not degenerate empty block groups.
  *  Table columns come off the rows' own page properties via `query_run`, never

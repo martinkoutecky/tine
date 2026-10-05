@@ -76,10 +76,6 @@ export function rectForSheetSelection(sel: SheetMutationSelection): SheetRect {
     : normalizeSheetRect(sel.anchor, sel.focus);
 }
 
-export function focusForSheetSelection(sel: SheetMutationSelection): SheetPoint {
-  return sel.kind === "cell" ? { row: sel.row, col: sel.col } : { ...sel.focus };
-}
-
 function offsetPoint(p: SheetPoint, dir: SheetMoveDirection): SheetPoint {
   if (dir === "up") return { row: p.row - 1, col: p.col };
   if (dir === "down") return { row: p.row + 1, col: p.col };

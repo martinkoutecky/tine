@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
-import type { AggFn, ViewSettings } from "../editor/queryIr";
+import { VIEW_KINDS, type AggFn, type ViewSettings } from "../editor/queryIr";
 import type { RegistryAccess } from "./querySheetParts";
 import { QueryVocabularyPicker, displayFieldEntries, type DisplaySlot } from "./QueryVocabularyPicker";
 import { registerTransientLayer } from "../transientLayers";
@@ -85,7 +85,7 @@ export function QueryDisplay(props: {
       aria-label={props.rowKind() === "page" ? "Page display" : "Block display"}
       onClick={(event) => event.stopPropagation()}>
       <section><h4>View</h4><div role="group" aria-label="Query view">
-        <For each={["search", "list", "table", "board"] as const}>{(kind) =>
+        <For each={VIEW_KINDS}>{(kind) =>
           <button type="button" classList={{ active: (view().view ?? "list") === kind }}
             onClick={() => apply({ view: kind })}>{kind}</button>}</For>
       </div></section>

@@ -33,7 +33,7 @@ import type {
   QueryHit,
   QueryPageScope,
 } from "../types";
-import type { ParsedQuery, Query, QueryResult, ViewSettings, ExplainEmptyResult, FriendlyPageMatchScope } from "../editor/queryIr";
+import { VIEW_KINDS, type ParsedQuery, type Query, type QueryResult, type ViewSettings, type ExplainEmptyResult, type FriendlyPageMatchScope } from "../editor/queryIr";
 import { queryDisplaySettings, type QueryDisplayDraft } from "../editor/queryDisplayDraft";
 import { queryScopedDisplayPropertyPatch } from "../editor/queryViewProperties";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
@@ -992,7 +992,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
             </label>
           </Show>
           <div class="query-presentations" role="group" aria-label="Result presentation">
-            <For each={["search", "list", "table", "board"] as QueryPresentation[]}>
+            <For each={VIEW_KINDS}>
               {(view) => (
                 <button
                   type="button"

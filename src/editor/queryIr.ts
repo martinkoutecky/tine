@@ -131,8 +131,9 @@ export function sourceOriginal(source: Source): string | null {
 
 export type SortDir = "asc" | "desc";
 /** `search` is the existing fourth view (`Macro.tsx`), and it stays. */
-export type ViewKind = "search" | "list" | "table" | "board";
-export const VIEW_KINDS: readonly ViewKind[] = ["search", "list", "table", "board"];
+export type ViewKind = (typeof VIEW_KINDS)[number];
+/** The one list of presentations; `QueryPresentation`, `QueryView`, the router normalizer and every picker derive from it. */
+export const VIEW_KINDS = ["search", "list", "table", "board"] as const;
 export type AggFn = "count" | "sum" | "avg";
 
 /** A sort/group/column/aggregate target: a property key or an OG-sortable field name, kept as the user wrote it. */

@@ -19,11 +19,12 @@ import { isMobilePlatform } from "./nativeChrome";
 import type { PageKind } from "./types";
 import { installRouterBridge } from "./routerBridge";
 import { retirePdfNavigationIntent } from "./pdfNavigation";
+import { VIEW_KINDS } from "./editor/queryIr";
 import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
 import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 export type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 
-const QUERY_PRESENTATIONS: ReadonlySet<string> = new Set(["search", "list", "table", "board"]);
+const QUERY_PRESENTATIONS: ReadonlySet<string> = new Set(VIEW_KINDS);
 
 /** The one reader of a query presentation; null is "unreadable". */
 export function normalizeQueryPresentation(value: unknown): QueryPresentation | null {
