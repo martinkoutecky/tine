@@ -21,8 +21,3 @@ export function literalBlockOfLine(raw: string, format: Format = "md"): number[]
   let run = 0;
   return literal.map((on,i) => on ? (i > 0 && literal[i-1] ? run : ++run) : -1);
 }
-
-/** Insertion at an inter-region boundary is permitted. */
-export function insertableBefore(literal: number[], before: number): boolean {
-  return before <= 0 || before >= literal.length || literal[before] === -1 || literal[before-1] !== literal[before];
-}

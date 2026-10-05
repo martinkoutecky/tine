@@ -747,16 +747,6 @@ export function runGlobalCommand(id: string): boolean {
   return true;
 }
 
-/** Merged shortcuts for the Settings reference. */
-export function currentShortcuts(): { id: string; label: string; binding: string; scope: ShortcutScope }[] {
-  return [...COMMANDS, ...pluginCommandDefs()].map((c) => ({
-    id: c.id,
-    label: c.label,
-    binding: overridesApplied[c.id] ?? c.binding,
-    scope: shortcutScope(c),
-  })).filter((c) => c.binding !== "false");
-}
-
 /** Built-in command defaults (id + label + default binding) for the Settings
  *  remap UI, which computes the effective binding reactively from these plus
  *  config.edn and the user's local overrides. */

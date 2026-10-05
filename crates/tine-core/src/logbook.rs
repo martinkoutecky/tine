@@ -32,21 +32,6 @@ pub struct ClockRow {
 const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 impl TimestampParts {
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn local_now() -> TimestampParts {
-        use chrono::{Datelike, Timelike};
-        let now = chrono::Local::now();
-        TimestampParts {
-            year: now.year(),
-            month: now.month(),
-            day: now.day(),
-            weekday: now.weekday().num_days_from_sunday(),
-            hour: now.hour(),
-            minute: now.minute(),
-            second: now.second(),
-        }
-    }
-
     pub fn format(self, with_seconds: bool) -> String {
         let wd = WEEKDAYS
             .get(self.weekday as usize)
@@ -66,11 +51,6 @@ impl TimestampParts {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub fn clock_in(raw: &str, format: LogbookFormat, with_seconds: bool) -> String {
-    clock_in_at(raw, format, with_seconds, TimestampParts::local_now())
-}
-
 pub fn clock_in_at(
     raw: &str,
     format: LogbookFormat,
@@ -82,11 +62,6 @@ pub fn clock_in_at(
         format,
         &format!("CLOCK: [{}]", now.format(with_seconds)),
     )
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn clock_out(raw: &str, format: LogbookFormat, with_seconds: bool) -> String {
-    clock_out_at(raw, format, with_seconds, TimestampParts::local_now())
 }
 
 pub fn clock_out_at(
@@ -215,26 +190,6 @@ pub fn apply_marker_transition_at(
         );
     }
     raw.to_string()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn apply_marker_transition(
-    raw: &str,
-    format: LogbookFormat,
-    old_marker: Option<&str>,
-    new_marker: Option<&str>,
-    enabled: bool,
-    with_seconds: bool,
-) -> String {
-    apply_marker_transition_at(
-        raw,
-        format,
-        old_marker,
-        new_marker,
-        enabled,
-        with_seconds,
-        TimestampParts::local_now(),
-    )
 }
 
 pub fn has_logbook_drawer(raw: &str, is_org: bool) -> bool {

@@ -407,9 +407,6 @@ export function setDimInFocus(v: boolean) {
   setDimInFocusSig(v);
   saveStr(DIM_IN_FOCUS_KEY, v ? null : "0");
 }
-export function toggleDimInFocus() {
-  setDimInFocus(!dimInFocus());
-}
 
 // --- carry-unfinished-tasks settings (persisted) ---
 const CARRY_CTX_KEY = "logseq-claude.carryKeepsContext";

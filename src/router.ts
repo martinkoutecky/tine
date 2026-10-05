@@ -93,10 +93,6 @@ export function pageTargetFromFeedPage(page: { name: string; kind: PageKind; id?
   return { name: page.name, pageKind: page.kind, ...(page.id ? { path: page.id } : {}) };
 }
 
-export function pageTargetFromEntry(entry: { name: string; kind: PageKind; path?: string }): PageTarget {
-  return { name: entry.name, pageKind: entry.kind, ...(entry.path ? { path: entry.path } : {}) };
-}
-
 export function pageTargetFromBlockRef(ref: {
   page: string;
   pageKind: PageKind;

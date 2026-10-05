@@ -62,11 +62,6 @@ export function setSpellcheckLanguages(value: string): void {
     (next) => backend().setAppString(KEY_LANGS, next), "spellcheck languages");
 }
 
-/** Is this dictionary code currently selected? */
-export function isLanguageSelected(code: string): boolean {
-  return parseLanguages(languages()).includes(code);
-}
-
 /** Tick/untick one dictionary in the selection (preserving the others). */
 export function toggleSpellcheckLanguage(code: string, on: boolean): void {
   const set = new Set(parseLanguages(languages()));

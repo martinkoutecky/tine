@@ -158,10 +158,6 @@ export function copyRich(text: string, html: string): Promise<void> {
   return writeClipboardRich(text, html);
 }
 
-export function copyOutline(md: string): Promise<void> {
-  return copyRich(md, outlineToHtml(md));
-}
-
 /**
  * Dedicated block copy/cut ordering boundary: clear old private state, start the
  * external write, then publish the fresh generation before returning. The write
