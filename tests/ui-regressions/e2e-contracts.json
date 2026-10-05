@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-large-page.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"A 2,000-block page opens with bounded rendering, Find reveals a far-down row, its edit is saved, and Back restores the edited row and scroll position.","blocking":true}],
+      "acceptableVariations":["Window sizes, spacer estimates and initial layout may vary while the same edited location returns to view."],
+      "nonRequirements":["Exact DOM shell count, pixel-identical caret geometry or cross-platform timing from Linux evidence."],
+      "stability":"stable"
+    },
     "scripts/e2e-tine-links.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Cold and forwarded Tine URLs open existing graph/page/block targets, graph copies ask once, and menu copies publish only durable identities.","blocking":false}],
       "acceptableVariations":["Pane tab placement, toast wording and chooser styling may vary."],
