@@ -64,7 +64,7 @@ import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
 import { captureBinding, graphScopedSignal, refuseStaleWrite } from "../binding";
 import type { AssetInfo, TrashStats, JournalFile } from "../types";
-import { formatJournal, appNow } from "../journal";
+import { DEFAULT_TITLE_FORMAT, formatJournal, appNow } from "../journal";
 import {
   launcherRankingEnabled,
   resetLauncherRanking,
@@ -595,7 +595,7 @@ function JournalTemplateField(): JSX.Element {
  *  one of the presets, so a hand-edited config.edn round-trips. */
 function DateFormatSelect(): JSX.Element {
   const today = appNow();
-  const current = () => graphMeta()?.journal_page_title_format || "MMM do, yyyy";
+  const current = () => graphMeta()?.journal_page_title_format || DEFAULT_TITLE_FORMAT;
   const options = () => [current(), ...JOURNAL_TITLE_FORMATS.filter((format) => format !== current())];
   return (
     <select

@@ -19,7 +19,7 @@ export { conflictQueue, settleArtifactConflict, syncConflicts, setSyncConflicts 
 import { parseBlockPos, type PageTarget } from "./routeTypes";
 import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
-import { setJournalTitleFormat } from "./journal";
+import { DEFAULT_TITLE_FORMAT, setJournalTitleFormat } from "./journal";
 import { pageIdentityKey } from "./pageIdentity";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
 import { navigationName } from "./pageIndex";
@@ -209,7 +209,7 @@ const journalTitleFormatScope = {};
  * Settings proposes renames for title-named files. Return does not confirm
  * persistence. Failure may roll UI back and toasts. */
 export function changeJournalTitleFormat(fmt: string) {
-  const next = fmt.trim() || "MMM do, yyyy";
+  const next = fmt.trim() || DEFAULT_TITLE_FORMAT;
   const m = graphMeta();
   if (!m || m.journal_page_title_format === next) return;
   setGraphMeta({ ...m, journal_page_title_format: next });

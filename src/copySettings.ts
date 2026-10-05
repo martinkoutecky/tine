@@ -19,9 +19,14 @@ const KEY_SUBTREE = "copy_include_subtree";
 const KEY_COLLAPSED = "copy_strip_collapsed";
 const KEY_REF_ZOOM = "ref_click_zoom";
 
-const [includeSubtree, setIncludeSubtreeSig] = createSignal(false);
-const [stripCollapsed, setStripCollapsedSig] = createSignal(true);
-const [refZoom, setRefZoomSig] = createSignal(false);
+// Each default is spelled once: the initial signal and the startup read share it.
+const DEFAULT_INCLUDE_SUBTREE = false;
+const DEFAULT_STRIP_COLLAPSED = true;
+const DEFAULT_REF_ZOOM = false;
+
+const [includeSubtree, setIncludeSubtreeSig] = createSignal(DEFAULT_INCLUDE_SUBTREE);
+const [stripCollapsed, setStripCollapsedSig] = createSignal(DEFAULT_STRIP_COLLAPSED);
+const [refZoom, setRefZoomSig] = createSignal(DEFAULT_REF_ZOOM);
 
 /** Reactive: when copying a parent, also include its sub-blocks? OFF = Tine default
  *  (only the selected blocks); ON = Logseq behavior (whole sub-tree). */
@@ -57,19 +62,19 @@ export async function initCopySettings(): Promise<void> {
   const collapsedRevision = preferenceRevision(stripCollapsed);
   const zoomRevision = preferenceRevision(refZoom);
   try {
-    const value = await backend().getAppBool(KEY_SUBTREE, false);
+    const value = await backend().getAppBool(KEY_SUBTREE, DEFAULT_INCLUDE_SUBTREE);
     if (preferenceReadCurrent(includeSubtree, subtreeRevision)) { setIncludeSubtreeSig(value); seedPreference(includeSubtree); }
   } catch {
     pushToast("Could not load copy subtree preference.", "error");
   }
   try {
-    const value = await backend().getAppBool(KEY_COLLAPSED, true);
+    const value = await backend().getAppBool(KEY_COLLAPSED, DEFAULT_STRIP_COLLAPSED);
     if (preferenceReadCurrent(stripCollapsed, collapsedRevision)) { setStripCollapsedSig(value); seedPreference(stripCollapsed); }
   } catch {
     pushToast("Could not load collapsed copy preference.", "error");
   }
   try {
-    const value = await backend().getAppBool(KEY_REF_ZOOM, false);
+    const value = await backend().getAppBool(KEY_REF_ZOOM, DEFAULT_REF_ZOOM);
     if (preferenceReadCurrent(refZoom, zoomRevision)) { setRefZoomSig(value); seedPreference(refZoom); }
   } catch {
     pushToast("Could not load block reference preference.", "error");

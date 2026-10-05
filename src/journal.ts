@@ -9,7 +9,7 @@ import { format_journal_date, parse_journal_format_json } from "./render/wasm/ls
  * Await initParser() before formatting/parsing, as app boot does. Parser init
  * failures propagate; there is no alternate date grammar. */
 
-const DEFAULT_TITLE_FORMAT = "MMM do, yyyy";
+export const DEFAULT_TITLE_FORMAT = "MMM do, yyyy";
 let titleFormat = DEFAULT_TITLE_FORMAT;
 
 /** The app's wall clock (GH #607). The backend's time-zone rules are the
