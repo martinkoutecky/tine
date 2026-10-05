@@ -1444,7 +1444,10 @@ try {
   // OG carries an annotation entity through block-ref navigation, then scrolls
   // to that exact highlight. A filename is the resource identity; a second
   // target in the same file must not remount it. A different filename still is
-  // a complete boundary: cleanup flushes A to A, then B opens only B's state.
+  // a complete boundary: A's reader position stays with A's route, then B opens
+  // only B's state. Reading and zooming write no graph files (GH #577, Martin
+  // 2026-10-04): the position persists in the pane route/session, not the sidecar.
+  const sidecarBeforeZoom = fs.readFileSync(sidecar, "utf8");
   await browser.$('button[title="Zoom in"]').click();
 
   // First prove ordinary direct-link A -> B -> A with real pointer clicks and
@@ -1462,10 +1465,9 @@ try {
     timeout: 10_000,
     timeoutMsg: "PDF B's distinct text never appeared",
   });
-  await browser.waitUntil(() => {
-    const written = fs.readFileSync(sidecar, "utf8");
-    return written.includes(":scale 1.93") && written.includes(':plugin "keep"') && written.includes(":future-root 42");
-  }, { timeout: 10_000, timeoutMsg: "PDF A cleanup did not persist A's pending view state" });
+  if (fs.readFileSync(sidecar, "utf8") !== sidecarBeforeZoom) {
+    throw new Error("zooming PDF A and switching to B rewrote A's sidecar; reader position belongs to the route");
+  }
   if (fs.readFileSync(secondSidecar, "utf8") !== originalSecondSidecar) {
     throw new Error("switching from PDF A wrote A's pending state or baseline into PDF B");
   }
