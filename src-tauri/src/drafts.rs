@@ -239,7 +239,7 @@ pub(crate) fn load_drafts(
 /// loading, after the window's binding has already moved (og T4). The caller
 /// must still be a bound graph window; the root only picks the app-data file.
 #[tauri::command]
-pub(crate) fn store_draft(
+pub(crate) async fn store_draft(
     record: Value,
     graph_root: Option<String>,
     app: tauri::AppHandle,
@@ -252,16 +252,18 @@ pub(crate) fn store_draft(
         }
         None => drafts_path(&app, &state)?,
     };
-    store_at(&path, record)
+    // Up to 8 MiB rewritten and fsynced under DRAFTS_LOCK (R3): off the main thread.
+    crate::state::off_ui(move || store_at(&path, record)).await
 }
 
 #[tauri::command]
-pub(crate) fn retire_draft(
+pub(crate) async fn retire_draft(
     id: String,
     app: tauri::AppHandle,
     state: crate::state::GraphContext<'_>,
 ) -> Result<(), String> {
-    retire_at(&drafts_path(&app, &state)?, &id)
+    let path = drafts_path(&app, &state)?;
+    crate::state::off_ui(move || retire_at(&path, &id)).await
 }
 
 #[cfg(test)]

@@ -409,6 +409,23 @@ pub(crate) fn slot_for_context(ctx: &GraphContext<'_>) -> Result<Arc<GraphSlot>,
     slot_for_bound_window(&ctx.state, ctx.window.label(), ctx.binding_generation)
 }
 
+/// R3 / I-21: run a command's blocking work (the store writer, an fsync, a
+/// directory sync) on the blocking pool and await it, so the main thread keeps
+/// painting and serving IPC. A synchronous Tauri command runs on the main
+/// thread and every other synchronous command queues behind it. Ordering: a
+/// synchronous command was ordered by the main thread; an async one is not, so
+/// the frontend issues these commands through its ordered lane (`ORDERED_COMMANDS`
+/// in src/orderedWrites.ts) and the shared state each touches keeps its own lock
+/// (store writer, SETTINGS_LOCK, DRAFTS_LOCK, NOTICES_LOCK, WORKSPACES_LOCK).
+/// Exemplar: commands.rs `save_pages`. A panicking job returns its join error.
+pub(crate) async fn off_ui<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 /// Resolve a normal graph-window command. Quick Capture intentionally has no
 /// graph slot, so this path cannot be used to grant it any GraphContext command
 /// (including save, delete, trash, or other mutations).

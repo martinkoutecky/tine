@@ -4,6 +4,7 @@
 
 import { readSavePlatformStep } from "./savePlatformStep";
 import { markCommandSlow } from "./slowBackend";
+import { orderedLane } from "./orderedWrites";
 import { timingNamesForCommand } from "./focusTiming";
 import type { GraphVerificationProgress, GraphVerificationReport } from "./graphVerification";
 import type {
@@ -759,6 +760,7 @@ class TauriBackend implements Backend {
   private ready: Promise<void>;
   private bindingGeneration = 0;
   private ipcDiagnosticsUnavailable = false;
+  private readonly ordered = orderedLane();
 
   constructor() {
     this.ready = import("@tauri-apps/api/core").then((m) => {
@@ -769,7 +771,12 @@ class TauriBackend implements Backend {
 
   graphBindingGeneration() { return this.bindingGeneration; }
 
-  private async call<T>(cmd: string, args?: Record<string, unknown>, bindingGeneration = this.bindingGeneration): Promise<T> {
+  /** R3: write commands keep their call order (src/orderedWrites.ts). */
+  private call<T>(cmd: string, args?: Record<string, unknown>, bindingGeneration = this.bindingGeneration): Promise<T> {
+    return this.ordered(cmd, () => this.issue<T>(cmd, args, bindingGeneration));
+  }
+
+  private async issue<T>(cmd: string, args: Record<string, unknown> | undefined, bindingGeneration: number): Promise<T> {
     await this.ready;
     const leasedArgs = bindingGeneration
       ? { ...(args ?? {}), bindingGeneration }

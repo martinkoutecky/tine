@@ -822,21 +822,28 @@ pub(crate) fn get_backup_keep(app: tauri::AppHandle) -> usize {
 }
 
 #[tauri::command]
-pub(crate) fn set_backup_keep(
+pub(crate) async fn set_backup_keep(
     keep: usize,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let keep = keep.clamp(1, 1000);
-    update_settings(&app, |json| {
-        json["backup_keep"] = serde_json::json!(keep);
-    })?;
-    // Apply the new (possibly lower) cap to the current graph's snapshots now.
-    let slot = slot_for_context(&state)?;
-    if let Some(base) = backup_base(&app, &slot.root_key) {
-        prune_backups(&base, keep);
-    }
-    Ok(())
+    // Resolved first, as before the write: a stale binding still writes the
+    // setting (device-wide) but prunes nothing, exactly like the old order.
+    let slot = slot_for_context(&state);
+    // Settings fsync and snapshot pruning (R3): off the main thread.
+    crate::state::off_ui(move || {
+        update_settings(&app, |json| {
+            json["backup_keep"] = serde_json::json!(keep);
+        })?;
+        // Apply the new (possibly lower) cap to the current graph's snapshots now.
+        let slot = slot?;
+        if let Some(base) = backup_base(&app, &slot.root_key) {
+            prune_backups(&base, keep);
+        }
+        Ok(())
+    })
+    .await
 }
 
 /// The backup directory for the currently-open graph (`<app-data>/backups/<id>`).

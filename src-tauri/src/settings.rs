@@ -223,14 +223,17 @@ pub(crate) fn list_known_graphs(app: tauri::AppHandle) -> Vec<KnownGraph> {
 }
 
 #[tauri::command]
-pub(crate) fn forget_known_graph(path: String, app: tauri::AppHandle) -> Result<(), String> {
-    update_settings(&app, |json| forget_graph_json(json, &path))?;
-    // Best-effort, after the removal itself; never fails it (ADR 0070).
-    crate::graph::forget_launch_checkpoint(
-        crate::graph::checkpoint_app_data(&app).as_deref(),
-        &path,
-    );
-    Ok(())
+pub(crate) async fn forget_known_graph(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    crate::state::off_ui(move || {
+        update_settings(&app, |json| forget_graph_json(json, &path))?;
+        // Best-effort, after the removal itself; never fails it (ADR 0070).
+        crate::graph::forget_launch_checkpoint(
+            crate::graph::checkpoint_app_data(&app).as_deref(),
+            &path,
+        );
+        Ok(())
+    })
+    .await
 }
 
 /// Reveal a remembered graph root in the desktop file manager. Only paths
@@ -288,10 +291,16 @@ pub(crate) fn get_capture_enter_files(app: tauri::AppHandle) -> bool {
 }
 
 #[tauri::command]
-pub(crate) fn set_capture_enter_files(value: bool, app: tauri::AppHandle) -> Result<(), String> {
-    update_settings(&app, |json| {
-        json["capture_enter_files"] = serde_json::Value::Bool(value);
+pub(crate) async fn set_capture_enter_files(
+    value: bool,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    crate::state::off_ui(move || {
+        update_settings(&app, |json| {
+            json["capture_enter_files"] = serde_json::Value::Bool(value);
+        })
     })
+    .await
 }
 
 /// Legacy `[[`/`#` autocomplete preference (app-level, in tine-settings.json):
@@ -328,10 +337,13 @@ pub(crate) fn get_smooth_scroll(app: tauri::AppHandle) -> bool {
 }
 
 #[tauri::command]
-pub(crate) fn set_smooth_scroll(value: bool, app: tauri::AppHandle) -> Result<(), String> {
-    update_settings(&app, |json| {
-        json["smooth_scroll"] = serde_json::Value::Bool(value);
+pub(crate) async fn set_smooth_scroll(value: bool, app: tauri::AppHandle) -> Result<(), String> {
+    crate::state::off_ui(move || {
+        update_settings(&app, |json| {
+            json["smooth_scroll"] = serde_json::Value::Bool(value);
+        })
     })
+    .await
 }
 
 /// Device-local boolean preference, O(settings bytes). The query crossing key
@@ -439,7 +451,7 @@ fn set_crossing_notice_at(
 }
 
 #[tauri::command]
-pub(crate) fn set_app_bool(
+pub(crate) async fn set_app_bool(
     key: String,
     value: bool,
     app: tauri::AppHandle,
@@ -451,11 +463,15 @@ pub(crate) fn set_app_bool(
             .path()
             .app_data_dir()
             .map_err(|error| error.to_string())?;
-        return set_crossing_notice_at(&dir, &slot.root_key, value);
+        return crate::state::off_ui(move || set_crossing_notice_at(&dir, &slot.root_key, value))
+            .await;
     }
-    update_settings(&app, |json| {
-        json[&key] = serde_json::Value::Bool(value);
+    crate::state::off_ui(move || {
+        update_settings(&app, |json| {
+            json[&key] = serde_json::Value::Bool(value);
+        })
     })
+    .await
 }
 
 /// Generic device-local STRING preference (tine-settings.json) — the string twin of
@@ -471,14 +487,17 @@ pub(crate) fn get_app_string(key: String, default: String, app: tauri::AppHandle
 }
 
 #[tauri::command]
-pub(crate) fn set_app_string(
+pub(crate) async fn set_app_string(
     key: String,
     value: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    update_settings(&app, |json| {
-        json[&key] = serde_json::Value::String(value.clone());
+    crate::state::off_ui(move || {
+        update_settings(&app, |json| {
+            json[&key] = serde_json::Value::String(value.clone());
+        })
     })
+    .await
 }
 
 /// Path to the persisted UI session (open tabs / active tab / zoom). This is
@@ -674,14 +693,14 @@ pub(crate) fn load_workspaces(
     load_workspaces_at(&path, &session)
 }
 
-pub(crate) fn save_workspaces(
+pub(crate) async fn save_workspaces(
     data: String,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<WorkspaceSaveOutcome, String> {
     let slot = slot_for_context(&state)?;
     let path = workspaces_path(&app, &slot.root_key).ok_or("no app-data dir")?;
-    save_workspaces_at(&path, &data)
+    crate::state::off_ui(move || save_workspaces_at(&path, &data)).await
 }
 
 // A missing session is fresh state; a disk/permission failure must not publish
@@ -1178,26 +1197,32 @@ mod tests {
 /// Favorites membership (`:favorites`) and, once the graph has one, the
 /// arrangement page (`:tine/favorites-page`), in one guarded config write.
 #[tauri::command]
-pub(crate) fn set_favorites(
+pub(crate) async fn set_favorites(
     names: Vec<String>,
     page: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::config::set_favorites(&slot.store, &names, page.as_deref())
-        .map_err(|e| e.to_string())
+    crate::state::off_ui(move || {
+        tine_graph_features::config::set_favorites(&slot.store, &names, page.as_deref())
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Persist or clear the graph home page through the guarded config transaction.
 /// Cost follows config.edn bytes; malformed map and I/O errors are returned.
 #[tauri::command]
-pub(crate) fn set_default_home(
+pub(crate) async fn set_default_home(
     name: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::config::set_default_home_page(&slot.store, name.as_deref())
-        .map_err(|error| error.to_string())
+    crate::state::off_ui(move || {
+        tine_graph_features::config::set_default_home_page(&slot.store, name.as_deref())
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[cfg(test)]

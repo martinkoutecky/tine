@@ -284,7 +284,17 @@ pub(crate) fn inspect_graph_access(
 /// Persist consent only if the submitted target still exactly matches the
 /// graph's live canonical assets target (TOCTOU/retarget guard).
 #[tauri::command]
-pub(crate) fn approve_external_assets(
+pub(crate) async fn approve_external_assets(
+    graph_root: String,
+    assets_path: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    // Inspects the graph and fsyncs the settings file (R3): off the main thread.
+    crate::state::off_ui(move || approve_external_assets_blocking(graph_root, assets_path, app))
+        .await
+}
+
+fn approve_external_assets_blocking(
     graph_root: String,
     assets_path: String,
     app: tauri::AppHandle,
@@ -606,7 +616,12 @@ impl LoadGraphResult {
 /// write into a user's existing files. Does NOT load the graph — the frontend
 /// calls `load_graph` with the returned path (matching the "open existing" flow).
 #[tauri::command]
-pub(crate) fn create_graph(dir: String) -> Result<String, String> {
+pub(crate) async fn create_graph(dir: String) -> Result<String, String> {
+    // Writes and fsyncs every demo page (R3): off the main thread.
+    crate::state::off_ui(move || create_graph_blocking(dir)).await
+}
+
+fn create_graph_blocking(dir: String) -> Result<String, String> {
     let dir = dir.trim();
     if dir.is_empty() {
         return Err("no folder was chosen".into());
@@ -1078,7 +1093,7 @@ mod tests {
         forget_launch_checkpoint(None, root);
         let settings = include_str!("settings.rs");
         let command = &settings[settings
-            .find("pub(crate) fn forget_known_graph")
+            .find("pub(crate) async fn forget_known_graph")
             .expect("the removal command")..];
         let command = &command[..command.find("\n}\n").unwrap()];
         assert!(

@@ -178,7 +178,10 @@ mod device_read_tests {
             .rsplit("pub(crate) fn read_local_image(")
             .next()
             .unwrap();
-        let image = image.split("pub(crate) fn import_asset(").next().unwrap();
+        let image = image
+            .split("pub(crate) async fn import_asset(")
+            .next()
+            .unwrap();
         assert!(image.contains("refuse_bound_graph_path"));
     }
 
@@ -252,12 +255,12 @@ pub(crate) fn load_workspaces(
 }
 
 #[tauri::command]
-pub(crate) fn save_workspaces(
+pub(crate) async fn save_workspaces(
     data: String,
     app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<crate::settings::WorkspaceSaveOutcome, String> {
-    crate::settings::save_workspaces(data, app, state)
+    crate::settings::save_workspaces(data, app, state).await
 }
 
 fn feature_search_error(error: tine_graph_features::search::SearchError) -> String {
@@ -448,8 +451,15 @@ fn log_save_kinds(entries: &[SavePageEntry]) {
 /// failures return a Failed wire value. Force reads current UTF-8 bytes for
 /// each affected base. Empty input returns Failed at placeholder index 0.
 /// A failed or slow call is recorded as a fixed-shape `direct.save` event.
+///
+/// The transaction takes the store writer, which waits behind a watcher cycle
+/// or a checkpoint capture, so it runs on the blocking pool (R3, og-flow3; the
+/// shape of 96531bd2a). Save ordering is unchanged: the frontend serializes
+/// each page's saves (and a group behind its members) and issues `save_pages`
+/// through its ordered lane, and the per-page base-revision guard inside
+/// `save_pages_wire` is untouched.
 #[tauri::command]
-pub(crate) fn save_pages(
+pub(crate) async fn save_pages(
     entries: Vec<SavePageEntry>,
     state: GraphContext<'_>,
 ) -> Result<SavePagesWire, String> {
@@ -470,11 +480,14 @@ pub(crate) fn save_pages(
             )
         })
         .collect();
-    Ok(save_wire::save_pages_wire(
-        &slot.store,
-        &entries,
-        tine_graph_features::pages::save_pages,
-    ))
+    crate::state::off_ui(move || {
+        Ok(save_wire::save_pages_wire(
+            &slot.store,
+            &entries,
+            tine_graph_features::pages::save_pages,
+        ))
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -963,104 +976,127 @@ pub(crate) async fn page_icons(
     .map_err(|error| error.to_string())?
 }
 
-fn with_config_store<T>(
+/// A config read or write on the bound graph's store, off the main thread: a
+/// config write takes the store writer (R3). O(config) plus the writer wait.
+async fn with_config_store<T: Send + 'static>(
     state: &GraphContext<'_>,
-    f: impl FnOnce(&tine_store::Store) -> Result<T, String>,
+    f: impl FnOnce(&tine_store::Store) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     let slot = slot_for_context(state)?;
-    f(&slot.store)
+    crate::state::off_ui(move || f(&slot.store)).await
 }
 
 #[tauri::command]
-pub(crate) fn set_preferred_workflow(
+pub(crate) async fn set_preferred_workflow(
     workflow: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_config_store(&state, |store| {
+    with_config_store(&state, move |store| {
         tine_graph_features::config::set_preferred_workflow(store, &workflow)
             .map_err(|e| e.to_string())
     })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn set_timetracking_enabled(
+pub(crate) async fn set_timetracking_enabled(
     enabled: bool,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_config_store(&state, |store| {
+    with_config_store(&state, move |store| {
         tine_graph_features::config::set_timetracking_enabled(store, enabled)
             .map_err(|e| e.to_string())
-    })?;
+    })
+    .await?;
     Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn set_show_brackets(enabled: bool, state: GraphContext<'_>) -> Result<(), String> {
-    with_config_store(&state, |store| {
-        tine_graph_features::config::set_show_brackets(store, enabled).map_err(|e| e.to_string())
-    })?;
-    Ok(())
-}
-
-#[tauri::command]
-pub(crate) fn set_doc_mode_enter_for_new_block(
+pub(crate) async fn set_show_brackets(
     enabled: bool,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_config_store(&state, |store| {
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_show_brackets(store, enabled).map_err(|e| e.to_string())
+    })
+    .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn set_doc_mode_enter_for_new_block(
+    enabled: bool,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    with_config_store(&state, move |store| {
         tine_graph_features::config::set_doc_mode_enter_for_new_block(store, enabled)
             .map_err(|e| e.to_string())
-    })?;
+    })
+    .await?;
     Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn set_logical_outdenting(enabled: bool, state: GraphContext<'_>) -> Result<(), String> {
-    with_config_store(&state, |store| {
+pub(crate) async fn set_logical_outdenting(
+    enabled: bool,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    with_config_store(&state, move |store| {
         tine_graph_features::config::set_logical_outdenting(store, enabled)
             .map_err(|e| e.to_string())
-    })?;
+    })
+    .await?;
     Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn set_guide_announced(announced: bool, state: GraphContext<'_>) -> Result<(), String> {
-    with_config_store(&state, |store| {
+pub(crate) async fn set_guide_announced(
+    announced: bool,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    with_config_store(&state, move |store| {
         tine_graph_features::config::set_guide_announced(store, announced)
             .map_err(|e| e.to_string())
-    })?;
+    })
+    .await?;
     Ok(())
 }
 
 #[tauri::command]
-pub(crate) fn set_default_journal_template(
+pub(crate) async fn set_default_journal_template(
     name: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    with_config_store(&state, |store| {
+    with_config_store(&state, move |store| {
         tine_graph_features::config::set_default_journal_template(store, name.as_deref())
             .map_err(|e| e.to_string())
     })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn set_start_of_week(n: u32, state: GraphContext<'_>) -> Result<(), String> {
-    with_config_store(&state, |store| {
+pub(crate) async fn set_start_of_week(n: u32, state: GraphContext<'_>) -> Result<(), String> {
+    with_config_store(&state, move |store| {
         tine_graph_features::config::set_start_of_week(store, n).map_err(|e| e.to_string())
     })
+    .await
 }
 
 /// Set the graph's `:preferred-format` for new pages/journals ("md" or "org").
 #[tauri::command]
-pub(crate) fn set_preferred_format(format: String, state: GraphContext<'_>) -> Result<(), String> {
+pub(crate) async fn set_preferred_format(
+    format: String,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
     let fmt = if format.eq_ignore_ascii_case("org") {
         tine_core::model::Format::Org
     } else {
         tine_core::model::Format::Md
     };
-    with_config_store(&state, |store| {
+    with_config_store(&state, move |store| {
         tine_graph_features::config::set_preferred_format(store, fmt).map_err(|e| e.to_string())
-    })?;
+    })
+    .await?;
     Ok(())
 }
 
@@ -1068,20 +1104,23 @@ pub(crate) fn set_preferred_format(format: String, state: GraphContext<'_>) -> R
 /// unvalidated. Renames no files: title-named journals are only proposed and
 /// applied through the journal filename commands (master e6f9b6e1ceae).
 #[tauri::command]
-pub(crate) fn set_journal_title_format(
+pub(crate) async fn set_journal_title_format(
     format: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    let slot = slot_for_context(&state)?;
-    tine_graph_features::config::set_journal_page_title_format(&slot.store, &format)
-        .map_err(|error| error.to_string())
+    with_config_store(&state, move |store| {
+        tine_graph_features::config::set_journal_page_title_format(store, &format)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn read_custom_css(state: GraphContext<'_>) -> Result<String, String> {
-    with_config_store(&state, |store| {
+pub(crate) async fn read_custom_css(state: GraphContext<'_>) -> Result<String, String> {
+    with_config_store(&state, move |store| {
         config::custom_css(store).map_err(|error| error.to_string())
     })
+    .await
 }
 
 #[tauri::command]
@@ -1511,27 +1550,30 @@ pub(crate) fn read_local_image(
 }
 
 #[tauri::command]
-pub(crate) fn import_asset(
+pub(crate) async fn import_asset(
     path: String,
     name: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
-    crate::device_io::import_asset_from_path(&slot.store, &path, name.as_deref()).map_err(|error| {
-        match error {
-            crate::device_io::DeviceAssetImportError::Name(message) => message,
-            crate::device_io::DeviceAssetImportError::Io(error) => {
-                feature_asset_error(error, &slot)
-            }
-        }
+    crate::state::off_ui(move || {
+        crate::device_io::import_asset_from_path(&slot.store, &path, name.as_deref()).map_err(
+            |error| match error {
+                crate::device_io::DeviceAssetImportError::Name(message) => message,
+                crate::device_io::DeviceAssetImportError::Io(error) => {
+                    feature_asset_error(error, &slot)
+                }
+            },
+        )
     })
+    .await
 }
 
 /// Import a bounded Android photo or voice memo by native cache-file capability.
 /// Media never crosses Kotlin/WebView/Rust as base64; Rust streams the open file
 /// into the graph and removes the temp only after the durable asset commit.
 #[tauri::command]
-pub(crate) fn import_native_capture(
+pub(crate) async fn import_native_capture(
     path: String,
     name: String,
     graph_root: Option<String>,
@@ -1541,73 +1583,78 @@ pub(crate) fn import_native_capture(
     use cap_std::{ambient_authority, fs::Dir};
     use tauri::Manager;
     let target = crate::capture_target::pick(slot_for_context(&state)?, graph_root, &app, &state)?;
-    const MAX_PHOTO_BYTES: u64 = 64 * 1024 * 1024;
-    const MAX_RECORDING_BYTES: u64 = 32 * 1024 * 1024;
-    let source = std::path::Path::new(&path);
-    let filename = source
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| "invalid native capture token".to_string())?;
-    let (max_bytes, media_label) =
-        if filename.starts_with("tine_memo_") && filename.ends_with(".m4a") {
-            (MAX_RECORDING_BYTES, "recording")
-        } else if filename.starts_with("tine_photo_") && filename.ends_with(".jpg") {
-            (MAX_PHOTO_BYTES, "photo")
-        } else {
-            return Err("invalid native capture token".into());
-        };
-    let cache_path = app
-        .path()
-        .app_cache_dir()
+    // The copy into the graph takes the store writer and fsyncs (R3): off the
+    // main thread. Choosing the target (registry + settings reads) stays here.
+    crate::state::off_ui(move || {
+        const MAX_PHOTO_BYTES: u64 = 64 * 1024 * 1024;
+        const MAX_RECORDING_BYTES: u64 = 32 * 1024 * 1024;
+        let source = std::path::Path::new(&path);
+        let filename = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| "invalid native capture token".to_string())?;
+        let (max_bytes, media_label) =
+            if filename.starts_with("tine_memo_") && filename.ends_with(".m4a") {
+                (MAX_RECORDING_BYTES, "recording")
+            } else if filename.starts_with("tine_photo_") && filename.ends_with(".jpg") {
+                (MAX_PHOTO_BYTES, "photo")
+            } else {
+                return Err("invalid native capture token".into());
+            };
+        let cache_path = app
+            .path()
+            .app_cache_dir()
+            .map_err(|error| error.to_string())?;
+        let token_parent = source
+            .parent()
+            .ok_or_else(|| "recording has no cache parent".to_string())?;
+        let cache_dir = Dir::open_ambient_dir(&cache_path, ambient_authority())
+            .map_err(|error| error.to_string())?;
+        let token_dir = Dir::open_ambient_dir(token_parent, ambient_authority())
+            .map_err(|error| error.to_string())?;
+        let cache_identity = same_file::Handle::from_file(
+            cache_dir
+                .try_clone()
+                .map_err(|error| error.to_string())?
+                .into_std_file(),
+        )
         .map_err(|error| error.to_string())?;
-    let token_parent = source
-        .parent()
-        .ok_or_else(|| "recording has no cache parent".to_string())?;
-    let cache_dir = Dir::open_ambient_dir(&cache_path, ambient_authority())
+        let token_identity = same_file::Handle::from_file(
+            token_dir
+                .try_clone()
+                .map_err(|error| error.to_string())?
+                .into_std_file(),
+        )
         .map_err(|error| error.to_string())?;
-    let token_dir = Dir::open_ambient_dir(token_parent, ambient_authority())
-        .map_err(|error| error.to_string())?;
-    let cache_identity = same_file::Handle::from_file(
-        cache_dir
-            .try_clone()
-            .map_err(|error| error.to_string())?
-            .into_std_file(),
-    )
-    .map_err(|error| error.to_string())?;
-    let token_identity = same_file::Handle::from_file(
-        token_dir
-            .try_clone()
-            .map_err(|error| error.to_string())?
-            .into_std_file(),
-    )
-    .map_err(|error| error.to_string())?;
-    if token_identity != cache_identity {
-        return Err("capture is outside Tine's native cache".into());
-    }
+        if token_identity != cache_identity {
+            return Err("capture is outside Tine's native cache".into());
+        }
 
-    let capture = token_dir
-        .open(filename)
-        .map_err(|error| error.to_string())?;
-    let metadata = capture.metadata().map_err(|error| error.to_string())?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > max_bytes {
-        return Err(format!(
-            "{media_label} is empty or exceeds the {} MiB limit",
-            max_bytes / (1024 * 1024)
-        ));
-    }
-    let stored = tine_graph_features::assets::import_asset_file(
-        target.store(),
-        &name,
-        tine_store::Content::Stream {
-            source: capture.into_std(),
-            max_bytes,
-        },
-    )
-    .map_err(|error| target.asset_error(error))?;
-    // The graph asset is authoritative now. Cleanup failure is harmless cache
-    // litter and must not make the frontend omit the already-durable reference.
-    let _ = cache_dir.remove_file(filename);
-    Ok(stored)
+        let capture = token_dir
+            .open(filename)
+            .map_err(|error| error.to_string())?;
+        let metadata = capture.metadata().map_err(|error| error.to_string())?;
+        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > max_bytes {
+            return Err(format!(
+                "{media_label} is empty or exceeds the {} MiB limit",
+                max_bytes / (1024 * 1024)
+            ));
+        }
+        let stored = tine_graph_features::assets::import_asset_file(
+            target.store(),
+            &name,
+            tine_store::Content::Stream {
+                source: capture.into_std(),
+                max_bytes,
+            },
+        )
+        .map_err(|error| target.asset_error(error))?;
+        // The graph asset is authoritative now. Cleanup failure is harmless cache
+        // litter and must not make the frontend omit the already-durable reference.
+        let _ = cache_dir.remove_file(filename);
+        Ok(stored)
+    })
+    .await
 }
 
 /// Read a dropped delimited-text file for the CSV/TSV → grid drop path.
@@ -2132,17 +2179,20 @@ pub(crate) async fn asset_trash_stats(
 
 /// Permanently delete everything in the asset trash; returns files removed.
 #[tauri::command]
-pub(crate) fn empty_asset_trash(state: GraphContext<'_>) -> Result<u64, String> {
-    slot_for_context(&state)?
-        .store
-        .purge_asset_trash()
-        .map(|(count, _)| count)
-        .map_err(|(error, count, bytes)| {
-            format!(
-                "{} ({count} entries, {bytes} bytes already removed)",
-                store_error(error)
-            )
-        })
+pub(crate) async fn empty_asset_trash(state: GraphContext<'_>) -> Result<u64, String> {
+    let slot = slot_for_context(&state)?;
+    crate::state::off_ui(move || {
+        slot.store
+            .purge_asset_trash()
+            .map(|(count, _)| count)
+            .map_err(|(error, count, bytes)| {
+                format!(
+                    "{} ({count} entries, {bytes} bytes already removed)",
+                    store_error(error)
+                )
+            })
+    })
+    .await
 }
 
 /// Journal days that resolve to more than one file (e.g. a date-stem file plus a
@@ -2193,9 +2243,16 @@ pub(crate) async fn apply_journal_filename_migrations(
 
 /// Move one journal file (by exact filename) to the recoverable trash.
 #[tauri::command]
-pub(crate) fn trash_journal_file(name: String, state: GraphContext<'_>) -> Result<(), String> {
+pub(crate) async fn trash_journal_file(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::journals::trash_journal_file(&slot.store, &name).map_err(|e| e.to_string())
+    crate::state::off_ui(move || {
+        tine_graph_features::journals::trash_journal_file(&slot.store, &name)
+            .map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Raw contents of one journal file (by exact filename) — for inspecting a
@@ -2283,15 +2340,18 @@ pub(crate) async fn rename_file_to_page(
 }
 
 #[tauri::command]
-pub(crate) fn save_asset(
+pub(crate) async fn save_asset(
     name: String,
     bytes_b64: String,
     state: GraphContext<'_>,
 ) -> Result<String, String> {
-    let bytes = decode_asset_b64(&bytes_b64)?;
     let slot = slot_for_context(&state)?;
-    tine_graph_features::assets::save_asset(&slot.store, &name, &bytes)
-        .map_err(|error| feature_asset_error(error, &slot))
+    crate::state::off_ui(move || {
+        let bytes = decode_asset_b64(&bytes_b64)?;
+        tine_graph_features::assets::save_asset(&slot.store, &name, &bytes)
+            .map_err(|error| feature_asset_error(error, &slot))
+    })
+    .await
 }
 
 mod read_highlights_worker;
@@ -2346,7 +2406,7 @@ pub(crate) async fn write_highlights(
 }
 
 #[tauri::command]
-pub(crate) fn save_pdf_area_image(
+pub(crate) async fn save_pdf_area_image(
     pdf: String,
     page: i64,
     id: String,
@@ -2354,8 +2414,11 @@ pub(crate) fn save_pdf_area_image(
     bytes_b64: String,
     state: GraphContext<'_>,
 ) -> Result<String, String> {
-    let bytes = decode_asset_b64(&bytes_b64)?;
     let slot = slot_for_context(&state)?;
-    tine_graph_features::pdf::write_pdf_area_image(&slot.store, &pdf, page, &id, stamp, &bytes)
-        .map_err(feature_pdf_error)
+    crate::state::off_ui(move || {
+        let bytes = decode_asset_b64(&bytes_b64)?;
+        tine_graph_features::pdf::write_pdf_area_image(&slot.store, &pdf, page, &id, stamp, &bytes)
+            .map_err(feature_pdf_error)
+    })
+    .await
 }
