@@ -308,7 +308,11 @@ pub fn trash_asset(store: &Store, name: &str) -> io::Result<TrashOutcome> {
     });
     match moved {
         Ok(()) => Ok(TrashOutcome::Trashed),
-        Err(error) if error.get_ref().is_some_and(|source| source.is::<AssetReferenced>()) => {
+        Err(error)
+            if error
+                .get_ref()
+                .is_some_and(|source| source.is::<AssetReferenced>()) =>
+        {
             Ok(TrashOutcome::Referenced)
         }
         Err(error) => Err(error),

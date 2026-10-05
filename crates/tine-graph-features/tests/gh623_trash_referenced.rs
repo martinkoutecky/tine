@@ -5,7 +5,10 @@
 //! the file.
 use std::fs;
 use tine_core::model::PageKind;
-use tine_graph_features::{assets::{self, TrashOutcome}, pages};
+use tine_graph_features::{
+    assets::{self, TrashOutcome},
+    pages,
+};
 use tine_store::{EditKind, SaveOutcome, Store};
 
 fn fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, Store) {
@@ -22,10 +25,16 @@ fn fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, Store) {
 }
 
 fn drop_reference(store: &Store, name: &str) {
-    let read = pages::get_page(store, name, PageKind::Page).unwrap().unwrap();
+    let read = pages::get_page(store, name, PageKind::Page)
+        .unwrap()
+        .unwrap();
     let mut doc = read.doc.clone();
     for block in &mut doc.blocks {
-        block.raw = block.raw.replace("![a](../assets/x.png)", "").trim().to_string();
+        block.raw = block
+            .raw
+            .replace("![a](../assets/x.png)", "")
+            .trim()
+            .to_string();
     }
     let saved = pages::save_page(
         store,
@@ -48,17 +57,26 @@ fn a_referenced_asset_is_kept_with_a_typed_outcome_until_every_reference_is_save
     ]);
     let asset = root.path().join("assets/x.png");
 
-    assert_eq!(assets::trash_asset(&store, "x.png").unwrap(), TrashOutcome::Referenced);
+    assert_eq!(
+        assets::trash_asset(&store, "x.png").unwrap(),
+        TrashOutcome::Referenced
+    );
     assert!(asset.exists());
 
     // Dropping the reference from P alone leaves Q's: kept, typed.
     drop_reference(&store, "P");
-    assert_eq!(assets::trash_asset(&store, "x.png").unwrap(), TrashOutcome::Referenced);
+    assert_eq!(
+        assets::trash_asset(&store, "x.png").unwrap(),
+        TrashOutcome::Referenced
+    );
     assert!(asset.exists());
 
     // The save that drops the last reference publishes before the trash runs.
     drop_reference(&store, "Q");
-    assert_eq!(assets::trash_asset(&store, "x.png").unwrap(), TrashOutcome::Trashed);
+    assert_eq!(
+        assets::trash_asset(&store, "x.png").unwrap(),
+        TrashOutcome::Trashed
+    );
     assert!(!asset.exists());
 }
 
