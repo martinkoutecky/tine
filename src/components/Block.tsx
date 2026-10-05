@@ -28,6 +28,7 @@ import { navigationName } from "../pageIndex";
 import { pluginManager } from "../plugins/manager";
 import { bindPluginBlockSnapshot, isPluginGraphOwnerCurrent } from "../plugins/ownership";
 import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairEdit, SELECTION_WRAP } from "../editor/autopair";
+import { holdExternalActivity } from "../externalActivity";
 import { typoTypeReplace } from "../render/typography";
 import { rangeInLiteral } from "../editor/inlineLiteral";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
@@ -1258,7 +1259,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const withNativeAssetPicker = async (work: (token: AssetEditorToken) => Promise<void>) => {
     const token = captureAssetEditorToken();
     nativeAssetPickers++;
-    try { await work(token); } finally { nativeAssetPickers--; }
+    const release = holdExternalActivity();
+    try { await work(token); } finally { nativeAssetPickers--; release(); }
   };
   // Mobile: take/pick a photo (Android camera plugin) → insert at the caret.
   const capturePhotoCmd = () => withNativeAssetPicker(async (editorToken) => {

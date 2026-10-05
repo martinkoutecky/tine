@@ -103,7 +103,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Page-search results read properties only for their selected pages, avoiding unrelated graph-query initialization (GH #623).
 - Page-scoped simple and TQL queries select owners through the existing name map and derive facts only for those pages (GH #623).
 - Closing or switching PDFs no longer shows an annotation-loading error from a retired reader (GH #557).
-- Image picker and Upload keep the initiating editor through asset import, so delayed native blur does not discard the saved image link (GH #622, GH #493).
+- Image picker, camera and Upload keep the initiating editor through asset import, so neither a delayed native blur nor the app being hidden behind the full-screen picker discards the saved image link; the background save still runs (GH #622, GH #493).
 - Journal date-format parity: honor legacy `:date-formatter` after the modern key, offer all Logseq formats, and render `E`/`EE` as abbreviated weekdays while keeping old titles readable (GH #332 follow-ups).
 - Plain-text search skips Unicode normalization for ASCII text while preserving search results and highlight spans (GH #623).
 - Query property commas now follow Logseq's configured keys; query text matches raw content with exact case and accents, while Search keeps folding (GH #624). Imported `query-table::` and trailing `table` choices are honored without writing Logseq view properties.

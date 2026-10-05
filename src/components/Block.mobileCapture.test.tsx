@@ -28,7 +28,8 @@ import { initParser } from "../render/parse";
 import { pageByName, resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
-import { startEditing } from "../editorController";
+import { endEdit, startEditing } from "../editorController";
+import { installBackgroundFlush } from "../backgroundFlush";
 import { dispatchFocusedEditorCommand } from "../editorCommandBridge";
 import { setGraphMeta } from "../graphSession";
 import { setToasts, toasts } from "../toasts";
@@ -150,6 +151,42 @@ describe("mobile photo capture editor-token staleness (GH #493)", () => {
       expect(doc.byId[id].raw).toBe("![](../assets/20260916_120000_123-1.jpg)");
       expect(toasts().some((toast) => toast.message === STALE_ASSET_TOAST)).toBe(false);
     } finally {
+      dispose();
+    }
+  });
+
+  it("GH #622: the picker activity hiding the WebView does not end the edit", async () => {
+    // The OnePlus 13 recordings: a full-screen picker/camera stops Tine's
+    // activity, the document goes hidden, and the background flush used to end
+    // the edit before the photo came back. Real flush wiring, as App.tsx installs it.
+    loadSingle(page("Assets", [blk("photo-hidden", "")]));
+    const id = pageByName("Assets")!.roots[0];
+    startEditing(id, 0);
+    const handles = {} as CaptureHandles;
+    const flushAll = vi.fn(() => Promise.resolve(true));
+    let hidden = false;
+    const disposeFlush = installBackgroundFlush({
+      endEdit: () => endEdit("graph-switch"), flushAll, closeInFlight: () => false,
+      isHidden: () => hidden,
+    });
+    const { dispose } = startCaptureWithPickerUp(handles);
+    try {
+      await settle();
+      hidden = true;
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(flushAll).toHaveBeenCalledOnce();
+      hidden = false;
+      document.dispatchEvent(new Event("visibilitychange"));
+
+      handles.pickedPhoto({ status: "ok", path: NATIVE_CACHE_TOKEN, ext: "jpg" });
+      await settle();
+      handles.finishImport("20260916_120000_123-9.jpg");
+      await settle();
+
+      expect(doc.byId[id].raw).toBe("![](../assets/20260916_120000_123-9.jpg)");
+      expect(toasts().some((toast) => toast.message === STALE_ASSET_TOAST)).toBe(false);
+    } finally {
+      disposeFlush();
       dispose();
     }
   });

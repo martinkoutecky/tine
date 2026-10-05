@@ -65,3 +65,29 @@ describe("background durability", () => {
     expect(handlers.size).toBe(0);
   });
 });
+
+describe("GH #622: a native picker's hide is part of the edit", () => {
+  it("flushes but does not end the edit while a picker holds external activity", async () => {
+    const { holdExternalActivity } = await import("./externalActivity");
+    const endEdit = vi.fn();
+    const flushAll = vi.fn(() => Promise.resolve(true));
+    const dispose = installBackgroundFlush({
+      endEdit, flushAll, closeInFlight: () => false, isHidden: () => hidden,
+      addEventListener: ((name: string, fn: () => void) => { handlers.set(name, fn); }) as typeof document.addEventListener,
+      removeEventListener: ((name: string) => { handlers.delete(name); }) as typeof document.removeEventListener,
+    });
+    const release = holdExternalActivity();
+    hidden = true;
+    handlers.get("visibilitychange")!();
+    expect(flushAll).toHaveBeenCalledOnce();
+    expect(endEdit).not.toHaveBeenCalled();
+    release();
+    release();
+    await Promise.resolve();
+    await Promise.resolve();
+    handlers.get("pagehide")!();
+    expect(endEdit).toHaveBeenCalledOnce();
+    expect(flushAll).toHaveBeenCalledTimes(2);
+    dispose();
+  });
+});
