@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- The Favorites page now recognises a favorite the way the parser reads it: links with `]` in the name, links with a block property, and Org links are kept, and asset links are no longer mistaken for pages (REG-OG-C5-L12-FAV-LINK).
 - Switching graphs right after Tine recovered an interrupted Favorites save no longer rewrites the new graph's Favorites page and config (REG-OG-C5-L12-FAV-TIMER).
 - Opening a favorite page through a different capitalization (a link, a restored tab, or a saved path) no longer rewrites the graph's favorites config; only an explicit rename changes it (REG-OG-C5-L14-FAV-CASE).
 - Opening Journals no longer replaces today's journal with the default template when it already holds text: Org heading prose such as `memo:: …`, a block id, or text nested under an empty bullet is kept; Org journals with such prose now count as written days for the calendar and carry (REG-OG-C5-L12-S1).

@@ -62,7 +62,7 @@ function pageDoor(): FavoritesPageDoor {
   return door;
 }
 const diskLayout = (page: PageDto) =>
-  layoutFromBlocks(pageDoor().favoritesArrangementBlocks(page.blocks, page.format ?? "md"));
+  layoutFromBlocks(pageDoor().favoritesArrangementBlocks(page.blocks, page.format ?? "md"), page.format ?? "md");
 
 
 /** THE favorites identity: kind, then the alias-resolved name folded like

@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
 import { journalHasContent } from "./journalContent";
 
-const block = (raw: string, children: { raw: string; children: never[] }[] = []) => ({ raw, children });
+interface TestBlock { raw: string; children: TestBlock[] }
+const block = (raw: string, children: TestBlock[] = []): TestBlock => ({ raw, children });
 
 it("OG-C5 L12-S1: any written text, whatever its shape, keeps the template away", () => {
   expect(journalHasContent([])).toBe(false);
