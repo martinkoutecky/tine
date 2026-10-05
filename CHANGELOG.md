@@ -23,7 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
-- - A query row switched off with `-- ` no longer invalidates the whole query when it holds an unquoted relative date, a stray `@page`/`@block` or another refused shape.
+- A query row switched off with `-- ` no longer invalidates the whole query when it holds an unquoted relative date, a stray `@page`/`@block` or another refused shape (REG-OG-C5-Q-TQL-DISABLED).
 - Searching for a page alias (Ctrl+K and the page autocomplete) lists the page that owns the alias once, with an "aka" hint, and no longer also lists a separate page named after the alias when that text is referenced elsewhere; ASCII and fullwidth comma alias lists both work (GH #623, GH #353; REG-OG-GH623-ALIAS-353).
 - An advanced query is refused for a `:result-transform` only when it declares one (a title, string, comment or discarded form that mentions the word no longer blocks it), and a BEGIN_QUERY block that declares a transform now shows the "clauses Tine cannot run" refusal instead of silently running without it (REG-OG-C5-Q-RESULT-TRANSFORM).
 - Saving a page no longer fails with "refusing to move page-header property into outline content" when a code block shows `key:: value` syntax; the guard asks the parser which lines are properties (REG-OG-C5-Q-REFUSAL1).
