@@ -673,7 +673,7 @@ fn transaction_revision_advances_only_for_disk_change() {
         other => panic!("{other:?}"),
     };
     assert!(changed > initial);
-    f.store.scan_refresh().unwrap();
+    f.store.refresh(tine_store::Depth::Stamps).unwrap();
     let before_unchanged = f.store.whole_graph().unwrap().rev();
     let a = PageId::from("pages/A.md");
     let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));

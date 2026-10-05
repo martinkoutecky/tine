@@ -68,7 +68,7 @@ impl Fixture {
     }
 
     fn changes(&self) -> Vec<Change> {
-        self.store.scan_refresh().unwrap();
+        self.store.refresh(tine_store::Depth::Stamps).unwrap();
         let mut changes = Vec::new();
         while let Some(change) = self.subscription.try_recv().unwrap() {
             changes.push(change);
@@ -210,7 +210,7 @@ fn incremental_modify_same_len_mtime_change_matches_full_diff() {
         .unwrap();
     file.set_modified(SystemTime::now() - Duration::from_secs(5))
         .unwrap();
-    graph.store.scan_refresh().unwrap();
+    graph.store.refresh(tine_store::Depth::Stamps).unwrap();
     while graph.subscription.try_recv().unwrap().is_some() {}
     graph.write("pages/Edit.md", "- bravo\n");
     one(&graph, "pages/Edit.md", ChangeKind::Modified);
@@ -432,7 +432,7 @@ fn scan_refresh_refuses_an_unsafe_configured_page_directory() {
     symlink(&outside, graph.path("linked-pages")).unwrap();
     graph.write("logseq/config.edn", "{:pages-directory \"linked-pages\"}\n");
     assert!(matches!(
-        graph.store.scan_refresh(),
+        graph.store.refresh(tine_store::Depth::Stamps),
         Err(LoadError::Failed { .. })
     ));
     assert_eq!(graph.store.config().pages_dir, "pages");
@@ -482,7 +482,7 @@ fn subscribe_then_view_preserves_startup_and_later_changes() {
     store.whole_graph().unwrap();
     let subscription = store.subscribe();
     std::fs::write(root.join("pages/A.md"), "- between subscribe and view\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let view = store.whole_graph().unwrap();
     let startup: Vec<_> = std::iter::from_fn(|| subscription.try_recv().unwrap()).collect();
     assert!(startup.iter().any(|change| change
@@ -491,7 +491,7 @@ fn subscribe_then_view_preserves_startup_and_later_changes() {
         .any(|(id, _, _)| id.as_str() == "pages/A.md")));
     assert!(startup.iter().all(|change| change.graph_rev <= view.rev()));
     std::fs::write(root.join("pages/A.md"), "- new content\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let later = subscription.try_recv().unwrap().expect("later publication");
     assert!(later.graph_rev > view.rev());
     store.close();
@@ -581,7 +581,7 @@ fn unreadable_subdirectory_keeps_its_pages_until_access_returns() {
     let graph = Fixture::new("unreadable-subdir", &[("pages/nested/Kept.md", "- live\n")]);
     let nested = graph.path("pages/nested");
     std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0)).unwrap();
-    graph.store.scan_refresh().unwrap();
+    graph.store.refresh(tine_store::Depth::Stamps).unwrap();
     let mut changes = Vec::new();
     while let Some(change) = graph.subscription.try_recv().unwrap() {
         changes.push(change);

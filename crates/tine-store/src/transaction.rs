@@ -274,7 +274,7 @@ pub struct Rollback {
 pub enum TxOutcome {
     /// All steps completed. A changed transaction normally publishes a view
     /// of its final state. After a failed initial load, its writes stand but
-    /// publication waits for successful `scan_refresh()` recovery.
+    /// publication waits for successful `refresh()` recovery.
     Committed {
         /// Results in input order.
         steps: Vec<StepResult>,
@@ -303,7 +303,7 @@ pub enum TxOutcome {
     /// a successful initial load. Store-written bytes use `Origin::Own`;
     /// concurrent external bytes surviving undo use `Origin::External`.
     /// A watcher echo is not guaranteed. After a failed initial load, publication waits
-    /// for successful `scan_refresh()` recovery.
+    /// for successful `refresh()` recovery.
     NotCommitted {
         /// Zero-based index of the failed step.
         step: usize,

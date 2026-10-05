@@ -549,7 +549,7 @@ mod tests {
             .store(7, std::sync::atomic::Ordering::Release);
 
         let binding = old.binding_generation;
-        old.store.scan_refresh().unwrap();
+        old.store.refresh(tine_store::Depth::Stamps).unwrap();
 
         assert_eq!(old.binding_generation, binding);
         assert_eq!(old.root_key, base);
@@ -572,7 +572,7 @@ mod tests {
         let old = graph(&base);
         let mut registry = GraphRegistry::default();
         registry.bind("main".into(), Arc::clone(&old)).unwrap();
-        old.store.scan_refresh().unwrap();
+        old.store.refresh(tine_store::Depth::Stamps).unwrap();
         assert_eq!(
             registry.slot("main").unwrap().binding_generation,
             old.binding_generation

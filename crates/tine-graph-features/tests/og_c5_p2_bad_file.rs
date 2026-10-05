@@ -52,7 +52,7 @@ fn journal_feed_serves_readable_days_and_reports_the_bad_one() {
     );
     #[cfg(unix)]
     write_non_utf8_name(&root.join("journals"));
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let feed = journals::feed_page(&store, 10, None).expect("one bad journal blocked the feed");
     let names: Vec<&str> = feed.pages.iter().map(|p| p.id.as_str()).collect();
     assert_eq!(
@@ -96,7 +96,7 @@ fn duplicate_days_list_every_day_and_name_the_unreadable_file() {
     );
     #[cfg(unix)]
     write_non_utf8_name(&root.join("journals"));
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let days = journals::journal_conflicts(&store).expect("one bad preview blocked the list");
     assert_eq!(days.len(), 2, "both duplicate days are listed");
     let files: Vec<_> = days.iter().flat_map(|day| day.files.iter()).collect();
@@ -143,7 +143,7 @@ fn conflict_inventory_keeps_healthy_conflicts_beside_bad_files() {
     );
     #[cfg(unix)]
     write_non_utf8_name(&root.join("pages"));
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let inventory =
         conflicts::conflict_inventory(&store).expect("one bad page blocked the conflict inventory");
     let copy_id = format!("copy:{COPY}");

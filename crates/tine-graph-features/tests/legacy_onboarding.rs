@@ -319,7 +319,7 @@ fn recopy_guide_skips_existing_pages_without_clobbering_user_edits() {
         .path_for_os_handoff(&page_id(&store, &edited).file(), false)
         .unwrap();
     atomic_write(&dir, &edited_path, b"- user edits stay\n");
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let before: HashMap<String, String> = GUIDE_TEMPLATES
         .iter()
         .map(|template| {

@@ -93,7 +93,7 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         "src-tauri/src/watcher.rs",
         "spawn_blocking(",
         1,
-        "rescan_graph_now: one bounded scan_refresh on the slot's Store",
+        "rescan_graph_now: one bounded refresh on the slot's Store",
         "detached; the scan returns and its completion is registered on RescanCursor, never waited on",
     ),
     (

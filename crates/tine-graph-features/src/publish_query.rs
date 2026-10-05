@@ -1063,7 +1063,7 @@ mod snapshot_consistency_tests {
             "public:: true\n- TODO unreviewed\n",
         )
         .unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         let bytes = snapshot(&graph, &reviewed.selected, "Export", "Public", None).unwrap();
         let value: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["pages"][0]["blocks"][0]["raw"], "TODO reviewed", "I-20: all publication projections use the held reviewed corpus; exemplar publish_query::snapshot");

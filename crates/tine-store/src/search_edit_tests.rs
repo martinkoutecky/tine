@@ -433,7 +433,7 @@ fn own_write_is_suppressed_by_watcher() {
     let before = store.whole_graph().unwrap().rev();
 
     // Before any edit, an unchanged file is already suppressed.
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         store.whole_graph().unwrap().rev(),
         before,
@@ -456,7 +456,7 @@ fn own_write_is_suppressed_by_watcher() {
 
     // The watcher polling this file must see it as OUR write, not external.
     let after_save = store.whole_graph().unwrap().rev();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         store.whole_graph().unwrap().rev(),
         after_save,
@@ -465,7 +465,7 @@ fn own_write_is_suppressed_by_watcher() {
 
     // A genuine external change is still detected.
     std::fs::write(&path, "- DOING ship the thing\n- edited by hand\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(
         store.whole_graph().unwrap().rev() > after_save,
         "external edit → detected"
@@ -712,7 +712,7 @@ fn highlight_write_is_not_seen_as_external_change() {
     };
     pdf::write_highlights(&store, "paper.pdf", "Paper", &[h], &[]).unwrap();
 
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let observed: Vec<_> = std::iter::from_fn(|| changes.try_recv().unwrap()).collect();
     let highlights = store
         .file_id(tine_store::Area::Pages, "hls__paper.md")
@@ -1063,7 +1063,7 @@ fn resolve_block_index_refreshes_after_cache_change() {
         "- beta\n  id:: bbbb-2222\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
     let current = store.whole_graph().unwrap();
     assert_eq!(
         current.blocks(&["bbbb-2222".into()]).unwrap()[0]

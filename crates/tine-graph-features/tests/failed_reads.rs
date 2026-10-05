@@ -33,7 +33,7 @@ fn config_failure_opens_but_never_creates_in_default_directories() {
         "{:pages-directory \"notes\"}\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(store.config().problem.is_none());
     let id = store.file_id(Area::Pages, "Recovered.md").unwrap();
     let mut tx = store.transaction(Some(EditKind::CreatePage));
@@ -49,7 +49,7 @@ fn discovery_read_failure_is_reported_and_good_pages_survive() {
     let (root, store) = graph("discovery");
     fs::write(root.join("pages/Good.md"), "- good\n").unwrap();
     fs::write(root.join("pages/Bad.md"), b"title:: \xff\n- bad\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let view = store.whole_graph().unwrap();
     assert!(view
         .unreadable_files()
@@ -67,14 +67,14 @@ fn trash_rechecks_references_after_an_external_publication() {
     let (root, store) = graph("trash");
     fs::create_dir_all(root.join("assets")).unwrap();
     fs::write(root.join("assets/kept.png"), b"asset").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(assets::orphan_assets(&store).unwrap().len(), 1);
     fs::write(
         root.join("pages/Arrived.md"),
         "- ![kept](../assets/kept.png)\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         assets::trash_asset(&store, "kept.png").unwrap(),
         assets::TrashOutcome::Referenced,

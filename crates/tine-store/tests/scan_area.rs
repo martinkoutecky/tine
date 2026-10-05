@@ -96,7 +96,7 @@ fn referenced_assets_keeps_raw_decoded_and_nested_first_segment() {
         "pages/Refs.md",
         b"- ![](../assets/my%20file.png)\n- ![](../assets/pdfkey/crop.png)\n",
     );
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let names = store.whole_graph().unwrap().referenced_assets();
     for name in ["my%20file.png", "my file.png", "pdfkey", "pdfkey/crop.png"] {
         assert!(names.contains(name), "{name}");

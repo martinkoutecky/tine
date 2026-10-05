@@ -114,11 +114,11 @@ pub use restore::{RestoreFailed, RestoreFile, RestoreReport};
 #[cfg(any(test, feature = "test-faults"))]
 pub use store::checkpoint::CheckpointWrite;
 pub use store::{
-    Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, FacetPolicy, FileEntry, FileId,
-    FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry, IrAnswer,
-    IrRequest, Listing, LoadError, OpenError, OpenOptions, Origin, PageId, PageRead, QueryError,
-    Resolved, SaveBase, SaveOutcome, SavePagesOutcome, SearchRequest, Store, StoreError,
-    Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode, WholeGraph,
+    Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, Depth, FacetPolicy, FileEntry,
+    FileId, FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry,
+    IrAnswer, IrRequest, Listing, LoadError, OpenError, OpenOptions, Origin, PageId, PageRead,
+    QueryError, Resolved, SaveBase, SaveOutcome, SavePagesOutcome, SearchRequest, Store,
+    StoreError, Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]
 pub use store::{QueryDialect, QueryResult};

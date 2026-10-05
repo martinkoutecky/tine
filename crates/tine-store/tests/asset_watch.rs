@@ -165,7 +165,7 @@ fn scan_refresh_and_poll_mode_see_an_asset_replaced_outside() {
     std::fs::write(root.join("assets/pic.png"), b"first").unwrap();
     let (store, subscription) = open(&root, WatchMode::Poll, None);
     replace(&root.join("assets"), "pic.png", b"second, longer");
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     wait_for_asset(&subscription, "assets/pic.png", ChangeKind::Modified);
     store.close();
 }
@@ -181,7 +181,7 @@ fn an_own_asset_write_is_never_echoed_as_external() {
     // Let the watcher see (and reconcile) the events of that write, and a
     // forced full pass on top, then read the whole feed.
     std::thread::sleep(Duration::from_millis(900));
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let mut origins = Vec::new();
     while let Some(change) = subscription.try_recv().unwrap() {
         if change

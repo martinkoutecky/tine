@@ -1,5 +1,5 @@
 //! GH #623 (Ellis build 4): the asset full walk (store open and every focus
-//! rescan's `scan_refresh`) holds the store's one writer lock, which a page
+//! rescan's `refresh(Depth::Stamps)`) holds the store's one writer lock, which a page
 //! click also takes. Stamping each asset by PATH is a per-file open on
 //! Windows (250x under Defender on an unseen file), so a 12k-asset graph made
 //! every focus return a multi-second critical section. The walk now stamps
@@ -49,8 +49,8 @@ fn by_path_asset_stamps(assets: usize) -> (u64, u64) {
     drop(store.whole_graph().unwrap());
     let at_open = cost_counters::snapshot().asset_stamps_by_path;
     cost_counters::reset();
-    store.scan_refresh().unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let in_rescans = cost_counters::snapshot().asset_stamps_by_path;
     store.close();
     (at_open, in_rescans)

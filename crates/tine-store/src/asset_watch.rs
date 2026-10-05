@@ -12,7 +12,7 @@
 //! Unit cost: at most one extra OS watch (only for an approved external assets
 //! root outside the graph; an in-graph assets directory rides the graph-root
 //! watch), one `HashMap` entry per asset file, one stat per event path. A full
-//! scan (poll cycle, kernel rescan, explicit `scan_refresh`) costs O(asset
+//! scan (poll cycle, kernel rescan, explicit `refresh`) costs O(asset
 //! files) stats and zero reads.
 
 use std::collections::{HashMap, HashSet};

@@ -57,7 +57,7 @@ fn replace_reports_the_leaf_that_arrived_after_review_and_leaves_siblings() {
         b"sibling"
     );
     assert_eq!(fs::read(result.site.join("index.html")).unwrap(), b"new");
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), 1);
     store.close();
 }

@@ -149,7 +149,7 @@ fn main() {
     }
     let view = store.whole_graph().expect("ready");
     let ready_ms = began.elapsed().as_secs_f64() * 1e3;
-    let pages = view.parsed_page_ids().len();
+    let pages = view.corpus().pages.len();
     let rss = rss_kib();
     let reads = (mode != "write").then(|| timed_reads(&view, &first, &second));
     let write = (mode == "write").then(|| {

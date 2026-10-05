@@ -174,13 +174,17 @@ pub(crate) const OUTCOME_CANCELLED: &str = "cancelled";
 /// Why a full stat diff ran.
 #[derive(Clone, Copy)]
 pub(crate) enum DiffTrigger {
-    /// `scan_refresh` on a ready graph: the rescan on return to the window.
+    /// `refresh(Depth::Stamps)` on a ready graph: the rescan on return to the window.
     Rescan,
-    /// `scan_refresh` retrying a failed load.
+    /// `refresh` retrying a failed load.
     Recovery,
     /// `rebuild_all`: the Settings "Rescan graph" button. Ignores every stamp
     /// and hashes every file.
     Rebuild,
+    /// `refresh(Depth::Bytes)` on a ready graph: a consumer that must see
+    /// every byte on disk (an export) ignores every stamp and hashes every
+    /// file, without the rebuild's re-parse.
+    Bytes,
     /// The watcher (re)installed its OS watch and checked once.
     WatchInstall,
     /// The OS watch reported a rescan-required or pathless event.
@@ -204,6 +208,7 @@ impl DiffTrigger {
             Self::Rescan => "rescan_command",
             Self::Recovery => "load_recovery",
             Self::Rebuild => "rebuild_command",
+            Self::Bytes => "bytes_refresh",
             Self::WatchInstall => "watch_install",
             Self::WatchEvent => "watch_rescan_event",
             Self::Poll => "poll_cycle",

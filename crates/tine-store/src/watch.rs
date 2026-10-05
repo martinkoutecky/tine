@@ -819,6 +819,13 @@ impl WatchHandle {
     }
 
     pub(crate) fn scan_refresh(&self) -> Result<(), LoadError> {
+        self.scan_refresh_with(DiffTrigger::Rescan)
+    }
+
+    /// `scan_refresh`, with `DiffTrigger::Bytes` hashing every file on a
+    /// ready graph instead of trusting unchanged stamps. A failed load is
+    /// recovered the same way either way (already a cold build).
+    pub(crate) fn scan_refresh_with(&self, trigger: DiffTrigger) -> Result<(), LoadError> {
         let mut status = self.core.load.status.lock().unwrap();
         while matches!(*status, LoadStatus::Loading) {
             status = self.core.load.ready.wait(status).unwrap();
@@ -869,7 +876,7 @@ impl WatchHandle {
             LoadStatus::Ready => drop(status),
             LoadStatus::Loading => unreachable!(),
         }
-        let result = self.core.reconcile(None, true, true, DiffTrigger::Rescan);
+        let result = self.core.reconcile(None, true, true, trigger);
         if result.is_ok() {
             self.core.observe_assets(&HashSet::new(), true);
         }

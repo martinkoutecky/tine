@@ -5637,7 +5637,7 @@ mod tests {
 
         // Watcher-equivalent physical replace is an upsert at the same seam.
         fs::write(&source_path, "- [[Target]] plus Target\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         snapshot = published_snapshot(&store);
         assert!(candidate_paths(
             &snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit)
@@ -5658,7 +5658,7 @@ mod tests {
         assert_indexed_reference_results_equal_full_scan(&snapshot, "Target");
 
         fs::remove_file(&source_path).unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         snapshot = published_snapshot(&store);
         let after_delete = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
         assert!(after_delete.indexed);
@@ -5679,7 +5679,7 @@ mod tests {
 
         // A broad invalidation reconstructs from the new physical page set.
         fs::write(&source_path, "- [[Alias]] and Target again\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         snapshot = published_snapshot(&store);
         assert!(candidate_paths(
             &snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit)
@@ -5700,7 +5700,7 @@ mod tests {
         assert_indexed_reference_results_equal_full_scan(&snapshot, "Target");
 
         fs::write(dir.join("pages/Created.md"), "- [[Target]] and Target\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         snapshot = published_snapshot(&store);
         let after_create = snapshot.reference_candidate_pages(&names, ReferenceKind::Explicit);
         assert!(after_create.indexed);
@@ -6460,9 +6460,9 @@ mod tests {
             "A"
         );
         fs::write(dir.join("pages/A.md"), "- empty again\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         fs::write(dir.join("pages/B.md"), "- destination\n  id:: moved-id\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert_eq!(
             crate::query::preview_block_with_budget(
                 &published_snapshot(&store),
@@ -8528,7 +8528,7 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), sidecar_before);
         assert_eq!(fs::read_to_string(&page_path).unwrap(), page_before);
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         assert_eq!(
             store.whole_graph().unwrap().rev(),
             before_rev,
@@ -8863,7 +8863,7 @@ mod tests {
         )
         .unwrap();
         assert!(page_path.exists());
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         while let Some(change) = changes.try_recv().unwrap() {
             assert!(
                 change.origin != tine_store::Origin::External
@@ -8883,7 +8883,7 @@ mod tests {
             &[h1.clone(), h2.clone()],
         )
         .unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         while let Some(change) = changes.try_recv().unwrap() {
             assert!(
                 change.origin != tine_store::Origin::External
@@ -10317,7 +10317,7 @@ mod tests {
             .graph
             .fail_sync_parse_once
             .store(true, std::sync::atomic::Ordering::Release);
-        let outcome = store.scan_refresh();
+        let outcome = store.refresh(crate::Depth::Stamps);
         assert!(outcome.is_ok(),
             "I-22: an external page parser panic must be isolated to that page; exemplar sync_file_content_with_saved");
         assert!(
@@ -10327,7 +10327,7 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Acquire),
             "the external sync path must consume the injected parser panic"
         );
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert_eq!(
             store
                 .page(&crate::PageId::from("pages/External.md"))

@@ -115,7 +115,7 @@ fn a_page_open_after_the_file_set_changes_reads_no_other_file() {
     store.whole_graph().unwrap();
     // Today's journal, a created page, a sync delivery: the file set moves.
     fs::write(root.path().join("pages/Arrived.md"), "- new\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
     GRAPH_LIST_CALLS.with(|calls| calls.set(0));
     GRAPH_PREAMBLE_READS.with(|reads| reads.set(0));
     let read = store.page(&PageId::from("pages/P7.md")).unwrap();

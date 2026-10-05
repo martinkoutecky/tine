@@ -45,7 +45,7 @@ fn apply_renames_only_the_confirmed_proposals() {
     // title-named journal and removes one listed file.
     fs::write(root.join("journals/Jun 22nd, 2026.md"), "- synced\n").unwrap();
     fs::remove_file(root.join("journals/Jun 21st, 2026.md")).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let result = journals::migrate_journal_filenames(&store, &listed).unwrap();
     assert_eq!(result.migrated, 1);
     assert_eq!(result.skipped.len(), 1, "{:?}", result.skipped);

@@ -22,7 +22,7 @@
 //! names with O(log P) tree updates. Keep the caller's unsaved edits on a
 //! refusal. Multi-file commit is not crash atomic.
 //!
-//! `Store::scan_refresh` compares file modification time and length, so a
+//! `Store::refresh(Depth::Stamps)` compares file modification time and length, so a
 //! same-length edit with unchanged timestamp may remain unseen. It waits for
 //! the initial parse. Poll mode scans O(P) file metadata and re-hashes
 //! `logseq/config.edn` every three seconds; notification mode silently falls
@@ -152,6 +152,24 @@ pub struct OpenOptions {
     pub launch_checkpoint: Option<PathBuf>,
 }
 
+/// How deep a [`Store::refresh`] looks at the graph on disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Depth {
+    /// Trust a file whose modification time, length and identity are
+    /// unchanged; hash only files whose stamps moved. The watcher's and the
+    /// window-focus rescan's depth.
+    Stamps,
+    /// Hash every graph file, publishing the ones whose bytes differ from the
+    /// recorded revision as ordinary external changes (a sync client or a
+    /// restore tool can rewrite a file and put its stamp back). For a
+    /// consumer that must see every byte on disk, such as an export.
+    Bytes,
+    /// [`Self::Bytes`], then re-read and re-parse every file through the
+    /// cold-launch build and replace the page cache, the name index and the
+    /// read evaluator: the Settings "Rescan graph" button.
+    Rebuild,
+}
+
 /// How the store observes graph files after opening.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WatchMode {
@@ -215,7 +233,7 @@ pub struct Change {
     /// Affected graph files, including `logseq/config.edn` when observed, with
     /// resulting revisions when present. An external config edit enters this
     /// feed on the watcher cycle that observes it (an event naming the file, a
-    /// rescan, or every poll cycle) or on `scan_refresh()`, only when its bytes
+    /// rescan, or every poll cycle) or on `refresh()`, only when its bytes
     /// changed. An own config create or replace lists its config file tuple in
     /// the same transaction publication.
     /// Trash destinations are not listed. A committed transaction or restore
@@ -700,7 +718,7 @@ impl std::fmt::Display for OpenError {
 }
 
 /// Effective config. While `problem` is set, reads are read-only and mutations
-/// refuse unknown destinations. `scan_refresh()` retries the read after repair.
+/// refuse unknown destinations. `refresh()` retries the read after repair.
 #[derive(Clone)]
 pub struct ConfigState {
     /// Effective graph config, defaulted when loading config failed. A changed
@@ -1055,16 +1073,16 @@ impl Store {
     /// A caller that applies the configured journal template must wait for
     /// `WholeGraph::templates()`; saving a new journal does not add it.
     /// [`Self::whole_graph`] waits for background parsing. Partial scans report
-    /// unreadable entries; [`Self::scan_refresh`] retries failed parsing.
+    /// unreadable entries; [`Self::refresh`] retries failed parsing.
     /// Direct reads/writes remain available after a parse failure, without
-    /// publishing until `scan_refresh()` succeeds. The returned
+    /// publishing until `refresh()` succeeds. The returned
     /// `GraphMeta` is a snapshot of open-time settings. After a config change,
     /// callers can derive fresh display metadata with
     /// `GraphMeta::from_config` and `JournalFormat::new` from `Store::config()`;
     /// reopening also refreshes it but restarts this store's revision sequence.
     /// External observations during loading publish after the initial parse.
     /// On failed initial load, the watcher also defers external publication
-    /// until `scan_refresh()` successfully retries. Recovery's completion
+    /// until `refresh()` successfully retries. Recovery's completion
     /// publication has no file tuples; reconciliation may publish observed
     /// differences separately. Use the recovered view to refresh graph-wide answers.
     /// Unsafe layouts, unapproved external targets, and I/O return [`OpenError`].
@@ -1232,7 +1250,7 @@ impl Store {
     /// (I-12). Does not wait for the graph parse, but may wait for a
     /// concurrent configuration update and its O(P + B) reparse. An external
     /// `logseq/config.edn` edit is taken in by the watcher cycle that sees it
-    /// (or `scan_refresh()`) when its bytes changed; one that names a page or
+    /// (or `refresh()`) when its bytes changed; one that names a page or
     /// journal directory escaping the graph is not taken in, and this keeps
     /// answering the last good config. Own config writes and restore reload
     /// before publication. The store accepts raw config EDN through
@@ -1244,7 +1262,7 @@ impl Store {
     /// Test oracle: whether graph-wide answers are ready, without waiting
     /// for parsing or recovery. Production asks domain questions instead
     /// (`page_named` routes on readiness internally). `Ok(false)` means still loading; `Err(Failed)` means `page()`
-    /// can still read files but graph publication waits for `scan_refresh()`;
+    /// can still read files but graph publication waits for `refresh()`;
     /// `Err(Closed)` means this store is closed.
     #[cfg(any(test, feature = "test-faults"))]
     pub fn is_graph_ready(&self) -> Result<bool, LoadError> {
@@ -1311,62 +1329,62 @@ impl Store {
     }
 
     /// Wait for the initial graph parse, retrying it if it previously failed,
-    /// then reconcile page, journal and config files. Normal runtime calls
-    /// also reconcile configured asset metadata; failed-load recovery leaves asset
-    /// catch-up to the watcher. A graph-text file is considered unchanged
-    /// when its modification time and length both match the previous scan;
-    /// same-length edits with preserved timestamps can therefore be missed.
-    /// Cost O(P metadata + bytes of files detected as changed + config bytes
-    /// hashed + asset metadata), plus load wait. Unchanged-config runtime graph-text walks run off-writer and retry on change.
-    /// Config changes enumerate and reparse O(P + B) pages/blocks under the writer before publication.
-    /// Recovery from a failed initial load also parses the whole graph
-    /// synchronously before reconciliation. A concurrent edit can make that
-    /// recovery parse fail; retry with another explicit call after edits settle.
-    /// A previously unreadable subtree is retried on this full scan; newly
-    /// accessible files can then enter the resulting view.
-    /// After a failed initial load, a successful retry
-    /// publishes a fresh completion generation with no file tuples even if no file changed during
-    /// reconciliation or an older snapshot exists.
-    /// Own writes made while failed update the watcher baseline and enter the
-    /// recovered view without being relabeled as External file changes.
+    /// then reconcile page, journal and config files at `depth`. Normal
+    /// runtime calls also reconcile configured asset metadata (assets are
+    /// metadata-only by contract at every depth); failed-load recovery leaves
+    /// asset catch-up to the watcher.
+    ///
+    /// [`Depth::Stamps`] considers a graph-text file unchanged when its
+    /// modification time and length both match the previous scan, so
+    /// same-length edits with preserved timestamps can be missed. Cost O(P
+    /// metadata + bytes of files detected as changed + config bytes hashed +
+    /// asset metadata), plus load wait. Unchanged-config runtime graph-text
+    /// walks run off-writer and retry on change. [`Depth::Bytes`] hashes
+    /// every graph-text file instead: O(graph bytes). [`Depth::Rebuild`] does
+    /// that and then re-reads and re-parses every file through the cold-launch
+    /// build, replacing the page cache, the name index and the read evaluator
+    /// (O(graph bytes) twice plus the cold-launch parse); it runs on the
+    /// caller's thread, so call it from a worker. An open editor keeps its
+    /// base revision, so a save made over a file a refresh found changed is
+    /// refused like any other stale save.
+    ///
+    /// Config changes enumerate and reparse O(P + B) pages/blocks under the
+    /// writer before publication. Recovery from a failed initial load parses
+    /// the whole graph synchronously before reconciliation, at every depth
+    /// (already a cold build). A concurrent edit can make that recovery parse
+    /// fail; retry with another explicit call after edits settle. A
+    /// previously unreadable subtree is retried on this full scan; newly
+    /// accessible files can then enter the resulting view. After a failed
+    /// initial load, a successful retry publishes a fresh completion
+    /// generation with no file tuples even if no file changed during
+    /// reconciliation or an older snapshot exists. Own writes made while
+    /// failed update the watcher baseline and enter the recovered view
+    /// without being relabeled as External file changes.
     /// Returns `LoadError::Closed` after close or `LoadError::Failed` for a
-    /// lost root or unsafe config layout, such as a
-    /// configured page directory that escapes the graph through a symlink.
-    /// A failed initial load is retried only by this explicit call; watcher
-    /// ticks do not retry it. A continuous stream of edits can keep the
-    /// initial background parse in `Loading` indefinitely.
-    /// A failed refresh after an earlier successful load returns an error but
-    /// leaves the last published `WholeGraph` view available.
+    /// lost root or unsafe config layout, such as a configured page directory
+    /// that escapes the graph through a symlink. A failed initial load is
+    /// retried only by this explicit call; watcher ticks do not retry it. A
+    /// continuous stream of edits can keep the initial background parse in
+    /// `Loading` indefinitely. A failed refresh after an earlier successful
+    /// load returns an error but leaves the last published `WholeGraph` view
+    /// available.
     ///
-    /// Returns the change-feed revision through which this scan's changes are
-    /// published: a subscriber that has received it has received them all.
-    pub fn scan_refresh(&self) -> Result<GraphRev, LoadError> {
-        self.watch.scan_refresh()?;
-        Ok(self.changes.rev())
-    }
-
-    /// Forced full rebuild: the Settings "Rescan graph" button. Where
-    /// [`Self::scan_refresh`] trusts a file whose modification time, length
-    /// and identity are unchanged, this ignores every stamp, revision and
-    /// cache: it hashes every graph file (publishing the ones whose bytes
-    /// differ from the recorded revision as ordinary external changes), then
-    /// re-reads and re-parses every file through the cold-launch build and
-    /// replaces the page cache, the name index and the read evaluator with
-    /// the result. Assets are metadata-only by contract and are compared as
-    /// usual. Cost O(graph bytes) twice (hash, then parse) plus the cold-launch
-    /// parse; it runs on the caller's thread, so call it from a worker. An
-    /// open editor keeps its base revision, so a save made over a file this
-    /// rebuild found changed is refused like any other stale save.
-    ///
-    /// Returns the change-feed revision through which its changes are
-    /// published, like `scan_refresh`. A graph whose load failed is retried
-    /// exactly as `scan_refresh` retries it, which is already a cold build.
-    pub fn rebuild_graph(&self) -> Result<GraphRev, LoadError> {
-        self.watch.rebuild_all()?;
-        self.changes
-            .checkpoint
-            .get()
-            .inspect(|signal| signal.request());
+    /// Returns the change-feed revision through which this refresh's changes
+    /// are published: a subscriber that has received it has received them all.
+    pub fn refresh(&self, depth: Depth) -> Result<GraphRev, LoadError> {
+        match depth {
+            Depth::Stamps => self.watch.scan_refresh()?,
+            Depth::Bytes => self
+                .watch
+                .scan_refresh_with(crate::launch_diag::DiffTrigger::Bytes)?,
+            Depth::Rebuild => {
+                self.watch.rebuild_all()?;
+                self.changes
+                    .checkpoint
+                    .get()
+                    .inspect(|signal| signal.request());
+            }
+        }
         Ok(self.changes.rev())
     }
 
@@ -1382,7 +1400,7 @@ impl Store {
     /// Return a cached canonical journal id or propose a configured path (directory,
     /// filename format, preferred extension). The day index covers accessible files
     /// before open and refreshes before relevant publications: direct reads/writes,
-    /// transactions, restore, watcher and scan_refresh. Cost O(format + path bytes);
+    /// transactions, restore, watcher and refresh. Cost O(format + path bytes);
     /// no parse or disk read. Unreadable subtrees or unobserved external creations
     /// can yield a duplicate-day proposal. It does not indicate existence: `page(id)`
     /// may return `NotFound`. Invalid `Day` is not rejected and may yield nonsense.
@@ -1855,7 +1873,7 @@ impl Store {
     /// A readable duplicate-day stray is returned but never published or
     /// added to graph-wide answers. Missing files do not wait for initial
     /// parsing; present files remain directly readable after a failed initial
-    /// parse, with publication deferred until successful `scan_refresh()`.
+    /// parse, with publication deferred until successful `refresh()`.
     /// An accessible path below an unreadable directory is read directly.
     /// Observed edits may wait for parsing, another writer, restore or site
     /// publication. Case aliases return the file's actual disk spelling.
@@ -2026,7 +2044,7 @@ impl Store {
     /// the wait; a held view never waits for later writes and its answers do
     /// not change. After a failed parse,
     /// later calls return `LoadError::Failed` without another parse attempt
-    /// until `scan_refresh()` retries it. Call this from a worker thread to
+    /// until `refresh()` retries it. Call this from a worker thread to
     /// wait.
     /// The initial load restarts if an external edit invalidates a parse pass;
     /// continuous edits can keep this wait open indefinitely.
@@ -2036,7 +2054,7 @@ impl Store {
     /// No partial graph generation is available after failure.
     /// A launch checkpoint (ADR 0070) is served before Ready, while the launch
     /// diff reconciles edits made while closed; an operation acting on the
-    /// whole graph's answers waits for Ready first (`scan_refresh` does;
+    /// whole graph's answers waits for Ready first (`refresh` does;
     /// inside the crate, `whole_graph_reconciled`).
     pub fn whole_graph(&self) -> Result<WholeGraph, LoadError> {
         self.whole_graph_when(true)
@@ -2594,7 +2612,7 @@ pub enum LoadError {
     /// root or unsafe config layout. Continuous edits instead keep the load
     /// in `Loading` while its parse restarts. After an initial failure, `page()` can still
     /// read a present file and guarded saves can write, but neither publishes
-    /// a graph generation until successful `scan_refresh()` recovery.
+    /// a graph generation until successful `refresh()` recovery.
     Failed {
         /// Human-readable failure reason.
         reason: String,
@@ -2822,17 +2840,6 @@ impl WholeGraph {
     /// `Removed` event is inferred from a failed listing. Cost O(1).
     pub fn unreadable_files(&self) -> &[(FileId, String)] {
         &self.unreadable
-    }
-
-    /// IDs of parsed page files in this stable view, without constructing an
-    /// owned corpus. Only pages included in this view are returned. Cost O(P).
-    pub fn parsed_page_ids(&self) -> Vec<PageId> {
-        self.graph.with_pages(|pages| {
-            pages
-                .iter()
-                .filter_map(|(entry, _)| entry.rel_path.clone())
-                .collect()
-        })
     }
 
     /// Return an owned `Corpus` of pages in this view for evaluation. Cost
@@ -3603,7 +3610,7 @@ mod rev5_tests {
             matches!(tx.commit(), crate::TxOutcome::Committed { graph_rev, .. } if graph_rev == prior)
         );
         assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         let recovered = store.whole_graph().unwrap();
         assert!(recovered.rev() > prior);
         assert!(recovered.corpus().pages.iter().any(|page| {
@@ -3670,7 +3677,7 @@ mod rev5_tests {
         assert!(changes.try_recv().unwrap().is_none());
         assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
 
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(matches!(store.is_graph_ready(), Ok(true)));
         let view = store.whole_graph().unwrap();
         assert!(view.corpus().pages.iter().any(|page| {
@@ -3711,7 +3718,8 @@ mod rev5_tests {
             .lock()
             .unwrap() = Some(Arc::clone(&pause));
         let recovery_store = Arc::clone(&store);
-        let recovery = std::thread::spawn(move || recovery_store.scan_refresh().unwrap());
+        let recovery =
+            std::thread::spawn(move || recovery_store.refresh(crate::Depth::Stamps).unwrap());
         wait_hook(&pause);
         let save_store = Arc::clone(&store);
         let (attempting, attempted) = mpsc::channel();
@@ -3766,7 +3774,7 @@ mod rev5_tests {
         let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
         *store.changes.snapshot_publish_pause.lock().unwrap() = Some(Arc::clone(&pause));
         let recovery_store = Arc::clone(&store);
-        let recovery = std::thread::spawn(move || recovery_store.scan_refresh());
+        let recovery = std::thread::spawn(move || recovery_store.refresh(crate::Depth::Stamps));
         wait_hook(&pause);
         assert!(matches!(
             store.is_graph_ready(),
@@ -4073,7 +4081,7 @@ mod rev5_tests {
             .lock()
             .unwrap() = Some(Arc::clone(&pause));
         let recovery_store = Arc::clone(&store);
-        let recovery = std::thread::spawn(move || recovery_store.scan_refresh());
+        let recovery = std::thread::spawn(move || recovery_store.refresh(crate::Depth::Stamps));
         wait_hook(&pause);
         store.close();
         release_hook(&pause);
@@ -4116,7 +4124,7 @@ mod rev5_tests {
         fs::write(&path, "- second external\n").unwrap();
         release_hook(&pause);
         assert!(reader.join().unwrap().is_ok());
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(store
             .whole_graph()
             .unwrap()
@@ -4174,7 +4182,7 @@ mod rev5_tests {
         fs::write(&path, "- external winner\n").unwrap();
         release_hook(&pause);
         assert!(matches!(save.join().unwrap(), SaveOutcome::Saved(_)));
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(store
             .whole_graph()
             .unwrap()
@@ -4444,7 +4452,7 @@ mod rev5_tests {
             .files
             .iter()
             .any(|(id, _, _)| id == &stream_id));
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present streamed asset was removed by a full watcher scan"
@@ -4454,7 +4462,7 @@ mod rev5_tests {
         tx.create(&bytes_id, crate::Content::Bytes(b"byte content".to_vec()));
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present byte asset was removed by a full watcher scan"
@@ -4467,7 +4475,7 @@ mod rev5_tests {
         );
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present replaced asset was removed by a full watcher scan"
@@ -4482,7 +4490,7 @@ mod rev5_tests {
         );
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present moved asset was removed by a full watcher scan"
@@ -4495,7 +4503,7 @@ mod rev5_tests {
         );
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "trashed asset was reported twice"
@@ -4537,7 +4545,7 @@ mod rev5_tests {
             .unwrap() = Some(Arc::clone(&pause));
         fs::remove_file(&path).unwrap();
         let scanning = Arc::clone(&store);
-        let scan = std::thread::spawn(move || scanning.scan_refresh());
+        let scan = std::thread::spawn(move || scanning.refresh(crate::Depth::Stamps));
         wait_hook(&pause);
         fs::write(&path, "- present\n").unwrap();
         release_hook(&pause);
@@ -4596,7 +4604,7 @@ mod rev5_tests {
         );
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         assert!(
             changes.try_recv().unwrap().is_none(),
             "present config was removed by page inventory scan"
@@ -5059,7 +5067,7 @@ mod rev5_tests {
             let mut n = 0;
             while !watch_stop.load(Ordering::Acquire) {
                 fs::write(&external, format!("- outside {n}\n")).unwrap();
-                watch_store.scan_refresh().unwrap();
+                watch_store.refresh(crate::Depth::Stamps).unwrap();
                 n += 1;
             }
         }));
@@ -5286,7 +5294,7 @@ mod rev5_tests {
         assert_eq!(view_answers(&old), original_answers);
 
         fs::write(root.join("pages/Added.md"), "- [[Target]] after\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
         let fresh = store.whole_graph().unwrap();
         assert!(fresh.rev() != old.rev());
         assert_eq!(old.corpus().pages.len(), old_corpus);

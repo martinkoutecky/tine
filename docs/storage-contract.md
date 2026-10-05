@@ -70,8 +70,17 @@ Initial graph loading is not exposed as a state (the readiness probe
 graph-wide answers block. After a failed initial parse, `page()` can read and
 parse an existing file, but saves and observed edits do not publish a graph
 generation; `whole_graph()` returns the load error. A successful
-`scan_refresh()` retries the load and publishes a fresh generation. A closed
-store is terminal.
+`refresh()` (at any `Depth`) retries the load and publishes a fresh
+generation. A closed store is terminal.
+
+`Store::refresh(Depth)` is the one refresh door. `Depth::Stamps` trusts a file
+whose modification time, length and identity are unchanged (the watcher's
+depth and the focus-return rescan's); `Depth::Bytes` hashes every graph-text
+file and publishes the ones whose bytes differ as ordinary external changes
+(scenario: a sync client or restore tool rewrites a file and puts its stamp
+back; an export must not publish the stale document); `Depth::Rebuild` does
+that and then re-parses every file through the cold-launch build (Settings
+"Rescan graph").
 
 A page open never waits for the whole graph (GH #623 BR3). `Store::page_named`
 is the one page-by-name door: while the graph is loading (initial parse

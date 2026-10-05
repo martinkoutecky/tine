@@ -28,7 +28,14 @@ fn main() {
     let store = Store::open(Path::new(&graph), Default::default())
         .expect("open")
         .0;
-    let ids = store.whole_graph().expect("load").parsed_page_ids();
+    let ids: Vec<_> = store
+        .whole_graph()
+        .expect("load")
+        .corpus()
+        .pages
+        .into_iter()
+        .map(|page| page.id)
+        .collect();
     if mode == "dump" {
         let mut out = BufWriter::new(fs::File::create(file).expect("create dump"));
         for id in ids {

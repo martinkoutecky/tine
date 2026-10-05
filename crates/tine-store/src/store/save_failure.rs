@@ -33,7 +33,7 @@ impl Store {
     /// returns a file revision, not a graph revision; compare the matching
     /// `Origin::Own` change with a newly acquired view when needed. After a failed
     /// initial load it still writes on a matching guard, but publishes no
-    /// generation until a successful `scan_refresh()`. Cost includes reading
+    /// generation until a successful `refresh()`. Cost includes reading
     /// and hashing the page and writing its new bytes. Updating an existing
     /// page can copy O(P) in-memory page pointers when a snapshot is held;
     /// creation can additionally walk O(P) file-list metadata for twin checks

@@ -136,7 +136,7 @@ fn page_id(store: &Store, name: &str) -> io::Result<(PageId, Option<(String, Fil
         return Ok((store.as_page(&org).expect("org page"), Some(value)));
     }
     store
-        .scan_refresh()
+        .refresh(tine_store::Depth::Stamps)
         .map_err(|error| io::Error::other(format!("{error:?}")))?;
     let id = match store
         .whole_graph()

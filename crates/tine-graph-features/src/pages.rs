@@ -163,10 +163,12 @@ fn view(store: &Store) -> io::Result<tine_store::WholeGraph> {
 }
 
 fn refreshed_view(store: &Store) -> io::Result<tine_store::WholeGraph> {
-    store.scan_refresh().map_err(|failure| match failure {
-        tine_store::LoadError::Failed { reason } => error(io::ErrorKind::Other, &reason),
-        tine_store::LoadError::Closed => error(io::ErrorKind::BrokenPipe, "store closed"),
-    })?;
+    store
+        .refresh(tine_store::Depth::Stamps)
+        .map_err(|failure| match failure {
+            tine_store::LoadError::Failed { reason } => error(io::ErrorKind::Other, &reason),
+            tine_store::LoadError::Closed => error(io::ErrorKind::BrokenPipe, "store closed"),
+        })?;
     view(store)
 }
 

@@ -184,7 +184,7 @@ fn the_flag_follows_external_edits_added_removed_and_moved() {
     };
     let settle = |store: &Store| {
         // Poll-free: an external edit is observed by an explicit rescan.
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         while let Ok(Some(change)) = changes.try_recv() {
             queue.refresh_change(store, &change).unwrap();
         }

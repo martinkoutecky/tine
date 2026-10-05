@@ -369,7 +369,7 @@ fn guide_copy_rewrites_inter_guide_links_and_keeps_existing_files() {
             fs::create_dir(new_root.join("assets/quick-capture.png")).unwrap();
             expected.remove("assets/quick-capture.png");
         }
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         let actual = guide::copy_guide_into_graph(&store, "Features/Sheets").unwrap();
         if case == "page" {
             assert!(actual
@@ -444,7 +444,7 @@ fn config_setters_match_legacy_values_and_bytes() {
             if let Some(input) = input {
                 fs::write(new_root.join("logseq/config.edn"), input).unwrap();
             }
-            store.scan_refresh().unwrap();
+            store.refresh(tine_store::Depth::Stamps).unwrap();
             let actual = new(&store);
             assert!(actual.is_ok(), "{op_name}/{case_name}: {actual:?}");
             assert_disk_tree(
@@ -516,7 +516,7 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
     fs::create_dir_all(new_root.join("journals")).unwrap();
     fs::write(new_root.join("pages/Foo.md"), "- mine\n").unwrap();
     fs::write(new_root.join("pages").join(conflict_name), "- theirs\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_json_value(
         serde_json::to_value(conflicts::list_sync_conflicts(&store).unwrap()).unwrap(),
         "conflict_clients_match_legacy_values_and_disk_bytes",
@@ -551,7 +551,7 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
 
     // The separate discard operation preserves the same bytes too.
     fs::write(new_root.join("pages").join(conflict_name), "- next\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     conflicts::trash_sync_conflict(&store, &conflict).unwrap();
     assert_disk_tree(
         &new_root,
@@ -573,7 +573,7 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
     ] {
         fs::write(new_root.join("journals").join(name), body).unwrap();
     }
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let new_feed = journals::feed_journals_desc_through(&store, Day(20260620)).unwrap();
     assert_eq!(
         new_feed.iter().map(|(day, _)| day.0).collect::<Vec<_>>(),
@@ -650,7 +650,7 @@ fn resolve_preblock_keep_choices_match_legacy_bytes() {
         let conflict = "pages/Foo.sync-conflict-20260705-120000-ABCDEFG.md";
         fs::write(new_root.join("pages/Foo.md"), "alias:: mine\n- shared\n").unwrap();
         fs::write(new_root.join(conflict), "alias:: theirs\n- shared\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         let diff = conflicts::sync_conflict_diff(&store, "pages/Foo.md", conflict, &[])
             .unwrap()
             .unwrap();
@@ -1073,7 +1073,7 @@ fn old_vs_new_matrix_on_identical_fixtures() {
     let (a, store) = fixture("matrix-new");
     fs::write(a.join("pages/Refs.md"), "- ![](../assets/referenced.png)\n").unwrap();
     fs::write(a.join("assets/referenced.png"), b"kept").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let mut same_index = 0;
     let mut same = |rel: &str| {
         let cases = [
@@ -1325,7 +1325,7 @@ fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
         tine_core::doc::serialize(&page),
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     pdf::open_pdf(&store, pdf_name, "My Paper").unwrap();
     assert!(!a.join("assets").join(format!("{key}.edn")).exists());
     assert_eq!(fs::read(a.join("assets").join(format!("{legacy}.edn"))).unwrap(), b"{:highlights [{:id \"one\" :page 1 :position {:page 1 :bounding {:top 0 :left 0 :width 1 :height 1} :rects ()} :content {:text \"one\"} :properties {:color \"yellow\"}}] :extra {}}\n");
@@ -1367,7 +1367,7 @@ fn blocked_trash_keeps_asset_and_legacy_error_text() {
     fs::create_dir_all(a.join("logseq")).unwrap();
     fs::write(a.join("logseq/.tine-trash"), b"blocked").unwrap();
     fs::write(a.join("assets/photo.png"), b"safe").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let new_error = assets::trash_asset(&store, "photo.png")
         .unwrap_err()
         .to_string();
@@ -1396,7 +1396,7 @@ fn malformed_sidecar_refusal_matches_legacy_text_and_keeps_bytes() {
     let (a, store) = fixture("malformed-new");
     let malformed = b"{:highlights []} trailing";
     fs::write(a.join("assets/paper.edn"), malformed).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         format!(
             "{:?}",
@@ -1655,7 +1655,7 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
         pages::delete_page_expected(&store, "delete", PageKind::Page, None, Some(&stale)).is_err()
     );
     assert_eq!(disk_tree(&a), before_delete, "stale delete changed disk");
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     pages::delete_page_expected(&store, "delete", PageKind::Page, None, None).unwrap();
     assert_disk_tree(
         &a,

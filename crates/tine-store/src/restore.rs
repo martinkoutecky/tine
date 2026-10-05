@@ -133,7 +133,7 @@ impl Store {
     /// The config is reloaded before the resulting view is published. A changed
     /// partial result on failure publishes the final disk state after a
     /// successful initial load. After a failed initial load, writes remain
-    /// guarded but publication waits for successful `scan_refresh()` recovery.
+    /// guarded but publication waits for successful `refresh()` recovery.
     /// An in-flight save holding the writer lock
     /// finishes before this restore; a later save checks against restored
     /// bytes. After any failure, check `done.recovery` and

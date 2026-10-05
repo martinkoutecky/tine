@@ -84,7 +84,7 @@ fn title_property_owns_page_name_through_store() {
         "title:: Renamed\n\n- body\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(matches!(
         store.whole_graph().unwrap().resolve("Renamed", false),
         Resolved::Existing { .. }
@@ -190,7 +190,7 @@ fn ordinary_page_outside_standard_directories_is_discoverable() {
     )
     .unwrap();
     fs::write(root.join("Top Level.md"), "- top\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(matches!(
         store.whole_graph().unwrap().resolve("Later", false),
         Resolved::Existing { .. }

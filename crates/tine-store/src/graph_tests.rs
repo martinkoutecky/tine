@@ -852,12 +852,12 @@ fn sync_file_detects_external_change_and_suppresses_self() {
     let initial = store.whole_graph().unwrap().rev();
 
     // No external change yet → sync reports nothing.
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(store.whole_graph().unwrap().rev(), initial);
 
     // External edit → sync reports the entry and refreshes the cache.
     std::fs::write(&path, "- after the change").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let changed = store.whole_graph().unwrap();
     assert!(changed.rev() > initial, "external change detected");
     assert_eq!(store.page(&id).unwrap().doc.name, "S");
@@ -870,12 +870,12 @@ fn sync_file_detects_external_change_and_suppresses_self() {
     assert_eq!(search_count(&store, "before"), 0);
 
     // Re-syncing the same content is a no-op (self-write suppression).
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(store.whole_graph().unwrap().rev(), changed.rev());
 
     // Deletion is reported and drops it from the cache.
     std::fs::remove_file(&path).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(store.whole_graph().unwrap().rev() > changed.rev());
     assert!(matches!(
         store.page(&id),
@@ -1004,7 +1004,7 @@ fn self_write_marker_does_not_outlive_its_save() {
     let saved_bytes = std::fs::read(&path).unwrap();
     let saved_rev = store.whole_graph().unwrap().rev();
     std::fs::remove_file(&path).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let removed_rev = store.whole_graph().unwrap().rev();
     assert!(removed_rev > saved_rev, "page deletion must be published");
     assert!(matches!(
@@ -1012,7 +1012,7 @@ fn self_write_marker_does_not_outlive_its_save() {
         Err(tine_store::StoreError::NotFound)
     ));
     std::fs::write(&path, saved_bytes).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(
         store.whole_graph().unwrap().rev() > removed_rev,
         "a stale self-write marker must not suppress the page reappearing"
@@ -1062,13 +1062,13 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
     ));
     let path = root.join("pages").join("R.md");
     let saved = store.whole_graph().unwrap().rev();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         store.whole_graph().unwrap().rev(),
         saved,
         "unchanged save → suppressed via disk_rev fast-path"
     );
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         store.whole_graph().unwrap().rev(),
         saved,
@@ -1077,7 +1077,7 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
 
     // A real external edit must still be detected (not masked by disk_revs).
     std::fs::write(&path, "- beta\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(
         store.whole_graph().unwrap().rev() > saved,
         "external change detected despite disk_revs entry"
@@ -1139,7 +1139,7 @@ fn self_write_is_not_reported_as_external_change() {
 
     // A watcher poll right after our own save must emit nothing.
     let saved = store.whole_graph().unwrap().rev();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(
         store.whole_graph().unwrap().rev(),
         saved,
@@ -2599,7 +2599,7 @@ fn page_symlinks_are_not_indexed_or_reconciled() {
         .all(|entry| entry.name != "Secret"));
     let id = store.file_id(tine_store::Area::Pages, "Secret.md").unwrap();
     assert!(store.path_for_os_handoff(&id, false).is_err());
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert_eq!(store.whole_graph().unwrap().rev(), before.rev());
     assert!(link.exists());
 

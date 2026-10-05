@@ -50,7 +50,7 @@ fn graph_with(pages: usize) -> tempfile::TempDir {
     root
 }
 
-/// Counts of one Rescan (`rebuild_graph`) of an opened graph.
+/// Counts of one Rescan (`refresh(Depth::Rebuild)`) of an opened graph.
 fn rescan_counts(root: &std::path::Path) -> cost_counters::Counts {
     let (store, _, _) = Store::open(
         root,
@@ -62,7 +62,7 @@ fn rescan_counts(root: &std::path::Path) -> cost_counters::Counts {
     .unwrap();
     drop(store.whole_graph().unwrap());
     cost_counters::reset();
-    store.rebuild_graph().unwrap();
+    store.refresh(tine_store::Depth::Rebuild).unwrap();
     let counts = cost_counters::snapshot();
     store.close();
     counts
