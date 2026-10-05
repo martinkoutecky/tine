@@ -33,17 +33,28 @@ reference-count reads until ready. Synchronous structural calls require init.
 The bounded AST cache retains regions from the same parse bundle. Parser
 traps quarantine the block as literal; structural edits refuse quarantine.
 
-Typography uses the editor's existing code-body/calc surface, adding no parse
-to input handling. One memoized property split supplies editor value and commit.
-The pre-existing facet renderer still makes one cold parse per changed raw:
-With a 2,000-block page loaded and the edited Block mounted, 200 typed characters
-produce 200 cold parses in prose and code, with zero additional cold parses from
-this door. This probe does not mount the complete virtualized Page.
+Editor literal decisions are the parser's, asked through this door and never recomputed from
+content (I-12). Typography adds no parse to ordinary input handling: a parse (`inlineLiteral.ts`,
+cached per text) runs only once a replacement trigger such as `->` has completed, to ask whether the
+range is literal, and counts a span still being typed (an unclosed backtick or Org `~`/`=`) as literal
+by asking lsdoc about the text with the closer spliced in. The same answer gates list continuation
+(`blockParts.listLineAt` via `literalBlockOfLine`), the checkbox toggle, pasted-text block
+classification (`pastedPlainBlocks`) and live reference counting at paste; `$$` display-math state
+(`fences.ts`) skips literal `$$`, and the block-reference and tab labels read property lines and
+inline markup through `splitProps` and the inline AST. One memoized property split supplies editor
+value and commit. The pre-existing facet renderer still makes one cold parse per changed raw: with
+a 2,000-block page loaded and the edited Block mounted, 200 typed characters produce 200 cold parses
+in prose and code, with zero additional cold parses from typing itself. This probe does not mount the
+complete virtualized Page.
 
-Unclosed/CommonMark code-card recognition and hidden-property split/reattach
-recognition remain follow-up work; their existing implementations are retained.
-The empty-card separator fix is included. Copy projection preserves a final raw
-newline, including the seven manager-approved corpus exceptions.
+Fence and property recognition are done: code containers come from `literal_blocks`/`open_fence`
+(`fences.ts`), property lines and hidden-property split/reattach from `properties` (`splitProps`).
+Retained outside this door, pending native doors: the Org drawer extents used when a page-property
+removal empties a drawer (`editor/properties.ts` `pagePartsWithProperty`), the outline/bullet grammar of
+pasted and copied outlines (`outline.ts`, `clipboard.ts` `outlineToHtml` cannot see a fence that
+follows a bullet marker), and the leading-ATX/list-marker grammar of a bare list-prefix line
+(`format.ts` `trimBlockTrailingSpace`). The empty-card separator fix is included. Copy projection
+preserves a final raw newline, including the seven manager-approved corpus exceptions.
 
 Unit cost: no new persisted record, index or transport. Edits are bounded to one
 block; cached optimized edits need zero ownership parses, raw entry points need
