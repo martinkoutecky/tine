@@ -194,6 +194,46 @@ mod depth_contract_tests {
         assert!(!parse_input_depth_within_limit(&source));
     }
 
+    /// OG-C5-Q L05: the guard's own fence grammar (same character, at least as
+    /// long) disagreed with lsdoc's (the next fence-marker line of EITHER
+    /// character closes it), so an outline after a shorter closer was hidden
+    /// from admission while the parser built the 129-deep tree.
+    #[test]
+    fn a_fence_the_parser_closes_early_does_not_hide_a_deep_outline() {
+        let deep = |closer: &str, tail: &str| {
+            let mut source = format!("````\ncode\n{closer}\n");
+            for depth in 0..129 {
+                source.push_str(&" ".repeat(depth));
+                source.push_str("- item\n");
+            }
+            source.push_str(tail);
+            source
+        };
+        for source in [deep("```", "````\n"), deep("~~~", "````\n")] {
+            // Ask the parser: the outline really is 129 deep after the closer.
+            let parsed = tine_core::doc::parse(&source);
+            let mut deepest = 0usize;
+            let mut todo: Vec<_> = parsed.roots.iter().map(|b| (b, 1usize)).collect();
+            while let Some((block, depth)) = todo.pop() {
+                deepest = deepest.max(depth);
+                todo.extend(block.children.iter().map(|c| (c, depth + 1)));
+            }
+            assert!(deepest > PARSE_INPUT_MAX_DEPTH, "parser depth {deepest}");
+            assert!(
+                !parse_input_depth_within_limit(&source),
+                "admission must see what the parser builds"
+            );
+        }
+        // A fence the parser really keeps open still hides its body.
+        let mut hidden = String::from("- a\n  ```\n");
+        for depth in 0..140 {
+            hidden.push_str(&" ".repeat(depth));
+            hidden.push_str("- not structure\n");
+        }
+        hidden.push_str("  ```\n");
+        assert!(parse_input_depth_within_limit(&hidden));
+    }
+
     #[test]
     fn org_headline_forms_and_markdown_stars_are_format_specific() {
         let org = Path::new("page.org");
