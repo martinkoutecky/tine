@@ -142,6 +142,26 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
+  it("I-20: finishes Make a template for the submitted block after its menu closed", async () => {
+    load();
+    let finish!: (templates: []) => void;
+    vi.spyOn(backend(), "listTemplates").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "leaf");
+    [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((item) => item.textContent?.includes("Make a template"))!.click();
+    const input = document.querySelector<HTMLInputElement>(".ctx-template-name")!;
+    input.value = "Late template";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLElement>(".ctx-template-submit")!.click();
+    // Dismissing the menu retires the Match accessor that backs `props.id`.
+    closeContextMenu();
+    finish([]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(blockProperty("leaf", "template")).toBe("Late template");
+    expect(toasts().some((t) => t.kind === "success")).toBe(true);
+    dispose();
+  });
+
   it("does not mark a colliding block in the new graph as a template", async () => {
     load();
     let finish!: (templates: Awaited<ReturnType<ReturnType<typeof backend>["listTemplates"]>>) => void;
