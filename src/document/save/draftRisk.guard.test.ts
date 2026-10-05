@@ -16,9 +16,11 @@ const source = readFileSync(new URL("./engine.ts", import.meta.url), "utf8");
 /** Top-level function name → its source text (up to the next top-level item). */
 function functions(): Map<string, string> {
   const out = new Map<string, string>();
-  const heads = [...source.matchAll(/^(?:export )?(?:async )?function (\w+)/gm)];
+  // Top-level `clearOnBindingInvalidated(...)` blocks count as their own item.
+  const heads = [...source.matchAll(/^(?:(?:export )?(?:async )?function (\w+)|(clearOnBindingInvalidated)\()/gm)];
   heads.forEach((head, i) => {
-    out.set(head[1], source.slice(head.index!, heads[i + 1]?.index ?? source.length));
+    const name = head[1] ?? head[2];
+    out.set(name, (out.get(name) ?? "") + source.slice(head.index!, heads[i + 1]?.index ?? source.length));
   });
   return out;
 }
@@ -33,8 +35,8 @@ const RULE = "only a matching-version Published reply retires risk (storage.qnt 
   + "Call notePublished(name, coveredVersion) with the bufferVersion captured at the save's snapshot, as doSave does.";
 
 describe("draft-risk retirement front door", () => {
-  it("risk leaves riskHeld only through the version check, a rename move, or the buffer leaving", () => {
-    expect(sitesOf(/riskHeld\.(delete|clear)\(/g), RULE).toEqual(["forgetSaveState", "noteRisk", "rekeyPageSaveState", "resetSaveState"]);
+  it("risk leaves riskHeld only through the version check, a rename move, the buffer leaving, or the binding ending", () => {
+    expect(sitesOf(/riskHeld\.(delete|clear)\(/g), RULE).toEqual(["clearOnBindingInvalidated", "forgetSaveState", "noteRisk", "rekeyPageSaveState", "resetSaveState"]);
     expect(functions().get("noteRisk"), RULE).toMatch(/publishedVersions\.get\(name\) === bufferVersion\(name\)\) riskHeld\.delete\(name\)/);
   });
 

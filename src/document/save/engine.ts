@@ -313,6 +313,11 @@ clearOnBindingInvalidated(() => {
   for (const timer of saveRetryTimers.values()) clearTimeout(timer);
   saveRetryTimers.clear();
   transientSaveFailures.clear();
+  // Risk belongs to the binding's buffers too; a draft already written stays
+  // in the old graph's store for recovery (the keeper drops its queue).
+  riskHeld.clear();
+  bufferVersions.clear();
+  publishedVersions.clear();
 });
 /** R-CREATE-UNREADABLE-OWNER (docs/storage-contract.md): the backend refused to
  * create `name` because a file it cannot read may already be that page. Name
