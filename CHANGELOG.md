@@ -27,6 +27,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Image `{:width ...}` / `{:height ...}` metadata is read as EDN, so a quoted title that contains `:width 999` no longer sets the image width (UI-OG-C5-P6-IMAGEMETA).
 - PDF Find shows an error and clears stale results when a page cannot be read, and closing Find or changing the query stops a pending search from moving the reader (UI-OG-C5-P6-FIND); a PDF text layer that finishes after its page was re-rendered or the reader closed no longer installs, and a failed text render shows the PDF error (UI-OG-C5-P6-TEXTLAYER).
 - A rejected native window request (minimize, maximize, close, resize drag) now shows an error instead of failing silently, and a resize listener registered after the window chrome was removed is released (UI-OG-C5-P6-WINDOW).
+- A Favorites (or other) settings edit no longer deletes an unrelated `config.edn` setting when an earlier entry's value is the same keyword; config keys are found only at key positions (REG-OG-C5-L01-S1).
+- Saving a PDF highlight keeps `file::`/`file-path::` example lines inside a code fence at the top of the annotation page; a failed cleanup of a leftover legacy sidecar, page or area image is now logged instead of silent (REG-OG-C5-L01-S2).
 - Page rename publication skips reparsing the old document and repeated transaction-record searches; loaded-page refresh uses one path lookup per touched page (GH #623).
 - Closing or switching PDFs no longer shows an annotation-loading error from a retired reader (GH #557).
 - Image picker and Upload keep the initiating editor through asset import, so delayed native blur does not discard the saved image link (GH #622, GH #493).

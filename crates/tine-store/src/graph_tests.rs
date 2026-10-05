@@ -1615,7 +1615,7 @@ fn set_favorites_edn_aware_vector_end() {
 fn set_preferred_workflow_ignores_key_inside_string_literal() {
     // Round-7 audit: the key was located with a non-string-aware scan, so a
     // `:preferred-workflow` inside a string value could be edited instead of the
-    // real key. `find_keyword` now skips strings.
+    // real key. `find_keyword_at_map_level` now skips strings.
     let root = std::env::temp_dir().join(format!("tine-wf-str-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("logseq")).unwrap();

@@ -317,6 +317,22 @@ pub fn write_pdf_area_image(
     })
 }
 
+const LEGACY_SIDECAR_LEFT: &str =
+    "tine pdf: highlights saved; the old-key highlight sidecar could not be retired and was left in place";
+const LEGACY_PAGE_LEFT: &str =
+    "tine pdf: highlights saved; the old-key annotation page could not be retired and was left in place";
+const DELETED_CROP_LEFT: &str =
+    "tine pdf: highlights saved; a deleted area highlight's image could not be removed and was left in place";
+
+/// Post-commit retirement is best effort: the save already succeeded, so a
+/// failed cleanup does not fail it. It does not vanish either (I-9): the fixed
+/// line (I-5: no names) reaches stderr and the host's `--debug` log.
+fn report_cleanup(outcome: tine_store::TxOutcome, line: &'static str) {
+    if !matches!(crate::commit_retry(outcome), Ok(true)) {
+        tine_core::diag_line::diagnostic_line(line);
+    }
+}
+
 /// Trash a crop only when the current primary sidecar has no reference to its
 /// ID and stamp. A read-only sidecar revision check runs in the same
 /// transaction as the crop trash. Missing/malformed sidecars and I/O
@@ -400,7 +416,7 @@ fn rollback_pdf_area_file(
 /// page are one guarded transaction. Failure can leave disk differences if
 /// undo or publication is incomplete; retain local edits and inspect disk.
 /// After commit, crop/legacy trash moves are best effort and do not fail this
-/// call. Cost O(asset entries + sidecar + page + deleted crop bytes + deleted
+/// call; a failed one is reported through `diag_line` and the leftover stays. Cost O(asset entries + sidecar + page + deleted crop bytes + deleted
 /// crops × sidecar bytes) per retry, plus graph refresh when the annotation
 /// page is absent (up to O(P)).
 pub fn write_highlights(
@@ -552,7 +568,7 @@ pub fn write_highlights(
         if let (Some(id), Some((_, rev))) = (legacy_id.as_ref(), old.as_ref()) {
             let mut cleanup = store.transaction(None);
             cleanup.trash(id, rev.clone());
-            let _ = cleanup.commit();
+            report_cleanup(cleanup.commit(), LEGACY_SIDECAR_LEFT);
         }
         let source_key = if old.is_some() { &legacy } else { &key };
         let merged_ids: HashSet<&str> = merged.iter().map(|item| item.id.as_str()).collect();
@@ -583,12 +599,19 @@ pub fn write_highlights(
             {
                 continue;
             }
-            let _ = rollback_pdf_area_file(store, pdf_name, &crop, &item.id, stamp);
+            // An already-missing crop is the state we want; any other failure
+            // leaves an orphan image behind.
+            match rollback_pdf_area_file(store, pdf_name, &crop, &item.id, stamp) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                    tine_core::diag_line::diagnostic_line(DELETED_CROP_LEFT);
+                }
+                _ => {}
+            }
         }
         if let (Some(id), Some((_, rev))) = (legacy_page_id, legacy_page) {
             let mut cleanup = store.transaction(Some(tine_store::EditKind::DeletePage));
             cleanup.trash(&id.file(), rev);
-            let _ = cleanup.commit();
+            report_cleanup(cleanup.commit(), LEGACY_PAGE_LEFT);
         }
         Ok(Some(merged))
     })

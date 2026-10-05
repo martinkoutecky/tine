@@ -431,3 +431,137 @@ fn escape_before_a_multibyte_char_is_refused_without_panicking() {
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_highlight_save_keeps_fenced_file_lines_in_the_page_preamble() {
+    // C5 L01-S2: `file::`/`file-path::` example lines inside a code fence are
+    // literal text, not the generated pointers; the save used to delete them.
+    let root = c3u_graph("fenced-preamble");
+    let fence =
+        "```text\nfile:: keep this literal example\nfile-path:: keep this second example\n```\n";
+    std::fs::write(
+        root.join("pages/hls__paper.md"),
+        format!(
+            "file:: [Paper](../assets/paper.pdf)\nfile-path:: ../assets/paper.pdf\n\n{fence}\n- aye\n  hl-page:: 1\n  hl-color:: yellow\n  ls-type:: annotation\n  id:: {A}\n"
+        ),
+    )
+    .unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    write_highlights(
+        &store,
+        "paper.pdf",
+        "Paper",
+        &[c3u_highlight(C, "sea")],
+        &[],
+    )
+    .unwrap();
+    let page = std::fs::read_to_string(root.join("pages/hls__paper.md")).unwrap();
+    assert!(page.contains(fence), "fenced preamble lines lost:\n{page}");
+    assert_eq!(
+        page.matches("file:: [Paper]").count(),
+        1,
+        "exactly one generated pointer:\n{page}"
+    );
+    assert_eq!(
+        page.matches("file-path:: ../assets/paper.pdf").count(),
+        1,
+        "{page}"
+    );
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+fn diagnostics() -> &'static std::sync::Mutex<Vec<String>> {
+    static SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        tine_core::diag_line::set_diagnostic_line_sink(|line| {
+            SEEN.lock().unwrap().push(line.to_owned());
+        });
+    });
+    &SEEN
+}
+
+/// C5 L03 B (I-9): the save committed, so it succeeds, but a leftover that
+/// could not be retired is reported instead of vanishing. `logseq/.tine-trash`
+/// being a file makes every trash move fail deterministically.
+#[test]
+fn a_leftover_that_cannot_be_retired_after_a_save_is_reported() {
+    let seen = diagnostics();
+    let root = c3u_graph("cleanup-reported");
+    std::fs::write(
+        root.join("assets/my_paper.edn"),
+        format!("{{:highlights [{}] :extra {{}}}}\n", c3u_entry(A, "aye")),
+    )
+    .unwrap();
+    std::fs::write(root.join("pages/hls__my_paper.md"), c3u_page(&[(A, "aye")])).unwrap();
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::write(root.join("logseq/.tine-trash"), "not a directory").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let loaded = read_highlights_checked(&store, "My Paper.pdf").unwrap();
+    let mut next = loaded.clone();
+    next.push(c3u_highlight(C, "sea"));
+    write_highlights(&store, "My Paper.pdf", "Paper", &next, &loaded).unwrap();
+    let lines = seen.lock().unwrap().clone();
+    for expected in [LEGACY_SIDECAR_LEFT, LEGACY_PAGE_LEFT] {
+        assert!(
+            lines.iter().any(|line| line == expected),
+            "{expected}: {lines:?}"
+        );
+    }
+    assert!(
+        root.join("assets/my_paper.edn").is_file(),
+        "the leftover stays"
+    );
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_deleted_area_highlights_unremovable_image_is_reported_and_a_missing_one_is_not() {
+    let seen = diagnostics();
+    let area = |id: &str, stamp: i64| Highlight {
+        image: Some(stamp),
+        text: None,
+        ..c3u_highlight(id, "")
+    };
+    // Unremovable: the trash location is a file.
+    let root = c3u_graph("crop-reported");
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let rel = write_pdf_area_image(&store, "paper.pdf", 1, A, 42, b"png").unwrap();
+    write_highlights(&store, "paper.pdf", "Paper", &[area(A, 42)], &[]).unwrap();
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::write(root.join("logseq/.tine-trash"), "not a directory").unwrap();
+    write_highlights(&store, "paper.pdf", "Paper", &[], &[area(A, 42)]).unwrap();
+    assert!(seen
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|line| line == DELETED_CROP_LEFT));
+    assert!(
+        root.join("assets").join(&rel).is_file(),
+        "the leftover stays"
+    );
+    drop(store);
+    std::fs::remove_dir_all(&root).unwrap();
+    // Missing: nothing to remove is the state we want, not a failure.
+    let root = c3u_graph("crop-missing");
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    write_highlights(&store, "paper.pdf", "Paper", &[area(B, 7)], &[]).unwrap();
+    let reported = |seen: &std::sync::Mutex<Vec<String>>| {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|line| *line == DELETED_CROP_LEFT)
+            .count()
+    };
+    let before = reported(seen);
+    write_highlights(&store, "paper.pdf", "Paper", &[], &[area(B, 7)]).unwrap();
+    assert_eq!(
+        reported(seen),
+        before,
+        "a crop that is already gone is not a failure"
+    );
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}

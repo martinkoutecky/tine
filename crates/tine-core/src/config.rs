@@ -250,7 +250,8 @@ impl Config {
             };
         }
         cfg.shortcuts = parse_shortcuts(edn);
-        cfg.all_pages_public = bool_value(edn, ":publishing/all-pages-public?").unwrap_or(false);
+        cfg.all_pages_public =
+            bool_value(edn, ":publishing/all-pages-public?").unwrap_or(cfg.all_pages_public);
         if let Some(n) = int_value(edn, ":start-of-week") {
             if n <= 6 {
                 cfg.start_of_week = n;
@@ -263,7 +264,8 @@ impl Config {
         cfg.separated_by_commas = parse_keyword_set(edn, ":property/separated-by-commas");
         cfg.ignored_page_references_keywords =
             parse_keyword_set(edn, ":ignored-page-references-keywords");
-        cfg.property_pages_enabled = bool_value(edn, ":property-pages/enabled?").unwrap_or(true);
+        cfg.property_pages_enabled =
+            bool_value(edn, ":property-pages/enabled?").unwrap_or(cfg.property_pages_enabled);
         cfg.property_pages_excludelist = parse_keyword_set(edn, ":property-pages/excludelist");
         cfg.default_journal_template =
             nested_string(edn, ":default-templates", ":journals").filter(|s| !s.is_empty());
@@ -296,7 +298,8 @@ impl Config {
             _ => FileNameFormat::Legacy,
         };
         cfg.macros = parse_macros(edn);
-        cfg.enable_timetracking = bool_value(edn, ":feature/enable-timetracking?").unwrap_or(true);
+        cfg.enable_timetracking =
+            bool_value(edn, ":feature/enable-timetracking?").unwrap_or(cfg.enable_timetracking);
         cfg.enable_search_remove_accents =
             read_keyword(edn, ":feature/enable-search-remove-accents?")
                 .map(|at| {
@@ -307,24 +310,28 @@ impl Config {
                         })
                     })
                 })
-                .unwrap_or(true);
-        cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(true);
+                .unwrap_or(cfg.enable_search_remove_accents);
+        cfg.show_brackets = bool_value(edn, ":ui/show-brackets?").unwrap_or(cfg.show_brackets);
         cfg.doc_mode_enter_for_new_block =
-            bool_value(edn, ":shortcut/doc-mode-enter-for-new-block?").unwrap_or(false);
-        cfg.logical_outdenting = bool_value(edn, ":editor/logical-outdenting?").unwrap_or(false);
+            bool_value(edn, ":shortcut/doc-mode-enter-for-new-block?")
+                .unwrap_or(cfg.doc_mode_enter_for_new_block);
+        cfg.logical_outdenting =
+            bool_value(edn, ":editor/logical-outdenting?").unwrap_or(cfg.logical_outdenting);
+        let default = cfg.logbook;
         cfg.logbook = LogbookSettings {
             with_second_support: nested_bool(edn, ":logbook/settings", ":with-second-support?")
-                .unwrap_or(true),
+                .unwrap_or(default.with_second_support),
             enabled_in_timestamped_blocks: nested_bool(
                 edn,
                 ":logbook/settings",
                 ":enabled-in-timestamped-blocks",
             )
-            .unwrap_or(true),
+            .unwrap_or(default.enabled_in_timestamped_blocks),
             enabled_in_all_blocks: nested_bool(edn, ":logbook/settings", ":enabled-in-all-blocks")
-                .unwrap_or(false),
+                .unwrap_or(default.enabled_in_all_blocks),
         };
-        cfg.guide_announced = bool_value(edn, ":tine/guide-announced?").unwrap_or(false);
+        cfg.guide_announced =
+            bool_value(edn, ":tine/guide-announced?").unwrap_or(cfg.guide_announced);
         cfg
     }
 
@@ -339,7 +346,7 @@ impl Config {
 // ---------------------------------------------------------------------------
 // Shared scanner family — byte-offset, string/comment/escape-aware. Used by
 // BOTH the readers above and the writers above. `;` comment handling lives in
-// `find_keyword` (so there's no separate comment-strip pass).
+// `find_keyword_at_map_level` (so there's no separate comment-strip pass).
 // ---------------------------------------------------------------------------
 
 /// Index just past the closing quote of an EDN string opening at byte `open` (a
@@ -398,66 +405,70 @@ fn match_close(s: &str, open: usize, openc: u8, closec: u8) -> usize {
     s.len()
 }
 
-/// Byte index of a real `key` keyword in `s`, skipping strings + `;` comments and
-/// requiring a token boundary after it. None if absent. Linear scan (always
-/// advances), so arbitrary `(…)`/`#{…}`/etc. content can't hang or mislead it.
-pub fn find_keyword(s: &str, key: &str) -> Option<usize> {
-    scan_keyword(s, key, false)
-}
-
-/// [`find_keyword`] restricted to nesting depth 0 of `s` — a direct entry of
-/// the map whose body `s` is, never one inside a nested map/vector/list.
+/// Byte index of `key` as a KEY of the map whose body is `s` (the text between
+/// its braces): a direct entry, never inside a nested map/vector/list/set,
+/// string or `;` comment, and never a VALUE that happens to spell the same
+/// keyword (`{:backup :favorites :private "keep"}` has no `:favorites` key;
+/// C5 L01-S1 spliced over it and the entry after it). The body is walked form
+/// by form, so keys sit at even form positions. A `#_` discard consumes the
+/// next form without counting it; a `#tag` prefix belongs to the form after it.
+/// Linear (every step advances), so arbitrary content cannot hang or mislead it.
 pub fn find_keyword_at_map_level(s: &str, key: &str) -> Option<usize> {
-    scan_keyword(s, key, true)
-}
-
-fn scan_keyword(s: &str, key: &str, top_level_only: bool) -> Option<usize> {
     let b = s.as_bytes();
-    let mut i = 0usize;
-    let mut depth = 0usize;
-    while i < b.len() {
-        match b[i] {
-            b'{' | b'[' | b'(' => depth += 1,
-            b'}' | b']' | b')' => depth = depth.saturating_sub(1),
-            b'"' => {
-                i = edn_str_end(s, i);
-                continue;
-            }
-            b';' => {
-                while i < b.len() && b[i] != b'\n' {
-                    i += 1;
-                }
-                continue;
-            }
-            _ if (!top_level_only || depth == 0) && b[i..].starts_with(key.as_bytes()) => {
-                let after = i + key.len();
-                let boundary = after >= b.len()
-                    || matches!(
-                        b[after],
-                        b' ' | b'\t'
-                            | b'\n'
-                            | b'\r'
-                            | b'"'
-                            | b'{'
-                            | b'}'
-                            | b'['
-                            | b']'
-                            | b'('
-                            | b')'
-                            | b'#'
-                            | b','
-                    );
-                if boundary {
-                    return Some(i);
-                }
-                i = after;
-                continue;
-            }
-            _ => {}
+    let (mut at, mut forms) = (skip_blank(s, 0), 0usize);
+    let mut discard = false;
+    let mut tagged = false;
+    while at < b.len() {
+        if b[at] == b'#' && b.get(at + 1) == Some(&b'_') {
+            discard = true;
+            at = skip_blank(s, at + 2);
+            continue;
         }
-        i += 1;
+        let end = form_end(s, at);
+        if b[at] == b'#' && !matches!(b.get(at + 1), Some(b'{' | b'#')) {
+            tagged = true; // `#inst "…"`: the tag and its value are one form
+        } else {
+            if !discard && !tagged && forms % 2 == 0 && &s[at..end] == key {
+                return Some(at);
+            }
+            if !discard {
+                forms += 1;
+            }
+            discard = false;
+            tagged = false;
+        }
+        at = skip_blank(s, end);
     }
     None
+}
+
+/// End of the one EDN form starting at `at` (non-blank): a string, a balanced
+/// collection (`{}`/`[]`/`()`/`#{}`), or a token up to the next delimiter. A
+/// stray closer is a one-byte form so the walk always advances.
+fn form_end(s: &str, at: usize) -> usize {
+    let b = s.as_bytes();
+    let set = b[at] == b'#' && b.get(at + 1) == Some(&b'{');
+    let open = if set { at + 1 } else { at };
+    match b[open] {
+        b'"' => edn_str_end(s, open),
+        b'{' => (match_close_brace(s, open) + 1).min(s.len()),
+        b'[' => (match_close_bracket(s, open) + 1).min(s.len()),
+        b'(' => (match_close(s, open, b'(', b')') + 1).min(s.len()),
+        b'}' | b']' | b')' => open + 1,
+        _ => {
+            // `\(` and `\é`: the char after a backslash belongs to the literal.
+            let mut end = open + usize::from(b[open] == b'\\');
+            end += s[end..].chars().next().map_or(0, char::len_utf8);
+            // Compact EDN: a `#{` set may follow a token with no blank between.
+            while end < b.len()
+                && !crate::edn::is_delim(b[end])
+                && !(b[end] == b'#' && b.get(end + 1) == Some(&b'{'))
+            {
+                end += 1;
+            }
+            end
+        }
+    }
 }
 
 /// Span `[start, end)` of the value token following byte `from` (skipping leading
@@ -764,7 +775,7 @@ pub fn root_map_bounds(s: &str) -> Option<(usize, usize)> {
 
 /// Byte index of `key` among the DIRECT entries of the root map, never inside
 /// a nested map, vector, comment or string. Every top-level config setter
-/// locates its key here: the depth-blind [`find_keyword`] returned a nested
+/// locates its key here: the depth-blind keyword search returned a nested
 /// shadow first and the setter spliced over it (master DUP-3, 4ae2f6f4f).
 /// `None` when the key is absent or there is no balanced root map.
 pub fn find_top_level_keyword(s: &str, key: &str) -> Option<usize> {
@@ -1324,6 +1335,104 @@ mod commented_dirs_test {
 }
 
 #[cfg(test)]
+mod key_position_tests {
+    use super::*;
+
+    fn at(body: &str, key: &str) -> Option<usize> {
+        find_keyword_at_map_level(body, key)
+    }
+
+    /// C5 L01-S1: a keyword VALUE spelling the key is not the key, in every
+    /// shape a value (and so a key) can take.
+    #[test]
+    fn a_key_is_found_only_at_a_key_position() {
+        assert_eq!(at(":a :k 1", ":k"), None, "value of :a");
+        assert_eq!(at(":a :k :k 2", ":k"), Some(6), "key after the value");
+        assert_eq!(at(":a [1 2] :k 1", ":k"), Some(9));
+        assert_eq!(at(":a {:x :k} :b #{:k} :c (:k) :d \"k\"", ":k"), None);
+        assert_eq!(
+            at(":a #inst \"2020\" :k 1", ":k"),
+            Some(16),
+            "a tag and its value are one form"
+        );
+        assert_eq!(
+            at(":a 1 #_ :x :k 1", ":k"),
+            Some(11),
+            "a discarded form is not an entry"
+        );
+        assert_eq!(
+            at(":a #_ :k :k 1", ":k"),
+            None,
+            "the discarded :k is not the value"
+        );
+        assert_eq!(at("\"a\" :k :k 1", ":k"), Some(7), "string key");
+        assert_eq!(
+            at(":k", ":k"),
+            Some(0),
+            "a bare key without a value is still the key"
+        );
+        assert_eq!(at(":kk 1 :k 2", ":k"), Some(6), "token boundary");
+        assert_eq!(at(":a 1 ; :k 2\n :b 3", ":k"), None, "comment");
+    }
+
+    /// The readers answer through the same selector, so a keyword value never
+    /// supplies a setting.
+    #[test]
+    fn readers_ignore_a_keyword_value_that_spells_a_setting() {
+        let edn = "{:preferred-workflow :now :alias :preferred-format :preferred-format :org \
+                   :favorites-backup :favorites :favorites [\"Real\"]}";
+        let config = Config::parse(edn);
+        assert_eq!(config.favorites, ["Real"]);
+        assert_eq!(config.preferred_format, crate::model::Format::Org);
+    }
+}
+
+#[cfg(test)]
+mod defaults_tests {
+    use super::*;
+
+    /// C5 L01-B3 (Rust half; I-12): a setting's default is declared once, in
+    /// `Config::default()`/`LogbookSettings::default()`. `Config::parse` falls
+    /// back to the field it started from, never to a second literal that could
+    /// drift from it (the browser's mirror of these defaults reads them from
+    /// the graph metadata the backend serves).
+    #[test]
+    fn parse_never_restates_a_default_literal() {
+        let source = include_str!("config.rs");
+        let parse = source
+            .split("    pub fn parse(edn: &str) -> Config {")
+            .nth(1)
+            .and_then(|rest| rest.split("\n        cfg\n    }\n").next())
+            .expect("Config::parse body");
+        for literal in [".unwrap_or(true)", ".unwrap_or(false)"] {
+            assert!(
+                !parse.contains(literal),
+                "I-12: Config::parse restates a default {literal}; fall back to the field set by Config::default() (exemplar: show_brackets)"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_or_malformed_config_serves_the_declared_defaults() {
+        for edn in [
+            "",
+            "{}",
+            "{:ui/show-brackets? maybe :logbook/settings {:with-second-support? 3}}",
+        ] {
+            let cfg = Config::parse(edn);
+            let default = Config::default();
+            assert_eq!(cfg.show_brackets, default.show_brackets, "{edn}");
+            assert_eq!(
+                cfg.enable_timetracking, default.enable_timetracking,
+                "{edn}"
+            );
+            assert_eq!(cfg.logbook, default.logbook, "{edn}");
+            assert_eq!(cfg.start_of_week, default.start_of_week, "{edn}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod non_ascii_scan_tests {
     use super::*;
 
@@ -1347,7 +1456,6 @@ mod non_ascii_scan_tests {
                 let edn = format!("{}{insert}{}", &base[..at], &base[at..]);
                 let _ = Config::parse(&edn);
                 for key in keys {
-                    let _ = find_keyword(&edn, key);
                     let _ = find_keyword_at_map_level(&edn, key);
                 }
                 for from in (0..edn.len()).filter(|from| edn.is_char_boundary(*from)) {

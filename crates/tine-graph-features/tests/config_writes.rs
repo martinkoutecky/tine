@@ -149,6 +149,85 @@ fn every_setter_edits_the_top_level_key_never_a_nested_shadow() {
     }
 }
 
+/// Checkpoint-5 L01-S1: a map KEY must be found at a key position. A keyword
+/// that is the VALUE of an earlier entry (`:backup :favorites`) equals a
+/// setting key but is not that key; the setter used to splice over it and the
+/// entry after it, deleting the unrelated `:private` setting.
+#[test]
+fn every_setter_leaves_a_keyword_value_that_spells_its_key_alone() {
+    for (key, set, reads_new) in setters() {
+        let input = format!("{{:backup {key} :private \"keep\"}}\n");
+        let dir = scratch("keyword-value", Some(&input));
+        let store = open(&dir);
+        set(&store).unwrap_or_else(|error| panic!("{key}: {error}"));
+        let written = content(&dir);
+        assert!(
+            written.contains(&format!(":backup {key} :private \"keep\"")),
+            "{key}: the earlier entry and its neighbour must survive byte-for-byte:\n{written}"
+        );
+        assert!(reads_new(&Config::parse(&written)), "{key}:\n{written}");
+        drop(store);
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+/// The reported S1 input exactly: the real key comes after the keyword value.
+#[test]
+fn a_real_key_after_a_keyword_value_is_the_one_replaced() {
+    let input = "{:favorites-backup :favorites :private \"keep\" :favorites [\"Real\"]}\n";
+    let dir = scratch("keyword-value-real", Some(input));
+    let store = open(&dir);
+    assert_eq!(Config::parse(input).favorites, ["Real"]);
+    config::set_favorites(&store, &["New".into()], None).unwrap();
+    assert_eq!(
+        content(&dir),
+        "{:favorites-backup :favorites :private \"keep\" :favorites [\"New\"]}\n"
+    );
+}
+
+/// The same key-position rule inside the nested maps the setters edit
+/// (`:default-home {:page …}`, `:default-templates {:journals …}`).
+#[test]
+fn a_keyword_value_in_a_nested_map_is_not_its_key_either() {
+    let dir = scratch(
+        "keyword-value-nested",
+        Some("{:default-home {:alias :page :other 1}}\n"),
+    );
+    let store = open(&dir);
+    config::set_default_home_page(&store, Some("Home")).unwrap();
+    let written = content(&dir);
+    assert!(written.contains(":alias :page :other 1"), "{written}");
+    assert_eq!(
+        Config::parse(&written).default_home.as_deref(),
+        Some("Home"),
+        "{written}"
+    );
+    config::set_default_home_page(&store, None).unwrap();
+    let cleared = content(&dir);
+    assert!(
+        cleared.contains(":alias :page :other 1"),
+        "clearing removed a neighbour:\n{cleared}"
+    );
+    assert_eq!(Config::parse(&cleared).default_home, None, "{cleared}");
+
+    fs::write(
+        dir.join("logseq/config.edn"),
+        "{:default-templates {:alias :journals :pages \"P\"}}\n",
+    )
+    .unwrap();
+    config::set_default_journal_template(&store, Some("Daily")).unwrap();
+    let written = content(&dir);
+    assert!(
+        written.contains(":alias :journals :pages \"P\""),
+        "{written}"
+    );
+    assert_eq!(
+        Config::parse(&written).default_journal_template.as_deref(),
+        Some("Daily"),
+        "{written}"
+    );
+}
+
 /// Master's DUP-3 case in meaning: an existing top-level key after a nested
 /// shadow is replaced in place, the shadow untouched.
 #[test]
