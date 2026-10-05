@@ -43,7 +43,7 @@ async function scanOne(root: HTMLElement) {
 }
 
 it("trashes a scanned orphan in the graph it was scanned in", async () => {
-  const trash = vi.spyOn(backend(), "trashAsset").mockResolvedValue();
+  const trash = vi.spyOn(backend(), "trashAsset").mockResolvedValue("trashed");
   const root = document.createElement("div");
   document.body.append(root);
   const dispose = render(() => <Settings />, root);
@@ -54,13 +54,28 @@ it("trashes a scanned orphan in the graph it was scanned in", async () => {
   } finally { dispose(); }
 });
 
+it("keeps a scanned orphan that a page started using, and says so instead of reporting a failure (GH #623)", async () => {
+  setToasts([]);
+  const trash = vi.spyOn(backend(), "trashAsset").mockResolvedValue("referenced");
+  const root = document.createElement("div");
+  document.body.append(root);
+  const dispose = render(() => <Settings />, root);
+  try {
+    const trashButton = await scanOne(root);
+    trashButton()!.click();
+    await vi.waitFor(() => expect(trash).toHaveBeenCalled());
+    await vi.waitFor(() => expect(toasts().some((toast) => toast.kind === "info" && toast.message.includes("was kept"))).toBe(true));
+    expect(toasts().some((toast) => toast.kind === "error")).toBe(false);
+  } finally { dispose(); }
+});
+
 it("hides a scan once its graph is gone, and refuses a Trash click that outlived the binding (I-20)", async () => {
   setToasts([]);
   let generation = 1;
   const api = backend() as unknown as { graphBindingGeneration?: () => number };
   const previous = api.graphBindingGeneration;
   api.graphBindingGeneration = () => generation;
-  const trash = vi.spyOn(backend(), "trashAsset").mockResolvedValue();
+  const trash = vi.spyOn(backend(), "trashAsset").mockResolvedValue("trashed");
   const root = document.createElement("div");
   document.body.append(root);
   const dispose = render(() => <Settings />, root);

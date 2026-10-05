@@ -2322,6 +2322,11 @@ impl SaveOutcome {
                 SaveOutcome::UnreadableOwner { file }
             }
             crate::Why::Refused(crate::Refusal::RepeatedFile(_)) => SaveOutcome::Repeated,
+            // Only an orphan-only asset trash raises this; a page save never
+            // does, so it reports as an I/O refusal rather than a page family.
+            crate::Why::Refused(crate::Refusal::AssetReferenced) => SaveOutcome::Io(
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "asset is referenced").into(),
+            ),
             crate::Why::Refused(crate::Refusal::Undecodable) => {
                 SaveOutcome::InvalidTarget("undecodable page".into())
             }

@@ -65,9 +65,7 @@ impl Transaction<'_> {
             ));
         }
         if view.referenced_assets().contains(name) {
-            return Err(Why::Refused(Refusal::ReadOnly(
-                "asset is referenced; refresh the orphan inventory".into(),
-            )));
+            return Err(Why::Refused(Refusal::AssetReferenced));
         }
         Ok(())
     }

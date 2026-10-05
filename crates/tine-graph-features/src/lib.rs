@@ -132,6 +132,9 @@ fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
                         io::Error::new(io::ErrorKind::InvalidInput, "repeated file")
                     }
                     Refusal::Closed => io::Error::new(io::ErrorKind::BrokenPipe, "store closed"),
+                    Refusal::AssetReferenced => {
+                        io::Error::new(io::ErrorKind::InvalidInput, assets::AssetReferenced)
+                    }
                     Refusal::UnreadableOwner { file } => io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!(

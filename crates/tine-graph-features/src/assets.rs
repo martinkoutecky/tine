@@ -24,6 +24,28 @@ pub fn error_for_user(store: &Store, error: io::Error) -> String {
     )
 }
 
+/// How a [`trash_asset`] that did not fail ended (GH #623). `Referenced` is a
+/// normal outcome, not an error: the published graph still uses the file, so
+/// it was kept. Callers match this value, never message text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrashOutcome {
+    /// The file moved to the recoverable trash.
+    Trashed,
+    /// Another page still references the file; it was left in `assets/`.
+    Referenced,
+}
+
+/// Typed source of the `io::Error` that the store refusal becomes inside the
+/// transaction mapping; `trash_asset` turns it into [`TrashOutcome::Referenced`].
+#[derive(Debug)]
+pub(crate) struct AssetReferenced;
+impl std::fmt::Display for AssetReferenced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("asset is still referenced")
+    }
+}
+impl std::error::Error for AssetReferenced {}
+
 fn split_name(name: &str) -> (&str, &str) {
     let lower = name.to_ascii_lowercase();
     for ext in COMPOUND_EXTS {
@@ -264,14 +286,15 @@ pub fn orphan_assets(store: &Store) -> io::Result<Vec<AssetInfo>> {
 
 /// Move one top-level asset into recoverable trash. Reads its current revision
 /// and retries a concurrent external write at most four times. The transaction
-/// rechecks the latest published asset references under its writer lock. Unreadable
-/// graph entries refuse trash; an external arrival not yet published can still
-/// race. Cost O(B + file bytes)
+/// rechecks the latest published asset references under its writer lock: an
+/// asset the graph still references stays put and reports
+/// [`TrashOutcome::Referenced`]. Unreadable graph entries refuse trash; an
+/// external arrival not yet published can still race. Cost O(B + file bytes)
 /// per attempt; a missing asset reports the v0.6.5 `no such asset` error.
-pub fn trash_asset(store: &Store, name: &str) -> io::Result<()> {
+pub fn trash_asset(store: &Store, name: &str) -> io::Result<TrashOutcome> {
     validate_name(name)?;
     let id = store.file_id(Area::Assets, name).map_err(store_error)?;
-    crate::retry_on_conflict("asset changed repeatedly during trash", || {
+    let moved = crate::retry_on_conflict("asset changed repeatedly during trash", || {
         let rev = match store.read(&id, None) {
             Ok((_, rev)) => rev,
             Err(StoreError::NotFound) => {
@@ -282,7 +305,14 @@ pub fn trash_asset(store: &Store, name: &str) -> io::Result<()> {
         let mut tx = store.transaction(None);
         tx.trash_orphan_asset(&id, rev);
         Ok(crate::commit_retry(tx.commit())?.then_some(()))
-    })
+    });
+    match moved {
+        Ok(()) => Ok(TrashOutcome::Trashed),
+        Err(error) if error.get_ref().is_some_and(|source| source.is::<AssetReferenced>()) => {
+            Ok(TrashOutcome::Referenced)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]
