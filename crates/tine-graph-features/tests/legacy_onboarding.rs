@@ -453,3 +453,54 @@ fn guide_explains_hierarchy_queries_and_empty_relations() {
         );
     }
 }
+
+/// OG-G (checkpoint-5 mess lane): the Guide described behaviour og no longer
+/// has. Each assertion pins the current behaviour by a positive phrase and
+/// rejects the stale one: /query opens the condition list with the chooser
+/// closed (Martin 2026-10-03, UI-OG-GH619-SLASH-QUERY-CHOOSER), the query text
+/// sits behind "Edit as text" (UI-OG-GH619-EDIT-AS-TEXT), a condition can be
+/// dragged into another group (UI-OG-GH619-DRAG-BETWEEN-GROUPS), scheduled and
+/// deadline ranges print as OG's `(between scheduled …)`, and the conflicts list
+/// is remembered in the launch cache.
+#[test]
+fn guide_describes_the_current_query_sheet_and_conflict_list() {
+    let page = |title: &str| {
+        GUIDE_TEMPLATES
+            .iter()
+            .find(|template| template.title == title)
+            .unwrap_or_else(|| panic!("Guide page {title:?} is not bundled"))
+            .markdown
+    };
+    let queries = page("Features/Queries");
+    let find = page("Workflows/Find and revisit");
+    for (name, text) in [("Queries", queries), ("Find and revisit", find)] {
+        assert!(
+            text.contains(
+                "opens the query sheet on its empty condition list; press **+ Add condition**"
+            ),
+            "{name}: /query opens the condition list and the user presses + Add condition"
+        );
+        assert!(
+            !text.contains("field chooser ready"),
+            "{name}: /query no longer opens the field chooser by itself"
+        );
+    }
+    assert!(find.contains("press **Edit as text** at the foot of the sheet"));
+    assert!(
+        !find.contains("It is always there"),
+        "the query text is behind Edit as text"
+    );
+    assert!(find.contains("Drop the handle onto another group to move the condition into it"));
+    assert!(!find.contains("only ever reorders within one list"));
+    let model = page("Reference/Tine query model");
+    assert!(!model.contains("scheduled and deadline ranges,"));
+    assert!(model.contains("Scheduled and deadline *ranges* are not on this list"));
+    let tips = page("Features/Tips & shortcuts");
+    assert!(!tips.contains("Nothing is stored"));
+    assert!(tips.contains("its own disposable launch cache"));
+    assert_eq!(
+        tips.matches("- **Code blocks**:").count(),
+        1,
+        "the Code blocks tip is written once"
+    );
+}
