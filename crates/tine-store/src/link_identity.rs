@@ -129,10 +129,16 @@ mod tests {
     }
     #[test]
     fn link_identity_reports_sync_and_publication_failures() {
-        for point in [
-            crate::FaultPoint::DirectorySyncIo,
-            crate::FaultPoint::PublicationReadIo,
-        ] {
+        // Directory sync exists only on Unix targets: Windows has no
+        // directory flush (`sync_directory_entry` returns Ok there), so the
+        // DirectorySyncIo fault is armed only on Unix, as in
+        // tests/transaction.rs. Its scenario (EIO/ENOSPC on a directory
+        // fsync after publication) cannot arise on Windows.
+        let mut points = vec![crate::FaultPoint::PublicationReadIo];
+        if cfg!(unix) {
+            points.insert(0, crate::FaultPoint::DirectorySyncIo);
+        }
+        for point in points {
             let temp = tempfile::tempdir().unwrap();
             let (store, _, _) = Store::open(temp.path(), Default::default()).unwrap();
             store.inject_fault(point);
