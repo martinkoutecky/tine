@@ -10,6 +10,11 @@
 //!   by lowering the ceiling, and growth is a visible edit of that number.
 //! Arrived = `SHALLOW.txt` is empty.
 //!
+//! The target surface is budgeted per concept (og-surface review §6): rule 2
+//! sections and ceilings, rule 4 production reachability, rule 5 no cache or
+//! readiness state; the operation total is derived and must match
+//! `docs/storage-contract.md`. SURFACE.txt's header states the rules.
+//!
 //! `TINE_SHALLOW_PRINT=1 cargo test -p tine-store --test shallow_ratchet`
 //! prints the current listing.
 
@@ -22,8 +27,15 @@ fn is_pub(v: &Visibility) -> bool {
     matches!(v, Visibility::Public(_))
 }
 
+thread_local! {
+    /// Evaluate `feature = "test-faults"` as enabled: the scan then sees the
+    /// test-oracle surface too (rule 4).
+    static FAULTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Evaluates a `cfg` predicate for a production (non-test) build: `test` and
-/// `feature = "test-faults"` are false, every other predicate is unknown.
+/// `feature = "test-faults"` are false (the latter true under [`FAULTS`]),
+/// every other predicate is unknown.
 /// `None` = unknown, which counts as compiled in (conservative).
 fn cfg_value(meta: &syn::Meta) -> Option<bool> {
     match meta {
@@ -31,7 +43,7 @@ fn cfg_value(meta: &syn::Meta) -> Option<bool> {
         syn::Meta::NameValue(nv) if nv.path.is_ident("feature") => {
             use quote::ToTokens;
             let value = nv.value.to_token_stream().to_string();
-            (value.trim_matches('"') == "test-faults").then_some(false)
+            (value.trim_matches('"') == "test-faults").then(|| FAULTS.with(|f| f.get()))
         }
         syn::Meta::List(l) => {
             let args: Vec<syn::Meta> = l
@@ -67,7 +79,7 @@ fn cfg_value(meta: &syn::Meta) -> Option<bool> {
     }
 }
 
-/// True when the attributes compile the item out of a production build
+/// True when the attributes compile the item out of the build being scanned
 /// (`#[cfg(test)]`, `#[cfg(feature = "test-faults")]`, and combinations).
 /// `#[cfg(not(test))]` is production code and is counted.
 fn is_cfg_test(attrs: &[Attribute]) -> bool {
@@ -133,6 +145,11 @@ struct Module {
 /// (whatever its visibility, `#[path]` included). Modules compiled out of a
 /// production build are recorded in `visited` but not returned.
 fn walk(src: &Path) -> (Vec<Module>, BTreeSet<PathBuf>) {
+    walk_from(&src.join("lib.rs"), src)
+}
+
+/// [`walk`] from any crate root file whose `mod x;` children live in `dir`.
+fn walk_from(root: &Path, dir: &Path) -> (Vec<Module>, BTreeSet<PathBuf>) {
     fn visit(
         file: &Path,
         dir: &Path,
@@ -246,15 +263,7 @@ fn walk(src: &Path) -> (Vec<Module>, BTreeSet<PathBuf>) {
     }
     let mut out = Vec::new();
     let mut visited = BTreeSet::new();
-    visit(
-        &src.join("lib.rs"),
-        src,
-        "crate",
-        true,
-        false,
-        &mut out,
-        &mut visited,
-    );
+    visit(root, dir, "crate", true, false, &mut out, &mut visited);
     (out, visited)
 }
 
@@ -309,7 +318,35 @@ struct Surface {
     ops: BTreeSet<String>,
     /// Keys of path-carrying signatures (rule 1 allow-list).
     paths: BTreeSet<String>,
+    /// Rule 5 evidence per item: its doc comment, and whether a function
+    /// answers `Option<bool>`.
+    docs: std::collections::BTreeMap<String, String>,
+    option_bool: BTreeSet<String>,
+    /// Identifiers of each function signature and field type (rule 5).
+    signatures: std::collections::BTreeMap<String, Vec<String>>,
     visited: BTreeSet<PathBuf>,
+}
+
+/// The `///` text of an item.
+fn doc_text(attrs: &[Attribute]) -> String {
+    use quote::ToTokens;
+    attrs
+        .iter()
+        .filter(|a| a.path().is_ident("doc"))
+        .filter_map(|a| match &a.meta {
+            syn::Meta::NameValue(nv) => Some(nv.value.to_token_stream().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `-> Option<bool>`: an answer whose `None` means "unknown" (rule 5).
+fn answers_option_bool(sig: &syn::Signature) -> bool {
+    let syn::ReturnType::Type(_, ty) = &sig.output else {
+        return false;
+    };
+    quote_type(ty).replace(' ', "") == "Option<bool>"
 }
 
 /// Identifiers that make a signature carry an OS path: `Path`/`PathBuf` and
@@ -351,6 +388,9 @@ fn surface(src: &Path) -> Surface {
         items: BTreeSet::new(),
         ops: BTreeSet::new(),
         paths: BTreeSet::new(),
+        docs: Default::default(),
+        option_bool: BTreeSet::new(),
+        signatures: Default::default(),
         visited,
     };
     for m in &modules {
@@ -372,6 +412,11 @@ fn surface(src: &Path) -> Surface {
                                 if carries_path(&f.sig) {
                                     s.paths.insert(key.clone());
                                 }
+                                if answers_option_bool(&f.sig) {
+                                    s.option_bool.insert(format!("fn {key}"));
+                                }
+                                s.docs.insert(format!("fn {key}"), doc_text(&f.attrs));
+                                s.signatures.insert(format!("fn {key}"), idents(&f.sig));
                                 s.items.insert(format!("fn {key}"));
                             }
                             ImplItem::Const(c) if is_pub(&c.vis) && !is_cfg_test(&c.attrs) => {
@@ -412,11 +457,15 @@ fn surface(src: &Path) -> Surface {
                             if carries_path(&f.sig) {
                                 s.paths.insert(key.clone());
                             }
+                            if answers_option_bool(&f.sig) {
+                                s.option_bool.insert(format!("fn {key}"));
+                            }
+                            s.signatures.insert(format!("fn {key}"), idents(&f.sig));
                             "fn"
                         }
                         Item::Struct(st) => {
                             for (index, f) in st.fields.iter().enumerate() {
-                                if !is_pub(&f.vis) {
+                                if !is_pub(&f.vis) || is_cfg_test(&f.attrs) {
                                     continue;
                                 }
                                 let field = f
@@ -425,6 +474,10 @@ fn surface(src: &Path) -> Surface {
                                     .map_or_else(|| index.to_string(), ToString::to_string);
                                 if f.ident.is_some() {
                                     s.items.insert(format!("field {key}.{field}"));
+                                    s.docs
+                                        .insert(format!("field {key}.{field}"), doc_text(&f.attrs));
+                                    s.signatures
+                                        .insert(format!("field {key}.{field}"), idents(&f.ty));
                                 }
                                 if carries_path(&f.ty) {
                                     s.paths.insert(format!("{key}.{field}"));
@@ -479,6 +532,7 @@ fn surface(src: &Path) -> Surface {
                         }
                         _ => continue,
                     };
+                    s.docs.insert(format!("{kind} {key}"), doc_text(attrs));
                     s.items.insert(format!("{kind} {key}"));
                 }
             }
@@ -489,6 +543,14 @@ fn surface(src: &Path) -> Surface {
 
 fn public_items(src: &Path) -> BTreeSet<String> {
     surface(src).items
+}
+
+/// The surface of a build with `test-faults` enabled.
+fn surface_with_faults(src: &Path) -> Surface {
+    FAULTS.with(|f| f.set(true));
+    let s = surface(src);
+    FAULTS.with(|f| f.set(false));
+    s
 }
 
 /// Honest-ratchet rule 1 (H1): the scan reaches every `.rs` file of the
@@ -539,6 +601,100 @@ fn read_list(path: &Path) -> (Option<usize>, Vec<String>) {
     (ceiling, entries)
 }
 
+/// The concepts the surface is budgeted by (og-surface review §6 rule 2). A
+/// new concept needs Martin; it is added here, visibly, not in SURFACE.txt.
+const CONCEPTS: &[&str] = &[
+    "Lifecycle",
+    "Freshness",
+    "Identity",
+    "Reads",
+    "Config",
+    "Save",
+    "Transaction steps",
+    "Trash admin",
+    "Diagnostics",
+    "Listing",
+    "Publication",
+    "Restore",
+    "WholeGraph: Names",
+    "WholeGraph: References",
+    "WholeGraph: Block refs",
+    "WholeGraph: Search/Query",
+    "WholeGraph: View meta",
+];
+
+/// Bookkeeping, not a concept: the `pub use` lines that re-export items
+/// counted in their concepts.
+const REEXPORTS: &str = "Re-exports";
+
+struct Section {
+    name: String,
+    ceiling: usize,
+    entries: Vec<String>,
+}
+
+/// SURFACE.txt: `## Concept (ceiling: N)` sections of entries. A
+/// `# test-oracle: <reason>` comment marks the entry after it (rule 4).
+struct SurfaceFile {
+    sections: Vec<Section>,
+    /// Entries before the first section header.
+    unsectioned: Vec<String>,
+    oracles: BTreeSet<String>,
+}
+
+impl SurfaceFile {
+    fn read() -> SurfaceFile {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("SURFACE.txt");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let mut file = SurfaceFile {
+            sections: Vec::new(),
+            unsectioned: Vec::new(),
+            oracles: BTreeSet::new(),
+        };
+        let mut oracle = false;
+        for line in text.lines().map(str::trim) {
+            if let Some(header) = line.strip_prefix("## ") {
+                let (name, rest) = header.split_once(" (ceiling: ").unwrap_or_else(|| {
+                    panic!("SURFACE.txt: `## Concept (ceiling: N)`, got `{line}`")
+                });
+                let ceiling = rest
+                    .strip_suffix(')')
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or_else(|| panic!("SURFACE.txt: bad ceiling in `{line}`"));
+                file.sections.push(Section {
+                    name: name.to_owned(),
+                    ceiling,
+                    entries: Vec::new(),
+                });
+            } else if let Some(reason) = line.strip_prefix("# test-oracle:") {
+                assert!(
+                    !reason.trim().is_empty(),
+                    "SURFACE.txt: `# test-oracle:` needs a reason"
+                );
+                oracle = true;
+            } else if !line.is_empty() && !line.starts_with('#') {
+                if oracle {
+                    file.oracles.insert(line.to_owned());
+                    oracle = false;
+                }
+                match file.sections.last_mut() {
+                    Some(section) => section.entries.push(line.to_owned()),
+                    None => file.unsectioned.push(line.to_owned()),
+                }
+            }
+        }
+        assert!(
+            !oracle,
+            "SURFACE.txt ends with a dangling `# test-oracle:` tag"
+        );
+        file
+    }
+
+    fn entries(&self) -> impl Iterator<Item = &String> {
+        self.sections.iter().flat_map(|s| &s.entries)
+    }
+}
+
 #[test]
 fn shallow_surface_only_shrinks() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -549,9 +705,15 @@ fn shallow_surface_only_shrinks() {
             println!("{p}");
         }
     }
-    let (_, surface) = read_list(&root.join("SURFACE.txt"));
+    let file = SurfaceFile::read();
+    let listed: Vec<&String> = file.entries().chain(&file.unsectioned).collect();
+    let surface: BTreeSet<String> = listed.iter().map(|s| (*s).clone()).collect();
+    assert_eq!(
+        listed.len(),
+        surface.len(),
+        "SURFACE.txt has duplicate entries"
+    );
     let (ceiling, shallow) = read_list(&root.join("SHALLOW.txt"));
-    let surface: BTreeSet<String> = surface.into_iter().collect();
     let shallow_set: BTreeSet<String> = shallow.iter().cloned().collect();
     assert_eq!(
         shallow.len(),
@@ -566,7 +728,7 @@ fn shallow_surface_only_shrinks() {
     assert!(
         unlisted.is_empty(),
         "new public tine-store items outside the target surface. Either don't make them pub, \
-         or add them to SURFACE.txt (they count against 01-arrival.md budget A). \
+         or add them to their concept in SURFACE.txt (raising its ceiling needs a reason). \
          SHALLOW.txt may not grow:\n{unlisted:#?}"
     );
     let stale: Vec<&String> = shallow_set
@@ -577,7 +739,10 @@ fn shallow_surface_only_shrinks() {
         stale.is_empty(),
         "SHALLOW.txt entries no longer public — delete them and lower `# ceiling:`:\n{stale:#?}"
     );
-    let stale_surface: Vec<&String> = surface.iter().filter(|s| !public.contains(*s)).collect();
+    let stale_surface: Vec<&String> = surface
+        .iter()
+        .filter(|s| !public.contains(*s) && !file.oracles.contains(*s))
+        .collect();
     assert!(
         stale_surface.is_empty(),
         "SURFACE.txt entries no longer public:\n{stale_surface:#?}"
@@ -596,8 +761,74 @@ fn shallow_surface_only_shrinks() {
     );
 }
 
+/// Rule 2: each concept's entry count is its ceiling. A cut lowers the
+/// ceiling; growth is a visible edit of it, whose commit names the existing
+/// item of the concept that cannot answer the need with a parameter.
 #[test]
-fn arrival_numeric_budgets() {
+fn surface_concepts_stay_within_their_ceilings() {
+    let file = SurfaceFile::read();
+    assert!(
+        file.unsectioned.is_empty(),
+        "tine-store rule 2: SURFACE.txt entries outside any `## Concept (ceiling: N)` section; \
+         put each in its concept:\n{:#?}",
+        file.unsectioned
+    );
+    let mut seen = BTreeSet::new();
+    for section in &file.sections {
+        assert!(
+            seen.insert(section.name.clone()),
+            "SURFACE.txt: section `{}` appears twice",
+            section.name
+        );
+        assert!(
+            CONCEPTS.contains(&section.name.as_str()) || section.name == REEXPORTS,
+            "tine-store rule 2: `{}` is not a surface concept. A new concept needs Martin; \
+             known concepts: {CONCEPTS:?}",
+            section.name
+        );
+        let uses = section
+            .entries
+            .iter()
+            .filter(|e| e.starts_with("use "))
+            .count();
+        if section.name == REEXPORTS {
+            assert_eq!(
+                uses,
+                section.entries.len(),
+                "SURFACE.txt `{REEXPORTS}` holds only `use` lines"
+            );
+        } else {
+            assert_eq!(
+                uses, 0,
+                "SURFACE.txt: `use` lines belong in `{REEXPORTS}`, not `{}`",
+                section.name
+            );
+        }
+        assert!(
+            section.entries.len() <= section.ceiling,
+            "tine-store rule 2: concept `{}` has {} items, ceiling {}. Answer the need with a \
+             parameter on an existing item of the concept (rule 3: performance work adds no \
+             surface; exemplars `WholeGraph::inventory(InventoryScope)`, `Store::refresh(Depth)`), \
+             or raise the ceiling in a commit that names the item that cannot and why",
+            section.name,
+            section.entries.len(),
+            section.ceiling
+        );
+        assert_eq!(
+            section.entries.len(),
+            section.ceiling,
+            "tine-store rule 2: concept `{}` shrank to {} items; lower its ceiling to match \
+             (a cut is recorded, never left as slack for the next addition)",
+            section.name,
+            section.entries.len()
+        );
+    }
+}
+
+/// The derived totals (operations, WholeGraph questions, types) and the
+/// contract's stated operation count, which must agree.
+#[test]
+fn derived_totals_match_the_storage_contract() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let surface = surface(&root.join("src"));
     let items = &surface.items;
@@ -622,20 +853,20 @@ fn arrival_numeric_budgets() {
             println!("op {op}");
         }
     }
-    assert!(operations <= OPS, "tine-store Rule 1: Store + Transaction has {operations} operations (methods plus functions taking a Store/Transaction), budget {OPS}; imitate crates/tine-store/SURFACE.txt");
-    assert!(questions <= QUESTIONS, "tine-store Rule 4: WholeGraph has {questions} public methods, budget {QUESTIONS}; imitate crates/tine-store/SURFACE.txt");
-    assert!(
-        types <= TYPES,
-        "tine-store Rule 1: {types} public types, budget {TYPES}; imitate crates/tine-store/SURFACE.txt"
+    let contract = std::fs::read_to_string(root.join("../../docs/storage-contract.md")).unwrap();
+    let flat = contract.split_whitespace().collect::<Vec<_>>().join(" ");
+    let stated = flat
+        .split_once("The public operation surface is ")
+        .and_then(|(_, rest)| rest.split(' ').next())
+        .and_then(|n| n.parse::<usize>().ok())
+        .expect("docs/storage-contract.md states `The public operation surface is N operations`");
+    assert_eq!(
+        stated, operations,
+        "docs/storage-contract.md says the store has {stated} operations; the scan counts \
+         {operations} (Store + Transaction methods plus functions taking either). Update the \
+         contract in the same commit"
     );
 }
-
-// Honest baseline (og-surface step 1, 2026-10-05): the earlier scan missed
-// files outside a hand list (H1), functions taking `&Store` (H2) and types
-// re-exported from private modules (H3).
-const OPS: usize = 40;
-const QUESTIONS: usize = 23;
-const TYPES: usize = 59;
 
 #[test]
 fn public_paths_are_only_inputs_and_handoffs() {
@@ -734,3 +965,304 @@ fn public_paths_are_only_inputs_and_handoffs() {
         .collect();
     assert_eq!(actual, allowed, "tine-store Rule 1: a public Path/PathBuf signature is only an OS hand-off; graph identities use FileId/PageId. Exemplar: Store::path_for_os_handoff. Update this allow-list only with an OS hand-off reason");
 }
+
+/// Every name a production (non-test) source file of a consumer crate uses:
+/// method calls, path segments, field accesses and struct-literal fields, and
+/// every identifier inside a macro invocation (its arguments are not parsed).
+/// Items compiled out of a production build are skipped.
+#[derive(Default)]
+struct Reach {
+    names: BTreeSet<String>,
+}
+
+impl Reach {
+    fn tokens(&mut self, tokens: &proc_macro2::TokenStream) {
+        for tree in tokens.clone() {
+            match tree {
+                proc_macro2::TokenTree::Ident(i) => {
+                    self.names.insert(i.to_string());
+                }
+                proc_macro2::TokenTree::Group(g) => self.tokens(&g.stream()),
+                _ => {}
+            }
+        }
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for Reach {
+    fn visit_item_fn(&mut self, i: &'ast syn::ItemFn) {
+        if !is_cfg_test(&i.attrs) {
+            syn::visit::visit_item_fn(self, i);
+        }
+    }
+    fn visit_item_impl(&mut self, i: &'ast syn::ItemImpl) {
+        if !is_cfg_test(&i.attrs) {
+            syn::visit::visit_item_impl(self, i);
+        }
+    }
+    fn visit_item_mod(&mut self, i: &'ast syn::ItemMod) {
+        if !is_cfg_test(&i.attrs) {
+            syn::visit::visit_item_mod(self, i);
+        }
+    }
+    fn visit_item_const(&mut self, i: &'ast syn::ItemConst) {
+        if !is_cfg_test(&i.attrs) {
+            syn::visit::visit_item_const(self, i);
+        }
+    }
+    fn visit_item_static(&mut self, i: &'ast syn::ItemStatic) {
+        if !is_cfg_test(&i.attrs) {
+            syn::visit::visit_item_static(self, i);
+        }
+    }
+    fn visit_item_trait(&mut self, i: &'ast syn::ItemTrait) {
+        if !is_cfg_test(&i.attrs) {
+            syn::visit::visit_item_trait(self, i);
+        }
+    }
+    fn visit_item_struct(&mut self, i: &'ast syn::ItemStruct) {
+        if !is_cfg_test(&i.attrs) {
+            syn::visit::visit_item_struct(self, i);
+        }
+    }
+    fn visit_item_enum(&mut self, i: &'ast syn::ItemEnum) {
+        if !is_cfg_test(&i.attrs) {
+            syn::visit::visit_item_enum(self, i);
+        }
+    }
+    fn visit_item_type(&mut self, i: &'ast syn::ItemType) {
+        if !is_cfg_test(&i.attrs) {
+            syn::visit::visit_item_type(self, i);
+        }
+    }
+    fn visit_impl_item_fn(&mut self, i: &'ast syn::ImplItemFn) {
+        if !is_cfg_test(&i.attrs) {
+            syn::visit::visit_impl_item_fn(self, i);
+        }
+    }
+    fn visit_stmt(&mut self, i: &'ast syn::Stmt) {
+        let attrs: &[Attribute] = match i {
+            syn::Stmt::Local(l) => &l.attrs,
+            syn::Stmt::Macro(m) => &m.attrs,
+            _ => &[],
+        };
+        if !is_cfg_test(attrs) {
+            syn::visit::visit_stmt(self, i);
+        }
+    }
+    fn visit_expr_method_call(&mut self, i: &'ast syn::ExprMethodCall) {
+        self.names.insert(i.method.to_string());
+        syn::visit::visit_expr_method_call(self, i);
+    }
+    fn visit_path(&mut self, i: &'ast syn::Path) {
+        for segment in &i.segments {
+            self.names.insert(segment.ident.to_string());
+        }
+        syn::visit::visit_path(self, i);
+    }
+    fn visit_member(&mut self, i: &'ast syn::Member) {
+        if let syn::Member::Named(n) = i {
+            self.names.insert(n.to_string());
+        }
+    }
+    fn visit_macro(&mut self, i: &'ast syn::Macro) {
+        self.tokens(&i.tokens);
+    }
+}
+
+/// The production crate roots that consume tine-store (rule 4): its own
+/// binaries, graph-features, and the desktop app. The wasm parser crate does
+/// not depend on tine-store.
+fn consumer_reach() -> BTreeSet<String> {
+    let store = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = store.parent().unwrap().parent().unwrap();
+    let mut roots = vec![
+        workspace.join("crates/tine-graph-features/src/lib.rs"),
+        workspace.join("src-tauri/src/lib.rs"),
+        workspace.join("src-tauri/src/main.rs"),
+    ];
+    for e in std::fs::read_dir(store.join("src/bin")).unwrap() {
+        roots.push(e.unwrap().path());
+    }
+    let mut reach = Reach::default();
+    for root in roots {
+        let (modules, _) = walk_from(&root, root.parent().unwrap());
+        for m in modules {
+            for item in &m.items {
+                // Nested modules are walked as their own entries.
+                if matches!(item, Item::Mod(_)) {
+                    continue;
+                }
+                syn::visit::Visit::visit_item(&mut reach, item);
+            }
+        }
+    }
+    reach.names
+}
+
+/// Rule 4: every function, constant and field on the surface has a production
+/// caller in a consuming crate, or is a tagged, `test-faults`-gated oracle.
+/// Callers are matched by name, so a same-named item elsewhere can mask a
+/// miss; types are reached through the signatures that carry them.
+#[test]
+fn surface_items_have_a_production_caller_or_are_gated_oracles() {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let production = surface(&src).items;
+    let gated: BTreeSet<String> = surface_with_faults(&src)
+        .items
+        .difference(&production)
+        .cloned()
+        .collect();
+    let file = SurfaceFile::read();
+    let misgated: Vec<&String> = file
+        .oracles
+        .iter()
+        .filter(|o| !gated.contains(*o))
+        .collect();
+    assert!(
+        misgated.is_empty(),
+        "tine-store rule 4: a `# test-oracle:` entry must be compiled only with \
+         `#[cfg(any(test, feature = \"test-faults\"))]`; exemplar `Subscription::try_recv`:\n{misgated:#?}"
+    );
+    let reach = consumer_reach();
+    let unreached: Vec<&String> = file
+        .entries()
+        .filter(|e| ["fn ", "const ", "field "].iter().any(|k| e.starts_with(k)))
+        .filter(|e| !file.oracles.contains(*e))
+        .filter(|e| {
+            let name = e.rsplit([':', '.', ' ']).next().unwrap();
+            !reach.contains(name)
+        })
+        .collect();
+    assert!(
+        unreached.is_empty(),
+        "tine-store rule 4: these surface items have no production caller in \
+         tine-graph-features, src-tauri or a tine-store binary. Make them private, or gate a \
+         test oracle with `#[cfg(any(test, feature = \"test-faults\"))]` and tag it \
+         `# test-oracle: <reason>` in SURFACE.txt (exemplar `Subscription::try_recv`):\n{unreached:#?}"
+    );
+}
+
+/// Words that promise cache, load or readiness state (rule 5).
+fn state_words(text: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    for token in text.split(|c: char| !c.is_alphanumeric()) {
+        // Split identifiers at `_` (already done) and at camel-case humps.
+        let mut word = String::new();
+        let mut parts = Vec::new();
+        for c in token.chars() {
+            if c.is_uppercase() && !word.is_empty() {
+                parts.push(std::mem::take(&mut word));
+            }
+            word.extend(c.to_lowercase());
+        }
+        parts.push(word);
+        for part in parts {
+            if ["cache", "ready", "readiness", "loaded", "generation"]
+                .iter()
+                .any(|k| part.starts_with(k))
+            {
+                words.push(part);
+            }
+        }
+    }
+    words
+}
+
+/// Rule 5 (arrival rule A, made mechanical): no public name or signature
+/// promises cache, load or readiness state, and no answer is `Option<bool>`
+/// "unknown". Docs that use those words to state a cost or an internal
+/// mechanism are listed with why they promise no caller-visible state.
+#[test]
+fn no_cache_or_readiness_state_on_the_surface() {
+    let s = surface(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src"));
+    let named: Vec<String> = s
+        .items
+        .iter()
+        .filter(|item| !item.starts_with("use "))
+        .filter_map(|item| {
+            let words = state_words(item);
+            let sig = s
+                .signatures
+                .get(item)
+                .map(|idents| state_words(&idents.join(" ")))
+                .unwrap_or_default();
+            (!words.is_empty() || !sig.is_empty()).then(|| format!("{item}: {words:?} {sig:?}"))
+        })
+        .collect();
+    assert!(
+        named.is_empty(),
+        "tine-store rule 5: a public name or signature promises cache/load/readiness state. \
+         Ask the domain question instead (exemplar `Store::may_carry_vcs_markers`):\n{named:#?}"
+    );
+    assert!(
+        s.option_bool.is_empty(),
+        "tine-store rule 5: `Option<bool>` answers \"unknown\"; answer the domain question \
+         conservatively instead (exemplar `Store::may_carry_vcs_markers`):\n{:#?}",
+        s.option_bool
+    );
+    let documented: BTreeSet<String> = s
+        .docs
+        .iter()
+        .filter(|(_, doc)| !state_words(doc).is_empty())
+        .map(|(item, _)| item.clone())
+        .collect();
+    if std::env::var_os("TINE_SHALLOW_PRINT").is_some() {
+        for item in &documented {
+            println!("rule5-doc {item}: {:?}", state_words(&s.docs[item]));
+        }
+    }
+    let allowed: BTreeSet<String> = RULE5_DOCS
+        .iter()
+        .map(|(item, reason)| {
+            assert!(!reason.is_empty());
+            (*item).to_owned()
+        })
+        .collect();
+    assert_eq!(
+        documented, allowed,
+        "tine-store rule 5: a public item's doc mentions cache/ready/loaded/generation. If it \
+         promises callers that state, make it a domain question (row 10); if it only states a \
+         cost or internal mechanism, list it in RULE5_DOCS with why"
+    );
+}
+
+/// Docs that mention cache/readiness vocabulary without exposing that state.
+const RULE5_DOCS: &[(&str, &str)] = &[
+    (
+        "fn store::Store::diagnostics",
+        "the diagnostics dump reports internal build state by design; no caller branches on it",
+    ),
+    (
+        "fn store::Store::journal_id",
+        "cost note: the id comes from the held day index, no disk read",
+    ),
+    (
+        "fn store::Store::may_carry_vcs_markers",
+        "the rule 5 exemplar: an unknown answer folds into the conservative `true`",
+    ),
+    (
+        "fn store::Store::page",
+        "locking and publication mechanism; the read returns the page, never a load state",
+    ),
+    (
+        "fn store::Store::page_named",
+        "states when the call waits for the graph; it returns the page, never a load state",
+    ),
+    (
+        "fn store::Store::refresh",
+        "cost and recovery note; returns the change-feed revision",
+    ),
+    (
+        "fn store::Store::whole_graph",
+        "states when the call waits for the initial parse; it returns a view or LoadError",
+    ),
+    (
+        "fn store::WholeGraph::block_ref_counts",
+        "cost note: the first read materializes the map, later reads clone it",
+    ),
+    (
+        "fn store::WholeGraph::query_ir",
+        "cost note: the registry is built once per published graph",
+    ),
+];

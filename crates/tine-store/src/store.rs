@@ -215,7 +215,7 @@ pub enum ChangeKind {
     Removed,
 }
 
-/// One published graph change; subscriptions deliver generations in order.
+/// One published graph change; subscriptions deliver revisions in order.
 /// `Change` is `Send + Sync` and can cross worker-thread boundaries.
 /// Its Serialize implementation emits a bounded derived-answer wire: `rev`,
 /// `inventoryChanged` (name/alias/reference-name or unreadable inventory inputs),
@@ -225,7 +225,7 @@ pub enum ChangeKind {
 /// materialization. Initial publication may include all counts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Change {
-    /// Generation after this change.
+    /// Graph revision after this change.
     pub graph_rev: GraphRev,
     /// Whether this store or an external actor supplied the final bytes in
     /// this publication. Rollback can emit separate Own and External changes.
@@ -626,8 +626,10 @@ impl Subscription {
         }
     }
 
-    /// Take the next queued change without waiting, or `None` when none is ready.
-    /// Returns a typed end reason after close or displacement.
+    /// Take the next queued change without waiting, or `None` when none is
+    /// queued. Returns a typed end reason after close or displacement. A test
+    /// oracle (SURFACE.txt rule 4): production waits with `recv`.
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn try_recv(&self) -> Result<Option<Change>, SubscriptionEnd> {
         let mut state = self.feed.state.lock().unwrap();
         if state.closed {

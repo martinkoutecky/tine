@@ -47,14 +47,16 @@ pub struct RestoreFile {
 /// Completed work and recovery locations, including after a partial failure.
 #[derive(Debug)]
 pub struct RestoreReport {
-    /// Number of input files copied into the graph.
+    /// Number of input files copied into the graph. A test oracle (SURFACE.txt
+    /// rule 4): the app reports recovery locations, never this count.
+    #[cfg(any(test, feature = "test-faults"))]
     pub restored: u64,
     /// Same-filesystem recovery directories holding retired files.
     pub recovery: Vec<PathBuf>,
     /// Live targets left in place when no-replace copying found a concurrent
     /// target. Its bytes need not differ from the restore baseline.
     pub kept_external: Vec<FileId>,
-    /// Generation published for a changed disk state, or the current generation
+    /// Revision published for a changed disk state, or the current revision
     /// if restore made no change. During a failed initial load this is the
     /// unchanged current revision even if restore wrote files: no view covers
     /// those writes until recovery's first view does.
@@ -165,6 +167,7 @@ impl Store {
     ) -> Result<RestoreReport, RestoreFailed> {
         let _writer = self.writer.lock().unwrap();
         let mut done = RestoreReport {
+            #[cfg(any(test, feature = "test-faults"))]
             restored: 0,
             recovery: Vec::new(),
             kept_external: Vec::new(),
@@ -383,7 +386,10 @@ impl Store {
                     return Err(fail(phase, error, done));
                 }
                 restored.insert(PathBuf::from(&file.rel));
-                done.restored += 1;
+                #[cfg(any(test, feature = "test-faults"))]
+                {
+                    done.restored += 1;
+                }
             }
             let live_dir = if live_prefix.is_empty() {
                 Path::new("")
@@ -439,7 +445,10 @@ impl Store {
                 return Err(fail("restore config failed", error, done));
             }
             changed = true;
-            done.restored += 1;
+            #[cfg(any(test, feature = "test-faults"))]
+            {
+                done.restored += 1;
+            }
         }
         if changed {
             self.graph.invalidate_cache();

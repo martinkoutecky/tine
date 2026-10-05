@@ -60,9 +60,10 @@ pages conflicted, and tells the user which files need inspection before retry.
 
 A held `WholeGraph` view does not wait for later writers. Acquiring the first
 view with `whole_graph()` can wait for the initial parse. The public operation
-surface is 38 combined operations: 29 `Store` methods and nine `Transaction`
-methods. The graph-command boundary guard lives at
-`crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
+surface is 40 operations: the methods of `Store` and `Transaction` plus every
+public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
+concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
+The graph-command boundary guard lives at `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
 `crates/tine-store/tests/client_root_boundary.rs`.
 
 Initial graph loading is not exposed as a state (the readiness probe
