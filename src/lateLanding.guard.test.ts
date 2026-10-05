@@ -110,7 +110,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "setStartOfWeek", "editAssetExternal", "trashAsset", "emptyAssetTrash", "trashJournalFile",
   "applyJournalFilenameMigrations",
   "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveLiveConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
-  "pasteImage", "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
+  "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
   "writeHighlights", "writePdfViewState", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setCaptureEnterFiles", "setLinkFirstMatch", "setWatchMode", "restoreBackup",
   "saveSession", "saveWorkspaces", "storeDraft", "retireDraft", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
@@ -362,7 +362,7 @@ describe("I-20 owned backend completion syntax", () => {
     expect(violations, "I-9: durable writes use writeOwned; exemplar Settings BackupsTab.saveKeep").toEqual([]);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().setBackupKeep(3))")).toHaveLength(1);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().renamePage('A', 'B', 'rename-page'))")).toHaveLength(1);
-    expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().pasteImage(1))")).toHaveLength(1);
+    expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().importAsset('a.png', undefined, 1))")).toHaveLength(1);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().writeHighlights('a.pdf', 'A', [], [], 'replace-page', 1))")).toHaveLength(1);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().openPdf('a.pdf', 'A', 1))")).toHaveLength(0);
   });

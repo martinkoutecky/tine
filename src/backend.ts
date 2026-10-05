@@ -50,7 +50,6 @@ import type {
 } from "./types";
 import type { GraphSources, GraphFolderPickResult, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
 import { dbg } from "./debug";
-import { assetFileName } from "./media";
 import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
 import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
@@ -480,7 +479,6 @@ export interface Backend {
    * Return null if clipboard access/conversion yields no image; save failures
    * reject. A saved image returns its assets-relative name. Cost O(image bytes +
    * collision candidates). */
-  pasteImage(bindingGeneration: number): Promise<string | null>;
   /** Decode an image off the OS clipboard to PNG bytes WITHOUT saving (the
    *  caller seeds the render cache + writes to disk in the background, so the
    *  pasted image appears instantly). Null if the clipboard has no image. */
@@ -1135,11 +1133,6 @@ class TauriBackend implements Backend {
     } catch {
       return null; // no image in clipboard, or plugin unavailable
     }
-  }
-  async pasteImage(bindingGeneration: number): Promise<string | null> {
-    const bytes = await this.readClipboardImage();
-    if (!bytes) return null;
-    return await this.saveAsset(assetFileName(), bytes, bindingGeneration);
   }
   assetTrashStats() {
     return this.call<TrashStats>("asset_trash_stats");

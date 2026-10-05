@@ -1358,9 +1358,6 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       mockAssets[name] = bytes;
       return name;
     },
-    async pasteImage(): Promise<string | null> {
-      return null; // no OS clipboard in the browser mock
-    },
     async readClipboardImage(): Promise<Uint8Array | null> {
       return null; // no OS clipboard in the browser mock
     },
