@@ -223,13 +223,13 @@
         { "class": "exact-safety-interoperability", "userOutcome": "PDF asset switches and target navigation isolate reader state without crashes or runaway resource use.", "blocking": true, "authority": "Tine PDF interoperability and reader resource-safety contract" }
       ],
       "acceptableVariations": ["Reader layout, coordinate normalization, theme presentation, and annotation menu placement may evolve while the persisted interoperability outcomes remain intact.", "Reader tools may move from the toolbar into a visible overflow menu in narrow panes.", "Highlight references may open in a companion notes tab; returning to Journals need not use Back history.", "Closing one PDF resource may reveal a different retained PDF tab."],
-      "nonRequirements": ["Exact drag threshold.", "Exact theme palette/RGB.", "Exact CSS filter/DOM strategy.", "Outline and Area being direct toolbar buttons at every pane width.", "A newly opened notes tab inheriting journal back-history.", "Closing one reader leaving no other PDF viewer mounted."],
+      "nonRequirements": ["Exact drag threshold.", "Exact theme palette/RGB.", "Exact CSS filter/DOM strategy.", "Outline and Area being direct toolbar buttons at every pane width.", "A newly opened notes tab inheriting journal back-history.", "Closing one reader leaving no other PDF viewer mounted.", "Writing reader page or zoom into the sidecar :extra: since GH #577 (Martin 2026-10-04) reading and zooming write no graph files, the position lives in the pane route, and an existing :extra still loads."],
       "stability": "stable"
     },
     "scripts/e2e-pdf-ownership.mjs": {
       "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "An in-place graph switch and ordinary safe close persist PDF work only through the window-local graph generation that created it.", "blocking": true, "authority": "Tine PDF graph-owner generation and safe-close persistence contract" }],
       "acceptableVariations": ["PDF rendering and graph-switch presentation may vary while the old graph is drained, the viewer is remounted, and sidecar bytes remain owner-isolated."],
-      "nonRequirements": ["Exact PDF pixels, graph-switch animation, or debounce completion time."],
+      "nonRequirements": ["Exact PDF pixels, graph-switch animation, or debounce completion time.", "Writing the reader position into the sidecar: since GH #577 (Martin 2026-10-04) it persists in the creating graph's session route instead, and reading or zooming leaves both sidecars byte-identical."],
       "stability": "stable"
     },
     "scripts/e2e-plugins.mjs": {
