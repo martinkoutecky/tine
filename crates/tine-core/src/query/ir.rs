@@ -121,27 +121,6 @@ impl ValueType {
 }
 
 impl Attr {
-    /// The fixed type of an attribute. `Value` (a property atom) has no fixed
-    /// type — it is the property's effective type (§6) and is `None` here.
-    pub fn fixed_type(self) -> Option<ValueType> {
-        match self {
-            Attr::Content
-            | Attr::Task
-            | Attr::Priority
-            | Attr::Name
-            | Attr::Namespace
-            | Attr::Key => Some(ValueType::Text),
-            Attr::Scheduled
-            | Attr::Deadline
-            | Attr::Day
-            | Attr::CreatedAt
-            | Attr::LastModifiedAt => Some(ValueType::Date),
-            Attr::Journal | Attr::UsedAsTag => Some(ValueType::Checkbox),
-            Attr::AtomCount => Some(ValueType::Number),
-            Attr::Value => None,
-        }
-    }
-
     /// The TQL spelling of this attribute on the row it belongs to.
     pub fn tql_name(self) -> &'static str {
         match self {

@@ -391,11 +391,11 @@ fn tql_rel(rel: Rel, quant: Quant, pred: &Filter, through_page: bool) -> String 
             Filter::Leaf { leaf } => tql_leaf(leaf, true),
             other => tql_expr(other, Prec::Atom),
         },
-        Rel::Refs => match single_name(pred) {
+        Rel::Refs => match pred.ref_name() {
             Some(name) => format!("[[{name}]]"),
             None => format!("any(refs, {})", tql_expr(pred, Prec::Or)),
         },
-        Rel::Tags => match single_name(pred) {
+        Rel::Tags => match pred.ref_name() {
             Some(name) => format!("tag({})", sql_string(&name)),
             None => format!("any(tags, {})", tql_expr(pred, Prec::Or)),
         },
@@ -492,21 +492,6 @@ fn single_value_equality(atom: &Filter) -> Option<String> {
             leaf:
                 Leaf::Attr {
                     attr: Attr::Value,
-                    op: CmpOp::Eq,
-                    value: Value::Text { text },
-                },
-        } => Some(text.clone()),
-        _ => None,
-    }
-}
-
-/// The `name = 'x'` predicate a ref or tag element leaf carries.
-fn single_name(pred: &Filter) -> Option<String> {
-    match pred {
-        Filter::Leaf {
-            leaf:
-                Leaf::Attr {
-                    attr: Attr::Name,
                     op: CmpOp::Eq,
                     value: Value::Text { text },
                 },
@@ -770,7 +755,7 @@ fn og_rel(
         return None;
     }
     match rel {
-        Rel::Refs => Some(format!("[[{}]]", single_name(pred)?)),
+        Rel::Refs => Some(format!("[[{}]]", pred.ref_name()?)),
         Rel::Page => match pred {
             Filter::Leaf { leaf } => og_leaf(leaf, anchor, true),
             _ => None,
