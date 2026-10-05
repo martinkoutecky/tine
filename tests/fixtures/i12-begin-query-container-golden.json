@@ -1,0 +1,121 @@
+{
+  "comment": "Whole #+BEGIN_QUERY container golden (I-12). TS: components/BeginQuery.tsx WHOLE_BEGIN_QUERY (authoritative regexp). Rust: tine-graph-features render.rs whole_begin_query_payload. Each case: [block raw, payload or null].",
+  "cases": [
+    [
+      "#+BEGIN_QUERY\nx\n#+END_QUERY",
+      "x"
+    ],
+    [
+      "#+BEGIN_QUERY\nx\n#+END_QUERY\n",
+      "x"
+    ],
+    [
+      "#+BEGIN_QUERY\nx\n#+END_QUERY\r\n",
+      "x"
+    ],
+    [
+      "#+BEGIN_QUERY\nx\n#+END_QUERY\r",
+      "x"
+    ],
+    [
+      "#+BEGIN_QUERY\n\n#+END_QUERY",
+      ""
+    ],
+    [
+      "#+BEGIN_QUERY\n#+END_QUERY",
+      null
+    ],
+    [
+      "#+begin_query\r\nx\r\n#+end_query  ",
+      "x"
+    ],
+    [
+      "  #+BEGIN_QUERY \t\nx\n \t#+END_QUERY",
+      "x"
+    ],
+    [
+      "#+BEGIN_QUERY\rx\r#+END_QUERY",
+      "x"
+    ],
+    [
+      "#+BEGIN_QUERY\n#+END_QUERY\n#+END_QUERY",
+      "#+END_QUERY"
+    ],
+    [
+      "#+BEGIN_QUERY x\ny\n#+END_QUERY",
+      null
+    ],
+    [
+      "#+BEGIN_QUERY\nx\n#+END_QUERY\n\n",
+      null
+    ],
+    [
+      "#+BEGIN_QUERY\nx\n#+END_QUERYZ",
+      null
+    ],
+    [
+      "#+BEGIN_QUERY\nx #+END_QUERY",
+      null
+    ],
+    [
+      "\n#+BEGIN_QUERY\nx\n#+END_QUERY",
+      null
+    ],
+    [
+      "#+BEGIN_QUERY\n  \n#+END_QUERY",
+      "  "
+    ],
+    [
+      " #+BEGIN_QUERY\nx\n#+END_QUERY",
+      null
+    ],
+    [
+      "#+BEGIN_QUERY\nx\n#+END_QUERY \n",
+      "x"
+    ],
+    [
+      "#+BEGIN_QUERY\nx\n#+END_QUERY\n ",
+      null
+    ],
+    [
+      "#+BEGIN_QUERY\na\n#+END_QUERY\nb\n#+END_QUERY",
+      "a\n#+END_QUERY\nb"
+    ],
+    [
+      "#+BEGIN_QUERY\r\n\r\n#+END_QUERY",
+      ""
+    ],
+    [
+      "#+BEGIN_QUERY\nx\r\n\r\n#+END_QUERY",
+      "x\r\n"
+    ],
+    [
+      "#+BEGIN_QUERY\n{:title \"é\"}\n#+END_QUERY",
+      "{:title \"é\"}"
+    ],
+    [
+      "#+BEGIN_QUERY\n#+END_QUERY\n",
+      null
+    ],
+    [
+      "#+BEGIN_QUERYX\nx\n#+END_QUERY",
+      null
+    ],
+    [
+      "#+BEGIN_QUERY\nx\n\t#+End_Query\t",
+      "x"
+    ],
+    [
+      "",
+      null
+    ],
+    [
+      "#+BEGIN_QUERY\nx\n#+END_QUERY ",
+      null
+    ],
+    [
+      "#+BEGIN_QUERY x\n#+END_QUERY",
+      null
+    ]
+  ]
+}

@@ -8,7 +8,8 @@ import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { setDoc } from "../document/model";
 import type { BlockDto, RefGroup } from "../types";
 import { Block } from "./Block";
-import { inspectBeginQuery } from "./BeginQuery";
+import { inspectBeginQuery, wholeBeginQueryPayload } from "./BeginQuery";
+import containerGolden from "../../tests/fixtures/i12-begin-query-container-golden.json";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { RefBlocks } from "./RefBlocks";
 
@@ -213,4 +214,12 @@ it("shares decoded titles, discards and input refusals with native export", () =
   });
   expect(inspect(`{:query ${query} :inputs nope}`)).toEqual({ kind: "unsupported", reason: "expected :inputs to be a vector" });
   expect(inspect(`{#_ [:title "hidden"] :query ${query}}`)).toEqual({ kind: "supported", query });
+});
+
+describe("I-12 BEGIN_QUERY container", () => {
+  it("reads the same container payloads as the native renderer (shared golden)", () => {
+    for (const [raw, payload] of containerGolden.cases as [string, string | null][]) {
+      expect(wholeBeginQueryPayload(raw), JSON.stringify(raw)).toBe(payload);
+    }
+  });
 });
