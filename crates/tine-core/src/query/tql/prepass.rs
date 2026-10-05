@@ -3,6 +3,7 @@
 //! into SQLite expression text before [`sqlparser`] sees it.
 
 use super::*;
+use crate::query::macro_extent::sql_quoted_end;
 
 // ---------------------------------------------------------------------------
 // 4.2.1 Pre-pass
@@ -214,14 +215,8 @@ fn desugar_mapped(
                 out.push(bytes[i] as char);
                 i += 1;
             }
-            b'\'' => {
-                let end = literal_end(text, i);
-                out.push_str(&text[i..end]);
-                prev = Prev::Other;
-                i = end;
-            }
-            b'"' => {
-                let end = double_quoted_end(text, i);
+            b'\'' | b'"' => {
+                let end = sql_quoted_end(text, i, bytes[i]);
                 out.push_str(&text[i..end]);
                 prev = Prev::Other;
                 i = end;
@@ -383,24 +378,6 @@ pub(super) fn next_code_byte(text: &str, mut at: usize) -> Option<usize> {
     }
 }
 
-/// End offset for a double-quoted SQL token, including doubled quotes. The
-/// pre-pass must not recognize a quantifier name inside quoted text.
-pub(super) fn double_quoted_end(text: &str, start: usize) -> usize {
-    let bytes = text.as_bytes();
-    let mut i = start + 1;
-    while i < bytes.len() {
-        if bytes[i] == b'"' {
-            if bytes.get(i + 1) == Some(&b'"') {
-                i += 2;
-                continue;
-            }
-            return i + 1;
-        }
-        i += 1;
-    }
-    bytes.len()
-}
-
 pub(super) fn emit_page_name(out: &mut String, inner: &str, value_position: bool) {
     let quoted = format!("'{}'", inner.replace('\'', "''"));
     if value_position {
@@ -410,23 +387,6 @@ pub(super) fn emit_page_name(out: &mut String, inner: &str, value_position: bool
         out.push_str(&quoted);
         out.push(')');
     }
-}
-
-/// The end offset (exclusive) of the `'…'` literal starting at `start`.
-pub(super) fn literal_end(text: &str, start: usize) -> usize {
-    let bytes = text.as_bytes();
-    let mut i = start + 1;
-    while i < bytes.len() {
-        if bytes[i] == b'\'' {
-            if bytes.get(i + 1) == Some(&b'\'') {
-                i += 2;
-                continue;
-            }
-            return i + 1;
-        }
-        i += 1;
-    }
-    bytes.len()
 }
 
 /// `today` is a vocabulary identifier; every other relative date is quoted. An

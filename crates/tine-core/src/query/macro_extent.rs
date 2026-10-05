@@ -125,7 +125,7 @@ fn scan_work(_bytes: usize) {
 fn protected_end(text: &str, at: usize, edn: bool) -> Option<usize> {
     match text.as_bytes()[at] {
         b'"' if edn => Some(edn_string_end(text, at)),
-        b'\'' if !edn => Some(tql_string_end(text, at)),
+        b'\'' if !edn => Some(sql_quoted_end(text, at, b'\'')),
         b';' if edn => Some(text[at..].find('\n').map_or(text.len(), |end| at + end)),
         b'[' if text.as_bytes().get(at + 1) == Some(&b'[') => Some(page_ref_end(text, at)),
         _ => None,
@@ -138,14 +138,15 @@ fn edn_string_end(text: &str, at: usize) -> usize {
     crate::query_edn::string_end(text, at).unwrap_or(text.len())
 }
 
-/// Index just past a TQL single-quoted string opening at `at`; end of input if
-/// unterminated. SQL doubles the quote (`''`) rather than backslash-escaping it.
-pub(super) fn tql_string_end(text: &str, at: usize) -> usize {
+/// Index just past an SQL quoted token (`'…'` literal or `"…"` identifier)
+/// opening at `at`; end of input if unterminated. SQL doubles the quote rather
+/// than backslash-escaping it.
+pub(super) fn sql_quoted_end(text: &str, at: usize, quote: u8) -> usize {
     let bytes = text.as_bytes();
     let mut j = at + 1;
     while j < bytes.len() {
-        if bytes[j] == b'\'' {
-            if bytes.get(j + 1) == Some(&b'\'') {
+        if bytes[j] == quote {
+            if bytes.get(j + 1) == Some(&quote) {
                 j += 2;
                 continue;
             }
@@ -314,4 +315,37 @@ fn macro_extents(raw: &str, limit: usize) -> Vec<MacroExtent> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod sql_quoted_end_tests {
+    use super::sql_quoted_end;
+
+    #[test]
+    fn one_scanner_closes_both_sql_quote_kinds_and_doubles_through_escapes() {
+        for quote in [b'\'', b'"'] {
+            let q = quote as char;
+            let closed = format!("{q}a{q}{q}b{q} tail");
+            assert_eq!(
+                sql_quoted_end(&closed, 0, quote),
+                6,
+                "doubled quote stays inside"
+            );
+            let plain = format!("x {q}ab{q}c");
+            assert_eq!(sql_quoted_end(&plain, 2, quote), 6);
+            let open = format!("{q}never closed");
+            assert_eq!(
+                sql_quoted_end(&open, 0, quote),
+                open.len(),
+                "unterminated runs to the end"
+            );
+            let trailing_double = format!("{q}a{q}{q}");
+            assert_eq!(
+                sql_quoted_end(&trailing_double, 0, quote),
+                trailing_double.len()
+            );
+        }
+        // The other quote kind is ordinary text inside a literal.
+        assert_eq!(sql_quoted_end("'a\"b'", 0, b'\''), 5);
+    }
 }
