@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { remote } from "webdriverio";
-import { openPageByName, openJournals } from "./lib/e2e-navigation.mjs";
+import { openPageByName, openJournals, switcherPageRows } from "./lib/e2e-navigation.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
@@ -62,6 +62,30 @@ async function modifiedClick(selector, modifier) {
   await browser.releaseActions();
 }
 
+// GH #623 comment 16: the reporter saw the alias listed as its OWN result
+// beside the owner (the alias text is referenced on another page) and that
+// row opened a page named after the alias. The page rows offered for an alias
+// query must be the owner, never a row called by the alias.
+async function expectAliasRowsAreTheOwner(owner, alias) {
+  await openJournals(browser);
+  await browser.keys(["Control", "k"]);
+  const input = await browser.$(".switcher-input");
+  await input.waitForExist({ timeout: 8_000 });
+  await input.setValue(alias);
+  let rows = [];
+  await browser.waitUntil(async () => {
+    const searching = await browser.execute(() => Boolean(document.querySelector('#switcher-results [role="status"]')));
+    rows = await switcherPageRows(browser);
+    return !searching && rows.length > 0;
+  }, { timeout: 8_000, interval: 150, timeoutMsg: `no page row offered for ${alias}` });
+  const own = rows.filter((name) => name.toLowerCase() === alias.normalize("NFC").toLowerCase());
+  if (own.length || rows[0] !== owner.normalize("NFC")) {
+    throw new Error(`alias ${JSON.stringify(alias)} offered ${JSON.stringify(rows)}; expected ${JSON.stringify(owner)} first and no row named by the alias`);
+  }
+  await browser.keys(["Escape"]);
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".switcher-input")), { timeout: 5_000 });
+}
+
 async function expectSidebar(name, body) {
   await browser.waitUntil(() => browser.execute((wanted, text) => {
     const item = [...document.querySelectorAll(".rs-item")].find((node) => node.querySelector(".rs-item-title")?.textContent?.trim() === wanted);
@@ -79,6 +103,7 @@ try {
     ["Fullwidth alias owner with a long canonical name", ["Wide one", "Wide two"], "Fullwidth owner body"],
   ]) {
     for (const alias of aliases) {
+      await expectAliasRowsAreTheOwner(owner, alias);
       await openJournals(browser);
       await openPageByName(browser, owner, { query: alias, timeout: 8_000 });
       const visible = await browser.$(".main-content .page-blocks").getText();

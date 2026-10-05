@@ -3,7 +3,7 @@
   "scenarios": {
     "scripts/e2e-gh623-link-navigation.mjs": {
       "contracts": [
-        {"class":"core-operation","userOutcome":"Ctrl+K activations using ASCII and fullwidth comma-separated aliases open the owning page's title and body without creating alias files or changing page bytes.","blocking":false},
+        {"class":"core-operation","userOutcome":"Ctrl+K activations using ASCII and fullwidth comma-separated aliases offer the owning page first and never a separate row named after the alias (also when the alias is referenced on another page), and open the owning page's title and body without creating alias files or changing page bytes.","blocking":false},
         {"class":"stateful-ux","userOutcome":"Native Shift+click opens page references in the right sidebar from journals, a named page, the sidebar and a split pane; the named source page stays open.","blocking":false}
       ],
       "acceptableVariations":["Alias search ranking, tab labels, sidebar item order, wrapping and navigation timing may vary while final destinations remain correct."],
