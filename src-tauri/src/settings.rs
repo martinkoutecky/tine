@@ -1,3 +1,4 @@
+use crate::device_io::read_app_text;
 use crate::state::{slot_for_context, GraphContext};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -24,7 +25,7 @@ pub(crate) fn settings_path(app: &tauri::AppHandle) -> Option<PathBuf> {
 }
 
 fn app_bool_at(path: &std::path::Path, key: &str, default: bool) -> bool {
-    std::fs::read_to_string(path)
+    read_app_text(path)
         .ok()
         .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
         .and_then(|value| value.get(key).and_then(serde_json::Value::as_bool))
@@ -177,7 +178,7 @@ pub(crate) fn approved_external_assets(
 ) -> Option<PathBuf> {
     let key = graph_root.display().to_string();
     settings_path(app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|p| read_app_text(&p).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|json| {
             external_assets_approvals(&json)
@@ -215,7 +216,7 @@ pub(crate) fn remember_graph(app: &tauri::AppHandle, path: &str) -> Result<(), S
 #[tauri::command]
 pub(crate) fn list_known_graphs(app: tauri::AppHandle) -> Vec<KnownGraph> {
     settings_path(&app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|p| read_app_text(&p).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .map(|json| parse_known_graphs(&json))
         .unwrap_or_default()
@@ -261,7 +262,7 @@ pub(crate) async fn reveal_known_graph(path: String, app: tauri::AppHandle) -> R
 
 pub(crate) fn last_graph_path(app: &tauri::AppHandle) -> Option<String> {
     settings_path(app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|p| read_app_text(&p).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|json| {
             json.get("last_graph_path")
@@ -275,7 +276,7 @@ pub(crate) fn last_graph_path(app: &tauri::AppHandle) -> Option<String> {
 /// Cmd/Ctrl+Enter files.
 fn capture_enter_files(app: &tauri::AppHandle) -> bool {
     settings_path(app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|p| read_app_text(&p).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|v| v.get("capture_enter_files").and_then(|x| x.as_bool()))
         .unwrap_or(false)
@@ -299,7 +300,7 @@ pub(crate) fn set_capture_enter_files(value: bool, app: tauri::AppHandle) -> Res
 /// for the three-mode `linkAutocompletePolicy` string key, which is the only writer.
 fn link_first_match(app: &tauri::AppHandle) -> bool {
     settings_path(app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|p| read_app_text(&p).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|v| v.get("link_first_match").and_then(|x| x.as_bool()))
         .unwrap_or(false)
@@ -315,7 +316,7 @@ pub(crate) fn get_link_first_match(app: tauri::AppHandle) -> bool {
 /// local because it's a feel preference, not graph data.
 fn smooth_scroll(app: &tauri::AppHandle) -> bool {
     settings_path(app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|p| read_app_text(&p).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|v| v.get("smooth_scroll").and_then(|x| x.as_bool()))
         .unwrap_or(false)
@@ -377,7 +378,7 @@ fn parse_notices(text: &str) -> serde_json::Value {
 }
 
 fn load_notices_at(path: &std::path::Path) -> serde_json::Value {
-    match std::fs::read_to_string(path) {
+    match read_app_text(path) {
         Ok(text) => parse_notices(&text),
         Err(error) => {
             // Recovery over refusal for disposable notices, as on master.
@@ -463,7 +464,7 @@ pub(crate) fn set_app_bool(
 #[tauri::command]
 pub(crate) fn get_app_string(key: String, default: String, app: tauri::AppHandle) -> String {
     settings_path(&app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|p| read_app_text(&p).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|v| v.get(&key).and_then(|x| x.as_str().map(str::to_string)))
         .unwrap_or(default)
@@ -640,7 +641,7 @@ fn load_workspaces_at(path: &std::path::Path, session: &std::path::Path) -> Resu
     let _guard = WORKSPACES_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    match std::fs::read_to_string(path) {
+    match read_app_text(path) {
         Ok(data) => {
             validate_workspaces_json(&data)?;
             Ok(data)
@@ -686,7 +687,7 @@ pub(crate) fn save_workspaces(
 // A missing session is fresh state; a disk/permission failure must not publish
 // a blank workspace over state that still exists. Shared by restore and migration.
 fn read_optional_session(path: &std::path::Path) -> std::io::Result<Option<String>> {
-    match std::fs::read_to_string(path) {
+    match read_app_text(path) {
         Ok(text) => Ok(Some(text)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
@@ -1093,6 +1094,23 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("tine-settings.json"), "{error}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
+    }
+
+    #[test]
+    fn an_oversize_session_is_an_error_not_a_blank_workspace() {
+        // I-22: the session read is bounded; a damaged huge file is reported
+        // like any unreadable session, never loaded whole and never "missing".
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join("session.json");
+        std::fs::File::create(&session)
+            .unwrap()
+            .set_len(33 * 1024 * 1024)
+            .unwrap();
+        let error = read_optional_session(&session).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(read_optional_session(&dir.path().join("none"))
+            .unwrap()
+            .is_none());
     }
 
     #[test]

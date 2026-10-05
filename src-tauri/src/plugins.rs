@@ -425,15 +425,11 @@ fn unique_install_dir(root: &Path, id: &str, version: &str) -> Result<(String, P
     Err("could not allocate a private plugin install directory".to_string())
 }
 
-/// Reads at most `max` bytes of `path`; a larger file is `Ok(None)` without
-/// reading past the limit (I-22: size check before read).
+/// Reads at most `max` bytes of a regular file; a larger file is `Ok(None)`
+/// without reading past the limit, and a FIFO or device is refused without
+/// waiting on a writer (I-22: the plugin directory is imported content).
 fn read_bounded(path: &Path, max: usize) -> std::io::Result<Option<Vec<u8>>> {
-    use std::io::Read;
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)?
-        .take(max as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    Ok((bytes.len() <= max).then_some(bytes))
+    crate::device_io::read_bounded(path, max as u64)
 }
 
 fn read_manifest_bounded(path: &Path) -> std::io::Result<Option<String>> {
@@ -1308,6 +1304,26 @@ mod tests {
             read_manifest_bounded(&ok.join("manifest.json")).unwrap(),
             None
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pipe_where_a_plugin_manifest_belongs_is_refused_without_waiting() {
+        // I-22 (imported plugin directory): a FIFO named manifest.json must not
+        // block the listing on a writer that never comes.
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("manifest.json");
+        let name = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader = fifo.clone();
+        std::thread::spawn(move || tx.send(read_manifest_bounded(&reader).is_err()).unwrap());
+        let refused = rx.recv_timeout(std::time::Duration::from_secs(2));
+        if refused.is_err() {
+            // Release the stuck reader so the test process can exit.
+            let _ = std::fs::OpenOptions::new().write(true).open(&fifo);
+        }
+        assert_eq!(refused, Ok(true), "FIFO manifest read waited for a writer");
     }
 }
 

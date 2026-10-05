@@ -46,25 +46,40 @@ fn open_regular_file(path: &Path) -> io::Result<fs::File> {
     Ok(file)
 }
 
-/// Reads a caller-selected regular file ([`open_regular_file`]); the caller
-/// enforces graph scope. Reads never more than `max` bytes: the read stops at
-/// `max + 1` so a file that grows (or lies about its length) after the check
-/// cannot allocate past the limit (I-22).
-pub(crate) fn read_regular_file_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
+/// Reads a regular file ([`open_regular_file`]) and never more than `max`
+/// bytes: the read stops at `max + 1` so a file that grows (or lies about its
+/// length) after the check cannot allocate past the limit (I-22). A larger file
+/// is `Ok(None)`. The one bounded-read door: plugin files, app-data JSON and
+/// caller-selected images all read through it.
+pub(crate) fn read_bounded(path: &Path, max: u64) -> io::Result<Option<Vec<u8>>> {
     use std::io::Read;
-    let file = open_regular_file(path).map_err(|e| e.to_string())?;
-    let meta = file.metadata().map_err(|e| e.to_string())?;
-    if meta.len() > max {
-        return Err("image too large".into());
+    let file = open_regular_file(path)?;
+    if file.metadata()?.len() > max {
+        return Ok(None);
     }
     let mut bytes = Vec::new();
-    file.take(max + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| e.to_string())?;
-    if bytes.len() as u64 > max {
-        return Err("image too large".into());
-    }
-    Ok(bytes)
+    file.take(max + 1).read_to_end(&mut bytes)?;
+    Ok((bytes.len() as u64 <= max).then_some(bytes))
+}
+
+/// [`read_bounded`] for a caller-selected image; the caller enforces graph scope.
+pub(crate) fn read_regular_file_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
+    read_bounded(path, max)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "image too large".into())
+}
+
+/// Reads app-data text (settings, session, workspaces) through [`read_bounded`].
+/// Threat scenario (disk error / interrupted write / external editor): a
+/// damaged or replaced file must not be read whole into memory or hang on a
+/// FIFO. Over the limit is `InvalidData`, so callers keep their existing
+/// "unreadable" handling.
+pub(crate) fn read_app_text(path: &Path) -> io::Result<String> {
+    /// Far above any real session, far below an allocation hazard.
+    const MAX_APP_TEXT_BYTES: u64 = 32 * 1024 * 1024;
+    let bytes = read_bounded(path, MAX_APP_TEXT_BYTES)?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "file too large"))?;
+    String::from_utf8(bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
 /// Device source errors remain distinct so the command can preserve its wire text.
@@ -172,6 +187,54 @@ mod tests {
         worker.join().unwrap();
         assert_eq!(result.unwrap_err(), "not a file");
         assert!(was_quick, "FIFO read waited for a writer");
+    }
+
+    #[test]
+    fn app_text_read_refuses_an_oversize_file_without_reading_it() {
+        // I-22 (disk error / replaced file): a sparse 33 MiB "session" is refused
+        // from its length, as InvalidData so callers keep their unreadable path.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.json");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(33 * 1024 * 1024).unwrap();
+        assert_eq!(
+            read_app_text(&path).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        fs::write(&path, "{}").unwrap();
+        assert_eq!(read_app_text(&path).unwrap(), "{}");
+        assert_eq!(
+            read_app_text(&dir.path().join("missing"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn app_text_read_refuses_a_fifo_without_waiting_for_a_writer() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("tine-settings.json");
+        let name = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = mpsc::channel();
+        let reader = fifo.clone();
+        let worker = std::thread::spawn(move || {
+            tx.send(read_app_text(&reader).map_err(|e| e.to_string()))
+                .unwrap();
+        });
+        let quick = rx.recv_timeout(Duration::from_millis(100));
+        if quick.is_err() {
+            let _writer = fs::OpenOptions::new().write(true).open(&fifo).unwrap();
+        }
+        let was_quick = quick.is_ok();
+        let result = quick.unwrap_or_else(|_| rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        worker.join().unwrap();
+        assert_eq!(result.unwrap_err(), "not a file");
+        assert!(was_quick, "app-data read waited for a writer");
     }
 
     #[cfg(target_os = "linux")]
@@ -320,7 +383,7 @@ fn atomic_update_with_hooks(
 ) -> io::Result<()> {
     let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     for attempt in 0..4 {
-        let baseline = match fs::read_to_string(path) {
+        let baseline = match read_app_text(path) {
             Ok(s) => Some(s),
             Err(e) if e.kind() == io::ErrorKind::NotFound => None,
             Err(e) => return Err(e),
@@ -331,7 +394,7 @@ fn atomic_update_with_hooks(
         // their new bytes instead of overwriting an external update with our stale
         // full-file copy.
         before_recheck(attempt);
-        let current = match fs::read_to_string(path) {
+        let current = match read_app_text(path) {
             Ok(s) => Some(s),
             Err(e) if e.kind() == io::ErrorKind::NotFound => None,
             Err(e) => return Err(e),

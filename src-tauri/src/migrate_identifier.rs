@@ -262,8 +262,8 @@ mod tests {
         while !root.join("parked").exists() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        child.kill().unwrap();
-        child.wait().unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
         assert!(
             root.join("parked").exists(),
             "child never reached the migration boundary"

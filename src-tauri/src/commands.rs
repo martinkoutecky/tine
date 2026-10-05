@@ -1,7 +1,7 @@
 #[cfg(desktop)]
 use crate::debug::diag_private;
 #[cfg(desktop)]
-use crate::platform::{open_page_source, opener_command, reveal_page_source};
+use crate::platform::{open_page_source, opener_command, reveal_page_source, spawn_reaped};
 use crate::state::{
     capture_quick_switch_slot, slot_for_context, AppState, GraphContext, GraphSlot,
 };
@@ -1672,11 +1672,7 @@ fn open_asset_with_os(name: &str, target: &std::path::Path, editing: bool) -> Re
         };
         let shown = target.display();
         diag_private(tag, format!("{action}: {name} -> {shown} ({q}{prog})"));
-        opener_command(prog)
-            .arg(&target)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        spawn_reaped(opener_command(prog).arg(&target))
     }
     // Mobile: opening an asset in an external app uses a platform intent; stub for now (M1).
     #[cfg(not(desktop))]
@@ -1769,11 +1765,7 @@ fn edit_asset_with_os(name: &str, command: &str, target: &std::path::Path) -> Re
             "edit-asset",
             format!("edit_asset_external: {name} -> {prog} {args:?}"),
         );
-        opener_command(&prog)
-            .args(&args)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        spawn_reaped(opener_command(&prog).args(&args))
     }
     #[cfg(not(desktop))]
     {
