@@ -1,7 +1,8 @@
 # tine-store public items ON the target surface (rev 5, 01-step1-interface.rs).
 # Counts against 01-arrival.md budget A, extended for batch save and read-only
-# transaction expectation: <=40 Store+Transaction ops,
-# <=25 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
+# transaction expectation: <=41 Store+Transaction ops,
+# <=26 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
+# Raised 40->41 and 25->26 for QF3b (GH #623 rename I/O: prepare_ref_rewrite, page_files_at_or_under), 2026-10-05.
 const model::PARSE_INPUT_MAX_BYTES
 enum edit_kind::EditKind
 use crate::edit_kind::EditKind
@@ -56,6 +57,12 @@ struct transaction::RenameMap
 struct transaction::Rollback
 struct transaction::Transaction
 use crate::transaction::{Content,IoError,Refusal,RenameMap,Rollback,StepResult,Transaction,TxOutcome,Why,}
+# QF3b (GH #623): the rename planner asks the transaction whether a reference
+# rewrite changes a file (the transaction keeps it for preflight, which does not
+# compute it again) and asks for the page files under one key instead of the
+# whole-graph inventory.
+fn transaction::Transaction::prepare_ref_rewrite
+fn store::WholeGraph::page_files_at_or_under
 fn publish::publication_assets
 fn publish::publication_block_ref_counts
 fn publish::publish_site_external

@@ -92,8 +92,15 @@ pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
 }
 
 pub(crate) fn read_parse_bytes(path: &Path) -> io::Result<Vec<u8>> {
+    read_parse_bytes_observed(path).map(|(bytes, _)| bytes)
+}
+
+/// [`read_parse_bytes`] with the open file's metadata, taken before its
+/// bytes are read (GH #623: an own-write stamp without another open).
+pub(crate) fn read_parse_bytes_observed(path: &Path) -> io::Result<(Vec<u8>, fs::Metadata)> {
     let mut input = fs::File::open(path)?;
-    let len = input.metadata()?.len();
+    let metadata = input.metadata()?;
+    let len = metadata.len();
     if len > PARSE_INPUT_MAX_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -114,7 +121,7 @@ pub(crate) fn read_parse_bytes(path: &Path) -> io::Result<Vec<u8>> {
     }
     #[cfg(feature = "test-faults")]
     crate::cost_counters::full_read();
-    Ok(bytes)
+    Ok((bytes, metadata))
 }
 
 pub(crate) fn validate_parse_bytes_for_path(bytes: &[u8], path: &Path) -> io::Result<()> {
@@ -3811,6 +3818,12 @@ impl Graph {
     /// Write raw bytes (e.g. a pasted image) into `assets/`, returning the
     /// stored filename (de-duplicated if it already exists).
     pub(crate) fn entry_for_path(&self, path: &Path) -> Option<PageEntry> {
+        self.entry_for_path_in(path, None)
+    }
+
+    /// [`Self::entry_for_path`] whose page preamble comes from `text`, the
+    /// file's bytes already in hand, instead of a fresh open (GH #623).
+    pub(crate) fn entry_for_path_in(&self, path: &Path, text: Option<&str>) -> Option<PageEntry> {
         if !graph_text_eligible(&self.root, path, &self.current_config()) {
             return None;
         }
@@ -3836,6 +3849,7 @@ impl Graph {
                     path,
                     stem,
                     self.current_config().file_name_format,
+                    text,
                 )?,
                 kind: PageKind::Page,
                 date_key: None,

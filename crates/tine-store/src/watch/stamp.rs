@@ -29,6 +29,16 @@ impl Stamp {
         self
     }
 
+    /// Whether `other` observed the same metadata (time, size, identity and
+    /// change time), whatever the revisions. The watcher's own unchanged
+    /// test; a racy stamp is still reread on the next poll (§5.4).
+    pub(crate) fn same_metadata(&self, other: &Stamp) -> bool {
+        self.modified == other.modified
+            && self.len == other.len
+            && self.identity == other.identity
+            && self.changed == other.changed
+    }
+
     /// §5.4: racy when observed at `observed` (judged at observation time;
     /// a missing mtime is racy because nothing bounds it).
     pub(crate) fn racy_at(&self, observed: SystemTime) -> bool {

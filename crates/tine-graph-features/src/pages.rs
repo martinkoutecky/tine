@@ -433,13 +433,15 @@ fn rename_page_after_inventory(
     }
     crate::retry_on_conflict("page changed repeatedly during rename", || {
         let graph = refreshed_view(store)?;
-        let inventory = graph.inventory();
+        let old_key = refs::normalize(old);
+        let prefix = format!("{old_key}/");
+        // Only file-claimed names move: the full inventory's alias and
+        // reference-only name discovery is not needed here (GH #623).
+        let owned = graph.page_files_at_or_under(&old_key);
         #[cfg(test)]
         after_inventory();
         let source = existing(graph.resolve(old, false));
         validate_target(&source, expected_path)?;
-        let old_key = refs::normalize(old);
-        let prefix = format!("{old_key}/");
         let mut pairs = Vec::new();
         let mut moves = HashMap::<PageId, FileId>::new();
         let mut moved_titles_to_rebind = HashSet::<PageId>::new();
@@ -447,19 +449,9 @@ fn rename_page_after_inventory(
         let mut identities = HashSet::new();
         let mut primary_is_file = false;
         let mut merge = None;
-        for entry in &inventory.0 {
-            if entry.is_journal {
-                continue;
-            }
+        for entry in owned.iter().filter(|entry| !entry.is_journal) {
             let ids = physical(&entry.target);
-            if ids.is_empty() {
-                continue;
-            }
-            let key = refs::normalize(&entry.name);
-            let primary = key == old_key;
-            if !primary && !key.starts_with(&prefix) {
-                continue;
-            }
+            let primary = refs::normalize(&entry.name) == old_key;
             let new_name = if primary {
                 new.to_owned()
             } else {
@@ -564,6 +556,7 @@ fn rename_page_after_inventory(
         });
         candidates.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
         candidates.dedup();
+        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
         let mut edits = Vec::new();
         let mut skipped = Vec::new();
         for id in candidates {
@@ -576,16 +569,15 @@ fn rename_page_after_inventory(
             let (content, rev) = read_text(store, &file)
                 .map_err(|e| error(e.kind(), &format!("{}: {e}", file.as_str())))?;
             let org = Format::from_path(id.as_str().as_ref()) == Format::Org;
-            let updated = refs::rename_tags_property_multi(
-                &refs::rename_refs_multi(&content, &lookup, org, store.config().file_name_format),
-                &lookup,
-                org,
-            );
+            // The store's own rewriter; the transaction keeps a changing
+            // rewrite for its preflight, which does not recompute it under the
+            // writer lock (GH #623).
+            let changed = tx.prepare_ref_rewrite(&file, &content, &map);
             // Master a8fd4230d: a file carrying VCS conflict markers is not
             // ours to rewrite (R-VCS-MARKERS; scenario: an external merge or a
             // sync service left it mid-conflict). It stays byte-identical, a
             // moved one moves verbatim, and the rename reports it.
-            if updated != content
+            if changed
                 && !tine_core::concord_queue::vcs_conflict_markers(
                     &content,
                     if org { Format::Org } else { Format::Md },
@@ -598,7 +590,7 @@ fn rename_page_after_inventory(
                 }
                 continue;
             }
-            if org && updated != content && !tine_core::org::org_editable(&content) {
+            if org && changed && !tine_core::org::org_editable(&content) {
                 let display = store
                     .path_for_os_handoff(&file, false)
                     .map_err(store_error)?;
@@ -610,8 +602,7 @@ fn rename_page_after_inventory(
                     ),
                 ));
             }
-            if moves.contains_key(&id) || moved_titles_to_rebind.contains(&id) || updated != content
-            {
+            if moves.contains_key(&id) || moved_titles_to_rebind.contains(&id) || changed {
                 edits.push((id, rev, true));
             }
         }
@@ -647,6 +638,7 @@ fn rename_page_after_inventory(
             .iter()
             .find(|page| unsaved_paths.contains(&page.path))
         {
+            let inventory = graph.inventory();
             let name = inventory
                 .0
                 .iter()
@@ -678,7 +670,6 @@ fn rename_page_after_inventory(
         // crash before the config step leaves home naming the old page. Every boundary leaves
         // `[[Old]]` resolving to the still-live source, and a retry finds the
         // survivor already holding the source payload (see `merged_survivor`).
-        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
         if let (Some((_, dst)), Some(survivor)) = (&merge, &merged) {
             let kinds = [
                 tine_store::EditKind::RenamePage,

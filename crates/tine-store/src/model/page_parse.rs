@@ -6,7 +6,17 @@ use super::*;
 impl Graph {
     /// Publication eligibility shared by prepared saves and external parses.
     pub(super) fn cacheable_page_entry(&self, path: &Path) -> Option<PageEntry> {
-        let entry = self.entry_for_path(path)?;
+        self.cacheable_page_entry_in(path, None)
+    }
+
+    /// [`Self::cacheable_page_entry`] naming the page from `text`, the bytes
+    /// already in hand (GH #623).
+    pub(super) fn cacheable_page_entry_in(
+        &self,
+        path: &Path,
+        text: Option<&str>,
+    ) -> Option<PageEntry> {
+        let entry = self.entry_for_path_in(path, text)?;
         if path_is_sync_conflict(path) {
             return None;
         }

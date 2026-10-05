@@ -233,6 +233,7 @@ impl<'a> Transaction<'a> {
                 expected,
                 renames,
                 rebind_title,
+                prepared,
             } => {
                 let file = id.file();
                 if !self.page(&file) {
@@ -240,10 +241,18 @@ impl<'a> Transaction<'a> {
                 }
                 let old = self.stage(&file, expected)?;
                 let path = self.path(&file)?;
+                let name_format = self.store.config().file_name_format;
+                let reused = prepared
+                    .as_ref()
+                    .and_then(|prepared| prepared.reuse(&file, &old, name_format));
                 let new = if *rebind_title {
-                    rewrite_move(&old, &path, renames, self.store.config().file_name_format)?
+                    rewrite_move(&old, &path, renames, name_format)?
+                } else if let Some(new) = reused {
+                    let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
+                    refuse_read_only_org(&old, &new, is_org)?;
+                    new
                 } else {
-                    rewrite(&old, &path, renames, self.store.config().file_name_format)?
+                    rewrite(&old, &path, renames, name_format)?
                 };
                 refuse_marker_rewrite(&old, &new, Format::from_path(&path))?;
                 Ok(Prepared {

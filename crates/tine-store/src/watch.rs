@@ -647,7 +647,11 @@ impl Core {
         Ok(())
     }
 
-    fn note_own(&self, files: &[(FileId, Option<FileRev>)]) -> HashSet<PathBuf> {
+    fn note_own(
+        &self,
+        files: &[(FileId, Option<FileRev>)],
+        observed_before: &HashMap<FileId, Stamp>,
+    ) -> HashSet<PathBuf> {
         #[cfg(test)]
         crate::store::pause_at_hook(&self.note_own_pause);
         let mut snapshot = self.snapshot.lock().unwrap();
@@ -659,7 +663,21 @@ impl Core {
                 self.assets.note_own(&path);
             }
             let observed = SystemTime::now();
-            let current = stamp(&path);
+            let current = match observed_before.get(id) {
+                // Publication stamped this file before reading the bytes it
+                // published (`expected`). Unchanged metadata since then proves
+                // those bytes are still on disk as well as a re-hash would,
+                // up to a same-granule write, which the racy rule below
+                // rereads on the next poll; changed metadata (an external
+                // editor or sync race) takes the full stamp (GH #623).
+                Some(before)
+                    if before.rev.as_ref() == expected.as_ref()
+                        && stamp_metadata(&path).is_some_and(|now| now.same_metadata(before)) =>
+                {
+                    Some(before.clone())
+                }
+                _ => stamp(&path),
+            };
             // §5.4: an own write just landed, so its stamp is usually racy:
             // a same-size external write in the same granule must not pass.
             if current
@@ -870,7 +888,17 @@ impl WatchHandle {
     }
 
     pub(crate) fn note_own(&self, files: &[(FileId, Option<FileRev>)]) -> HashSet<PathBuf> {
-        let raced = self.core.note_own(files);
+        self.note_own_observed(files, &HashMap::new())
+    }
+
+    /// [`Self::note_own`] with stamps the publication took before reading
+    /// the bytes whose revisions `files` carry.
+    pub(crate) fn note_own_observed(
+        &self,
+        files: &[(FileId, Option<FileRev>)],
+        observed_before: &HashMap<FileId, Stamp>,
+    ) -> HashSet<PathBuf> {
+        let raced = self.core.note_own(files, observed_before);
         let _ = self.wake.send(());
         raced
     }

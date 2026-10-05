@@ -177,11 +177,18 @@ fn public_items(src: &Path) -> BTreeSet<String> {
         "store/save_failure.rs",
         "store/page_identity.rs",
         "store/diagnostics.rs",
+        "store/inventory.rs",
     ] {
         let file = src.join(child);
         let parsed = syn::parse_file(&std::fs::read_to_string(&file).unwrap())
             .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
         collect("store", &parsed.items, &mut out);
+    }
+    for child in ["transaction/prepared.rs"] {
+        let file = src.join(child);
+        let parsed = syn::parse_file(&std::fs::read_to_string(&file).unwrap())
+            .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+        collect("transaction", &parsed.items, &mut out);
     }
     out
 }
@@ -287,8 +294,8 @@ fn arrival_numeric_budgets() {
     // The 40th operation is Store::vcs_anchor_state: whether a cached page carries
     // a merge-conflict anchor line, answered from the state the load pass already
     // built so the conflicts list reads no file for an unmarked page (GH #623).
-    assert!(operations <= 40, "tine-store Rule 1: Store + Transaction has {operations} public methods, budget 40; imitate crates/tine-store/SURFACE.txt");
-    assert!(questions <= 25, "tine-store Rule 4: WholeGraph has {questions} public methods, budget 25; imitate crates/tine-store/SURFACE.txt");
+    assert!(operations <= 41, "tine-store Rule 1: Store + Transaction has {operations} public methods, budget 41; imitate crates/tine-store/SURFACE.txt");
+    assert!(questions <= 26, "tine-store Rule 4: WholeGraph has {questions} public methods, budget 26; imitate crates/tine-store/SURFACE.txt");
     assert!(
         types <= 55,
         "tine-store Rule 1: {types} public types, budget 55; imitate crates/tine-store/SURFACE.txt"

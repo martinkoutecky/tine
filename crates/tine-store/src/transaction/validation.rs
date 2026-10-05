@@ -11,24 +11,44 @@ pub(super) fn rewrite(
     map: &RenameMap,
     name_format: tine_core::config::FileNameFormat,
 ) -> Result<Vec<u8>, Why> {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::transaction_rewrite();
     let text = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
     let is_org = path.extension().and_then(|ext| ext.to_str()) == Some("org");
+    let rewritten = rewritten_text(text, is_org, map, name_format);
+    refuse_read_only_org(text.as_bytes(), rewritten.as_bytes(), is_org)?;
+    Ok(rewritten.into_bytes())
+}
+
+/// The store's one reference rewriter: `map`'s links, tags and `tags::`
+/// values in `text`. Pure, O(text).
+pub(super) fn rewritten_text(
+    text: &str,
+    is_org: bool,
+    map: &RenameMap,
+    name_format: tine_core::config::FileNameFormat,
+) -> String {
     let renames: std::collections::HashMap<String, String> = map
         .0
         .iter()
         .map(|(from, to)| (tine_core::refs::normalize(from), to.clone()))
         .collect();
-    let rewritten = tine_core::refs::rename_tags_property_multi(
+    tine_core::refs::rename_tags_property_multi(
         &tine_core::refs::rename_refs_multi(text, &renames, is_org, name_format),
         &renames,
         is_org,
-    );
-    if is_org && rewritten != text && !tine_core::org::org_editable(text) {
+    )
+}
+
+/// Refuse changing an Org file that does not round-trip. Scenario: malformed
+/// imported Org content that Tine cannot rewrite without losing bytes.
+pub(super) fn refuse_read_only_org(old: &[u8], new: &[u8], is_org: bool) -> Result<(), Why> {
+    if is_org && old != new && !std::str::from_utf8(old).is_ok_and(tine_core::org::org_editable) {
         return Err(Why::Refused(Refusal::ReadOnly(
             "org file is read-only (does not round-trip)".into(),
         )));
     }
-    Ok(rewritten.into_bytes())
+    Ok(())
 }
 
 /// A rename move changes a file's logical identity as well as its path. Keep

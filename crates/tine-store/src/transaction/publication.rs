@@ -9,6 +9,8 @@ pub(super) struct FilePublication {
     pub(super) publication_errors: Vec<(FileId, IoError)>,
     pub(super) published_own: Vec<(FileId, ChangeKind, Option<FileRev>)>,
     pub(super) published_external: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+    /// Own-publication observations handed to the stamp and name index.
+    pub(super) observations: crate::store::PublishedObservations,
 }
 
 impl Transaction<'_> {
@@ -57,6 +59,7 @@ impl Transaction<'_> {
         let mut publication_errors = Vec::new();
         let mut published_own = Vec::new();
         let mut published_external = Vec::new();
+        let mut observations = crate::store::PublishedObservations::default();
         for (name, baseline) in before {
             let id = FileId::from(name.clone());
             let spelling_move = spelling_moves.contains(&id);
@@ -129,12 +132,23 @@ impl Transaction<'_> {
                 }
                 continue;
             }
+            // A page's metadata comes from the read's own handle, before its
+            // bytes, so the own-write stamp can later prove these bytes
+            // unchanged without another open or re-hash (GH #623). Handle
+            // metadata follows a symlink where the watcher's does not; the
+            // stamp is reused only when a later `symlink_metadata` of a
+            // regular file matches it, so a symlinked page takes the full
+            // stamp as before.
+            let mut stamped = None;
             let now = match if fault(self.store, FaultPoint::PublicationReadIo) {
                 Err(io::Error::other("injected publication read error"))
             } else if missing_spelling {
                 Err(io::Error::from(io::ErrorKind::NotFound))
             } else if self.page(&id) {
-                crate::model::read_parse_bytes(&path)
+                crate::model::read_parse_bytes_observed(&path).map(|(bytes, metadata)| {
+                    stamped = crate::watch::stamp_from_metadata(&metadata);
+                    bytes
+                })
             } else {
                 fs::read(&path)
             } {
@@ -146,6 +160,12 @@ impl Transaction<'_> {
                     continue;
                 }
             };
+            if let (Some(stamp), Some(bytes)) = (stamped, &now) {
+                let rev = FileRev::from_bytes(bytes);
+                observations
+                    .stamps
+                    .insert(id.clone(), stamp.with_rev(Some(rev)));
+            }
             let own_final = file_undos.get(&id).into_iter().flatten().any(|record| {
                 #[cfg(feature = "test-faults")]
                 crate::cost_counters::transaction_record_probe();
@@ -225,13 +245,15 @@ impl Transaction<'_> {
                         && source_plans
                             .get(&id)
                             .is_some_and(|&index| matches!(steps[index], Step::Rewrite { .. }));
-                    self.store.graph.transaction_publish_page_inner(
+                    if let Some(entry) = self.store.graph.transaction_publish_page_inner(
                         &path,
                         now.as_deref(),
                         saved_page,
                         baseline.is_none() || now.is_none(),
                         own_rename,
-                    );
+                    ) {
+                        observations.entries.insert(id.clone(), entry);
+                    }
                 } else {
                     self.store.graph.transaction_clear_page_marker(&path);
                 }
@@ -245,6 +267,7 @@ impl Transaction<'_> {
             publication_errors,
             published_own,
             published_external,
+            observations,
         }
     }
 }

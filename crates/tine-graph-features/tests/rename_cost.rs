@@ -79,14 +79,14 @@ fn rename_cost_is_linear_in_referrers_and_flat_in_graph_size() {
         28,
         "I-25: each extra referrer costs exactly one file write"
     );
-    // Four guarded reads per rewritten referrer, each a base-revision or
-    // publication check on the audited save path: preflight stage,
-    // pre-write verify, the check just before the rename, and the
-    // post-commit publication read that tells own bytes from an external
-    // editor's. None scales with the graph.
+    // Three guarded reads per rewritten referrer, each a base-revision or
+    // publication check on the audited save path: preflight stage, the check
+    // just before the rename, and the post-commit publication read that tells
+    // own bytes from an external editor's (GH #623 QF3b removed a stage-2
+    // verify that repeated the pre-rename check). None scales with the graph.
     assert!(
-        many.full_reads - few.full_reads <= 4 * 28,
-        "I-25: each extra referrer costs at most four whole-file reads (stage, verify, \
+        many.full_reads - few.full_reads <= 3 * 28,
+        "I-25: each extra referrer costs at most three whole-file reads (stage, \
          pre-rename check, publication)"
     );
 }
