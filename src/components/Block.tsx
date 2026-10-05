@@ -132,6 +132,7 @@ import {
   startDesktopVoiceRecording,
   stopDesktopVoiceRecording,
 } from "../mediaCapture";
+import { blockListProps } from "./BlockList";
 import { childrenSheetConfig } from "../sheet/childrenSheet";
 import { SheetCellContext } from "../sheet/context";
 import { appendSheetCellChild, structuralSheetPasteNode } from "../sheet/mutations";
@@ -147,7 +148,6 @@ import { wireBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
-
 type SheetSlashView = "grid" | "table" | "board";
 
 export function applySheetViewSlashAction(id: string, view: SheetSlashView): string | null {
@@ -475,7 +475,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             <div class="block-children-container">
               <CollapseAllBorder id={props.id} readOnly={readOnly()} surface={collapseSurface} />
               <div class="block-children">
-                <For each={node().children}>{(cid) => <Block id={cid} />}</For>
+                <For {...blockListProps(() => node().children)} />
               </div>
             </div>
           </Match>

@@ -1,3 +1,4 @@
+import { revealOutlineBlock } from "./outlineViewport";
 import { batch, createMemo, createRoot, createSignal } from "solid-js";
 import { mainPages, pageByName, revealNode, resolveBlockRef, node as docNode } from "./document";
 import { renderedBlockText, type RenderedTextOptions } from "./render/renderedText";
@@ -397,6 +398,7 @@ export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boo
   for (let i = 0; i < 20; i++) {
     await animationFrame();
     if (!current()) return false;
+    revealOutlineBlock(match.blockId, findScopeElement(scopeId));
     const el = inPageFindBlockElement(match.blockId, scopeId);
     if (el) {
       if (!centerInPageFindOccurrence(el, match.ordinalInBlock)) {

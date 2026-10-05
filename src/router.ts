@@ -1,3 +1,4 @@
+import { revealOutlineBlock } from "./outlineViewport";
 // Tab-based routing with per-tab navigation history. Each tab holds a back/
 // forward stack of routes; the active tab's current route drives the page view.
 // Middle-click opens links in a new tab. The whole tab session is persisted, so
@@ -786,6 +787,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
         expandAncestors(id);
       }
       const scroller = mainScroller();
+      if (id) revealOutlineBlock(id, scroller);
       const el = id
         ? scroller?.querySelector(`.ls-block[data-block-id="${id}"]`)
         : null;

@@ -1,3 +1,4 @@
+import { revealOutlineBlock } from "../../outlineViewport";
 import { removeSubtree } from "./subtree";
 import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf, existingSubtreeFits } from "../tree";
 import { doc, setDoc, bumpCollapseEpochs, type DocState } from "../model";
@@ -236,6 +237,7 @@ function scrollBlockRowIntoView(id: string) {
   if (typeof requestAnimationFrame !== "function" || typeof document === "undefined") return;
   requestAnimationFrame(() => {
     const sel = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id;
+    revealOutlineBlock(id);
     const row = document.querySelector(`.ls-block[data-block-id="${sel}"] > .block-main`);
     row?.scrollIntoView({ block: "nearest" });
   });

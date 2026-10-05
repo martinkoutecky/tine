@@ -423,7 +423,7 @@ function bigPageBlocks(n: number): BlockDto[] {
   return out.map((block) => ({ ...block, has_id: false }));
 }
 if (typeof location !== "undefined" && /[?&]big\b/.test(location.search)) {
-  NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(2000) });
+  NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(Math.min(5000, Math.max(1, Number(new URLSearchParams(location.search).get("blocks")) || 2000))).map((v, i) => new URLSearchParams(location.search).has("long") ? { ...v, raw: `Paragraph ${i}: ` + "Long prose with ordinary words and wrapping lines. ".repeat(80) } : v) });
 }
 if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)) {
   NAMED.push(

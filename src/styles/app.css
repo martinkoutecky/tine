@@ -3792,7 +3792,7 @@ html[data-system-insets="native-viewport"] {
 
 /* Host-owned rendering for the plugin `thread-lines` decoration. The guest can
    request this known visual vocabulary but cannot inject CSS or DOM. */
-.plugin-thread-lines > .block-children-container > .block-children > .ls-block > .block-main::before {
+.plugin-thread-lines > .block-children-container > .block-children > :is(.ls-block, .outline-list > .outline-window > .ls-block) > .block-main::before {
   content: "";
   position: absolute;
   left: -3px;
@@ -3806,11 +3806,11 @@ html[data-system-insets="native-viewport"] {
 
 /* Active mode follows the focused branch using only host-owned focus state. It
    does not reveal block contents to the guest or let the guest select DOM. */
-.plugin-thread-lines-active > .block-children-container > .block-children > .ls-block:not(:focus-within) > .block-main::before {
+.plugin-thread-lines-active > .block-children-container > .block-children > :is(.ls-block, .outline-list > .outline-window > .ls-block):not(:focus-within) > .block-main::before {
   display: none;
 }
 
-.plugin-thread-lines-standard > .block-children-container > .block-children > .ls-block > .block-main::before {
+.plugin-thread-lines-standard > .block-children-container > .block-children > :is(.ls-block, .outline-list > .outline-window > .ls-block) > .block-main::before {
   border-bottom-color: var(--guide-color);
 }
 
