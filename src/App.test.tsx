@@ -13,7 +13,7 @@ import { pageToDto } from "./document/convert";
 import { type FeedPage, type Node as StoreNode } from "./document/model";
 import { setDoc } from "./document/model";
 import { isConflicted } from "./document";
-import { pageInventoryRev } from "./graphSession";
+import { pageInventoryRev, firstLoadDone, setFirstLoadDone } from "./graphSession";
 import { bumpGraphEpoch } from "./graphSession";
 import { applyGraphChange as handleGraphChange } from "./document";
 
@@ -398,5 +398,38 @@ describe("identifier migration notice", () => {
       await vi.waitFor(() => expect(take).toHaveBeenCalledTimes(2));
       expect(toasts().filter((toast) => toast.message.includes("moved your settings and backups"))).toHaveLength(1);
     } finally { dispose(); setToasts([]); }
+  });
+});
+
+describe("first load completion", () => {
+  it("I-20: marks the first load done after the startup graph load retires its own binding", async () => {
+    // Opening a graph bumps the graph epoch, so an owner captured BEFORE the
+    // load is always stale afterwards. Welcome's `mandatory` gate reads this
+    // flag, so a flag gated on that owner never lets a failed first open reach
+    // onboarding. The view (not the graph binding) owns this completion.
+    setFirstLoadDone(false);
+    vi.spyOn(backend(), "startupGraphPath").mockResolvedValue("/tmp/never-opened");
+    vi.spyOn(backend(), "loadGraph").mockImplementation(async () => { bumpGraphEpoch(); throw new Error("no such graph"); });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => <App />, host);
+    try {
+      await vi.waitFor(() => expect(firstLoadDone()).toBe(true));
+    } finally {
+      dispose();
+    }
+  });
+  it("does not mark the first load done after App unmounts mid-load", async () => {
+    setFirstLoadDone(false);
+    let release!: (path: string) => void;
+    vi.spyOn(backend(), "startupGraphPath").mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => <App />, host);
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    dispose();
+    release("");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(firstLoadDone()).toBe(false);
   });
 });
