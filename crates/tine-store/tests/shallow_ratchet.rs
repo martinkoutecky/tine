@@ -634,8 +634,8 @@ fn arrival_numeric_budgets() {
 // files outside a hand list (H1), functions taking `&Store` (H2) and types
 // re-exported from private modules (H3).
 const OPS: usize = 43;
-const QUESTIONS: usize = 26;
-const TYPES: usize = 58;
+const QUESTIONS: usize = 25;
+const TYPES: usize = 56;
 
 #[test]
 fn public_paths_are_only_inputs_and_handoffs() {

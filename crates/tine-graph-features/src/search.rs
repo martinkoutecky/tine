@@ -11,10 +11,7 @@ use tine_core::model::{PageKind, RefGroup};
 use tine_core::query::ir::FriendlyPageMatchScope;
 use tine_core::query::ir::ViewSettings;
 use tine_core::query_plan::{QueryExecution, QueryExplanation, QueryHasMore, QueryHit};
-use tine_store::{
-    Cancel, LoadError, PageId, QueryDialect, QueryError, QueryResult, Resolved, SearchRequest,
-    Store,
-};
+use tine_store::{Cancel, LoadError, PageId, QueryError, Resolved, SearchRequest, Store};
 
 /// Per-transport-lane cancellation flags, hidden behind search operations.
 #[derive(Default)]
@@ -239,8 +236,10 @@ fn enforce_execution_budget(execution: &QueryExecution) -> Result<(), QueryError
 }
 
 /// Refuse oversized or over-nested query source before parsing or cache lookup.
-/// Cost O(source bytes).
-pub fn validate_source(query: &str) -> Result<(), QueryError> {
+/// Cost O(source bytes). Test-only: the live answerer is src-tauri
+/// `commands::query_ir`.
+#[cfg(test)]
+fn validate_source(query: &str) -> Result<(), QueryError> {
     tine_core::query::admit_source(query).map_err(|reason| {
         QueryError::Parse(match reason {
             tine_core::query::SourceRefusal::TooLarge => format!(
@@ -255,47 +254,23 @@ pub fn validate_source(query: &str) -> Result<(), QueryError> {
     })
 }
 
-/// Run a bounded simple query. Cost O(query candidates + output).
-pub fn run_query(store: &Store, query: &str) -> Result<Arc<Vec<RefGroup>>, SearchError> {
-    validate_source(query).map_err(SearchError::Query)?;
-    let view = store.whole_graph().map_err(SearchError::Load)?;
-    match view
-        .query(query, QueryDialect::Simple)
-        .map_err(SearchError::Query)?
-    {
-        QueryResult::Simple(groups) => Ok(groups),
-        QueryResult::Advanced(_) => unreachable!(),
-    }
-}
-
-/// Run an advanced query. Cost O(query candidates + output).
-pub fn run_advanced_query(
-    store: &Store,
-    query: &str,
-) -> Result<tine_core::query::AdvancedResult, SearchError> {
-    run_advanced_query_after_scope(
-        store,
-        query,
-        #[cfg(test)]
-        || {},
-    )
-}
-
+/// Test helper over the `WholeGraph::query` test oracle (the legacy advanced
+/// bridge). Production queries run through `query_ir`.
+#[cfg(test)]
 fn run_advanced_query_after_scope(
     store: &Store,
     query: &str,
-    #[cfg(test)] after_scope: impl FnOnce(),
+    after_scope: impl FnOnce(),
 ) -> Result<tine_core::query::AdvancedResult, SearchError> {
     validate_source(query).map_err(SearchError::Query)?;
     let view = store.whole_graph().map_err(SearchError::Load)?;
-    #[cfg(test)]
     after_scope();
     match view
-        .query(query, QueryDialect::Advanced)
+        .query(query, tine_store::QueryDialect::Advanced)
         .map_err(SearchError::Query)?
     {
-        QueryResult::Advanced(result) => Ok(result),
-        QueryResult::Simple(_) => unreachable!(),
+        tine_store::QueryResult::Advanced(result) => Ok(result),
+        tine_store::QueryResult::Simple(_) => unreachable!(),
     }
 }
 

@@ -829,7 +829,9 @@ impl ReadSnapshot {
         }
     }
 
-    /// `{{query}}` through the legacy block-group bridge, memoized.
+    /// `{{query}}` through the legacy block-group bridge, memoized. Reached
+    /// only from the `WholeGraph::query` test oracle.
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn run_query_bounded(
         &self,
         source: &str,
@@ -857,6 +859,7 @@ impl ReadSnapshot {
         }
     }
 
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn run_advanced_query_bounded_cached(
         &self,
         source: &str,
@@ -1816,6 +1819,7 @@ struct SnapshotMemos {
     query: crate::query::memo::QueryMemo,
 }
 
+#[cfg(any(test, feature = "test-faults"))]
 fn answer_groups(groups: crate::query::BoundedGroups) -> crate::query::memo::Answer {
     crate::query::memo::Answer::Groups(BoundedRefGroups {
         groups: Arc::new(groups.groups),

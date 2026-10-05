@@ -75,9 +75,7 @@ use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
 enum store::Budget
 enum store::FacetPolicy
 enum store::LoadError
-enum store::QueryDialect
 enum store::QueryError
-enum store::QueryResult
 enum store::Resolved
 enum store::SaveBase
 enum store::SaveOutcome
@@ -188,7 +186,6 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::parsed_page_ids
 fn store::WholeGraph::preview_block
 fn store::WholeGraph::property_facets
-fn store::WholeGraph::query
 fn store::WholeGraph::query_ir
 fn store::WholeGraph::resolve
 fn store::WholeGraph::rev
@@ -220,7 +217,7 @@ field store::WatchBatch.first_event_at
 field store::WatchBatch.full_diff
 field store::WatchBatch.poll
 field store::WatchBatch.reconcile_started
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 struct store::GraphAccessInspection
 struct store::OpenOptions
 struct store::WholeGraph

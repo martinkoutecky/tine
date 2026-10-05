@@ -52,7 +52,9 @@ use tine_core::model::{
     PageEntry, PageKind, RefGroup, TemplateDto,
 };
 pub use tine_core::model::{FileId, PageId};
-use tine_core::query::{AdvancedResult, QueryExportBatch, QueryExportSpec};
+#[cfg(any(test, feature = "test-faults"))]
+use tine_core::query::AdvancedResult;
+use tine_core::query::{QueryExportBatch, QueryExportSpec};
 use tine_core::query_plan::QueryExecution;
 
 use crate::model::{CheckedOpenError, Graph, ReadSnapshot};
@@ -2445,7 +2447,9 @@ pub struct SearchRequest {
     /// Effective Blocks Display view, independent of the Pages section.
     pub block_view: Option<tine_core::query::ir::ViewSettings>,
 }
-/// Syntax used to evaluate a `{{query}}` expression.
+/// Test oracle: syntax for [`WholeGraph::query`], the legacy block-group bridge.
+/// Production queries run through [`WholeGraph::query_ir`].
+#[cfg(any(test, feature = "test-faults"))]
 pub enum QueryDialect {
     /// Simple query expression.
     Simple,
@@ -2505,7 +2509,8 @@ impl TryFrom<IrAnswer> for tine_core::query::ir::QueryResult {
     }
 }
 
-/// Answer shape matching the requested query dialect.
+/// Test oracle: answer shape of [`WholeGraph::query`].
+#[cfg(any(test, feature = "test-faults"))]
 pub enum QueryResult {
     /// Simple query reference groups.
     Simple(Arc<Vec<RefGroup>>),
@@ -2945,6 +2950,10 @@ impl WholeGraph {
         Ok(())
     }
 
+    /// Test oracle: the legacy simple/advanced bridge, kept to pin legacy-vs-IR
+    /// parity and the bridge budgets in tests. Production runs every query
+    /// through [`WholeGraph::query_ir`].
+    ///
     /// Execute one simple or advanced query macro over this stable view.
     /// This entry carries no page context, so `:current-page` has no binding
     /// here; the IR path binds it through `ExecutionContext::on_page`. A simple
@@ -2954,6 +2963,7 @@ impl WholeGraph {
     /// `QueryError::ResultTooLarge` without a partial answer. Query cost
     /// is O(P + B) graph-wide; exact page-name scopes visit only their owners
     /// unless property coercions or used-as-tag require graph-wide facts.
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn query(&self, source: &str, dialect: QueryDialect) -> Result<QueryResult, QueryError> {
         if let Err(reason) = tine_core::query::admit_source(source) {
             return Err(QueryError::Parse(match reason {
