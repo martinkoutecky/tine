@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import searchDslGolden from "../../tests/fixtures/i12-search-dsl-golden.json";
 import { SEARCH_SYNTAX, parseSearchQuery, matcherMatches, simpleTerm, matchHighlight, matchHighlights, friendlySearchToDsl, friendlySearchToSavedDsl, savedDslToFriendlySearch } from "./searchQuery";
 import { searchFold } from "./searchFold";
 import sharedContract from "../../tests/fixtures/search-query-contract.json";
@@ -168,5 +169,14 @@ describe("searchQuery parser (#44)", () => {
     expect(friendlySearchToSavedDsl('foo "bar"')).toBe('(search "foo \\"bar\\"")');
     expect(savedDslToFriendlySearch('(search "foo \\"bar\\"")')).toBe('foo "bar"');
     expect(savedDslToFriendlySearch('(and "foo" "bar")')).toBeNull();
+  });
+});
+
+describe("I-12 saved search DSL", () => {
+  it("writes and reads the form the engine parses (shared golden)", () => {
+    for (const [friendly, dsl] of searchDslGolden.cases as [string, string][]) {
+      expect(friendlySearchToSavedDsl(friendly), JSON.stringify(friendly)).toBe(dsl);
+      expect(savedDslToFriendlySearch(dsl), JSON.stringify(dsl)).toBe(friendly.trim());
+    }
   });
 });

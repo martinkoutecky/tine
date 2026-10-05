@@ -577,6 +577,26 @@ fn the_shared_property_key_golden_normalises_as_recorded() {
     }
 }
 
+/// I-12: the saved `(search "…")` form the frontend writes
+/// (`friendlySearchToSavedDsl`) reads back here as one content-match filter
+/// over exactly the trimmed friendly source, backslashes and quotes included;
+/// `src/editor/searchQuery.test.ts` reads the same golden for the TS side.
+#[test]
+fn the_shared_search_dsl_golden_reads_back_the_friendly_source() {
+    let golden: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/i12-search-dsl-golden.json"
+    ))
+    .expect("golden parses");
+    for case in golden["cases"].as_array().expect("cases") {
+        let (friendly, dsl) = (case[0].as_str().unwrap(), case[1].as_str().unwrap());
+        assert_eq!(
+            pred(dsl),
+            Filter::attr(Attr::Content, CmpOp::Match, Value::text(friendly.trim())),
+            "{dsl:?}"
+        );
+    }
+}
+
 /// I-12: the LIKE-literal encoder and its inverse, pinned against the
 /// frontend builder's `escapeLike` / `plainLikeSubstring` by one golden.
 #[test]
