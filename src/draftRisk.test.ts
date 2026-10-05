@@ -6,9 +6,9 @@
 // (installDraftStore → backend.storeDraft / retireDraft) paths; the backend is
 // the only fake. Conformance map GAP-1 / GAP-2, Martin's ruling 2026-10-05 #4.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { backend, type Backend, type SavePageEntry } from "./backend";
+import { backend, type Backend, type GraphChange, type SavePageEntry } from "./backend";
 import { initParser } from "./render/parse";
-import { flushPage, installPageIdentityNavigation, setPageProperty, isConflicted, isDirty, loadFeed, moveBlock, pageByName, resetStore, setRaw } from "./document";
+import { applyGraphChange, flushPage, installPageIdentityNavigation, setPageProperty, installExternalChangeUiHandler, isConflicted, isDirty, loadFeed, moveBlock, pageByName, resetStore, setRaw } from "./document";
 import { forceSave } from "./document/save/engine";
 import { doc } from "./document/model";
 import { installDraftStore, REFRESH_MS, writeAtRisk } from "./draftStore";
@@ -161,5 +161,41 @@ describe("a title rename while at risk moves the risk, never retires it", () => 
     await vi.advanceTimersByTimeAsync(REFRESH_MS + 450);
     await vi.advanceTimersByTimeAsync(REFRESH_MS);
     expect(records()).toEqual([]);
+  });
+});
+
+describe("watcher observations on a page with unsaved input", () => {
+  const NAME = "Synced";
+  let disk: (PageDto & { id: string; rev: string }) | null = null;
+  const event = (patch: Partial<GraphChange>): GraphChange => ({ name: NAME, kind: "page", created: false, removed: false, ...patch });
+  const raws = () => pageByName(NAME)?.roots.map((id) => doc.byId[id].raw) ?? [];
+  beforeEach(() => {
+    disk = null;
+    vi.spyOn(backend(), "getPage").mockImplementation(async () => disk as never);
+    vi.spyOn(backend(), "getPageByPath").mockImplementation(async () => disk as never);
+    installExternalChangeUiHandler(() => ({ pageOpen: () => true, journalsOpen: false, leaveRemovedPage: () => {}, restartJournalFeed: () => {} }));
+  });
+
+  it("GAP-2: the conflict lift keeps the draft until the re-armed save publishes", async () => {
+    loadFeed([page(NAME, "rev-1", [block("b1", "original")]) as never]);
+    setRaw("b1", "mine");
+    await applyGraphChange(event({ removed: true }));
+    expect(isConflicted(NAME)).toBe(true);
+    await writeAtRisk();
+    expect(draftText()).toEqual(["mine"]);
+    const slow = gate();
+    vi.spyOn(backend(), "savePages").mockImplementation(async (entries: SavePageEntry[]) => {
+      await slow.promise;
+      return { ok: entries.map(() => "rev-2") };
+    });
+    disk = page(NAME, "rev-1", [block("d1", "original")]);
+    await applyGraphChange(event({ created: true }));   // back to the baseline: lifted
+    expect(isConflicted(NAME)).toBe(false);
+    await vi.advanceTimersByTimeAsync(450);             // the re-armed save is in flight
+    expect(draftText(), "the lift must not retire the only durable copy of the frozen edit").toEqual(["mine"]);
+    slow.open();
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    expect(records()).toEqual([]);
+    expect(raws()).toEqual(["mine"]);
   });
 });

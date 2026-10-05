@@ -200,6 +200,8 @@ export function applyObservedDivergence(name: string, observedRev: string | null
     markConflict(name, { kind: "disk-changed" }, observedRev);
     return;
   }
+  // Risk is not retired here (noteRisk keeps it until a matching Published
+  // reply): the frozen edit has no durable copy but its draft until it saves.
   clearConflict(name);
   const page = pageByName(name);
   if (!page || page.readOnly || page.guide) return;
