@@ -12,9 +12,11 @@
 //
 // One node type. Every bullet round-trips verbatim; a blank bullet is dropped
 // but its children are kept.
-import type { BlockDto, PageKind } from "./types";
+import type { BlockDto, Format, PageKind } from "./types";
 import { isJournalTitle } from "./journal";
 import { pageIdentityKey } from "./pageIdentity";
+import { parseBlock } from "./render/parse";
+import { reference_target_name } from "./render/wasm/lsdoc_wasm.js";
 
 export const FAVORITES_PAGE_PROPERTY = "tine/favorites";
 export const DEFAULT_FAVORITES_PAGE = "Favorites";
@@ -33,21 +35,32 @@ export interface FavItem { name: string; kind: PageKind }
 /** A drawn row: its node, its path (child indices from the root), its depth. */
 export interface FavRow { path: number[]; node: FavNode; depth: number }
 
-const LINK_ONLY = /^\s*\[\[([^\]]+)\]\]\s*$/;
-export function linkOnlyTarget(raw: string): string | null {
-  return LINK_ONLY.exec(raw)?.[1]?.trim() || null;
+/** The page a bullet names when its text is exactly one unlabeled page link
+ *  (its own properties, such as `id::`, aside); `null` makes it a label. lsdoc
+ *  decides (I-12): `[[a]b]]` names page "a]b", while asset links, code and
+ *  `TODO`/heading bullets are labels. O(bullet bytes), cached parse. */
+export function linkOnlyTarget(raw: string, format: Format = "md"): string | null {
+  if (!raw.includes("[[")) return null; // admission only: no link opener, no link
+  const [head, ...rest] = parseBlock(raw, format === "org");
+  if (head?.kind !== "bullet" || head.marker || head.priority || head.size || head.htags?.length
+    || rest.some((block) => block.kind !== "properties")) return null;
+  const parts = head.inline.filter((inline) => inline.k !== "plain" || inline.text.trim() !== "");
+  const link = parts.length === 1 && parts[0].k === "link" ? parts[0] : null;
+  if (!link || link.image || link.label?.length) return null;
+  const url = link.url;
+  return reference_target_name(url.type, "v" in url ? url.v : "", "", format === "org", false)?.trim() || null;
 }
 export const itemKind = (name: string): PageKind => (isJournalTitle(name) ? "journal" : "page");
 export const favoriteNode = (name: string, kind?: PageKind): FavNode =>
   ({ target: name, raw: `[[${name}]]`, ...(kind && kind !== itemKind(name) ? { kind } : {}), children: [] });
 export const labelNode = (name: string): FavNode => ({ target: null, raw: name, children: [] });
 
-export function layoutFromBlocks(roots: readonly BlockDto[]): FavLayout {
+export function layoutFromBlocks(roots: readonly BlockDto[], format: Format = "md"): FavLayout {
   return roots.flatMap((block): FavNode[] => {
-    const children = layoutFromBlocks(block.children);
+    const children = layoutFromBlocks(block.children, format);
     if (!block.raw.trim()) return children;
     // raw stays verbatim: it is written back byte for byte.
-    return [{ target: linkOnlyTarget(block.raw), raw: block.raw, collapsed: block.collapsed || undefined, children }];
+    return [{ target: linkOnlyTarget(block.raw, format), raw: block.raw, collapsed: block.collapsed || undefined, children }];
   });
 }
 

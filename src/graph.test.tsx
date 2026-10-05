@@ -202,6 +202,42 @@ describe("default journal template graph bind", () => {
     expect(api.getPage).toHaveBeenCalledTimes(1); // graph bind reads none; one shared refresh
     expect(api.savePages).toHaveBeenCalledTimes(1);
   });
+  // OG-C5 L12-S1: opening Journals must never replace text the user wrote with the
+  // template. `memo:: keep` is ordinary prose in an Org heading, and a root `id::`
+  // is a block identity other pages may reference; neither is an empty journal.
+  for (const [name, format, raw] of [
+    ["Org heading prose that looks like a Markdown property", "org", "memo:: keep this sentence"],
+    ["a Markdown root carrying only a block id", "md", "id:: 6679f1c2-0000-4000-8000-000000000001"],
+    ["a property-shaped line nested under an empty root", "md", ""],
+  ] as const) {
+    it(`keeps today's journal when it holds ${name}`, async () => {
+      const children = raw === "" ? [{ id: "c", raw: "note:: keep me", collapsed: false, children: [] }] : [];
+      const existing = {
+        id: `journals/2026_07_10.${format === "org" ? "org" : "md"}`, rev: "rev-1", name: "Jul 10th, 2026", kind: "journal",
+        title: "Jul 10th, 2026", pre_block: null, format,
+        blocks: [{ id: "b", raw, collapsed: false, children }],
+      } as unknown as PageRead;
+      const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(existing);
+      await loadGraphPath(META.root);
+      api.savePages.mockClear();
+      expect(await ensureJournalTemplateForDay(new Date())).toBe("ready");
+      expect(api.savePages).not.toHaveBeenCalled();
+    });
+  }
+  it("still fills an existing journal whose blocks hold only whitespace", async () => {
+    const existing = {
+      id: "journals/2026_07_10.md", rev: "rev-1", name: "Jul 10th, 2026", kind: "journal",
+      title: "Jul 10th, 2026", pre_block: "title:: Jul 10th, 2026", format: "md",
+      blocks: [{ id: "b", raw: "  \n", collapsed: false, children: [{ id: "c", raw: "", collapsed: false, children: [] }] }],
+    } as unknown as PageRead;
+    const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(existing);
+    await loadGraphPath(META.root);
+    api.savePages.mockClear();
+    expect(await ensureJournalTemplateForDay(new Date())).toBe("ready");
+    expect(api.savePages).toHaveBeenCalledTimes(1);
+    const [[entry]] = api.savePages.mock.calls[0];
+    expect(entry).toMatchObject({ baseRev: "rev-1", page: { pre_block: "title:: Jul 10th, 2026" } });
+  });
   it("returns a typed template read failure for the feed to surface and retry", async () => {
     const { loadGraphPath, ensureJournalTemplateForDay, api } = await loadHarness(null);
     await loadGraphPath(META.root);

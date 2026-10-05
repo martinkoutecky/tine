@@ -146,6 +146,27 @@ describe("favorites arrangement page", () => {
     expect(writes).toHaveLength(1);
   });
 
+  it("the parser decides which bullets are favorites (OG-C5 L12 I-12)", async () => {
+    // `[[a]b]]` links page "a]b"; a referenced bullet carries `id::`; an asset
+    // link and an Org file link are not pages.
+    disk.set("Favs", { pre_block: "tine/favorites:: true", blocks: [b("[[A]]"), b("[[a]b]]"), b("Work")], rev: 1 });
+    seedFavorites(["A", "a]b"], "Favs");
+    await settle();
+    disk.set("Favs", { pre_block: "tine/favorites:: true", rev: 2, blocks: [
+      b("[[A]]"), b("[[a]b]]"), b("Home", [b("[[C]]\nid:: 6679f1c2-0000-4000-8000-000000000002"), b("[[assets/x.pdf]]")]),
+    ] });
+    bumpDataRev();
+    await settle();
+    expect(favorites().map((f) => f.name)).toEqual(["A", "a]b", "C"]);
+    expect(config.names).toEqual(["A", "a]b", "C"]);
+    disk.set("Org Favs", { pre_block: "#+tine/favorites: true", format: "org", rev: 1,
+      blocks: [b("[[D]]"), b("[[file:../pages/e.org]]"), b("[[D][Label]]")] });
+    seedFavorites(["D"], "Org Favs");
+    await settle();
+    expect(md()).toBe("- [[D]]\n- [[file:../pages/e.org]]\n- [[D][Label]]\n");
+    expect(favorites().map((f) => f.name)).toEqual(["D"]);
+  });
+
   it("does not overwrite an outside edit it has not seen: it adopts it and rolls the change back", async () => {
     disk.set("Favs", { pre_block: "tine/favorites:: true", blocks: [b("[[A]]"), b("Work")], rev: 1 });
     seedFavorites(["A"], "Favs");
@@ -183,6 +204,28 @@ describe("favorites arrangement page", () => {
     addFavoriteGroup("Work"); // repeating the change now lands over the recovered page
     await settle();
     expect(shape(disk.get("Favorites")!).text).toBe("- [[A]]\n- Kept\n- Work\n");
+  });
+
+  it("an orphan recovery scheduled in one graph never lands in the next one (OG-C5 L12, I-20)", async () => {
+    toggleFavorite("A");
+    await settle();
+    vi.spyOn(backend(), "setFavorites").mockRejectedValueOnce(new Error("killed"));
+    addFavoriteGroup("Kept"); // page written, config never saw it
+    await settle();
+    seedFavorites(config.names, config.page); // reopen with the orphan on disk
+    await settle();
+    setToasts([]);
+    addFavoriteGroup("Work"); // finds the orphan and schedules its recovery
+    for (let i = 0; i < 60 && !toasts().length; i++) await Promise.resolve();
+    expect(toasts().some((t) => t.message.includes("Recovered the Favorites page"))).toBe(true);
+    // The next graph binds before the scheduled recovery runs.
+    disk.set("Other", { pre_block: "tine/favorites:: true", blocks: [b("[[X]]"), b("[[Y]]")], rev: 1 });
+    writes = [];
+    seedFavorites(["X"], "Other");
+    await settle();
+    await settle();
+    expect(writes).toEqual([]);
+    expect(md()).toBe("- [[X]]\n");
   });
 
   it("an older page read that lands after a newer one is dropped (I-20)", async () => {

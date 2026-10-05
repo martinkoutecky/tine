@@ -62,7 +62,7 @@ function pageDoor(): FavoritesPageDoor {
   return door;
 }
 const diskLayout = (page: PageDto) =>
-  layoutFromBlocks(pageDoor().favoritesArrangementBlocks(page.blocks, page.format ?? "md"));
+  layoutFromBlocks(pageDoor().favoritesArrangementBlocks(page.blocks, page.format ?? "md"), page.format ?? "md");
 
 
 /** THE favorites identity: kind, then the alias-resolved name folded like
@@ -239,8 +239,10 @@ async function writeArrangementPage(next: FavLayout, text: string): Promise<stri
       arrangementPage = name;
       pageBase = null;
       // After this change's rollback (a microtask chain), so the fold uses
-      // config's membership, not the change being refused.
-      setTimeout(() => void readArrangement("recover"), 0);
+      // config's membership, not the change being refused. Only in this graph:
+      // a later seed (generation) or binding must not inherit the fold (I-20).
+      const gen = generation;
+      setTimeout(() => { if (gen === generation && owner()) void readArrangement("recover"); }, 0);
       pushToast(`Recovered the Favorites page "${name}" from an interrupted save; repeat your last change.`, "info");
       throw new Error(`recovered the Favorites page "${name}"`);
     }

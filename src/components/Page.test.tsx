@@ -22,7 +22,7 @@ import { markConflict } from "../document/save/engine";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRecentPages, setRightSidebar } from "../ui";
 import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
 import { setToasts, toasts } from "../toasts";
-import { favorites, seedFavorites } from "../favorites";
+import { favorites, isFavorite, seedFavorites } from "../favorites";
 import type { GraphMeta } from "../types";
 
 beforeAll(async () => {
@@ -1590,7 +1590,29 @@ describe("page route loading", () => {
     }
   });
 
-  it("a true case variant still adopts the canonical spelling in favorites", async () => {
+  it("adopting a saved path's disk spelling never rewrites the favorites config (OG-C5 D11)", async () => {
+    clearRecent();
+    seedFavorites(["Page1"]);
+    const write = vi.spyOn(backend(), "setFavorites").mockResolvedValue();
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue({
+      name: "page1", kind: "page", title: "page1", pre_block: null, id: "pages/page1.md",
+      blocks: [{ id: "path-block", raw: "path content", collapsed: false, children: [] }],
+    });
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Page1", pageKind: "page", path: "pages/Page1.md" });
+    const { dispose } = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(mainPaneRouter.route()).toMatchObject({ name: "page1", path: "pages/page1.md" }));
+      await flushMicrotasks();
+      expect(write).not.toHaveBeenCalled();
+      expect(favorites().map((f) => f.name)).toEqual(["Page1"]);
+    } finally {
+      dispose();
+      clearRecent();
+      seedFavorites([]);
+    }
+  });
+
+  it("opening a case variant of a favorite never rewrites the favorites config (OG-C5 D11)", async () => {
     clearRecent();
     seedFavorites(["Page1"]);
     const write = vi.spyOn(backend(), "setFavorites").mockResolvedValue();
@@ -1600,10 +1622,14 @@ describe("page route loading", () => {
     };
     vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
     mainPaneRouter.openPage("Page1", "page", { inPlace: true });
-    const { dispose } = mount(() => <PageView />);
+    const { root, dispose } = mount(() => <PageView />);
     try {
-      await vi.waitFor(() => expect(write).toHaveBeenCalledWith(["page1"], null));
-      expect(favorites().map((f) => f.name)).toEqual(["page1"]);
+      await vi.waitFor(() => expect(root.textContent).toContain("case content"));
+      expect(recentPages()[0]).toMatchObject({ name: "page1", kind: "page" }); // views follow
+      await flushMicrotasks();
+      expect(write).not.toHaveBeenCalled();
+      expect(favorites().map((f) => f.name)).toEqual(["Page1"]);
+      expect(isFavorite("page1", "page")).toBe(true); // one favorite identity, either spelling
     } finally {
       dispose();
       clearRecent();

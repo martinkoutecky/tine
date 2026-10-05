@@ -569,7 +569,7 @@ async function seedTodayJournal(): Promise<void> {
     const page = await readOwned(owner, backend().getPage(title, "journal"));
     if (page.kind === "stale") return;
     const existing = page.value;
-    if (existing && existing.blocks.some((b) => b.raw.trim() !== "")) return;
+    if (existing && journalHasContent(existing.blocks)) return;
     const resolution = existing?.id ? null : await readOwned(owner, backend().resolvePage(title, "journal"));
     if (resolution?.kind === "stale") return;
     const resolved = resolution?.value ?? null;

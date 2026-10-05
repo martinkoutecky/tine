@@ -4740,15 +4740,12 @@ fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
     }
 }
 
-/// True if journal text requires skipping template insertion, including hash-prefixed prose.
+/// Journal text beyond properties (calendar days, carry); the parser's visible text
+/// decides, so Org `memo:: x` prose counts (OG-C5 L12-S1). Not the template guard.
 fn doc_has_content(blocks: &[DocBlock]) -> bool {
-    blocks.iter().any(|b| {
-        b.raw().lines().any(|l| {
-            !l.trim().is_empty()
-                && (l.trim_start().starts_with('#')
-                    || tine_core::doc::parse_property_line(l).is_none())
-        }) || doc_has_content(&b.children)
-    })
+    blocks
+        .iter()
+        .any(|b| !b.visible_text().trim().is_empty() || doc_has_content(&b.children))
 }
 
 /// Whether a page should load read-only: an org file whose on-disk bytes don't
@@ -5221,7 +5218,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn journal_content_matches_shared_frontend_fixture() {
+    fn journal_content_asks_the_parser_which_bytes_are_properties() {
+        // OG-C5 L12-S1/S1-14: Org stores properties in drawers, so heading prose
+        // shaped like a Markdown property is a written day for calendar and carry.
+        let org = tine_core::org::parse_org("* memo:: keep this sentence\n");
+        assert!(doc_has_content(&org.roots), "Org prose is content");
+        let drawer = tine_core::org::parse_org("* \n:PROPERTIES:\n:id: 6679-abc\n:END:\n");
+        assert!(
+            !doc_has_content(&drawer.roots),
+            "an Org head drawer alone is not"
+        );
+        let md = tine_core::doc::parse("- memo:: only a property\n");
+        assert!(
+            !doc_has_content(&md.roots),
+            "a Markdown property block is not"
+        );
+        let fenced = tine_core::doc::parse("- ```\n  key:: literal\n  ```\n");
+        assert!(
+            doc_has_content(&fenced.roots),
+            "a fenced property-shaped line is code"
+        );
+    }
+
+    #[test]
+    fn journal_content_days_fixture() {
+        // Rust-only since OG-C5 L12-S1: the template guard asks a different question.
         let cases: serde_json::Value =
             serde_json::from_str(include_str!("../../../tests/fixtures/journal-content.json"))
                 .unwrap();
