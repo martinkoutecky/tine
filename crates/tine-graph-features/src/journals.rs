@@ -18,6 +18,19 @@ pub struct FeedPage<T> {
     pub next_before_day: Option<i64>,
     pub done: bool,
     pub as_of_day: i64,
+    /// `path: reason` for every journal this request skipped because it could
+    /// not be listed or read (one bad file never blocks the feed, I-22; the
+    /// caller reports these, I-2). Empty in the common case.
+    pub unreadable: Vec<String>,
+}
+
+/// What one feed row load found.
+enum Loaded<T> {
+    Page(T),
+    /// Deleted since the inventory: skipped silently, as before.
+    Gone,
+    /// This file cannot be read or parsed; skipped and reported with its reason.
+    Unreadable(String),
 }
 
 fn collect_feed_page<T, F>(
@@ -28,7 +41,7 @@ fn collect_feed_page<T, F>(
     mut load: F,
 ) -> Result<FeedPage<T>, io::Error>
 where
-    F: FnMut(&PageId) -> Result<T, io::Error>,
+    F: FnMut(&PageId) -> Result<Loaded<T>, io::Error>,
 {
     if limit == 0 {
         let done = !entries
@@ -39,9 +52,11 @@ where
             next_before_day: None,
             done,
             as_of_day,
+            unreadable: Vec::new(),
         });
     }
     let mut out = Vec::new();
+    let mut unreadable = Vec::new();
     let mut last_examined = None;
     let mut candidates = entries
         .into_iter()
@@ -49,10 +64,10 @@ where
         .peekable();
     while let Some((day, id)) = candidates.next() {
         last_examined = Some(day.0);
-        match load(&id) {
-            Ok(value) => out.push(value),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
+        match load(&id)? {
+            Loaded::Page(value) => out.push(value),
+            Loaded::Gone => {}
+            Loaded::Unreadable(reason) => unreadable.push(format!("{}: {reason}", id.as_str())),
         }
         if out.len() == limit {
             break;
@@ -64,10 +79,14 @@ where
         next_before_day: if done { None } else { last_examined },
         done,
         as_of_day,
+        unreadable,
     })
 }
 
 /// Page the dated journal feed by day, skipping a file deleted since inventory.
+/// A journal that cannot be listed or read (undecodable, oversized, a disk
+/// error, a non-UTF-8 name) is skipped and named in `unreadable`; only a
+/// failure of the whole store (closed, area scan) fails the request.
 /// Cost O(J log J + bytes of returned pages).
 pub fn feed_page(
     store: &Store,
@@ -75,22 +94,21 @@ pub fn feed_page(
     before_day: Option<i64>,
 ) -> Result<FeedPage<tine_store::PageRead>, io::Error> {
     let as_of_day = JournalDate::today().ordinal_key();
-    let entries = feed_journals_desc_through(store, Day(as_of_day))?;
-    collect_feed_page(entries, limit, before_day, as_of_day, |id| {
-        store.page(id).map_err(|error| match error {
-            StoreError::NotFound => io::Error::from(io::ErrorKind::NotFound),
-            StoreError::Io(error) => error.into(),
-            StoreError::InvalidTarget(_)
-            | StoreError::PageSource(_)
-            | StoreError::StreamSymlink(_) => io::Error::other("invalid page path"),
-            StoreError::Undecodable => io::Error::other("stream did not contain valid UTF-8"),
-            StoreError::Unparseable(reason) => io::Error::other(reason),
-            StoreError::TooLarge { limit, .. } => {
-                io::Error::other(format!("journal page exceeds {limit} byte limit"))
-            }
-            StoreError::Closed => io::Error::other("store closed"),
+    let (entries, listing_unreadable) = feed_days_through(store, Day(as_of_day))?;
+    let mut page = collect_feed_page(entries, limit, before_day, as_of_day, |id| {
+        Ok(match store.page(id) {
+            Ok(read) => Loaded::Page(read),
+            Err(StoreError::NotFound) => Loaded::Gone,
+            Err(StoreError::Closed) => return Err(store_error(StoreError::Closed)),
+            Err(error) => Loaded::Unreadable(store_error(error).to_string()),
         })
-    })
+    })?;
+    // The listing's own unreadable entries are reported with the first page
+    // only, so a paged feed names each one once per load.
+    if before_day.is_none() {
+        page.unreadable.splice(0..0, listing_unreadable);
+    }
+    Ok(page)
 }
 
 #[cfg(test)]
@@ -113,11 +131,11 @@ mod journal_feed_tests {
     fn deletion_stable_day_cursor_fills_then_continues_without_duplicates() {
         let entries = [5, 4, 3, 2, 1].into_iter().map(entry).collect();
         let first = collect_feed_page(entries, 3, None, 5, |id| {
-            if id.as_str() == "5" {
-                Err(io::Error::from(io::ErrorKind::NotFound))
+            Ok(if id.as_str() == "5" {
+                Loaded::Gone
             } else {
-                Ok(dto(id))
-            }
+                Loaded::Page(dto(id))
+            })
         })
         .unwrap();
         assert_eq!(
@@ -131,8 +149,10 @@ mod journal_feed_tests {
         assert_eq!(first.next_before_day, Some(2));
         assert!(!first.done);
         let entries = [5, 4, 3, 2, 1].into_iter().map(entry).collect();
-        let second =
-            collect_feed_page(entries, 3, first.next_before_day, 5, |id| Ok(dto(id))).unwrap();
+        let second = collect_feed_page(entries, 3, first.next_before_day, 5, |id| {
+            Ok(Loaded::Page(dto(id)))
+        })
+        .unwrap();
         assert_eq!(
             second
                 .pages
@@ -152,7 +172,7 @@ mod journal_feed_tests {
             3,
             None,
             5,
-            |id| Ok(dto(id)),
+            |id| Ok(Loaded::Page(dto(id))),
         )
         .unwrap();
         assert_eq!(first.next_before_day, Some(3));
@@ -162,11 +182,11 @@ mod journal_feed_tests {
             first.next_before_day,
             5,
             |id| {
-                if id.as_str() == "2" {
-                    Err(io::Error::from(io::ErrorKind::NotFound))
+                Ok(if id.as_str() == "2" {
+                    Loaded::Gone
                 } else {
-                    Ok(dto(id))
-                }
+                    Loaded::Page(dto(id))
+                })
             },
         )
         .unwrap();
@@ -187,7 +207,7 @@ mod journal_feed_tests {
             3,
             Some(4),
             5,
-            |id| Ok(dto(id)),
+            |id| Ok(Loaded::Page(dto(id))),
         )
         .unwrap();
         assert!(empty.pages.is_empty());
@@ -197,7 +217,7 @@ mod journal_feed_tests {
             3,
             None,
             3,
-            |id| Ok(dto(id)),
+            |id| Ok(Loaded::Page(dto(id))),
         )
         .unwrap();
         assert!(exact.done, "an exactly-full final page is done");
@@ -210,7 +230,7 @@ mod journal_feed_tests {
             3,
             |_id| {
                 loads += 1;
-                Ok(dto(&PageId::from("0")))
+                Ok(Loaded::Page(dto(&PageId::from("0"))))
             },
         )
         .unwrap();
@@ -222,6 +242,36 @@ mod journal_feed_tests {
             });
         assert!(matches!(hard, Err(err) if err.kind() == io::ErrorKind::PermissionDenied));
     }
+
+    /// One unreadable journal is skipped and named; the page still fills to
+    /// its limit from the readable days, and the cursor moves past it.
+    #[test]
+    fn an_unreadable_day_is_reported_and_the_page_still_fills() {
+        let page = collect_feed_page(
+            [4, 3, 2, 1].into_iter().map(entry).collect(),
+            2,
+            None,
+            4,
+            |id| {
+                Ok(if id.as_str() == "3" {
+                    Loaded::Unreadable("undecodable".into())
+                } else {
+                    Loaded::Page(dto(id))
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            page.pages
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["4", "2"]
+        );
+        assert_eq!(page.unreadable, ["3: undecodable"]);
+        assert_eq!(page.next_before_day, Some(2));
+        assert!(!page.done);
+    }
 }
 
 fn format(store: &Store) -> JournalFormat {
@@ -232,15 +282,26 @@ fn format(store: &Store) -> JournalFormat {
     )
 }
 
-fn files(store: &Store) -> io::Result<Vec<FileEntry>> {
-    let listing = store.scan_area(Area::Journals, None).map_err(store_error)?;
-    if let Some((name, error)) = listing.unreadable.into_iter().next() {
+/// The journals listing: every listed file, plus `name: reason` for each entry
+/// the scan could not read. A failed scan of the whole area is an error.
+fn listing(store: &Store) -> io::Result<(Vec<FileEntry>, Vec<String>)> {
+    crate::conflicts::area_listing(store, Area::Journals)
+}
+
+/// The complete journals listing, for the filename migration, which renames
+/// beside the entries it sees: an unlisted entry (a disk error, or a sync
+/// service delivering a non-UTF-8 name) could be a same-day twin that the
+/// rename would turn into a duplicate journal day, so a partial listing
+/// refuses. Read-only listings use [`listing`] and report instead.
+fn complete_files(store: &Store) -> io::Result<Vec<FileEntry>> {
+    let (files, unreadable) = listing(store)?;
+    if let Some(first) = unreadable.first() {
         return Err(io::Error::new(
-            error.kind,
-            format!("journal inventory is partial ({name}): {}", error.message),
+            io::ErrorKind::InvalidData,
+            format!("journal inventory is partial ({first})"),
         ));
     }
-    Ok(listing.files)
+    Ok(files)
 }
 
 fn stem(entry: &FileEntry) -> Option<&str> {
@@ -256,21 +317,29 @@ fn stem(entry: &FileEntry) -> Option<&str> {
 }
 
 /// Dated journal ids newest first, once per day, through `cutoff`. Future days
-/// stay addressable as pages. Partial scans return an error. Cost O(J log J).
+/// stay addressable as pages. Listing entries that cannot be read are skipped.
+/// Cost O(J log J).
 pub fn feed_journals_desc_through(store: &Store, cutoff: Day) -> io::Result<Vec<(Day, PageId)>> {
+    Ok(feed_days_through(store, cutoff)?.0)
+}
+
+/// [`feed_journals_desc_through`] plus the listing's unreadable entries.
+fn feed_days_through(store: &Store, cutoff: Day) -> io::Result<(Vec<(Day, PageId)>, Vec<String>)> {
+    let (files, unreadable) = listing(store)?;
     let mut days = BTreeMap::new();
-    for entry in files(store)? {
+    for entry in files {
         if entry.page.is_some() {
             if let Some(day) = entry.day.filter(|day| *day <= cutoff) {
                 days.entry(day).or_insert(());
             }
         }
     }
-    Ok(days
+    let days = days
         .into_keys()
         .rev()
         .map(|day| (day, store.journal_id(day)))
-        .collect())
+        .collect();
+    Ok((days, unreadable))
 }
 
 fn migration_target(entry: &FileEntry, fmt: &JournalFormat) -> Option<String> {
@@ -320,7 +389,7 @@ struct Listing {
 
 impl Listing {
     fn new(store: &Store) -> io::Result<Self> {
-        let entries = files(store)?;
+        let entries = complete_files(store)?;
         let rels = entries.iter().map(|entry| entry.rel.clone()).collect();
         let mut days = BTreeMap::new();
         for day in entries.iter().filter_map(|entry| entry.day) {
@@ -463,12 +532,14 @@ pub fn migrate_journal_filenames(
     Ok(result)
 }
 
-/// Duplicate-day files with first-line previews, canonical first. Unreadable
-/// scans and previews return errors rather than an empty answer. Cost
-/// O(J log J + bytes of duplicate files).
+/// Duplicate-day files with first-line previews, canonical first. A file whose
+/// preview cannot be read stays listed with `preview_error` (one bad file never
+/// hides the day, I-22); listing entries that cannot be read at all are named by
+/// the conflict inventory and the journal feed. A failed area scan or a closed
+/// store is an error. Cost O(J log J + bytes of duplicate files).
 pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
     let mut groups: BTreeMap<Day, Vec<FileEntry>> = BTreeMap::new();
-    for entry in files(store)? {
+    for entry in listing(store)?.0 {
         if let Some(day) = entry.day.filter(|_| stem(&entry).is_some()) {
             groups.entry(day).or_default().push(entry);
         }
@@ -481,6 +552,11 @@ pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
         }
         let mut journal_files = Vec::new();
         for entry in entries {
+            let (preview, preview_error) = match crate::conflicts::preview(store, &entry.id) {
+                Ok(preview) => (preview, None),
+                Err(error) if crate::conflicts::store_failed(&error) => return Err(error),
+                Err(error) => (String::new(), Some(error.to_string())),
+            };
             journal_files.push(JournalFile {
                 name: entry
                     .rel
@@ -489,8 +565,9 @@ pub fn journal_conflicts(store: &Store) -> io::Result<Vec<JournalConflict>> {
                     .unwrap_or(&entry.rel)
                     .to_owned(),
                 path: entry.id.as_str().to_owned(),
-                preview: crate::conflicts::preview(store, &entry.id)?,
+                preview,
                 canonical: stem(&entry).is_some_and(|stem| fmt.is_canonical_stem(stem)),
+                preview_error,
             });
         }
         journal_files.sort_by(|a, b| {

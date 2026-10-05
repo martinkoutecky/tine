@@ -751,7 +751,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return "";
     },
     async graphSourceFiles() {
-      return [];
+      return { files: [], skipped: [] };
     },
     async conflictInventory() {
       return { sync_conflicts: [], vcs_markers: [], queue: [] };

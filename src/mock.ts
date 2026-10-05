@@ -875,7 +875,10 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       if (includeJournals) {
         files.push({ rel: "journals/2026_07_04.md", text: "- met with [[Alice]] re: $$x^2$$\n", format: "md" as const });
       }
-      return files.map((f) => ({ ...f, bytes: new TextEncoder().encode(f.text).length }));
+      return {
+        files: files.map((f) => ({ ...f, bytes: new TextEncoder().encode(f.text).length })),
+        skipped: [],
+      };
     },
     graphBindingGeneration: () => 1,
     async savePages(entries) {

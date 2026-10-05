@@ -5,7 +5,6 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 
-use tine_core::doc;
 use tine_core::model::{Format, PageDto, PageKind};
 use tine_core::refs;
 use tine_store::{
@@ -463,14 +462,7 @@ fn rename_page_after_inventory(
             let new_name = if primary {
                 new.to_owned()
             } else {
-                format!(
-                    "{new}{}",
-                    entry
-                        .name
-                        .chars()
-                        .skip(old.chars().count())
-                        .collect::<String>()
-                )
+                format!("{new}{}", namespace_suffix(&entry.name, &old_key))
             };
             if ids.len() > 1 {
                 return Err(error(
@@ -752,6 +744,22 @@ fn rename_page_after_inventory(
     })
 }
 
+/// The namespace tail of descendant `name` below the parent whose page key is
+/// `parent_key`, starting at its separating `/` (`é/x` below `é` → `/x`). The
+/// descendant was matched by page key (case fold, NFC, boundary slashes), which
+/// can change character counts but never the namespace separators, so the tail
+/// is located by separator count in the descendant's own spelling, never by the
+/// parent's character count (REG-OG-C5-L03-S1: an NFD parent with an NFC child
+/// renamed `Newx` instead of `New/x`). O(name).
+fn namespace_suffix<'a>(name: &'a str, parent_key: &str) -> &'a str {
+    let trimmed = name.trim();
+    let body = trimmed.strip_prefix('/').unwrap_or(trimmed);
+    let depth = parent_key.matches('/').count();
+    body.match_indices('/')
+        .nth(depth)
+        .map_or("", |(at, _)| &body[at..])
+}
+
 /// What [`rename_or_merge_page`] did, and the page files it wrote.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct RenameReport {
@@ -998,42 +1006,63 @@ fn same_blocks(a: &[tine_core::model::BlockDto], b: &[tine_core::model::BlockDto
             .all(|(x, y)| x.raw == y.raw && same_blocks(&x.children, &y.children))
 }
 
-/// A page-header property line: Markdown `key:: value`, or an Org
-/// `#+KEY: value` directive. Keys compare case-insensitively.
-fn header_property(line: &str, org: bool) -> Option<(String, String)> {
-    if !org {
-        return doc::parse_property_line(line)
-            .map(|(key, value)| (key.to_owned(), value.to_owned()));
-    }
-    let (key, value) = line.strip_prefix("#+")?.split_once(':')?;
-    let key = key.trim();
-    (!key.is_empty()
-        && key.chars().all(|c| {
-            c.is_alphanumeric()
-                || unicode_normalization::char::is_combining_mark(c)
-                || matches!(c, '-' | '_' | '.' | '/')
-        }))
-    .then(|| (key.to_owned(), value.trim().to_owned()))
+/// Each line of a page preamble, with its lowercase key and value when the
+/// parser accepts it as a page-header property (Markdown `key:: value`, Org
+/// `#+KEY: value`) outside every literal container. A fenced or `#+BEGIN_…`
+/// example is literal text, never a header property (I-12: the parser owns
+/// regions; REG-OG-C5-L03-S2). One parse of `text`, O(text bytes).
+fn header_lines(text: &str, org: bool) -> Vec<(&str, Option<(String, String)>)> {
+    let regions = crate::conflicts::pre_regions(text, if org { Format::Org } else { Format::Md });
+    let mut at = 0;
+    text.split_inclusive('\n')
+        .map(|raw| {
+            let start = at;
+            at += raw.len();
+            let line = raw.strip_suffix('\n').unwrap_or(raw);
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            let property = regions
+                .container_of(start, at)
+                .is_none()
+                .then(|| regions.property(start).cloned())
+                .flatten();
+            (line, property)
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod header_property_tests {
-    use super::header_property;
+    use super::header_lines;
+
+    fn property(text: &str, org: bool) -> Option<(String, String)> {
+        header_lines(text, org)
+            .into_iter()
+            .next()
+            .and_then(|(_, p)| p)
+    }
 
     #[test]
     fn merge_recognizes_unicode_page_headers_in_both_formats() {
         assert_eq!(
-            header_property("klíč:: hodnota", false),
+            property("klíč:: hodnota", false),
             Some(("klíč".into(), "hodnota".into()))
         );
         assert_eq!(
-            header_property("#+klíč: hodnota", true),
+            property("#+klíč: hodnota", true),
             Some(("klíč".into(), "hodnota".into()))
         );
         assert_eq!(
-            header_property("#+a.b/c: value", true),
+            property("#+a.b/c: value", true),
             Some(("a.b/c".into(), "value".into()))
         );
+    }
+
+    #[test]
+    fn a_fenced_example_is_never_a_header_property() {
+        let lines = header_lines("```\nnote:: keep me\n```\nkey:: v\n", false);
+        assert_eq!(lines.len(), 4);
+        assert!(lines[..3].iter().all(|(_, p)| p.is_none()), "{lines:?}");
+        assert_eq!(lines[3].1, Some(("key".into(), "v".into())));
     }
 }
 
@@ -1053,40 +1082,46 @@ fn payload(
     let mut new_header = None;
     let mut blocks = Vec::new();
     if let Some(pre) = source.pre_block.as_deref() {
-        let mut header: Vec<String> = survivor
+        let mut header: Vec<(String, Option<(String, String)>)> = survivor
             .pre_block
             .as_deref()
-            .unwrap_or_default()
-            .lines()
-            .map(str::to_owned)
-            .collect();
+            .map(|kept| {
+                header_lines(kept, org)
+                    .into_iter()
+                    .map(|(line, property)| (line.to_owned(), property))
+                    .collect()
+            })
+            .unwrap_or_default();
         let mut moved = Vec::new();
-        for line in pre.lines() {
-            let Some((key, value)) = header_property(line, org) else {
+        for (line, property) in header_lines(pre, org) {
+            let Some((key, value)) = property else {
                 moved.push(line);
                 continue;
             };
-            let key = key.to_ascii_lowercase();
-            let clash = header.iter().position(|kept| {
-                header_property(kept, org).is_some_and(|(k, _)| k.eq_ignore_ascii_case(&key))
-            });
+            let clash = header
+                .iter()
+                .position(|(_, kept)| kept.as_ref().is_some_and(|(k, _)| *k == key));
             let equal = clash.is_some_and(|at| {
-                header_property(&header[at], org).is_some_and(|(_, v)| v.trim() == value.trim())
+                header[at]
+                    .1
+                    .as_ref()
+                    .is_some_and(|(_, v)| v.trim() == value.trim())
             });
             match clash {
                 Some(_) if equal => {}
-                None if key != "title" => header.push(line.to_owned()),
+                None if key != "title" => header.push((line.to_owned(), Some((key, value)))),
                 Some(at) if key == "alias" => {
-                    let kept = header[at].clone();
+                    let kept_value = header[at]
+                        .1
+                        .as_ref()
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
                     // Members split like the reference evidence and OG
                     // `sep-by-comma`: `,` or `，` (C3Y Y4).
-                    let known: HashSet<String> = header_property(&kept, org)
-                        .map(|(_, v)| {
-                            v.split(refs::is_linkable_property_separator)
-                                .map(refs::normalize)
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                    let known: HashSet<String> = kept_value
+                        .split(refs::is_linkable_property_separator)
+                        .map(refs::normalize)
+                        .collect();
                     let extra: Vec<&str> = value
                         .split(refs::is_linkable_property_separator)
                         .map(str::trim)
@@ -1095,18 +1130,21 @@ fn payload(
                         })
                         .collect();
                     if !extra.is_empty() {
-                        header[at] = extra
-                            .iter()
-                            .fold(kept.trim_end().to_owned(), |line, alias| {
-                                format!("{line}, {alias}")
-                            });
+                        let join = |start: &str| {
+                            extra
+                                .iter()
+                                .fold(start.trim_end().to_owned(), |line, alias| {
+                                    format!("{line}, {alias}")
+                                })
+                        };
+                        header[at] = (join(&header[at].0), Some((key, join(&kept_value))));
                     }
                 }
                 _ => moved.push(line),
             }
         }
         if !header.is_empty() {
-            new_header = Some(lines(header.iter().map(String::as_str)));
+            new_header = Some(lines(header.iter().map(|(line, _)| line.as_str())));
         }
         if moved.iter().any(|line| !line.trim().is_empty()) {
             blocks.push(tine_core::model::BlockDto {

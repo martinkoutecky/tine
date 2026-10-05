@@ -169,6 +169,9 @@ export function ImproveTab(): JSX.Element {
           <div class="improve-report">
             <div class="settings-hint">
               {APP_PRODUCT_NAME} {r().tineVersion} · lsdoc {r().lsdocVersion} · Scanned {r().stats.files} file(s), {fmtBytes(r().stats.totalBytes)}.
+              <Show when={r().stats.skipped?.length}>
+                {" "}<span title={r().stats.skipped?.join("\n")}>Skipped {r().stats.skipped?.length} unreadable or oversized file(s).</span>
+              </Show>
             </div>
 
             <Show when={!r().lsdocAvailable}>

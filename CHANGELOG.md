@@ -33,6 +33,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Switching graphs right after Tine recovered an interrupted Favorites save no longer rewrites the new graph's Favorites page and config (REG-OG-C5-L12-FAV-TIMER).
 - Opening a favorite page through a different capitalization (a link, a restored tab, or a saved path) no longer rewrites the graph's favorites config; only an explicit rename changes it (REG-OG-C5-L14-FAV-CASE).
 - Opening Journals no longer replaces today's journal with the default template when it already holds text: Org heading prose such as `memo:: …`, a block id, or text nested under an empty bullet is kept; Org journals with such prose now count as written days for the calendar and carry (REG-OG-C5-L12-S1).
+- Renaming a namespace parent whose title and a child's title use different Unicode forms of the same letters moves the child to `New/child`, not `Newchild` (REG-OG-C5-L03-S1).
+- Merging pages keeps a fenced `key:: value` example in the merged page's preamble inside its fence instead of dropping it or turning it into a page property (REG-OG-C5-L03-S2).
+- One unreadable journal or page (undecodable text, an oversized file, a filename that is not UTF-8) no longer blanks the journal feed, the duplicate-journal list, the conflict review or the parser comparison: the readable files are shown and the skipped ones are named (REG-OG-C5-P2-BAD-FILE).
 - Page rename publication skips reparsing the old document and repeated transaction-record searches; loaded-page refresh uses one path lookup per touched page (GH #623).
 - Ordinary focus refreshes enumerate graph metadata outside the page/save writer and sort only changed paths, reducing waits while preserving freshness; config changes and failed-load recovery retain their full writer-ordered scans (GH #623).
 - Graph search measures text rank only for matches, avoiding a full Unicode-length pass over rejected blocks (GH #623).

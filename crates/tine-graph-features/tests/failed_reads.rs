@@ -122,9 +122,16 @@ fn journal_preview_failure_is_reported_instead_of_an_empty_preview() {
     let (root, store) = graph("journal-preview");
     fs::write(root.join("journals/2026_06_19.md"), "- good\n").unwrap();
     fs::write(root.join("journals/2026_06_19.org"), b"- bad \xff\n").unwrap();
-    let result = tine_graph_features::journals::journal_conflicts(&store);
+    // I-22: the bad file stays listed with its failure, never an empty
+    // preview that reads as an empty file, and never hiding the day.
+    let days = tine_graph_features::journals::journal_conflicts(&store).unwrap();
+    let bad = days
+        .iter()
+        .flat_map(|day| &day.files)
+        .find(|file| file.path == "journals/2026_06_19.org")
+        .expect("the unreadable duplicate stays listed");
     assert!(
-        result.is_err(),
+        bad.preview_error.is_some(),
         "incomplete duplicate journal previews must be reported"
     );
     store.close();

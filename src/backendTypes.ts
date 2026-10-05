@@ -83,6 +83,13 @@ export interface GraphSourceFile {
   bytes: number;
 }
 
+/** The parser-comparison input: every eligible file, and `path: reason` for
+ *  each file left out (unreadable, undecodable, over the size limit). */
+export interface GraphSources {
+  files: GraphSourceFile[];
+  skipped: string[];
+}
+
 export type GraphFolderPickResult =
   | { status: "picked"; path: string }
   | { status: "permission-requested" | "permission-needed" | "cancelled"; path?: string };
