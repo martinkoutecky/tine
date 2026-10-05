@@ -294,10 +294,21 @@ pub(super) fn execute_pages(
             );
         }
     }
-    let have: HashSet<String> = file_pages
+    let mut have: HashSet<String> = file_pages
         .iter()
         .map(|page| identity_fold(&page.name))
         .collect();
+    // GH #353 / #623: an alias of a file page names THAT page. The owner carries
+    // the identity (with `matched_alias` as display context), so the alias text
+    // must never also appear as a referenced, path-less page candidate: selecting
+    // that phantom row opened a standalone alias-named page instead of the owner.
+    // `aliases_by_owner` is the one physical-owner alias inventory above.
+    have.extend(
+        aliases_by_owner
+            .values()
+            .flatten()
+            .map(|alias| identity_fold(alias)),
+    );
     for name in if include_names {
         graph.referenced_page_names()
     } else {

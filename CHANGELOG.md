@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- Searching for a page alias (Ctrl+K and the page autocomplete) lists the page that owns the alias once, with an "aka" hint, and no longer also lists a separate page named after the alias when that text is referenced elsewhere; ASCII and fullwidth comma alias lists both work (GH #623, GH #353; REG-OG-GH623-ALIAS-353).
 - An advanced query is refused for a `:result-transform` only when it declares one (a title, string, comment or discarded form that mentions the word no longer blocks it), and a BEGIN_QUERY block that declares a transform now shows the "clauses Tine cannot run" refusal instead of silently running without it (REG-OG-C5-Q-RESULT-TRANSFORM).
 - Saving a page no longer fails with "refusing to move page-header property into outline content" when a code block shows `key:: value` syntax; the guard asks the parser which lines are properties (REG-OG-C5-Q-REFUSAL1).
 - A PDF link into a nested assets folder (`../assets/nested/report.pdf`) opens that PDF, not a same-named one in the assets root, and highlights made in it are saved under the nested PDF's own page and sidecar; opening the PDF from a highlight's page does the same (UI-OG-C5-P6-PDFLINK).
