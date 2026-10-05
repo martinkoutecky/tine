@@ -1269,13 +1269,13 @@ impl Store {
     }
 
     /// Wait for the initial graph parse, retrying it if it previously failed,
-    /// then reconcile page, journal and
-    /// config files. Assets are not scanned. A file is considered unchanged
+    /// then reconcile page, journal and config files. Asset metadata is
+    /// reconciled separately through the configured asset scope. A graph-text file is considered unchanged
     /// when its modification time and length both match the previous scan;
     /// same-length edits with preserved timestamps can therefore be missed.
     /// Cost O(P metadata + bytes of files detected as changed + config bytes
-    /// hashed), plus the initial load wait. An external config change reparses
-    /// O(P + B) pages and blocks under the writer lock before publication.
+    /// hashed + asset metadata), plus load wait. Runtime graph-text metadata walks run off-writer and retry on change.
+    /// A config change reparses O(P + B) pages and blocks under the writer before publication.
     /// Recovery from a failed initial load also parses the whole graph
     /// synchronously before reconciliation. A concurrent edit can make that
     /// recovery parse fail; retry with another explicit call after edits settle.
