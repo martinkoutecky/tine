@@ -945,7 +945,7 @@ fn journal_objects(store: &Store, bad: &mut Unreadable) -> io::Result<Vec<Confli
 /// them (R-VCS-MARKERS). Read failures are errors, never absence: the caller
 /// reports the file as unreadable and keeps the rest. Cost: O(1)
 /// for a page the store has observed without an anchor line
-/// (`Store::vcs_anchor_state`, no read); otherwise one bounded read, O(file
+/// (`Store::may_carry_vcs_markers`, no read); otherwise one bounded read, O(file
 /// bytes), where a byte prefilter skips the UTF-8 check and line scan for files
 /// without an anchor marker.
 fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConflict>> {
@@ -958,7 +958,7 @@ fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConf
     // A page the store has observed with no anchor line cannot be marker-
     // bearing: no read. (Cached pages are readable, within the parse limit and
     // valid UTF-8, so the read below could not have failed for them either.)
-    if store.vcs_anchor_state(file) == Some(false) {
+    if !store.may_carry_vcs_markers(file) {
         return Ok(None);
     }
     let (bytes, _) = match store.read(file, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {

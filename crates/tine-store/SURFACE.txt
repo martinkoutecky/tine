@@ -117,7 +117,7 @@ fn store::Store::file_id
 fn store::Store::config
 fn store::Store::diagnostics
 fn store::Store::rebuild_graph
-fn store::Store::vcs_anchor_state
+fn store::Store::may_carry_vcs_markers
 fn store::Store::close
 fn store::Store::create_graph
 fn store::Store::inspect
