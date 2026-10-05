@@ -36,7 +36,7 @@ use super::macro_extent::SCAN_WORK;
 pub use super::macro_extent::{
     is_query_macro_name, query_macro_extent, query_macro_extents, FormFamily, MacroExtent,
 };
-use super::macro_extent::{page_ref_end, scan_braces, tql_string_end};
+use super::macro_extent::{page_ref_end, scan_braces, sql_quoted_end};
 
 // ---------------------------------------------------------------------------
 // C1 / W3 — the one `split_trailing_map`
@@ -192,7 +192,7 @@ pub fn guard_page_ref_arguments(form: &str) -> String {
         };
         match byte {
             b'\'' => {
-                let end = tql_string_end(form, i);
+                let end = sql_quoted_end(form, i, b'\'');
                 out.push_str(&form[i..end]);
                 i = end;
                 after_comma = false;

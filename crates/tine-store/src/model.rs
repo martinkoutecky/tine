@@ -443,77 +443,6 @@ pub(crate) struct Graph {
         std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
 }
 
-/// Read-only inputs consumed by graph evaluators. Disk and mutation helpers
-/// remain on `Graph`; a published generation supplies these answers directly.
-pub(crate) trait GraphRead {
-    fn with_pages<T>(&self, f: impl FnOnce(&Pages) -> T) -> T;
-    fn config(&self) -> &Config;
-    fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>>;
-    fn reference_candidate_pages(
-        &self,
-        names: &[String],
-        kind: ReferenceKind,
-    ) -> ReferenceCandidatePages;
-    fn page_aliases_with_owners(&self) -> Vec<(String, String, String)>;
-    fn page_aliases(&self) -> Vec<(String, String)> {
-        self.page_aliases_with_owners()
-            .into_iter()
-            .map(|(alias, owner, _)| (alias, owner))
-            .collect()
-    }
-    /// The alias relation, indexed (see [`crate::query::AliasEdges`]). A
-    /// snapshot builds it once and carries it across saves that moved no
-    /// alias; the default builds it from the alias list on every call.
-    fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
-        Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))
-    }
-    fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>>;
-    fn block_page_hint(&self, uuid: &str) -> Option<String>;
-    fn page_list_arc(&self) -> Arc<Vec<PageEntry>>;
-    fn referenced_page_names(&self) -> Vec<String>;
-    fn query_index(&self) -> Arc<crate::query::index::QueryIndex>;
-}
-
-impl<R: GraphRead> GraphRead for Arc<R> {
-    fn with_pages<T>(&self, f: impl FnOnce(&Pages) -> T) -> T {
-        self.as_ref().with_pages(f)
-    }
-    fn config(&self) -> &Config {
-        self.as_ref().config()
-    }
-    fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>> {
-        self.as_ref().reference_real_page_names()
-    }
-    fn reference_candidate_pages(
-        &self,
-        names: &[String],
-        kind: ReferenceKind,
-    ) -> ReferenceCandidatePages {
-        self.as_ref().reference_candidate_pages(names, kind)
-    }
-    fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
-        self.as_ref().page_aliases_with_owners()
-    }
-    fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
-        self.as_ref().alias_edges()
-    }
-    fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
-        self.as_ref().observed_page_mtimes()
-    }
-    fn block_page_hint(&self, uuid: &str) -> Option<String> {
-        self.as_ref().block_page_hint(uuid)
-    }
-    fn page_list_arc(&self) -> Arc<Vec<PageEntry>> {
-        self.as_ref().page_list_arc()
-    }
-    fn referenced_page_names(&self) -> Vec<String> {
-        self.as_ref().referenced_page_names()
-    }
-    fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
-        self.as_ref().query_index()
-    }
-}
-
 /// The immutable page and index input for one published generation. Evaluators
 /// borrow this value; write helpers and filesystem capabilities are absent.
 pub(crate) struct ReadSnapshot {
@@ -1083,17 +1012,25 @@ impl ReadSnapshot {
     }
 }
 
-impl GraphRead for ReadSnapshot {
-    fn with_pages<T>(&self, f: impl FnOnce(&Pages) -> T) -> T {
+/// Read-only inputs consumed by graph evaluators. Disk and mutation helpers
+/// remain on `Graph`; a published generation supplies these answers directly.
+impl ReadSnapshot {
+    pub(crate) fn page_aliases(&self) -> Vec<(String, String)> {
+        self.page_aliases_with_owners()
+            .into_iter()
+            .map(|(alias, owner, _)| (alias, owner))
+            .collect()
+    }
+    pub(crate) fn with_pages<T>(&self, f: impl FnOnce(&Pages) -> T) -> T {
         f(&self.pages)
     }
-    fn config(&self) -> &Config {
+    pub(crate) fn config(&self) -> &Config {
         &self.config
     }
-    fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>> {
+    pub(crate) fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>> {
         Some(Arc::clone(&self.real_page_names))
     }
-    fn reference_candidate_pages(
+    pub(crate) fn reference_candidate_pages(
         &self,
         names: &[String],
         kind: ReferenceKind,
@@ -1150,13 +1087,13 @@ impl GraphRead for ReadSnapshot {
             }
         }
     }
-    fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
+    pub(crate) fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
         Arc::clone(
             self.alias_edges
                 .get_or_init(|| Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))),
         )
     }
-    fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
+    pub(crate) fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
         self.aliases
             .get_or_init(|| {
                 let index = self.alias_index.get_or_init(|| {
@@ -1192,10 +1129,10 @@ impl GraphRead for ReadSnapshot {
             .as_ref()
             .clone()
     }
-    fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
+    pub(crate) fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
         Arc::clone(&self.observed_mtimes)
     }
-    fn block_page_hint(&self, uuid: &str) -> Option<String> {
+    pub(crate) fn block_page_hint(&self, uuid: &str) -> Option<String> {
         self.block_index
             .get_or_init(|| {
                 #[cfg(test)]
@@ -1205,14 +1142,14 @@ impl GraphRead for ReadSnapshot {
             })
             .hint(uuid)
     }
-    fn page_list_arc(&self) -> Arc<Vec<PageEntry>> {
+    pub(crate) fn page_list_arc(&self) -> Arc<Vec<PageEntry>> {
         self.list.materialize()
     }
-    fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
+    pub(crate) fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
         let positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
         (self.query_index).get(&self.pages, &positions, &self.config, self.cache_generation)
     }
-    fn referenced_page_names(&self) -> Vec<String> {
+    pub(crate) fn referenced_page_names(&self) -> Vec<String> {
         self.referenced_names
             .get_or_init(|| {
                 let index = self.referenced_name_index.get_or_init(|| {
@@ -3498,7 +3435,7 @@ impl SnapshotMemos {
     /// (all of them on a day rollover).
     fn scope_derived_invalidation(
         &self,
-        graph: &impl GraphRead,
+        graph: &ReadSnapshot,
         entry: &PageEntry,
         previous_doc: Option<&Document>,
         doc: &Document,
@@ -3833,58 +3770,6 @@ impl Graph {
         out
     }
 
-    /// Read raw bytes of an asset (e.g. a PDF) for the viewer.
-    #[cfg(test)]
-    pub(crate) fn read_asset(&self, name: &str) -> io::Result<Vec<u8>> {
-        fs::read(self.asset_file_for_read(name)?)
-    }
-
-    /// Resolve an existing top-level regular asset through the canonical asset
-    /// capability. A symlink may point elsewhere inside that approved root, but
-    /// can never turn a read/open into access outside it.
-    #[cfg(test)]
-    pub(crate) fn asset_file_for_read(&self, name: &str) -> io::Result<PathBuf> {
-        top_level_asset_name(name)?;
-        let assets = fs::canonicalize(self.assets_path())?;
-        let path = fs::canonicalize(self.assets_path().join(name))?;
-        if !path.starts_with(&assets) || !fs::metadata(&path)?.is_file() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid asset"));
-        }
-        Ok(path)
-    }
-
-    /// Read an asset only if its current on-disk size is within `max_bytes`.
-    /// The post-read check closes the metadata/read race if another process grows
-    /// the file between those operations.
-    #[cfg(test)]
-    pub(crate) fn read_asset_limited(&self, name: &str, max_bytes: u64) -> io::Result<Vec<u8>> {
-        top_level_asset_name(name)?;
-        let path = self.asset_file_for_read(name)?;
-        let metadata = fs::metadata(&path)?;
-        if !metadata.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "asset is not a regular file",
-            ));
-        }
-        if metadata.len() > max_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("asset exceeds {} byte limit", max_bytes),
-            ));
-        }
-        let bytes = self.read_asset(name)?;
-        if bytes.len() as u64 > max_bytes {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("asset exceeds {} byte limit", max_bytes),
-            ));
-        }
-        Ok(bytes)
-    }
-
-    /// Write raw bytes (e.g. a pasted image) into `assets/`, returning the
-    /// stored filename (de-duplicated if it already exists).
     pub(crate) fn entry_for_path(&self, path: &Path) -> Option<PageEntry> {
         self.entry_for_path_in(path, None)
     }
@@ -4556,29 +4441,6 @@ fn newly_reclassified_page_property_line(
         .map(|line| (*line).clone())
 }
 
-/// Atomically reserve a unique filename in `assets/` for `name`, de-duplicating
-/// against existing files by appending `_1`, `_2`, … to the stem. Unlike a plain
-/// `exists()` check followed by a write, this CREATES the file exclusively
-/// (`create_new`), so a concurrent writer (OG Logseq, or another asset op) that
-/// races between the name check and our write can't claim the same name and get
-/// silently overwritten — whoever loses the create retries the next candidate.
-/// Returns the chosen name and the open (empty) file handle.
-/// Reject an asset name that isn't a plain top-level filename — a path separator
-/// or a `.`/`..` component — so a frontend-supplied name can't reach outside
-/// `assets/` (defense-in-depth; mirrors `trash_asset`). `create_new` already
-/// blocks overwriting an existing file, so the realistic pre-guard outcome was a
-/// stray file, not corruption — but reject it outright anyway.
-#[cfg(test)]
-fn top_level_asset_name(name: &str) -> io::Result<()> {
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "bad asset name",
-        ));
-    }
-    Ok(())
-}
-
 /// Parse `entries` on up to `page_cache_worker_count()` scoped threads (serial
 /// for small graphs), returning per-shard results in entry order. Each shard
 /// checks `keep_going` every 24 entries; `None` means one of them saw it false.
@@ -4655,60 +4517,6 @@ fn page_cache_worker_count() -> usize {
 
 #[cfg(test)]
 const TEST_PAGE_PARSE_PANIC_SENTINEL: &str = "__TINE_TEST_PAGE_PARSE_PANIC__";
-
-/// Compound asset extensions that a downstream matcher keys on AS A WHOLE (e.g.
-/// drawio's editable SVG, whose `.drawio.svg` suffix is what surfaces the
-/// "Edit in draw.io" affordance). De-dup must insert its `_N` counter BEFORE the
-/// whole suffix — `flow.drawio.svg` must collide to `flow_1.drawio.svg`, NOT
-/// `flow.drawio_1.svg` (a naive last-dot split), which would still end in `.svg`
-/// but no longer match `\.drawio\.svg$` and silently lose the editor button
-/// (GH #38). Longest match wins; case-insensitive.
-#[cfg(test)]
-const COMPOUND_ASSET_EXTS: &[&str] = &[".drawio.svg", ".excalidraw.svg", ".excalidraw.png"];
-
-/// Split an asset filename into (stem, extension) for de-dup counter insertion,
-/// preserving known compound extensions (see `COMPOUND_ASSET_EXTS`). Falls back
-/// to a last-dot split for ordinary single extensions.
-#[cfg(test)]
-fn split_asset_stem_ext(name: &str) -> (String, String) {
-    let lower = name.to_ascii_lowercase();
-    for ext in COMPOUND_ASSET_EXTS {
-        if lower.ends_with(ext) {
-            let cut = name.len() - ext.len();
-            return (name[..cut].to_string(), name[cut..].to_string());
-        }
-    }
-    match name.rsplit_once('.') {
-        Some((s, e)) => (s.to_string(), format!(".{e}")),
-        None => (name.to_string(), String::new()),
-    }
-}
-
-#[cfg(test)]
-fn reserve_asset(assets: &Path, name: &str) -> io::Result<(String, fs::File)> {
-    top_level_asset_name(name)?;
-    let create_new = |n: &str| {
-        fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(assets.join(n))
-    };
-    match create_new(name) {
-        Ok(f) => return Ok((name.to_string(), f)),
-        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
-        _ => {}
-    }
-    let (stem, ext) = split_asset_stem_ext(name);
-    let mut i = 1;
-    loop {
-        let candidate = format!("{stem}_{i}{ext}");
-        match create_new(&candidate) {
-            Ok(f) => return Ok((candidate, f)),
-            Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
-            _ => i += 1,
-        }
-    }
-}
 
 /// Collapse journal entries that resolve to the SAME date down to one (the
 /// canonical `yyyy_MM_dd` file) — a leftover title-named duplicate must not show
@@ -5200,36 +5008,6 @@ pub(crate) fn atomic_write_with_check(
     )
 }
 
-/// Like [`atomic_write`] but the payload is COPIED from `src` (so a large import —
-/// a PDF, a big image — isn't slurped fully into memory): copy into a unique temp
-/// in the destination dir, fsync it, then atomically rename into place. The temp
-/// is removed on any failure, and the directory entry is fsynced on success. The
-/// temp name is hidden (`.`-prefixed) so the orphan-asset scanner never lists it.
-#[cfg(test)]
-pub fn atomic_copy(src: &Path, dst: &Path) -> io::Result<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-    let dir = dst.parent().unwrap_or_else(|| Path::new("."));
-    let tmp =
-        crate::atomic_file::temp_path(dst, TMP_SEQ.fetch_add(1, Ordering::Relaxed), ".import");
-    let res = (|| {
-        let mut input = fs::File::open(src)?;
-        let mut output = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)?;
-        std::io::copy(&mut input, &mut output)?;
-        output.sync_all()?;
-        drop(output);
-        fs::rename(&tmp, dst)?;
-        crate::directory_durability::sync_directory_entry(dir)
-    })();
-    if res.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    res
-}
-
 /// Copy into a newly-created destination without replacing a path that appeared
 /// concurrently. Used by restore after the previous live inode has been moved to
 /// recovery: a sync writer that recreates the live name wins and the restore
@@ -5424,95 +5202,6 @@ mod tests {
         assert_ne!(parent.uuid, parent.children[0].uuid);
         assert_ne!(parent.uuid, "x");
         assert_ne!(parent.children[0].uuid, "x");
-    }
-
-    #[test]
-    fn reserve_asset_avoids_overwrite() {
-        let dir = std::env::temp_dir().join(format!("tine-asset-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        // Each reserve CREATES the file (exclusively), so the next reserve of the
-        // same name is forced onto a fresh suffix — no manual writes needed, and a
-        // racing writer can never be handed an already-taken name.
-        assert_eq!(reserve_asset(&dir, "paper.pdf").unwrap().0, "paper.pdf");
-        assert_eq!(reserve_asset(&dir, "paper.pdf").unwrap().0, "paper_1.pdf");
-        assert_eq!(reserve_asset(&dir, "paper.pdf").unwrap().0, "paper_2.pdf");
-        // Extensionless names work too.
-        assert_eq!(reserve_asset(&dir, "NOTES").unwrap().0, "NOTES");
-        assert_eq!(reserve_asset(&dir, "NOTES").unwrap().0, "NOTES_1");
-        // Compound extensions (drawio/excalidraw editable assets) survive de-dup:
-        // the counter goes BEFORE the whole `.drawio.svg` suffix so the collided
-        // name still matches the editor affordance (GH #38). A naive last-dot
-        // split would have produced `flow.drawio_1.svg`.
-        assert_eq!(
-            reserve_asset(&dir, "flow.drawio.svg").unwrap().0,
-            "flow.drawio.svg"
-        );
-        assert_eq!(
-            reserve_asset(&dir, "flow.drawio.svg").unwrap().0,
-            "flow_1.drawio.svg"
-        );
-        assert_eq!(
-            reserve_asset(&dir, "flow.drawio.svg").unwrap().0,
-            "flow_2.drawio.svg"
-        );
-        // Case-insensitive suffix match, and .excalidraw.png too.
-        assert_eq!(
-            reserve_asset(&dir, "S.DRAWIO.SVG").unwrap().0,
-            "S.DRAWIO.SVG"
-        );
-        assert_eq!(
-            reserve_asset(&dir, "S.DRAWIO.SVG").unwrap().0,
-            "S_1.DRAWIO.SVG"
-        );
-        assert_eq!(
-            reserve_asset(&dir, "art.excalidraw.png").unwrap().0,
-            "art.excalidraw.png"
-        );
-        assert_eq!(
-            reserve_asset(&dir, "art.excalidraw.png").unwrap().0,
-            "art_1.excalidraw.png"
-        );
-        // An ordinary double-dotted name (not a known compound) still splits on
-        // the last dot — `my.file.txt` → `my.file_1.txt`.
-        assert_eq!(reserve_asset(&dir, "my.file.txt").unwrap().0, "my.file.txt");
-        assert_eq!(
-            reserve_asset(&dir, "my.file.txt").unwrap().0,
-            "my.file_1.txt"
-        );
-        // Every reserved name is a real, distinct file on disk.
-        for n in [
-            "paper.pdf",
-            "paper_1.pdf",
-            "paper_2.pdf",
-            "NOTES",
-            "NOTES_1",
-            "flow.drawio.svg",
-            "flow_1.drawio.svg",
-            "flow_2.drawio.svg",
-            "art.excalidraw.png",
-            "art_1.excalidraw.png",
-            "my.file.txt",
-            "my.file_1.txt",
-        ] {
-            assert!(dir.join(n).exists(), "{n} reserved");
-        }
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn reserve_asset_rejects_path_traversal() {
-        // F5: a frontend-supplied asset name with a separator or `..`/`.` component
-        // must not reach outside assets/. (read_asset shares the same guard.)
-        let dir = std::env::temp_dir().join(format!("tine-asset-trav-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        for bad in ["../evil.md", "..", ".", "a/b.png", "a\\b.png", ""] {
-            assert!(reserve_asset(&dir, bad).is_err(), "must reject {bad:?}");
-        }
-        // A plain top-level name still works.
-        assert_eq!(reserve_asset(&dir, "ok.png").unwrap().0, "ok.png");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -5834,7 +5523,7 @@ mod tests {
     }
 
     fn assert_reference_candidates_equal_full_scan(
-        graph: &impl GraphRead,
+        graph: &ReadSnapshot,
         target: &str,
         names: &[String],
         kind: ReferenceKind,
@@ -8014,20 +7703,6 @@ mod tests {
         .unwrap();
         assert_eq!(saved, "source_20260626_120000.png");
         assert!(dir.join("assets").join(&saved).exists());
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn read_asset_limited_rejects_before_returning_oversized_bytes() {
-        let dir = scratch("read-asset-limited");
-        let assets = dir.join("assets");
-        fs::create_dir_all(&assets).unwrap();
-        fs::write(assets.join("large.pdf"), b"12345").unwrap();
-        let g = Graph::open(&dir);
-        assert_eq!(g.read_asset_limited("large.pdf", 5).unwrap(), b"12345");
-        let err = g.read_asset_limited("large.pdf", 4).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("asset exceeds 4 byte limit"));
         let _ = fs::remove_dir_all(&dir);
     }
 

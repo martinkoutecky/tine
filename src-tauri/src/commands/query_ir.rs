@@ -8,27 +8,12 @@ use std::sync::Arc;
 use tine_core::query::ir::{
     ExecutionContext, ExplainEmptyResult, Query, QueryResult, RegistrySnapshot, ViewSettings,
 };
+use tine_core::query::print::PrintDialect;
 use tine_core::query::registry::Registry;
 pub(crate) use tine_core::query::wire_parse::{parse_query_pair, ParsedQuery, QueryTextDialect};
 use tine_store::{IrAnswer, IrRequest, WholeGraph};
 
 use crate::state::{slot_for_context, GraphContext};
-
-/// The printed form a `query_print` caller wants (SPEC §4.3, §7.1).
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum QueryPrintDialect {
-    /// OG DSL, the argument of a `{{query …}}` macro (wrapper not included).
-    Og,
-    /// The text pane's multi-line editing layout.
-    Tql,
-    /// The argument of the persisted single-line `{{tine-query …}}` macro
-    /// (wrapper not included).
-    TqlMacro,
-    /// The argument of a `{{query [:find …]}}` advanced macro, printed from its
-    /// authored source (wrapper not included).
-    AdvancedMacro,
-}
 
 fn validate_query_source(query: &str) -> Result<(), String> {
     if !tine_core::query::query_source_within_limit(query) {
@@ -47,16 +32,9 @@ fn validate_query_source(query: &str) -> Result<(), String> {
 fn print_query_text(
     query: &Query,
     view: &ViewSettings,
-    dialect: QueryPrintDialect,
+    dialect: PrintDialect,
     preserve_form: bool,
 ) -> Result<String, String> {
-    use tine_core::query::print::PrintDialect;
-    let dialect = match dialect {
-        QueryPrintDialect::Og => PrintDialect::Og,
-        QueryPrintDialect::Tql => PrintDialect::Tql,
-        QueryPrintDialect::TqlMacro => PrintDialect::TqlMacro,
-        QueryPrintDialect::AdvancedMacro => PrintDialect::AdvancedMacro,
-    };
     tine_core::query::print::query_print(query, view, dialect, preserve_form).map_err(
         |diagnostic| {
             let reason = match diagnostic.kind {
@@ -180,7 +158,7 @@ pub(crate) async fn query_parse(
 pub(crate) async fn query_print(
     query: Query,
     view: ViewSettings,
-    dialect: QueryPrintDialect,
+    dialect: PrintDialect,
     preserve_form: Option<bool>,
 ) -> Result<String, String> {
     print_query_text(&query, &view, dialect, preserve_form.unwrap_or(false))
@@ -317,7 +295,7 @@ mod tests {
     #[test]
     fn query_print_rejects_a_non_og_expressible_ir_with_the_diagnostic() {
         let og = parsed("(and (task TODO) [[Project]])", QueryTextDialect::Og);
-        let printed = print_query_text(&og.query, &og.view, QueryPrintDialect::Og, false).unwrap();
+        let printed = print_query_text(&og.query, &og.view, PrintDialect::Og, false).unwrap();
         assert!(printed.starts_with('('), "{printed}");
         assert!(tine_core::query::print::og_expressible(&og.query, &og.view));
         let tql_only = parsed("any(children, task = 'DONE')", QueryTextDialect::Tql);
@@ -330,13 +308,8 @@ mod tests {
             &tql_only.query,
             &tql_only.view
         ));
-        let error = print_query_text(
-            &tql_only.query,
-            &tql_only.view,
-            QueryPrintDialect::Og,
-            false,
-        )
-        .expect_err("the OG printer is partial");
+        let error = print_query_text(&tql_only.query, &tql_only.view, PrintDialect::Og, false)
+            .expect_err("the OG printer is partial");
         assert!(
             error.starts_with("query-print-refused:not_applicable:{"),
             "{error}"

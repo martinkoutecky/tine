@@ -188,7 +188,6 @@ fn a_loaded_checkpoint_equals_a_fresh_build() {
 /// Build every lazily built part of the current generation (ADR 0070: the
 /// checkpoint writes them in whatever state they are in).
 fn warm(store: &Store) {
-    use crate::model::GraphRead;
     let view = store.whole_graph_reconciled().unwrap();
     let graph = &view.graph;
     graph.block_page_hint("x");

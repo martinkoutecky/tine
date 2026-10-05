@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_ID } from "./lib/app-identity.mjs";
+import { x11Tools } from "./lib/e2e-x11.mjs";
 
 if (process.platform !== "linux") throw new Error("PDF ownership native proof is Linux-only");
 
@@ -66,64 +67,13 @@ const env = {
   LIBGL_ALWAYS_SOFTWARE: "1",
   GDK_BACKEND: "x11",
 };
-const xdoEnv = process.env.E2E_XDOTOOL_LIB
-  ? { ...env, LD_LIBRARY_PATH: process.env.E2E_XDOTOOL_LIB }
-  : env;
-const xdo = (...args) => execFileSync(XDOTOOL, args, { encoding: "utf8", env: xdoEnv }).trim();
+const { xdo, geometry, windowIds, frameExtents } = x11Tools(env, { xdotool: XDOTOOL });
 let driver;
 let browser;
 let appPid;
 let wm;
 let driverLog;
 let wmLog;
-
-function geometry(id) {
-  // xdotool's --shell Y coordinate double-counts Openbox's reparented titlebar
-  // in this environment. xwininfo reports the client origin that
-  // _NET_FRAME_EXTENTS is defined around.
-  const raw = execFileSync("xwininfo", ["-id", id], { encoding: "utf8", env });
-  const read = (label) => {
-    const value = raw.match(new RegExp(`^\\s*${label}:\\s*(-?\\d+)`, "m"))?.[1];
-    if (value === undefined) throw new Error(`xwininfo omitted ${label}: ${raw.trim()}`);
-    return Number(value);
-  };
-  return {
-    X: read("Absolute upper-left X"),
-    Y: read("Absolute upper-left Y"),
-    WIDTH: read("Width"),
-    HEIGHT: read("Height"),
-  };
-}
-
-function windowIds() {
-  try {
-    // xdotool uses POSIX extended regular expressions (no `(?:...)`).
-    return xdo("search", "--onlyvisible", "--name", "^Tine( — .*)?$")
-      .split(/\s+/)
-      .filter(Boolean)
-      // Tauri/Openbox can also expose a tiny same-title helper surface. The
-      // graph window is the largest visible match and owns the real frame.
-      .sort((a, b) => {
-        try {
-          const ga = geometry(a);
-          const gb = geometry(b);
-          return gb.WIDTH * gb.HEIGHT - ga.WIDTH * ga.HEIGHT;
-        } catch {
-          return 0;
-        }
-      });
-  } catch {
-    return [];
-  }
-}
-
-function frameExtents(id) {
-  const raw = execFileSync("xprop", ["-id", id, "_NET_FRAME_EXTENTS", "_GTK_FRAME_EXTENTS"], { encoding: "utf8", env });
-  const values = raw.match(/=\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)/)?.slice(1).map(Number);
-  if (!values) throw new Error(`window manager exposed malformed frame extents: ${raw.trim()}`);
-  const [left, right, top, bottom] = values;
-  return { left, right, top, bottom };
-}
 
 function processAlive(pid) {
   try {

@@ -41,7 +41,11 @@ use crate::query::macro_text::{self, FormFamily};
 /// before returning (§4.3.1). `Tql` is the text PANE's rendering: the editing
 /// form, multi-line, never options, never checked for macro safety because it
 /// is never written to a document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The serde names (`og`, `tql`, `tql_macro`, `advanced_macro`) are the
+/// `query_print` command's wire values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PrintDialect {
     /// The OG DSL, for `{{query …}}`. Partial: defined only where
     /// [`og_expressible`] holds.
@@ -387,11 +391,11 @@ fn tql_rel(rel: Rel, quant: Quant, pred: &Filter, through_page: bool) -> String 
             Filter::Leaf { leaf } => tql_leaf(leaf, true),
             other => tql_expr(other, Prec::Atom),
         },
-        Rel::Refs => match single_name(pred) {
+        Rel::Refs => match pred.ref_name() {
             Some(name) => format!("[[{name}]]"),
             None => format!("any(refs, {})", tql_expr(pred, Prec::Or)),
         },
-        Rel::Tags => match single_name(pred) {
+        Rel::Tags => match pred.ref_name() {
             Some(name) => format!("tag({})", sql_string(&name)),
             None => format!("any(tags, {})", tql_expr(pred, Prec::Or)),
         },
@@ -496,39 +500,8 @@ fn single_value_equality(atom: &Filter) -> Option<String> {
     }
 }
 
-/// The `name = 'x'` predicate a ref or tag element leaf carries.
-fn single_name(pred: &Filter) -> Option<String> {
-    match pred {
-        Filter::Leaf {
-            leaf:
-                Leaf::Attr {
-                    attr: Attr::Name,
-                    op: CmpOp::Eq,
-                    value: Value::Text { text },
-                },
-        } => Some(text.clone()),
-        _ => None,
-    }
-}
-
 fn tql_attr_name(attr: Attr, through_page: bool) -> String {
-    let bare = match attr {
-        Attr::Content => "content",
-        Attr::Task => "task",
-        Attr::Priority => "priority",
-        Attr::Scheduled => "scheduled",
-        Attr::Deadline => "deadline",
-        Attr::CreatedAt => "created_at",
-        Attr::LastModifiedAt => "last_modified_at",
-        Attr::Name => "name",
-        Attr::Journal => "journal",
-        Attr::Day => "day",
-        Attr::Namespace => "namespace",
-        Attr::UsedAsTag => "used_as_tag",
-        Attr::Key => "key",
-        Attr::Value => "value",
-        Attr::AtomCount => "atom_count",
-    };
+    let bare = attr.tql_name();
     let page_row = matches!(
         attr,
         Attr::Name | Attr::Journal | Attr::Day | Attr::Namespace | Attr::UsedAsTag
@@ -782,7 +755,7 @@ fn og_rel(
         return None;
     }
     match rel {
-        Rel::Refs => Some(format!("[[{}]]", single_name(pred)?)),
+        Rel::Refs => Some(format!("[[{}]]", pred.ref_name()?)),
         Rel::Page => match pred {
             Filter::Leaf { leaf } => og_leaf(leaf, anchor, true),
             _ => None,

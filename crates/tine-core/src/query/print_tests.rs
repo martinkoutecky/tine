@@ -1178,3 +1178,58 @@ fn the_wide_journal_range_resolves_around_every_journal_date() {
         }
     );
 }
+
+#[test]
+fn the_printer_spells_every_attribute_with_the_one_ir_spelling() {
+    let page_rows = [
+        Attr::Name,
+        Attr::Journal,
+        Attr::Day,
+        Attr::Namespace,
+        Attr::UsedAsTag,
+    ];
+    for attr in [
+        Attr::Content,
+        Attr::Task,
+        Attr::Priority,
+        Attr::Scheduled,
+        Attr::Deadline,
+        Attr::CreatedAt,
+        Attr::LastModifiedAt,
+        Attr::Name,
+        Attr::Journal,
+        Attr::Day,
+        Attr::Namespace,
+        Attr::UsedAsTag,
+        Attr::Key,
+        Attr::Value,
+        Attr::AtomCount,
+    ] {
+        assert_eq!(tql_attr_name(attr, false), attr.tql_name());
+        let through_page = tql_attr_name(attr, true);
+        if page_rows.contains(&attr) {
+            assert_eq!(through_page, format!("page.{}", attr.tql_name()));
+        } else {
+            assert_eq!(through_page, attr.tql_name());
+        }
+    }
+}
+
+#[test]
+fn the_print_dialect_wire_names_are_the_query_print_command_values() {
+    for (dialect, wire) in [
+        (PrintDialect::Og, "og"),
+        (PrintDialect::Tql, "tql"),
+        (PrintDialect::TqlMacro, "tql_macro"),
+        (PrintDialect::AdvancedMacro, "advanced_macro"),
+    ] {
+        assert_eq!(
+            serde_json::to_string(&dialect).unwrap(),
+            format!("\"{wire}\"")
+        );
+        assert_eq!(
+            serde_json::from_str::<PrintDialect>(&format!("\"{wire}\"")).unwrap(),
+            dialect
+        );
+    }
+}

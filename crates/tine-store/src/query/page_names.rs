@@ -82,7 +82,7 @@ impl RealPageNames {
     }
 }
 
-pub(crate) fn real_page_names(graph: &impl GraphRead) -> std::sync::Arc<RealPageNames> {
+pub(crate) fn real_page_names(graph: &ReadSnapshot) -> std::sync::Arc<RealPageNames> {
     graph.reference_real_page_names().unwrap_or_else(|| {
         std::sync::Arc::new(graph.with_pages(|pages| RealPageNames::capture(None, pages, &[])))
     })

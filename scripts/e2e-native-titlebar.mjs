@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_ID } from "./lib/app-identity.mjs";
+import { x11Tools } from "./lib/e2e-x11.mjs";
 
 if (process.platform !== "linux") throw new Error("native titlebar regression is Linux-only");
 
@@ -50,31 +51,7 @@ const env = {
   LIBGL_ALWAYS_SOFTWARE: "1",
   GDK_BACKEND: "x11",
 };
-const xdoEnv = process.env.E2E_XDOTOOL_LIB
-  ? { ...env, LD_LIBRARY_PATH: process.env.E2E_XDOTOOL_LIB }
-  : env;
-const xdo = (...args) => execFileSync(XDOTOOL, args, { encoding: "utf8", env: xdoEnv }).trim();
-const windowIds = () => {
-  try {
-    // xdotool uses POSIX extended regular expressions (no `(?:...)`).
-    return xdo("search", "--onlyvisible", "--name", "^Tine( — .*)?$")
-      .split(/\s+/)
-      .filter(Boolean)
-      // Tauri/Openbox can also expose a tiny same-title helper surface. The
-      // graph window is the largest visible match and owns the real frame.
-      .sort((a, b) => {
-        try {
-          const ga = geometry(a);
-          const gb = geometry(b);
-          return gb.WIDTH * gb.HEIGHT - ga.WIDTH * ga.HEIGHT;
-        } catch {
-          return 0;
-        }
-      });
-  } catch {
-    return [];
-  }
-};
+const { xdo, geometry, windowIds, frameExtents: frameExtentsOf } = x11Tools(env, { xdotool: XDOTOOL });
 const waitFor = async (predicate, timeoutMs, message) => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -84,34 +61,9 @@ const waitFor = async (predicate, timeoutMs, message) => {
   }
   throw new Error(message);
 };
-const geometry = (id) => {
-  // xdotool's --shell Y coordinate double-counts Openbox's reparented titlebar
-  // in this environment. xwininfo reports the actual client origin, which is
-  // the coordinate _NET_FRAME_EXTENTS is defined around.
-  const raw = execFileSync("xwininfo", ["-id", id], { encoding: "utf8", env });
-  const read = (label) => {
-    const value = raw.match(new RegExp(`^\\s*${label}:\\s*(-?\\d+)`, "m"))?.[1];
-    if (value === undefined) throw new Error(`xwininfo omitted ${label}: ${raw.trim()}`);
-    return Number(value);
-  };
-  return {
-    WINDOW: Number(id),
-    X: read("Absolute upper-left X"),
-    Y: read("Absolute upper-left Y"),
-    WIDTH: read("Width"),
-    HEIGHT: read("Height"),
-  };
-};
-const frameExtents = (id) => {
-  const raw = execFileSync("xprop", ["-id", id, "_NET_FRAME_EXTENTS", "_GTK_FRAME_EXTENTS"], { encoding: "utf8", env });
-  const values = raw.match(/=\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)/)?.slice(1).map(Number);
-  // An undecorated window commonly has no property at all; that is equivalent
-  // to zero extents and is the expected pre-toggle state.
-  if (!values && /not found/i.test(raw)) return { left: 0, right: 0, top: 0, bottom: 0 };
-  if (!values) throw new Error(`window manager exposed malformed frame extents: ${raw.trim()}`);
-  const [left, right, top, bottom] = values;
-  return { left, right, top, bottom };
-};
+// An undecorated window commonly has no extents property at all; that is
+// equivalent to zero extents and is the expected pre-toggle state.
+const frameExtents = (id) => frameExtentsOf(id, { missingAsZero: true });
 
 const wmLog = fs.openSync(path.join(ARTIFACTS, "window-manager.log"), "w");
 const wm = spawn(process.env.E2E_WINDOW_MANAGER || "openbox", ["--sm-disable"], {

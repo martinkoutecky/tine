@@ -19,6 +19,7 @@
 //! reference set ([`PageFacts::may_reference`]), and `and` conjuncts are
 //! evaluated cheapest first. Both are evaluation-order changes only.
 
+use crate::model::ReadSnapshot;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -45,7 +46,6 @@ use tine_core::refs;
 use super::eval::{self, CompiledLeaves, EvalCache, EvalCtx};
 use super::index::{atom_format, PageFacts, QueryIndex};
 use super::{result_dto, shallow_dto_estimated_bytes, BoundedGroups, ConstructionBudget};
-use crate::model::GraphRead;
 
 #[path = "exec_candidates.rs"]
 mod candidates;
@@ -694,7 +694,7 @@ pub(crate) fn page_sort_decor(
 
 /// Execute one plan over the graph's current generation.
 pub(crate) fn execute(
-    graph: &impl GraphRead,
+    graph: &ReadSnapshot,
     plan: &Plan,
     query: &Query,
     view: &ViewSettings,
@@ -964,7 +964,7 @@ pub(crate) fn execute(
 }
 
 /// Count the rows a plan matches, constructing nothing (explain-empty's probe).
-fn count(graph: &impl GraphRead, plan: &Plan) -> usize {
+fn count(graph: &ReadSnapshot, plan: &Plan) -> usize {
     graph.with_pages(|pages| {
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
@@ -993,7 +993,7 @@ fn count(graph: &impl GraphRead, plan: &Plan) -> usize {
 /// The plan for `query` over this generation, reading the registry only when a
 /// `props` leaf needs it.
 pub(crate) fn plan(
-    graph: &impl GraphRead,
+    graph: &ReadSnapshot,
     query: &Query,
     today: JournalDate,
     block_rows: bool,
@@ -1057,7 +1057,7 @@ pub(crate) fn query_ir(
 /// `query_run`'s evaluation (SPEC §7.1): the resolved tree under the
 /// statistics-execution view, with the binding's report attached afterwards.
 pub(crate) fn run_resolved(
-    graph: &impl GraphRead,
+    graph: &ReadSnapshot,
     resolved: &ResolvedQuery,
     view: &ViewSettings,
     bounds: Bounds,
@@ -1072,10 +1072,7 @@ pub(crate) fn run_resolved(
 }
 
 /// `query_explain_empty` (SPEC §7.1, N19): one count per probe of the plan.
-pub(crate) fn explain_empty(
-    graph: &impl GraphRead,
-    resolved: &ResolvedQuery,
-) -> ExplainEmptyResult {
+pub(crate) fn explain_empty(graph: &ReadSnapshot, resolved: &ResolvedQuery) -> ExplainEmptyResult {
     let explain = explain_empty_plan(resolved);
     let counts: Vec<usize> = explain
         .probes
@@ -1093,7 +1090,7 @@ pub(crate) fn explain_empty(
 /// The legacy block-group bridge for one resolved query (`run_query`, the
 /// advanced bridge and Copy/Export): block rows even for a `@page` query.
 pub(crate) fn run_block_groups(
-    graph: &impl GraphRead,
+    graph: &ReadSnapshot,
     resolved: &ResolvedQuery,
     view: &ViewSettings,
     max_rows: usize,
@@ -1124,7 +1121,7 @@ pub(crate) fn run_block_groups(
 
 /// `{{query …}}` text (OG DSL) through the legacy bridge.
 pub(crate) fn run_query_bounded(
-    graph: &impl GraphRead,
+    graph: &ReadSnapshot,
     source: &str,
     max_rows: usize,
     max_bytes: usize,
@@ -1135,7 +1132,7 @@ pub(crate) fn run_query_bounded(
 /// [`run_query_bounded`] on a given execution day (relative dates resolve
 /// against it).
 pub(crate) fn run_query_at(
-    graph: &impl GraphRead,
+    graph: &ReadSnapshot,
     source: &str,
     max_rows: usize,
     max_bytes: usize,
@@ -1147,7 +1144,7 @@ pub(crate) fn run_query_at(
 /// [`run_query_at`] for a source in either dialect (`{{query}}` is OG text,
 /// `{{tine-query}}` is TQL); Copy/Export reads the macro name, not the text.
 pub(crate) fn run_dialect_query_at(
-    graph: &impl GraphRead,
+    graph: &ReadSnapshot,
     dialect: QueryDialect,
     source: &str,
     max_rows: usize,
@@ -1163,7 +1160,7 @@ pub(crate) fn run_dialect_query_at(
 /// pattern subset (#542), with no current page bound (§4.4). The plan is
 /// `None` for an unsupported query, whose answer reads no page.
 pub(crate) fn run_advanced_query_bounded(
-    graph: &impl GraphRead,
+    graph: &ReadSnapshot,
     source: &str,
     max_rows: usize,
     max_bytes: usize,
@@ -1173,7 +1170,7 @@ pub(crate) fn run_advanced_query_bounded(
 
 /// [`run_advanced_query_bounded`] on a given execution day.
 pub(crate) fn run_advanced_query_at(
-    graph: &impl GraphRead,
+    graph: &ReadSnapshot,
     source: &str,
     max_rows: usize,
     max_bytes: usize,

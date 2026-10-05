@@ -733,6 +733,66 @@ fn save_and_stream_import_match_legacy_collision_names_and_bytes() {
 }
 
 #[test]
+fn asset_collisions_put_the_counter_before_a_whole_compound_extension() {
+    // GH #38: the counter goes BEFORE `.drawio.svg` / `.excalidraw.png` so the
+    // collided name still matches the editor affordance; a naive last-dot split
+    // would give `flow.drawio_1.svg`. Matching is case-insensitive and keeps the
+    // authored case. An ordinary double-dotted name splits on its last dot, and an
+    // extensionless one just gets `_N`. Every name lands as a distinct file.
+    let (root, store) = fixture("asset-compound-names");
+    let mut landed = Vec::new();
+    for (asked, expected) in [
+        ("paper.pdf", "paper.pdf"),
+        ("paper.pdf", "paper_1.pdf"),
+        ("paper.pdf", "paper_2.pdf"),
+        ("NOTES", "NOTES"),
+        ("NOTES", "NOTES_1"),
+        ("flow.drawio.svg", "flow.drawio.svg"),
+        ("flow.drawio.svg", "flow_1.drawio.svg"),
+        ("flow.drawio.svg", "flow_2.drawio.svg"),
+        ("S.DRAWIO.SVG", "S.DRAWIO.SVG"),
+        ("S.DRAWIO.SVG", "S_1.DRAWIO.SVG"),
+        ("art.excalidraw.png", "art.excalidraw.png"),
+        ("art.excalidraw.png", "art_1.excalidraw.png"),
+        ("my.file.txt", "my.file.txt"),
+        ("my.file.txt", "my.file_1.txt"),
+    ] {
+        assert_eq!(
+            assets::save_asset(&store, asked, asked.as_bytes()).unwrap(),
+            expected
+        );
+        landed.push(expected);
+    }
+    for name in landed {
+        assert!(root.join("assets").join(name).is_file(), "{name} exists");
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn an_asset_name_that_leaves_assets_is_refused_by_every_import_door() {
+    // F5: a frontend-supplied name with a separator or a `.`/`..` component must
+    // not reach outside `assets/`; a plain top-level name still works.
+    let (root, store) = fixture("asset-traversal");
+    for bad in ["../evil.md", "..", ".", "a/b.png", "a\\b.png", ""] {
+        assert!(
+            assets::save_asset(&store, bad, b"x").is_err(),
+            "save must reject {bad:?}"
+        );
+        assert!(
+            assets::choose_import_name(None, Some(bad)).is_err(),
+            "import name must reject {bad:?}"
+        );
+    }
+    assert!(!root.join("evil.md").exists());
+    assert_eq!(
+        assets::save_asset(&store, "ok.png", b"x").unwrap(),
+        "ok.png"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn stream_cap_and_missing_trash_leave_no_asset() {
     let (root, store) = fixture("cap");
     let source = root.join("oversize");

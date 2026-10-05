@@ -55,7 +55,7 @@ pub use tine_core::model::{FileId, PageId};
 use tine_core::query::{AdvancedResult, QueryExportBatch, QueryExportSpec};
 use tine_core::query_plan::QueryExecution;
 
-use crate::model::{CheckedOpenError, Graph, GraphRead, ReadSnapshot};
+use crate::model::{CheckedOpenError, Graph, ReadSnapshot};
 
 #[cfg(test)]
 pub(crate) type TestPause = Arc<(Mutex<(bool, bool)>, Condvar)>;

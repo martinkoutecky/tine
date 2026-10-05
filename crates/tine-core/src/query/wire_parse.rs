@@ -44,17 +44,6 @@ impl QueryTextDialect {
             QueryTextDialect::MacroTql => QueryInput::MacroTql,
         }
     }
-
-    /// The wire dialect a core input is named by (the inverse of [`Self::input`]).
-    pub fn from_input(input: QueryInput) -> Self {
-        match input {
-            QueryInput::Og => QueryTextDialect::Og,
-            QueryInput::Advanced => QueryTextDialect::Advanced,
-            QueryInput::Tql => QueryTextDialect::Tql,
-            QueryInput::MacroQuery => QueryTextDialect::MacroQuery,
-            QueryInput::MacroTql => QueryTextDialect::MacroTql,
-        }
-    }
 }
 
 /// The `{query, view}` pair every parse returns (SPEC §7.1).

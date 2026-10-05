@@ -123,19 +123,6 @@ pub struct Atom {
     /// Position within the key's flattened atom list, renumbered `0..n` by the
     /// registry producer (§5.8); the atomizer numbers within one value.
     pub ordinal: u32,
-    /// The UTF-16 length of OG's stored value for the `key:: value` line this
-    /// atom came from, when OG's `text/parse-property` holds that value as a
-    /// bare **string**; `None` when OG holds a set (refs, or a comma-separated
-    /// key) or a parsed number/boolean.
-    ///
-    /// It exists because OG's `:property` rule ends in `(contains? ?v ?val)`,
-    /// and `contains?` on a ClojureScript string is an INDEX lookup, so the
-    /// only thing the rule needs from the stored string is its length
-    /// (`rules.cljc:129-138`; measured, `shapes.cljs`). Read ONLY by the four
-    /// counterfactual §8.1 modes — never by production matching, which is
-    /// [`CompareMode::Both`] (SPEC §8 v16 evidence correction: "Do not add OG's
-    /// string-index quirk to production typed matching").
-    pub og_string_len: Option<u32>,
 }
 
 /// OG `gp-property/unparsed-built-in-properties` (`property.cljs:110-121`):
@@ -208,22 +195,6 @@ fn wrapped_by_quotes(value: &str) -> bool {
     value.len() > 1 && value.starts_with('"') && value.ends_with('"')
 }
 
-/// OG `text/parse-non-string-property-value` (`text.cljs:87-98`): `"true"` and
-/// `"false"` become booleans, an unsigned run of ASCII digits becomes an
-/// integer, everything else stays the string it was written as.
-fn og_parses_as_non_string(value: &str) -> bool {
-    value == "true"
-        || value == "false"
-        || (!value.is_empty() && value.chars().all(|c| c.is_ascii_digit()))
-}
-
-/// The [`Atom::og_string_len`] of a value OG holds as a bare string: its length
-/// in UTF-16 code units, because that is what ClojureScript's `(.-length s)`
-/// counts and what the `contains?` index bound compares against.
-fn og_string_len(value: &str) -> Option<u32> {
-    Some(value.encode_utf16().count() as u32)
-}
-
 /// OG `sep-by-comma` (`text.cljs:132-139`): split on one `,` or `，`, trim, drop
 /// blanks. OG returns a set; Tine keeps text order (K19).
 fn sep_by_comma(value: &str) -> Vec<&str> {
@@ -283,103 +254,6 @@ fn plain_segments(nodes: &[lsdoc::ast::Inline], out: &mut Vec<String>) {
     }
 }
 
-/// The five counterfactual modes of SPEC §8.1, as parameters of the atomizer
-/// and the comparator.
-///
-/// Gate 1 asks a question no single implementation can answer: when the walk
-/// and OG disagree on a corpus query, WHICH decision caused it? The only honest
-/// way to answer is to run the same walk with each decision switched off and
-/// see which switch closes the gap. These are those switches — production code,
-/// not a test scaffold, because gate 1 runs them from an example binary over
-/// real graphs.
-///
-/// [`CompareMode::Both`] is Tine. Every other mode is a deliberate regression
-/// towards OG, and nothing in the product ever selects one.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub enum CompareMode {
-    /// OG's own rule: OG's split (`alias`/`aliases`/`tags` plus the configured
-    /// `separated-by-commas` keys, and no other key), case-SENSITIVE property
-    /// equality, case-insensitive page identity for refs, and no effective-type
-    /// coercion — an atom matching `^\d+$` compares as an integer to a numeric
-    /// literal, every other atom as text (v13 §8.1, Y3).
-    Og,
-    /// OG, plus Q20: atom identity is NFC-lowercased.
-    Q20Only,
-    /// OG, plus Q21: every key splits on commas.
-    Q21Only,
-    /// Q20 and Q21, with OG's comparison otherwise — no coercion.
-    BothUntyped,
-    /// Tine: Q20, OG comma keys (D2), and §6.3 effective-type coercion.
-    #[default]
-    Both,
-}
-
-impl CompareMode {
-    /// Whether the comma split applies to EVERY key (Q21) or only to the keys
-    /// OG splits.
-    pub fn splits_every_key(self) -> bool {
-        matches!(self, CompareMode::Q21Only | CompareMode::BothUntyped)
-    }
-
-    /// Whether atom identity folds case and normalizes to NFC (Q20).
-    pub fn folds_case(self) -> bool {
-        matches!(
-            self,
-            CompareMode::Q20Only | CompareMode::BothUntyped | CompareMode::Both
-        )
-    }
-
-    /// The same mode with case folding switched ON, for the keys OG resolves
-    /// to page names (`tags`, `alias`, `aliases`), whose identity is
-    /// case-insensitive in OG too. Folding is the only decision this changes,
-    /// so an OG-ward mode stays OG-ward.
-    pub fn folding_case(self) -> CompareMode {
-        match self {
-            CompareMode::Og => CompareMode::Q20Only,
-            CompareMode::Q21Only => CompareMode::BothUntyped,
-            other => other,
-        }
-    }
-
-    /// Whether a property atom is coerced by its key's effective type (§6.3).
-    /// Only Tine does; every OG-ward mode compares as OG compares.
-    pub fn coerces_by_effective_type(self) -> bool {
-        matches!(self, CompareMode::Both)
-    }
-
-    /// The five modes in the order gate 1 reports them.
-    pub fn all() -> [CompareMode; 5] {
-        [
-            CompareMode::Og,
-            CompareMode::Q20Only,
-            CompareMode::Q21Only,
-            CompareMode::BothUntyped,
-            CompareMode::Both,
-        ]
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            CompareMode::Og => "OG",
-            CompareMode::Q20Only => "Q20-only",
-            CompareMode::Q21Only => "Q21-only",
-            CompareMode::BothUntyped => "both-untyped",
-            CompareMode::Both => "both",
-        }
-    }
-}
-
-/// Atom identity under one mode: Tine's NFC-lowercased [`atom_key`], or — for
-/// the OG-ward modes — the trimmed text as written, because OG's property
-/// equality is case-SENSITIVE (measured, `case.cljs`).
-pub fn atom_key_in(text: &str, mode: CompareMode) -> String {
-    if mode.folds_case() {
-        atom_key(text)
-    } else {
-        text.trim().to_string()
-    }
-}
-
 /// The ONE atomizer (SPEC §6.2), as Tine runs it. `key` is the raw source key;
 /// it is normalized with the existing [`property_key_norm`] before every rule
 /// test.
@@ -389,18 +263,6 @@ pub fn property_atoms(
     format: AtomFormat,
     config: &ParseConfig,
 ) -> Vec<Atom> {
-    property_atoms_in(key, value, format, config, CompareMode::Both)
-}
-
-/// [`property_atoms`] under one of the §8.1 modes. Gate 1's only entry point;
-/// everything in the product calls [`property_atoms`].
-pub fn property_atoms_in(
-    key: &str,
-    value: &str,
-    format: AtomFormat,
-    config: &ParseConfig,
-    mode: CompareMode,
-) -> Vec<Atom> {
     let key_norm = property_key_norm(key);
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -409,27 +271,13 @@ pub fn property_atoms_in(
         return Vec::new();
     }
 
-    // OG's `text/parse-property` decides the SHAPE of the stored value, and its
-    // shape is what the `:property` rule's `contains?` branch means: set
-    // membership on a set, an index lookup on a string, always false on a
-    // number. Steps 1 and 2 below return the raw string; step 3 is OG's set;
-    // step 4 is OG's `parse-non-string-property-value` or the string. Recorded
-    // per atom as `og_string_len`, and read only by the §8.1 modes.
     let suppressed = reference_parsing_suppressed(&key_norm, config);
 
     // Step 2 — a quoted value is one atom, quotes included (K19). OG checks this
     // after the unparsed-key branch and so do we; for a step-1 key OG returns the
     // same raw string either way.
     if wrapped_by_quotes(trimmed) {
-        return vec![make_atom(
-            trimmed.to_string(),
-            AtomOrigin::Plain,
-            0,
-            config,
-            mode,
-            // Both branches hand `v'` back unparsed, so OG holds the string.
-            og_string_len(trimmed),
-        )];
+        return vec![make_atom(trimmed.to_string(), AtomOrigin::Plain, 0, config)];
     }
 
     let mut atoms: Vec<Atom> = Vec::new();
@@ -455,91 +303,40 @@ pub fn property_atoms_in(
                 }
             }
         }
-        // OG's step 3 returns a SET (`(if (seq refs) refs …)`), and `contains?`
-        // on a set is real membership — no index lookup — so these atoms carry
-        // no `og_string_len`.
         for text in refs {
-            push_atom(
-                &mut atoms,
-                &mut seen,
-                text,
-                AtomOrigin::Ref,
-                config,
-                mode,
-                None,
-            );
+            push_atom(&mut atoms, &mut seen, text, AtomOrigin::Ref, config);
         }
         for text in segments {
-            push_atom(
-                &mut atoms,
-                &mut seen,
-                text,
-                AtomOrigin::Plain,
-                config,
-                mode,
-                None,
-            );
+            push_atom(&mut atoms, &mut seen, text, AtomOrigin::Plain, config);
         }
         if !atoms.is_empty() {
             return atoms;
         }
     }
 
-    // Step 4 — OG parse-property fallback: one string. Historical Q21 modes
-    // remain counterfactual oracle inputs; production follows D2.
-    let segments: Vec<String> = if mode.splits_every_key() {
-        sep_by_comma(trimmed)
-            .into_iter()
-            .map(str::to_string)
-            .collect()
-    } else {
-        vec![trimmed.to_string()]
-    };
-    // OG's own value here is the WHOLE trimmed line — `v'`, never a segment —
-    // held as a string unless `parse-non-string-property-value` claimed it, or
-    // unconditionally as a string for a step-1 key (that branch returns before
-    // the number parse). Q21's split changes which ATOMS exist; it does not
-    // change what OG stored, so the same length rides on every segment.
-    let stored = (suppressed || !og_parses_as_non_string(trimmed))
-        .then(|| og_string_len(trimmed))
-        .flatten();
-    for segment in segments {
-        push_atom(
-            &mut atoms,
-            &mut seen,
-            segment,
-            AtomOrigin::Plain,
-            config,
-            mode,
-            stored,
-        );
-    }
+    // Step 4 — OG parse-property fallback: one string (Martin D2).
+    push_atom(
+        &mut atoms,
+        &mut seen,
+        trimmed.to_string(),
+        AtomOrigin::Plain,
+        config,
+    );
     atoms
 }
 
-#[allow(clippy::too_many_arguments)]
 fn push_atom(
     atoms: &mut Vec<Atom>,
     seen: &mut AtomDeduper,
     text: String,
     origin: AtomOrigin,
     config: &ParseConfig,
-    mode: CompareMode,
-    og_string_len: Option<u32>,
 ) {
-    let key = atom_key_in(&text, mode);
-    if !seen.admit(&key) {
+    if !seen.admit(&atom_key(&text)) {
         return;
     }
     let ordinal = atoms.len() as u32;
-    atoms.push(make_atom(
-        text,
-        origin,
-        ordinal,
-        config,
-        mode,
-        og_string_len,
-    ));
+    atoms.push(make_atom(text, origin, ordinal, config));
 }
 
 /// First-occurrence admission for already-normalized atom keys (I-12/I-22).
@@ -555,15 +352,8 @@ impl AtomDeduper {
     }
 }
 
-fn make_atom(
-    text: String,
-    origin: AtomOrigin,
-    ordinal: u32,
-    config: &ParseConfig,
-    mode: CompareMode,
-    og_string_len: Option<u32>,
-) -> Atom {
-    let key = atom_key_in(&text, mode);
+fn make_atom(text: String, origin: AtomOrigin, ordinal: u32, config: &ParseConfig) -> Atom {
+    let key = atom_key(&text);
     let class = classify_text(&text, origin, config);
     Atom {
         num: (class == ObservedType::Number)
@@ -576,7 +366,6 @@ fn make_atom(
         key,
         origin,
         ordinal,
-        og_string_len,
     }
 }
 
@@ -730,7 +519,6 @@ mod tests {
                 num: None,
                 day: None,
                 ordinal: 0,
-                og_string_len: Some(3),
             }]
         );
     }
