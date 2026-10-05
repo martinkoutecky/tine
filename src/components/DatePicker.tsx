@@ -5,7 +5,7 @@ import { readSchedule, setSchedule } from "../document";
 import { fieldLabel, readField, writeFieldVisibly, type FieldId } from "../sheet/fields";
 import { daysInCalendarMonth, parseIsoDateLike, utcCalendarMillis } from "../sheet/typed";
 import { registerTransientLayer } from "../transientLayers";
-import { captureBinding, stillBound, refuseStaleWrite } from "../binding";
+import { captureBinding, bindingCurrent, refuseStaleWrite } from "../binding";
 
 import { parseRepeater, type RepMode } from "../editor/repeat";
 import { appNow, journalTitle, localCalendarDate } from "../journal";
@@ -47,16 +47,16 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
   const close = () => {
     closeDatePicker();
     queueMicrotask(() => {
-      if (stillBound(binding) && !datePicker() && opener?.isConnected) opener.focus();
+      if (bindingCurrent(binding) && !datePicker() && opener?.isConnected) opener.focus();
     });
   };
   // I-20: writes and focus restoration belong to the opening graph.
-  const bound = () => stillBound(binding) && datePicker() !== null || (refuseStaleWrite("The date"), false);
+  const bound = () => bindingCurrent(binding) && datePicker() !== null || (refuseStaleWrite("The date"), false);
   createEffect(() => {
     const unregister = registerTransientLayer({
       id: "date-picker",
       root: () => root ?? null,
-      trigger: () => stillBound(binding) ? opener : null,
+      trigger: () => bindingCurrent(binding) ? opener : null,
       dismiss: () => { close(); return true; },
     });
     onCleanup(unregister);

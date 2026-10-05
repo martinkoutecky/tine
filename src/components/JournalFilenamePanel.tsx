@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, on, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { graphOwner, readOwned, writeOwned } from "../owned";
+import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
 import { graphEpoch } from "../graphSession";
 import { journalMigrationSkipMessage, refreshJournalConflicts } from "../ui";
@@ -28,7 +28,7 @@ export function JournalFilenamePanel(): JSX.Element {
   // A graph switch or journal-format change moves the epoch and can change the proposals.
   createEffect(on(graphEpoch, () => void load()));
   const apply = async () => {
-    const owner = graphOwner();
+    const owner = bindingOwner();
     // The confirmation names this exact list; the backend renames only it.
     const migrations = pending();
     const count = migrations.length;

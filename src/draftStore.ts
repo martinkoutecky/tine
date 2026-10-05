@@ -7,10 +7,10 @@
 // only the user dismisses them.
 import { createEffect, createRoot } from "solid-js";
 import { backend } from "./backend";
-import { captureBinding, clearOnBindingInvalidated, graphScopedSignal, refuseStaleWrite, stillBound, type Binding } from "./binding";
+import { captureBinding, clearOnBindingInvalidated, graphScopedSignal, refuseStaleWrite, bindingCurrent, type Binding } from "./binding";
 import { installDraftKeeper, unsavedDrafts } from "./document";
 import { graphEpoch, graphMeta } from "./graphSession";
-import { graphOwner, ownedWhen, readOwned, serializeDurable, writeOwned } from "./owned";
+import { bindingOwner, graphOwner, ownedWhen, readOwned, serializeDurable, writeOwned } from "./owned";
 import { pushToast } from "./toasts";
 import { openUnsavedRecovery } from "./unsavedRecovery";
 import type { DraftRecord } from "./types";
@@ -52,7 +52,7 @@ function schedule() {
 export async function writeAtRisk(): Promise<void> {
   const current = new Map(unsavedDrafts().map((d) => [d.name, d]));
   for (const [name, kept] of atRisk) {
-    if (!stillBound(kept.binding)) { atRisk.delete(name); continue; }
+    if (!bindingCurrent(kept.binding)) { atRisk.delete(name); continue; }
     if (!kept.risky) continue;
     const draft = current.get(name);
     if (!draft?.page) continue;
@@ -69,7 +69,7 @@ export async function writeAtRisk(): Promise<void> {
       ...(live ? { base_rev: draft.baseRev, observed_rev: draft.observedRev } : {}),
     };
     try {
-      const owner = ownedWhen(() => stillBound(kept.binding));
+      const owner = ownedWhen(() => bindingCurrent(kept.binding));
       await serializeDurable(kept, owner, async () => {
         if (!kept.risky || text === kept.written) return;
         const written = await writeOwned(owner, backend().storeDraft?.(record) ?? Promise.resolve());
@@ -90,7 +90,7 @@ export async function writeAtRisk(): Promise<void> {
 
 async function retire(name: string, kept: Kept) {
   try {
-    const owner = ownedWhen(() => stillBound(kept.binding));
+    const owner = ownedWhen(() => bindingCurrent(kept.binding));
     await serializeDurable(kept, owner, async () => {
       if (kept.risky) return;
       if (kept.written !== null) {
@@ -110,7 +110,7 @@ function keep(name: string, risky: boolean) {
     // An entry left from another graph binding (a switch while it was at risk)
     // is not this page: start a fresh one, or this draft would never be kept.
     const kept = atRisk.get(name);
-    if (!kept || !stillBound(kept.binding)) atRisk.set(name, { binding: captureBinding(), written: null, risky: true });
+    if (!kept || !bindingCurrent(kept.binding)) atRisk.set(name, { binding: captureBinding(), written: null, risky: true });
     else kept.risky = true;
     schedule();
     return;
@@ -156,7 +156,7 @@ export async function dismissEarlierDraft(id: string): Promise<void> {
   // A panel that outlived its graph must not retire a record in the next one.
   if (earlier() === null) return refuseStaleWrite("Dismissing the kept draft");
   try {
-    const result = await writeOwned(graphOwner(), backend().retireDraft?.(id) ?? Promise.resolve());
+    const result = await writeOwned(bindingOwner(), backend().retireDraft?.(id) ?? Promise.resolve());
     if (result.kind === "current") setEarlier(earlierDrafts().filter((r) => r.id !== id));
   } catch (error) {
     pushToast(`Couldn't dismiss the kept draft (${String(error)}). It is still available.`, "error");

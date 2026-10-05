@@ -5,8 +5,8 @@ import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, emptyPage } from "./convert";
 import { invalidateAllMatrixDimensions, clearMatrixDimensionCache } from "../sheet/matrix";
 import { invalidateUndoForPage, clearUndoHistory } from "./history";
-import { captureBinding, stillBound, invalidateBinding } from "../binding";
-import { graphOwner, readOwned, type Owner } from "../owned";
+import { captureBinding, bindingCurrent, invalidateBinding } from "../binding";
+import { readOwned, type Owner, bindingOwner } from "../owned";
 import { backend } from "../backend";
 import { removeDeletedPageFromNavigation, rightSidebar } from "../ui";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
@@ -293,7 +293,7 @@ export async function deletePage(
     pushToast(`Resolve the conflict on “${name}” first.`, "error");
     return false;
   }
-  if (!stillBound(binding) || pageInstanceGeneration(name) !== generation || graphRewriteFrozen()) {
+  if (!bindingCurrent(binding) || pageInstanceGeneration(name) !== generation || graphRewriteFrozen()) {
     releaseReservation?.();
     return false;
   }
@@ -313,12 +313,12 @@ export async function deletePage(
     // "Delete failed" is diagnosable (I-9).
     dbg(`page delete failed for ${name}: ${String(error)}`);
     releaseReservation?.();
-    if (!stillBound(binding)) return false;
+    if (!bindingCurrent(binding)) return false;
     untombstone(name); // delete failed — lift the tombstone; page + edits stay intact
     return false;
   }
   releaseReservation?.();
-  if (!stillBound(binding)) return false;
+  if (!bindingCurrent(binding)) return false;
   try {
     retireRoutes?.();
   } catch (error) {
@@ -421,7 +421,7 @@ export async function reloadHlsIfLoaded(name: string): Promise<boolean> {
   };
   if (reloadDisposition(name) !== "reload") return retryWhenFree();
   const generation = pageInstanceGeneration(name);
-  const owner = graphOwner(() => pageInstanceGeneration(name) === generation);
+  const owner = bindingOwner(() => pageInstanceGeneration(name) === generation);
   const result = await readOwned(owner, backend().getPage(name, "page"));
   if (result.kind !== "current" || !result.value) return false;
   return reloadPageIfStillSafe(name, result.value) || retryWhenFree();

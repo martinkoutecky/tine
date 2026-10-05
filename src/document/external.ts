@@ -1,9 +1,9 @@
 import { applyGraphAnswers } from "../graphAnswers";
 import { backend, type GraphChange, type GraphAnswersChange } from "../backend";
-import { captureBinding, stillBound } from "../binding";
+import { captureBinding, bindingCurrent } from "../binding";
 import { conflictPolicyAlwaysAsk, holdExternalChange, installHeldExternalChangeApplier } from "../conflictPolicy";
 import { pushToast } from "../toasts";
-import { graphOwner, readOwned } from "../owned";
+import { readOwned, bindingOwner } from "../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { toLoadablePage } from "./convert";
 import { doc, feedNames, pageByName } from "./model";
@@ -71,20 +71,20 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
   let restart = false, conflicts = 0;
   const batchUi = ui && { ...ui, restartJournalFeed: () => { restart = true; } };
   for (const c of changes) {
-    if (!stillBound(binding)) return;
+    if (!bindingCurrent(binding)) return;
     const name = (c.path && doc.pages.find((page) => page.id === c.path)?.name) || c.name;
     // A page nothing loads or shows is refetched on navigation anyway.
     if (!c.removed && !ui?.pageOpen(c.name) && !pageByName(name) && reloadDisposition(name) === "reload") continue;
     await applyObservedChange(c, batchUi, false);
     if (isConflicted(name)) conflicts++;
   }
-  if (!stillBound(binding)) return;
+  if (!bindingCurrent(binding)) return;
   if (restart || (ui?.journalsOpen && changes.some((c) => c.kind === "journal"))) ui?.restartJournalFeed();
   pushToast(`${changes.length} pages updated externally${conflicts ? ` · ${conflicts} conflict${conflicts === 1 ? "" : "s"} to review` : ""}`, "info");
 }
 
 async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefined, bypassPolicy: boolean): Promise<void> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const restartJournalFeed = () => {
     if (c.kind === "journal") ui?.restartJournalFeed();
   };

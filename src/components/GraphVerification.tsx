@@ -15,7 +15,7 @@ import {
   type GraphVerificationReport,
 } from "../graphVerification";
 import { isMobilePlatform } from "../nativeChrome";
-import { graphOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "../owned";
+import { bindingOwner, graphOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
 
 const isCancellation = (error: unknown) => typeof error === "object" && error !== null && "kind" in error && error.kind === "cancelled";
@@ -99,7 +99,7 @@ export function GraphVerification(): JSX.Element {
     const current = report();
     if (!current) return;
     try {
-      const saved = await writeOwned(graphOwner(() => !disposed), backend().saveGraphVerificationReport(current.text));
+      const saved = await writeOwned(bindingOwner(() => !disposed), backend().saveGraphVerificationReport(current.text));
       if (saved.kind === "current" && saved.value) pushToast("Graph verification report saved", "success");
     } catch (error) {
       dbg(`graph verification save failed: ${String(error)}`);

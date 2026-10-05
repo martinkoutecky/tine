@@ -25,7 +25,7 @@ const RULE = "I-20: module state naming graph content (block id, page name, sele
 // Module-level signals whose declared type can name graph content, and why each
 // cannot write into another graph. Shrink-only: fix an entry rather than add one.
 const CLASSIFIED: Record<string, string> = {
-  "src/components/blockGestures.ts#dragId": "drag state; a click ends the drag in the old graph first, and beginDrag commits only while stillBound (asyncOwnership guard)",
+  "src/components/blockGestures.ts#dragId": "drag state; a click ends the drag in the old graph first, and beginDrag commits only while bindingCurrent (asyncOwnership guard)",
   "src/components/blockGestures.ts#dropInd": "drop indicator of the same drag",
   "src/components/RightSidebar.tsx#rsDropTarget": "right-sidebar drag state (a row index and side, not graph content); pointerup ends the drag in the old graph first",
   "src/components/SidebarFavorites.tsx#dropTarget": "favorites drag state; a click ends the drag in the old graph first (K17b, no user path)",
@@ -44,7 +44,7 @@ const CLASSIFIED: Record<string, string> = {
   "src/paneSelect.ts#paneSel": "pane layout target (pane ids, seams), not graph content",
   "src/plugins/registry.ts#registryPersistenceError": "device-local registry message",
   "src/ui.ts#accentColor": "device preference",
-  "src/ui.ts#pagePropsPanel": "carries its own captureBinding(); loadGraphPath closes it and writeOne refuses when !stillBound (asyncOwnership guard)",
+  "src/ui.ts#pagePropsPanel": "carries its own captureBinding(); loadGraphPath closes it and writeOne refuses when !bindingCurrent (asyncOwnership guard)",
   "src/ui.ts#recentPages": "clearRecent() on a switch; navigation only",
   "src/ui.ts#rightSidebar": "setRightSidebar([]) on a switch; pruneSidebarBlocks on reopen",
   "src/ui.ts#lightbox": "asset URL for display only",
@@ -58,17 +58,17 @@ const CLASSIFIED: Record<string, string> = {
   "src/document/model.ts#doc": "the document store itself; resetStore replaces it on every switch",
   "src/editorCommandBridge.ts#focusedEditorBridge": "the focused editor's command bridge; unregistered when that editor unmounts, and resetStore ends the edit",
   "src/editorController.ts#pendingHistoryEditorRestore": "caret selection hint consumed by the mounting editor; never written back",
-  "src/favorites.ts#layout": "graph preference reseeded on open; its writes capture graphOwner (writeGraphSignal)",
+  "src/favorites.ts#layout": "graph preference reseeded on open; its writes capture bindingOwner (writeGraphSignal)",
   "src/graphSession.ts#graphMeta": "the open graph's identity (the binding itself)",
   "src/plugins/manager.ts#installedPlugins": "device-level plugin catalog, not graph content",
   "src/plugins/registry.ts#communityPlugins": "remote registry catalog, not graph content",
   "src/plugins/registry.ts#communityThemes": "remote registry catalog, not graph content",
   "src/themes/manager.ts#installedThemes": "device-level theme catalog, not graph content",
   "src/toasts.ts#toasts": "notifications; their actions open settings, retry the session save, or undo (history is cleared by resetStore)",
-  "src/ui.ts#journalConflicts": "cleared by clearOnBindingInvalidated; its reconcile writes capture graphOwner at the click",
-  "src/conflictQueue.ts#conflictInventory": "cleared by clearOnBindingInvalidated; its merge/discard/resolve writes capture graphOwner at the click",
+  "src/ui.ts#journalConflicts": "cleared by clearOnBindingInvalidated; its reconcile writes capture bindingOwner at the click",
+  "src/conflictQueue.ts#conflictInventory": "cleared by clearOnBindingInvalidated; its merge/discard/resolve writes capture bindingOwner at the click",
   "src/ui.ts#switcherMode": "Ctrl-K mode enum (matches only through the literal \"current-page\")",
-  "src/workspaces.ts#workspaceList": "clearWorkspaces() on a switch; every workspace write captures graphOwner",
+  "src/workspaces.ts#workspaceList": "clearWorkspaces() on a switch; every workspace write captures bindingOwner",
 };
 
 // A type that can hold a block id, page name, uuid or a target object.
@@ -285,7 +285,7 @@ export function unprovenPopupConsumers(sources: Sources = repoSources()): string
 // each cannot write into another graph. Shrink-only.
 const CLASSIFIED_CONSUMERS: Record<string, string> = {
   "src/components/ContextMenu.tsx#contextMenu": "menu actions run synchronously on a click while the menu is mounted, and it is mounted only "
-    + "while its target is bound (reads null after a switch). Every action that awaits before writing captures graphOwner() first "
+    + "while its target is bound (reads null after a switch). Every action that awaits before writing captures bindingOwner() first "
     + "and applies nothing when stale (make template, rename, delete, open file, copy as Markdown)",
   "src/components/Page.tsx#contextMenu": "reads whether its own page-actions menu is open (aria state); no write",
   "src/components/Block.tsx#blockReferencesRequest": "opens this block's own references panel when the request names it; no write",
@@ -307,7 +307,7 @@ describe("graph-scoped UI state (I-20)", () => {
     const session = readFileSync("src/session.ts", "utf8");
     expect(session).toMatch(/const mayApply = \(\) => owner\(\) && JSON\.stringify\(buildPersistedSession\(\)\) === initialSession/);
     const block = readFileSync("src/components/Block.tsx", "utf8");
-    expect(block).toMatch(/persistBlockRefTarget\([\s\S]*?\(\) => \{\s*if \(!stillBound\(binding\) \|\| ac\(\) !== trigger/);
+    expect(block).toMatch(/persistBlockRefTarget\([\s\S]*?\(\) => \{\s*if \(!bindingCurrent\(binding\) \|\| ac\(\) !== trigger/);
   });
 
   it("every module-level signal that can name graph content is graph-scoped or classified", () => {

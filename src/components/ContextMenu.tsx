@@ -4,7 +4,7 @@ import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type J
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openBlockProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
 import { isMobilePlatform } from "../nativeChrome";
 import { pushToast } from "../toasts";
-import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
+import { bindingOwner, graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { isConflicted } from "../document";
 import { graphMeta, setJournalTemplate } from "../graphSession";
 import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, pageTargetMatchesLoaded, type PageTarget } from "../router";
@@ -700,7 +700,7 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
     const id = props.id;
     const close = props.close;
     const asksToOmitParent = hasChildren() && !includeParent();
-    const owner = graphOwner();
+    const owner = bindingOwner();
     let existing;
     try {
       existing = await readOwned(owner, backend().listTemplates());
@@ -827,7 +827,7 @@ function PageMenu(props: {
     }
   };
   const remove = async () => {
-    const owner = graphOwner();
+    const owner = bindingOwner();
     // Snapshot props BEFORE any await/close: the menu's <Show> disposes this
     // component the instant props.close() runs, after which reading props.* warns
     // "stale read from <Show>".

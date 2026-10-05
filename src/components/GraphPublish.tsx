@@ -3,7 +3,7 @@ import { backend } from "../backend";
 import { exportSheets } from "../sheet/exportSheets";
 import { graphMeta } from "../graphSession";
 import { switchGraph } from "../graph";
-import { graphOwner, readOwned, writeOwned } from "../owned";
+import { bindingOwner, readOwned, writeOwned } from "../owned";
 
 /** The Graph settings publication control. A picked external folder receives
  * one create-only site; the app snapshot and static HTML contain only the
@@ -16,7 +16,7 @@ export function GraphPublish(): JSX.Element {
   let mounted = true;
   onCleanup(() => { mounted = false; });
   const publish = async () => {
-    const owner = graphOwner(() => mounted);
+    const owner = bindingOwner(() => mounted);
     const selected = await readOwned(owner, backend().pickFolder("Choose a folder outside this graph for the export"));
     if (selected.kind !== "current" || !owner() || !selected.value) return;
     const destination = selected.value;

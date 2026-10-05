@@ -3,7 +3,7 @@ import type { LoadGraphPathOutcome } from "../graph";
 import type { ContextMenuAction } from "../ui";
 import { copyTineLink } from "./blockLinkCopy";
 import { pushToast } from "../toasts";
-import { graphOwner, writeOwned } from "../owned";
+import { bindingOwner, writeOwned } from "../owned";
 import { reportGraphOpenFailure } from "../graphOpenFailure";
 
 export interface GraphRowMenuDeps {
@@ -19,7 +19,7 @@ export interface GraphRowMenuDeps {
  * a reason but cannot run; mobile omits OS and peer-window actions. Each
  * operation reports its own failure. Cost: O(1), no I/O until an action runs. */
 export function graphRowMenuActions(graph: KnownGraph, deps: GraphRowMenuDeps): ContextMenuAction[] {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const open = (newWindow: boolean): void => {
     void writeOwned(owner, deps.openKnown(graph.path, newWindow))
       .catch((error) => reportGraphOpenFailure(error, () => open(newWindow)));

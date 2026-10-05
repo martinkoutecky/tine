@@ -11,7 +11,7 @@ import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
 import { backend } from "./backend";
 import { setFocusFullscreen } from "./focusFullscreen";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "./binding";
-import { graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "./owned";
+import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "./owned";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave, openPageTarget } from "./routerBridge";
 import { beginConflictRefresh, conflictQueue, conflictRefreshCurrent, forgetArrivalNotice, setConflictInventory, trackArrivalNotice } from "./conflictQueue";
@@ -215,7 +215,7 @@ export function changeJournalTitleFormat(fmt: string) {
   setGraphMeta({ ...m, journal_page_title_format: next });
   setJournalTitleFormat(next);
   bumpGraphEpoch(); // immediate: re-render open journal titles with the new format
-  const owner = latestOwner(journalTitleFormatScope, "title", graphOwner(), () => graphMeta()?.root === m.root && graphMeta()?.journal_page_title_format === next);
+  const owner = latestOwner(journalTitleFormatScope, "title", bindingOwner(), () => graphMeta()?.root === m.root && graphMeta()?.journal_page_title_format === next);
   // Bump again once config.edn is written so the feed and the rename proposals
   // reload against the new format rather than racing the write.
   void writeOwned(owner, backend().setJournalTitleFormat(next, ["rename-page"]))
@@ -252,7 +252,7 @@ clearOnBindingInvalidated(() => setJournalConflicts([]));
  *  object, so it reaches the user through the badge, the overview and the day's
  *  own page like every other standing conflict (master 9dc54e4a7). */
 export async function refreshJournalConflicts(): Promise<void> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   try {
     const result = await readOwned(owner, backend().listJournalConflicts());
     if (result.kind === "stale") return;
@@ -272,7 +272,7 @@ export async function refreshJournalConflicts(): Promise<void> {
  *  `notify === "new"`, toast for sync copies that newly arrived. A failed read
  *  keeps the last successful inventory and reports its failure. */
 export async function refreshSyncConflicts(notify: "new" | false = false): Promise<void> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const episode = beginConflictRefresh();
   try {
     const result = await readOwned(owner, backend().conflictInventory());

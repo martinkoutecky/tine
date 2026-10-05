@@ -6,7 +6,7 @@
 import { backend } from "./backend";
 import { errorFamily } from "./errorFamily";
 import { ownedWhen, writeOwned } from "./owned";
-import { captureBinding, stillBound, type Binding } from "./binding";
+import { captureBinding, bindingCurrent, type Binding } from "./binding";
 import { editingId, editingOwner, editingSurface } from "./editorController";
 import { graphMeta } from "./graphSession";
 import { pushToast } from "./toasts";
@@ -32,7 +32,7 @@ export function captureAssetEditor(textarea: HTMLTextAreaElement): AssetEditorTo
 }
 
 export function assetEditorIsCurrent(token: AssetEditorToken, textarea: HTMLTextAreaElement, mounted: boolean): boolean {
-  return stillBound(token.binding)
+  return bindingCurrent(token.binding)
     && token.graphRoot === graphMeta()?.root
     && mounted
     && textarea === token.textarea

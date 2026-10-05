@@ -14,7 +14,7 @@ import {
 } from "solid-js";
 import { backend, isTauri, type SavePageEntry, type SavePagesResult } from "../backend";
 import { bindingIdentity, captureBinding } from "../binding";
-import { advanceRevision, currentRevision, graphOwner, latestOwner, ownedWhen, readOwned, revisionOwner, writeOwned } from "../owned";
+import { bindingOwner, advanceRevision, currentRevision, graphOwner, latestOwner, ownedWhen, readOwned, revisionOwner, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
 import { errorFamily } from "../errorFamily";
 import {
@@ -150,7 +150,7 @@ export async function materializeQueryWorkspace(
   const superseded = (): MaterializeQueryResult => ({ ok: false, kind: "superseded", message: SUPERSEDED_MESSAGE });
   if (!isCurrent()) return superseded();
   const binding = captureBinding();
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const name = input.title.trim();
   if (!name) {
     return { ok: false, kind: "invalid-name", message: "Enter a page title before saving." };

@@ -7,7 +7,7 @@
  * Busy and transition state are managed here. Cost includes dirty pages, live and
  * snapshot file counts and bytes, and graph reload. */
 import { backend, type BackupInfo } from "./backend";
-import { graphOwner, ownedWhen, readOwned, writeOwned } from "./owned";
+import { bindingOwner, ownedWhen, readOwned, writeOwned } from "./owned";
 import { flushAll } from "./document";
 import { loadGraphPath } from "./graph";
 import { graphMeta } from "./graphSession";
@@ -27,7 +27,7 @@ export async function restoreBackupFromSettings(
   setBusy: (busy: boolean) => void,
   refresh: () => void,
 ): Promise<void> {
-  const owner = graphOwner(), root = graphMeta()?.root ?? "";
+  const owner = bindingOwner(), root = graphMeta()?.root ?? "";
   const ownsTransition = ownedWhen(() => owner() || (!!root && graphMeta()?.root === root));
   // Busy is held from the click, across the confirmation, so a second Restore
   // cannot start while the first one's dialog is open.

@@ -1,6 +1,6 @@
 import { For, Show, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { graphOwner, readOwned, writeOwned } from "../owned";
+import { bindingOwner, readOwned, writeOwned } from "../owned";
 import type { PaneRouter } from "../router";
 import { pushToast } from "../toasts";
 import type { ConflictObject, ConflictSource, SyncConflict } from "../types";
@@ -45,7 +45,7 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
   onCleanup(() => { alive = false; });
   onMount(() => void refreshSyncConflicts());
   const discardCopy = async (path: string, pageName: string) => {
-    const owner = graphOwner(() => alive);
+    const owner = bindingOwner(() => alive);
     const name = path.split("/").pop() ?? path;
     const confirmed = await readOwned(owner, backend().confirm(
       `Discard the conflict copy “${name}”?\n\n` +

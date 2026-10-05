@@ -22,7 +22,7 @@
 import { Show, For, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
-import { graphOwner, readOwned, writeOwned, type Owned } from "../owned";
+import { bindingOwner, graphOwner, readOwned, writeOwned, type Owned } from "../owned";
 import { pushToast } from "../toasts";
 import { conflictQueue, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, settleArtifactConflict } from "../ui";
 import { openFile } from "../router";
@@ -237,7 +237,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     const copy = c.sides.find((s) => s.role === "theirs")?.path ?? null;
     const live = c.live;
     const reviewed = read()?.draft, reviewedGeneration = read()?.generation ?? null;
-    const owner = graphOwner(() => mounted);
+    const owner = bindingOwner(() => mounted);
     const refresh = (message: string) => {
       alignment = undefined;
       void refetch();
@@ -366,7 +366,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     : [];
   if (conflict().source === "duplicate-journal") void refreshJournalConflicts();
   const reconcileFile = async (op: () => Promise<Owned<void>>, ok: string) => {
-    const owner = graphOwner(() => mounted);
+    const owner = bindingOwner(() => mounted);
     try {
       const result = await op();
       if (result.kind === "stale" || !owner()) return;
@@ -378,13 +378,13 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     }
   };
   const trashDayFile = async (name: string) => {
-    const owner = graphOwner(() => mounted);
+    const owner = bindingOwner(() => mounted);
     const confirmed = await readOwned(owner, backend().confirm(
       `Move the journal file “${name}” to the trash?\n\n` +
         `It's a duplicate of another file for the same day. It moves to logseq/.tine-trash (recoverable).`
     ));
     if (confirmed.kind === "stale" || !owner() || !confirmed.value) return;
-    await reconcileFile(() => writeOwned(graphOwner(() => mounted), backend().trashJournalFile(name, "delete-page")), `Moved ${name} to trash`);
+    await reconcileFile(() => writeOwned(bindingOwner(() => mounted), backend().trashJournalFile(name, "delete-page")), `Moved ${name} to trash`);
   };
 
   const markers = () => conflict().source === "vcs-markers";
@@ -431,7 +431,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
               file={file}
               parentLayerId="page-conflict"
               onOpen={() => openFile(file.path, conflict().page_name, "journal")}
-              onRename={(name) => void reconcileFile(() => writeOwned(graphOwner(() => mounted), backend().renameFileToPage(file.path, name, "rename-page")), `Renamed ${file.name} → ${name}`)}
+              onRename={(name) => void reconcileFile(() => writeOwned(bindingOwner(() => mounted), backend().renameFileToPage(file.path, name, "rename-page")), `Renamed ${file.name} → ${name}`)}
               onTrash={() => void trashDayFile(file.name)}
             />
           )}

@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
-import { graphOwner, readOwned, serializeDurable, writeOwned, type Owned, type Owner } from "./owned";
+import { bindingOwner, readOwned, serializeDurable, writeOwned, type Owned, type WriteOwner } from "./owned";
 import { pushToast } from "./toasts";
 import { applyParsedSession, buildPersistedSession, discardWorkspaceRestoreEvidence, flushSession, parsePersistedSession, prepareWorkspaceRecovery, scheduleSessionSave, setSessionWorkspaceId, type PersistedSession } from "./session";
 
@@ -28,12 +28,12 @@ let foreignWorkspaces: unknown[] = [];
 
 interface WorkspaceOperation {
   assert: () => void;
-  owner: Owner;
+  owner: WriteOwner;
   after: <T>(result: Promise<Owned<T>>) => Promise<T>;
 }
 
 async function enqueue<T>(operation: (scope: WorkspaceOperation) => Promise<T>): Promise<T> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const assert = () => {
     if (!owner()) throw new Error("The graph changed during the workspace operation");
   };

@@ -13,7 +13,7 @@ import { formatForBlock, insertOutlineAfter, pageByName, trackAssetWrite, visibl
 import { pushToast } from "./toasts";
 import { reportStaleAsset } from "./assetLanding";
 import { captureBinding } from "./binding";
-import { graphOwner, readOwned, writeOwned } from "./owned";
+import { bindingOwner, readOwned, writeOwned } from "./owned";
 import { graphMeta } from "./graphSession";
 import type { OutlineNode } from "./editor/outline";
 
@@ -74,7 +74,7 @@ export async function installFileDrop(): Promise<() => void> {
     const binding = captureBinding();
     const dropRoot = graphMeta()?.root;
     const dropPage = docNode(afterId).page;
-    const owner = graphOwner(() => graphMeta()?.root === dropRoot && docNode(afterId)?.page === dropPage);
+    const owner = bindingOwner(() => graphMeta()?.root === dropRoot && docNode(afterId)?.page === dropPage);
     const pagePath = pageByName(dropPage)?.id;
     const format = formatForBlock(afterId);
 

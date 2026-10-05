@@ -1,6 +1,6 @@
 import { batch } from "solid-js";
 import { backend } from "../backend";
-import { graphOwner, readOwned, writeOwned, type Owner } from "../owned";
+import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "../owned";
 import type { PageTarget } from "../router";
 import { endEdit } from "../editorController";
 import { conflicts, dirtyPages, flushAll, savingPages } from "./save/engine";
@@ -47,9 +47,12 @@ export type DiskRename = RenameDone["outcome"] | "busy" | { unsaved: string; men
  * edits and undo included. `unchanged` touches nothing.
  * Cost grows with graph pages and references, plus one page read per loaded
  * rewritten page. A backend failure can require inspecting disk before
- * retrying. The refresh retires every graph owner captured before it, so a
- * caller that must act on success (open the page, confirm) receives the graph
- * owner captured after the refresh through `onRefreshed`. Navigation in that
+ * retrying. The rename's own write and its bookkeeping (forgetting moved
+ * pages, reloading rewritten ones) are owned by the graph binding (R4), so a
+ * repaint during the rename cannot skip them. The refresh retires every
+ * display owner captured before it, so a caller that must act on success (open
+ * the page, confirm) receives the display owner captured after the refresh
+ * through `onRefreshed`. Navigation in that
  * callback shares the refresh batch, so views read only the final route. */
 export async function renamePageOnDisk(
   from: string, to: string, target?: PageTarget, mergeInto?: string, onRefreshed?: (owner: Owner) => void,
@@ -61,7 +64,7 @@ export async function renamePageOnDisk(
     document.activeElement.blur();
   const release = tryFreezeGraphRewrite();
   if (!release) return "busy";
-  const owner = graphOwner();
+  const owner = bindingOwner();
   try {
     // Delayed intents now fail pageWritable even if they started before this.
     endEdit("graph-switch");
@@ -170,7 +173,7 @@ function forgetMovedPages(touched: readonly RenameTouchedPage[]): { name: string
  * so none was edited during the rename; a page edited anyway keeps its edit
  * and its guarded save meets the rewrite as an ordinary conflict. */
 async function reloadRewrittenPages(pages: readonly { name: string; path: string }[]): Promise<void> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   await Promise.all(pages.map(async (page) => {
     const current = () => owner() && pageByName(page.name)?.id === page.path;
     try {

@@ -73,7 +73,7 @@ import {
 import { registerTransientLayer } from "../transientLayers";
 import { JOURNAL_TITLE_FORMATS } from "../journalTitleFormats";
 import { writePreference, loadPreference } from "../preferenceWrites";
-import { graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
+import { bindingOwner, graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
 import { readOr } from "../resourceRead";
 const TABS: { id: SettingsTabId; label: string }[] = [
   { id: "appearance", label: "Appearance" },
@@ -1003,7 +1003,7 @@ function BackupsTab(): JSX.Element {
   const saveKeep = async (n: number) => {
     const v = Math.max(1, Math.min(1000, Math.floor(n) || 12));
     setKeep(v);
-    const owner = graphOwner(() => alive);
+    const owner = bindingOwner(() => alive);
     try {
       const result = await writeOwned(owner, backend().setBackupKeep(v));
       if (result.kind === "stale") return;
@@ -1103,7 +1103,7 @@ function BackupsTab(): JSX.Element {
 function JournalConflictsPanel(): JSX.Element {
   void refreshJournalConflicts(); // refresh when the Backups tab opens
   const reconcile = async (op: () => Promise<void>, ok: string) => {
-    const owner = graphOwner();
+    const owner = bindingOwner();
     try {
       const result = await writeOwned(owner, op());
       if (result.kind === "stale") return;
@@ -1114,7 +1114,7 @@ function JournalConflictsPanel(): JSX.Element {
     }
   };
   const trashFile = async (name: string) => {
-    const owner = graphOwner();
+    const owner = bindingOwner();
     const confirmed = await readOwned(owner, backend().confirm(
         `Move the journal file “${name}” to the trash?\n\n` +
           `It's a duplicate of another file for the same day. It moves to logseq/.tine-trash (recoverable).`
@@ -1438,7 +1438,7 @@ function AssetsTab(): JSX.Element {
   const trash = async (a: AssetInfo) => {
     if (orphanScan() === null) return refuseStaleWrite("Moving that asset to the trash");
     const binding = captureBinding();
-    const owner = graphOwner();
+    const owner = bindingOwner();
     // Recoverable trash moves directly; emptying trash still asks.
     try {
       const result = await writeOwned(owner, backend().trashAsset(a.name, binding.backendGeneration));
@@ -1458,7 +1458,7 @@ function AssetsTab(): JSX.Element {
   };
   const emptyTrash = async () => {
     const binding = captureBinding();
-    const owner = graphOwner();
+    const owner = bindingOwner();
     const info = trashInfo();
     if (!info.count) return;
     const confirmed = await readOwned(owner, backend().confirm(

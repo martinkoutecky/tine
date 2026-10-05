@@ -16,7 +16,7 @@ import { backend } from "./backend";
 import type { createPage, favoritesArrangementBlocks, favoritesArrangementPage, reloadHlsIfLoaded } from "./document";
 import { dataRev, graphMeta } from "./graphSession";
 import { seedGraphSignal, writeGraphSignal } from "./graphPreferences";
-import { graphOwner, readOwned, writeOwned } from "./owned";
+import { bindingOwner, readOwned, writeOwned } from "./owned";
 import { navigationName } from "./pageIndex";
 import { pageIdentityKey } from "./pageIdentity";
 import { pushToast } from "./toasts";
@@ -187,7 +187,7 @@ async function readArrangement(mode: ReadMode | null): Promise<void> {
   const gen = generation;
   const writes = ownWrites;
   const seq = ++latestRead;
-  const owner = graphOwner(() => gen === generation && writes === ownWrites && seq === latestRead);
+  const owner = bindingOwner(() => gen === generation && writes === ownWrites && seq === latestRead);
   const read = await readOwned(owner, backend().getPage(page, "page")).catch((error: unknown) => {
     pushToast(`Could not read the Favorites page "${page}": ${String(error)}`, "error");
     return null;
@@ -218,7 +218,7 @@ const toBlocks = (nodes: FavNode[]): BlockDto[] =>
  *  own page; an orphaned arrangement page (a write that never reached config)
  *  is reused. Returns the page's name. */
 async function writeArrangementPage(next: FavLayout, text: string): Promise<string> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const { createPage, favoritesArrangementPage, reloadHlsIfLoaded } = pageDoor();
   for (let n = 1; ; n += 1) {
     const name = arrangementPage ?? (n === 1 ? DEFAULT_FAVORITES_PAGE : `${DEFAULT_FAVORITES_PAGE} ${n}`);
@@ -264,7 +264,7 @@ async function writeArrangementPage(next: FavLayout, text: string): Promise<stri
 }
 
 function persistArrangement(next: FavLayout): Promise<unknown> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const names = layoutMembers(next).map((f) => f.name);
   const text = layoutToMarkdown(next);
   if (!(arrangementPage || carriesArrangement(next)) || text === pageBase)

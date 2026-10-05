@@ -3,14 +3,14 @@ import { pageByName, setPageId, doc } from "../model";
 import { createSignal } from "solid-js";
 import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
 import { type ClipboardSourcePage } from "../../clipboard";
-import { captureBinding, clearOnBindingInvalidated, type Binding, stillBound } from "../../binding";
+import { captureBinding, clearOnBindingInvalidated, type Binding, bindingCurrent } from "../../binding";
 import { pageToDto, appendAliasDraft, aliasDraftBlocks, replaceLandedAliasDraft } from "../convert";
 import type { BlockDto, PageDto, PageKind } from "../../types";
 import { backend, saveOnePage, type SavePageEntry } from "../../backend";
 import { forgetPage, reloadPage, loadSingle, rekeyPageIdentityByPath, reportPageLoadRefusal, reloadDisposition } from "../workingSet";
 import { editingId } from "../../editorController";
 import { pagePropertyEntries } from "../../editor/properties";
-import { graphOwner, readOwned } from "../../owned";
+import { bindingOwner, readOwned } from "../../owned";
 import { dismissToast, pushToast } from "../../toasts";
 import { openUnsavedRecovery } from "../../unsavedRecovery";
 import { errorFamily } from "../../errorFamily";
@@ -86,17 +86,17 @@ export async function createPage(
   if (options.bindingGeneration !== undefined && options.bindingGeneration !== binding.backendGeneration)
     throw new CreatePageRefusal("stale-binding");
   const resolved = options.id ? null : await backend().resolvePage(name, dto.kind);
-  if (!stillBound(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
+  if (!bindingCurrent(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
   if (graphRewriteFrozen()) throw new CreatePageRefusal("graph-rewrite");
   if (resolved?.kind === "alias") throw new CreatePageRefusal("alias");
   const id = options.id ?? resolved!.id;
-  if (!stillBound(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
+  if (!bindingCurrent(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
   if (pageInstanceGeneration(name) !== generation) throw new CreatePageRefusal("page-rebound");
   const wasTombstoned = deletedPages.delete(name); // an explicit create supersedes a completed delete
   try {
     const rev = await saveOnePage(backend(), { id, page: dto, baseRev: options.baseRev ?? null, force: false,
-      kinds: [options.baseRev == null ? "create-page" : "replace-page"] }, binding.backendGeneration, (change) => { if (stillBound(binding) && token === graphToken) applyGraphAnswers(change); });
-    if (!stillBound(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
+      kinds: [options.baseRev == null ? "create-page" : "replace-page"] }, binding.backendGeneration, (change) => { if (bindingCurrent(binding) && token === graphToken) applyGraphAnswers(change); });
+    if (!bindingCurrent(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
     if (graphRewriteFrozen()) throw new CreatePageRefusal("graph-rewrite");
     if (pageInstanceGeneration(name) === generation) {
       setPageId(name, id);
@@ -108,8 +108,8 @@ export async function createPage(
     bumpDataRev();
     return rev;
   } catch (error) {
-    if (wasTombstoned && stillBound(binding) && token === graphToken) deletedPages.add(name);
-    if (stillBound(binding) && token === graphToken && pageInstanceGeneration(name) === generation
+    if (wasTombstoned && bindingCurrent(binding) && token === graphToken) deletedPages.add(name);
+    if (bindingCurrent(binding) && token === graphToken && pageInstanceGeneration(name) === generation
         && errorFamily(error) === "conflict")
       markConflict(name, { kind: "disk-changed" }, (error as { diskRev?: string | null }).diskRev);
     throw error;
@@ -483,7 +483,7 @@ function orderedMembers(g: SaveGroup): string[] {
 }
 
 function validGroupMembers(g: SaveGroup, binding: Binding, token: number, generations: Map<string, number | null>): boolean {
-  return !g.cancelled && stillBound(binding) && token === graphToken
+  return !g.cancelled && bindingCurrent(binding) && token === graphToken
     && [...g.members].every((name) => pageInstanceGeneration(name) === generations.get(name) && !deletedPages.has(name));
 }
 
@@ -546,7 +546,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
     if (!predecessors.length) break;
     await Promise.all(predecessors.map((older) => older.request));
     if (g.redirect) return enqueueGroup(g.redirect);
-    if (!stillBound(binding) || token !== graphToken) return false;
+    if (!bindingCurrent(binding) || token !== graphToken) return false;
   }
   if (g.cancelled || [...g.members].some((name) => deletedPages.has(name) || deletingGroupMembers.has(name))) return false;
   if ([...g.members].some((name) => isConflicted(name) && !decidedConflict(g, name))) return false;
@@ -575,7 +575,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
       if (!validGroupMembers(g, binding, token, generations)) return abortGroup(g);
       if (resolved.kind === "alias") {
         const owner = resolved.owners[0] && await backend().getPageByPath(resolved.owners[0]);
-        if (!stillBound(binding) || !validGroupMembers(g, binding, token, generations)) return abortGroup(g);
+        if (!bindingCurrent(binding) || !validGroupMembers(g, binding, token, generations)) return abortGroup(g);
         if (!owner || owner.read_only || owner.guide) return failGroup(g, { index: order.indexOf(name), family: "alias-owner-busy", undoFailed: [] }, order);
         if (order.some((member) => member !== name && pageByName(member)?.id === owner.id))
           return failGroup(g, { index: order.indexOf(name), family: "repeated", undoFailed: [] }, order);
@@ -611,8 +611,8 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
   for (const name of order) { dirty.delete(name); kindLedger.delete(name); }
   try {
     const outcome = await backend().savePages(entries, binding.backendGeneration);
-    if (stillBound(binding) && token === graphToken && "ok" in outcome) applyGraphAnswers(outcome.changes);
-    if (!stillBound(binding) || !validGroupMembers(g, binding, token, generations)) {
+    if (bindingCurrent(binding) && token === graphToken && "ok" in outcome) applyGraphAnswers(outcome.changes);
+    if (!bindingCurrent(binding) || !validGroupMembers(g, binding, token, generations)) {
       for (let i = 0; i < order.length; i++) restoreKinds(order[i], entries[i].kinds);
       return abortGroup(g);
     }
@@ -659,7 +659,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
     if ([...g.members].some((name) => dirty.has(name))) scheduleSave();
     return true;
   } catch (error) {
-    if (!stillBound(binding) || token !== graphToken || g.cancelled) return false;
+    if (!bindingCurrent(binding) || token !== graphToken || g.cancelled) return false;
     for (let i = 0; i < order.length; i++) restoreKinds(order[i], entries[i].kinds);
     return failGroup(g, { index: 0, family: errorFamily(error), undoFailed: [] }, order);
   }
@@ -796,7 +796,7 @@ async function settleSavedTitleIdentity(name: string, id: string, dto: PageDto, 
   let effective = title;
   if (!effective && titleIdentityIntents.has(name)) {
     try {
-      const result = await readOwned(graphOwner(), backend().getPageByPath(id));
+      const result = await readOwned(bindingOwner(), backend().getPageByPath(id));
       if (result.kind === "stale") return;
       effective = result.value?.name;
     } catch (error) {
@@ -804,7 +804,7 @@ async function settleSavedTitleIdentity(name: string, id: string, dto: PageDto, 
       return;
     }
   }
-  if (!stillBound(binding) || generation !== pageInstanceGeneration(name) || pageByName(name)?.id !== id) return;
+  if (!bindingCurrent(binding) || generation !== pageInstanceGeneration(name) || pageByName(name)?.id !== id) return;
   if (effective && effective !== name) {
     if (!rekeyPageIdentityByPath(id, effective, rev, true)) {
       pushToast("Saved the title, but its page identity could not be adopted safely. Reopen this page by its file path.", "error");
@@ -936,7 +936,7 @@ async function doSave(
   expectedCutSource?: ClipboardSourcePage,
   decision?: ConflictReason,
 ): Promise<SaveResult> {
-  if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+  if (!bindingCurrent(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
   // A cut-retirement save is authority-bound to the exact loaded page instance.
   // Check when this queued operation actually reaches its snapshot boundary, not
   // only when the caller enqueues it: another save may have been ahead of it.
@@ -968,14 +968,14 @@ async function doSave(
     let id = pageByName(name)?.id;
     if (!id) {
       const resolved = await backend().resolvePage(dto.name, dto.kind);
-      if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+      if (!bindingCurrent(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
       if (resolved.kind === "alias") {
         // A pathless draft may acquire an alias while it is open. Its blocks
         // belong to the alias owner, but the owner's existing bytes must win
         // the front of the page. Read its current revision and use an ordinary
         // guarded save; forceSave must not clobber an externally edited owner.
         const owner = resolved.owners[0] && await backend().getPageByPath(resolved.owners[0]);
-        if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+        if (!bindingCurrent(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
         if (!owner || owner.read_only || owner.guide || reloadDisposition(owner.name) !== "reload") {
           throw new Error("conflict");
         }
@@ -988,9 +988,9 @@ async function doSave(
         const appended = aliasOwnerPage(name, generation, owner, dto);
         if (!appended) throw new Error("conflict");
         const ownerRev = await saveOnePage(backend(), { id: owner.id, page: appended, baseRev: owner.rev ?? null, force: false,
-          kinds: ["insert-blocks", "delete-page"] }, binding.backendGeneration, (change) => { if (stillBound(binding) && token === graphToken) applyGraphAnswers(change); });
+          kinds: ["insert-blocks", "delete-page"] }, binding.backendGeneration, (change) => { if (bindingCurrent(binding) && token === graphToken) applyGraphAnswers(change); });
         landedAliasDrafts.set(name, { owner: owner.id, blocks: aliasDraftBlocks(dto), generation });
-        if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+        if (!bindingCurrent(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
         if (dirty.has(name) || reloadDisposition(owner.name) !== "reload" || pageInstanceGeneration(owner.name) !== ownerGeneration) {
           // The saved snapshot is durable, but a later edit must remain visible
           // in the draft rather than being discarded by the route change.
@@ -1011,12 +1011,12 @@ async function doSave(
       id = resolved.id;
     }
     const rev = await saveOnePage(backend(), { id, page: dto, baseRev: baseline, force: false,
-      kinds }, binding.backendGeneration, (change) => { if (stillBound(binding) && token === graphToken) applyGraphAnswers(change); });
+      kinds }, binding.backendGeneration, (change) => { if (bindingCurrent(binding) && token === graphToken) applyGraphAnswers(change); });
     // A reload/rename/delete/rebind while savePages was in flight invalidates the
     // retirement proof even if those bytes landed. Never let that stale success
     // authorize identity reuse or update the replacement instance's baseline.
     if (expectedCutSource && !cutSourceUsable(expectedCutSource)) return false;
-    if (token === graphToken && stillBound(binding) && pageInstanceGeneration(name) === generation) {
+    if (token === graphToken && bindingCurrent(binding) && pageInstanceGeneration(name) === generation) {
       // Record the file this save wrote, but only on the instance that asked:
       // a reload/rebind meanwhile carries its own id.
       setPageId(name, id);
@@ -1029,7 +1029,7 @@ async function doSave(
     }
     return false;
   } catch (e) {
-    if (token === graphToken && stillBound(binding) && pageInstanceGeneration(name) === generation) {
+    if (token === graphToken && bindingCurrent(binding) && pageInstanceGeneration(name) === generation) {
       restoreKinds(name, kinds);
       const family = errorFamily(e);
       if (family === "conflict" || family === "deleted" || family === "twin"
@@ -1177,7 +1177,7 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
     if (g?.state === "sealed") {
       const binding = captureBinding(), token = graphToken, generation = pageInstanceGeneration(name);
       await g.request;
-      if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+      if (!bindingCurrent(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
       return isConflicted(name) ? resolveConflict(name, "mine") : true;
     }
     if (g) {
@@ -1193,7 +1193,7 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
   const kind = page?.kind ?? "page";
   const id = page?.id;
   await Promise.all([...sealedGroups].filter((g) => g.members.has(name)).map((g) => g.request));
-  if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+  if (!bindingCurrent(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
   const currentGroup = group(name);
   if (currentGroup?.state === "sealed") return false;
   if (currentGroup?.forced.delete(name)) changedGroups();
@@ -1202,11 +1202,11 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
   let dto: Awaited<ReturnType<ReturnType<typeof backend>["getPage"]>>;
   try { dto = id ? await backend().getPageByPath(id) : await backend().getPage(name, kind); }
   catch (error) {
-    if (stillBound(binding) && token === graphToken && pageInstanceGeneration(name) === generation)
+    if (bindingCurrent(binding) && token === graphToken && pageInstanceGeneration(name) === generation)
       pushToast(`Couldn't read “${name}” from disk — ${String(error)}`, "error");
     return false;
   }
-  if (!stillBound(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
+  if (!bindingCurrent(binding) || token !== graphToken || pageInstanceGeneration(name) !== generation) return false;
   if (group(name) !== currentGroup || group(name)?.state === "sealed"
       || conflictReason(name) !== reason
       || currentGroup?.forced.has(name) || (saveAttempts.get(name) ?? 0) !== attempt) return false;
@@ -1256,7 +1256,7 @@ export async function installLiveResolution(name: string, generation: number, re
   const binding = captureBinding(), token = graphToken;
   const tail = saveChain.get(name);
   if (tail) await tail.catch(() => false);
-  if (!stillBound(binding) || token !== graphToken) return "gone";
+  if (!bindingCurrent(binding) || token !== graphToken) return "gone";
   if (pageInstanceGeneration(name) !== generation) return "gone";
   const now = pageToDto(name);
   const ed = editingId();

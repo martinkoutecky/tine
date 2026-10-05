@@ -1,7 +1,7 @@
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingIdentity, captureBinding } from "../binding";
-import { graphOwner, readOwned, writeOwned, type Owned } from "../owned";
+import { bindingOwner, readOwned, writeOwned, type Owned } from "../owned";
 import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
 import { createLongPress } from "../render/longPress";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
@@ -409,7 +409,7 @@ export function QuickSwitcher(): JSX.Element {
   // page was created (or failed and was toasted) and opens by name.
   const createPageFile = async (name: string): Promise<Owned<PageTarget | null>> => {
     const binding = captureBinding();
-    const owner = graphOwner();
+    const owner = bindingOwner();
     const stale = (): Owned<null> => {
       pushToast("The graph changed before the page was created. Try again.", "warn");
       return { kind: "stale" };
