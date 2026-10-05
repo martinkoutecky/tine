@@ -5,7 +5,7 @@
 // An ordinary save never writes here. Records from an earlier session (a crash,
 // a kill, a power cut) are offered on the next open of that graph for review;
 // only the user dismisses them.
-import { createEffect, createRoot } from "solid-js";
+import { createEffect, createRoot, createSignal } from "solid-js";
 import { backend } from "./backend";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal, refuseStaleWrite, bindingCurrent, type Binding } from "./binding";
 import { installDraftKeeper, unsavedDrafts } from "./document";
@@ -132,28 +132,51 @@ function keep(name: string, risky: boolean, renamedFrom?: string) {
   void retire(name, kept);
 }
 
+/** Drafts of the previous graph's unsaved pages taken at a graph switch and
+ *  not (yet) durable in its draft store: this window holds them, and the
+ *  recovery panel offers Copy and Dismiss. Window-lifetime, not graph-scoped:
+ *  they belong to the graph that was left. */
+export type HeldDraft = { root: string; record: DraftRecord };
+const [held, setHeld] = createSignal<HeldDraft[]>([]);
+export const switchHeldDrafts = (): HeldDraft[] => held();
+/** The user's explicit release of a held switch draft. O(held). */
+export function dismissHeldDraft(id: string): void {
+  setHeld(held().filter((entry) => entry.record.id !== id));
+}
+
 /** Keep every page still unsaved at a graph switch in the store of the graph it
  *  belongs to, `root`, before resetStore drops the working set: an edit typed
  *  while the next graph was loading, after the last flush (og T4). The window's
  *  binding has already moved, so the record names its graph explicitly and
  *  cannot land in the next one. Each switch gets its own session tag, so
  *  reopening that graph, even in this window, offers the drafts for review.
- *  Takes the snapshot before returning; resolves to the names that could not
- *  be kept (disk error or the store's bound). */
+ *  Takes the snapshot before returning and moves it into `switchHeldDrafts`,
+ *  so the text has a holder from the moment the working set is reset; a record
+ *  leaves that holder only once its write is durable (storage.qnt mutant MX).
+ *  Resolves to the names whose write failed (disk error or the store's bound;
+ *  they stay held). The caller awaits it before the
+ *  switch goes on. */
 export function keepAtSwitch(root: string): Promise<string[]> {
   // Snapshot synchronously: the caller resets the working set right after.
   const tag = `switch-${newSessionId()}`;
-  const records = unsavedDrafts().flatMap((draft): DraftRecord[] => draft.page ? [{
+  const drafts = unsavedDrafts();
+  const unrepresentable = drafts.filter((draft) => !draft.page).map((draft) => draft.name);
+  const records = drafts.flatMap((draft): DraftRecord[] => draft.page ? [{
     id: `${tag}:${draft.name}`, kind: "unsaved", session: tag, page_name: draft.name, path: draft.path,
     reason: draft.state === "Conflict" ? "conflict" : "save-failed", saved_at: Date.now(), page: draft.page,
   }] : []);
+  if (records.length) setHeld([...held(), ...records.map((record) => ({ root, record }))]);
   return (async () => {
+    // No draft form exists (pageToDto refuses a page header mid-edit): say so
+    // rather than pass over it in silence.
+    if (unrepresentable.length) pushToast(`Unsaved edits to ${unrepresentable.map((n) => `“${n}”`).join(", ")} could not be copied when the graph was switched.`, "error", { sticky: true });
     const lost: string[] = [];
     for (const record of records) {
       try {
         // The completion belongs to this switch, not to a graph binding (the
         // window's binding has already moved on): nothing can retire it.
         await writeOwned(ownedWhen(), backend().storeDraft?.(record, root) ?? Promise.resolve());
+        dismissHeldDraft(record.id);
       } catch {
         lost.push(record.page_name);
       }

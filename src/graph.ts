@@ -8,6 +8,7 @@ import { setGraphMeta, bumpGraphEpoch, bumpDataRev, graphMeta, graphEpoch } from
 import { setWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { createSignal } from "solid-js";
 import { pushToast } from "./toasts";
+import { openUnsavedRecovery } from "./unsavedRecovery";
 import { keepAtSwitch } from "./draftStore";
 import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
@@ -218,11 +219,15 @@ export async function loadGraphPath(
   const oldRoot = hadGraph ? graphMeta()?.root : undefined;
   const kept = oldRoot ? keepAtSwitch(oldRoot) : null;
   resetStore();
-  void kept?.then((lost) => {
-    if (lost.length > 0) {
-      pushToast(`Couldn't keep unsaved edits to ${lost.map((n) => `“${n}”`).join(", ")} from the previous graph.`, "error", { sticky: true });
-    }
-  });
+  // storage.qnt mutant MX: the switch goes on only once that text is durable
+  // in the old graph's draft store, or, if the store refused it (disk error,
+  // its 64-page / 8 MiB bound), is held in this window and the user is told.
+  const lost = kept ? await kept : [];
+  if (lost.length > 0) {
+    pushToast(`Couldn't keep a crash-safe copy of unsaved edits to ${lost.map((n) => `“${n}”`).join(", ")} from the previous graph. `
+      + "They are held in this window until you dismiss them: copy them from Review unsaved.", "error",
+      { sticky: true, action: { label: "Review unsaved", run: openUnsavedRecovery } });
+  }
   clearWorkspaces();
   closePageProps();
   setAudioPlayer(null);
