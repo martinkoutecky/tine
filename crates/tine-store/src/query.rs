@@ -1951,14 +1951,29 @@ pub(crate) fn export_query_subtrees(
         // a page with hundreds of thousands of direct children.
         let total_wanted = wanted_by_page.values().map(HashSet::len).sum::<usize>();
         let mut found: HashMap<(PageKind, String, String), &DocBlock> = HashMap::new();
+        // The page's header property block is a row of a block query (exec.rs
+        // `Hit::PageProperty`) but lives in `Document::pre_block`, not in
+        // `roots`: it is rebuilt here exactly as the query rebuilds it.
+        let mut headers: HashMap<(PageKind, String, String), DocBlock> = HashMap::new();
         for (entry, doc) in pages {
-            if found.len() == total_wanted {
+            if found.len() + headers.len() == total_wanted {
                 break;
             }
             let page_key = (entry.kind, entry.name.clone());
             let Some(wanted) = wanted_by_page.get(&page_key) else {
                 continue;
             };
+            if let Some(header) = doc
+                .pre_block
+                .as_deref()
+                .and_then(|pre| page_property_block(entry, pre))
+                .filter(|header| wanted.contains(header.uuid.as_str()))
+            {
+                headers.insert(
+                    (entry.kind, entry.name.clone(), header.uuid.clone()),
+                    header,
+                );
+            }
             let mut stack: Vec<&DocBlock> = doc.roots.iter().rev().collect();
             while let Some(block) = stack.pop() {
                 let property_id = block.property("id");
@@ -1969,7 +1984,7 @@ pub(crate) fn export_query_subtrees(
                 };
                 if let Some(id) = matched {
                     found.insert((entry.kind, entry.name.clone(), id.to_string()), block);
-                    if found.len() == total_wanted {
+                    if found.len() + headers.len() == total_wanted {
                         break;
                     }
                 }
@@ -1988,7 +2003,8 @@ pub(crate) fn export_query_subtrees(
                 let mut shown = 0usize;
                 let mut omitted_nodes = 0usize;
                 for root in query.roots {
-                    let Some(block) = found.get(&(root.kind, root.page.clone(), root.id.clone()))
+                    let wanted = (root.kind, root.page.clone(), root.id.clone());
+                    let Some(block) = found.get(&wanted).copied().or_else(|| headers.get(&wanted))
                     else {
                         // The graph changed between query evaluation and the
                         // borrowed hydration snapshot. Count the missing result as
@@ -2003,9 +2019,10 @@ pub(crate) fn export_query_subtrees(
                     let emitted = before_nodes.saturating_sub(remaining_nodes);
                     omitted_nodes =
                         omitted_nodes.saturating_add(total_nodes.saturating_sub(emitted));
-                    let Some(dto) = dto else {
+                    let Some(mut dto) = dto else {
                         continue;
                     };
+                    dto.page_property = headers.contains_key(&wanted);
                     shown += 1;
                     if let Some(group) = groups
                         .iter_mut()
@@ -4487,6 +4504,49 @@ mod tests {
                 .all(|block| !block.raw.contains("unrelated branch"))
         }));
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A block query answers with the page's header property block as a row
+    /// (exec.rs `Hit::PageProperty`); Copy / Export must hydrate that row like
+    /// the query view does instead of counting it as a vanished block
+    /// (checkpoint-5 L02 B3, I-12 one answerer).
+    #[test]
+    fn query_export_hydrates_the_header_property_row() {
+        use std::fs;
+
+        let dir =
+            std::env::temp_dir().join(format!("tine-query-export-header-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("pages").join("Headed.md"),
+            "status:: exported-state\n\n- an ordinary block\n",
+        )
+        .unwrap();
+        let graph = test_snapshot(&dir);
+        let batch = export_query_subtrees(
+            &graph,
+            &[QueryExportSpec {
+                key: "header".into(),
+                query: "(property status exported-state)".into(),
+            }],
+            8,
+            50,
+            100,
+            1024 * 1024,
+        );
+        let result = &batch.results[0];
+        assert_eq!(
+            (result.total, result.shown, result.omitted_nodes),
+            (1, 1, 0),
+            "the header property row must be exported, not counted as omitted: {result:?}"
+        );
+        assert!(
+            result.groups[0].blocks[0].raw.contains("exported-state"),
+            "{result:?}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
