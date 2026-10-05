@@ -109,7 +109,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "applyJournalFilenameMigrations",
   "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveLiveConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
   "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
-  "writeHighlights", "writePdfViewState", "savePdfAreaImage", "rollbackPdfAreaImage",
+  "writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setCaptureEnterFiles", "setWatchMode", "restoreBackup",
   "saveSession", "saveWorkspaces", "storeDraft", "retireDraft", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",

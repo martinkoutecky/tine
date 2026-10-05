@@ -17,7 +17,6 @@ const LEGACY_WRITERS: &[&str] = &[
     "import_asset_file",
     "write_highlights",
     "write_pdf_area_image",
-    "write_pdf_view_state",
     "open_pdf",
     "trash_asset",
     "sync_file",

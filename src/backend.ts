@@ -559,10 +559,6 @@ export interface Backend {
    * O(P) refresh if the page is absent.
    * The mock stores caller values directly without merge, files, or these failures. */
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseHighlights: Highlight[], kind: "replace-page", bindingGeneration: number): Promise<Highlight[]>;
-  /** Update page and scale while preserving other sidecar fields; retry and merge
-   * concurrent changes up to four attempts. Invalid state/sidecar, I/O, or
-   * exhausted conflicts reject. Cost O(asset entries + sidecar) per attempt. */
-  writePdfViewState(pdf: string, page: number, scale: number, bindingGeneration: number): Promise<void>;
   /** Save a cropped area-highlight PNG to OG's layout `assets/<key>/<page>_<id>_<stamp>.png`
    *  (non-dedup — the filename links the `.edn` `:image <stamp>` to the file).
    *  Returns the assets-relative path; a repeated save replaces that crop.
@@ -1320,9 +1316,6 @@ class TauriBackend implements Backend {
   }
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseHighlights: Highlight[], _kind: "replace-page", bindingGeneration: number) {
     return this.assetCall<Highlight[]>("write_highlights", { pdf, label, highlights, baseHighlights }, bindingGeneration);
-  }
-  writePdfViewState(pdf: string, page: number, scale: number, bindingGeneration: number) {
-    return this.assetCall<void>("write_pdf_view_state", { pdf, page, scale }, bindingGeneration);
   }
   savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array, bindingGeneration: number) {
     if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) return Promise.reject(new Error("PDF area image exceeds 64 MiB ingress limit"));

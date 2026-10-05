@@ -1608,10 +1608,6 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async writeHighlights(pdf: string, label: string, highlights: Highlight[], _baseHighlights: Highlight[]): Promise<Highlight[]> {
       return (mockHighlights[pdf] = { ...mockHighlights[pdf], label, highlights }).highlights;
     },
-    async writePdfViewState(pdf: string, page: number, scale: number): Promise<void> {
-      const current = mockHighlights[pdf] ?? { label: pdf, highlights: [] };
-      mockHighlights[pdf] = { ...current, page, scale };
-    },
     async savePdfAreaImage(
       pdf: string,
       page: number,

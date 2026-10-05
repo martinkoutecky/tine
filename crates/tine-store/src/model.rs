@@ -8748,22 +8748,32 @@ mod tests {
     }
 
     #[test]
-    fn pdf_view_state_update_preserves_highlights_and_foreign_edn() {
+    fn highlight_write_preserves_view_state_and_foreign_edn() {
         let dir = scratch("pdf-view-state");
         let store = tine_store::Store::open(&dir, Default::default()).unwrap().0;
         let key = tine_core::pdf::asset_key("paper.pdf");
         let sidecar_path = dir.join("assets").join(format!("{key}.edn"));
         fs::create_dir_all(dir.join("assets")).unwrap();
         let h = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("text"));
-        let original =
-            tine_core::pdf::write_highlights(&[h.clone()], "{:extra {:plugin \"keep\"}}");
+        let original = tine_core::pdf::write_highlights(
+            &[h.clone()],
+            "{:extra {:page 8 :scale 1.9 :plugin \"keep\"}}",
+        );
         fs::write(&sidecar_path, original).unwrap();
+        let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("more"));
 
-        tine_graph_features::pdf::write_pdf_view_state(&store, "paper.pdf", 8, 1.9).unwrap();
+        tine_graph_features::pdf::write_highlights(
+            &store,
+            "paper.pdf",
+            "Paper",
+            &[h.clone(), h2.clone()],
+            &[h.clone()],
+        )
+        .unwrap();
 
         let written = fs::read_to_string(&sidecar_path).unwrap();
         let state = tine_core::pdf::parse_pdf_state(&written);
-        assert_eq!(state.highlights, vec![h]);
+        assert_eq!(state.highlights, vec![h, h2]);
         assert_eq!(state.page, Some(8));
         assert_eq!(state.scale, Some(1.9));
         let root = tine_core::edn::parse_strict(&written).unwrap();

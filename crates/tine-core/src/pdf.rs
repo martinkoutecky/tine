@@ -269,48 +269,6 @@ pub fn parse_pdf_state(edn_str: &str) -> PdfState {
     }
 }
 
-/// Update only OG's `:extra` view fields while retaining highlights and all
-/// foreign root/extra fields. Invalid existing EDN fails closed (`None`).
-pub fn write_pdf_view_state(existing_edn: &str, page: i64, scale: f64) -> Option<String> {
-    if page < 1 || !scale.is_finite() || scale <= 0.0 {
-        return None;
-    }
-    let mut pairs = if existing_edn.trim().is_empty() {
-        vec![(kw("highlights"), Edn::Vec(Vec::new()))]
-    } else {
-        match edn::parse_strict(existing_edn)? {
-            Edn::Map(pairs) => pairs,
-            _ => return None,
-        }
-    };
-    let mut extra = match pairs
-        .iter()
-        .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "extra"))
-        .map(|(_, value)| value)
-    {
-        Some(Edn::Map(existing)) => existing.clone(),
-        _ => Vec::new(),
-    };
-    deep_merge(
-        &mut extra,
-        vec![
-            (kw("page"), Edn::Int(page)),
-            (kw("scale"), Edn::Float(scale)),
-        ],
-    );
-    if let Some((_, value)) = pairs
-        .iter_mut()
-        .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "extra"))
-    {
-        *value = Edn::Map(extra);
-    } else {
-        pairs.push((kw("extra"), Edn::Map(extra)));
-    }
-    let mut out = edn::to_string(&Edn::Map(pairs));
-    out.push('\n');
-    Some(out)
-}
-
 /// Recursively merge `new` pairs onto `old` (in place): a key present in both whose
 /// values are BOTH maps is merged deeper; otherwise `new` overwrites. Keys only in
 /// `old` are kept. This is how foreign EDN (data Tine doesn't model) round-trips.
@@ -875,19 +833,24 @@ mod tests {
     }
 
     #[test]
-    fn pdf_state_reads_and_updates_og_extra_without_touching_foreign_data() {
+    fn pdf_state_reads_og_extra_and_highlight_writes_keep_it_with_foreign_data() {
         let existing = r#"{:highlights [] :extra {:page 7 :scale 1.75 :plugin "keep"} :future 42}"#;
         let state = parse_pdf_state(existing);
         assert_eq!(state.page, Some(7));
         assert_eq!(state.scale, Some(1.75));
 
-        let out = write_pdf_view_state(existing, 9, 2.25).unwrap();
+        // Tine no longer writes the view position into the sidecar, but an OG-written
+        // one must survive every highlight write together with foreign fields.
+        let out = write_highlights(&[sample()], existing);
         let root = edn::parse_strict(&out).unwrap();
         let extra = root.get("extra").unwrap();
-        assert_eq!(extra.get("page").and_then(Edn::as_i64), Some(9));
-        assert_eq!(extra.get("scale").and_then(Edn::as_f64), Some(2.25));
+        assert_eq!(extra.get("page").and_then(Edn::as_i64), Some(7));
+        assert_eq!(extra.get("scale").and_then(Edn::as_f64), Some(1.75));
         assert_eq!(extra.get("plugin").and_then(Edn::as_str), Some("keep"));
         assert_eq!(root.get("future").and_then(Edn::as_i64), Some(42));
+        let state = parse_pdf_state(&out);
+        assert_eq!((state.page, state.scale), (Some(7), Some(1.75)));
+        assert_eq!(state.highlights, vec![sample()]);
     }
 
     #[test]

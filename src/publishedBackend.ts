@@ -1032,7 +1032,6 @@ export const PUBLISHED_REFUSED_METHODS = [
   "cancelRecording",
   "copyImageToClipboard",
   "writeHighlights",
-  "writePdfViewState",
   "savePdfAreaImage",
   "rollbackPdfAreaImage",
   "setBackupKeep",

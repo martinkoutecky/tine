@@ -119,7 +119,6 @@ fn load_waiting_tauri_commands_are_async_and_leave_the_ui_thread() {
         "read_journal_file",
         "save_asset",
         "read_highlights",
-        "write_pdf_view_state",
         "save_pdf_area_image",
     ];
     for (name, asynchronous, _) in &listed {
