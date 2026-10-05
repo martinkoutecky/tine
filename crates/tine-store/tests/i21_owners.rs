@@ -121,6 +121,15 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         "caller awaits blocking result",
     ),
     (
+        "src-tauri/src/state.rs",
+        "spawn_blocking(",
+        // og-flow3 R3: `off_ui` is the one helper that moves a command's
+        // blocking store/fsync work off the UI thread; every caller awaits it.
+        1,
+        "command future (off_ui caller)",
+        "caller awaits blocking result",
+    ),
+    (
         "src-tauri/src/commands/concord.rs",
         "spawn_blocking(",
         // +2 og-A: duplicate_journal_diff and resolve_duplicate_journal_day,
