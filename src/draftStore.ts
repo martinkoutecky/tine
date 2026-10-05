@@ -27,7 +27,9 @@ const idFor = (name: string) => `${session}:${name}`;
 type Kept = { binding: Binding; written: string | null; risky: boolean; supersedes?: string };
 const atRisk = new Map<string, Kept>();
 let timer: ReturnType<typeof setTimeout> | null = null;
-let refusedOnce = false;
+// Pages whose crash-safe write was refused: said once per page until a write
+// for it succeeds again (a refusal of another page is said too).
+const refused = new Set<string>();
 
 // I-21: page queues belong to one binding. A switch preserves already-started
 // capsules for recovery but cannot start their retirement in the next graph.
@@ -35,7 +37,7 @@ clearOnBindingInvalidated(() => {
   if (timer) clearTimeout(timer);
   timer = null;
   atRisk.clear();
-  refusedOnce = false;
+  refused.clear();
 });
 
 // An earlier session's drafts belong to the graph they were read for.
@@ -79,6 +81,7 @@ export async function writeAtRisk(): Promise<void> {
         // Record completion before the queued retirement examines it. Already
         // started writes finish even when the page becomes safe meanwhile.
         kept.written = text;
+        refused.delete(name);
       });
       const old = kept.supersedes !== undefined ? atRisk.get(kept.supersedes) : undefined;
       if (kept.written === text && kept.supersedes !== undefined) {
@@ -89,8 +92,9 @@ export async function writeAtRisk(): Promise<void> {
     } catch (error) {
       // Refused past the store's bound, or a disk error: the draft stays in this
       // window (recovery panel); say once that it will not survive a crash.
-      if (!refusedOnce) pushToast(`Couldn't keep a crash-safe copy of “${name}” — ${String(error)}. It is still open in this window.`, "error");
-      refusedOnce = true;
+      // The page stays at risk and the write is retried on the next refresh.
+      if (!refused.has(name)) pushToast(`Couldn't keep a crash-safe copy of “${name}” — ${String(error)}. It is still open in this window.`, "error", { sticky: true });
+      refused.add(name);
     }
   }
   schedule();

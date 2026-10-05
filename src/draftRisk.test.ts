@@ -12,7 +12,7 @@ import { applyGraphChange, flushAll, flushPage, installPageIdentityNavigation, s
 import { baseRevFor, forceSave } from "./document/save/engine";
 import { doc } from "./document/model";
 import { installDraftStore, REFRESH_MS, writeAtRisk } from "./draftStore";
-import { setToasts } from "./toasts";
+import { setToasts, toasts } from "./toasts";
 import type { BlockDto, DraftRecord, PageDto } from "./types";
 
 const store = new Map<string, DraftRecord>();
@@ -129,6 +129,26 @@ describe("MS: a Published reply retires risk only for the buffer version it cove
     await vi.advanceTimersByTimeAsync(REFRESH_MS + 450);
     await vi.advanceTimersByTimeAsync(REFRESH_MS);
     expect(records()).toEqual([]);
+  });
+});
+
+describe("a refused crash-safe write (the store's 64-page / 8 MiB bound, a disk error)", () => {
+  it("is a sticky error for every page it refuses, and the page stays at risk until a write lands", async () => {
+    loadFeed([page("P", "r1", [block("p1", "p")]) as never, page("Q", "r1", [block("q1", "q")]) as never]);
+    vi.spyOn(backend(), "savePages").mockRejectedValue(new Error("conflict"));
+    vi.mocked(backend().storeDraft!).mockRejectedValue(new Error("the draft store keeps at most 64 pages"));
+    setRaw("p1", "typed on P");
+    await vi.advanceTimersByTimeAsync(450);
+    await writeAtRisk();
+    setRaw("q1", "typed on Q");
+    await vi.advanceTimersByTimeAsync(450);
+    await writeAtRisk();
+    const refusals = toasts().filter((t) => t.message.includes("crash-safe copy"));
+    expect(refusals.map((t) => [t.kind, t.sticky, /“(.)”/.exec(t.message)?.[1]])).toEqual([["error", true, "P"], ["error", true, "Q"]]);
+    // Room again: the next refresh writes both drafts (they stayed at risk).
+    vi.mocked(backend().storeDraft!).mockImplementation(async (r) => { store.set(r.id, structuredClone(r)); });
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    expect(records().map((r) => r.page_name).sort()).toEqual(["P", "Q"]);
   });
 });
 
