@@ -99,6 +99,8 @@ pub(crate) struct PageFacts {
 
 impl PageFacts {
     pub(crate) fn of(entry: &PageEntry, doc: &Document, config: &ParseConfig) -> PageFacts {
+        #[cfg(test)]
+        DERIVED_FACT_PAGES.with(|count| count.set(count.get() + 1));
         #[cfg(feature = "test-faults")]
         crate::cost_counters::query_facts_derived();
         let (properties, tags) = super::page_facets(doc);
@@ -743,6 +745,7 @@ impl QueryIndexSlot {
 thread_local! {
     static REGISTRY_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static BUILT_FACT_PAGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static DERIVED_FACT_PAGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]

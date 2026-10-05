@@ -188,13 +188,21 @@ replaces a page holding an unsaved draft, and the frontend's "always ask"
 policy only holds clean changes it would otherwise apply silently. Tests cover
 these in `watch.rs`, `tests/watch.rs` and `src-tauri/src/watcher.rs`.
 
-Full runtime graph-text scans enumerate metadata outside the page/save writer.
+Full runtime graph-text scans with unchanged configuration enumerate metadata outside the page/save writer.
 They validate the cache generation and publication revision after acquiring the
 writer, retrying an observation crossed by an own edit or another publication.
 Only changed or racy paths are sorted for reconciliation; unchanged files retain
-their known revisions. Config changes and failed-load recovery retain the full
-reparse protocol. Applying detected changes remains writer-ordered, including
+their known revisions. Config changes and failed-load recovery retain full
+enumeration and reparse under the writer. Applying detected changes remains writer-ordered, including
 racy rehashes, unreadable subtree retention and ordinary external publication.
+
+Search page rows read authored properties through the shared `page_facets`
+producer for selected owners rather than initializing graph-wide query facts.
+Exact page-name query constraints select every physical owner from the existing
+name claimant and page-position maps; simple, advanced and IR execution use the
+same evaluator and page-fact producer. OR and negation remain conservative;
+property coercions and used-as-tag retain their global facts. This changes no
+stored index, cache, checkpoint format, query membership or save protocol.
 
 Review rule: a new refusal must identify a reachable scenario involving an honest
 local user, sync or external editor. Source scans cannot prove reachability;
