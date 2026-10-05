@@ -25,7 +25,7 @@ const EXEMPT: Record<string, string> = {
   "src/copySettings.ts#initCopySettings": "preference revision gates each device-local signal",
   "src/debug.ts#dbg": "best-effort process log has no UI landing",
   "src/editor/linkDefault.ts#initLinkDefault": "migration write reports failure independently of the current policy request",
-  "src/editor/linkDefault.ts#setLinkFirstMatch": "legacy preference write reports failure independently",
+  "src/graphSession.ts#setJournalTemplate": "graph binding owns the template update",
   "src/launcherRanking.ts#initLauncherRankingSetting": "preference revision gates the device-local signal",
   "src/localFileSettings.ts#initLocalFileSettings": "preference revision gates the device-local signal",
   "src/mediaEditorSettings.ts#initMediaEditorSettings": "preference revision gates the device-local signal",
@@ -66,7 +66,7 @@ const EXEMPT_CALLS: Record<string, string[]> = {
   "src/copySettings.ts#initCopySettings": ["getAppBool", "getAppBool", "getAppBool"],
   "src/debug.ts#dbg": ["debugLog"],
   "src/editor/linkDefault.ts#initLinkDefault": ["setAppString"],
-  "src/editor/linkDefault.ts#setLinkFirstMatch": ["setLinkFirstMatch"],
+  "src/graphSession.ts#setJournalTemplate": ["setDefaultJournalTemplate"],
   "src/launcherRanking.ts#initLauncherRankingSetting": ["getAppBool"],
   "src/localFileSettings.ts#initLocalFileSettings": ["getAppBool"],
   "src/mediaEditorSettings.ts#initMediaEditorSettings": ["getAppString", "getAppString"],
@@ -107,9 +107,9 @@ const DURABLE_BACKEND_METHODS = new Set([
   "setStartOfWeek", "editAssetExternal", "trashAsset", "emptyAssetTrash", "trashJournalFile",
   "applyJournalFilenameMigrations",
   "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveLiveConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
-  "pasteImage", "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
-  "writeHighlights", "writePdfViewState", "savePdfAreaImage", "rollbackPdfAreaImage",
-  "setBackupKeep", "setCaptureEnterFiles", "setLinkFirstMatch", "setWatchMode", "restoreBackup",
+  "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
+  "writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage",
+  "setBackupKeep", "setCaptureEnterFiles", "setWatchMode", "restoreBackup",
   "saveSession", "saveWorkspaces", "storeDraft", "retireDraft", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
   "saveGraphVerificationReport", "addDefenderExclusion", "dismissDefenderHint",
@@ -359,7 +359,7 @@ describe("I-20 owned backend completion syntax", () => {
     expect(violations, "I-9: durable writes use writeOwned; exemplar Settings BackupsTab.saveKeep").toEqual([]);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().setBackupKeep(3))")).toHaveLength(1);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().renamePage('A', 'B', 'rename-page'))")).toHaveLength(1);
-    expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().pasteImage(1))")).toHaveLength(1);
+    expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().importAsset('a.png', undefined, 1))")).toHaveLength(1);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().writeHighlights('a.pdf', 'A', [], [], 'replace-page', 1))")).toHaveLength(1);
     expect(durableReadViolations("src/planted.ts", "readOwned(graphOwner(), backend().openPdf('a.pdf', 'A', 1))")).toHaveLength(0);
   });

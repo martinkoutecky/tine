@@ -68,7 +68,7 @@ use commands::{
     set_guide_announced, set_journal_title_format, set_logical_outdenting, set_preferred_format,
     set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
     stream_asset_path, tine_open_devtools, tine_quit, trash_asset, trash_journal_file,
-    write_highlights, write_pdf_view_state,
+    write_highlights,
 };
 use concord::{
     conflict_inventory, duplicate_journal_diff, list_sync_conflicts, live_conflict_diff,
@@ -100,7 +100,7 @@ use settings::{
     forget_known_graph, get_app_bool, get_app_string, get_capture_enter_files,
     get_link_first_match, get_smooth_scroll, list_known_graphs, load_session, reveal_known_graph,
     save_session, set_app_bool, set_app_string, set_capture_enter_files, set_default_home,
-    set_favorites, set_link_first_match, set_smooth_scroll,
+    set_favorites, set_smooth_scroll,
 };
 use spellcheck::{
     apply_spellcheck, apply_spellcheck_all, list_spellcheck_dictionaries, parse_spellcheck_langs,
@@ -989,7 +989,6 @@ pub fn run() {
             read_highlights,
             open_pdf,
             write_highlights,
-            write_pdf_view_state,
             save_pdf_area_image,
             rollback_pdf_area_image,
             get_backup_keep,
@@ -997,7 +996,6 @@ pub fn run() {
             get_capture_enter_files,
             set_capture_enter_files,
             get_link_first_match,
-            set_link_first_match,
             get_watch_mode,
             set_watch_mode,
             rescan_graph_now,

@@ -957,20 +957,6 @@ pub fn occurrences(
     out
 }
 
-/// Deliberately uncached parser path used by diagnostics/tests as a drift
-/// oracle for the memoized `DocBlock::projection` integration.
-pub fn slow_occurrences(
-    raw: &str,
-    is_org: bool,
-    canonical: &str,
-    names_norm: &[String],
-    config: &crate::config::Config,
-) -> Vec<ReferenceOccurrence> {
-    let parsed = crate::render::parse_projection(raw, is_org);
-    let source = project(raw, is_org, &parsed.blocks);
-    occurrences(raw, source.as_source(), canonical, names_norm, config)
-}
-
 #[cfg(test)]
 mod tests {
 

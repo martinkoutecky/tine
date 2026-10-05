@@ -230,42 +230,6 @@ pub fn open_pdf(store: &Store, pdf_name: &str, _label: &str) -> io::Result<PdfSt
     Ok(pdf::parse_pdf_state(&raw))
 }
 
-/// Save page and scale while retaining all other sidecar fields. Concurrent
-/// external writes are merged on retry, at most four attempts. Cost O(asset
-/// entries + sidecar) per attempt when legacy lookup is needed.
-pub fn write_pdf_view_state(
-    store: &Store,
-    pdf_name: &str,
-    page: i64,
-    scale: f64,
-) -> io::Result<()> {
-    crate::retry_on_conflict(
-        "highlight sidecar changed repeatedly during view-state update",
-        || {
-            let (id, baseline) = sidecar(store, pdf_name, true)?;
-            if let Some((raw, _)) = &baseline {
-                valid_edn(raw)?;
-            }
-            let next = pdf::write_pdf_view_state(
-                baseline.as_ref().map_or("", |(raw, _)| raw),
-                page,
-                scale,
-            )
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid PDF view state"))?;
-            let mut tx = store.transaction(None);
-            match baseline {
-                Some((_, rev)) => {
-                    tx.replace(&id, rev, next.into_bytes());
-                }
-                None => {
-                    tx.create(&id, Content::Bytes(next.into_bytes()));
-                }
-            }
-            Ok(crate::commit_retry(tx.commit())?.then_some(()))
-        },
-    )
-}
-
 fn area_image_target(
     store: &Store,
     pdf_name: &str,

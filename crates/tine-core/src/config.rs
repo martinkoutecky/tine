@@ -131,11 +131,9 @@ pub struct Config {
     pub guide_announced: bool,
 }
 
-/// Logseq's default journal formats (verified against
-/// `logseq/deps/common/src/logseq/common/util/date_time.cljs`). Tine recognizes
-/// and synthesizes only these.
-pub const DEFAULT_JOURNAL_FILE_FORMAT: &str = "yyyy_MM_dd";
-pub const DEFAULT_JOURNAL_TITLE_FORMAT: &str = "MMM do, yyyy";
+/// OG's default when `:ref/linked-references-collapsed-threshold` is absent;
+/// the one declaration the `Config` default and the graph-meta DTO share.
+pub const DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD: u32 = 100;
 
 /// Preferred task marker cycle.
 #[deny(missing_docs)]
@@ -189,7 +187,7 @@ impl Default for Config {
             all_pages_public: false,
             start_of_week: 6, // Logseq's default (Sunday) — see field doc
             block_hidden_properties: Vec::new(),
-            linked_references_collapsed_threshold: 100, // OG default — see field doc
+            linked_references_collapsed_threshold: DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD,
             separated_by_commas: Vec::new(),
             ignored_page_references_keywords: Vec::new(),
             property_pages_enabled: true,
@@ -1261,6 +1259,12 @@ mod tests {
         assert_eq!(
             Config::parse("{}").linked_references_collapsed_threshold,
             100
+        );
+        // The graph-meta DTO's serde default and `Config::default` share one constant.
+        assert_eq!(DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD, 100);
+        assert_eq!(
+            Config::default().linked_references_collapsed_threshold,
+            DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD
         );
         assert_eq!(
             Config::parse("{:ref/linked-references-collapsed-threshold 0}")

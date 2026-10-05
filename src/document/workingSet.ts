@@ -213,10 +213,6 @@ export function loadGuidePages(dtos: PageDto[]) {
   evictIfNeeded();
 }
 
-export function isGuidePage(name: string): boolean {
-  return pageByName(name)?.guide ?? false;
-}
-
 /** Drop a page from the working set + feed and clear its dirty/baseline/conflict
  *  state — WITHOUT touching disk. Use when the page no longer exists on disk and
  *  the user accepts that (e.g. resolving an external-deletion conflict with "use

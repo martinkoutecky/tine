@@ -57,11 +57,6 @@ export function registerTransientLayer(layer: TransientLayer): () => void {
   };
 }
 
-export function activateTransientLayer(id: string) {
-  const layer = layers.get(id);
-  if (layer) layer.token = ++serial;
-}
-
 export function topTransientLayer(): Entry | undefined {
   // Normalize the live parent graph before ranking it.  A missing parent is a
   // root; every member of a detected cycle becomes a root, while descendants of

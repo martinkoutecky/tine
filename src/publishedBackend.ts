@@ -831,9 +831,6 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async detectMediaEditor() {
       return "";
     },
-    async pasteImage() {
-      return null;
-    },
     async readClipboardImage() {
       return null;
     },
@@ -988,7 +985,6 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "assetTrashStats",
   "clipboardFiles",
   "detectMediaEditor",
-  "pasteImage",
   "readClipboardImage",
   "diagnosticReport",
   "saveDiagnosticReport",
@@ -1090,12 +1086,10 @@ export const PUBLISHED_REFUSED_METHODS = [
   "cancelRecording",
   "copyImageToClipboard",
   "writeHighlights",
-  "writePdfViewState",
   "savePdfAreaImage",
   "rollbackPdfAreaImage",
   "setBackupKeep",
   "setCaptureEnterFiles",
-  "setLinkFirstMatch",
   "setWatchMode",
   "restoreBackup",
   "retryIndex",

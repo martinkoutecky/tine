@@ -755,19 +755,6 @@ fn angle_after(slice: &str, ts: &str) -> Option<String> {
     Some(after[lt + 1..lt + 1 + gt].to_string())
 }
 
-/// Properties + visible text for a block we only have `raw` for (a query-result
-/// DTO has no projection), off the one lsdoc recognizer. md mode: query-result
-/// sort keys are cosmetic, and an org `key::` here is format-agnostic exactly as
-/// the old line-scan was. Call once per block (decorate-sort), never per compare.
-pub fn block_sort_facets(raw: &str) -> (Vec<(String, String)>, String) {
-    let blocks = crate::render::parse_block(raw, false);
-    let (_, _, _, properties) = header_facets(&blocks);
-    let visible = crate::block_regions::from_blocks(raw, false, &blocks)
-        .apply(raw, false, crate::block_regions::Edit::Visible)
-        .expect("parsed regions");
-    (properties, visible)
-}
-
 pub fn property_key_norm(key: &str) -> String {
     key.trim().to_ascii_lowercase().replace([' ', '_'], "-")
 }

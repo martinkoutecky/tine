@@ -7,7 +7,7 @@
 //! test; adding a command means adding its name here.
 
 /// Every registered command's name (last path segment), sorted.
-pub(crate) const KNOWN_COMMANDS: [&str; 179] = [
+pub(crate) const KNOWN_COMMANDS: [&str; 177] = [
     "add_defender_exclusion",
     "app_architecture",
     "app_platform",
@@ -153,7 +153,6 @@ pub(crate) const KNOWN_COMMANDS: [&str; 179] = [
     "set_favorites",
     "set_guide_announced",
     "set_journal_title_format",
-    "set_link_first_match",
     "set_logical_outdenting",
     "set_plugin_enabled",
     "set_preferred_format",
@@ -186,7 +185,6 @@ pub(crate) const KNOWN_COMMANDS: [&str; 179] = [
     "warm_done",
     "watcher_latency_recent",
     "write_highlights",
-    "write_pdf_view_state",
 ];
 
 /// Whether  is exactly a registered command name. O(log n); pure.

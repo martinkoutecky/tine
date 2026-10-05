@@ -20,8 +20,12 @@ import { pushToast } from "./toasts";
 const KEY_ENABLED = "spellcheck_enabled";
 const KEY_LANGS = "spellcheck_languages";
 
-const [enabled, setEnabledSig] = createSignal(true);
-const [languages, setLanguagesSig] = createSignal("");
+// Each default is spelled once: the initial signal and the startup read share it.
+const DEFAULT_ENABLED = true;
+const DEFAULT_LANGS = "";
+
+const [enabled, setEnabledSig] = createSignal(DEFAULT_ENABLED);
+const [languages, setLanguagesSig] = createSignal(DEFAULT_LANGS);
 const [dictionaries, setDictionaries] = createSignal<string[]>([]);
 const dictionaryScope = {};
 
@@ -60,11 +64,6 @@ export function setSpellcheckEnabled(on: boolean): void {
 export function setSpellcheckLanguages(value: string): void {
   writePreference(languages, (next) => { setLanguagesSig(next); apply(); }, value,
     (next) => backend().setAppString(KEY_LANGS, next), "spellcheck languages");
-}
-
-/** Is this dictionary code currently selected? */
-export function isLanguageSelected(code: string): boolean {
-  return parseLanguages(languages()).includes(code);
 }
 
 /** Tick/untick one dictionary in the selection (preserving the others). */
@@ -113,13 +112,13 @@ export async function initSpellcheckSettings(): Promise<void> {
   const enabledRevision = preferenceRevision(enabled);
   const languageRevision = preferenceRevision(languages);
   try {
-    const value = await backend().getAppBool(KEY_ENABLED, true);
+    const value = await backend().getAppBool(KEY_ENABLED, DEFAULT_ENABLED);
     if (preferenceReadCurrent(enabled, enabledRevision)) { setEnabledSig(value); seedPreference(enabled); }
   } catch {
     pushToast("Could not load spellcheck preference.", "error");
   }
   try {
-    const value = await backend().getAppString(KEY_LANGS, "");
+    const value = await backend().getAppString(KEY_LANGS, DEFAULT_LANGS);
     if (preferenceReadCurrent(languages, languageRevision)) { setLanguagesSig(value); seedPreference(languages); }
   } catch {
     pushToast("Could not load spellcheck languages.", "error");

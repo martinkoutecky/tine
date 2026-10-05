@@ -4,12 +4,11 @@
 //! title and graph I/O errors are returned as I/O errors. Callers need no
 //! graph path, name encoding, or transaction details.
 
-use std::collections::HashSet;
 use std::io;
 
 use tine_core::guide::{
-    collect_guide_asset_refs, guide_copy_page_name, guide_link_renames,
-    rewrite_bundled_guide_links, CONFIG_EDN, GUIDE_ASSETS, GUIDE_TEMPLATES, QUICK_CAPTURE_PNG,
+    guide_copy_page_name, guide_link_renames, rewrite_bundled_guide_links, CONFIG_EDN,
+    GUIDE_ASSETS, GUIDE_TEMPLATES, QUICK_CAPTURE_PNG,
 };
 use tine_store::{Area, Content, OpenError, Resolved, Store, TxOutcome, Why};
 
@@ -75,8 +74,8 @@ fn create_if_absent(store: &Store, area: Area, rel: &str, bytes: &[u8]) -> io::R
     }
 }
 
-/// Copy every Guide page in template order and referenced assets in sorted
-/// order. Each file commits independently; an existing page or asset is skipped.
+/// Copy every Guide page in template order and the bundled assets in manifest
+/// (sorted) order. Each file commits independently; an existing page or asset is skipped.
 pub fn copy_guide_into_graph(store: &Store, title: &str) -> io::Result<GuideCopyResult> {
     let Some(viewed) = GUIDE_TEMPLATES
         .iter()
@@ -118,28 +117,10 @@ pub fn copy_guide_into_graph(store: &Store, title: &str) -> io::Result<GuideCopy
             skipped_pages.push(name);
         }
     }
-    let mut referenced = HashSet::new();
-    for template in GUIDE_TEMPLATES {
-        collect_guide_asset_refs(template.markdown, &mut referenced);
-    }
-    let mut referenced: Vec<String> = referenced.into_iter().collect();
-    referenced.sort();
     let mut copied_assets = Vec::new();
-    for name in referenced {
-        if name.contains('/') || name.contains('\\') {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "guide assets must be top-level files",
-            ));
-        }
-        let Some(asset) = GUIDE_ASSETS.iter().find(|asset| asset.name == name) else {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("missing bundled guide asset {name}"),
-            ));
-        };
-        if create_if_absent(store, Area::Assets, &name, asset.bytes)? {
-            copied_assets.push(name);
+    for asset in GUIDE_ASSETS {
+        if create_if_absent(store, Area::Assets, asset.name, asset.bytes)? {
+            copied_assets.push(asset.name.to_string());
         }
     }
     Ok(GuideCopyResult {

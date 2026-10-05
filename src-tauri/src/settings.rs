@@ -293,9 +293,10 @@ pub(crate) fn set_capture_enter_files(value: bool, app: tauri::AppHandle) -> Res
     })
 }
 
-/// `[[`/`#` autocomplete default action (app-level, in tine-settings.json):
+/// Legacy `[[`/`#` autocomplete preference (app-level, in tine-settings.json):
 /// true → Enter links the first match; false (default, OG) → Enter creates a new
-/// page/tag unless an exact match exists. A workflow preference, device-local.
+/// page/tag unless an exact match exists. Read-only: it is the migration source
+/// for the three-mode `linkAutocompletePolicy` string key, which is the only writer.
 fn link_first_match(app: &tauri::AppHandle) -> bool {
     settings_path(app)
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -307,13 +308,6 @@ fn link_first_match(app: &tauri::AppHandle) -> bool {
 #[tauri::command]
 pub(crate) fn get_link_first_match(app: tauri::AppHandle) -> bool {
     link_first_match(&app)
-}
-
-#[tauri::command]
-pub(crate) fn set_link_first_match(value: bool, app: tauri::AppHandle) -> Result<(), String> {
-    update_settings(&app, |json| {
-        json["link_first_match"] = serde_json::Value::Bool(value);
-    })
 }
 
 /// Smooth-scrolling preference (app-level, in tine-settings.json). Experimental,

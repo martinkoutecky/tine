@@ -18,15 +18,12 @@ import {
   cellSel,
   cellSurfaceKey,
   handleCellSelectionKey,
-  aggregateFooterPinned,
   clearSelectedSheetInstance,
   registerSheetViewAdapter,
   rebaseSelectedCell,
   rebaseSelectedRange,
   setCellSel,
-  setAggregateFooterPinned,
   startCellEditing,
-  toggleAggregateFooterPinned,
   type CellSel,
 } from "../sheet/selection";
 import { beginCellPointerSelection, isSheetPointerInteractive, sheetGridIdFromEventTarget } from "../sheet/pointerSelection";
@@ -61,7 +58,7 @@ import { pushToast } from "../toasts";
 import { blockBackgroundColor } from "../blockColors";
 import type { RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
-import { SheetAggregateCornerToggle, SheetAggregateFooterCell } from "./SheetAggregateFooter";
+import { SheetAggregateFooterCell, useSheetFooterCorner } from "./SheetAggregateFooter";
 import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
 import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
 import { compareSortKeys, measuredGridTracks, nextQuerySort, queryColumnFieldId, queryColumnName, querySortFieldName, reorderedQueryColumns,
@@ -243,33 +240,12 @@ export function SheetTable(props: {
       ? fields().some((field) => queryFooter(field)?.fn != null)
       : config().colAggregates.size > 0,
   );
-  const footerPinned = createMemo(() => aggregateFooterPinned(props.ownerId));
-  const showFooter = createMemo(() => hasAggregates() || footerPinned());
-  const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned()));
-
-  const toggleFooter = (e: MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    toggleAggregateFooterPinned(props.ownerId);
-  };
-
-  const footerToggle = () => (
-    <SheetAggregateCornerToggle
-      active={footerPinned()}
-      onClick={toggleFooter}
-    />
-  );
-
-  createEffect(() => {
-    if (hasAggregates() && footerPinned()) setAggregateFooterPinned(props.ownerId, false);
+  const { footerPinned, showFooter, showFooterToggle, footerToggle } = useSheetFooterCorner({
+    ownerId: () => props.ownerId,
+    hasAggregates,
+    overlay: sheetOverlay,
+    hovering: sheetHovering,
   });
-
-  createEffect(() => {
-    if (!sheetOverlay) return;
-    sheetOverlay.setCorner(showFooterToggle() ? footerToggle() : null);
-  });
-
-  onCleanup(() => sheetOverlay?.setCorner(null));
 
   const captureStableColumns = () => {
     if (!tableRef) return;

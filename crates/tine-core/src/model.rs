@@ -830,7 +830,7 @@ pub struct PageDto {
 }
 /// OG's default when `:ref/linked-references-collapsed-threshold` is absent.
 fn default_linked_references_collapsed_threshold() -> u32 {
-    100
+    crate::config::DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD
 }
 
 /// Effective graph settings returned when opening a store.

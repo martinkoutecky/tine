@@ -73,14 +73,3 @@ export async function initLinkDefault(): Promise<void> {
     pushToast("Could not load link autocomplete policy.", "error");
   }
 }
-
-// Compatibility surface for patch callers and the retained Rust commands. New
-// UI code must use the three-mode API above.
-export const linkFirstMatch = () => policy() === "existing";
-/** Map true to existing, false to adaptive; write generic and legacy keys
- * independently, with failures toasted. */
-export function setLinkFirstMatch(on: boolean): void {
-  setLinkAutocompletePolicy(on ? "existing" : "adaptive");
-  void backend().setLinkFirstMatch(on)
-    .catch(() => pushToast("Could not save legacy link preference.", "error"));
-}

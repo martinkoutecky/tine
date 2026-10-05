@@ -770,7 +770,7 @@ fn asset_import_creates_missing_assets_directory() {
 }
 
 #[test]
-fn pdf_image_and_view_state_create_then_replace() {
+fn pdf_area_image_create_then_replace() {
     let (root, store) = fixture("pdf");
     let name = pdf::write_pdf_area_image(&store, "paper.pdf", 2, "id", 42, b"first").unwrap();
     assert_eq!(name, "paper/2_id_42.png");
@@ -779,10 +779,6 @@ fn pdf_image_and_view_state_create_then_replace() {
         fs::read(root.join("assets").join(&name)).unwrap(),
         b"second"
     );
-    pdf::write_pdf_view_state(&store, "paper.pdf", 2, 1.5).unwrap();
-    pdf::write_pdf_view_state(&store, "paper.pdf", 3, 2.0).unwrap();
-    let state = pdf::open_pdf(&store, "paper.pdf", "Paper").unwrap();
-    assert_eq!(state.page, Some(3));
 }
 
 fn highlight(id: &str) -> Highlight {
@@ -844,8 +840,11 @@ fn pdf_open_preserves_sidecars_and_never_repairs_missing_notes() {
         ] {
             let (root, store) = fixture("pdf-existing-read-only");
             let item = highlight("existing");
-            let raw = tine_core::pdf::write_highlights(&[item.clone()], "");
-            let raw = tine_core::pdf::write_pdf_view_state(&raw, 2, 1.5).unwrap();
+            // An OG-written sidecar carrying view state (`:extra`).
+            let raw = tine_core::pdf::write_highlights(
+                &[item.clone()],
+                "{:highlights [] :extra {:page 2 :scale 1.5}}",
+            );
             fs::write(root.join("assets").join(format!("{key}.edn")), raw).unwrap();
             for notes in [
                 None,
@@ -1025,7 +1024,6 @@ fn old_vs_new_matrix_on_identical_fixtures() {
             "captured_stream",
             "first_area_image",
             "replaced_area_image",
-            "view_state",
             "first_highlight",
             "first_highlight_notes",
             "second_highlight",
@@ -1182,17 +1180,12 @@ fn old_vs_new_matrix_on_identical_fixtures() {
     // Martin 2026-10-04: opening intentionally differs from eager legacy writes.
     assert!(!a.join("assets/paper.edn").exists());
     assert!(!a.join("pages/hls__paper.md").exists());
-    pdf::write_pdf_view_state(&store, "paper.pdf", 3, 1.5).unwrap();
-    same("assets/paper.edn");
-    assert_eq!(
-        format!(
-            "{:?}",
-            pdf::write_pdf_view_state(&store, "paper.pdf", 0, 1.0)
-                .unwrap_err()
-                .to_string()
-        ),
-        "\"invalid PDF view state\""
-    );
+    // A pre-existing OG sidecar that carries view state; Tine only reads it.
+    fs::write(
+        a.join("assets/paper.edn"),
+        "{:highlights [] :extra {:page 3 :scale 1.5}}\n",
+    )
+    .unwrap();
     for (items, base) in [
         (vec![highlight("a")], vec![]),
         (vec![highlight("a"), highlight("b")], vec![highlight("a")]),
@@ -1219,16 +1212,6 @@ fn trash_retries_external_write_without_losing_its_bytes() {
 }
 
 #[test]
-fn view_state_retries_external_sidecar_write_and_preserves_foreign_data() {
-    let (root, store) = fixture("retry-view");
-    pdf::write_pdf_view_state(&store, "paper.pdf", 1, 1.0).unwrap();
-    store.inject_fault(FaultPoint::Stage2ValidSidecar);
-    pdf::write_pdf_view_state(&store, "paper.pdf", 2, 1.5).unwrap();
-    let edn = fs::read_to_string(root.join("assets/paper.edn")).unwrap();
-    assert!(edn.contains("external") && edn.contains(":page 2"));
-}
-
-#[test]
 fn area_image_retries_external_write_in_place() {
     let (root, store) = fixture("retry-image");
     pdf::write_pdf_area_image(&store, "paper.pdf", 2, "crop", 12, b"old").unwrap();
@@ -1243,11 +1226,19 @@ fn area_image_retries_external_write_in_place() {
 #[test]
 fn highlights_retry_external_sidecar_write_and_preserve_foreign_data() {
     let (root, store) = fixture("retry-highlights");
-    pdf::write_pdf_view_state(&store, "other.pdf", 1, 1.0).unwrap();
+    fs::write(
+        root.join("assets/other.edn"),
+        "{:highlights [] :extra {:page 1 :scale 1.0}}\n",
+    )
+    .unwrap();
     store.inject_fault(FaultPoint::Stage2ValidSidecar);
     pdf::write_highlights(&store, "other.pdf", "Other", &[highlight("h")], &[]).unwrap();
     let edn = fs::read_to_string(root.join("assets/other.edn")).unwrap();
     assert!(edn.contains("external") && edn.contains("h"));
+    assert!(
+        edn.contains(":page 1"),
+        "the existing view state survives the retry: {edn}"
+    );
     assert!(root.join("pages/hls__other.md").exists());
 }
 

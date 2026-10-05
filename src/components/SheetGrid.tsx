@@ -18,16 +18,13 @@ import {
   cellOwner,
   cellSel,
   cellSurfaceKey,
-  aggregateFooterPinned,
   colSeamSel,
   growSheetEdge,
   rowSeamSel,
   registerSheetVisibilityHook,
   registerSheetViewAdapter,
   setCellSel,
-  setAggregateFooterPinned,
   startCellEditing,
-  toggleAggregateFooterPinned,
   type SheetSel,
 } from "../sheet/selection";
 import {
@@ -44,7 +41,7 @@ import { blockBackgroundColor } from "../blockColors";
 import { Editor, SurfaceContext } from "./Block";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
-import { SheetAggregateCornerToggle, SheetAggregateFooterCell } from "./SheetAggregateFooter";
+import { SheetAggregateFooterCell, useSheetFooterCorner } from "./SheetAggregateFooter";
 import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
 
 const MAX_GRID_DEPTH = 5;
@@ -233,8 +230,12 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const config = createMemo(() => configForBlock(props.id));
   const rowIds = createMemo(() => blockChildren(props.id));
   const hasAggregates = createMemo(() => config().colAggregates.size > 0);
-  const footerPinned = createMemo(() => aggregateFooterPinned(props.id));
-  const showFooter = createMemo(() => hasAggregates() || footerPinned());
+  const { footerPinned, showFooter, showFooterToggle, footerToggle } = useSheetFooterCorner({
+    ownerId: () => props.id,
+    hasAggregates,
+    overlay: sheetOverlay,
+    hovering: sheetHovering,
+  });
   const [renderLimit, setRenderLimit] = createSignal(GRID_RENDER_PAGE);
   const [rowStart, setRowStart] = createSignal(0);
   const [columnLimit, setColumnLimit] = createSignal(GRID_RENDER_PAGE);
@@ -278,7 +279,6 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const columns = createMemo(() => columnTracks(renderedCols(), config().colWidths, undefined, columnStart()));
   const editingInThisGrid = () => editingOwner()?.startsWith(`sheet:${surfaceId}:${props.id}:`) ?? false;
   const effectiveColumns = () => stableColumns() ?? columns();
-  const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned()));
   const readOnly = () => blockPageReadOnly(props.id);
 
   const ensureSelectionVisible = (sel: SheetSel) => {
@@ -327,30 +327,6 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     bounds: () => ({ rows: rowIds().length, cols: rowIds().length ? fullColumnCount() : 0 }),
     blockIdAt: (row, col) => blockChildren(rowIds()[row] ?? "")[col] ?? null,
   }, surfaceId));
-
-  const toggleFooter = (e: MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    toggleAggregateFooterPinned(props.id);
-  };
-
-  const footerToggle = () => (
-    <SheetAggregateCornerToggle
-      active={footerPinned()}
-      onClick={toggleFooter}
-    />
-  );
-
-  createEffect(() => {
-    if (hasAggregates() && footerPinned()) setAggregateFooterPinned(props.id, false);
-  });
-
-  createEffect(() => {
-    if (!sheetOverlay) return;
-    sheetOverlay.setCorner(showFooterToggle() ? footerToggle() : null);
-  });
-
-  onCleanup(() => sheetOverlay?.setCorner(null));
 
   const captureStableColumns = () => {
     if (!gridRef) return;

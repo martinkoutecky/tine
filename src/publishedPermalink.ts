@@ -47,16 +47,6 @@ export function parsePublishedPermalinkHash(hash: string): PublishedPermalinkTar
     : { kind: "block", block: decoded };
 }
 
-/** Absolute copyable URL, preserving the deployment path and query string. */
-export function publishedPermalinkUrl(
-  target: PublishedPermalinkTarget,
-  currentHref: string = window.location.href,
-): string {
-  const url = new URL(currentHref);
-  url.hash = publishedPermalinkHash(target).slice(1);
-  return url.href;
-}
-
 function findBlock(blocks: PageDto["blocks"], wanted: string, format: "md" | "org"): BlockDto | null {
   for (const block of blocks) {
     if ((blockRegions(block.raw, format).id?.value.trim() ?? block.id) === wanted) return block;

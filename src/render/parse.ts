@@ -24,7 +24,6 @@ import type { Block, MacroInline, Inline } from "./ast";
 // path that renders before init resolves.
 const [ready, setReady] = createSignal(false);
 const [failed, setFailed] = createSignal(false);
-let initError: unknown = null;
 let initPromise: Promise<void> | null = null;
 
 function base64ToBytes(b64: string): Uint8Array {
@@ -54,7 +53,6 @@ export function initParser(): Promise<void> {
         }
       })
       .catch((e) => {
-        initError = e;
         setFailed(true);
         if (typeof document !== "undefined") document.documentElement.dataset.lsdocParser = "failed";
         throw e;
@@ -67,12 +65,6 @@ export function initParser(): Promise<void> {
  *  call. Read inside JSX so a component re-renders when init resolves. */
 export function parserReady(): boolean {
   return ready();
-}
-
-/** The init error, if `initParser()` rejected (used to surface a visible banner
- *  rather than a silently blank app). Null while pending or on success. */
-export function parserInitError(): unknown {
-  return initError;
 }
 
 /** True (reactive) if the wasm parser failed to load — drives the app-level

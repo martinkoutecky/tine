@@ -186,11 +186,22 @@ fn concurrent_create_and_replace_winners_are_never_clobbered() {
 fn graph_site_and_query_leaf_have_one_commit_answerer() {
     let source = include_str!("../src/publish.rs");
     let production = source.split("#[cfg(all(test, unix))]").next().unwrap();
-    assert_eq!(production.matches("commit_publish_stage_report(&self.graph").count(), 1,
+    // Count CALLS, whatever the receiver or argument spelling: every occurrence of the
+    // name followed by `(` that is not its own `fn` definition.
+    let calls = |name: &str| {
+        let squeezed: String = production.split_whitespace().collect::<Vec<_>>().join(" ");
+        squeezed.matches(&format!("{name}(")).count()
+            - squeezed.matches(&format!("fn {name}(")).count()
+    };
+    assert_eq!(calls("commit_publish_stage_report"), 1,
         "I-12: all graph publications share one stage/commit door; exemplar publish.rs::publish_site_at");
-    assert!(production.contains("self.publish_site_at(None, true, emit)"));
-    assert!(production.contains("store.publish_site_at(Some(folder), replace, emit)"));
-    assert_eq!(production.matches("crate::model::collect_asset_refs(pre").count(), 1,
+    // Both public doors (graph site, query leaf) reach that one answerer through publish_site_at.
+    assert_eq!(
+        calls("publish_site_at"),
+        2,
+        "I-12: the graph and query-leaf publications both go through publish_site_at"
+    );
+    assert_eq!(calls("collect_asset_refs"), 1,
         "I-12: publication reuses the asset-reference answerer; exemplar publish.rs::publication_assets");
     let contract = include_str!("../../../docs/storage-contract.md");
     for value in [

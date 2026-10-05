@@ -51,3 +51,51 @@ fn native_byte_policy_can_admit_an_ancestor_sibling_after_rejecting_a_child() {
     assert_eq!(dto.children[1].id, "c");
     assert_eq!(nodes, 1);
 }
+
+#[test]
+fn deep_dto_is_the_shallow_dto_plus_projected_children() {
+    use tine_core::projection::{block_to_dto, block_to_shallow_dto};
+    let mut root = DocBlock::new(
+        "TODO [#A] Heading text #tagged\nSCHEDULED: <2026-01-02 Fri>\nDEADLINE: <2026-01-03 Sat>\nkey:: value",
+    );
+    root.uuid = "root-id".into();
+    let mut child = DocBlock::new("DOING child\nid:: 6a1b2c3d-0000-4000-8000-000000000001");
+    child.uuid = "6a1b2c3d-0000-4000-8000-000000000001".into();
+    let mut grandchild = DocBlock::new("grandchild");
+    grandchild.uuid = "grandchild-id".into();
+    child.children.push(grandchild);
+    let mut plain = DocBlock::new("plain");
+    plain.uuid = "plain-id".into();
+    root.children = vec![child, plain];
+
+    let deep = block_to_dto(&root);
+    // The independent oracle: facets are the parser's answers for this raw text.
+    assert_eq!(deep.id, "root-id");
+    assert_eq!(deep.has_id, Some(false));
+    assert_eq!(deep.marker.as_deref(), Some("TODO"));
+    assert_eq!(deep.priority.as_deref(), Some("A"));
+    assert_eq!(deep.scheduled.as_deref(), Some("2026-01-02 Fri"));
+    assert_eq!(deep.deadline.as_deref(), Some("2026-01-03 Sat"));
+    assert!(deep.tags.iter().any(|t| t == "tagged"), "{:?}", deep.tags);
+    assert!(deep
+        .properties
+        .iter()
+        .any(|(k, v)| k == "key" && v == "value"));
+    assert_eq!(deep.children.len(), 2);
+    assert_eq!(deep.children[0].has_id, Some(true));
+    assert_eq!(deep.children[0].marker.as_deref(), Some("DOING"));
+    assert_eq!(deep.children[0].children.len(), 1);
+    // Structural relation, at every node: deep == shallow with children attached.
+    fn check(block: &DocBlock, dto: &tine_core::model::BlockDto) {
+        let mut expected = serde_json::to_value(block_to_shallow_dto(block)).unwrap();
+        let mut actual = serde_json::to_value(dto).unwrap();
+        assert_eq!(dto.children.len(), block.children.len());
+        expected["children"] = serde_json::Value::Null;
+        actual["children"] = serde_json::Value::Null;
+        assert_eq!(actual, expected, "{}", block.raw());
+        for (child, child_dto) in block.children.iter().zip(&dto.children) {
+            check(child, child_dto);
+        }
+    }
+    check(&root, &deep);
+}

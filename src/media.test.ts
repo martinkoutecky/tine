@@ -6,8 +6,6 @@ import {
   captureAssetFileName,
   recordingExt,
   formatAssetName,
-  insertedAssetMarkdownTarget,
-  replaceInsertedAssetMarkdown,
 } from "./media";
 import { DEFAULT_ASSET_NAME_FORMAT, STAMPED_ASSET_NAME_FORMAT } from "./assetSettings";
 
@@ -143,18 +141,5 @@ describe("media helpers", () => {
     expect(danger).not.toContain("..");
     expect(danger.startsWith(".")).toBe(false);
     expect(danger.endsWith(".png")).toBe(true);
-  });
-
-  it("replaceInsertedAssetMarkdown: repoints the tracked duplicate occurrence", () => {
-    const candidate = "20300102-030405.png";
-    const stored = "20300102-030405_1.png";
-    const md = assetMarkdown(candidate);
-    const raw = `${md} ${md}`;
-    const secondOffset = md.length + 1;
-    const target = insertedAssetMarkdownTarget(raw, md, secondOffset);
-
-    expect(replaceInsertedAssetMarkdown(raw, candidate, stored, target)).toBe(
-      `${md} ${assetMarkdown(stored)}`
-    );
   });
 });

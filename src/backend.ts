@@ -50,7 +50,6 @@ import type {
 } from "./types";
 import type { GraphSources, GraphFolderPickResult, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
 import { dbg } from "./debug";
-import { assetFileName } from "./media";
 import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
 import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
@@ -480,7 +479,6 @@ export interface Backend {
    * Return null if clipboard access/conversion yields no image; save failures
    * reject. A saved image returns its assets-relative name. Cost O(image bytes +
    * collision candidates). */
-  pasteImage(bindingGeneration: number): Promise<string | null>;
   /** Decode an image off the OS clipboard to PNG bytes WITHOUT saving (the
    *  caller seeds the render cache + writes to disk in the background, so the
    *  pasted image appears instantly). Null if the clipboard has no image. */
@@ -561,10 +559,6 @@ export interface Backend {
    * O(P) refresh if the page is absent.
    * The mock stores caller values directly without merge, files, or these failures. */
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseHighlights: Highlight[], kind: "replace-page", bindingGeneration: number): Promise<Highlight[]>;
-  /** Update page and scale while preserving other sidecar fields; retry and merge
-   * concurrent changes up to four attempts. Invalid state/sidecar, I/O, or
-   * exhausted conflicts reject. Cost O(asset entries + sidecar) per attempt. */
-  writePdfViewState(pdf: string, page: number, scale: number, bindingGeneration: number): Promise<void>;
   /** Save a cropped area-highlight PNG to OG's layout `assets/<key>/<page>_<id>_<stamp>.png`
    *  (non-dedup — the filename links the `.edn` `:image <stamp>` to the file).
    *  Returns the assets-relative path; a repeated save replaces that crop.
@@ -602,7 +596,6 @@ export interface Backend {
   /** `[[`/`#` autocomplete default: true → Enter links the first match; false
    *  (default, OG) → Enter creates a new page/tag unless an exact match exists. */
   getLinkFirstMatch(): Promise<boolean>;
-  setLinkFirstMatch(value: boolean): Promise<void>;
   /** How the file-watcher detects external edits: "inotify" (default, no idle
    *  wakeups) or "poll" (3s scan, for filesystems where inotify is flaky). */
   getWatchMode(): Promise<string>;
@@ -1136,11 +1129,6 @@ class TauriBackend implements Backend {
       return null; // no image in clipboard, or plugin unavailable
     }
   }
-  async pasteImage(bindingGeneration: number): Promise<string | null> {
-    const bytes = await this.readClipboardImage();
-    if (!bytes) return null;
-    return await this.saveAsset(assetFileName(), bytes, bindingGeneration);
-  }
   assetTrashStats() {
     return this.call<TrashStats>("asset_trash_stats");
   }
@@ -1329,9 +1317,6 @@ class TauriBackend implements Backend {
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseHighlights: Highlight[], _kind: "replace-page", bindingGeneration: number) {
     return this.assetCall<Highlight[]>("write_highlights", { pdf, label, highlights, baseHighlights }, bindingGeneration);
   }
-  writePdfViewState(pdf: string, page: number, scale: number, bindingGeneration: number) {
-    return this.assetCall<void>("write_pdf_view_state", { pdf, page, scale }, bindingGeneration);
-  }
   savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array, bindingGeneration: number) {
     if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) return Promise.reject(new Error("PDF area image exceeds 64 MiB ingress limit"));
     return this.assetCall<string>("save_pdf_area_image", {
@@ -1372,9 +1357,6 @@ class TauriBackend implements Backend {
   }
   getLinkFirstMatch() {
     return this.call<boolean>("get_link_first_match");
-  }
-  setLinkFirstMatch(value: boolean) {
-    return this.call<void>("set_link_first_match", { value });
   }
   getWatchMode() {
     return this.call<string>("get_watch_mode");

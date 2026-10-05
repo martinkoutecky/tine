@@ -2331,18 +2331,6 @@ pub(crate) async fn write_highlights(
 }
 
 #[tauri::command]
-pub(crate) fn write_pdf_view_state(
-    pdf: String,
-    page: i64,
-    scale: f64,
-    state: GraphContext<'_>,
-) -> Result<(), String> {
-    let slot = slot_for_context(&state)?;
-    tine_graph_features::pdf::write_pdf_view_state(&slot.store, &pdf, page, scale)
-        .map_err(feature_pdf_error)
-}
-
-#[tauri::command]
 pub(crate) fn save_pdf_area_image(
     pdf: String,
     page: i64,
