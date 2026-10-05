@@ -73,7 +73,8 @@ fn journal_content_days_preserves_prose_while_skipping_unicode_properties() {
     let fixture = Fixture::new();
     let journal = fixture.0.join("journals/2026_09_25.md");
     for (raw, has_content) in [
-        ("- #tag:: prose\n", true),
+        // lsdoc (an mldoc transcription) reads `#tag::` as a property key, so this line is a property, not prose.
+        ("- #tag:: prose\n", false),
         ("- klíč:: hodnota\n", false),
         ("- key::value\n", true),
     ] {
