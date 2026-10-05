@@ -34,10 +34,12 @@ function visitVisible(ids: readonly string[], visit: (id: string) => void, scope
 }
 
 /** Visible blocks in the MAIN view, in display order (drives editor arrow-nav),
- *  plus an id→index map. Memoized: it's recomputed only when the feed or a
- *  collapsed/children state changes (NOT on plain typing), and shared across the
- *  many callers in one tick. Scoped to the feed so navigation stays within the
- *  main content area, not satellite pages loaded for the sidebar/queries. */
+ *  plus an id→index map. Memoized: it's recomputed only when the feed, a
+ *  collapsed/children state, or a block's opaque-sheet answer changes — plain
+ *  typing reruns only that block's node-scoped sheet memo, never this walk
+ *  (`visibleOrderCost.test.ts`). Shared across the many callers in one tick.
+ *  Scoped to the feed so navigation stays within the main content area, not
+ *  satellite pages loaded for the sidebar/queries. */
 export const visibleData = createRoot(() =>
   createMemo(() => {
     const order: string[] = [];

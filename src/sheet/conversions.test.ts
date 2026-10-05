@@ -284,3 +284,14 @@ describe("sheet pipe-table/grid conversions", () => {
     expect(pageToDto("Sheet")).toEqual(before);
   });
 });
+
+describe("grid to pipe table admission bound (og C, I-22)", () => {
+  it("refuses an oversized grid by its row count before visiting its rows", () => {
+    grid();
+    // 300,000 row ids: the refusal must come from the count, not from mapping
+    // every row (whose spread into Math.max exceeds the engine argument limit).
+    setDoc("byId", "grid", "children", Array.from({ length: 300_000 }, (_, i) => `missing-${i}`));
+    expect(() => convertGridToPipeTable("grid")).not.toThrow();
+    expect(toasts().at(-1)?.message).toContain("larger than 30 columns by 200 rows");
+  });
+});

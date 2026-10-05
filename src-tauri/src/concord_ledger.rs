@@ -7,8 +7,8 @@
 //! Questions and operations (all O(one page), never a graph walk except prune):
 //! - [`ConcordLedger::observe`]: hand one published store `Change` to the
 //!   ledger's worker thread. Caller cost: one channel send. The worker reads
-//!   each changed page once (O(page bytes)), records it, and pins the winner's
-//!   ancestor when a sync-conflict copy appears.
+//!   each changed page once (O(page bytes)), records it (see **Unit cost**),
+//!   and pins the winner's ancestor when a sync-conflict copy appears.
 //! - [`ConcordLedger::conflict_bases`]: candidate ancestors for one copy,
 //!   newest first: its pin, then the winner's retained texts. Every blob is
 //!   re-hashed on read; anything unreadable, corrupt or foreign answers
@@ -18,6 +18,21 @@
 //!   temps. O(ledger files).
 //! - [`ConcordLedger::drain_for_exit`]: quitting waits at most
 //!   [`EXIT_DRAIN_BUDGET`] for queued updates.
+//!
+//! **Unit cost (I-25).** This ledger is the one approved private per-edit
+//! record in og (Martin, og QUESTIONS Q4, 2026-09-29; ADR 0056 "Unit cost").
+//! The restated I-25 in og's E-invariants §1 counts the page-file rewrite as
+//! the whole intrinsic cost of a save and names "any extra file per edit" a
+//! violation; the ledger is that extra term, accepted, not exempt by being
+//! off-thread. A recorded save (bytes changed and still matching the published
+//! revision) writes, through two atomic writes: one text blob when the text is
+//! new (page bytes) and one `index.json` rewrite (~177 B), and removes the blob
+//! that fell out of retention. Measured: 220 B for a 1-block page, 2,808 B for
+//! a 60-block page; 2 files written + 1 removed; transport 0 (app data is never
+//! synced). It scales with the saved page, never with the graph or history
+//! (retention is [`RETAINED`] texts per page); re-recording the newest text
+//! writes nothing. Pinned by
+//! `concord_ledger_tests::unit_cost_per_recorded_save_is_one_blob_plus_one_index`.
 //!
 //! Never an authority: nothing refuses, delays or fails on the ledger. It is
 //! off the save path (fed from the store's change feed after commit), lives in
@@ -101,7 +116,8 @@ impl ConcordLedger {
         }
     }
 
-    /// Record the published change off-thread (see the module doc).
+    /// Record the published change off-thread. The caller pays one channel
+    /// send; the worker pays the module doc's **Unit cost** per recorded save.
     pub(crate) fn observe(&self, change: &Change) {
         if !change.files.is_empty() {
             self.enqueue(Job::Observe(change.clone()));
@@ -280,7 +296,9 @@ impl LedgerFiles {
 
     /// Make `bytes` the newest retained text of `rel`: one blob (when new) and
     /// one index rewrite, then the blob that fell out of retention is removed.
-    /// Re-recording the newest text writes nothing.
+    /// Re-recording the newest text writes nothing. This is the approved
+    /// per-save I-25 term (module doc **Unit cost**): two private durable
+    /// files beyond the page rewrite, O(page bytes).
     fn record(&self, rel: &str, bytes: &[u8]) -> io::Result<()> {
         let hash = sha(bytes);
         let old = self.index(rel).map(|i| i.revs).unwrap_or_default();

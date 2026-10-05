@@ -276,6 +276,33 @@ describe("FormulaEditor", () => {
     dispose();
   });
 
+  it("opens a conditional whose THEN is a 10,000-term sum without throwing, and saves it unchanged (og C, I-22)", () => {
+    loadEditorDoc();
+    const { root, dispose } = mount(() => <FormulaEditor />);
+    const expr = `if(true, ${"1 + ".repeat(10_000)}1, 0)`;
+    openFormulaEditor({
+      mode: "edit", ownerId: "table", x: 10, y: 10, name: "long",
+      expr, formulas: [], fields: [], home: { kind: "block", id: "table" },
+    });
+    expect(root.querySelector(".formula-builder-if")).not.toBeNull();
+    saveButton(root).click();
+    expect(decodeFormulaExpr(blockProperty("table", "tine.formula.long") ?? "")).toBe(expr);
+    dispose();
+  });
+
+  it("opens a 13,000-link transform chain (to the 64 KiB cap) without throwing, and saves it unchanged (og C, I-22)", () => {
+    loadEditorDoc();
+    const { root, dispose } = mount(() => <FormulaEditor />);
+    const expr = `points${".abs()".repeat(5_000)}${".day".repeat(8_000)}`;
+    openFormulaEditor({
+      mode: "edit", ownerId: "table", x: 10, y: 10, name: "chain",
+      expr, formulas: [], fields: ["points"], home: { kind: "block", id: "table" },
+    });
+    saveButton(root).click();
+    expect(decodeFormulaExpr(blockProperty("table", "tine.formula.chain") ?? "")).toBe(expr);
+    dispose();
+  });
+
   it("changing the operator in a comparison rewrites the expression text", () => {
     loadEditorDoc();
     const { root, dispose } = mount(() => <FormulaEditor />);

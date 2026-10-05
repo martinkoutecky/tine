@@ -17,12 +17,13 @@
 //! fsync + rename + directory sync).
 //!
 //! Reads stop after MAX_BYTES + 1, including files growing during the read.
-//! **Bounds.** At most [`MAX_RECORDS`] records and [`MAX_BYTES`] bytes.
+//! **Bounds.** At most [`MAX_RECORDS`] records and [`MAX_BYTES`] bytes, on
+//! read as on write.
 //!
 //! **Refusals.** A write past a bound is refused and the draft stays in the
 //! window (scenario: disk error / exhaustion; the bound keeps a stuck page that
 //! is edited for hours from growing the file without limit). An unreadable,
-//! malformed or oversized file never blocks opening: it is set aside as
+//! malformed or oversized file (past either bound) never blocks opening: it is set aside as
 //! `.unreadable-<n>` and the store starts empty (scenario: crash or power loss
 //! leaving a torn file, disk error, or a sync client delivering another build's
 //! file into app data). The bytes are kept, not deleted.
@@ -43,7 +44,40 @@ static DRAFTS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[derive(Deserialize, Serialize)]
 struct Envelope {
     version: u64,
+    #[serde(deserialize_with = "bounded_records")]
     drafts: Vec<Value>,
+}
+
+/// Decode at most [`MAX_RECORDS`] records: the read refuses the next one
+/// before allocating it, so a delivered file past the record bound is
+/// malformed for this store (set aside, bytes kept), never admitted into a
+/// store whose next write would then be refused (og C, I-22).
+fn bounded_records<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Value>, D::Error> {
+    struct Records;
+    impl<'de> serde::de::Visitor<'de> for Records {
+        type Value = Vec<Value>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(f, "at most {MAX_RECORDS} draft records")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> Result<Vec<Value>, A::Error> {
+            let mut records = Vec::new();
+            while let Some(record) = seq.next_element::<Value>()? {
+                if records.len() == MAX_RECORDS {
+                    return Err(serde::de::Error::custom(format!(
+                        "the draft store keeps at most {MAX_RECORDS} pages"
+                    )));
+                }
+                records.push(record);
+            }
+            Ok(records)
+        }
+    }
+    deserializer.deserialize_seq(Records)
 }
 
 fn record_id(record: &Value) -> Result<&str, String> {
@@ -305,6 +339,30 @@ mod tests {
         assert!(store_at(&path, record("s:0", &"y".repeat(MAX_BYTES))).is_err());
         assert_eq!(load_at(&path).unwrap().len(), MAX_RECORDS);
         assert_eq!(load_at(&path).unwrap()[0], record("s:0", "x"));
+    }
+
+    #[test]
+    fn a_delivered_file_past_the_record_bound_is_set_aside_like_an_oversized_one() {
+        // og C (I-22): a sync-delivered envelope under MAX_BYTES with
+        // MAX_RECORDS + 1 valid records is past the store's bound; it is set
+        // aside with its bytes kept, as an oversized file is, instead of being
+        // admitted into a store that then refuses every write.
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("g.v1.json");
+        let drafts: Vec<Value> = (0..=MAX_RECORDS)
+            .map(|i| record(&format!("s:{i}"), "x"))
+            .collect();
+        let bytes = serde_json::to_vec(&json!({ "version": 1, "drafts": drafts })).unwrap();
+        assert!(bytes.len() < MAX_BYTES);
+        fs::write(&path, &bytes).unwrap();
+        assert!(load_at(&path).unwrap().is_empty());
+        assert!(!path.exists());
+        assert_eq!(
+            fs::read(path.with_extension("json.unreadable-0")).unwrap(),
+            bytes
+        );
+        store_at(&path, record("s:0", "after")).unwrap();
+        assert_eq!(load_at(&path).unwrap(), vec![record("s:0", "after")]);
     }
 
     #[test]

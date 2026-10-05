@@ -9,7 +9,7 @@ import { exportOpml } from "../editor/exportOpml";
 import { initParser } from "../render/parse";
 import { doc } from "./model";
 import { pageToDto } from "./convert";
-import { loadFeed, pageByName, insertOutlineAfter, insertOutlineChildren, insertEmptyChildBlock, replaceEmptyBlockWithOutline, replaceChildOrders, splitBlock, captureToPage, blockSubtreeMarkdown, buildClipboardPayload, exportNodesFor, indentBlock, moveBlock, resetStore } from ".";
+import { loadFeed, pageByName, mergeWithPrev, mergeWithNext, insertOutlineAfter, insertOutlineChildren, insertEmptyChildBlock, replaceEmptyBlockWithOutline, replaceChildOrders, splitBlock, captureToPage, blockSubtreeMarkdown, buildClipboardPayload, exportNodesFor, indentBlock, moveBlock, resetStore } from ".";
 
 // og 15b (I-22 / I-4): the frontend's one outline ceiling is the backend's
 // admission cap. A benign page AT the cap loads, serializes, exports and
@@ -130,6 +130,24 @@ describe("outline depth cap", () => {
     expect(splitBlock(leaf, 0, true, true)).toBe(false);
     expect(replaceChildOrders({ [leaf]: [id(900)] })).toBe(false);
     expect(pageToDto("Deep")).toEqual(before);
+  });
+
+  it("Backspace/Delete merge refuses to carry children past the cap (og C)", () => {
+    // Two roots: a 128-level chain, then a root with one child. Backspace at the
+    // start of the second root merges it into the deepest visible leaf (depth
+    // 127); its child would land on a 129th level that no save can admit.
+    const second = (): BlockDto => ({ id: id(900), raw: "second", collapsed: false, children: [{ id: id(901), raw: "kid", collapsed: false, children: [] }] });
+    loadFeed([page("Deep", [...deepDto(OUTLINE_MAX_DEPTH), second()])]);
+    const before = pageToDto("Deep");
+    expect(mergeWithPrev(id(900))).toBe(false);
+    expect(mergeWithNext(id(OUTLINE_MAX_DEPTH))).toBe(false);
+    expect(pageToDto("Deep")).toEqual(before);
+
+    // One level shallower, the same merge lands exactly at the cap.
+    resetStore();
+    loadFeed([page("Fits", [...deepDto(OUTLINE_MAX_DEPTH - 1), second()])]);
+    expect(mergeWithPrev(id(900))).toBe(true);
+    expect(doc.byId[id(901)].parent).toBe(id(OUTLINE_MAX_DEPTH - 1));
   });
 
   it("parses no outline from text past the source ceiling", () => {

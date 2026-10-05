@@ -608,8 +608,48 @@ fn unit_cost_per_recorded_save_is_one_blob_plus_one_index() {
             .flatten()
             .map(|e| e.metadata().unwrap().len())
             .sum();
+        let listing = |dir: &std::path::Path| -> std::collections::BTreeSet<String> {
+            std::fs::read_dir(dir)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        };
+        // The index's file identity: an atomic rewrite renames a new file in.
+        // Unix only; elsewhere the listing assertions still run.
+        let index_inode = || -> u64 {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                std::fs::metadata(dir.join("index.json")).unwrap().ino()
+            }
+            #[cfg(not(unix))]
+            {
+                0
+            }
+        };
+        let (names_before, inode_before) = (listing(&dir), index_inode());
         let text = page(blocks, 99);
         ledger.record(&rel, text.as_bytes()).unwrap();
+        // Work count (og C, I-25 wording): exactly one new blob, one evicted
+        // blob removed, and one index rewrite (atomic rename = new inode).
+        let names_after = listing(&dir);
+        assert_eq!(
+            names_after
+                .difference(&names_before)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![sha(text.as_bytes())]
+        );
+        assert_eq!(names_before.difference(&names_after).count(), 1);
+        if cfg!(unix) {
+            assert_ne!(index_inode(), inode_before, "the index is rewritten once");
+        }
+        // Re-recording the newest text writes nothing.
+        let inode_recorded = index_inode();
+        ledger.record(&rel, text.as_bytes()).unwrap();
+        assert_eq!(index_inode(), inode_recorded);
+        assert_eq!(listing(&dir), names_after);
         let index = std::fs::metadata(dir.join("index.json")).unwrap().len();
         let written = text.len() as u64 + index;
         let after: u64 = std::fs::read_dir(&dir)
@@ -625,6 +665,8 @@ fn unit_cost_per_recorded_save_is_one_blob_plus_one_index() {
         );
         assert_eq!(file_count(&dir), RETAINED + 1);
         assert!(index < 400, "index {index}");
+        // The measured row the module doc and ADR 0056 quote.
+        assert_eq!(written, if blocks == 1 { 220 } else { 2_808 });
         assert!(after <= RETAINED as u64 * text.len() as u64 + index + 64);
     }
     let _ = std::fs::remove_dir_all(dir);

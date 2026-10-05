@@ -196,6 +196,31 @@ describe("persisted split session", () => {
     expect(JSON.stringify(parsed)).not.toContain("results");
   });
 
+  it("restores the shallow panes of a hostile deep or wide layout instead of discarding the session (og C, I-22)", () => {
+    const pane = (paneId: string) => JSON.stringify({ kind: "pane", paneId, ...page(paneId) });
+    // A 10,000-level children[0] split chain, built as text so the fixture itself never recurses.
+    const levels = 10_000;
+    const deep = '{"kind":"split","dir":"row","children":['.repeat(levels) + pane("bottom")
+      + Array.from({ length: levels }, (_, i) => `,${pane(`p${levels - 1 - i}`)}]}`).join("");
+    const parsed = parsePersistedSession(JSON.stringify({ tabs: [] }).replace("}", `,"layout":${deep}}`));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.snapshots.has("p0")).toBe(true);
+    expect(parsed!.snapshots.has("bottom")).toBe(false);
+    expect(parsed!.snapshots.size).toBeLessThanOrEqual(64);
+
+    // A balanced layout with 256 panes is cut to the node budget (a full 64-pane tree)
+    // before parsing more snapshots.
+    let next = 0;
+    const wide = (depth: number): string => depth === 0 ? pane(`w${next++}`)
+      : `{"kind":"split","dir":"col","children":[${wide(depth - 1)},${wide(depth - 1)}]}`;
+    const many = parsePersistedSession(`{"layout":${wide(8)}}`)!;
+    expect(many.snapshots.size).toBeLessThanOrEqual(64);
+    expect(many.snapshots.has("w0")).toBe(true);
+    // A full 64-pane layout is within the budget and restores whole.
+    next = 0;
+    expect(parsePersistedSession(`{"layout":${wide(6)}}`)!.snapshots.size).toBe(64);
+  });
+
   it("drops only a malformed optional field and keeps the query tab (og E, master P5C)", () => {
     const restore = (fields: Record<string, unknown>) => parsePersistedSession(JSON.stringify({
       tabs: [{

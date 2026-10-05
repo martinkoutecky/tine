@@ -228,13 +228,25 @@ function sanitizeJournals(snapshot: PaneSnapshot, journalsSeen: { value: boolean
   return { tabs, activeIndex: Math.min(activeIndex, tabs.length - 1), scrolls };
 }
 
+/** Restore bounds for a persisted pane layout (og C, I-22). A session or
+ * workspace blob is device input that another build or a sync tool may have
+ * written; a split nested past the depth bound, or any node past the node budget
+ * (a full binary layout of 64 panes), is dropped like any other malformed node,
+ * so the shallow panes still restore and the recursion depth and snapshot work
+ * stay bounded whatever the input. */
+const MAX_LAYOUT_DEPTH = 32;
+const MAX_LAYOUT_NODES = 2 * 64 - 1;
+
 function parseLayoutNode(
   raw: unknown,
   snapshots: Map<string, PaneSnapshot>,
   journalsSeen: { value: boolean },
   seenViewIds: Set<string>,
+  depth = 0,
+  visited = { nodes: 0 },
 ): LayoutNode | null {
   if (!raw || typeof raw !== "object") return null;
+  if (depth > MAX_LAYOUT_DEPTH || ++visited.nodes > MAX_LAYOUT_NODES) return null;
   const o = raw as Record<string, unknown>;
   if (o.kind === "pane") {
     const paneId = typeof o.paneId === "string" && o.paneId ? o.paneId : null;
@@ -249,8 +261,8 @@ function parseLayoutNode(
   if (o.kind === "split") {
     if (o.dir !== "row" && o.dir !== "col") return null;
     const children = Array.isArray(o.children) ? o.children : [];
-    const a = parseLayoutNode(children[0], snapshots, journalsSeen, seenViewIds);
-    const b = parseLayoutNode(children[1], snapshots, journalsSeen, seenViewIds);
+    const a = parseLayoutNode(children[0], snapshots, journalsSeen, seenViewIds, depth + 1, visited);
+    const b = parseLayoutNode(children[1], snapshots, journalsSeen, seenViewIds, depth + 1, visited);
     if (a && b) {
       const ratio = typeof o.ratio === "number" ? Math.min(0.85, Math.max(0.15, o.ratio)) : 0.5;
       return { kind: "split", dir: o.dir, ratio, children: [a, b] };
