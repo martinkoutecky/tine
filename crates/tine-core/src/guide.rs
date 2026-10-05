@@ -3,7 +3,7 @@
 
 use crate::model::PageDto;
 use crate::projection::markdown_page_dto;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct GuidePage {
@@ -167,6 +167,9 @@ pub struct GuideAsset {
     pub bytes: &'static [u8],
 }
 
+/// Every embedded asset the Guide templates reference: top-level names, sorted,
+/// no duplicates. `asset_manifest_tests` checks this against the templates, so
+/// the copy path writes the list directly without scanning them at runtime.
 pub const GUIDE_ASSETS: &[GuideAsset] = &[GuideAsset {
     name: "quick-capture.png",
     bytes: QUICK_CAPTURE_PNG,
@@ -200,26 +203,6 @@ pub fn rewrite_bundled_guide_links(markdown: &str, renames: &HashMap<String, Str
         false,
         crate::config::FileNameFormat::TripleLowbar,
     )
-}
-
-pub fn collect_guide_asset_refs(markdown: &str, into: &mut HashSet<String>) {
-    let mut rest = markdown;
-    while let Some(i) = rest.find("../assets/") {
-        let after = &rest[i + "../assets/".len()..];
-        let end = after
-            .find(|c: char| {
-                matches!(
-                    c,
-                    ')' | ']' | '"' | '\'' | '<' | '>' | '|' | '\n' | '\r' | '\t'
-                )
-            })
-            .unwrap_or(after.len());
-        let name = after[..end].trim();
-        if !name.is_empty() {
-            into.insert(name.to_string());
-        }
-        rest = &after[end..];
-    }
 }
 
 #[cfg(test)]
@@ -1221,6 +1204,55 @@ mod external_link_guide_tests {
                 guide.contains(outcome),
                 "GH #181 Guide is missing {outcome}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod asset_manifest_tests {
+    use super::*;
+
+    fn collect_guide_asset_refs(markdown: &str, into: &mut std::collections::HashSet<String>) {
+        let mut rest = markdown;
+        while let Some(i) = rest.find("../assets/") {
+            let after = &rest[i + "../assets/".len()..];
+            let end = after
+                .find(|c: char| {
+                    matches!(
+                        c,
+                        ')' | ']' | '"' | '\'' | '<' | '>' | '|' | '\n' | '\r' | '\t'
+                    )
+                })
+                .unwrap_or(after.len());
+            let name = after[..end].trim();
+            if !name.is_empty() {
+                into.insert(name.to_string());
+            }
+            rest = &after[end..];
+        }
+    }
+
+    #[test]
+    fn guide_assets_are_exactly_the_sorted_top_level_assets_the_templates_reference() {
+        let mut referenced = std::collections::HashSet::new();
+        for template in GUIDE_TEMPLATES {
+            collect_guide_asset_refs(template.markdown, &mut referenced);
+        }
+        let mut referenced: Vec<String> = referenced.into_iter().collect();
+        referenced.sort();
+        let manifest: Vec<&str> = GUIDE_ASSETS.iter().map(|asset| asset.name).collect();
+        assert_eq!(
+            manifest, referenced,
+            "GUIDE_ASSETS must list every referenced asset, sorted, once"
+        );
+        assert_eq!(manifest, ["quick-capture.png"]);
+        for asset in GUIDE_ASSETS {
+            assert!(
+                !asset.name.contains('/') && !asset.name.contains('\\'),
+                "guide assets must be top-level files: {}",
+                asset.name
+            );
+            assert!(!asset.bytes.is_empty(), "{}", asset.name);
         }
     }
 }
