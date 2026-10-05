@@ -1342,6 +1342,25 @@ fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
     assert!(!a.join("pages").join(format!("hls__{legacy}.md")).exists());
 }
 
+/// og-surface: the trash location shown in asset errors is the absolute
+/// asset trash directory of the open graph (moved from a Store method into the
+/// store's config/layout answer without changing the text).
+#[test]
+fn asset_error_names_the_absolute_trash_location() {
+    let (a, store) = fixture("trash-display");
+    let shown = assets::error_for_user(
+        &store,
+        std::io::Error::other("could not create trash directory logseq/.tine-trash/assets: x"),
+    );
+    let trash = fs::canonicalize(&a)
+        .unwrap()
+        .join("logseq/.tine-trash/assets");
+    assert_eq!(
+        shown,
+        format!("could not create trash directory {}: x", trash.display())
+    );
+}
+
 #[test]
 fn blocked_trash_keeps_asset_and_legacy_error_text() {
     let (a, store) = fixture("blocked-new");

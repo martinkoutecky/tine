@@ -717,6 +717,30 @@ pub struct ConfigState {
     pub problem: Option<crate::IoError>,
     /// Final component of the validated assets directory, for backup layout.
     pub assets_directory_name: String,
+    /// The recoverable asset trash location, for display in user-facing
+    /// errors only; never a write target (graph writes take a [`FileId`]).
+    pub asset_trash_location: PathBuf,
+}
+
+impl ConfigState {
+    /// The effective config state of `graph` with its layout display fields.
+    pub(crate) fn of(
+        graph: &crate::model::Graph,
+        config: Arc<tine_core::config::Config>,
+        problem: Option<crate::IoError>,
+    ) -> Self {
+        Self {
+            config,
+            problem,
+            assets_directory_name: graph
+                .assets_path()
+                .file_name()
+                .and_then(|part| part.to_str())
+                .unwrap_or("dir")
+                .to_owned(),
+            asset_trash_location: graph.root.join("logseq/.tine-trash/assets"),
+        }
+    }
 }
 
 impl std::ops::Deref for ConfigState {
@@ -867,16 +891,11 @@ impl Store {
             &graph,
             graph.list_pages_shared().as_ref(),
         )));
-        let config_state = Arc::new(RwLock::new(ConfigState {
-            config: Arc::new(graph.config.clone()),
-            problem: None,
-            assets_directory_name: graph
-                .assets_path()
-                .file_name()
-                .and_then(|part| part.to_str())
-                .unwrap_or("dir")
-                .to_owned(),
-        }));
+        let config_state = Arc::new(RwLock::new(ConfigState::of(
+            &graph,
+            Arc::new(graph.config.clone()),
+            None,
+        )));
         let changes = Arc::new(ChangeFeed::new(
             Arc::clone(&graph),
             Arc::clone(&config_state),
@@ -1075,16 +1094,7 @@ impl Store {
         let journal_ids = journal_ids_from_entries(&graph, &journals);
         let problem = graph.config_read_problem.clone();
         let graph = Arc::new(graph);
-        let config = ConfigState {
-            config: Arc::new(graph.config.clone()),
-            problem,
-            assets_directory_name: graph
-                .assets_path()
-                .file_name()
-                .and_then(|part| part.to_str())
-                .unwrap_or("dir")
-                .to_owned(),
-        };
+        let config = ConfigState::of(&graph, Arc::new(graph.config.clone()), problem);
         let meta = tine_core::model::GraphMeta::from_config(
             root.display().to_string(),
             &config.config,
@@ -1526,11 +1536,6 @@ impl Store {
         let id = FileId::from(format!("{directory}/{rel}"));
         self.validate_file(&id)?;
         Ok(id)
-    }
-
-    /// Display the recoverable asset trash location in a user-facing error.
-    pub fn asset_trash_location_for_user(&self) -> PathBuf {
-        self.graph.root.join("logseq/.tine-trash/assets")
     }
 
     /// Read one file's bytes and its raw-byte revision without updating the

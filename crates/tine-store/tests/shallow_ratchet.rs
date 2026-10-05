@@ -633,7 +633,7 @@ fn arrival_numeric_budgets() {
 // Honest baseline (og-surface step 1, 2026-10-05): the earlier scan missed
 // files outside a hand list (H1), functions taking `&Store` (H2) and types
 // re-exported from private modules (H3).
-const OPS: usize = 49;
+const OPS: usize = 48;
 const QUESTIONS: usize = 26;
 const TYPES: usize = 56;
 
@@ -675,7 +675,7 @@ fn public_paths_are_only_inputs_and_handoffs() {
             "validated file path to OS",
         ),
         (
-            "store::Store::asset_trash_location_for_user",
+            "store::ConfigState.asset_trash_location",
             "trash location in user-facing error",
         ),
         (

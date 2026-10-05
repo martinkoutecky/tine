@@ -633,17 +633,7 @@ impl Core {
                 reason: error.to_string(),
             })?;
         *self.dirs.write().unwrap() = [self.graph.root.clone()];
-        *self.config.write().unwrap() = ConfigState {
-            config: Arc::new(config),
-            problem,
-            assets_directory_name: self
-                .graph
-                .assets_path()
-                .file_name()
-                .and_then(|part| part.to_str())
-                .unwrap_or("dir")
-                .to_owned(),
-        };
+        *self.config.write().unwrap() = ConfigState::of(&self.graph, Arc::new(config), problem);
         Ok(())
     }
 

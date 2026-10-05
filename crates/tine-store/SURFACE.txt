@@ -30,6 +30,7 @@ field transaction::IoError.kind
 field store::ConfigState.config
 field store::ConfigState.problem
 field store::ConfigState.assets_directory_name
+field store::ConfigState.asset_trash_location
 field store::GraphAccessInspection.external_assets
 field store::GraphAccessInspection.root
 field store::OpenOptions.approved_external_assets
@@ -139,7 +140,6 @@ fn store::Store::open_read
 fn store::Store::page
 fn store::Store::page_named
 fn store::Store::path_for_os_handoff
-fn store::Store::asset_trash_location_for_user
 fn store::Store::read
 fn store::Store::scan_area
 fn store::Store::save_pages

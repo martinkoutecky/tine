@@ -20,7 +20,7 @@ const COMPOUND_EXTS: &[&str] = &[".drawio.svg", ".excalidraw.svg", ".excalidraw.
 pub fn error_for_user(store: &Store, error: io::Error) -> String {
     error.to_string().replace(
         "logseq/.tine-trash/assets",
-        &store.asset_trash_location_for_user().display().to_string(),
+        &store.config().asset_trash_location.display().to_string(),
     )
 }
 
