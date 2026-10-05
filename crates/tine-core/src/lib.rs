@@ -18,6 +18,7 @@ pub mod media_mime;
 pub mod model;
 pub mod org;
 mod outline;
+pub mod page_properties;
 pub mod pdf;
 pub mod projection;
 mod property_line;

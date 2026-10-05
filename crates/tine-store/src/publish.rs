@@ -207,22 +207,6 @@ pub struct PublishReceipt {
 }
 
 impl Store {
-    /// Fold the existing per-document block-reference counter over exactly a
-    /// publication's selected pages. Cost O(selected blocks); no graph bytes
-    /// are read or written. Callers need no cache or index state.
-    pub(crate) fn publication_block_ref_counts(
-        &self,
-        corpus: &tine_core::Corpus,
-    ) -> std::collections::HashMap<String, usize> {
-        let mut counts = std::collections::HashMap::new();
-        for page in &corpus.pages {
-            for (id, count) in crate::model::document_block_ref_counts(&page.document) {
-                *counts.entry(id).or_default() += count;
-            }
-        }
-        counts
-    }
-
     /// Read assets referenced by exactly the supplied parsed source pages for
     /// a publication. Candidate names use the store's one asset-ref
     /// scanner and file-id validator. Missing files warn; oversized live assets
@@ -489,15 +473,6 @@ impl Store {
             previous_kept,
         })
     }
-}
-
-/// Count projected block references over exactly the selected publication
-/// pages. Cost O(selected blocks); source pages are not changed.
-pub fn publication_block_ref_counts(
-    store: &Store,
-    corpus: &tine_core::Corpus,
-) -> std::collections::HashMap<String, usize> {
-    store.publication_block_ref_counts(corpus)
 }
 
 /// Read selected pages' referenced assets through Store's validated asset

@@ -27,6 +27,9 @@ pub(crate) mod page_properties;
 mod sample_seed_tests;
 pub(crate) use page_properties::page_facets;
 use page_properties::{page_document_is_org, page_property_lines};
+pub(crate) use tine_core::page_properties::{
+    document_page_property_block, page_property_raw, property_projection,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct BoundedGroups {
@@ -578,37 +581,6 @@ fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, t
     }
 }
 
-/// Project only parser-owned page properties into native block syntax. Keeping
-/// the whole Org drawer preserves parser ownership for reference evidence.
-pub(crate) fn page_property_raw(pre: &str, is_org: bool) -> String {
-    let entries = page_property_lines(pre, is_org);
-    if entries.is_empty() {
-        return String::new();
-    }
-    if is_org {
-        format!(
-            ":PROPERTIES:\n{}\n:END:",
-            entries
-                .iter()
-                .map(|(key, value)| format!(":{key}: {value}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    } else {
-        entries
-            .iter()
-            .map(|(key, value)| format!("{key}:: {value}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
-fn property_projection(raw: &str, is_org: bool) -> DocBlock {
-    let mut block = DocBlock::new(raw);
-    block.set_org(is_org);
-    block
-}
-
 fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
     let is_org = Format::from_path(&entry.path) == Format::Org;
     let raw = page_property_raw(pre, is_org);
@@ -622,21 +594,6 @@ fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
         refs::page_key(&entry.name)
     );
     Some(block)
-}
-
-/// The header pre-block as a block, from the document alone (no page entry).
-/// I-12: the one projection of "the pre-block is a real block with `:block/refs`"
-/// for the walkers that have only a `Document` (block-ref badge counts, scoped
-/// referrer invalidation); the entry-taking `page_property_block` builds the
-/// same block with a page-scoped identity for the DTO-producing walkers.
-pub(crate) fn document_page_property_block(doc: &Document) -> Option<DocBlock> {
-    let pre = doc.pre_block.as_deref()?;
-    let is_org = page_document_is_org(doc);
-    let raw = page_property_raw(pre, is_org);
-    if raw.is_empty() {
-        return None;
-    }
-    Some(property_projection(&raw, is_org))
 }
 
 /// The header pre-block when it references block `uuid`, as a page-property row.

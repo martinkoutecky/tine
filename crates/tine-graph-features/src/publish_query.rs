@@ -478,7 +478,6 @@ fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<V
 }
 
 fn snapshot(
-    store: &Store,
     graph: &WholeGraph,
     corpus: &tine_core::Corpus,
     name: &str,
@@ -597,7 +596,7 @@ fn snapshot(
             _ => None,
         })
         .collect();
-    let block_ref_counts = tine_store::publication_block_ref_counts(store, corpus);
+    let block_ref_counts = corpus.block_ref_counts();
     let snapshot = json!({ "schema": 1, "name": name, "exported_at": export_time()?,
         "home": home, "pages": pages, "entries": entries, "backlinks": backlinks,
         "block_ref_counts": block_ref_counts, "aliases": aliases, "icons": icons, "queries": queries });
@@ -763,7 +762,6 @@ pub fn publish_query_with_sheets(
         home.push_str(" 2");
     }
     let snap = snapshot(
-        store,
         &graph,
         &planned.selected,
         &request.name,
@@ -898,7 +896,7 @@ fn live(
         32 * 1024 * 1024,
         &mut Vec::new(),
     )?;
-    let snap = snapshot(store, &graph, &corpus, name, &home, None)?;
+    let snap = snapshot(&graph, &corpus, name, &home, None)?;
     app_files(&mut files, bundle, snap, name)?;
     commit(store, parent, &slug(name), files, corpus.pages.len())
 }
@@ -970,7 +968,7 @@ mod snapshot_consistency_tests {
         )
         .unwrap();
         store.scan_refresh().unwrap();
-        let bytes = snapshot(&store, &graph, &reviewed.selected, "Export", "Public", None).unwrap();
+        let bytes = snapshot(&graph, &reviewed.selected, "Export", "Public", None).unwrap();
         let value: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["pages"][0]["blocks"][0]["raw"], "TODO reviewed", "I-20: all publication projections use the held reviewed corpus; exemplar publish_query::snapshot");
         let repeated = resolve_plan(&store, &graph, &request).unwrap();

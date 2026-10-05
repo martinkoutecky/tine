@@ -1724,29 +1724,7 @@ impl PageCacheBuild {
     }
 }
 
-/// Count each projected block reference once per referring block.
-pub(crate) fn document_block_ref_counts(doc: &Document) -> HashMap<String, usize> {
-    fn walk(blocks: &[DocBlock], counts: &mut std::collections::HashMap<String, usize>) {
-        for block in blocks {
-            // projection().block_refs() is already de-duplicated per referrer block,
-            // matching the badge's OG-compatible counting semantics.
-            for id in block.projection().block_refs() {
-                *counts.entry(id.clone()).or_insert(0) += 1;
-            }
-            walk(&block.children, counts);
-        }
-    }
-    let mut counts = std::collections::HashMap::new();
-    // OG parity (#7): the header pre-block is a block with `:block/refs`, so a
-    // `((uuid))` in a page property is one referrer of that block.
-    if let Some(pre) = crate::query::document_page_property_block(doc) {
-        for id in pre.projection().block_refs() {
-            *counts.entry(id.clone()).or_insert(0) += 1;
-        }
-    }
-    walk(&doc.roots, &mut counts);
-    counts
-}
+pub(crate) use tine_core::page_properties::document_block_ref_counts;
 
 impl PageCacheIndex {
     fn insert(&mut self, entry: &PageEntry, slot: usize) {

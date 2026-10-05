@@ -69,10 +69,9 @@ use crate::transaction::{Content,IoError,Refusal,RenameMap,Rollback,StepResult,T
 fn transaction::Transaction::prepare_ref_rewrite
 fn store::WholeGraph::page_files_at_or_under
 fn publish::publication_assets
-fn publish::publication_block_ref_counts
 # R3C2: two bounded publication verbs over existing staged door, no new Store methods/types.
 fn publish::query_publication_destination
-use crate::publish::{publication_assets,publication_block_ref_counts,PublishDest,PublishFailed,PublishReceipt,SiteWriter,}
+use crate::publish::{publication_assets,PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
 enum store::Budget
 enum store::FacetPolicy

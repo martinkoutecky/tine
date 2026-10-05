@@ -5,11 +5,15 @@ const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.ur
 
 describe("OG-B-DOOR2 shared-answer boundaries", () => {
   it("keeps page properties and icons behind parser-owned regions (I-12)", () => {
+    // page_property_lines lives in tine-core (one pure answer); the store's
+    // page_properties.rs re-exports it and adds page facets.
+    const coreProps = read("crates/tine-core/src/page_properties.rs");
     const props = read("crates/tine-store/src/query/page_properties.rs");
     const icons = read("crates/tine-store/src/model/page_icons.rs");
-    expect(props, "I-12: imitate block_regions::parse_document; no page-property raw selector").toContain("block_regions::parse_document");
+    expect(coreProps, "I-12: imitate block_regions::parse_document; no page-property raw selector").toContain("block_regions::parse_document");
+    expect(props, "I-12: the store asks tine_core::page_properties, it does not re-derive").toContain("tine_core::page_properties::");
     expect(icons, "I-12: icons use page_property_lines with the actual file format").toContain("page_property_lines");
-    for (const source of [props, icons]) expect(source).not.toMatch(/\.lines\(|parse_property_line|strip_prefix\(/);
+    for (const source of [coreProps, props, icons]) expect(source).not.toMatch(/\.lines\(|parse_property_line|strip_prefix\(/);
     expect(read("crates/tine-store/src/query.rs")).not.toContain("fn org_property_line");
     expect(read("crates/tine-core/src/reference_evidence.rs")).not.toContain("fn property_values");
     const regions = read("crates/tine-core/src/block_regions.rs");
