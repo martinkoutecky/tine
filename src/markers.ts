@@ -18,6 +18,7 @@
 import { parserReady } from "./render/parse";
 import { header_tokens_json, __tineReinstantiate } from "./render/wasm/lsdoc_wasm.js";
 import { utf8ToUtf16Cursor } from "./render/utf16Cursor";
+import { reportUiFailure } from "./uiFailure";
 
 export const MARKERS = [
   "TODO",
@@ -77,7 +78,11 @@ export function headerTokens(raw: string, format: "md" | "org" = "md"): { marker
   if (memo?.raw !== raw || memo.format !== format) {
     let json: string | undefined;
     for (let attempt = 0; attempt < 2 && json === undefined; attempt++) {
-      try { json = header_tokens_json(raw, format === "org"); } catch { __tineReinstantiate(); }
+      try { json = header_tokens_json(raw, format === "org"); } catch (error) {
+        __tineReinstantiate();
+        // The retry recovers a poisoned instance; only a second failure is shown.
+        if (attempt === 1) reportUiFailure("marker-read", error);
+      }
     }
     if (json === undefined) return none;
     const header = JSON.parse(json) as { marker: string | null; priority: string | null; marker_range: [number, number] | null; priority_range: [number, number] | null };

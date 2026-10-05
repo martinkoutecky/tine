@@ -43,7 +43,7 @@ export function setJournalTemplate(name: string | null) {
   if (m) setGraphMeta({ ...m, default_journal_template: name });
   void serializeDurable(journalTemplateWrites, graphOwner(), () => backend().setDefaultJournalTemplate(name))
     .then((result) => {
-      if (result.kind === "current" && confirmedTemplate?.root === root) confirmedTemplate = { root: confirmedTemplate.root, value: name };
+      if (result.kind === "current" && root !== undefined && confirmedTemplate?.root === root) confirmedTemplate = { root, value: name };
     })
     .catch((e) => {
       // A durable failure is reported even when the graph has since changed.

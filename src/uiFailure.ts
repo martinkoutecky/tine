@@ -35,7 +35,7 @@ export type UiFailureFamily =
   | "asset-read"
   | "page-refresh"
   | "logbook"
-  | "marker-cycle"
+  | "marker-read"
   | "export-preview"
   | "sheet-export";
 
@@ -43,8 +43,8 @@ const MESSAGES: Record<UiFailureFamily, string> = {
   "custom-css": "Couldn't read custom.css. No custom CSS was applied.",
   "asset-read": "Couldn't read a file from this graph's assets. It may be unreadable.",
   "page-refresh": "Couldn't refresh a page after a change. Reopen it to see the latest.",
-  "logbook": "Couldn't update the time-tracking entry.",
-  "marker-cycle": "Couldn't update the task marker.",
+  "logbook": "Couldn't read or update a time-tracking entry.",
+  "marker-read": "Couldn't read a task marker from a block. It is shown as plain text.",
   "export-preview": "Couldn't prepare a block for the export preview. It is shown unresolved.",
   "sheet-export": "Couldn't read this sheet for export.",
   "config-read": "Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.",
