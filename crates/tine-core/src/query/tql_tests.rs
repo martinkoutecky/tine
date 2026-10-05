@@ -878,6 +878,29 @@ fn a_malformed_disabled_span_is_a_disabled_diagnostic_and_does_not_invalidate() 
 }
 
 #[test]
+fn a_disabled_row_never_invalidates_through_the_prepass_reporters() {
+    // OG-C5-Q TQL-DISABLED: the stray-anchor and unquoted-relative-date
+    // reporters ran on the whole text, so a row switched off with `-- ` still
+    // produced an ENABLED diagnostic and invalidated the active query.
+    for text in [
+        "-- deadline > -7d\nand [[a]]",
+        "-- @page\nand [[a]]",
+        "[[a]]\n-- and deadline > -7d",
+        "[[a]]\n-- and \u{e9}\u{e9} @block",
+    ] {
+        let query = parse(text);
+        assert!(
+            !query.is_invalid(),
+            "{text:?} must stay valid, got {:?}",
+            query.diagnostics
+        );
+    }
+    // The ACTIVE equivalents are still reported.
+    assert!(parse("deadline > -7d\nand [[a]]").is_invalid());
+    assert!(parse("[[a]] and @page").is_invalid());
+}
+
+#[test]
 fn starts_with_recognises_only_a_single_trailing_wildcard() {
     assert_eq!(
         crate::query::text::LikePattern::compile("%").starts_with_prefix(),

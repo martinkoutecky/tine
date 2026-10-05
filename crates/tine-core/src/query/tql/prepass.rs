@@ -70,8 +70,12 @@ pub(super) fn inside_literal(spans: &[(usize, usize)], at: usize) -> bool {
 
 pub(super) fn pre_pass(text: &str, diagnostics: &mut Vec<Diagnostic>) -> PrePass {
     let (anchor, rest, offset) = take_anchor(text);
-    report_stray_anchor(text, &rest, offset, diagnostics);
-    report_unquoted_relative_dates(text, &rest, offset, diagnostics);
+    // The two reporters scan the ACTIVE text only: a row the user turned off
+    // with `-- ` must not invalidate the query (§3.5), so disabled lines are
+    // blanked (same byte length, offsets unchanged) before they look.
+    let active = mask_disabled_lines(&rest);
+    report_stray_anchor(text, &active, offset, diagnostics);
+    report_unquoted_relative_dates(text, &active, offset, diagnostics);
     if rest.trim().is_empty() {
         return PrePass {
             sql: "true".to_string(),
@@ -487,6 +491,36 @@ pub(super) struct DisabledRun {
     origins: Vec<usize>,
 }
 
+/// `text` with every disabled (`-- payload`) line replaced by spaces of equal
+/// byte length. Uses the same predicate as `lift_disabled_runs`, so the two
+/// agree on which lines are disabled.
+fn mask_disabled_lines(text: &str) -> String {
+    let spans = literal_spans(text);
+    let mut out = String::with_capacity(text.len());
+    let mut offset = 0usize;
+    for (n, line) in text.split('\n').enumerate() {
+        if n > 0 {
+            out.push('\n');
+        }
+        let indent_len = line.len() - line.trim_start().len();
+        let trimmed = line.trim();
+        let disabled = !inside_literal(&spans, offset + indent_len)
+            && trimmed != "--"
+            && trimmed.starts_with("-- ")
+            && !trimmed[3..].trim().is_empty();
+        if disabled {
+            out.extend(line.chars().map(|c| if c == '\r' { '\r' } else { ' ' }));
+            // keep byte length: pad for multibyte characters
+            let extra = line.len() - line.chars().count();
+            out.extend(std::iter::repeat(' ').take(extra));
+        } else {
+            out.push_str(line);
+        }
+        offset += line.len() + 1;
+    }
+    out
+}
+
 /// Step 3 (Q12): a maximal run of `-- ` lines becomes a positional
 /// `<connector> off(<rest>)`. Positional replacement is what makes nesting free:
 /// a run inside a parenthesized group becomes an `off()` operand of that group.
@@ -558,7 +592,11 @@ fn lift_disabled_runs(text: &str, diagnostics: &mut Vec<Diagnostic>) -> (String,
         for origin in &mut payload_origins {
             *origin = run.origins[rest_start + *origin];
         }
-        let parses = parse_expr_guarded(&sugared).is_ok();
+        // A payload with a forbidden shape (`@page` placeholder, subquery, …)
+        // parses but would fail the WHOLE-query shape check and invalidate the
+        // active query; it is captured like any other malformed disabled row.
+        let parses =
+            parse_expr_guarded(&sugared).is_ok_and(|expr| reject_forbidden_shapes(&expr).is_none());
         if parses {
             for diagnostic in inner_diagnostics {
                 diagnostics.push(Diagnostic {
