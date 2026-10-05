@@ -43,4 +43,15 @@ impl Corpus {
         }
         counts
     }
+
+    /// Asset names these pages mention, by the same collector as orphan-asset
+    /// detection: raw and percent-decoded spellings, plus the first segment of
+    /// a nested reference. Cost O(page text bytes); no I/O.
+    pub fn asset_refs(&self) -> std::collections::HashSet<String> {
+        let mut names = std::collections::HashSet::new();
+        for page in &self.pages {
+            crate::asset_refs::collect_document_asset_refs(&page.document, &mut names);
+        }
+        names
+    }
 }

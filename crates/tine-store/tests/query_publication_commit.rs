@@ -217,8 +217,20 @@ fn graph_site_and_query_leaf_have_one_commit_answerer() {
         2,
         "I-12: the graph and query-leaf publications both go through publish_site_at"
     );
-    assert_eq!(calls("collect_asset_refs"), 1,
-        "I-12: publication reuses the asset-reference answerer; exemplar publish.rs::publication_assets");
+    // Publication asset selection is a client (gf publish_query::publication_assets)
+    // over tine-core's one collector; the store reads only through Store::read.
+    assert_eq!(calls("collect_asset_refs"), 0,
+        "I-12: the store does not re-collect publication assets; exemplar tine-graph-features publish_query.rs::publication_assets");
+    let client = include_str!("../../tine-graph-features/src/publish_query.rs");
+    assert_eq!(client.matches("corpus.asset_refs()").count(), 1,
+        "I-12: publication reuses the asset-reference answerer Corpus::asset_refs; exemplar publish_query.rs::publication_assets");
+    assert!(
+        !client.contains("collect_asset_refs("),
+        "I-12: publication must not re-derive asset references; use Corpus::asset_refs"
+    );
+    let corpus = include_str!("../../tine-core/src/corpus.rs");
+    assert!(corpus.contains("asset_refs::collect_document_asset_refs("),
+        "I-12: Corpus::asset_refs is the orphan detector's collector; exemplar tine-core asset_refs.rs");
     let contract = include_str!("../../../docs/storage-contract.md");
     for value in [
         "published-queries/<portable-folder>/",

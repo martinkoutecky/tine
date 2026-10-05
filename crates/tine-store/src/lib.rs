@@ -110,7 +110,7 @@ mod test_config_client;
 mod test_fixture_io;
 pub mod transaction;
 mod watch;
-pub use publish::{publication_assets, PublishDest, PublishFailed, PublishReceipt, SiteWriter};
+pub use publish::{PublishDest, PublishFailed, PublishReceipt, SiteWriter};
 pub use restore::{RestoreFailed, RestoreFile, RestoreReport};
 #[cfg(any(test, feature = "test-faults"))]
 pub use store::checkpoint::CheckpointWrite;

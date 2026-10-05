@@ -207,84 +207,6 @@ pub struct PublishReceipt {
 }
 
 impl Store {
-    /// Read assets referenced by exactly the supplied parsed source pages for
-    /// a publication. Candidate names use the store's one asset-ref
-    /// scanner and file-id validator. Missing files warn; oversized live assets
-    /// return TooLarge before publication. Reads are bounded during copying.
-    /// Cost O(selected text + asset bytes), capped by budget. No graph writes.
-    pub(crate) fn publication_assets(
-        &self,
-        corpus: &tine_core::Corpus,
-        budget: u64,
-        warnings: &mut Vec<String>,
-    ) -> Result<Vec<(String, Vec<u8>)>, crate::StoreError> {
-        let mut names = std::collections::HashSet::new();
-        for page in &corpus.pages {
-            if let Some(pre) = &page.document.pre_block {
-                crate::model::collect_asset_refs(pre, &mut names);
-            }
-            for block in &page.document.roots {
-                crate::model::collect_block_asset_refs(block, &mut names);
-            }
-        }
-        // The orphan scanner keeps raw and decoded URL spellings. A browser
-        // decodes the URL, so copy only the decoded name when both were seen.
-        let encoded: Vec<_> = names
-            .iter()
-            .filter(|name| name.contains('%'))
-            .cloned()
-            .collect();
-        for name in encoded {
-            if crate::model::percent_decode(&name) != name {
-                names.remove(&name);
-            }
-        }
-        // The shared orphan answerer also marks ancestors (PDF area-image
-        // directories). Publication copies files, so remove those directory
-        // markers while preserving the complete nested reference.
-        let referenced: Vec<_> = names.iter().cloned().collect();
-        for name in referenced {
-            for parent in Path::new(&name).ancestors().skip(1) {
-                if let Some(parent) = parent.to_str() {
-                    names.remove(parent);
-                }
-            }
-        }
-        let mut names: Vec<_> = names.into_iter().collect();
-        names.sort();
-        let mut out = Vec::new();
-        let mut remaining = budget;
-        for name in names {
-            // The scanner over-collects on purpose (orphan detection must not
-            // miss a reference), so a candidate may be prose after `assets/`
-            // rather than a file name. One that cannot name a file is simply
-            // not an asset: skip it like a missing one instead of failing the
-            // whole publication. A real read failure of an asset still fails.
-            let Ok(id) = self.file_id(crate::Area::Assets, &name) else {
-                continue;
-            };
-            match self.read(&id, Some(remaining)) {
-                Ok((bytes, _)) => {
-                    remaining = remaining.saturating_sub(bytes.len() as u64);
-                    out.push((format!("assets/{name}"), bytes));
-                }
-                Err(crate::StoreError::InvalidTarget(_)) => {
-                    warnings.push(format!("Asset {name} was omitted: not a regular file."));
-                }
-                Err(crate::StoreError::NotFound) => {
-                    warnings.push(format!("Asset {name} was omitted: file not found."));
-                }
-                Err(crate::StoreError::Io(error))
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::InvalidFilename | std::io::ErrorKind::NotADirectory
-                    ) => {}
-                Err(error) => return Err(error),
-            }
-        }
-        Ok(out)
-    }
-
     /// Publish a create-only site under a directory explicitly picked by the
     /// user. The leaf must be a portable name. The parent must exist outside
     /// the graph; even a symlink into the graph is refused. Files are fsynced
@@ -473,18 +395,6 @@ impl Store {
             previous_kept,
         })
     }
-}
-
-/// Read selected pages' referenced assets through Store's validated asset
-/// reader. Missing assets append warnings; TooLarge refuses the caller-supplied
-/// cumulative byte budget. Cost O(selected text + budget); no graph writes.
-pub fn publication_assets(
-    store: &Store,
-    corpus: &tine_core::Corpus,
-    budget: u64,
-    warnings: &mut Vec<String>,
-) -> Result<Vec<(String, Vec<u8>)>, crate::StoreError> {
-    store.publication_assets(corpus, budget, warnings)
 }
 
 fn validate_leaf(leaf: &str) -> io::Result<()> {

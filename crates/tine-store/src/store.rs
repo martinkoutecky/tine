@@ -2815,12 +2815,7 @@ impl WholeGraph {
         let mut names = HashSet::new();
         self.graph.with_pages(|pages| {
             for (_, doc) in pages {
-                if let Some(pre) = &doc.pre_block {
-                    crate::model::collect_asset_refs(pre, &mut names);
-                }
-                for block in &doc.roots {
-                    crate::model::collect_block_asset_refs(block, &mut names);
-                }
+                tine_core::asset_refs::collect_document_asset_refs(doc, &mut names);
             }
         });
         Arc::new(names)

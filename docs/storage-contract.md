@@ -217,7 +217,8 @@ Launch config metadata and its read failure come from the same bounded read. A s
 
 ### Query publication (OG-R3C2)
 
-`Store::publish_site` and `publish::publish_query_site` use one stage/commit door.
+`Store::publish(PublishDest::{GraphSite, QueryLeaf, External}, emit)` is the one
+publication door; its graph-site and query-leaf arms share one stage/commit.
 A query leaf is `published-queries/<portable-folder>/`; the shared discovery
 predicate excludes the whole directory from pages, watching and graph backups.
 Review (`query_publication_destination`) creates nothing, reports collisions and
@@ -232,9 +233,10 @@ An interruption may leave an unpublished hidden stage; it never exposes a partia
 leaf. After retirement the previous leaf remains in recovery, even if installation
 has not happened. Callers inspect output/recovery on any post-rename I/O failure.
 
-`publication_assets` uses the existing asset-reference answerer, validates names
-and bounds reads during copying. Its caller supplies the cumulative budget and a
-warning collection. Query exports use one Rust default of 1 GiB, optionally
+`tine-graph-features::publish_query::publication_assets` takes names from
+`tine_core::Corpus::asset_refs` (the orphan detector's collector), reads each
+through `Store::file_id(Area::Assets)` + `Store::read`, and bounds reads during
+copying. Its caller supplies the cumulative budget and a warning collection. Query exports use one Rust default of 1 GiB, optionally
 replaced by the device-local Settings limit. `TooLarge` becomes typed
 `AssetBudgetExceeded` / IPC `assetBudget`; no leaf or recovery is touched on that
 refusal. A missing asset is a visible warning. Live/CLI limits remain unchanged.
