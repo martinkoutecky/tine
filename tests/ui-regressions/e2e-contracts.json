@@ -1,6 +1,15 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-gh623-link-navigation.mjs": {
+      "contracts": [
+        {"class":"core-operation","userOutcome":"Ctrl+K activations using ASCII and fullwidth comma-separated aliases open the owning page's title and body without creating alias files or changing page bytes.","blocking":false},
+        {"class":"stateful-ux","userOutcome":"Native Shift+click opens page references in the right sidebar from journals, a named page, the sidebar and a split pane; the named source page stays open.","blocking":false}
+      ],
+      "acceptableVariations":["Alias search ranking, tab labels, sidebar item order, wrapping and navigation timing may vary while final destinations remain correct."],
+      "nonRequirements":["Windows WebView2 or macOS/mobile runtime certification from a Linux WebKitGTK run.","Exact pixels, sidebar widths, animation or incidental DOM nesting."],
+      "stability":"stable"
+    },
     "scripts/e2e-tine-links.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Cold and forwarded Tine URLs open existing graph/page/block targets, graph copies ask once, and menu copies publish only durable identities.","blocking":false}],
       "acceptableVariations":["Pane tab placement, toast wording and chooser styling may vary."],
