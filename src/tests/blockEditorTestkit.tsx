@@ -2,8 +2,11 @@ import { afterEach, beforeAll } from "vitest";
 import { type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { resetStore } from "../document";
+import { emptyPage, resetStore } from "../document";
 import type { BlockDto, PageDto } from "../types";
+
+// PageDto values are constructed only through document/convert.ts (boundary guard
+// "I-12 PageDto construction stays in convert"), so the kit starts from emptyPage().
 
 /** Shared setup for the `Block.*` editor-behaviour tests: parser init before
  *  the file, store reset and DOM cleanup after every test. Call once at the top
@@ -31,11 +34,11 @@ export function blk(id: string, raw: string): BlockDto {
 }
 
 export function page(name: string, blocks: BlockDto[]): PageDto {
-  return { name, kind: "page", title: name, pre_block: null, blocks };
+  return { ...emptyPage(name, "page"), blocks };
 }
 
 export function journal(name: string, blocks: BlockDto[]): PageDto {
-  return { name, kind: "journal", title: name, pre_block: null, blocks };
+  return { ...emptyPage(name, "journal"), blocks };
 }
 
 export function pressEnter(ta: HTMLTextAreaElement, caret: number) {
