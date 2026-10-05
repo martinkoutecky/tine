@@ -1,11 +1,16 @@
 import { invalidateBinding } from "./binding";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { exportPagePdf, preparePrintHtml, PRINT_IFRAME_SANDBOX } from "./print";
 import { backend } from "./backend";
 import * as documentStore from "./document";
 import { toasts, setToasts } from "./toasts";
 
 describe("print document privilege boundary", () => {
+  // The mock backend refuses sheet reads, which now (correctly) raises a sticky error; these tests are about print
+  // ownership, so give them a graph with no sheets.
+  beforeEach(() => {
+    vi.spyOn(backend(), "sheetExportInputs").mockResolvedValue([]);
+  });
   afterEach(() => {
     document.head.querySelectorAll("[data-print-test]").forEach((element) => element.remove());
   });
