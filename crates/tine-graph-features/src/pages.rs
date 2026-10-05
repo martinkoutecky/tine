@@ -370,8 +370,9 @@ pub fn rename_page_expected(
 /// source title and clashing lines move with the blocks as one ordinary block.
 /// References and namespace descendants are renamed as by
 /// [`rename_page_expected`], and the source goes to graph trash in the last
-/// step, so a crash never leaves a reference to a name with no live page and a
-/// retry after reopen never duplicates the moved blocks (see `merged_survivor`).
+/// step, so a crash never leaves a reference to a name with no live page. A
+/// retry after a crash between the survivor write and the trash appends the
+/// moved blocks again: visible duplicates, never loss (see `merged_survivor`).
 /// An `old` with no file only repoints its references at the survivor. It
 /// refuses before any write when, for an `old` with a file, a page other than
 /// `merge_into` claims the new name (`AlreadyExists`); when `merge_into` no
@@ -615,33 +616,7 @@ fn rename_page_after_inventory(
             }
         }
         let merged = match &merge {
-            Some((src, dst)) => {
-                // A retry after a crash that already moved a namespace
-                // descendant no longer lists `Old/x` in `map`; the survivor
-                // then holds the source text with `New/x`. Map every
-                // file-backed `New/x` back from `Old/x` for the "already
-                // holds" question only.
-                let new_prefix = format!("{}/", refs::normalize(new));
-                let mut moved_back = lookup.clone();
-                for entry in &inventory.0 {
-                    let key = refs::normalize(&entry.name);
-                    if let (Some(rest), false) = (
-                        key.strip_prefix(&new_prefix),
-                        physical(&entry.target).is_empty(),
-                    ) {
-                        moved_back
-                            .entry(format!("{prefix}{rest}"))
-                            .or_insert_with(|| entry.name.clone());
-                    }
-                }
-                Some(merged_survivor(
-                    store,
-                    src,
-                    dst,
-                    Some(&lookup),
-                    Some(&moved_back),
-                )?)
-            }
+            Some((src, dst)) => Some(merged_survivor(store, src, dst, Some(&lookup))?),
             None => None,
         };
         let outcome = if merge.is_some() || ref_merge {
@@ -869,7 +844,7 @@ pub fn merge_pages(store: &Store, src_rel: &str, dst_rel: &str) -> io::Result<()
         .as_page(&dst)
         .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
     crate::retry_on_conflict("pages changed repeatedly during merge", || {
-        let survivor = merged_survivor(store, &src_id, &dst_id, None, None)?;
+        let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
         let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
         tx.save_page(
             &[
@@ -905,19 +880,19 @@ struct Survivor {
 /// block, so the source identity never renames the survivor and every source
 /// alias keeps resolving (I-4, I-12).
 ///
-/// Retry after a crash (I-2): the source payload is the moved block, if any,
-/// followed by the source's top-level blocks. The survivor already *holds* it
-/// when that payload is non-empty and equals the survivor's trailing top-level
-/// blocks, compared by `raw` text and child structure recursively (a
-/// byte-identical block sequence; runtime ids are ignored). A held payload is
-/// not appended again; header joins are idempotent by the equal-line rule.
-/// `held_renames` is a second rename map tried only for that question.
+/// The source payload (the moved block, if any, then the source's top-level
+/// blocks) is always appended, as OG `merge-pages!` moves every block. A first
+/// merge cannot be told from a retry after a crash between the survivor write
+/// and the source trash without durable evidence, so such a retry appends the
+/// payload a second time: visible duplicates, never loss (Martin, 2026-10-05,
+/// option (a); the old "survivor already ends with it" skip silently dropped
+/// legitimate duplicate blocks on a first merge). Header joins stay idempotent
+/// by the equal-line rule.
 fn merged_survivor(
     store: &Store,
     src: &PageId,
     dst: &PageId,
     renames: Option<&HashMap<String, String>>,
-    held_renames: Option<&HashMap<String, String>>,
 ) -> io::Result<Survivor> {
     let org = Format::from_path(src.as_str().as_ref()) == Format::Org;
     if org != (Format::from_path(dst.as_str().as_ref()) == Format::Org) {
@@ -941,22 +916,11 @@ fn merged_survivor(
     if let Some(renames) = renames {
         rename_doc(&mut doc, renames, org, format);
     }
-    let mut payloads = vec![payload(&doc, &source, renames, org, format)];
-    if let Some(held) = held_renames {
-        payloads.push(payload(&doc, &source, Some(held), org, format));
-    }
-    let held = payloads.iter().position(|(_, blocks)| {
-        !blocks.is_empty()
-            && blocks.len() <= doc.blocks.len()
-            && same_blocks(&doc.blocks[doc.blocks.len() - blocks.len()..], blocks)
-    });
-    let (header, blocks) = payloads.swap_remove(held.unwrap_or(0));
+    let (header, blocks) = payload(&doc, &source, renames, org, format);
     if let Some(header) = header {
         doc.pre_block = Some(header);
     }
-    if held.is_none() {
-        doc.blocks.extend(blocks);
-    }
+    doc.blocks.extend(blocks);
     Ok(Survivor {
         doc,
         src_rev,
@@ -997,13 +961,6 @@ fn rename_doc(
         rewrite(pre, renames, org, format);
     }
     walk(&mut doc.blocks, renames, org, format);
-}
-
-fn same_blocks(a: &[tine_core::model::BlockDto], b: &[tine_core::model::BlockDto]) -> bool {
-    a.len() == b.len()
-        && a.iter()
-            .zip(b)
-            .all(|(x, y)| x.raw == y.raw && same_blocks(&x.children, &y.children))
 }
 
 /// Each line of a page preamble, with its lowercase key and value when the

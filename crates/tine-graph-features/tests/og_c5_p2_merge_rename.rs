@@ -1,5 +1,5 @@
 //! og checkpoint 5, packet P2: page rename/merge keeps page identity and literal
-//! preamble text (REG-OG-C5-L03-S1, REG-OG-C5-L03-S2).
+//! preamble text (REG-OG-C5-L03-S1, REG-OG-C5-L03-S2, REG-OG-C5-L03-S3).
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -162,6 +162,28 @@ fn org_merge_keeps_a_directive_example_inside_its_block() {
     let merged = read(&root, "pages/New.org");
     assert!(merged.contains(example), "{merged}");
     assert!(merged.starts_with("#+CATEGORY: work\n"), "{merged}");
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// L03-S3: the rename-merge appends every source block, as OG `merge-pages!`
+/// does, even when the survivor already holds an identical block (Martin,
+/// 2026-10-05, option (a)). The old crash-retry skip treated a source whose
+/// blocks equal the survivor's trailing blocks as already merged, and silently
+/// dropped the source's copy on a first merge.
+#[test]
+fn rename_merge_keeps_a_source_block_equal_to_a_survivor_block() {
+    let (root, store) = fixture(
+        "identical-block",
+        &[
+            ("pages/Old.md", "- repeated\n"),
+            ("pages/New.md", "- only in new\n- repeated\n"),
+        ],
+    );
+    pages::rename_or_merge_page(&store, "Old", "New", None, Some("pages/New.md"), &[]).unwrap();
+    let merged = read(&root, "pages/New.md");
+    assert_eq!(merged.matches("- repeated").count(), 2, "{merged}");
+    assert!(merged.contains("- only in new"), "{merged}");
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }

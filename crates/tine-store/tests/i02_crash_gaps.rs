@@ -557,10 +557,13 @@ fn rename_merge_boundary_holds(root: &Path, boundary: usize, done: bool) {
         merged.contains("kept destination"),
         "I-2: survivor kept at {at}"
     );
+    // Before a retry the payload is in the survivor at most once. A retry after a crash between the survivor
+    // write and the trash appends it again (Martin 2026-10-05, option (a): visible duplicates, never loss).
+    let most = if done && boundary > 0 { 2 } else { 1 };
     for needle in ["moved source", "type:: note"] {
         assert!(
-            merged.matches(needle).count() <= 1,
-            "I-2: rename-merge duplicated {needle:?} in the survivor at {at}:\n{merged}"
+            merged.matches(needle).count() <= most,
+            "I-2: rename-merge duplicated {needle:?} more than {most} time(s) in the survivor at {at}:\n{merged}"
         );
     }
     let source_live =
@@ -590,8 +593,9 @@ fn rename_merge_boundary_holds(root: &Path, boundary: usize, done: bool) {
         "I-2: descendant kept at {at}"
     );
     if done {
-        assert_eq!(merged.matches("moved source").count(), 1,
-            "I-2: retry must leave the source blocks in the survivor exactly once at {at}:\n{merged}");
+        let count = merged.matches("moved source").count();
+        assert!((1..=most).contains(&count),
+            "I-2: retry must leave the source blocks in the survivor (at most {most} times) at {at}:\n{merged}");
         assert!(
             !root.join("pages/Old.md").exists() && recovery_has(root, RENAME_MERGE_SOURCE),
             "I-2: retry must finish with the source in trash at {at}"
