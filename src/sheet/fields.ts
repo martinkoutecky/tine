@@ -28,6 +28,10 @@ export type FieldId =
 export interface FieldValue {
   text: string;
   raw?: string;
+  /** The members of a list-valued field (tags), exactly as the parser split
+   *  them; `raw` is their space-joined spelling and cannot be split back when a
+   *  member holds a space. */
+  items?: string[];
 }
 
 export function isFieldId(value: string): value is FieldId {
@@ -207,11 +211,9 @@ export function fieldLabel(field: FieldId): string {
   return "Page";
 }
 
-export function readField(id: string, field: FieldId): FieldValue | null {
-  if (isFormulaField(field)) return null;
-  const n = docNode(id);
-  const f = facetsForBlock(id);
-  if (!n || !f) return null;
+/** One field's value from a block's facets: the single reader behind both the
+ *  live-document and the DTO row paths (formulas, tables, static export). */
+export function fieldValueFromFacets(f: Facets, field: FieldId, page: string): FieldValue | null {
   switch (field) {
     case "state":
       return f.marker ? { text: f.marker, raw: f.marker } : null;
@@ -222,15 +224,23 @@ export function readField(id: string, field: FieldId): FieldValue | null {
     case "deadline":
       return f.deadline ? { text: f.deadline, raw: f.deadline } : null;
     case "tags":
-      return f.tags.length ? { text: f.tags.map((t) => `#${t}`).join(" "), raw: f.tags.join(" ") } : null;
+      return f.tags.length ? { text: f.tags.map((t) => `#${t}`).join(" "), raw: f.tags.join(" "), items: [...f.tags] } : null;
     case "page":
-      return { text: n.page, raw: n.page };
+      return { text: page, raw: page };
     default: {
       const key = field.slice(5);
       const found = f.properties.find(([k]) => k === key);
       return found ? { text: found[1], raw: found[1] } : null;
     }
   }
+}
+
+export function readField(id: string, field: FieldId): FieldValue | null {
+  if (isFormulaField(field)) return null;
+  const n = docNode(id);
+  const f = facetsForBlock(id);
+  if (!n || !f) return null;
+  return fieldValueFromFacets(f, field, n.page);
 }
 
 

@@ -1,5 +1,7 @@
 import { createMemo, createRoot, createSignal } from "solid-js";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { cellView } from "./cellPresentation";
+import { boardCardChips } from "./boardColumns";
 import { initParser } from "../render/parse";
 import { resetStore } from "../document";
 import { type FeedPage, type Node } from "../document/model";
@@ -124,5 +126,28 @@ describe("formula eval context", () => {
     expect(liveFormulaRowNode(journalRow)).toBeNull();
     expect(readFormulaRowField(pageRow, "prop:score")?.text).toBe("1");
     expect(readFormulaRowField(journalRow, "prop:score")?.text).toBe("9");
+  });
+
+  it("keeps a multi-word tag one member when tags become a formula list", () => {
+    const row = {
+      id: "t1",
+      page: "P",
+      kind: "page" as const,
+      dto: { id: "t1", raw: "Task\ntags:: [[big idea]], plain", collapsed: false, children: [], tags: ["big idea", "plain"], properties: [["tags", "[[big idea]], plain"] as [string, string]] },
+    };
+    const value = fieldValueToFormulaValue("tags", readFormulaRowField(row, "tags"));
+    expect(value).toEqual({ kind: "list", values: [textValue("big idea"), textValue("plain")] });
+  });
+
+  it("shows a multi-word tag as one chip in table cells and board cards", () => {
+    const row = {
+      id: "t2",
+      page: "P",
+      kind: "page" as const,
+      dto: { id: "t2", raw: "Task", collapsed: false, children: [], tags: ["big idea", "plain"], properties: [] },
+    };
+    expect(cellView("tags", undefined, readFormulaRowField(row, "tags"))).toEqual({ k: "chips", values: ["#big idea", "#plain"] });
+    expect(boardCardChips(row, "state").tags).toEqual(["#big idea", "#plain"]);
+    expect(boardCardChips(row, "tags").tags).toEqual([]);
   });
 });

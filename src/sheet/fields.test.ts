@@ -82,7 +82,7 @@ describe("sheet fields", () => {
 
     expect(readField("a", "state")).toEqual({ text: "TODO", raw: "TODO" });
     expect(readField("a", "priority")).toEqual({ text: "[#A]", raw: "A" });
-    expect(readField("a", "tags")).toEqual({ text: "#sheets", raw: "sheets" });
+    expect(readField("a", "tags")).toEqual({ text: "#sheets", raw: "sheets", items: ["sheets"] });
     expect(readField("a", "prop:owner")).toEqual({ text: "Martin", raw: "Martin" });
   });
 

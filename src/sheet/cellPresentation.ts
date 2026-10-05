@@ -65,7 +65,7 @@ export function cellView(field: FieldId, type: FieldType | undefined, value: Fie
     case "priority": return { k: "priority", raw: value.raw ?? "", text };
     case "scheduled": return { k: "date", cls: "scheduled", text };
     case "deadline": return { k: "date", cls: "deadline", text };
-    case "tags": return { k: "chips", values: (value.raw ?? "").split(/\s+/).filter(Boolean).map((t) => `#${t}`) };
+    case "tags": return { k: "chips", values: (value.items ?? (value.raw ?? "").split(/\s+/)).filter(Boolean).map((t) => `#${t}`) };
     case "page": return { k: "inline", text };
     default: return field.startsWith("prop:") ? propCellView(type, value) : { k: "none" };
   }
