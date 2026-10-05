@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { copyGuideIntoGraph, ensureGuidePagesLoaded, maybeShowGuideAnnouncement } from "./guide";
+import { copyGuideIntoGraph, ensureGuidePagesLoaded, maybeShowGuideAnnouncement, openGuide } from "./guide";
+import * as router from "./router";
 import { dismissToast, setToasts, toasts } from "./toasts";
 import { graphMeta, pageInventoryRev, setGraphMeta } from "./graphSession";
 import { resetStore } from "./document";
@@ -124,5 +125,42 @@ describe("guide copy inventory", () => {
     const before = pageInventoryRev();
     await copyGuideIntoGraph("Tine-guide/Tine Guide");
     expect(pageInventoryRev()).toBe(before);
+  });
+});
+
+describe("I-20: Guide navigation belongs to the surface that asked", () => {
+  it("opens the Guide in a new tab when nothing moved", async () => {
+    vi.spyOn(backend(), "guidePages").mockResolvedValue([]);
+    const open = vi.spyOn(router, "openPageInNewTab").mockImplementation(() => {});
+    await seedMeta("/mock/guide-open-same");
+    await openGuide();
+    expect(open).toHaveBeenCalledOnce();
+  });
+  it("does not open a Guide tab after the user moved to another route while it loaded", async () => {
+    let finish!: (pages: GuidePage[]) => void;
+    vi.spyOn(backend(), "guidePages").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const open = vi.spyOn(router, "openPageInNewTab").mockImplementation(() => {});
+    await seedMeta("/mock/guide-open-moved");
+    const pending = openGuide();
+    router.openPage("Elsewhere (open test)");
+    finish([]);
+    await pending;
+    expect(open).not.toHaveBeenCalled();
+  });
+  it("keeps the copy's bookkeeping and toast but does not navigate after the route moved", async () => {
+    let finish!: (value: { name: string; created: boolean; created_pages: string[] }) => void;
+    vi.spyOn(backend(), "copyGuideIntoGraph").mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const nav = vi.spyOn(router, "openPage");
+    await seedMeta("/mock/guide-copy-moved");
+    const pending = copyGuideIntoGraph("Tine-guide/Tine Guide");
+    router.openPage("Elsewhere (copy test)");
+    nav.mockClear();
+    nav.mockImplementation(() => {});
+    const before = pageInventoryRev();
+    finish({ name: "tine-guide/Tine Guide", created: true, created_pages: ["tine-guide/Tine Guide"] });
+    await pending;
+    expect(pageInventoryRev()).toBeGreaterThan(before);
+    expect(toasts().some((t) => t.kind === "success")).toBe(true);
+    expect(nav).not.toHaveBeenCalled();
   });
 });
