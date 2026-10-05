@@ -90,6 +90,22 @@ pub fn split_linkable_property(value: &str) -> Vec<String> {
     value.split(block_regions::is_linkable_property_separator).map(str::to_owned).collect()
 }
 
+#[path = "../../tine-core/src/render_facets.rs"]
+mod render_facets;
+
+/// Whether a block property key is hidden from rendered chips (I-12: the one
+/// answerer the static export also asks). O(key bytes + hidden keys), no I/O.
+#[wasm_bindgen]
+pub fn is_render_hidden_prop(key: &str, user_hidden: Vec<String>) -> bool {
+    render_facets::is_render_hidden_prop(key, &user_hidden)
+}
+
+/// The checkbox a task marker draws: true checked, false empty, undefined none.
+#[wasm_bindgen]
+pub fn task_checkbox_state(marker: &str) -> Option<bool> {
+    render_facets::task_checkbox_state(marker)
+}
+
 #[path = "../../tine-core/src/block_regions.rs"]
 mod block_regions;
 mod render {

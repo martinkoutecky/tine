@@ -3,9 +3,13 @@
 
 import type { Format } from "./ast";
 import { MARKERS, headerTokens } from "../markers";
-import { codeFences } from "../editor/fences";
 import { acceptedPropertyLine, pagePropertyEntries } from "../editor/properties";
-import { split_linkable_property as splitLinkableProperty } from "./wasm/lsdoc_wasm.js";
+import { blockRegions, parserReady } from "./parse";
+import { utf8ToUtf16Cursor } from "./utf16Cursor";
+import {
+  split_linkable_property as splitLinkableProperty,
+  is_render_hidden_prop as isRenderHiddenPropNative,
+} from "./wasm/lsdoc_wasm.js";
 export { splitLinkableProperty };
 
 export { MARKERS };
@@ -15,32 +19,19 @@ export function propertyKeyNorm(key: string): string {
 }
 
 // Property keys NOT shown as rendered chips (id/uuid/collapsed + Logseq internals
-// + display-only keys). Single source for the two render paths — Block.tsx's live
-// chip filter and body.tsx's renderProps — which had drifted ~15 keys apart, and
-// only Block.tsx honored the user's `:block-hidden-properties`. Lowercased; compare
-// via isRenderHiddenProp so the match is case-insensitive (OG treats keys so).
+// + display-only keys, `tine.*`, `logseq.table.*`, and the user's
+// `:block-hidden-properties`). ONE answerer for Block.tsx's live chip filter,
+// body.tsx's renderProps and the static export: crates/tine-core/src/render_facets.rs,
+// reached through the WASM bridge (I-12, no TS twin of the key list).
 //
 // Deliberately SEPARATE (different concepts — do not merge): editor/properties.ts
 // BUILTIN_HIDDEN (hide from the edit textarea), query.rs INTERNAL_PROPS (don't
 // offer as a query filter), components/Page.tsx PAGE_PROPS_HIDDEN (page-prop area).
-export const RENDER_HIDDEN_PROPS: ReadonlySet<string> = new Set([
-  "id", "collapsed", "hl-page", "hl-color", "hl-type", "ls-type",
-  "background-color", "logseq.order-list-type",
-  "heading", "title", "filters", "created-at", "updated-at", "last-modified-at",
-  "query-table", "query-properties", "query-sort-by", "query-sort-desc", "logseq.tldraw.shape",
-].map(propertyKeyNorm));
 
 /** Whether a property key is hidden from the rendered chips: a built-in internal
  *  key (case-insensitive) OR one the user listed in `:block-hidden-properties`. */
 export function isRenderHiddenProp(key: string, userHidden: readonly string[] = []): boolean {
-  const normalized = propertyKeyNorm(key);
-  return normalized.startsWith("tine.")
-    // Table v2 reads this configuration from the block rather than presenting it
-    // as content. OG likewise resolves `logseq.table.*` view props from the block
-    // property map (og/deps/shui/src/logseq/shui/table/v2.cljs:37-50).
-    || normalized.startsWith("logseq.table.")
-    || RENDER_HIDDEN_PROPS.has(normalized)
-    || userHidden.some((k) => propertyKeyNorm(k) === normalized);
+  return isRenderHiddenPropNative(key, userHidden as string[]);
 }
 
 export function isPropertyLine(line: string): boolean {
@@ -98,12 +89,14 @@ export function normalizeImplicitPageName(value: string): string {
   return trimmed.trim();
 }
 
-const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*<[^>]+>\s*$/;
-
 /** A block's *visible body* lines: the readable text the reader sees, with the
  *  marker / priority / heading prefix stripped from the first line and the
- *  property / SCHEDULED / DEADLINE / drawer / CLOCK lines removed. Fence-aware (a
- *  `key::` or `SCHEDULED:` inside a code fence stays as content).
+ *  property / planning / drawer (LOGBOOK, PROPERTIES, CLOCK) lines removed. EVERY
+ *  decision is the parser's (I-12): header facts from `headerTokens`, metadata
+ *  line extents from lsdoc's block regions (`blockRegions`); code containers are
+ *  content because lsdoc forms no metadata inside them. Nothing here recognizes a
+ *  property, planning line or drawer by its text. Before the parser is ready no
+ *  fact is known and the lines come back unchanged.
  *
  *  This is ONLY the body text — for short labels (breadcrumbs, search, sidebar
  *  titles) and the reference-panel inline render. The block-header FACTS
@@ -115,43 +108,60 @@ export function visibleBody(raw: string): string[] {
   // line one mistakes `TODO\nbody` for a task and misses leading blank lines.
   const { marker, priority } = headerTokens(raw);
   const from = marker ? marker.end + (raw[marker.end] === " " ? 1 : 0) : 0;
-  let body = raw.slice(from);
   // The accepted priority token (only whitespace can precede it) is facet, not body text.
-  if (priority && priority.start >= from) {
-    body = body.slice(0, priority.start - from) + body.slice(priority.end - from).replace(/^\s/, "");
-  }
+  const cut = priority && priority.start >= from
+    ? { start: priority.start, end: priority.end + (/\s/.test(raw[priority.end] ?? "") ? 1 : 0) }
+    : null;
+  const meta = metadataLineRanges(raw, from);
   const lines: string[] = [];
-  let inDrawer = false;
-  // Lines of a code container (the parser's, src/editor/fences.ts) are content, never metadata.
-  const fences = codeFences(body);
   let pos = 0;
-  for (const line of body.split("\n")) {
-    const lineStart = pos;
-    pos += line.length + 1;
-    if (fences.some((f) => f.start <= lineStart + line.length && lineStart < f.end)) {
-      lines.push(line);
-      continue;
+  for (const line of raw.split("\n")) {
+    const start = pos;
+    const end = start + line.length;
+    pos = end + 1;
+    if (end < from) continue; // before the header token (a skipped leading line)
+    if (start >= from && meta.some(([a, b]) => a < pos && start < b)) continue;
+    let text = line;
+    const head = Math.max(from - start, 0);
+    if (cut && cut.start >= start && cut.start <= end) {
+      text = line.slice(head, cut.start - start) + line.slice(Math.min(cut.end, end) - start);
+    } else if (head > 0) {
+      text = line.slice(head);
     }
-    const t = line.trim();
-    if (inDrawer) {
-      if (/^:END:$/i.test(t)) inDrawer = false;
-      continue;
-    }
-    if (/^:(LOGBOOK|PROPERTIES):$/i.test(t)) {
-      inDrawer = true;
-      continue;
-    }
-    if (/^CLOCK:\s/i.test(t)) continue;
-    if (PLANNING_LINE.test(line)) continue; // shown as a date badge, not body text
-    if (isPropertyLine(line)) continue; // shown as a chip, not body text
-    lines.push(line);
+    lines.push(text);
   }
   if (lines.length === 0) lines.push("");
-  // Strip the heading prefix from the first line.
-  let first = lines[0];
-  const hm = /^(#{1,6}) /.exec(first);
-  if (hm) first = first.slice(hm[1].length + 1);
-  lines[0] = first;
+  // Strip the heading prefix from the first line (`TODO ## x` keeps its heading after the marker).
+  const heading = /^(#{1,6}) /.exec(lines[0]);
+  if (heading) lines[0] = lines[0].slice(heading[1].length + 1);
   while (lines.length > 1 && lines[0].trim() === "") lines.shift();
   return lines;
+}
+
+/** Whether `raw` can hold anything the block regions would remove: more than one
+ *  line or a colon (property separator, planning keyword). Admission only (skips the parse of the
+ *  common one-line label); lsdoc decides the rest. */
+function needsRegions(raw: string): boolean {
+  return raw.includes("\n") || raw.includes(":");
+}
+
+/** UTF-16 `[start, end)` extents (newline included) of every metadata line lsdoc
+ *  accepted in `raw` at or after UTF-16 offset `from`: properties, planning lines
+ *  and drawers. Empty before the parser is ready or for a quarantined block. */
+function metadataLineRanges(raw: string, from: number): [number, number][] {
+  if (!parserReady() || !needsRegions(raw)) return [];
+  const regions = blockRegions(raw, "md");
+  if (regions.quarantined) return [];
+  const bytes = [
+    ...regions.property_regions,
+    ...regions.planning.map((p) => p.line),
+    ...regions.drawers.map((d) => d.range),
+  ].sort((x, y) => x[0] - y[0]);
+  const at = utf8ToUtf16Cursor(raw);
+  const out: [number, number][] = [];
+  for (const [a, b] of bytes) {
+    const range: [number, number] = [at(a), at(b)];
+    if (range[1] > from) out.push(range);
+  }
+  return out;
 }

@@ -40,6 +40,8 @@ pub(crate) struct RenderGraph<'a> {
     /// Selected-query exports suppress counts of rows outside the selection.
     pub query_export: bool,
     lookups: render_lookups::Lookups,
+    /// The graph's `:block-hidden-properties`, read once per export.
+    hidden_props: Vec<String>,
 }
 
 impl<'a> RenderGraph<'a> {
@@ -56,10 +58,12 @@ impl<'a> RenderGraph<'a> {
             sheets,
             query_export: false,
             lookups: Default::default(),
+            hidden_props: store.config().block_hidden_properties.clone(),
         }
     }
 
-    fn publish_preview_block(&self, uuid: &str) -> Option<BlockPreview> {
+    /// The bounded preview of a block and whether its page is Org.
+    fn publish_preview_block(&self, uuid: &str) -> Option<(BlockPreview, bool)> {
         let (page, block) = self.lookups.block(self.corpus, uuid)?;
         let total = subtree_node_count(block);
         let mut remaining_nodes = 10_000;
@@ -67,7 +71,7 @@ impl<'a> RenderGraph<'a> {
         let blocks = block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes)
             .into_iter()
             .collect();
-        Some(BlockPreview {
+        let preview = BlockPreview {
             group: RefGroup {
                 page: page.name.clone(),
                 kind: page.kind,
@@ -75,7 +79,8 @@ impl<'a> RenderGraph<'a> {
                 evidence: Vec::new(),
             },
             truncated: total.saturating_sub(10_000 - remaining_nodes),
-        })
+        };
+        Some((preview, block.is_org()))
     }
 
     fn list_pages(&self) -> Vec<&CorpusPage> {
@@ -110,7 +115,7 @@ pub(crate) fn slug(name: &str) -> String {
 
 /// Output slugs for physical names and owned aliases, assigned after filenames.
 /// A published alias link reaches its owner's file.
-type SlugMap = std::collections::HashMap<String, String>;
+type SlugMap = std::collections::HashMap<String, String>; // keyed by `refs::page_key`
 
 /// FNV-1a 64-bit hash → 8 lowercase hex chars. Deterministic across runs (unlike
 /// std's `DefaultHasher`/`RandomState`, which are randomly seeded), so re-exports
@@ -167,7 +172,7 @@ fn build_slug_map(names: &[&str]) -> (SlugMap, Vec<(String, String, String)>) {
             collisions.push((name.to_string(), base, chosen.clone()));
         }
         used.insert(chosen.clone());
-        map.insert(name.to_lowercase(), chosen);
+        map.insert(tine_core::refs::page_key(name), chosen);
     }
     (map, collisions)
 }
@@ -176,7 +181,7 @@ fn build_slug_map(names: &[&str]) -> (SlugMap, Vec<(String, String, String)>) {
 /// raw slug fallback; publication callers check membership before linking.
 fn page_slug(ctx: &Ctx, name: &str) -> String {
     ctx.slugs
-        .and_then(|m| m.get(&name.to_lowercase()))
+        .and_then(|m| m.get(&tine_core::refs::page_key(name)))
         .cloned()
         .unwrap_or_else(|| slug(name))
 }
@@ -218,7 +223,8 @@ impl PrintAssetBudget {
 fn inline_asset_uri(ctx: &Ctx, src: &str) -> Option<String> {
     let graph = ctx.graph?;
     let budget_cell = ctx.print_asset_budget?;
-    // Only local asset references; leave remote/data URLs untouched.
+    // Only local asset references inline; a remote/data URL is refused (None),
+    // and the caller then emits the omission marker.
     if src.contains("://") || src.starts_with("data:") {
         return None;
     }
@@ -298,7 +304,7 @@ fn collect_block_refs(blocks: &[DocBlock], slug: &str, refs: &mut RefIndex) {
                 id,
                 RefTarget {
                     slug: slug.to_string(),
-                    text: ref_target_text(b.raw()),
+                    text: ref_target_text(b.raw(), b.is_org()),
                 },
             );
         }
@@ -325,7 +331,7 @@ fn collect_reverse_refs(
                 slug: slug.to_string(),
                 page: page.to_string(),
                 anchor: anchor.clone(),
-                text: ref_target_text(block.raw()),
+                text: ref_target_text(block.raw(), block.is_org()),
             });
         }
         collect_reverse_refs(
@@ -812,8 +818,8 @@ fn ast_plain_text(blocks: &[Block]) -> String {
 
 /// Parse + property/planning-filter one block body the way `render_block` does — the
 /// shared front of the render and search-index paths (one lsdoc parse per call).
-fn body_blocks(raw: &str) -> Vec<Block> {
-    tine_core::doc::strip_planning_lines(tine_core::render::parse_block(raw, false), raw)
+fn body_blocks(raw: &str, org: bool) -> Vec<Block> {
+    tine_core::doc::strip_planning_lines(tine_core::render::parse_block(raw, org), raw)
         .into_iter()
         .filter(|b| !matches!(b, Block::Properties { .. }))
         .collect()
@@ -923,8 +929,8 @@ fn inspect_begin_query(raw: &str, blocks: &[Block]) -> Option<BeginQueryInspecti
 }
 
 /// The first visible block's plain text — a `((block ref))`'s shown label when it has none.
-fn ref_target_text(raw: &str) -> String {
-    let first: Vec<Block> = body_blocks(raw).into_iter().take(1).collect();
+fn ref_target_text(raw: &str, org: bool) -> String {
+    let first: Vec<Block> = body_blocks(raw, org).into_iter().take(1).collect();
     ast_plain_text(&first)
 }
 
@@ -957,10 +963,23 @@ struct Ctx<'a> {
     pages: Option<&'a HashMap<String, (&'a str, &'a doc::Document)>>,
 }
 
-/// lsdoc render options for a Markdown block body (the canonical skeleton the export decorates).
-fn md_opts() -> tine_core::lsdoc::RenderOpts {
+impl Ctx<'_> {
+    /// The graph's hidden property keys; none without a graph (decorator tests).
+    fn hidden_props(&self) -> &[String] {
+        self.graph
+            .map_or(&[], |graph| graph.hidden_props.as_slice())
+    }
+}
+
+/// lsdoc render options for a block body in its page's format (the canonical
+/// skeleton the export decorates).
+fn render_opts(org: bool) -> tine_core::lsdoc::RenderOpts {
     tine_core::lsdoc::RenderOpts {
-        format: tine_core::lsdoc::Format::Md,
+        format: if org {
+            tine_core::lsdoc::Format::Org
+        } else {
+            tine_core::lsdoc::Format::Md
+        },
     }
 }
 
@@ -971,22 +990,12 @@ fn macro_args(attr: Option<&str>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// A task marker's checkbox state, mirroring the app's `taskCheckboxState`
-/// (`src/markers.ts`): DONE = checked, CANCELED/CANCELLED = no box, any other
-/// marker = an empty box.
-fn checkbox_state(marker: &str) -> Option<bool> {
-    match marker {
-        "DONE" => Some(true),
-        "CANCELED" | "CANCELLED" => None,
-        _ => Some(false),
-    }
-}
-
 /// Render one block's inner: header facets + the decorated body + trailer facets.
 /// Shared by the top-level renderer and the embedded/query-result renderers so a
 /// task in a query result looks exactly like a task on its own page.
-fn emit_block_inner(raw: &str, out: &mut String, ctx: &Ctx, depth: u8) {
-    let blk = DocBlock::new(raw);
+fn emit_block_inner(raw: &str, org: bool, out: &mut String, ctx: &Ctx, depth: u8) {
+    let mut blk = DocBlock::new(raw);
+    blk.set_org(org);
     out.push_str(if blk.marker() == Some("DONE") {
         "<div class=\"b done\">"
     } else {
@@ -994,58 +1003,79 @@ fn emit_block_inner(raw: &str, out: &mut String, ctx: &Ctx, depth: u8) {
     });
     emit_header_facets(blk.marker(), blk.priority(), out);
     let body = decorate(
-        &tine_core::lsdoc::render_html(&body_blocks(raw), &md_opts()),
+        &tine_core::lsdoc::render_html(&body_blocks(raw, org), &render_opts(org)),
         ctx,
         depth,
     );
     out.push_str(&body);
     out.push_str("</div>");
-    emit_trailer_facets(&blk, raw, &blk.properties(), out);
+    emit_trailer_facets(&blk, raw, &blk.properties(), ctx.hidden_props(), out);
 }
 
-/// Render a query/embed result block (a `BlockDto` from the query engine) as an
-/// `<li>` with its facets + children, at `depth` (bounds recursion).
 const MAX_RENDER_TREE_DEPTH: usize = 128;
 
-fn flat_dto_text(root: &BlockDto) -> String {
+/// A block tree the renderer walks: a bounded embed preview (`BlockDto`) or a
+/// parsed document (`DocBlock`). One walk renders both (I-12).
+trait OutlineNode: Sized {
+    fn raw_text(&self) -> &str;
+    fn child_nodes(&self) -> &[Self];
+}
+
+impl OutlineNode for BlockDto {
+    fn raw_text(&self) -> &str {
+        &self.raw
+    }
+    fn child_nodes(&self) -> &[Self] {
+        &self.children
+    }
+}
+
+impl OutlineNode for DocBlock {
+    fn raw_text(&self) -> &str {
+        self.raw()
+    }
+    fn child_nodes(&self) -> &[Self] {
+        &self.children
+    }
+}
+
+/// A subtree's raw text, one block per line in preorder (the over-deep fallback).
+fn flat_text<N: OutlineNode>(root: &N) -> String {
     let mut text = String::new();
     let mut stack = vec![root];
     while let Some(block) = stack.pop() {
         if !text.is_empty() {
             text.push('\n');
         }
-        text.push_str(&block.raw);
-        stack.extend(block.children.iter().rev());
+        text.push_str(block.raw_text());
+        stack.extend(block.child_nodes().iter().rev());
     }
     text
 }
 
-fn flat_doc_text(root: &DocBlock) -> String {
-    let mut text = String::new();
-    let mut stack = vec![root];
-    while let Some(block) = stack.pop() {
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        text.push_str(block.raw());
-        stack.extend(block.children.iter().rev());
-    }
-    text
-}
-
-fn render_result_block(dto: &BlockDto, out: &mut String, ctx: &Ctx, depth: u8, tree_depth: usize) {
+/// Render an embedded or query-result block as an `<li>` with its facets and
+/// children, at `depth` (bounds macro recursion) and `tree_depth` (bounds the
+/// outline). `org` is the format of the page the block lives on.
+fn render_outline_item<N: OutlineNode>(
+    node: &N,
+    org: bool,
+    out: &mut String,
+    ctx: &Ctx,
+    depth: u8,
+    tree_depth: usize,
+) {
     out.push_str("<li>");
     if tree_depth >= MAX_RENDER_TREE_DEPTH {
         out.push_str("<pre class=\"outline-flat\">");
-        out.push_str(&esc(&flat_dto_text(dto)));
+        out.push_str(&esc(&flat_text(node)));
         out.push_str("</pre></li>");
         return;
     }
-    emit_block_inner(&dto.raw, out, ctx, depth);
-    if !dto.children.is_empty() {
+    emit_block_inner(node.raw_text(), org, out, ctx, depth);
+    if !node.child_nodes().is_empty() {
         out.push_str("<ul>");
-        for c in &dto.children {
-            render_result_block(c, out, ctx, depth, tree_depth + 1);
+        for child in node.child_nodes() {
+            render_outline_item(child, org, out, ctx, depth, tree_depth + 1);
         }
         out.push_str("</ul>");
     }
@@ -1093,30 +1123,10 @@ fn render_query_groups(
         collect_wanted_doc_blocks(&doc.roots, &wanted, &mut found);
         for block in &group.blocks {
             if let Some(source) = found.get(block.id.as_str()) {
-                render_embedded_block(source, out, ctx, depth, 0);
+                render_outline_item(*source, source.is_org(), out, ctx, depth, 0);
             }
         }
     }
-}
-
-/// Render an embedded page's block (a `DocBlock`) as an `<li>`, mirroring `render_result_block`.
-fn render_embedded_block(b: &DocBlock, out: &mut String, ctx: &Ctx, depth: u8, tree_depth: usize) {
-    out.push_str("<li>");
-    if tree_depth >= MAX_RENDER_TREE_DEPTH {
-        out.push_str("<pre class=\"outline-flat\">");
-        out.push_str(&esc(&flat_doc_text(b)));
-        out.push_str("</pre></li>");
-        return;
-    }
-    emit_block_inner(b.raw(), out, ctx, depth);
-    if !b.children.is_empty() {
-        out.push_str("<ul>");
-        for c in &b.children {
-            render_embedded_block(c, out, ctx, depth, tree_depth + 1);
-        }
-        out.push_str("</ul>");
-    }
-    out.push_str("</li>");
 }
 
 /// Expand one `{{macro …}}` within `depth` (circular embeds) and `macro_budget` (fan-out, I-22).
@@ -1249,12 +1259,12 @@ fn render_embed(graph: &RenderGraph<'_>, arg: &str, ctx: &Ctx, depth: u8) -> Str
                 .into();
         }
         return match graph.publish_preview_block(uuid) {
-            Some(preview) if publish_page_allowed(ctx, &preview.group.page) => {
+            Some((preview, org)) if publish_page_allowed(ctx, &preview.group.page) => {
                 let mut out = String::from(
                     "<div class=\"embed block-embed single-root\"><ul class=\"embed-outline\">",
                 );
                 for blk in &preview.group.blocks {
-                    render_result_block(blk, &mut out, ctx, depth, 0);
+                    render_outline_item(blk, org, &mut out, ctx, depth, 0);
                 }
                 if preview.truncated > 0 {
                     out.push_str(&format!(
@@ -1387,7 +1397,7 @@ fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) 
         esc(page)
     );
     for b in &doc.roots {
-        render_embedded_block(b, &mut out, ctx, depth, 0);
+        render_outline_item(b, b.is_org(), &mut out, ctx, depth, 0);
     }
     out.push_str("</ul></div>");
     out
@@ -1449,13 +1459,13 @@ fn render_block(
 ) {
     if tree_depth >= MAX_RENDER_TREE_DEPTH {
         out.push_str("<li><pre class=\"outline-flat\">");
-        out.push_str(&esc(&flat_doc_text(b)));
+        out.push_str(&esc(&flat_text(b)));
         out.push_str("</pre></li>");
         return;
     }
     // ONE lsdoc parse → the canonical body skeleton (M3), property/planning-filtered like
     // the app's `bodyBlocks`. No second hand-rolled inline parser (the old `render_inline`).
-    let blocks = body_blocks(b.raw());
+    let blocks = body_blocks(b.raw(), b.is_org());
     // BEGIN_QUERY is a static-site feature. The print context deliberately has
     // no public-page capability (`pages: None`) and retains its prior rendering
     // and whole-graph query behavior.
@@ -1534,7 +1544,11 @@ fn render_block(
                 render_sheets::emit_query(b, at, found, &mut emit, out)
             });
             if sheet.is_none() {
-                out.push_str(&decorate(&tine_core::lsdoc::render_html(&blocks, &md_opts()), ctx, 0));
+                out.push_str(&decorate(
+                    &tine_core::lsdoc::render_html(&blocks, &render_opts(b.is_org())),
+                    ctx,
+                    0,
+                ));
             }
         }
     }
@@ -1545,7 +1559,7 @@ fn render_block(
     if render_sheets::is_laid_out(ctx, title, at) {
         props.retain(|(key, _)| !tine_core::doc::property_key_norm(key).starts_with("tine."));
     }
-    emit_trailer_facets(b, b.raw(), &props, out);
+    emit_trailer_facets(b, b.raw(), &props, ctx.hidden_props(), out);
     if let (Some(id), Some(reverse)) = (block_id(b.raw(), b.is_org()), ctx.reverse_refs) {
         if let Some(referrers) = reverse.get(&id).filter(|items| !items.is_empty()) {
             let count = referrers.len();
@@ -1814,12 +1828,11 @@ pub fn page_print_html(
     graph: &RenderGraph<'_>,
     name: &str,
     opts: PrintOpts,
-    org_document: Option<&doc::Document>,
 ) -> io::Result<Option<String>> {
     let Some(entry) = graph.list_pages().into_iter().find(|e| e.name == name) else {
         return Ok(None);
     };
-    let parsed = org_document.unwrap_or(entry.document.as_ref());
+    let parsed = entry.document.as_ref();
     let slug = slug(&entry.name);
     let mut refs = RefIndex::new();
     collect_block_refs(&parsed.roots, &slug, &mut refs);
@@ -2047,23 +2060,23 @@ impl PageSelection {
     }
 }
 
-/// A page's `public` property: Markdown `public:: v` or Org `#+public: v`, with
-/// OG's exact `true`/`false` values (`text.cljs` parse-non-string-property-value).
-/// An explicit `false` wins over any other line.
+/// A page's `public` property: Markdown `public:: v` or Org `#+public: v` / head
+/// `:public:` drawer entry, with OG's exact `true`/`false` values (`text.cljs`
+/// parse-non-string-property-value). An explicit `false` wins over any other
+/// entry. The entries are the parser's page properties (`block_regions`), so a
+/// fenced or drawer-body example is never a flag (I-12).
 fn page_public_flag(page: &CorpusPage) -> Option<bool> {
     let org = Format::from_path(page.id.as_str().as_ref()) == Format::Org;
+    let pre = page.document.pre_block.as_deref()?;
+    let regions = tine_core::block_regions::parse_document(pre, org);
     let mut flag = None;
-    for line in page.document.pre_block.as_deref()?.lines() {
-        let value = match tine_core::doc::parse_property_line(line) {
-            Some((key, value)) => (doc::property_key_norm(key) == "public").then_some(value),
-            None if org => (line.trim().split_once(':'))
-                .filter(|(key, _)| key.eq_ignore_ascii_case("#+public"))
-                .map(|(_, value)| value.trim()),
-            None => None,
-        };
-        match value {
-            Some("false") => return Some(false),
-            Some("true") => flag = Some(true),
+    for property in regions.page_properties() {
+        if doc::property_key_norm(&property.key) != "public" {
+            continue;
+        }
+        match property.value.as_str() {
+            "false" => return Some(false),
+            "true" => flag = Some(true),
             _ => {}
         }
     }
@@ -2141,7 +2154,7 @@ pub(crate) fn publish_graph(
         if let tine_store::Resolved::Existing { id, .. } =
             graph.whole.resolve(name, *kind == PageKind::Journal)
         {
-            if let Some(slug) = slugs.get(&name.to_lowercase()) {
+            if let Some(slug) = slugs.get(&tine_core::refs::page_key(name)) {
                 exported_ids.insert(id, slug.clone());
             }
         }
@@ -2150,14 +2163,14 @@ pub(crate) fn publish_graph(
         if let tine_store::Resolved::Alias { owners } = &entry.target {
             if let Some(slug) = owners.first().and_then(|owner| exported_ids.get(owner)) {
                 slugs
-                    .entry(entry.name.to_lowercase())
+                    .entry(tine_core::refs::page_key(&entry.name))
                     .or_insert_with(|| slug.clone());
             }
         }
     }
     let slug_of = |name: &str| -> String {
         slugs
-            .get(&name.to_lowercase())
+            .get(&tine_core::refs::page_key(name))
             .cloned()
             .unwrap_or_else(|| slug(name))
     };
@@ -2326,13 +2339,13 @@ mod tests {
             pages: None,
         };
         decorate(
-            &tine_core::lsdoc::render_html(&body_blocks(raw), &md_opts()),
+            &tine_core::lsdoc::render_html(&body_blocks(raw, false), &render_opts(false)),
             &ctx,
             0,
         )
     }
     fn search_text(raw: &str) -> String {
-        ast_plain_text(&body_blocks(raw))
+        ast_plain_text(&body_blocks(raw, false))
     }
 
     #[test]

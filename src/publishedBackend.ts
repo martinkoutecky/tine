@@ -18,6 +18,7 @@ import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPrevie
 import { previewDtoSubtree } from "./previewProjection";
 import { pageIdentityKey } from "./pageIdentity";
 import { blockRegions } from "./render/parse";
+import { blockRefsInText } from "./render/pageRefs";
 import { searchSubstringSpans } from "./editor/searchQuery";
 import { searchFold } from "./editor/searchFold";
 
@@ -78,6 +79,51 @@ export function isPublishedExport(): boolean {
 
 let snapshotPromise: Promise<PublishedSnapshot> | null = null;
 
+/** Largest snapshot document a viewer will read (I-22). Far above any real export;
+ *  a larger body is a wrong or hostile file and refuses visibly. */
+export const PUBLISHED_SNAPSHOT_MAX_BYTES = 512 * 1024 * 1024;
+/** Largest asset `readAsset` buffers when the caller names no cap of its own (I-22). */
+export const PUBLISHED_ASSET_MAX_BYTES = 256 * 1024 * 1024;
+
+/** Read a response body of at most `max` bytes: a declared length over the cap refuses
+ *  before any byte is read, and a body that outgrows it (no or wrong length) is cancelled
+ *  as soon as the running total passes the cap. O(max) memory at worst. */
+export async function readBounded(response: Response, max: number, label: string): Promise<Uint8Array> {
+  const tooLarge = () => new Error(`${label}: larger than ${max} bytes`);
+  const declared = Number(response.headers?.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > max) throw tooLarge();
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const whole = new Uint8Array(await response.arrayBuffer());
+    if (whole.byteLength > max) throw tooLarge();
+    return whole;
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      // The oversize refusal is the answer; a failed cancel is attached, not dropped.
+      try {
+        await reader.cancel();
+      } catch (cancelError) {
+        throw new Error(tooLarge().message, { cause: cancelError });
+      }
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return out;
+}
+
 /** The one shared, memoized fetch of the snapshot. `main.tsx` awaits it before
  *  mounting; every backend method awaits it too, so the backend can be
  *  installed before any snapshot bytes exist. */
@@ -86,7 +132,9 @@ export function loadPublishedSnapshot(url = publishedSnapshotUrl() ?? "snapshot.
     snapshotPromise = (async () => {
       const response = await fetch(url, { cache: "no-store" });
       if (!response.ok) throw new Error(`snapshot ${url}: HTTP ${response.status}`);
-      const snapshot = (await response.json()) as PublishedSnapshot;
+      // I-22: bound the served bytes before they become a string and an object graph.
+      const bytes = await readBounded(response, PUBLISHED_SNAPSHOT_MAX_BYTES, `snapshot ${url}`);
+      const snapshot = JSON.parse(new TextDecoder().decode(bytes)) as PublishedSnapshot;
       validateSnapshot(snapshot);
       return snapshot;
     })();
@@ -229,14 +277,14 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       walk(block.children, visit, [...ancestors, block.raw.split("\n")[0] ?? ""]);
     }
   };
-  const collect = (snapshot: PublishedSnapshot, keep: (block: BlockDto) => boolean, limit = Infinity): RefGroup[] => {
+  const collect = (snapshot: PublishedSnapshot, keep: (block: BlockDto, page: PublishedPage) => boolean, limit = Infinity): RefGroup[] => {
     const groups: RefGroup[] = [];
     let budget = limit;
     for (const page of snapshot.pages) {
       if (budget <= 0) break;
       const matched: BlockDto[] = [];
       walk(page.blocks, (block, ancestors) => {
-        if (budget > 0 && keep(block)) {
+        if (budget > 0 && keep(block, page)) {
           matched.push({ ...structuredClone(block), breadcrumb: ancestors });
           budget--;
         }
@@ -459,7 +507,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     },
     async getBlockReferrers(uuid: string) {
       const snapshot = await load();
-      return collect(snapshot, (block) => block.raw.includes(`((${uuid}))`));
+      // Admission by substring, decision by the parser: a `((uuid))` inside code is not a reference.
+      return collect(snapshot, (block, page) =>
+        block.raw.includes(uuid) && blockRefsInText(block.raw, page.format ?? "md").some((v) => v.trim() === uuid));
     },
     resolveBlock,
     async resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]> {
@@ -564,17 +614,21 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return { ...empty, has_more: { pages: pageHits.length > pageLimit, blocks: blockHits.length > blockLimit } };
     },
     // ---- assets and the browser ----
-    async readAsset(name: string) {
+    // A refused or missing asset rejects (I-9): an empty byte array reads as a valid empty
+    // file and blanks a PDF or image with no cause. The live backend rejects the same way.
+    async readAsset(name: string, maxBytes?: number) {
       await load();
       const url = assetUrl(name);
-      if (!url) return new Uint8Array();
+      if (!url) throw new Error(`asset ${name}: not a file inside the published assets`);
       const response = await fetch(url);
-      if (!response.ok) return new Uint8Array();
-      return new Uint8Array(await response.arrayBuffer());
+      if (!response.ok) throw new Error(`asset ${name}: HTTP ${response.status}`);
+      return readBounded(response, maxBytes ?? PUBLISHED_ASSET_MAX_BYTES, `asset ${name}`);
     },
     async streamAsset(name: string) {
       await load();
-      return assetUrl(name) ?? "";
+      const url = assetUrl(name);
+      if (!url) throw new Error(`asset ${name}: not a file inside the published assets`);
+      return url;
     },
     async openExternal(url: string) {
       window.open(url, "_blank", "noopener");

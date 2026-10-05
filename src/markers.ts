@@ -16,7 +16,7 @@
 //
 // Order is prefix-safe for substring pre-filtering only (WAITING before WAIT).
 import { parserReady } from "./render/parse";
-import { header_tokens_json, __tineReinstantiate } from "./render/wasm/lsdoc_wasm.js";
+import { header_tokens_json, task_checkbox_state, __tineReinstantiate } from "./render/wasm/lsdoc_wasm.js";
 import { utf8ToUtf16Cursor } from "./render/utf16Cursor";
 import { reportUiFailure } from "./uiFailure";
 
@@ -129,7 +129,5 @@ export function leadingMarker(raw: string, format: "md" | "org" = "md"): string 
  *  Returns `true` (checked) / `false` (unchecked) / `null` (no checkbox). */
 export function taskCheckboxState(marker: string | null | undefined): boolean | null {
   if (!marker) return null;
-  if (marker === "DONE") return true;
-  if (OPEN_MARKERS.has(marker)) return false;
-  return null;
+  return task_checkbox_state(marker) ?? null;
 }

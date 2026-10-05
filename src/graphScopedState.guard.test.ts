@@ -146,7 +146,6 @@ const BOUNDED_COLLECTIONS: Record<string, string> = {
   "src/editor/autocomplete.ts#BARE_ORDER": "fixed literal command-label array, one tuple per label, no additions",
   "src/editor/autopair.ts#CLOSERS": "values of the fixed PAIRS literal, no additions",
   "src/markers.ts#OPEN_MARKERS": "subset of the 11 literal MARKERS, no additions",
-  "src/render/block.ts#RENDER_HIDDEN_PROPS": "one normalized value per fixed literal hidden-property key, no additions",
   "src/sheet/aggregate.ts#AGGREGATE_SET": "fixed 15-entry AGGREGATE_FNS vocabulary, no additions",
 };
 

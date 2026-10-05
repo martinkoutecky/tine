@@ -19,8 +19,8 @@
 //! `MAX_TOTAL_CELLS` cells of data are accepted (I-22).
 
 use super::{
-    ast_plain_text, body_blocks, decorate, esc, esc_attr, md_opts, publish_page_allowed,
-    render_block, render_facets, Ctx, PageAnchors, PrintOpts, RenderGraph,
+    ast_plain_text, body_blocks, decorate, esc, esc_attr, publish_page_allowed, render_block,
+    render_facets, render_opts, Ctx, PageAnchors, PrintOpts, RenderGraph,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -380,7 +380,7 @@ pub(super) fn sole_query_macro(block: &DocBlock) -> Option<(String, String)> {
     if !is_candidate(block) {
         return None;
     }
-    let blocks = body_blocks(block.raw());
+    let blocks = body_blocks(block.raw(), block.is_org());
     let Inline::Macro { name, .. } = tine_core::standalone_macro::sole_macro(&blocks)? else {
         return None;
     };
@@ -493,7 +493,8 @@ fn style_attr(bg: &Option<String>) -> String {
 
 fn inline(text: &str, ctx: &Ctx) -> String {
     decorate(
-        &tine_core::lsdoc::render_html(&body_blocks(text), &md_opts()),
+        // Cell text is the app's computed Markdown string, not a file block.
+        &tine_core::lsdoc::render_html(&body_blocks(text, false), &render_opts(false)),
         ctx,
         0,
     )
@@ -607,7 +608,7 @@ fn row_anchor(row: &DocBlock, e: &mut Emit) -> String {
         return String::new();
     }
     let anchor = e.anchors.get(row);
-    let text = ast_plain_text(&body_blocks(row.raw()));
+    let text = ast_plain_text(&body_blocks(row.raw(), row.is_org()));
     if !text.is_empty() {
         e.index
             .push(json!({"slug": e.slug, "title": e.title, "anchor": anchor, "text": text}));

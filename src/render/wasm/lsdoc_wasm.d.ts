@@ -39,6 +39,12 @@ export function install_panic_hook(): void;
 export function is_query_macro_name(name: string): boolean;
 
 /**
+ * Whether a block property key is hidden from rendered chips (I-12: the one
+ * answerer the static export also asks). O(key bytes + hidden keys), no I/O.
+ */
+export function is_render_hidden_prop(key: string, user_hidden: string[]): boolean;
+
+/**
  * The message of the most recent panic in this instance ("" if none). A trapped
  * instance still answers small calls; the glue reads this before reinstantiating.
  */
@@ -208,6 +214,11 @@ export function search_substring_spans_json(text: string, needle: string, limit:
  */
 export function split_linkable_property(value: string): string[];
 
+/**
+ * The checkbox a task marker draws: true checked, false empty, undefined none.
+ */
+export function task_checkbox_state(marker: string): boolean | undefined;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -220,6 +231,7 @@ export interface InitOutput {
     readonly header_tokens_json: (a: number, b: number, c: number) => [number, number];
     readonly install_panic_hook: () => void;
     readonly is_query_macro_name: (a: number, b: number) => number;
+    readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number) => number;
     readonly last_panic: () => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
@@ -250,6 +262,7 @@ export interface InitOutput {
     readonly search_spans_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
     readonly search_substring_spans_json: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly split_linkable_property: (a: number, b: number) => [number, number];
+    readonly task_checkbox_state: (a: number, b: number) => number;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

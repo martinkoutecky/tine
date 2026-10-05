@@ -38,6 +38,7 @@ describe("task markers (single source of truth)", () => {
     }
     expect(taskCheckboxState("CANCELED")).toBeNull(); // closed-but-not-done → no box (OG)
     expect(taskCheckboxState("CANCELLED")).toBeNull();
+    expect(taskCheckboxState("NOT-A-MARKER")).toBeNull(); // Rust render_facets::task_checkbox_state, same table
     expect(taskCheckboxState(null)).toBeNull();
     expect(taskCheckboxState(undefined)).toBeNull();
   });

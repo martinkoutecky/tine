@@ -151,6 +151,22 @@ function __tine_raw_is_query_macro_name(name) {
 }
 
 /**
+ * Whether a block property key is hidden from rendered chips (I-12: the one
+ * answerer the static export also asks). O(key bytes + hidden keys), no I/O.
+ * @param {string} key
+ * @param {string[]} user_hidden
+ * @returns {boolean}
+ */
+function __tine_raw_is_render_hidden_prop(key, user_hidden) {
+    const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayJsValueToWasm0(user_hidden, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.is_render_hidden_prop(ptr0, len0, ptr1, len1);
+    return ret !== 0;
+}
+
+/**
  * The message of the most recent panic in this instance ("" if none). A trapped
  * instance still answers small calls; the glue reads this before reinstantiating.
  * @returns {string}
@@ -797,6 +813,18 @@ function __tine_raw_split_linkable_property(value) {
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
 }
+
+/**
+ * The checkbox a task marker draws: true checked, false empty, undefined none.
+ * @param {string} marker
+ * @returns {boolean | undefined}
+ */
+function __tine_raw_task_checkbox_state(marker) {
+    const ptr0 = passStringToWasm0(marker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.task_checkbox_state(ptr0, len0);
+    return ret === 0xFFFFFF ? undefined : ret !== 0;
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -946,6 +974,16 @@ function handleError(f, args) {
 
 function isLikeNone(x) {
     return x === undefined || x === null;
+}
+
+function passArrayJsValueToWasm0(array, malloc) {
+    const ptr = malloc(array.length * 4, 4) >>> 0;
+    for (let i = 0; i < array.length; i++) {
+        const add = addToExternrefTable0(array[i]);
+        getDataViewMemory0().setUint32(ptr + 4 * i, add, true);
+    }
+    WASM_VECTOR_LEN = array.length;
+    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {
@@ -1149,6 +1187,7 @@ export const format_journal_date = __tineGuard("format_journal_date", __tine_raw
 export const header_tokens_json = __tineGuard("header_tokens_json", __tine_raw_header_tokens_json);
 export const install_panic_hook = __tineGuard("install_panic_hook", __tine_raw_install_panic_hook);
 export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw_is_query_macro_name);
+export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine_raw_is_render_hidden_prop);
 export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);
 export const logbook_apply_marker_transition = __tineGuard("logbook_apply_marker_transition", __tine_raw_logbook_apply_marker_transition);
 export const logbook_clock_in = __tineGuard("logbook_clock_in", __tine_raw_logbook_clock_in);
@@ -1179,3 +1218,4 @@ export const search_query_json = __tineGuard("search_query_json", __tine_raw_sea
 export const search_spans_json = __tineGuard("search_spans_json", __tine_raw_search_spans_json);
 export const search_substring_spans_json = __tineGuard("search_substring_spans_json", __tine_raw_search_substring_spans_json);
 export const split_linkable_property = __tineGuard("split_linkable_property", __tine_raw_split_linkable_property);
+export const task_checkbox_state = __tineGuard("task_checkbox_state", __tine_raw_task_checkbox_state);

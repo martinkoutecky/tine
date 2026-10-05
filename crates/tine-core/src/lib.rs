@@ -27,6 +27,7 @@ pub mod query_plan;
 pub mod reference_evidence;
 pub mod refs;
 pub mod render;
+pub mod render_facets;
 pub mod search_query;
 pub mod sync_diff;
 pub mod text_merge;
