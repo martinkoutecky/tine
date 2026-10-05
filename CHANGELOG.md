@@ -91,6 +91,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A session or workspace whose saved pane layout is nested thousands of splits deep no longer loses the whole restore; the panes within the depth and pane bounds are restored (UI-OG-C5-C-LAYOUT-DEPTH).
 - Convert to pipe table on a grid with more than 200 rows shows its size refusal instead of failing with an internal error (UI-OG-C5-C-GRID-PIPE-BOUND).
 - The formula editor opens and saves a valid formula with a very long sum or transform chain instead of failing with an internal error (UI-OG-C5-C-FORMULA-CHAIN).
+- Importing a dropped or picked file that is a named pipe is refused at once instead of hanging the app (REG-OG-C5-C-ASSET-FIFO).
 
 ### Added
 

@@ -17,35 +17,43 @@ mod atomic_file;
 mod platform_step;
 use tine_store::directory_durability;
 
-/// Reads a caller-selected regular file; the caller enforces graph scope.
-/// Reads never more than `max`
-/// bytes: path metadata refuses non-regular files before open (so a FIFO does
-/// not block), opened-handle metadata rechecks races, and the read stops at
-/// `max + 1` so a file that grows (or lies about its length) after the check
-/// cannot allocate past the limit (I-22).
-pub(crate) fn read_regular_file_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
-    use std::io::Read;
-    let path_meta = fs::metadata(path).map_err(|e| e.to_string())?;
-    if !path_meta.is_file() {
-        return Err("not a file".into());
+/// Open a caller-selected device file only if it is a regular file (I-22).
+/// Threat scenario (imported content): a dropped, pasted or picked path may
+/// name a FIFO, socket or device node, and a blocking `open` of a FIFO with no
+/// writer hangs the synchronous command before any later validation runs.
+/// Path metadata refuses a non-regular file before open; the open is
+/// nonblocking on Unix so a path swapped for a FIFO after that check cannot
+/// hang either; opened-handle metadata rechecks the race. `O_NONBLOCK` has no
+/// effect on reads of a regular file.
+fn open_regular_file(path: &Path) -> io::Result<fs::File> {
+    let not_a_file = || io::Error::new(io::ErrorKind::InvalidInput, "not a file");
+    if !fs::metadata(path)?.is_file() {
+        return Err(not_a_file());
     }
-    // A path can be swapped for a FIFO after metadata; nonblocking open keeps
-    // that race from hanging the synchronous command on Unix.
     #[cfg(unix)]
     let file = {
         use std::os::unix::fs::OpenOptionsExt;
         fs::File::options()
             .read(true)
             .custom_flags(libc::O_NONBLOCK)
-            .open(path)
-            .map_err(|e| e.to_string())?
+            .open(path)?
     };
     #[cfg(not(unix))]
-    let file = fs::File::open(path).map_err(|e| e.to_string())?;
-    let meta = file.metadata().map_err(|e| e.to_string())?;
-    if !meta.is_file() {
-        return Err("not a file".into());
+    let file = fs::File::open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(not_a_file());
     }
+    Ok(file)
+}
+
+/// Reads a caller-selected regular file ([`open_regular_file`]); the caller
+/// enforces graph scope. Reads never more than `max` bytes: the read stops at
+/// `max + 1` so a file that grows (or lies about its length) after the check
+/// cannot allocate past the limit (I-22).
+pub(crate) fn read_regular_file_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let file = open_regular_file(path).map_err(|e| e.to_string())?;
+    let meta = file.metadata().map_err(|e| e.to_string())?;
     if meta.len() > max {
         return Err("image too large".into());
     }
@@ -76,7 +84,7 @@ pub(crate) fn import_asset_from_path(
     let source_filename = Path::new(path).file_name().and_then(|value| value.to_str());
     let chosen = tine_graph_features::assets::choose_import_name(source_filename, name)
         .map_err(DeviceAssetImportError::Name)?;
-    let source = fs::File::open(path).map_err(DeviceAssetImportError::Io)?;
+    let source = open_regular_file(Path::new(path)).map_err(DeviceAssetImportError::Io)?;
     tine_graph_features::assets::import_asset(
         store,
         &chosen,
@@ -212,6 +220,46 @@ mod tests {
         assert_eq!(fs::read(root.join("assets/kept.bin")).unwrap(), b"media");
         fs::remove_file(source).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn asset_import_refuses_fifo_without_waiting_for_writer() {
+        // og C (I-22): a dropped `capture.png` that is a FIFO with no writer
+        // must be refused before a blocking open, and leave no asset.
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let graph = tempfile::tempdir().unwrap();
+        for area in ["pages", "journals", "assets"] {
+            fs::create_dir_all(graph.path().join(area)).unwrap();
+        }
+        let outside = tempfile::tempdir().unwrap();
+        let fifo = outside.path().join("capture.png");
+        let name = std::ffi::CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let root = graph.path().to_path_buf();
+        let path = fifo.to_str().unwrap().to_owned();
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let store = tine_store::Store::open(&root, tine_store::OpenOptions::default())
+                .unwrap()
+                .0;
+            let started = std::time::Instant::now();
+            let result = import_asset_from_path(&store, &path, None);
+            tx.send((result.map_err(|e| format!("{e:?}")), started.elapsed())).unwrap();
+        });
+        // Store::open may take a while on a loaded machine; the claim is about
+        // the import call itself, which the worker times.
+        let outcome = rx.recv_timeout(Duration::from_secs(30));
+        if outcome.is_err() {
+            // Release a hung open so the test thread can finish and report.
+            let _writer = fs::OpenOptions::new().write(true).open(&fifo).unwrap();
+        }
+        let (result, elapsed) = outcome.expect("asset import hung on a FIFO with no writer");
+        worker.join().unwrap();
+        assert!(result.unwrap_err().contains("not a file"));
+        assert!(elapsed < Duration::from_secs(5), "import waited {elapsed:?}");
+        assert_eq!(fs::read_dir(graph.path().join("assets")).unwrap().count(), 0);
     }
 }
 
