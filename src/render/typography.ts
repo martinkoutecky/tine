@@ -85,21 +85,20 @@ function splice(value: string, from: number, to: number, glyph: string, caret: n
  *  are the post-input textarea state; `typed` is the char just inserted (at
  *  `value[caret-1]`). Returns the adjusted `{value, caret}` or null.
  *
- *  Skipped inside code: an odd number of backticks before the caret means we're
- *  inside inline code (or past a `\`\`\`` fence opener — 3 is odd), where the
- *  source is literal and must not be rewritten. */
+ *  `inLiteral(from, to)` says whether `value[from, to)` is literal source (inline code, verbatim,
+ *  a code container, or a span still being typed): that is the PARSER's answer, supplied by the
+ *  caller (`editor/inlineLiteral.ts`); a literal range is never rewritten. */
 export function typoTypeReplace(
   value: string,
   caret: number,
-  typed: string
+  typed: string,
+  inLiteral: (from: number, to: number) => boolean
 ): { value: string; caret: number } | null {
-  let ticks = 0;
-  for (let i = 0; i < caret; i++) if (value[i] === "`") ticks++;
-  if (ticks % 2 === 1) return null;
   // `>` terminates an arrow → replace immediately (maximal, longest-match).
   if (typed === ">") {
     for (const k of GT_KEYS) {
       if (caret >= k.length && value.slice(caret - k.length, caret) === k) {
+        if (inLiteral(caret - k.length, caret)) return null;
         return splice(value, caret - k.length, caret, TYPO_MAP[k], caret);
       }
     }
@@ -111,6 +110,7 @@ export function typoTypeReplace(
     const end = caret - 1; // position of `typed`; the run sits in [.., end)
     for (const k of DEFERRED_KEYS) {
       if (end >= k.length && value.slice(end - k.length, end) === k) {
+        if (inLiteral(end - k.length, end)) return null;
         return splice(value, end - k.length, end, TYPO_MAP[k], caret);
       }
     }

@@ -6,6 +6,7 @@
  * for the two toggles, the block they name. */
 import { For, type JSX } from "solid-js";
 import { node as docNode, pageByName, setRaw } from "../document";
+import { literalBlockOfLine } from "../editor/literalLines";
 import { toggleMarkerLabel, toggleTaskDone } from "../editor/repeat";
 import type { LogbookInfo } from "../logbook";
 import { logbookWithSecondSupport, timetrackingEnabled, workflow } from "../ui";
@@ -114,7 +115,9 @@ export function blockFirstLine(raw: string): string {
 }
 
 /** If the caret sits on an in-block markdown list line (`+`/`*`/ordered — NOT the
- *  outline bullet `-`), return its parts, for caret-context list editing. */
+ *  outline bullet `-`), return its parts, for caret-context list editing. A line inside literal
+ *  source is never a list line. `text` is the buffer the caret is in; a body-only code view is
+ *  entirely literal, so its callers (Block.tsx `listLine`) do not ask. */
 // In-block list markers differ by format (see body.tsx): Markdown uses `+`/`*`
 // (a leading `-` is the outline bullet), Org uses `-`/`+` (a leading `*` is a
 // headline). Numbered works in both.
@@ -131,6 +134,8 @@ export function listLineAt(
   const re = format === "org" ? LIST_LINE_ORG : LIST_LINE_MD;
   const m = re.exec(text.slice(lineStart, lineEnd));
   if (!m) return null;
+  // A line of literal source (fence, `#+BEGIN_SRC`, example, `$$`) is code, not a list: lsdoc decides (I-12).
+  if (literalBlockOfLine(text, format)[text.slice(0, lineStart).split("\n").length - 1] !== -1) return null;
   return { indent: m[1], marker: m[2], hasCheckbox: !!m[4], lineStart, prefixLen: m[0].length };
 }
 

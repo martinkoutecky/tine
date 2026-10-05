@@ -29,6 +29,7 @@ import { pluginManager } from "../plugins/manager";
 import { bindPluginBlockSnapshot, isPluginGraphOwnerCurrent } from "../plugins/ownership";
 import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairEdit, SELECTION_WRAP } from "../editor/autopair";
 import { typoTypeReplace } from "../render/typography";
+import { rangeInLiteral } from "../editor/inlineLiteral";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection } from "../editor/restoreMovedSelection";
@@ -49,7 +50,7 @@ import {
   takeCaretFor,
   takeHistoryEditorSelectionFor,
 } from "../editorController";
-import { OUTLINE_MAX_SOURCE_CHARS, parseOutline, type OutlineNode } from "../editor/outline";
+import { OUTLINE_MAX_SOURCE_CHARS, pastedPlainBlocks, type OutlineNode } from "../editor/outline";
 import { structuredHtmlOutline } from "../editor/htmlPaste";
 import {
   toggleInlineFormat,
@@ -655,6 +656,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
 
   // Nest/un-nest an in-block list item by ±2 leading spaces (Tab/Shift-Tab when
   // the caret is on a `+`/`*`/ordered list line).
+  // In-block list line at the caret. A body-only code view (and a calc block) is all literal text, so it
+  // has no list lines; a raw view asks the parser which lines are literal (blockParts `listLineAt`).
+  const listLine = (text: string, caret: number) =>
+    codeShown() !== null || isCalc() ? null : listLineAt(text, caret, pageFmt());
   const nudgeListItem = (ll: NonNullable<ReturnType<typeof listLineAt>>, delta: number) => {
     const text = ref.value;
     const caret = ref.selectionStart;
@@ -1144,18 +1149,6 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       autosize();
     });
   };
-
-  // Transcribed from OG 6e7afa8eb src/main/frontend/handler/paste.cljs:101-107:
-  // Markdown recognizes only -, +, *, and ATX headings; Org recognizes stars.
-  const plainTextLooksLikeBlocks = (text: string) =>
-    pageFmt() === "org"
-      ? /^\s*\*+\s+/m.test(text)
-      : /^\s*(?:[-+*]|#+)\s+/m.test(text);
-
-  // OG 6e7afa8eb src/main/frontend/handler/paste.cljs:34-47,173-174 splits on
-  // two-or-more newlines and trims each whole paragraph before block parsing.
-  const segmentedPlainText = (text: string): OutlineNode[] =>
-    text.split(/(?:\r?\n){2,}/).map((paragraph) => ({ raw: paragraph.trim(), children: [] }));
 
   /** Import file-manager paths without materializing their bytes in the WebView.
    * If a platform exposes only browser File objects, save those sequentially so
@@ -1973,7 +1966,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       // "On type" typographic replacement (source gets the glyph). Pair chars and
       // typo triggers don't overlap, but skip if a pair op already consumed the char.
       if (!handled && !codeShown() && !isCalc() && typographyMode() === "type") {
-        const r = typoTypeReplace(ref.value, ref.selectionStart, ch);
+        const typed = ref.value, fmt = pageFmt();
+        const r = typoTypeReplace(typed, ref.selectionStart, ch, (from, to) => rangeInLiteral(typed, fmt, from, to));
         if (r) {
           ref.value = r.value;
           ref.setSelectionRange(r.caret, r.caret);
@@ -2139,7 +2133,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     "editor/indent": (e) => {
       e.preventDefault();
       // On an in-block list line, Tab nests the LIST ITEM (intra-block), not the block.
-      const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
+      const ll = listLine(ref.value, ref.selectionStart);
       if (ll) { nudgeListItem(ll, +2); return true; }
       if (!outlineScope?.navOnly && outlineScope?.roots.includes(props.id)) return true;
       const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
@@ -2149,7 +2143,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     },
     "editor/outdent": (e) => {
       e.preventDefault();
-      const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
+      const ll = listLine(ref.value, ref.selectionStart);
       if (ll && ll.indent.length > 0) { nudgeListItem(ll, -2); return true; }
       if (outlineScope?.forceExpandedRoot === docNode(props.id)?.parent) return true;
       const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
@@ -2606,7 +2600,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       // (new item below, same marker/indent; a checkbox item starts a fresh `[ ]`)
       // instead of splitting the block. To exit, Backspace the empty item down to a
       // blank line, then Enter on that non-list line makes a new bullet.
-      const ll = !isAnnot() ? listLineAt(raw, start, pageFmt()) : null;
+      const ll = !isAnnot() ? listLine(raw, start) : null;
       if (ll) {
         const ordered = /\d/.test(ll.marker);
         const nextMarker = ordered ? parseInt(ll.marker) + 1 + ll.marker.replace(/\d+/, "") : ll.marker;
@@ -2644,7 +2638,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       }
       // In-block list: Backspace at the head of a list item's text removes the
       // marker (turns it into a blank/plain line) — the way to exit the list.
-      const ll = listLineAt(raw, start, pageFmt());
+      const ll = listLine(raw, start);
       if (ll && start === ll.lineStart + ll.prefixLen) {
         e.preventDefault();
         applyEdit({ text: raw.slice(0, ll.lineStart) + raw.slice(start), start: ll.lineStart, end: ll.lineStart });
@@ -2934,13 +2928,13 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         pasteLiteralText(text);
         return;
       }
-      if (!plainTextLooksLikeBlocks(text) && !/(?:\r?\n){2,}/.test(text)) {
+      // One outline-module answer (editor/outline.ts): OG's bullet/heading test and paragraph split, with
+      // literal source (fences, code) left whole. No blocks means the text is inserted as typed.
+      const nodes = pastedPlainBlocks(text, pageFmt());
+      if (!nodes) {
         pasteLiteralText(text);
         return;
       }
-      const nodes = plainTextLooksLikeBlocks(text)
-        ? parseOutline(text)
-        : segmentedPlainText(text);
       if (!nodes.length) return;
       insertPastedOutline(nodes, "outline-paste");
       return;

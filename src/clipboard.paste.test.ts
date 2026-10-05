@@ -98,6 +98,24 @@ describe("clipboard payload insertion and identity validation", () => {
     expect(roots("Target")).toEqual(["plain-key"]);
   });
 
+  it("replaces an empty host that only literal code mentions by id (C5 L11 paste.ts:128)", async () => {
+    seed([page("Source", [block("plain-key", "plain")]),
+      page("Target", [block(HOST, ""), block("sample", `example\n\`\`\`\n((${HOST}))\n\`\`\``)])]);
+    await record("copy", "- plain", buildClipboardPayload(["plain-key"])!);
+    await paste();
+    expect(roots("Target")).not.toContain(HOST);
+    expect(roots("Target").map((id) => doc.byId[id].raw)).toEqual(["plain", expect.stringContaining("example")]);
+  });
+
+  it("keeps an empty host that live text references by id", async () => {
+    seed([page("Source", [block("plain-key", "plain")]),
+      page("Target", [block(HOST, ""), block("ref", `see ((${HOST.toUpperCase()}))`)])]);
+    await record("copy", "- plain", buildClipboardPayload(["plain-key"])!);
+    await paste();
+    expect(roots("Target")).toContain(HOST);
+    expect(roots("Target")).toContain("ref");
+  });
+
   it("warns when a cut must be pasted as a copy", async () => {
     seed([page("Source", [block(ID1, `source\nid:: ${ID1}`)]), page("Target", [block(HOST, "")])]);
     const payload = buildClipboardPayload([ID1])!;

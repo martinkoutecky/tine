@@ -34,36 +34,40 @@ describe("typographic replacements", () => {
   });
 });
 
+const never = () => false;
+
 describe('typoTypeReplace ("on type" mode)', () => {
   it("replaces `>`-terminated arrows the moment `>` is typed (longest match)", () => {
-    expect(typoTypeReplace("a->", 3, ">")).toEqual({ value: "a→", caret: 2 });
-    expect(typoTypeReplace("x=>", 3, ">")).toEqual({ value: "x⇒", caret: 2 });
-    expect(typoTypeReplace("a-->", 4, ">")).toEqual({ value: "a⟶", caret: 2 }); // NOT "a–>"
-    expect(typoTypeReplace("<->", 3, ">")).toEqual({ value: "⟷", caret: 1 });
-    expect(typoTypeReplace("<-->", 4, ">")).toEqual({ value: "⟺", caret: 1 });
+    expect(typoTypeReplace("a->", 3, ">", never)).toEqual({ value: "a→", caret: 2 });
+    expect(typoTypeReplace("x=>", 3, ">", never)).toEqual({ value: "x⇒", caret: 2 });
+    expect(typoTypeReplace("a-->", 4, ">", never)).toEqual({ value: "a⟶", caret: 2 }); // NOT "a–>"
+    expect(typoTypeReplace("<->", 3, ">", never)).toEqual({ value: "⟷", caret: 1 });
+    expect(typoTypeReplace("<-->", 4, ">", never)).toEqual({ value: "⟺", caret: 1 });
   });
 
   it("does NOT fire mid-sequence when the next char could extend the run", () => {
     // Typing `--` must not become `–` — a following `-`/`>` might make `---`/`-->`.
-    expect(typoTypeReplace("--", 2, "-")).toBeNull();
-    expect(typoTypeReplace("<-", 2, "-")).toBeNull();
+    expect(typoTypeReplace("--", 2, "-", never)).toBeNull();
+    expect(typoTypeReplace("<-", 2, "-", never)).toBeNull();
   });
 
   it("resolves deferred dash/left-arrow runs on the following boundary char", () => {
-    expect(typoTypeReplace("-- ", 3, " ")).toEqual({ value: "– ", caret: 2 }); // en dash
-    expect(typoTypeReplace("---x", 4, "x")).toEqual({ value: "—x", caret: 2 }); // em dash
-    expect(typoTypeReplace("<-x", 3, "x")).toEqual({ value: "←x", caret: 2 });
-    expect(typoTypeReplace("<--x", 4, "x")).toEqual({ value: "⟵x", caret: 2 });
+    expect(typoTypeReplace("-- ", 3, " ", never)).toEqual({ value: "– ", caret: 2 }); // en dash
+    expect(typoTypeReplace("---x", 4, "x", never)).toEqual({ value: "—x", caret: 2 }); // em dash
+    expect(typoTypeReplace("<-x", 3, "x", never)).toEqual({ value: "←x", caret: 2 });
+    expect(typoTypeReplace("<--x", 4, "x", never)).toEqual({ value: "⟵x", caret: 2 });
   });
 
-  it("leaves the source alone inside inline code (odd backticks before caret)", () => {
-    expect(typoTypeReplace("`->", 3, ">")).toBeNull();
-    // …but a closed `code` span is fine (even backticks).
-    expect(typoTypeReplace("`x`->", 5, ">")).toEqual({ value: "`x`→", caret: 4 });
+  it("never rewrites a range the caller reports as literal (the parser decides, editor/inlineLiteral.ts)", () => {
+    const seen: [number, number][] = [];
+    const literal = (from: number, to: number) => { seen.push([from, to]); return true; };
+    expect(typoTypeReplace("x->", 3, ">", literal)).toBeNull();
+    expect(typoTypeReplace("x-- ", 4, " ", literal)).toBeNull();
+    expect(seen).toEqual([[1, 3], [1, 3]]);
   });
 
   it("returns null when nothing completes at the caret", () => {
-    expect(typoTypeReplace("hello", 5, "o")).toBeNull();
-    expect(typoTypeReplace("a-", 2, "-")).toBeNull();
+    expect(typoTypeReplace("hello", 5, "o", never)).toBeNull();
+    expect(typoTypeReplace("a-", 2, "-", never)).toBeNull();
   });
 });

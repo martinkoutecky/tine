@@ -61,6 +61,21 @@ describe("AstBody (no-IO degrade path)", () => {
     host.remove();
   });
 
+  it("clicking an item's checkbox never toggles a literal `[ ]` in its label (C5 L11-S1)", async () => {
+    const raw = "Tasks\n+ [x] literal [ ]";
+    loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "body", raw, collapsed: false, children: [] }], format: "md" });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => AstBody({ raw, blockId: "body" }), host);
+    await Promise.resolve();
+    const checkboxes = host.querySelectorAll('[role="checkbox"]');
+    expect(checkboxes).toHaveLength(1);
+    checkboxes[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(doc.byId.body.raw, "only the item's own checkbox flips").toBe("Tasks\n+ [ ] literal [ ]");
+    dispose();
+    host.remove();
+  });
+
   it("toggles the rendered checkbox after a fenced checkbox lookalike", async () => {
     const raw = "Task\n+ [ ] first\n```md\n+ [ ] code\n```\n+ [ ] second";
     loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: null, blocks: [{ id: "body", raw, collapsed: false, children: [] }], format: "md" });

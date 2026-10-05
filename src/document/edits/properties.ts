@@ -361,26 +361,19 @@ export function orderedListMarker(id: string, ownProperties?: readonly (readonly
   return ordered_list_glyph(idx, depth);
 }
 
-/** Tick/untick a checkbox on one line of an in-block `+ [ ]` markdown list,
- *  identified by its exact source line. Pure `[ ]`↔`[x]` text swap — round-trips
- *  as standard markdown (and renders/ticks in OG + mobile). */
-export function toggleListItem(id: string, rawLine: string) {
-  const node = doc.byId[id];
-  if (!node) return;
-  toggleListItemAtIndex(id, node.raw.split("\n").indexOf(rawLine));
-}
-
-/** Flip the `[ ]`/`[x]` checkbox on a SPECIFIC raw line index. Targeting by index
- *  (not line text) is what makes the AST list checkbox toggle safe when two items
- *  share the same label — see toggleAstCheckbox in render/body.tsx. */
-export function toggleListItemAtIndex(id: string, lineIndex: number) {
+/** Flip the `[ ]`/`[x]` checkbox of ONE list item: the token at `column` (a UTF-16 offset in the raw
+ *  line `lineIndex`). Both coordinates come from the item's own lsdoc source span (render/body.tsx
+ *  `toggleAstCheckbox`), so the line's other `[ ]`/`[x]` text (a literal in the label) is never touched
+ *  and two items with the same label flip independently. Pure `[ ]`↔`[x]` text swap — round-trips
+ *  as standard markdown (and renders/ticks in OG + mobile). A position that is not a checkbox token is a no-op. */
+export function toggleListItemAtIndex(id: string, lineIndex: number, column: number) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
   const lines = node.raw.split("\n");
   const ln = lines[lineIndex];
-  if (ln === undefined || !/\[[ xX]\]/.test(ln)) return;
-  const next = /\[ \]/.test(ln) ? ln.replace(/\[ \]/, "[x]") : ln.replace(/\[[xX]\]/, "[ ]");
-  if (next === ln) return;
+  const token = ln?.slice(column, column + 3);
+  if (ln === undefined || token === undefined || !/^\[[ xX]\]$/.test(token)) return;
+  const next = ln.slice(0, column) + (token === "[ ]" ? "[x]" : "[ ]") + ln.slice(column + 3);
   pushUndo(`listcheck:${id}`, [node.page]);
   lines[lineIndex] = next;
   setDoc("byId", id, "raw", lines.join("\n"));

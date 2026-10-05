@@ -15,6 +15,7 @@ import { backend } from "../../backend";
 import { pushToast } from "../../toasts";
 import { blockRegions } from "../../render/parse";
 import type { OutlineNode } from "../../editor/outline";
+import { offsetInLiteral } from "../../editor/inlineLiteral";
 
 const ID_LOOKUP_CHUNK_SIZE = 128;
 
@@ -125,10 +126,17 @@ function clipboardCollapsed(block: ClipboardBlock): boolean {
     .some(({ key, value }) => key.toLowerCase() === "collapsed" && value.trim().toLowerCase() === "true");
 }
 
+/** Whether any loaded block references `id` as live text: a `((id))` spelling outside literal source
+ *  (a code sample that shows the spelling references nothing). A search for the one known spelling
+ *  finds candidates; lsdoc, through `offsetInLiteral`, says whether a hit is literal (I-12). */
 function liveDocReferences(id: string): boolean {
-  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const reference = new RegExp(`\\(\\(${escaped}\\)\\)`, "i");
-  return Object.values(doc.byId).some((node) => reference.test(node.raw));
+  const spelling = new RegExp(`\\(\\(${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)\\)`, "gi");
+  return Object.values(doc.byId).some((node) => {
+    for (const hit of node.raw.matchAll(spelling)) {
+      if (!offsetInLiteral(node.raw, formatForPage(node.page), hit.index)) return true;
+    }
+    return false;
+  });
 }
 
 interface ClipboardPasteAuthority {

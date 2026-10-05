@@ -530,6 +530,7 @@ function toggleAstCheckbox(blockId: string, sourceRaw: string, item: AstListItem
   if (start === undefined) return;
   const at = utf8ByteToUtf16Offset(sourceRaw, rebulletedSourceByteToRawByte(sourceRaw, start));
   const lineStart = sourceRaw.lastIndexOf("\n", at - 1) + 1;
-  if (!/\[[ xX]\]\s*$/.test(sourceRaw.slice(lineStart, at))) return;
-  toggleListItemAtIndex(blockId, sourceRaw.slice(0, lineStart).split("\n").length - 1);
+  const checkbox = /\[[ xX]\]\s*$/.exec(sourceRaw.slice(lineStart, at));
+  if (!checkbox) return;
+  toggleListItemAtIndex(blockId, sourceRaw.slice(0, lineStart).split("\n").length - 1, checkbox.index);
 }
