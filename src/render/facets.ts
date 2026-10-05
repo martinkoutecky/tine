@@ -52,10 +52,12 @@ export function parseBody(raw: string, format: Format): Block[] {
 
 // Two tiers so a page bigger than any cap can't thrash the cache into parse-all-on-
 // load (audit P2 — a 4097-block page evicted its own seeds before they were read):
-//  - `seeded`: backend-shipped facets for the CURRENTLY-LOADED blocks. NEVER LRU-
-//    evicted (so an arbitrarily large page is still all hits); cleared wholesale on
-//    graph switch / store reset (`clearSeededFacets`). Bounded by the loaded graph,
-//    which is already in memory.
+//  - `seeded`: backend-shipped facets for the loaded blocks. NEVER LRU-evicted (so
+//    an arbitrarily large page is still all hits); cleared wholesale ONLY on graph
+//    switch / store reset (`clearSeededFacets`). Not bounded by the CURRENT working
+//    set: a raw that was edited away, removed or reloaded keeps its entry until that
+//    reset, so the map holds every distinct raw seeded since (O(distinct raws seen
+//    this graph session), each a small facet record).
 //  - `derived`: facets computed locally for a raw the backend hasn't shipped (the
 //    block being edited). Small LRU — transient.
 const seeded = new Map<string, Facets>();
@@ -114,7 +116,9 @@ export function effectiveHeadingLevel(facets: Pick<Facets, "headingLevel" | "hea
   return facets.headingAuto ? Math.min(Math.max(0, depth) + 1, 6) : null;
 }
 
-/** Seed the never-evicted tier from the backend-computed facets — no parse. */
+/** Seed the never-evicted tier from the backend-computed facets — no parse. An entry
+ *  stays until `clearSeededFacets` (graph switch / store reset), even after its block
+ *  is gone. */
 export function seedFacets(raw: string, format: Format, f: Facets): void {
   seeded.set(keyOf(raw, format), f);
 }

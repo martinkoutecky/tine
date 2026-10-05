@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aliasNamesOf, isPropertyLine, pageProperties, visibleBody } from "./block";
+import { aliasNamesOf, isPropertyLine, isRenderHiddenProp, pageProperties, visibleBody } from "./block";
 import type { Format } from "../types";
 
 const aliasNames = (text: string | null, format?: Format) => aliasNamesOf(pageProperties(text, format));
@@ -90,5 +90,47 @@ describe("visibleBody strips header chrome from the body text", () => {
     expect(visibleBody("do SCHEDULED: <2026-07-06 Mon> the thing")).toEqual([
       "do SCHEDULED: <2026-07-06 Mon> the thing",
     ]);
+  });
+});
+
+describe("visibleBody removes exactly the metadata lsdoc accepted (I-12)", () => {
+  it("drops one planning line carrying SCHEDULED and DEADLINE together", () => {
+    expect(visibleBody("first\nSCHEDULED: <2026-01-01 Thu> DEADLINE: <2026-01-02 Fri>\nbody")).toEqual([
+      "first",
+      "body",
+    ]);
+  });
+  it("keeps the text of a drawer that never closes (it is body, not metadata)", () => {
+    expect(visibleBody("first\n:LOGBOOK:\nbody after the open drawer")).toEqual([
+      "first",
+      ":LOGBOOK:",
+      "body after the open drawer",
+    ]);
+  });
+  it("keeps a CLOCK-looking line outside any drawer", () => {
+    expect(visibleBody("first\nCLOCK: not really a clock\nbody")).toEqual([
+      "first",
+      "CLOCK: not really a clock",
+      "body",
+    ]);
+  });
+  it("still drops a closed PROPERTIES drawer and a real logbook drawer", () => {
+    expect(visibleBody("first\n  :PROPERTIES:\n  :a: b\n  :END:\nbody")).toEqual(["first", "body"]);
+    expect(
+      visibleBody("TODO first\n:LOGBOOK:\nCLOCK: [2026-01-01 Thu 10:00:00]--[2026-01-01 Thu 10:05:00] =>  00:05:00\n:END:\nbody"),
+    ).toEqual(["first", "body"]);
+  });
+});
+
+describe("isRenderHiddenProp is the Rust render_facets answer (I-12)", () => {
+  it("hides the built-ins, tine.* and logseq.table.*, and shows other logseq.* keys", () => {
+    for (const key of ["id", "Title", "hl-color", "Created_At", "tine.view", "logseq.table.version"]) {
+      expect(isRenderHiddenProp(key), key).toBe(true);
+    }
+    for (const key of ["logseq.custom", "status", "public"]) expect(isRenderHiddenProp(key), key).toBe(false);
+  });
+  it("applies the graph's :block-hidden-properties after the shared key fold", () => {
+    expect(isRenderHiddenProp("mine", ["Mine"])).toBe(true);
+    expect(isRenderHiddenProp("other", ["Mine"])).toBe(false);
   });
 });

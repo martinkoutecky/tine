@@ -168,8 +168,8 @@ export function applySheetViewSlashAction(id: string, view: SheetSlashView): str
   return seededCellId;
 }
 
-// (Rendered-property hidden set lives in render/block.ts as RENDER_HIDDEN_PROPS /
-// isRenderHiddenProp, shared with body.tsx's renderProps.)
+// (The rendered-property hidden predicate is render/block.ts isRenderHiddenProp,
+// shared with body.tsx's renderProps; its list is Rust's render_facets.rs.)
 
 // Set ONLY by the quick-capture window (capture.tsx). Flows through the Block
 // tree to every Editor so the capture's submit/cancel gestures and Enter mode

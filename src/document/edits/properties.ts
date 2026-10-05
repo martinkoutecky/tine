@@ -4,6 +4,7 @@ import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock } from "../../render/parse";
 import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
+import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent } from "../save/engine";
@@ -270,12 +271,13 @@ export function isOrdered(id: string | null | undefined): boolean {
 }
 
 function orderedFromProperties(properties: readonly (readonly [string, string])[]): boolean {
-  return properties.find(([key]) => key.toLowerCase() === ORDER_KEY)?.[1].trim() === "number";
+  // Same key fold as Rust `DocBlock::property` (the static export's `own_ordered`): I-12.
+  return properties.find(([key]) => propertyKeyNorm(key) === ORDER_KEY)?.[1].trim() === "number";
 }
 
 export function orderListTypeFromRaw(raw: string, format: Format): string | null {
   for (const [key, value] of facetsOf(raw, format).properties) {
-    if (key.toLowerCase() === ORDER_KEY) return value.trim();
+    if (propertyKeyNorm(key) === ORDER_KEY) return value.trim();
   }
   return null;
 }
@@ -286,7 +288,7 @@ export function orderListTypeFromRaw(raw: string, format: Format): string | null
  * OG writes both the in-memory property and serialized content at
  * `src/main/frontend/modules/outliner/core.cljs:420-433` (6e7afa8eb). */
 export function rawWithOrderListType(raw: string, value: string | null, format: Format): string {
-  const { visible } = splitProps(raw, (key) => key.toLowerCase() === ORDER_KEY, format);
+  const { visible } = splitProps(raw, (key) => propertyKeyNorm(key) === ORDER_KEY, format);
   if (value === null) return visible;
   const property = format === "org" ? `:${ORDER_KEY}: ${value}` : `${ORDER_KEY}:: ${value}`;
   return joinProps(visible, property, format);

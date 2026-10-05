@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
-import { publishedBackend, validateSnapshot, type PublishedSnapshot } from "./publishedBackend";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  __resetPublishedSnapshotForTest, loadPublishedSnapshot, publishedBackend, readBounded, validateSnapshot,
+  type PublishedSnapshot,
+} from "./publishedBackend";
+import { initParser } from "./render/parse";
 import { openPublishedPermalink, parsePublishedPermalinkHash, publishedPermalinkHash } from "./publishedPermalink";
 import type { ParsedQuery, QueryResult } from "./editor/queryIr";
 
@@ -121,4 +125,56 @@ it("bounds preview cloning before allocation and owns emitted metadata (OG-DUPF0
     copied.tags![0] = "changed"; copied.properties![0][1] = "changed"; copied.breadcrumb![0] = "changed";
     expect(root.tags).toEqual(["tag"]); expect(root.properties).toEqual([["key", "value"]]); expect(root.breadcrumb).toEqual(["ancestor"]);
   } finally { clone.mockRestore(); }
+});
+
+
+describe("published reads are parser-decided, visible on failure and bounded (OG-R)", () => {
+  beforeAll(initParser);
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __resetPublishedSnapshotForTest();
+  });
+  const bytesOf = (n: number) => new Uint8Array(n).fill(7);
+  const respond = (body: Uint8Array, init: ResponseInit = {}) => new Response(body as unknown as BodyInit, init);
+
+  it("lists only real ((uuid)) references as referrers, never a code lookalike", async () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const s = structuredClone(snapshot);
+    s.pages[0].blocks = [
+      { id: "real", raw: `see ((${id})) here`, collapsed: false, children: [] },
+      { id: "code", raw: `inline \`((${id}))\` only`, collapsed: false, children: [] },
+      { id: "fence", raw: `\`\`\`\n((${id}))\n\`\`\``, collapsed: false, children: [] },
+      { id: "other", raw: "no reference", collapsed: false, children: [] },
+    ];
+    const groups = await publishedBackend(async () => s).getBlockReferrers(id);
+    expect(groups.flatMap((group) => group.blocks.map((block) => block.id))).toEqual(["real"]);
+  });
+
+  it("rejects a missing or refused asset instead of answering empty bytes", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 404 })));
+    const api = publishedBackend(async () => snapshot);
+    await expect(api.readAsset("gone.png")).rejects.toThrow(/gone\.png.*404/);
+    await expect(api.readAsset("../escape.png")).rejects.toThrow(/outside|not a file/);
+    await expect(api.streamAsset("/etc/passwd")).rejects.toThrow(/not a file/);
+  });
+
+  it("honours the caller's byte cap on an asset, by declared length and by streamed length", async () => {
+    const api = publishedBackend(async () => snapshot);
+    vi.stubGlobal("fetch", vi.fn(async () => respond(bytesOf(10), { headers: { "content-length": "10" } })));
+    expect((await api.readAsset("ok.bin", 10)).byteLength).toBe(10);
+    await expect(api.readAsset("big.bin", 9)).rejects.toThrow(/larger than 9/);
+    // No declared length: the running total refuses and cancels the stream.
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < 5; i++) controller.enqueue(bytesOf(4));
+        controller.close();
+      },
+    });
+    await expect(readBounded(new Response(stream), 9, "asset s")).rejects.toThrow(/larger than 9/);
+  });
+
+  it("refuses an oversized snapshot document before parsing it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => respond(new TextEncoder().encode("{}"), { headers: { "content-length": String(1 << 30) } })));
+    await expect(loadPublishedSnapshot("snapshot.json")).rejects.toThrow(/larger than/);
+  });
 });
