@@ -342,6 +342,47 @@ mod tests {
         );
     }
 
+    /// A plan reading `used_as_tag` owns a graph-wide tag-target set; each
+    /// memo entry holds its own, so it must count toward the entry ceiling
+    /// (checkpoint-5 L02 B3, I-22).
+    #[test]
+    fn b_query_memo_charges_the_graph_wide_tag_target_set() {
+        use tine_core::query::ir::*;
+        let memo = QueryMemo::default();
+        let config = ParseConfig::default();
+        let query = Query {
+            anchor: Anchor::Page,
+            filter: Filter::attr(Attr::UsedAsTag, CmpOp::Eq, Value::Bool { value: true }),
+            diagnostics: Vec::new(),
+            source: Source::Tql {
+                original: String::new(),
+                og_options: String::new(),
+            },
+        };
+        let targets: HashSet<String> = (0..150_000).map(|i| format!("tag-{i}")).collect();
+        let plan = Arc::new(Plan::new(
+            &query,
+            JournalDate::today(),
+            false,
+            false,
+            || Arc::new(tine_core::query::registry::Registry::empty(&config)),
+            || Arc::new(targets),
+        ));
+        let answer = memo.answer("tags".into(), JournalDate::today(), &config, || {
+            (groups(1), Some(plan))
+        });
+        assert_eq!(
+            total(&answer),
+            1,
+            "a budget may skip retention, never refuse"
+        );
+        assert_eq!(
+            memo.len(),
+            0,
+            "the tag-target set must be charged to the entry"
+        );
+    }
+
     #[test]
     fn b_query_memo_charges_statistics_even_when_rows_are_omitted() {
         use tine_core::query::ir::*;

@@ -96,6 +96,12 @@ impl Plan {
                 super::memo::retained::serialized_bytes(registry.rows())
                     .saturating_add(super::memo::retained::parse_config_bytes(registry.config()))
             }))
+            // The graph-wide tag-target set is owned by this plan (built once
+            // per plan, not shared across memo entries), so every retained
+            // entry holds its own copy of up to one key per tagged page.
+            .saturating_add(self.tag_targets.as_ref().map_or(0, |targets| {
+                super::memo::retained::serialized_bytes(&**targets)
+            }))
             .saturating_add(std::mem::size_of::<Self>())
     }
 

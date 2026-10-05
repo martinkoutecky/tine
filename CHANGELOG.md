@@ -23,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- A used_as_tag query's remembered answer now counts its tag-key set toward the memory budget (REG-OG-C5-Q-MEMO-TAGSET).
+- Quick-switcher page search with more candidates than slots no longer evicts a better name match in favour of a content match (REG-OG-C5-Q-PAGE-HEAP-ORDER).
 - Asking why a query with thousands of conditions returned nothing no longer builds a quadratic explanation plan; queries over 64 conditions are explained as one whole condition (REG-OG-C5-Q-EXPLAIN-COST).
 - A property condition written with two keys, or with a nested group around its key, is no longer evaluated as if the extra key or condition were not there; the query builder reads property conditions with the same rule as the engine (REG-OG-C5-Q-PROPS-READER-TWIN).
 - A property column named in a legacy query table's `query-properties::` now finds the engine's key when the name has a space or a non-ASCII capital, matching how Tine stores property keys (REG-OG-C5-Q-KEY-NORM-TWIN).
