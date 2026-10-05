@@ -1,5 +1,6 @@
 // About: build/project information and device-local update controls.
-import { createSignal, onMount, Show, type JSX } from "solid-js";
+import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { ownedWhen, readOwned } from "../owned";
 import { APP_PRODUCT_NAME } from "../appIdentity";
 import { writeClipboardTextStrict } from "../clipboard";
 import { isTauri } from "../backend";
@@ -37,6 +38,11 @@ export function AboutTab(): JSX.Element {
     try { await writeClipboardTextStrict(versionLabel()); setCopyStatus("Copied!"); }
     catch { setCopyStatus("Copy failed"); }
   };
+  // View-only ownership: nothing here reads or writes graph state, so only the
+  // tab's own lifetime decides whether a late completion may land (I-20).
+  let alive = true;
+  onCleanup(() => { alive = false; });
+  const owner = ownedWhen(() => alive);
   const [checking, setChecking] = createSignal(false);
   const [updatePlatform, setUpdatePlatform] = createSignal<"loading" | "desktop" | "mobile" | "unavailable">(
     isTauri() ? "loading" : "unavailable"
@@ -46,15 +52,18 @@ export function AboutTab(): JSX.Element {
     if (!isTauri()) return;
     try {
       const desktop = (await platformKind()) === "desktop";
+      if (!owner()) return;
       if (desktop) await initUpdateSettings();
+      if (!owner()) return;
       setUpdatePlatform(desktop ? "desktop" : "mobile");
     } catch {
       // Fail closed: an unknown native platform must not expose the desktop updater.
-      setUpdatePlatform("unavailable");
+      if (owner()) setUpdatePlatform("unavailable");
     }
     try {
       const { getVersion } = await import("@tauri-apps/api/app");
-      setVersion(await getVersion());
+      const read = await readOwned(owner, getVersion());
+      if (read.kind === "current") setVersion(read.value);
     } catch {
       /* dev / non-Tauri — no runtime version */
     }
@@ -63,7 +72,9 @@ export function AboutTab(): JSX.Element {
   const check = async () => {
     setChecking(true);
     setStatus("");
-    const r = await checkForUpdateNow();
+    const result = await readOwned(owner, checkForUpdateNow());
+    if (result.kind === "stale") return;
+    const r = result.value;
     setChecking(false);
     if (r.kind === "current") setStatus(`You're on the latest version (${r.version}).`);
     else if (r.kind === "available") setStatus(`${APP_PRODUCT_NAME} ${r.version} is available — choose Install update in the notification.`);
