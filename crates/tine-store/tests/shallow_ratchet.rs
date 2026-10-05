@@ -633,9 +633,9 @@ fn arrival_numeric_budgets() {
 // Honest baseline (og-surface step 1, 2026-10-05): the earlier scan missed
 // files outside a hand list (H1), functions taking `&Store` (H2) and types
 // re-exported from private modules (H3).
-const OPS: usize = 42;
+const OPS: usize = 41;
 const QUESTIONS: usize = 25;
-const TYPES: usize = 55;
+const TYPES: usize = 57;
 
 #[test]
 fn public_paths_are_only_inputs_and_handoffs() {

@@ -290,7 +290,9 @@ Before the atomic rename, the source is live; after it, original bytes are
 live at the new spelling. There is no intermediate Trash-only window or
 manual page restoration step. After the existing atomic rewrite, updated
 title/reference bytes are live there. Retrying after the rename finishes an
-old explicit title in place. An I/O failure attempts ordinary transaction undo;
+old explicit title in place, through `Transaction::rewrite_refs` with
+`TitleRebind::Own` under the same revision guard; `move_file` onto its own
+source names one file twice and is refused (`RepeatedFile`). An I/O failure attempts ordinary transaction undo;
 failed undo keeps live or recoverable bytes. Changed directories use the
 existing sync policy. The no-replace primitive retains Windows write-through;
 the folded-alias fallback uses the same replacement/durability policy as
@@ -330,10 +332,15 @@ A rename opens each rewritten referrer four times: the planner's read, the
 preflight base-revision stage, the final pre-rename guard inside
 `atomic_write_with_check`, and the publication read. The planner names only
 the renamed page's own files (`WholeGraph::page_files_at_or_under`), not the
-whole-graph inventory. It asks the transaction whether each referrer's
-rewrite changes it (`Transaction::prepare_ref_rewrite`, the store's own
-rewriter); the transaction keeps a changing rewrite for that file and rename
-map, and preflight still stages the file against the expected revision and
+whole-graph inventory. It queues each unmoved, marker-free referrer with
+`Transaction::rewrite_refs` and the text it read; the call reports whether the
+rewrite (`tine_core::refs::rename_rewrite`, the one rewriter both the planner
+and the store use) changes it, queues nothing for an unchanged non-title
+referrer, and keeps a changing rewrite in the queued step. Moved and
+marker-bearing referrers are asked of `rename_rewrite` directly, since a move
+rewrites inside its own step and a marker-bearing file must not be queued
+before the planner's VCS-marker skip. Preflight still stages the file against
+the expected revision and
 reuses the kept bytes only when the staged bytes are byte-identical to the
 prepared old bytes and the filename format is unchanged, otherwise it
 recomputes; the read-only Org and

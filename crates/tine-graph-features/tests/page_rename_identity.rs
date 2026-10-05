@@ -188,3 +188,34 @@ fn org_title_rename_refuses_a_page_that_does_not_round_trip() {
     );
     assert!(!root.join("pages/Renamed.org").exists());
 }
+
+/// og-surface row 6: an interrupted rename. The physical move to `New.md`
+/// already happened (a crash after the rename, before the title rewrite), so
+/// the page named `Old` by its `title::` already sits in the destination
+/// file. A retried rename completes in place: the own title and every
+/// reference rebind, and the file is not moved or duplicated.
+#[test]
+fn a_rename_whose_move_already_happened_rebinds_the_title_in_place() {
+    let (root, _) = fixture("rename-interrupted");
+    put(&root, "pages/New.md", "title:: Old\n\n- [[Old]] body\n");
+    put(&root, "pages/Ref.md", "- [[Old]]\n");
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    pages::rename_page_expected(&store, "Old", "New", Some("pages/New.md")).unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join("pages/New.md")).unwrap(),
+        "title:: New\n\n- [[New]] body\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Ref.md")).unwrap(),
+        "- [[New]]\n"
+    );
+    let graph = store.whole_graph().unwrap();
+    assert!(matches!(
+        graph.resolve("New", false),
+        tine_store::Resolved::Existing { .. }
+    ));
+    assert!(matches!(
+        graph.resolve("Old", false),
+        tine_store::Resolved::Absent { .. }
+    ));
+}

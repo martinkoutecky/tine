@@ -12,7 +12,7 @@
 //! read or revision check returns the affected file locations and makes the
 //! publication incomplete; callers inspect disk and refresh before retrying.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use faults::fault;
 #[cfg(any(test, feature = "test-faults"))]
@@ -70,6 +70,30 @@ pub enum Content {
         /// Maximum accepted byte count.
         max_bytes: u64,
     },
+}
+
+/// Whether a [`Transaction::rewrite_refs`] step also rebinds the file's own
+/// explicit title.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TitleRebind {
+    /// Rewrite references only; the file's own `title::` is a reference-free
+    /// property and stays.
+    Keep,
+    /// Also rebind an own Markdown `title::` that names a mapped old identity,
+    /// as a move with a rename map does. This completes an interrupted rename
+    /// whose physical move already happened: the file sits at its new name but
+    /// still carries the old title.
+    Own,
+}
+
+/// What a [`Transaction::rewrite_refs`] call learned from the caller's read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RewriteEffect {
+    /// The rename map changes nothing in the text the caller read.
+    Unchanged,
+    /// The rename map changes the text the caller read, or the caller passed
+    /// no read, so the step was queued to find out at commit.
+    Changes,
 }
 
 /// The condition a [`Transaction::trash`] step requires at commit.
@@ -404,8 +428,6 @@ pub struct Transaction<'a> {
     // Exact names sampled once per directory per commit phase.
     spelling_entries:
         std::cell::RefCell<BTreeMap<PathBuf, BTreeMap<std::ffi::OsString, std::ffi::OsString>>>,
-    // Reference rewrites prepared from the caller's planning read (GH #623).
-    prepared: HashMap<FileId, PreparedRewrite>,
 }
 
 impl Store {
@@ -419,7 +441,6 @@ impl Store {
             steps: Vec::new(),
             kinds: kind.into_iter().collect(),
             spelling_entries: Default::default(),
-            prepared: HashMap::new(),
         }
     }
 }
@@ -537,42 +558,86 @@ impl<'a> Transaction<'a> {
         self
     }
 
-    /// Queue a guarded page-reference rewrite. Obtain each referrer's
-    /// `FileRev` with `Store::page` or `Store::read` after locating it in a
-    /// graph view. Recheck revisions if the view may be stale; each referrer
-    /// needs its own file read. Unchanged output reports [`StepResult::Unchanged`];
-    /// unsafe Org edits are refused as read-only. There is no partial rename
-    /// mode: omit that referrer from the queued steps if leaving its old link
-    /// is acceptable. This rewrites file content,
-    /// not an unsaved editor buffer. Commit reads, parses, rewrites and writes
-    /// each named referrer, O(its text bytes), plus publication metadata; a
-    /// rewrite kept by [`Self::prepare_ref_rewrite`] is reused, not recomputed.
+    /// Queue a guarded page-reference rewrite of `id` against revision
+    /// `expected`. Obtain each referrer's `FileRev` with `Store::page` or
+    /// `Store::read` after locating it in a graph view. Recheck revisions if
+    /// the view may be stale; each referrer needs its own file read.
+    ///
+    /// `read` is the text the caller read at `expected`, if any. With it the
+    /// rewrite is computed once here (`tine_core::refs::rename_rewrite`) and
+    /// reported: [`RewriteEffect::Unchanged`] queues nothing unless `title` is
+    /// [`TitleRebind::Own`]; a changing rewrite is kept for preflight, which
+    /// still stages the file against `expected` and reuses the kept bytes only
+    /// when the staged bytes are byte-identical to `read` and the filename
+    /// format is unchanged, otherwise it recomputes (GH #623). Without `read`
+    /// the step is always queued and [`RewriteEffect::Changes`] is reported;
+    /// commit reports [`StepResult::Unchanged`] for a no-op.
+    ///
+    /// `title` [`TitleRebind::Own`] also rebinds the file's own explicit title
+    /// (completing an interrupted rename in place, under the same revision
+    /// guard); it is always queued and never reuses a kept rewrite.
+    ///
+    /// Unsafe Org edits are refused as read-only, and a rewrite that would
+    /// change a file carrying VCS conflict markers is refused
+    /// (R-VCS-MARKERS). There is no partial rename mode: omit that referrer if
+    /// leaving its old link is acceptable. This rewrites file content, not an
+    /// unsaved editor buffer. Cost: O(read) here when `read` is given; commit
+    /// reads, parses, rewrites (unless reused) and writes each queued
+    /// referrer, O(its text bytes), plus publication metadata.
     pub fn rewrite_refs(
         &mut self,
         id: &PageId,
         expected: FileRev,
+        read: Option<&str>,
         renames: &RenameMap,
-    ) -> &mut Self {
-        let prepared = self.take_prepared(&id.file(), renames);
-        self.steps.push(Step::Rewrite {
-            id: id.clone(),
-            expected,
-            renames: renames.clone(),
-            rebind_title: false,
-            prepared,
-        });
-        self
+        title: TitleRebind,
+    ) -> RewriteEffect {
+        let file = id.file();
+        let mut prepared = None;
+        let effect = match read {
+            None => RewriteEffect::Changes,
+            Some(text) => {
+                let name_format = self.store.config().file_name_format;
+                let is_org = Path::new(file.as_str())
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    == Some("org");
+                let new = tine_core::refs::rename_rewrite(text, is_org, &renames.0, name_format);
+                if new == text {
+                    RewriteEffect::Unchanged
+                } else {
+                    if title == TitleRebind::Keep {
+                        prepared = Some(Box::new(PreparedRewrite::new(
+                            file.clone(),
+                            text.to_owned(),
+                            new,
+                            name_format,
+                        )));
+                    }
+                    RewriteEffect::Changes
+                }
+            }
+        };
+        if effect == RewriteEffect::Changes || title == TitleRebind::Own {
+            self.steps.push(Step::Rewrite {
+                id: id.clone(),
+                expected,
+                renames: renames.clone(),
+                rebind_title: title == TitleRebind::Own,
+                prepared,
+            });
+        }
+        effect
     }
 
-    /// Queue a guarded no-replace move. With a rename map and identical source
-    /// and destination IDs, complete an interrupted move by rewriting the
-    /// file's explicit title and references in place under the same revision
-    /// guard; stale revisions or non-round-tripping Org content refuse it.
-    /// On a normal move, optional ref rewrites rebind an own Markdown `title::`
+    /// Queue a guarded no-replace move to a different file ID. A destination
+    /// equal to the source names one file twice and the commit refuses it
+    /// before any write (`Refusal::RepeatedFile`); an interrupted rename is
+    /// completed in place with [`Self::rewrite_refs`] and [`TitleRebind::Own`].
+    /// Optional ref rewrites rebind an own Markdown `title::`
     /// matching the mapped old identity and destination; other titles, aliases
     /// and namespace children stay untouched. Changed bytes leave an old-byte
-    /// copy in trash; unchanged bytes rename directly. An in-place completion
-    /// rewrites the existing file and makes no new trash copy.
+    /// copy in trash; unchanged bytes rename directly.
     /// `resolve` follows the destination; later referrers need a later query.
     /// Twin claims are refused. A read-only Org source may move without a
     /// rewrite; asking to rewrite its bytes invokes the round-trip check.
@@ -595,18 +660,6 @@ impl<'a> Transaction<'a> {
         to: &FileId,
         renames: Option<&RenameMap>,
     ) -> &mut Self {
-        if file == to {
-            if let Some(renames) = renames {
-                self.steps.push(Step::Rewrite {
-                    id: PageId::from(file.as_str()),
-                    expected,
-                    renames: renames.clone(),
-                    rebind_title: true,
-                    prepared: None,
-                });
-                return self;
-            }
-        }
         self.steps.push(Step::Move {
             file: file.clone(),
             expected,

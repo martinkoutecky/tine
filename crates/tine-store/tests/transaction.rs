@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use tine_core::model::{BlockDto, Format, PageDto, PageKind};
 use tine_store::{
-    Area, Content, FileId, FileRev, OpenOptions, PageId, Refusal, RenameMap, SaveBase, StepResult,
-    Store, TxOutcome, WatchMode, Why,
+    Area, Content, FileId, FileRev, OpenOptions, PageId, Refusal, RenameMap, RewriteEffect,
+    SaveBase, StepResult, Store, TitleRebind, TxOutcome, WatchMode, Why,
 };
 
 struct Fixture {
@@ -278,7 +278,9 @@ fn step_successes_and_noop() {
     tx.rewrite_refs(
         &PageId::from("pages/B.md"),
         f.rev(&b),
+        None,
         &RenameMap(vec![("A".into(), "C".into())]),
+        TitleRebind::Keep,
     );
     assert!(matches!(
         committed(tx.commit())[0],
@@ -524,7 +526,9 @@ fn stage_one_conflicts_for_guarded_steps() {
     tx.rewrite_refs(
         &a,
         stale.clone(),
+        None,
         &RenameMap(vec![("A".into(), "B".into())]),
+        TitleRebind::Keep,
     );
     assert!(matches!(refused(tx.commit()).0, Why::Conflict { .. }));
     let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
@@ -861,7 +865,9 @@ mod faults {
                     tx.rewrite_refs(
                         &b,
                         f.rev(&b.file()),
+                        None,
                         &RenameMap(vec![("A".into(), "Z".into())]),
+                        TitleRebind::Keep,
                     );
                 }
                 5 => {
@@ -1084,4 +1090,77 @@ fn trash_into_new_directories_syncs_every_created_entry() {
         );
         dir = parent;
     }
+}
+
+/// og-surface row 6: `rewrite_refs` with the caller's read reports whether the
+/// rename map changes it and queues nothing for an unchanged non-title read;
+/// a changing read is queued and written. `move_file` onto its own source is
+/// refused before any write (it names one file twice, `Refusal::RepeatedFile`); an interrupted
+/// rename completes with `rewrite_refs(.., TitleRebind::Own)` instead.
+#[test]
+fn rewrite_refs_reports_its_effect_and_a_self_move_is_refused() {
+    let f = Fixture::new();
+    f.put("pages/B.md", b"- [[A]]\n");
+    f.put("pages/Plain.md", b"- nothing here\n");
+    f.put("pages/New.md", b"title:: Old\n\n- [[Old]]\n");
+    let map = RenameMap(vec![("A".into(), "C".into())]);
+    let b = PageId::from("pages/B.md");
+    let plain = PageId::from("pages/Plain.md");
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::RenamePage));
+    let plain_rev = f.rev(&plain.file());
+    assert_eq!(
+        tx.rewrite_refs(
+            &plain,
+            plain_rev,
+            Some("- nothing here\n"),
+            &map,
+            TitleRebind::Keep
+        ),
+        RewriteEffect::Unchanged
+    );
+    assert_eq!(
+        tx.rewrite_refs(
+            &b,
+            f.rev(&b.file()),
+            Some("- [[A]]\n"),
+            &map,
+            TitleRebind::Keep
+        ),
+        RewriteEffect::Changes
+    );
+    let results = committed(tx.commit());
+    assert_eq!(results.len(), 1, "only the changing rewrite is queued");
+    assert!(matches!(results[0], StepResult::Written { .. }));
+    assert_eq!(f.bytes("pages/B.md").unwrap(), b"- [[C]]\n");
+    assert_eq!(f.bytes("pages/Plain.md").unwrap(), b"- nothing here\n");
+
+    let new = f.id(Area::Pages, "New.md");
+    let title_map = RenameMap(vec![("Old".into(), "New".into())]);
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::RenamePage));
+    tx.move_file(&new, f.rev(&new), &new, Some(&title_map));
+    assert!(matches!(
+        refused(tx.commit()).0,
+        Why::Refused(Refusal::RepeatedFile(_))
+    ));
+    assert_eq!(
+        f.bytes("pages/New.md").unwrap(),
+        b"title:: Old\n\n- [[Old]]\n"
+    );
+
+    let mut tx = f.store.transaction(Some(tine_store::EditKind::RenamePage));
+    tx.rewrite_refs(
+        &PageId::from("pages/New.md"),
+        f.rev(&new),
+        None,
+        &title_map,
+        TitleRebind::Own,
+    );
+    assert!(matches!(
+        committed(tx.commit())[0],
+        StepResult::Written { .. }
+    ));
+    assert_eq!(
+        f.bytes("pages/New.md").unwrap(),
+        b"title:: New\n\n- [[New]]\n"
+    );
 }
