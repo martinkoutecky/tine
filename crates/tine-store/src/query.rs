@@ -2685,6 +2685,25 @@ mod tests {
     }
 
     #[test]
+    fn a_planning_marker_in_a_fence_or_ending_a_longer_word_is_not_planning() {
+        // OG-C5-Q L02 eval.rs:154: the inline fallback scanned raw bytes, so
+        // documentation of the syntax scheduled the block.
+        let q = "(between scheduled +20d +20d)";
+        assert!(selects(q, "TODO real\nSCHEDULED: <2026-07-06 Mon>"));
+        assert!(!selects(
+            q,
+            "TODO doc\n```\nSCHEDULED: <2026-07-06 Mon>\n```"
+        ));
+        assert!(!selects(q, "TODO doc UNSCHEDULED: <2026-07-06 Mon>"));
+        assert!(!selects(
+            "(between deadline +20d +20d)",
+            "TODO doc\n#+BEGIN_SRC org\nDEADLINE: <2026-07-06 Mon>\n#+END_SRC"
+        ));
+        // The recorded inline-code deviation is unchanged.
+        assert!(selects(q, "TODO doc `SCHEDULED: <2026-07-06 Mon>`"));
+    }
+
+    #[test]
     fn journal_predicate_and_target_query() {
         assert!(selects_on_journal("(journal)", 20260616, "TODO buy milk"));
         assert!(!selects("(journal)", "TODO buy milk"));

@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- A query for scheduled or deadline blocks no longer matches a block that only shows the `SCHEDULED: <date>` / `DEADLINE: <date>` syntax inside a code fence or after a longer word such as `UNSCHEDULED:` (REG-OG-C5-Q-PLANNING-TEXT).
 - A query's `like ... escape 'c'` clause is now applied instead of silently ignored (a pattern such as `'100!%' escape '!'` matches a literal percent sign); an escape that is not one character is reported (REG-OG-C5-Q-TQL-ESCAPE).
 - The query builder's date-range preview now resolves a typed bound exactly as the query engine does: `-7D` is no longer previewed as a date, `2026_01_05` and `2026-1-5` now are, and offsets past 10,000 years or a month clamp in year 0 no longer disagree (REG-OG-C5-Q-DATE-TWIN).
 - Clicking a query table column header now sorts only the view you are looking at. It no longer rewrites the query block and its display properties; a saved sort is still set from the query's sort control (UI-OG-C5-Q-HEADER-SORT).
