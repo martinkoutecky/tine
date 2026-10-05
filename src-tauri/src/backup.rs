@@ -96,13 +96,12 @@ fn wait_launch_backup(slot: &GraphSlot) -> bool {
 }
 
 pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
-    let Ok(source) = BackupSource::from_store(&slot.store, &slot.root_key) else {
-        report_launch_failure(
-            &app,
-            &slot,
-            &BackupOutcome::failed(0, "source", ErrorKind::Other),
-        );
-        return;
+    let source = match BackupSource::from_store(&slot.store, &slot.root_key) {
+        Ok(source) => source,
+        Err((kind, _)) => {
+            report_launch_failure(&app, &slot, &BackupOutcome::failed(0, "source", kind));
+            return;
+        }
     };
     std::thread::spawn(move || {
         if !wait_launch_backup(&slot) {
@@ -132,8 +131,9 @@ pub(crate) fn backup_graph_now(
     root: &std::path::Path,
     suffix: &str,
 ) -> BackupOutcome {
-    let Ok(source) = BackupSource::from_store(store, root) else {
-        return BackupOutcome::failed(0, "source", ErrorKind::Other);
+    let source = match BackupSource::from_store(store, root) {
+        Ok(source) => source,
+        Err((kind, _)) => return BackupOutcome::failed(0, "source", kind),
     };
     do_backup_source(app, store, source, suffix)
 }
@@ -174,13 +174,27 @@ struct BackupSource {
 }
 
 impl BackupSource {
-    fn from_store(store: &Store, root: &std::path::Path) -> Result<Self, String> {
+    /// The live layout to snapshot, or why it can't be read: the error kind
+    /// for the `backup-failed:source:<kind>` token (I-9) and a message.
+    fn from_store(store: &Store, root: &std::path::Path) -> Result<Self, (ErrorKind, String)> {
         let config = store.config();
-        let root = Store::canonical_root(root).map_err(|error| error.to_string())?;
+        let root = Store::canonical_root(root).map_err(|error| {
+            let kind = match &error {
+                tine_store::OpenError::NotAFolder(_) => ErrorKind::NotADirectory,
+                tine_store::OpenError::Unresolvable { .. } => ErrorKind::NotFound,
+                tine_store::OpenError::Io(io) => io.kind,
+                tine_store::OpenError::CreateFailed { cause, .. } => cause.kind,
+                _ => ErrorKind::InvalidInput,
+            };
+            (kind, error.to_string())
+        })?;
         // Verify the live assets target before using the store's backup layout.
-        store
-            .scan_area(Area::Assets, None)
-            .map_err(|error| format!("unsafe assets directory: {error:?}"))?;
+        store.scan_area(Area::Assets, None).map_err(|error| {
+            (
+                store_error_kind(&error),
+                format!("unsafe assets directory: {error:?}"),
+            )
+        })?;
         let assets_dir_name = config.assets_directory_name.clone();
         Ok(Self {
             root,
@@ -465,13 +479,13 @@ fn copy_store_area(
     }
     let listing = match store.scan_area(area, None) {
         Ok(listing) => listing,
-        Err(_) => {
+        Err(error) => {
             return (
                 0,
                 1,
                 Some(BackupFailure {
                     phase,
-                    kind: ErrorKind::Other,
+                    kind: store_error_kind(&error),
                 }),
             )
         }
@@ -550,22 +564,25 @@ fn store_error_kind(error: &tine_store::StoreError) -> ErrorKind {
     }
 }
 
-fn count_store_text(store: &Store, area: Area) -> Option<usize> {
-    let listing = store.scan_area(area, None).ok()?;
-    if listing
+/// The live graph-text count a snapshot must match, or the failure that
+/// prevented counting: the scan's own error, or the first unreadable entry
+/// (I-9: the cause reaches the backup token, not a fixed `Other`).
+fn count_store_text(store: &Store, area: Area) -> Result<usize, ErrorKind> {
+    let listing = store
+        .scan_area(area, None)
+        .map_err(|error| store_error_kind(&error))?;
+    if let Some((_, error)) = listing
         .unreadable
         .iter()
-        .any(|(_, error)| error.kind != std::io::ErrorKind::NotFound)
+        .find(|(_, error)| error.kind != ErrorKind::NotFound)
     {
-        return None;
+        return Err(error.kind);
     }
-    Some(
-        listing
-            .files
-            .iter()
-            .filter(|entry| is_graph_text(&entry.id))
-            .count(),
-    )
+    Ok(listing
+        .files
+        .iter()
+        .filter(|entry| is_graph_text(&entry.id))
+        .count())
 }
 
 struct PartialBackup {
@@ -661,8 +678,9 @@ fn write_snapshot(
         path: dest.clone(),
         committed: false,
     };
-    let Some(live_text_n) = count_store_text(store, Area::Graph) else {
-        return BackupOutcome::failed(0, "inventory", ErrorKind::Other);
+    let live_text_n = match count_store_text(store, Area::Graph) {
+        Ok(count) => count,
+        Err(kind) => return BackupOutcome::failed(0, "inventory", kind),
     };
     // Graph text anywhere in the graph-text scope, at its graph-relative path.
     let (ct, ft, et) = copy_store_area(
@@ -728,11 +746,11 @@ fn write_snapshot(
                     }
                 }
             }
-            Err(_) => {
+            Err(error) => {
                 failed += 1;
                 first_failure.get_or_insert(BackupFailure {
                     phase: "config",
-                    kind: ErrorKind::Other,
+                    kind: store_error_kind(&error),
                 });
             }
         }
@@ -1125,6 +1143,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(first);
         let _ = std::fs::remove_dir_all(second);
+    }
+
+    /// REG-OG-C5-L06-B1 (I-9): a graph inventory that cannot be read names
+    /// its cause in the backup token. Before, every inventory failure became
+    /// `backup-failed:inventory:Other`, hiding a permission or disk error.
+    #[cfg(unix)]
+    #[test]
+    fn inventory_failure_keeps_its_error_kind() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("inventory-error-kind");
+        let graph = root.join("graph");
+        for dir in ["pages/locked", "journals", "assets", "logseq"] {
+            std::fs::create_dir_all(graph.join(dir)).unwrap();
+        }
+        std::fs::write(graph.join("pages/locked/a.md"), b"- a\n").unwrap();
+        let (store, _, _) = Store::open(&graph, tine_store::OpenOptions::default()).unwrap();
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        let locked = graph.join("pages/locked");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let outcome = write_snapshot(&root.join("backups"), &store, source, "", &|| false);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let failure = outcome
+            .failure
+            .expect("an unreadable page directory fails the backup");
+        assert_eq!(
+            (failure.phase, failure.kind),
+            ("inventory", ErrorKind::PermissionDenied),
+            "I-9: the inventory failure's cause must reach the backup token; exemplar backup.rs count_store_text"
+        );
+
+        // A store closed under the backup reports that, not `Other`.
+        let source = BackupSource::from_store(&store, &graph).unwrap();
+        store.close();
+        let outcome = write_snapshot(&root.join("backups"), &store, source, "", &|| false);
+        let failure = outcome.failure.expect("a closed store fails the backup");
+        assert_eq!(
+            (failure.phase, failure.kind),
+            ("inventory", ErrorKind::BrokenPipe)
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

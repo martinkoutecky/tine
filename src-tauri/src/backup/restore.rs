@@ -28,7 +28,7 @@ pub(crate) async fn restore_backup(
     }
     let slot = slot_for_context(&state)?;
     let source = BackupSource::from_store(&slot.store, &slot.root_key)
-        .map_err(|message| format!("backup-failed:source:Other: {message}"))?;
+        .map_err(|(kind, message)| format!("backup-failed:source:{kind:?}: {message}"))?;
     let restore_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let base = backup_base_for_root(&restore_app, &source.root).ok_or("no app-data dir")?;

@@ -691,3 +691,74 @@ fn graph_restore_refuses_text_outside_its_recorded_scope() {
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
+
+/// REG-OG-C5-L06-S1 (I-1, I-2): restore retires the live file into a recovery
+/// tree created for this restore, then publishes the backup bytes. Scenario:
+/// power loss after the replacement is durable — unless the recovery entry and
+/// every directory created for it were synced first, the retired original (an
+/// external editor's edit newer than the safety snapshot) can vanish. A
+/// process kill cannot show this; the recorded directory syncs can.
+#[test]
+fn restore_makes_the_recovery_tree_durable_before_publishing_replacements() {
+    let root = scratch("recovery-durable");
+    let graph_root = root.join("graph");
+    let store = graph(&graph_root, None);
+    fs::create_dir_all(graph_root.join("pages/sub")).unwrap();
+    fs::write(graph_root.join("pages/sub/A.md"), b"- external edit\n").unwrap();
+    fs::write(graph_root.join("pages/B.md"), b"- unlisted\n").unwrap();
+    let source = root.join("A.md");
+    fs::write(&source, b"- from backup\n").unwrap();
+    tine_store::directory_durability::take_synced_directories();
+    let report = store
+        .restore(
+            tine_store::EditKind::ReplacePage,
+            vec![input(&source, Area::Pages, "sub/A.md")],
+            None,
+        )
+        .unwrap();
+    let synced = tine_store::directory_durability::take_synced_directories();
+    let recovery = &report.recovery[0];
+    let canonical = fs::canonicalize(&graph_root).unwrap();
+    assert_eq!(
+        fs::read(recovery.join("pages/sub/A.md")).unwrap(),
+        b"- external edit\n"
+    );
+    assert_eq!(
+        fs::read(recovery.join("pages/B.md")).unwrap(),
+        b"- unlisted\n"
+    );
+    let first = |dir: &Path| synced.iter().position(|path| path == dir);
+    let live_publish =
+        first(&canonical.join("pages/sub")).expect("the replacement's live directory is synced");
+    for dir in [
+        recovery.join("pages/sub"),
+        recovery.join("pages"),
+        recovery.clone(),
+        canonical.join("logseq/.tine-trash"),
+        canonical.join("logseq"),
+    ] {
+        let at = first(&dir).unwrap_or_else(|| {
+            panic!(
+                "I-2: restore recovery entry {} never synced; exemplar restore.rs reserve/move_if_present; synced {synced:?}",
+                dir.display()
+            )
+        });
+        assert!(
+            at < live_publish,
+            "I-2: recovery entry {} synced only after the replacement was published",
+            dir.display()
+        );
+    }
+    // The unlisted page is retired after the copy; its recovery entry is synced too.
+    let last_recovery_pages = synced
+        .iter()
+        .rposition(|path| *path == recovery.join("pages"))
+        .unwrap();
+    assert!(
+        last_recovery_pages > live_publish,
+        "unlisted retirement synced: {synced:?}"
+    );
+    store.close();
+    drop(store);
+    fs::remove_dir_all(root).unwrap();
+}

@@ -187,18 +187,16 @@ impl<'a> Transaction<'a> {
                         .store
                         .file_id(*area, &rel)
                         .map_err(|_| Why::Refused(Refusal::InvalidTarget(rel)))?;
-                    match self.absent(&candidate) {
-                        Ok(()) => {
-                            self.twin(&candidate, None)?;
-                            self.unreadable_owner(&candidate, &[])?;
-                            if self.fixed_step_names().contains(&candidate) {
-                                return Err(Why::Refused(Refusal::RepeatedFile(candidate)));
-                            }
-                            break;
-                        }
-                        Err(Why::Conflict { .. }) => continue,
-                        Err(error) => return Err(error),
+                    // Only occupancy matters here: never read an occupant.
+                    if self.occupied(&candidate)? {
+                        continue;
                     }
+                    self.twin(&candidate, None)?;
+                    self.unreadable_owner(&candidate, &[])?;
+                    if self.fixed_step_names().contains(&candidate) {
+                        return Err(Why::Refused(Refusal::RepeatedFile(candidate)));
+                    }
+                    break;
                 }
                 Ok(Prepared {
                     src: file,

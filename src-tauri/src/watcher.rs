@@ -292,8 +292,9 @@ impl RescanCursor {
 /// file plus the bytes of changed files), which the focus return uses; with
 /// `rebuild` (Settings "Rescan graph") it is `Store::rebuild_graph`, which
 /// ignores every stamp and re-reads and re-parses every file. The scan runs
-/// on the blocking pool; a failed scan still completes, and the watcher stays
-/// primary.
+/// on the blocking pool and the command answers after it. A failed scan is
+/// returned as the command's error (I-9), so the caller shows it instead of
+/// recording a finished rescan; the watcher stays primary either way.
 #[tauri::command]
 pub(crate) async fn rescan_graph_now(
     state: crate::state::GraphContext<'_>,
@@ -305,30 +306,54 @@ pub(crate) async fn rescan_graph_now(
     let sequence = RESCAN_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1;
     let queued = std::time::Instant::now();
     tauri::async_runtime::spawn_blocking(move || {
-        // GH #623: how long the blocking pool kept the scan waiting, and how
-        // long the scan itself took, reach the diagnostics as numbers.
-        let focus_scan = !rebuild.unwrap_or(false);
-        if focus_scan {
-            crate::flight::record_timing("rescan.queue", queued.elapsed());
-        }
-        let began = std::time::Instant::now();
-        // A failed scan published nothing to wait for: it completes at once.
-        let scanned = if rebuild.unwrap_or(false) {
-            slot.store.rebuild_graph()
-        } else {
-            slot.store.scan_refresh()
-        };
-        if focus_scan {
-            crate::flight::record_timing("rescan.scan", began.elapsed());
-        }
-        let Ok(target) = scanned else {
-            crate::debug::diag("watcher-focus-rescan-failed");
-            return emit_rescan_complete(&app, &label, sequence);
-        };
-        if slot.rescan.wait(target, sequence) {
-            emit_rescan_complete(&app, &label, sequence);
-        }
-    });
+        run_rescan(
+            &slot.store,
+            &slot.rescan,
+            rebuild.unwrap_or(false),
+            queued,
+            sequence,
+            || emit_rescan_complete(&app, &label, sequence),
+        )
+    })
+    .await
+    .map_err(|error| format!("rescan stopped: {error}"))?
+}
+
+/// One rescan: scan (or rebuild), then answer `sequence`, calling `complete`
+/// now if publication already dispatched its events, or leaving it to the
+/// dispatch thread. A failed scan publishes nothing and completes nothing:
+/// it is logged and returned (I-9).
+fn run_rescan(
+    store: &tine_store::Store,
+    rescan: &RescanCursor,
+    rebuild: bool,
+    queued: Instant,
+    sequence: u64,
+    complete: impl FnOnce(),
+) -> Result<u64, String> {
+    // GH #623: how long the blocking pool kept the scan waiting, and how
+    // long the scan itself took, reach the diagnostics as numbers.
+    let focus_scan = !rebuild;
+    if focus_scan {
+        crate::flight::record_timing("rescan.queue", queued.elapsed());
+    }
+    let began = std::time::Instant::now();
+    let scanned = if rebuild {
+        store.rebuild_graph()
+    } else {
+        store.scan_refresh()
+    };
+    if focus_scan {
+        crate::flight::record_timing("rescan.scan", began.elapsed());
+    }
+    let target = scanned.map_err(|error| {
+        let message = format!("rescan failed: {error:?}");
+        crate::debug::diag_private("watcher-focus-rescan-failed", &message);
+        message
+    })?;
+    if rescan.wait(target, sequence) {
+        complete();
+    }
     Ok(sequence)
 }
 
@@ -515,6 +540,31 @@ mod tests {
         assert_eq!(own[0].1["answers"], answers);
         assert_eq!(own[0].1["changes"], serde_json::json!([]));
         assert!(page_event_payloads(vec![], 7, None).is_empty());
+    }
+
+    /// REG-OG-C5-L08-B1 (I-9): a rescan whose scan fails returns the failure
+    /// and completes nothing. Before, it emitted the same completion as a
+    /// success, so Settings recorded a finished rescan and no error showed.
+    #[test]
+    fn failed_rescan_returns_its_error_and_never_completes() {
+        let root = std::env::temp_dir().join(format!("tine-rescan-failure-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        let (store, _, _) = tine_store::Store::open(&root, Default::default()).unwrap();
+        store.close();
+        let cursor = RescanCursor::default();
+        let mut completed = false;
+        for rebuild in [false, true] {
+            let result = run_rescan(&store, &cursor, rebuild, Instant::now(), 1, || {
+                completed = true
+            });
+            assert!(
+                result.is_err(),
+                "I-9: a failed rescan must reach the caller as an error; exemplar watcher.rs run_rescan"
+            );
+        }
+        assert!(!completed, "a failed rescan must not report completion");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn page(index: usize) -> GraphChange {
