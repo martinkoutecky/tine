@@ -41,7 +41,11 @@ use crate::query::macro_text::{self, FormFamily};
 /// before returning (§4.3.1). `Tql` is the text PANE's rendering: the editing
 /// form, multi-line, never options, never checked for macro safety because it
 /// is never written to a document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The serde names (`og`, `tql`, `tql_macro`, `advanced_macro`) are the
+/// `query_print` command's wire values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PrintDialect {
     /// The OG DSL, for `{{query …}}`. Partial: defined only where
     /// [`og_expressible`] holds.

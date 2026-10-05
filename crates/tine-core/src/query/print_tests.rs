@@ -1214,3 +1214,22 @@ fn the_printer_spells_every_attribute_with_the_one_ir_spelling() {
         }
     }
 }
+
+#[test]
+fn the_print_dialect_wire_names_are_the_query_print_command_values() {
+    for (dialect, wire) in [
+        (PrintDialect::Og, "og"),
+        (PrintDialect::Tql, "tql"),
+        (PrintDialect::TqlMacro, "tql_macro"),
+        (PrintDialect::AdvancedMacro, "advanced_macro"),
+    ] {
+        assert_eq!(
+            serde_json::to_string(&dialect).unwrap(),
+            format!("\"{wire}\"")
+        );
+        assert_eq!(
+            serde_json::from_str::<PrintDialect>(&format!("\"{wire}\"")).unwrap(),
+            dialect
+        );
+    }
+}
