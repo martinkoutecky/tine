@@ -1,7 +1,8 @@
 import { createRoot, createSignal } from "solid-js";
 import { pushToast } from "../toasts";
 import { clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock, node as docNode } from "../document";
-import { endEdit, startEditing } from "../editorController";
+import { editingId, endEdit, startEditing } from "../editorController";
+import { graphOwner } from "../owned";
 import { isSheetCellHidden, splitProps } from "../editor/properties";
 import {
   registerEditingStartListener,
@@ -840,7 +841,13 @@ function cellElement(sel: CellSelInput): HTMLElement | null {
 }
 
 function replaceThroughMountedEditor(sel: CellSelInput, text: string): void {
+  // The editor mounts a tick later and is found by grid coordinates, which are
+  // the same in every graph and for every editor. The typed text belongs to the
+  // editor the keystroke started, in the graph it started in (I-20).
+  const started = editingId();
+  const owner = graphOwner();
   const apply = () => {
+    if (!owner() || editingId() !== started) return true;
     const textarea = cellElement(sel)?.querySelector("textarea.block-editor") as HTMLTextAreaElement | null;
     if (!textarea) return false;
     textarea.value = text;
