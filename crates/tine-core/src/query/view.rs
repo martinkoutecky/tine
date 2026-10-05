@@ -798,6 +798,41 @@ mod tests {
         assert!(merged.sort.is_empty());
     }
 
+    /// I-12: the aggregate-list grammar has one authority (`parse_col_aggregates`);
+    /// the frontend's `decodeAggregateSegment(_, "query")` (Display editor and
+    /// schema rename) reads this same golden (`src/sheet/ogDupd3Codecs.test.ts`).
+    /// `TINE_UPDATE_GOLDEN=1` rewrites the expectations from this parser.
+    #[test]
+    fn the_shared_col_aggregates_golden_parses_as_recorded() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/i12-col-aggregates-golden.json");
+        let mut golden: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).expect("golden parses");
+        let update = std::env::var("TINE_UPDATE_GOLDEN").as_deref() == Ok("1");
+        for case in golden["cases"].as_array_mut().expect("cases") {
+            let value = case[0].as_str().unwrap().to_owned();
+            let actual: Vec<serde_json::Value> = parse_col_aggregates(&value)
+                .into_iter()
+                .map(|(field, agg)| {
+                    let name = match agg {
+                        AggFn::Count => "count",
+                        AggFn::Sum => "sum",
+                        AggFn::Avg => "avg",
+                    };
+                    serde_json::json!([field.as_str(), name])
+                })
+                .collect();
+            if update {
+                case[1] = serde_json::Value::Array(actual);
+            } else {
+                assert_eq!(case[1], serde_json::Value::Array(actual), "{value:?}");
+            }
+        }
+        if update {
+            std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&golden).unwrap())).unwrap();
+        }
+    }
+
     #[test]
     fn the_view_properties_parse_the_forms_section_7_6_persists() {
         let merged = merge_block_property_view(

@@ -88,8 +88,9 @@ export function decodeAggregateSegment(segment: string, policy: "sheet" | "query
   const fn = segment.slice(fnStart, fnEnd);
   const normalized = fn.toLowerCase();
   if (policy === "query") {
-    // Stable's query codec permits whitespace before '=', but none after it.
-    if (fnStart !== eq + 1 || !isQueryAggregateFn(normalized)) return null;
+    // Rust `parse_col_aggregate_segment` trims both sides of '='; the shared
+    // golden tests/fixtures/i12-col-aggregates-golden.json pins this policy.
+    if (!isQueryAggregateFn(normalized)) return null;
   } else if (keyStart === keyEnd || (!isAggregateFn(normalized) && !(policy === "rename" && normalized === "avg"))
     || (policy === "sheet" && fn !== normalized)) return null;
   return { keyStart, keyEnd, fn };
