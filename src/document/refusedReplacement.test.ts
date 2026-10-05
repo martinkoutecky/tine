@@ -155,6 +155,18 @@ describe("the PDF-notes refresh never drops a highlight write it declined", () =
     expect(applied).toBe(false);
   });
 
+  it("shows a sticky error when the deferred refresh fails, instead of dropping it unhandled", async () => {
+    const notes = "hls__failing";
+    vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);
+    install(file(notes, "pages/hls__failing.md", ["old note"], "page"));
+    startEditing(pageByName(notes)!.roots[0], 0);
+    vi.spyOn(backend(), "getPage").mockRejectedValue(new Error("disk unreadable"));
+    expect(await reloadHlsIfLoaded(notes)).toBe(false);
+    endEdit("blur");
+    await vi.waitFor(() => expect(toasts().some((t) => t.kind === "error" && t.message.includes("refresh a page"))).toBe(true));
+    expect(raws(notes)).toEqual(["old note"]);
+  });
+
   it("applies at once when the notes page is idle", async () => {
     const notes = "hls__paper";
     install(file(notes, "pages/hls__paper.md", ["old note"], "page"));

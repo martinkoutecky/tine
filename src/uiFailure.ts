@@ -33,7 +33,6 @@ export type UiFailureFamily =
   | "graph-verification"
   | "unreadable-files"
   | "asset-read"
-  | "page-delete"
   | "page-refresh"
   | "logbook"
   | "marker-cycle"
@@ -43,7 +42,6 @@ export type UiFailureFamily =
 const MESSAGES: Record<UiFailureFamily, string> = {
   "custom-css": "Couldn't read custom.css. No custom CSS was applied.",
   "asset-read": "Couldn't read a file from this graph's assets. It may be unreadable.",
-  "page-delete": "Couldn't delete the page. It was not removed.",
   "page-refresh": "Couldn't refresh a page after a change. Reopen it to see the latest.",
   "logbook": "Couldn't update the time-tracking entry.",
   "marker-cycle": "Couldn't update the task marker.",
