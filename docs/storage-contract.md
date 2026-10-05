@@ -192,8 +192,9 @@ Full runtime graph-text scans with unchanged configuration enumerate metadata ou
 They validate the cache generation and publication revision after acquiring the
 writer, retrying an observation crossed by an own edit or another publication.
 Only changed or racy paths are sorted for reconciliation; unchanged files retain
-their known revisions. Config changes and failed-load recovery retain full
-enumeration and reparse under the writer. Applying detected changes remains writer-ordered, including
+their known revisions. Config changes enumerate and reparse under the writer.
+Failed-load recovery retains its synchronous full parse followed by writer-ordered
+reconciliation. Applying detected changes remains writer-ordered, including
 racy rehashes, unreadable subtree retention and ordinary external publication.
 
 Search page rows read authored properties through the shared `page_facets`

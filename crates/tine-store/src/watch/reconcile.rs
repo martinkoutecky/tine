@@ -44,9 +44,11 @@ impl Core {
         self.reconcile_inner(paths, include_config, false, Some(batch), trigger)
     }
 
-    /// Keep graph-sized enumeration outside the page/save writer. A publication
-    /// or cache change while collecting invalidates the observation: retry rather
-    /// than replacing a newer own-write baseline with older directory metadata.
+    /// Enumerate unchanged-config metadata outside the page/save writer. Config
+    /// changes retain full enumeration and reparse under the writer; failed-load
+    /// recovery uses the separate writer-ordered reconciliation entry point. A
+    /// publication or cache change while collecting invalidates the observation:
+    /// retry rather than replacing a newer own-write baseline with older metadata.
     fn reconcile_full(
         &self,
         include_config: bool,
