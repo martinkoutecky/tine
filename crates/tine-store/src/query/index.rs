@@ -198,12 +198,17 @@ pub(crate) fn atom_format(entry: &PageEntry) -> AtomFormat {
 /// never the table.
 #[derive(Clone, Default)]
 struct Postings {
-    base: Arc<HashMap<String, Arc<BTreeSet<String>>>>,
-    delta: HashMap<String, Arc<BTreeSet<String>>>,
+    base: Arc<HashMap<String, PathSet>>,
+    delta: HashMap<String, PathSet>,
 }
 
+/// The pages holding one key. Persistent, so one page joining or leaving a
+/// popular key's set copies O(log holders) nodes, never every holder's path
+/// (I-25; exemplar model/persistent.rs).
+pub(super) type PathSet = crate::model::persistent::Map<String, ()>;
+
 impl Postings {
-    fn get(&self, key: &str) -> Option<&Arc<BTreeSet<String>>> {
+    fn get(&self, key: &str) -> Option<&PathSet> {
         let set = self.delta.get(key).or_else(|| self.base.get(key))?;
         (!set.is_empty()).then_some(set)
     }
@@ -211,7 +216,7 @@ impl Postings {
     /// Every key that has at least one member. O(keys), used only when a
     /// declaration moved (a key is matched to its page by `page_key`).
     fn keys(&self) -> Vec<&str> {
-        fn live<'a>((key, set): (&'a String, &Arc<BTreeSet<String>>)) -> Option<&'a str> {
+        fn live<'a>((key, set): (&'a String, &PathSet)) -> Option<&'a str> {
             (!set.is_empty()).then_some(key.as_str())
         }
         self.delta
@@ -231,13 +236,15 @@ impl Postings {
         let mut delta = self.delta.clone();
         for (key, path, added) in changes {
             let current = delta.get(key).or_else(|| self.base.get(key));
-            let mut set = current.map(|set| (**set).clone()).unwrap_or_default();
+            // A persistent set: this clone shares every node, and the insert or
+            // remove below copies O(log holders) of them (I-25).
+            let mut set = current.cloned().unwrap_or_default();
             if *added {
-                set.insert(path.clone());
+                set.insert(path.clone(), ());
             } else {
                 set.remove(path);
             }
-            delta.insert(key.clone(), Arc::new(set));
+            delta.insert(key.clone(), set);
         }
         if delta.len() <= FACTS_DELTA_MAX {
             return Postings {
@@ -378,13 +385,13 @@ impl QueryIndex {
             facts.insert(path.to_owned(), page_facts);
         }
         let group = |changes: &[(String, String, bool)]| {
-            let mut by_key: HashMap<String, Arc<BTreeSet<String>>> = HashMap::new();
-            let mut sets: HashMap<&str, BTreeSet<String>> = HashMap::new();
+            let mut by_key: HashMap<String, PathSet> = HashMap::new();
+            let mut sets: HashMap<&str, Vec<(String, ())>> = HashMap::new();
             for (key, path, _) in changes {
-                sets.entry(key).or_default().insert(path.clone());
+                sets.entry(key).or_default().push((path.clone(), ()));
             }
-            for (key, set) in sets {
-                by_key.insert(key.to_owned(), Arc::new(set));
+            for (key, paths) in sets {
+                by_key.insert(key.to_owned(), paths.into_iter().collect());
             }
             Postings {
                 base: Arc::new(by_key),
@@ -588,7 +595,7 @@ impl QueryIndex {
             let paths: BTreeSet<&String> = holders
                 .into_iter()
                 .chain(declarers)
-                .flat_map(|set| set.iter())
+                .flat_map(|set| set.iter().map(|(path, _)| path))
                 .collect();
             let mut rows = Vec::new();
             let mut metas: HashMap<&str, PageMeta> = HashMap::new();
@@ -751,6 +758,23 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn registry_builds() -> usize {
     REGISTRY_BUILDS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+mod postings_shape_guard {
+    /// I-25 shape guard: a posting set cloned per edit is O(holders) for a
+    /// popular key. Rule: key postings are `PathSet` (persistent), never a
+    /// std set; exemplar `model/persistent.rs` and `Postings::applied`.
+    #[test]
+    fn postings_are_persistent_sets_not_std_sets() {
+        let source = include_str!("index.rs");
+        let postings = &source[source.find("struct Postings {").unwrap()..];
+        let body = &postings[..postings.find("\n}").unwrap()];
+        assert!(
+            !body.contains("BTreeSet") && !body.contains("HashSet"),
+            "I-25: Postings must hold persistent PathSet values, not std sets: {body}"
+        );
+    }
 }
 
 #[cfg(test)]

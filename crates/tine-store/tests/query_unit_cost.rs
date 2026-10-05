@@ -286,3 +286,38 @@ fn a_property_edit_patches_the_registry_per_page_not_per_graph() {
         );
     }
 }
+
+/// An edit that makes the page a holder of a key every other page already
+/// holds moves one posting of that key. The posting sets are shared
+/// structure, so the edit copies O(log holders) tree nodes, never every
+/// holder's path (checkpoint-5 L02 B3, I-25; exemplar model/persistent.rs).
+/// `status::` is held by all 9,999 other pages of this fixture.
+#[test]
+fn a_popular_property_edit_does_not_copy_the_key_postings() {
+    let _case = CASE_LOCK.lock().unwrap();
+    for blocks in [1, 60] {
+        let edits = ["settle", "before\nstatus:: s1"];
+        let small = probe_edit(20, blocks, true, edits);
+        let large = probe_edit(10_000, blocks, true, edits);
+        let copies = |p: &Probe| p.save.query_facts_copies + p.query.query_facts_copies;
+        eprintln!(
+            "I-25 popular key: blocks={blocks} facts_copies 20 pages={} 10k pages={}; tree nodes {} / {}",
+            copies(&small),
+            copies(&large),
+            small.save.shared_tree_node_copies + small.query.shared_tree_node_copies,
+            large.save.shared_tree_node_copies + large.query.shared_tree_node_copies
+        );
+        assert!(
+            copies(&large) <= 256,
+            "I-25: adding a page to a 10k-holder property key copied {} index entries; \
+             exemplar model/persistent.rs (shared postings, no per-edit set copy)",
+            copies(&large)
+        );
+        let nodes = large.save.shared_tree_node_copies + large.query.shared_tree_node_copies;
+        assert!(
+            nodes <= 512,
+            "I-25: the same edit copied {nodes} shared-tree nodes on a 10k graph; \
+             O(log holders) is a few dozen"
+        );
+    }
+}

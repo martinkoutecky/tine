@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- Editing a page so it gains a property that many pages already have no longer copies the whole list of those pages in the query index (REG-OG-C5-Q-POSTINGS-COST).
 - A used_as_tag query's remembered answer now counts its tag-key set toward the memory budget (REG-OG-C5-Q-MEMO-TAGSET).
 - Quick-switcher page search with more candidates than slots no longer evicts a better name match in favour of a content match (REG-OG-C5-Q-PAGE-HEAP-ORDER).
 - Asking why a query with thousands of conditions returned nothing no longer builds a quadratic explanation plan; queries over 64 conditions are explained as one whole condition (REG-OG-C5-Q-EXPLAIN-COST).
