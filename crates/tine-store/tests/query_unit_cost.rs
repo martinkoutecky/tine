@@ -25,6 +25,7 @@ unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if COUNTING.load(Ordering::Relaxed) {
             ALLOCATED.fetch_add(layout.size() as u64, Ordering::Relaxed);
+            note_own(layout.size() as u64);
         }
         unsafe { System.alloc(layout) }
     }
@@ -37,6 +38,7 @@ unsafe impl GlobalAlloc for Counting {
                 new_size.saturating_sub(layout.size()) as u64,
                 Ordering::Relaxed,
             );
+            note_own(new_size.saturating_sub(layout.size()) as u64);
         }
         unsafe { System.realloc(ptr, layout, new_size) }
     }
@@ -44,6 +46,20 @@ unsafe impl GlobalAlloc for Counting {
 
 #[global_allocator]
 static GLOBAL: Counting = Counting;
+
+// Bytes allocated by the measuring thread itself, to attribute the process-wide
+// count: the rest comes from concurrent threads (the `tine-graph-load` warm
+// cache, the watcher), which are not the measured operation's work.
+thread_local! {
+    static MEASURER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+static OWN: AtomicU64 = AtomicU64::new(0);
+
+fn note_own(bytes: u64) {
+    if MEASURER.try_with(|m| m.get()).unwrap_or(false) {
+        OWN.fetch_add(bytes, Ordering::Relaxed);
+    }
+}
 
 static CASE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -187,7 +203,9 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
 
 #[test]
 fn a_query_side_edit_cost_does_not_grow_with_the_graph() {
-    let _case = CASE_LOCK.lock().unwrap();
+    let _case = CASE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     for blocks in [1, 60] {
         let small = probe(20, blocks, true);
         let large = probe(10_000, blocks, true);
@@ -252,7 +270,9 @@ fn a_query_side_edit_cost_does_not_grow_with_the_graph() {
 /// probe on a text edit reads no page at all).
 #[test]
 fn a_property_edit_patches_the_registry_per_page_not_per_graph() {
-    let _case = CASE_LOCK.lock().unwrap();
+    let _case = CASE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     for blocks in [1, 60] {
         let edits = ["before\nrare:: v1", "before\nrare:: v2"];
         let small = probe_edit(20, blocks, true, edits);
@@ -294,7 +314,9 @@ fn a_property_edit_patches_the_registry_per_page_not_per_graph() {
 /// `status::` is held by all 9,999 other pages of this fixture.
 #[test]
 fn a_popular_property_edit_does_not_copy_the_key_postings() {
-    let _case = CASE_LOCK.lock().unwrap();
+    let _case = CASE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     for blocks in [1, 60] {
         let edits = ["settle", "before\nstatus:: s1"];
         let small = probe_edit(20, blocks, true, edits);
@@ -329,8 +351,10 @@ fn a_popular_property_edit_does_not_copy_the_key_postings() {
 /// a key that declares none).
 #[test]
 fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
-    let _case = CASE_LOCK.lock().unwrap();
-    fn save_bytes(aliases: bool) -> u64 {
+    let _case = CASE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    fn save_bytes(aliases: bool) -> (u64, u64) {
         static NEXT: AtomicU64 = AtomicU64::new(2_000_000);
         let root = std::env::temp_dir().join(format!(
             "tine-query-alias-carry-{}-{}",
@@ -352,11 +376,18 @@ fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
         let id = PageId::from("pages/Page00000.md".to_string());
         // Build the alias list of the current generation.
         store.whole_graph().unwrap().backlinks("Page00003").unwrap();
-        let mut measured = 0;
-        for text in ["settle", "after"] {
+        // Concurrent background threads allocate into the process-wide count
+        // at random (Windows CI saw the same save measure 0.3 MB and 1.5 MB).
+        // That noise only adds, while a real alias-list copy recurs in every
+        // save, so the minimum over several saves is the save's own cost.
+        let mut measured = u64::MAX;
+        let mut own = u64::MAX;
+        for (index, text) in ["settle", "a", "b", "c", "d", "e"].into_iter().enumerate() {
             let read = store.page(&id).unwrap();
             let mut doc = read.doc;
             doc.blocks[0].raw = text.into();
+            OWN.store(0, Ordering::Relaxed);
+            MEASURER.with(|m| m.set(true));
             let (outcome, bytes, _) = measure(|| {
                 store.save(
                     tine_store::EditKind::ReplacePage,
@@ -365,20 +396,33 @@ fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
                     &doc,
                 )
             });
+            MEASURER.with(|m| m.set(false));
+            let own_bytes = OWN.load(Ordering::Relaxed);
             assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+            eprintln!(
+                "I-25 alias carry sample aliases={aliases} save={index}: process={bytes} \
+                 measuring-thread={own_bytes} other-threads={}",
+                bytes - own_bytes.min(bytes)
+            );
             // Re-read so the next generation's list is built before the
             // measured save carries it.
             store.whole_graph().unwrap().backlinks("Page00003").unwrap();
-            measured = bytes;
+            if index > 0 {
+                measured = measured.min(bytes);
+                own = own.min(own_bytes);
+            }
         }
         store.close();
         let _ = fs::remove_dir_all(&root);
-        measured
+        (measured, own)
     }
     save_bytes(false); // one-time process work, not the edit's
-    let without = save_bytes(false);
-    let with = save_bytes(true);
-    eprintln!("I-25 alias carry: save bytes without aliases={without} with 10k aliases={with}");
+    let (without, without_own) = save_bytes(false);
+    let (with, with_own) = save_bytes(true);
+    eprintln!(
+        "I-25 alias carry: save bytes without aliases={without} with 10k aliases={with} \
+         (measuring thread: {without_own} / {with_own})"
+    );
     assert!(
         with <= without + 256 * 1024,
         "I-25: a save carrying a 10k-alias list allocated {with} bytes vs {without} without \

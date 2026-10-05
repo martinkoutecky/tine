@@ -69,13 +69,18 @@ fn case_only_rename_changes_filename_title_refs_and_namespace() {
 #[test]
 fn case_move_io_failure_restores_source_and_preserves_refs() {
     use tine_store::FaultPoint;
-    for (point, alias) in [
-        (FaultPoint::DirectorySyncIo, false),
+    let mut cases = vec![
         (FaultPoint::MoveAfterTrashCopyIo, false),
         (FaultPoint::MidStepIoAt(0), false),
         (FaultPoint::MoveAfterTrashCopyIo, true),
         (FaultPoint::MidStepIoAt(0), true),
-    ] {
+    ];
+    // Directory sync exists only on Unix targets (Windows has no directory
+    // flush), so the DirectorySyncIo fault is armed only there.
+    if cfg!(unix) {
+        cases.insert(0, (FaultPoint::DirectorySyncIo, false));
+    }
+    for (point, alias) in cases {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
         fs::write(dir.path().join("pages/old.md"), "- [[old]]\n").unwrap();
@@ -207,10 +212,36 @@ fn a_competing_destination_before_case_move_is_never_overwritten() {
     let src = store.file_id(Area::Pages, "old.md").unwrap();
     let dst = store.file_id(Area::Pages, "Old.md").unwrap();
     let rev = store.read(&src, None).unwrap().1;
+    // On a case-folding filesystem (Windows NTFS, default macOS APFS) `Old.md`
+    // names the source itself, so no distinct competing entry can exist: the
+    // injected writer's no-replace create must fail, the case move publishes,
+    // and the original bytes survive under the one requested spelling.
+    let folding = dir.path().join("pages/Old.md").exists();
     store.inject_fault(FaultPoint::NoReplaceCollision);
     let mut tx = store.transaction(Some(EditKind::RenamePage));
     tx.move_file(&src, rev, &dst, None);
-    assert!(matches!(tx.commit(), TxOutcome::NotCommitted { .. }));
+    let outcome = tx.commit();
+    if folding {
+        assert!(
+            matches!(outcome, TxOutcome::Committed { .. }),
+            "{outcome:?}"
+        );
+        let names: Vec<_> = fs::read_dir(dir.path().join("pages"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["Old.md"]);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("pages/Old.md")).unwrap(),
+            "- original\n"
+        );
+        store.close();
+        return;
+    }
+    assert!(
+        matches!(outcome, TxOutcome::NotCommitted { .. }),
+        "{outcome:?}"
+    );
     assert_eq!(
         fs::read_to_string(dir.path().join("pages/Old.md")).unwrap(),
         "external collision"
