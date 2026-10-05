@@ -83,3 +83,4 @@ see the project `CLAUDE.md`.
 | [0068](0068-bounded-desktop-cli.md) | The desktop binary exposes a bounded, scriptable CLI: one clap schema owns parse, help, man pages and forwarded launches (og-D port of master 0068) | Proposed |
 | [0070](0070-og-launch-checkpoint.md) | A dumb launch checkpoint in app data serves the last published generation at launch, then a full stat diff reconciles it before Ready (GH #623) | Accepted |
 | [0071](0071-open-only-tine-links.md) | External tine:// links use lazy graph UUIDs and open existing graph, page or block targets | Accepted |
+| [0072](0072-window-large-outlines.md) | Window large outline shells with measured re-entry geometry (GH #623) | Accepted |

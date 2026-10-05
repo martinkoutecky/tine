@@ -1,3 +1,4 @@
+import { revealOutlineBlock } from "./outlineViewport";
 import { captureEditorScrollAnchor } from "./editor/scrollAnchor";
 import { batch, createSignal } from "solid-js";
 import { renderedBlocks } from "./lazyObserve";
@@ -207,6 +208,7 @@ export function startEditing(
   surface: string | null = null,
   preserveHistoryRestore = false,
 ) {
+  revealOutlineBlock(id);
   if (!preserveHistoryRestore) setPendingHistoryEditorRestore(null);
   notifyEditingStarted(id, owner);
   // Latch the block so that when editing ends its body renders eagerly (no

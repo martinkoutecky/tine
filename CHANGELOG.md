@@ -92,6 +92,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Settings → About: **Check for updates automatically** can disable startup update checks and notifications on this device; manual checks remain available (GH #618).
 
 ### Changed
+- Large outlines window offscreen block shells, speeding page open, revisit and cleanup while retaining editing and navigation (GH #623).
 
 - Android Back follows the one Back ladder used everywhere (GH #492): it dismisses an open dialog, menu or image first, then closes an open drawer, then steps back through page history, and exits only at the root; a failed exit keeps the screen shield up and the next Back retries only the exit.
 - Launch: Tine reopens a graph from a checkpoint of its last state in app data, then checks every file's date and size and rereads only what changed before the graph is ready; the checkpoint includes remembered query and backlinks answers, and is written about a minute after editing pauses (at most every 5 minutes), or 5 seconds after a launch that had none (GH #623).

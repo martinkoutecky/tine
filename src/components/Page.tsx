@@ -1,3 +1,4 @@
+import { BlockList } from "./BlockList";
 import { reportUiFailure } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
@@ -1098,7 +1099,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
             </div>
           )}
         </Show>
-        <For each={rootsToRender()}>{(id) => <Block id={id} />}</For>
+        <BlockList ids={rootsToRender()} />
       </div>
       {props.children}
       <PageTypingTarget page={() => props.page} surface={editSurface()} />

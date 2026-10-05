@@ -8,15 +8,20 @@ import { PageView } from "./Page";
 
 class OffscreenObserver {
   static current: OffscreenObserver;
+  static all: OffscreenObserver[] = [];
   targets = new Set<Element>();
-  constructor(private callback: IntersectionObserverCallback) { OffscreenObserver.current = this; }
+  constructor(private callback: IntersectionObserverCallback) { OffscreenObserver.current = this; OffscreenObserver.all.push(this); }
   observe(target: Element) { this.targets.add(target); }
   unobserve(target: Element) { this.targets.delete(target); }
   disconnect() {}
-  revealFirst() { this.callback([{ target: [...this.targets][0], isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver); }
+  revealFirst() {
+    const body = OffscreenObserver.all.find((observer) => [...observer.targets].some((el) => el.classList.contains("ast-deferred")))!;
+    body.callback([{ target: [...body.targets][0], isIntersecting: true } as IntersectionObserverEntry], body as unknown as IntersectionObserver);
+  }
 }
 
 afterEach(() => {
+  OffscreenObserver.all = [];
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   resetNearObserverForTests();
@@ -41,8 +46,10 @@ it("I-25: routed large-page opening keeps offscreen bodies unparsed when native 
   (window as unknown as { __tineParseStats: typeof stats }).__tineParseStats = stats;
   const dispose = render(() => <PageView />, host);
   try {
-    await vi.waitFor(() => expect(host.querySelectorAll(".ls-block")).toHaveLength(count));
-    expect(host.querySelectorAll(".ast-deferred")).toHaveLength(count);
+    await vi.waitFor(() => expect(host.querySelectorAll(".ls-block").length).toBeGreaterThan(0));
+    const shells = host.querySelectorAll(".ls-block").length;
+    expect(shells).toBeLessThan(100);
+    expect(host.querySelectorAll(".ast-deferred")).toHaveLength(shells);
     expect(host.querySelector(".ast-deferred")?.textContent).toBe(blocks[0].raw);
     expect(stats.misses, "I-25: property chrome must reuse native negative facets; see render/facets.ts").toBe(0);
     OffscreenObserver.current.revealFirst();

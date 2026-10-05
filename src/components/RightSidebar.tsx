@@ -1,3 +1,4 @@
+import { BlockList } from "./BlockList";
 import { resizeSidebar, commitSidebarWidth } from "../sidebarSizing";
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
 import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, type SidebarBlock, type SidebarItem } from "../ui";
@@ -320,7 +321,7 @@ function PageItem(props: {
       <Show when={!props.collapsed}>
         <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}>
           <div id={bodyId} class="rs-item-body">
-            <For each={page()!.roots}>{(id) => <Block id={id} />}</For>
+            <BlockList ids={page()!.roots} />
             {/* The same producer the main pane uses: a page opened only here still
                 gets its phantom empty bullet and a trailing target (GH #483). */}
             <PageTypingTarget page={page} surface={props.surfaceKey} />
