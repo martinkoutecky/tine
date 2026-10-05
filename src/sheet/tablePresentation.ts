@@ -1,5 +1,4 @@
 import type { FieldId } from "./fields";
-import type { SortDir } from "../editor/queryIr";
 import { isSheetBuiltinField, SCHEMA_PROP_TYPES } from "./config";
 export { SCHEMA_PROP_TYPES };
 
@@ -72,10 +71,4 @@ export function reorderedQueryColumns(fields: readonly FieldId[], from: FieldId,
   order.splice(at < 0 ? order.length : at + (before ? 0 : 1), 0, from);
   const names = order.map(queryColumnName);
   return names.every((name): name is string => name !== null) ? names : null;
-}
-
-/** Ascending, descending, then cleared for a saved single-key sort. */
-export function nextQuerySort(current: [string, SortDir][] | undefined, field: string): [string, SortDir][] {
-  if (current?.length !== 1 || current[0][0] !== field) return [[field, "asc"]];
-  return current[0][1] === "asc" ? [[field, "desc"]] : [];
 }

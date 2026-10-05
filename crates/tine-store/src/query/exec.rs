@@ -96,7 +96,33 @@ impl Plan {
                 super::memo::retained::serialized_bytes(registry.rows())
                     .saturating_add(super::memo::retained::parse_config_bytes(registry.config()))
             }))
+            // The graph-wide tag-target set is owned by this plan (built once
+            // per plan, not shared across memo entries), so every retained
+            // entry holds its own copy of up to one key per tagged page.
+            .saturating_add(self.tag_targets.as_ref().map_or(0, |targets| {
+                super::memo::retained::serialized_bytes(&**targets)
+            }))
             .saturating_add(std::mem::size_of::<Self>())
+    }
+
+    /// Whether an answer depends on the wall-clock instant rather than the
+    /// day: a date bound spelled `now` resolves to the evaluation's
+    /// milliseconds (`resolve_timestamp_token`); every other date token is
+    /// anchored at the day's midnight. The memo files answers per day, so a
+    /// clock-reading answer must not be retained (checkpoint-5 L02 B3).
+    pub(super) fn reads_clock(&self) -> bool {
+        fn is_now(value: &tine_core::query::ir::Value) -> bool {
+            use tine_core::query::ir::Value;
+            match value {
+                Value::Date { literal } => literal.trim().eq_ignore_ascii_case("now"),
+                Value::List { items } => items.iter().any(is_now),
+                _ => false,
+            }
+        }
+        self.filter.any_leaf(&mut |leaf| match leaf {
+            Leaf::Attr { value, .. } => is_now(value),
+            Leaf::Rel { .. } => false,
+        })
     }
 
     /// `block_rows` evaluates a `@page` query block-anchored (page attributes
@@ -1115,7 +1141,20 @@ pub(crate) fn run_query_at(
     max_bytes: usize,
     today: JournalDate,
 ) -> (BoundedGroups, Arc<Plan>) {
-    let (query, view) = parse_query_text(source, QueryDialect::Og, today);
+    run_dialect_query_at(graph, QueryDialect::Og, source, max_rows, max_bytes, today)
+}
+
+/// [`run_query_at`] for a source in either dialect (`{{query}}` is OG text,
+/// `{{tine-query}}` is TQL); Copy/Export reads the macro name, not the text.
+pub(crate) fn run_dialect_query_at(
+    graph: &impl GraphRead,
+    dialect: QueryDialect,
+    source: &str,
+    max_rows: usize,
+    max_bytes: usize,
+    today: JournalDate,
+) -> (BoundedGroups, Arc<Plan>) {
+    let (query, view) = parse_query_text(source, dialect, today);
     let resolved = resolve_for_execution(&query, &ExecutionContext::none(), today);
     run_block_groups(graph, &resolved, &view, max_rows, max_bytes)
 }

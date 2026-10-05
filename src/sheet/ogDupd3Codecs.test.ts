@@ -9,6 +9,7 @@ import { parseFormula } from "./formula/parser";
 import { parseDurationValue } from "./formula/value";
 import { hiccupToHtml } from "../render/hiccup";
 import { parseDelimitedText } from "./tsv";
+import golden from "../../tests/fixtures/i12-col-aggregates-golden.json";
 
 it("D35: aggregate codecs retain their named sheet, query and rename policies", () => {
   const raw = "count; prop:cost=sum ;prop:cost=avg;prop:cost=median;opaque";
@@ -18,8 +19,19 @@ it("D35: aggregate codecs retain their named sheet, query and rename policies", 
     value: "count; prop:price=sum ;prop:price=avg;prop:price=median;opaque" });
   expect(decodeAggregateSegment("cost=SUM", "sheet")).toBeNull();
   expect(decodeAggregateSegment("cost=SUM", "query")).not.toBeNull();
-  expect(decodeAggregateSegment("cost= sum", "query")).toBeNull();
+  // I-12: the engine trims both sides of '=' (see the shared col-aggregates golden).
+  expect(decodeAggregateSegment("cost= sum", "query")).not.toBeNull();
   expect(decodeAggregateSegment("cost= sum", "sheet")).not.toBeNull();
+});
+
+it("I-12: the query aggregate codec agrees with the engine's parse_col_aggregates on the shared golden", () => {
+  for (const [value, want] of golden.cases as [string, [string, string][]][]) {
+    const got = value.split(";").flatMap((segment) => {
+      const decoded = decodeAggregateSegment(segment, "query");
+      return decoded ? [[segment.slice(decoded.keyStart, decoded.keyEnd), decoded.fn.toLowerCase()]] : [];
+    });
+    expect(got, JSON.stringify(value)).toEqual(want);
+  }
 });
 
 it("D35: schema rename keeps unknown tokens and whitespace; type admission remains separate", () => {

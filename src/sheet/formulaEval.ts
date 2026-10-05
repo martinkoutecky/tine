@@ -12,7 +12,7 @@ import {
   parseDateValue,
 } from "./formula/value";
 import { isPlainDecimalNumber, isoDatePrefix } from "./typed";
-import { readField, type FieldId, type FieldValue } from "./fields";
+import { fieldValueFromFacets, readField, type FieldId, type FieldValue } from "./fields";
 import type { BlockDto, PageKind } from "../types";
 
 import { appNow } from "../journal";
@@ -87,25 +87,7 @@ export function readFormulaRowField(row: FormulaEvalRow, field: FieldId): FieldV
 
   const f = row.dto ? facetsFromDto(row.dto) : null;
   if (!f) return null;
-  switch (field) {
-    case "state":
-      return f.marker ? { text: f.marker, raw: f.marker } : null;
-    case "priority":
-      return f.priority ? { text: `[#${f.priority}]`, raw: f.priority } : null;
-    case "scheduled":
-      return f.scheduled ? { text: f.scheduled, raw: f.scheduled } : null;
-    case "deadline":
-      return f.deadline ? { text: f.deadline, raw: f.deadline } : null;
-    case "tags":
-      return f.tags.length ? { text: f.tags.map((t) => `#${t}`).join(" "), raw: f.tags.join(" ") } : null;
-    case "page":
-      return { text: row.page, raw: row.page };
-    default: {
-      const key = field.slice(5);
-      const prop = f.properties.find(([k]) => k === key);
-      return prop ? { text: prop[1], raw: prop[1] } : null;
-    }
-  }
+  return fieldValueFromFacets(f, field, row.page);
 }
 
 export function fieldValueToFormulaValue(field: FieldId, value: FieldValue | null): FormulaValue {
@@ -113,8 +95,7 @@ export function fieldValueToFormulaValue(field: FieldId, value: FieldValue | nul
   if (field === "tags") {
     return {
       kind: "list",
-      values: (value.raw ?? value.text)
-        .split(/\s+/)
+      values: (value.items ?? (value.raw ?? value.text).split(/\s+/))
         .map((tag) => tag.trim())
         .filter(Boolean)
         .map(textValue),

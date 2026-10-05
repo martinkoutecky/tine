@@ -7660,6 +7660,20 @@ img.emoji {
   text-overflow: ellipsis;
 }
 
+/* Alias context on a switcher row whose match came through an alias: muted,
+   right-aligned, never longer than a fraction of the row (GH #353). */
+.switcher-alias {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+  flex: 0 1 auto;
+}
+
 .switcher-page {
   color: var(--text-muted);
   font-weight: 500;

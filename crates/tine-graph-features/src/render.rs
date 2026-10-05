@@ -2295,6 +2295,20 @@ pub(crate) fn publish_graph(
 mod tests {
     use super::*;
 
+    /// I-12: `whole_begin_query_payload` and the frontend's `WHOLE_BEGIN_QUERY`
+    /// (components/BeginQuery.tsx, authoritative) read one golden of block raws.
+    #[test]
+    fn begin_query_container_matches_the_shared_frontend_golden() {
+        let golden: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/i12-begin-query-container-golden.json"
+        ))
+        .expect("golden parses");
+        for case in golden["cases"].as_array().expect("cases") {
+            let raw = case[0].as_str().unwrap();
+            assert_eq!(whole_begin_query_payload(raw), case[1].as_str(), "{raw:?}");
+        }
+    }
+
     #[test]
     fn native_destination_preserves_optional_protocol_policy() {
         assert_eq!(

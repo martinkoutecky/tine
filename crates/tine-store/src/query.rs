@@ -422,40 +422,64 @@ fn sorted_alias_owners(
 mod page_names;
 pub(crate) use page_names::{real_page_names, RealPageNames};
 
+/// The alias relation of one generation, indexed once: normalized name to its
+/// alias-adjacent normalized names, and to the spellings it was written with.
+/// A component walk then costs O(component), not O(every alias in the graph)
+/// (I-25); a save that moves no alias carries the whole value by `Arc`.
+#[derive(Default)]
+pub(crate) struct AliasEdges {
+    neighbors: std::collections::HashMap<String, Vec<String>>,
+    originals: std::collections::HashMap<String, Vec<String>>,
+}
+
+impl AliasEdges {
+    pub(crate) fn new(aliases: &[(String, String)]) -> Self {
+        let mut edges = Self::default();
+        for (alias, owner) in aliases {
+            let alias_norm = refs::page_key(alias);
+            let owner_norm = refs::page_key(owner);
+            edges
+                .neighbors
+                .entry(alias_norm.clone())
+                .or_default()
+                .push(owner_norm.clone());
+            edges
+                .neighbors
+                .entry(owner_norm.clone())
+                .or_default()
+                .push(alias_norm.clone());
+            edges
+                .originals
+                .entry(alias_norm)
+                .or_default()
+                .push(alias.clone());
+            edges
+                .originals
+                .entry(owner_norm)
+                .or_default()
+                .push(owner.clone());
+        }
+        edges
+    }
+}
+
 /// Resolve a requested page/alias to its canonical display name, the complete
 /// alias-connected component, and the real page to exclude as self. The
 /// normalized component is shared by backlinks, unlinked references, and their
 /// scoped-invalidation predicates so those paths cannot drift.
 fn equivalent_page_names(
     real_pages: &RealPageNames,
-    aliases: &[(String, String)],
+    edges: &AliasEdges,
     target: &str,
 ) -> (String, Vec<String>, String) {
     let target_norm = refs::page_key(target);
-    let mut neighbors = std::collections::HashMap::<String, Vec<String>>::new();
-    let mut original_names = vec![(target_norm.clone(), target.to_string())];
-    for (alias, owner) in aliases {
-        let alias_norm = refs::page_key(alias);
-        let owner_norm = refs::page_key(owner);
-        neighbors
-            .entry(alias_norm.clone())
-            .or_default()
-            .push(owner_norm.clone());
-        neighbors
-            .entry(owner_norm.clone())
-            .or_default()
-            .push(alias_norm.clone());
-        original_names.push((alias_norm, alias.clone()));
-        original_names.push((owner_norm, owner.clone()));
-    }
-
     let mut component = std::collections::BTreeSet::new();
     let mut pending = vec![target_norm.clone()];
     while let Some(name) = pending.pop() {
         if !component.insert(name.clone()) {
             continue;
         }
-        if let Some(adjacent) = neighbors.get(&name) {
+        if let Some(adjacent) = edges.neighbors.get(&name) {
             pending.extend(adjacent.iter().cloned());
         }
     }
@@ -466,12 +490,18 @@ fn equivalent_page_names(
         .min()
         .cloned()
         .or_else(|| {
-            original_names
-                .iter()
-                .filter(|(key, _)| component.contains(key))
-                .map(|(_, original)| original)
+            // No real page in the component: the least spelling any member
+            // was written with, including the requested one.
+            std::iter::once(target)
+                .chain(
+                    component
+                        .iter()
+                        .filter_map(|name| edges.originals.get(name))
+                        .flatten()
+                        .map(String::as_str),
+                )
                 .min()
-                .cloned()
+                .map(str::to_owned)
         })
         .unwrap_or_else(|| target.to_string());
     let self_page = real_pages
@@ -483,10 +513,9 @@ fn equivalent_page_names(
 
 fn graph_equivalent_page_names(
     graph: &impl GraphRead,
-    aliases: &[(String, String)],
     target: &str,
 ) -> (String, Vec<String>, String) {
-    let mut resolved = equivalent_page_names(&real_page_names(graph), aliases, target);
+    let mut resolved = equivalent_page_names(&real_page_names(graph), &graph.alias_edges(), target);
     let format = journal_format(graph.config());
     let Some(target_day) = format.parse(target) else {
         return resolved;
@@ -857,8 +886,7 @@ fn collect_reference_occurrences_bounded(
 
 #[cfg(test)]
 pub(crate) fn backlinks(graph: &impl GraphRead, target: &str) -> Vec<RefGroup> {
-    let aliases = graph.page_aliases();
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
+    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target);
     collect_reference_occurrences(
         graph,
         &canonical,
@@ -874,8 +902,7 @@ pub(crate) fn backlinks_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
-    let aliases = graph.page_aliases();
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
+    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target);
     collect_reference_occurrences_bounded(
         graph,
         &canonical,
@@ -1009,8 +1036,7 @@ pub(crate) fn backlink_filter_context(
     target: &str,
     targets: &[BacklinkFilterTarget],
 ) -> BacklinkFilterContext {
-    let aliases = graph.page_aliases();
-    let (_, names_norm, _) = graph_equivalent_page_names(graph, &aliases, target);
+    let (_, names_norm, _) = graph_equivalent_page_names(graph, target);
     let excluded_refs = names_norm
         .into_iter()
         .collect::<std::collections::HashSet<_>>();
@@ -1160,8 +1186,7 @@ pub(crate) fn block_referrers_bounded(
 /// with the corresponding occurrence evidence.
 #[cfg(test)]
 pub(crate) fn unlinked_refs(graph: &impl GraphRead, target: &str) -> Vec<RefGroup> {
-    let aliases = graph.page_aliases();
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
+    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target);
     collect_reference_occurrences(
         graph,
         &canonical,
@@ -1177,8 +1202,7 @@ pub(crate) fn unlinked_refs_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
-    let aliases = graph.page_aliases();
-    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, &aliases, target);
+    let (canonical, names_norm, self_page) = graph_equivalent_page_names(graph, target);
     collect_reference_occurrences_bounded(
         graph,
         &canonical,
@@ -1220,7 +1244,7 @@ pub(crate) fn run_query_bounded(
 
 pub(crate) fn page_affects_backlinks(
     real_pages: &RealPageNames,
-    aliases: &[(String, String)],
+    aliases: &AliasEdges,
     journal: &JournalFormat,
     target: &str,
     entry: &PageEntry,
@@ -1263,7 +1287,7 @@ pub(crate) fn page_affects_backlinks(
 /// `unlinked_refs(target)`. Mirrors `unlinked_refs`'s matcher.
 pub(crate) fn page_affects_unlinked(
     real_pages: &RealPageNames,
-    aliases: &[(String, String)],
+    aliases: &AliasEdges,
     journal: &JournalFormat,
     target: &str,
     entry: &PageEntry,
@@ -1881,7 +1905,27 @@ pub(crate) fn export_query_subtrees(
         const QUERY_EXPORT_CONSTRUCTION_ROWS: usize = 20_000;
         const QUERY_EXPORT_CONSTRUCTION_BYTES: usize = 32 * 1024 * 1024;
         // One answerer (I-12): the caller's `advanced` flag is not trusted.
-        let bounded = if tine_core::query::is_advanced(&spec.query) {
+        let bounded = if spec.dialect == tine_core::query::QueryDialect::Tql {
+            // `{{tine-query}}` carries TQL, never datalog; admission is the same
+            // I-22 source limit every dialect passes through `parse_query_text`.
+            if admit_source(&spec.query).is_err() {
+                BoundedGroups {
+                    groups: Vec::new(),
+                    total: 0,
+                    exceeded: false,
+                }
+            } else {
+                exec::run_dialect_query_at(
+                    graph,
+                    spec.dialect,
+                    &spec.query,
+                    QUERY_EXPORT_CONSTRUCTION_ROWS,
+                    QUERY_EXPORT_CONSTRUCTION_BYTES,
+                    JournalDate::today(),
+                )
+                .0
+            }
+        } else if tine_core::query::is_advanced(&spec.query) {
             let (result, exceeded, total) = run_advanced_query_bounded(
                 graph,
                 &spec.query,
@@ -1951,14 +1995,29 @@ pub(crate) fn export_query_subtrees(
         // a page with hundreds of thousands of direct children.
         let total_wanted = wanted_by_page.values().map(HashSet::len).sum::<usize>();
         let mut found: HashMap<(PageKind, String, String), &DocBlock> = HashMap::new();
+        // The page's header property block is a row of a block query (exec.rs
+        // `Hit::PageProperty`) but lives in `Document::pre_block`, not in
+        // `roots`: it is rebuilt here exactly as the query rebuilds it.
+        let mut headers: HashMap<(PageKind, String, String), DocBlock> = HashMap::new();
         for (entry, doc) in pages {
-            if found.len() == total_wanted {
+            if found.len() + headers.len() == total_wanted {
                 break;
             }
             let page_key = (entry.kind, entry.name.clone());
             let Some(wanted) = wanted_by_page.get(&page_key) else {
                 continue;
             };
+            if let Some(header) = doc
+                .pre_block
+                .as_deref()
+                .and_then(|pre| page_property_block(entry, pre))
+                .filter(|header| wanted.contains(header.uuid.as_str()))
+            {
+                headers.insert(
+                    (entry.kind, entry.name.clone(), header.uuid.clone()),
+                    header,
+                );
+            }
             let mut stack: Vec<&DocBlock> = doc.roots.iter().rev().collect();
             while let Some(block) = stack.pop() {
                 let property_id = block.property("id");
@@ -1969,7 +2028,7 @@ pub(crate) fn export_query_subtrees(
                 };
                 if let Some(id) = matched {
                     found.insert((entry.kind, entry.name.clone(), id.to_string()), block);
-                    if found.len() == total_wanted {
+                    if found.len() + headers.len() == total_wanted {
                         break;
                     }
                 }
@@ -1988,7 +2047,8 @@ pub(crate) fn export_query_subtrees(
                 let mut shown = 0usize;
                 let mut omitted_nodes = 0usize;
                 for root in query.roots {
-                    let Some(block) = found.get(&(root.kind, root.page.clone(), root.id.clone()))
+                    let wanted = (root.kind, root.page.clone(), root.id.clone());
+                    let Some(block) = found.get(&wanted).copied().or_else(|| headers.get(&wanted))
                     else {
                         // The graph changed between query evaluation and the
                         // borrowed hydration snapshot. Count the missing result as
@@ -2003,9 +2063,10 @@ pub(crate) fn export_query_subtrees(
                     let emitted = before_nodes.saturating_sub(remaining_nodes);
                     omitted_nodes =
                         omitted_nodes.saturating_add(total_nodes.saturating_sub(emitted));
-                    let Some(dto) = dto else {
+                    let Some(mut dto) = dto else {
                         continue;
                     };
+                    dto.page_property = headers.contains_key(&wanted);
                     shown += 1;
                     if let Some(group) = groups
                         .iter_mut()
@@ -2682,6 +2743,25 @@ mod tests {
             "(between deadline +20d +20d)",
             "TODO z\nDEADLINE: <2026-07-06 Mon>"
         ));
+    }
+
+    #[test]
+    fn a_planning_marker_in_a_fence_or_ending_a_longer_word_is_not_planning() {
+        // OG-C5-Q L02 eval.rs:154: the inline fallback scanned raw bytes, so
+        // documentation of the syntax scheduled the block.
+        let q = "(between scheduled +20d +20d)";
+        assert!(selects(q, "TODO real\nSCHEDULED: <2026-07-06 Mon>"));
+        assert!(!selects(
+            q,
+            "TODO doc\n```\nSCHEDULED: <2026-07-06 Mon>\n```"
+        ));
+        assert!(!selects(q, "TODO doc UNSCHEDULED: <2026-07-06 Mon>"));
+        assert!(!selects(
+            "(between deadline +20d +20d)",
+            "TODO doc\n#+BEGIN_SRC org\nDEADLINE: <2026-07-06 Mon>\n#+END_SRC"
+        ));
+        // The recorded inline-code deviation is unchanged.
+        assert!(selects(q, "TODO doc `SCHEDULED: <2026-07-06 Mon>`"));
     }
 
     #[test]
@@ -4214,7 +4294,7 @@ mod tests {
             "every path-sorted alias edge must reach component resolution"
         );
         assert_eq!(
-            equivalent_page_names(&RealPageNames::new(), &aliases, "Z").0,
+            equivalent_page_names(&RealPageNames::new(), &AliasEdges::new(&aliases), "Z").0,
             "A"
         );
     }
@@ -4432,10 +4512,12 @@ mod tests {
                 QueryExportSpec {
                     key: "todo".into(),
                     query: "(task TODO)".into(),
+                    dialect: Default::default(),
                 },
                 QueryExportSpec {
                     key: "done".into(),
                     query: "(task DONE)".into(),
+                    dialect: Default::default(),
                 },
             ],
             64,
@@ -4468,6 +4550,50 @@ mod tests {
                 .all(|block| !block.raw.contains("unrelated branch"))
         }));
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A block query answers with the page's header property block as a row
+    /// (exec.rs `Hit::PageProperty`); Copy / Export must hydrate that row like
+    /// the query view does instead of counting it as a vanished block
+    /// (checkpoint-5 L02 B3, I-12 one answerer).
+    #[test]
+    fn query_export_hydrates_the_header_property_row() {
+        use std::fs;
+
+        let dir =
+            std::env::temp_dir().join(format!("tine-query-export-header-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("pages").join("Headed.md"),
+            "status:: exported-state\n\n- an ordinary block\n",
+        )
+        .unwrap();
+        let graph = test_snapshot(&dir);
+        let batch = export_query_subtrees(
+            &graph,
+            &[QueryExportSpec {
+                key: "header".into(),
+                query: "(property status exported-state)".into(),
+                dialect: Default::default(),
+            }],
+            8,
+            50,
+            100,
+            1024 * 1024,
+        );
+        let result = &batch.results[0];
+        assert_eq!(
+            (result.total, result.shown, result.omitted_nodes),
+            (1, 1, 0),
+            "the header property row must be exported, not counted as omitted: {result:?}"
+        );
+        assert!(
+            result.groups[0].blocks[0].raw.contains("exported-state"),
+            "{result:?}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

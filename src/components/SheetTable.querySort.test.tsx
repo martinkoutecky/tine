@@ -41,4 +41,23 @@ describe("query table local sorting", () => {
       expect(m.root.querySelector(".sheet-table-only-sort")).toBeNull();
     } finally { m.dispose(); }
   });
+
+  // OG-C5-Q D11/D8: a header click is browsing; it must not write the query,
+  // even for a field that could be saved as the query's sort.
+  it("sorts a saveable field locally on a header click and never applies a display change", () => {
+    const m = mount({ columns: ["cost"] });
+    try {
+      const header = [...m.root.querySelectorAll<HTMLElement>(".sheet-header-cell")]
+        .find((cell) => cell.textContent?.includes("cost"))!;
+      header.click();
+      expect(m.apply).not.toHaveBeenCalled();
+      expect(header.textContent).toContain("\u25B2");
+      expect(m.root.querySelector(".sheet-table-only-sort")?.textContent).toContain("Table-only sort: cost");
+      header.click();
+      expect(header.textContent).toContain("\u25BC");
+      header.click();
+      expect(header.textContent).not.toMatch(/[\u25B2\u25BC]/);
+      expect(m.apply).not.toHaveBeenCalled();
+    } finally { m.dispose(); }
+  });
 });

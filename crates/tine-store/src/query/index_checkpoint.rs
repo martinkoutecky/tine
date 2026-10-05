@@ -118,14 +118,16 @@ fn flat<V: Clone>(
 }
 
 fn postings_parts(postings: &Postings) -> Vec<(String, Vec<String>)> {
-    let delta: HashMap<String, Option<Arc<BTreeSet<String>>>> = postings
+    let delta: HashMap<String, Option<PathSet>> = postings
         .delta
         .iter()
-        .map(|(key, set)| (key.clone(), Some(Arc::clone(set))))
+        .map(|(key, set)| (key.clone(), Some(set.clone())))
         .collect();
     flat(&postings.base, &delta)
         .into_iter()
-        .filter_map(|(key, set)| set.map(|set| (key, set.iter().cloned().collect())))
+        .filter_map(|(key, set)| {
+            set.map(|set| (key, set.iter().map(|(path, _)| path.clone()).collect()))
+        })
         .collect()
 }
 
@@ -134,7 +136,7 @@ fn postings_from(parts: Vec<(String, Vec<String>)>) -> Postings {
         base: Arc::new(
             parts
                 .into_iter()
-                .map(|(key, paths)| (key, Arc::new(paths.into_iter().collect())))
+                .map(|(key, paths)| (key, paths.into_iter().map(|path| (path, ())).collect()))
                 .collect(),
         ),
         delta: HashMap::new(),

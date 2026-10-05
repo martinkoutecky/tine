@@ -1,4 +1,5 @@
 import { beforeAll, describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { initParser } from "./render/parse";
 import { clearSeededFacets, facetsOf } from "./render/facets";
 import { MARKERS, OPEN_MARKERS, DONE_MARKERS, matchLeadingMarker, leadingMarker, taskCheckboxState } from "./markers";
@@ -7,16 +8,15 @@ import { setPriority } from "./editor/format";
 
 describe("task markers (single source of truth)", () => {
   it("matches the backend set (crates/tine-core/src/doc.rs MARKERS) — keep in sync", () => {
-    // If doc.rs::MARKERS changes, update this list (and vice-versa). The two can't
-    // share a literal across the language boundary, so this is the drift guard.
-    // This set must equal lsdoc's recognizer (lsdoc/src/parse.rs MARKERS, the
-    // mldoc/OG-faithful authority) — Tine treats exactly what OG treats as a task.
-    expect([...MARKERS].sort()).toEqual(
-      [
-        "CANCELED", "CANCELLED", "DOING", "DONE", "IN-PROGRESS",
-        "LATER", "NOW", "STARTED", "TODO", "WAIT", "WAITING",
-      ].sort()
-    );
+    // Read the Rust source itself (I-12): a literal copied into this test could
+    // not notice doc.rs changing. This set must equal lsdoc's recognizer
+    // (lsdoc/src/parse.rs MARKERS, the mldoc/OG-faithful authority) — Tine
+    // treats exactly what OG treats as a task.
+    const source = readFileSync("crates/tine-core/src/doc.rs", "utf8");
+    const block = /pub const MARKERS: &\[&str\] = &\[([^\]]*)\];/.exec(source)?.[1] ?? "";
+    const rust = [...block.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect(rust.length).toBeGreaterThan(0);
+    expect([...MARKERS].sort()).toEqual(rust.sort());
   });
 
   it("OPEN ∪ DONE partitions MARKERS with no overlap", () => {

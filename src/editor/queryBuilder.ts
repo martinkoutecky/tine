@@ -786,12 +786,14 @@ function dateOf(value: Value): string | null {
   return value.kind === "date" ? value.literal : null;
 }
 
-/** The `props` predicate's key and optional single atom test, mirroring
-*  `Filter::props_key` / `props_atom_test` on the Rust side. */
-function propsParts(pred: Filter): { key: string; atom: Filter | null } | null {
+/** The `props` predicate's key and its atom test, mirroring `Filter::props_key` /
+*  `props_atom_test` on the Rust side (one shared golden pins both): the key is
+*  the ONE direct key-equality item; everything else is the atom test, an `and`
+*  when there are several. Two keys is no property predicate. */
+export function propsParts(pred: Filter): { key: string; atom: Filter | null } | null {
   const items = pred.kind === "and" ? pred.items : [pred];
   let key: string | null = null;
-  let atom: Filter | null = null;
+  const atoms: Filter[] = [];
   for (const item of items) {
     const leaf = asAttrLeaf(item);
     if (leaf && leaf.attr === "key" && leaf.op === "eq") {
@@ -800,10 +802,10 @@ function propsParts(pred: Filter): { key: string; atom: Filter | null } | null {
       key = text;
       continue;
     }
-    if (atom != null) return null;
-    atom = item;
+    atoms.push(item);
   }
-  return key == null ? null : { key, atom };
+  if (key == null) return null;
+  return { key, atom: atoms.length === 0 ? null : atoms.length === 1 ? atoms[0] : { kind: "and", items: atoms } };
 }
 
 /** The property key a `props`/`page_prop` leaf tests, or `null` for any other shape. */

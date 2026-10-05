@@ -286,3 +286,102 @@ fn a_property_edit_patches_the_registry_per_page_not_per_graph() {
         );
     }
 }
+
+/// An edit that makes the page a holder of a key every other page already
+/// holds moves one posting of that key. The posting sets are shared
+/// structure, so the edit copies O(log holders) tree nodes, never every
+/// holder's path (checkpoint-5 L02 B3, I-25; exemplar model/persistent.rs).
+/// `status::` is held by all 9,999 other pages of this fixture.
+#[test]
+fn a_popular_property_edit_does_not_copy_the_key_postings() {
+    let _case = CASE_LOCK.lock().unwrap();
+    for blocks in [1, 60] {
+        let edits = ["settle", "before\nstatus:: s1"];
+        let small = probe_edit(20, blocks, true, edits);
+        let large = probe_edit(10_000, blocks, true, edits);
+        let copies = |p: &Probe| p.save.query_facts_copies + p.query.query_facts_copies;
+        eprintln!(
+            "I-25 popular key: blocks={blocks} facts_copies 20 pages={} 10k pages={}; tree nodes {} / {}",
+            copies(&small),
+            copies(&large),
+            small.save.shared_tree_node_copies + small.query.shared_tree_node_copies,
+            large.save.shared_tree_node_copies + large.query.shared_tree_node_copies
+        );
+        assert!(
+            copies(&large) <= 256,
+            "I-25: adding a page to a 10k-holder property key copied {} index entries; \
+             exemplar model/persistent.rs (shared postings, no per-edit set copy)",
+            copies(&large)
+        );
+        let nodes = large.save.shared_tree_node_copies + large.query.shared_tree_node_copies;
+        assert!(
+            nodes <= 512,
+            "I-25: the same edit copied {nodes} shared-tree nodes on a 10k graph; \
+             O(log holders) is a few dozen"
+        );
+    }
+}
+
+/// The graph-wide alias list is carried across a save that moved no alias by
+/// reference count, not by deep copy (checkpoint-5 L02 B3, I-25): with the
+/// list built, a text edit allocates the same on a 10k-page graph whether or
+/// not 10,000 aliases exist to carry (the control spells the same text under
+/// a key that declares none).
+#[test]
+fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
+    let _case = CASE_LOCK.lock().unwrap();
+    fn save_bytes(aliases: bool) -> u64 {
+        static NEXT: AtomicU64 = AtomicU64::new(2_000_000);
+        let root = std::env::temp_dir().join(format!(
+            "tine-query-alias-carry-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::create_dir_all(root.join("journals")).unwrap();
+        for index in 0..10_000 {
+            // The control carries the same text under a key that declares no
+            // alias, so page-reference work is equal and only the alias list
+            // differs.
+            let key = if aliases { "alias" } else { "other" };
+            let body = format!("{key}:: Alias-number-{index}\n\n- block {index}\n");
+            fs::write(root.join("pages").join(format!("Page{index:05}.md")), body).unwrap();
+        }
+        let store = Store::open(&root, Default::default()).unwrap().0;
+        let id = PageId::from("pages/Page00000.md".to_string());
+        // Build the alias list of the current generation.
+        store.whole_graph().unwrap().backlinks("Page00003").unwrap();
+        let mut measured = 0;
+        for text in ["settle", "after"] {
+            let read = store.page(&id).unwrap();
+            let mut doc = read.doc;
+            doc.blocks[0].raw = text.into();
+            let (outcome, bytes, _) = measure(|| {
+                store.save(
+                    tine_store::EditKind::ReplacePage,
+                    &id,
+                    SaveBase::Existing(read.rev),
+                    &doc,
+                )
+            });
+            assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
+            // Re-read so the next generation's list is built before the
+            // measured save carries it.
+            store.whole_graph().unwrap().backlinks("Page00003").unwrap();
+            measured = bytes;
+        }
+        store.close();
+        let _ = fs::remove_dir_all(&root);
+        measured
+    }
+    save_bytes(false); // one-time process work, not the edit's
+    let without = save_bytes(false);
+    let with = save_bytes(true);
+    eprintln!("I-25 alias carry: save bytes without aliases={without} with 10k aliases={with}");
+    assert!(
+        with <= without + 256 * 1024,
+        "I-25: a save carrying a 10k-alias list allocated {with} bytes vs {without} without \
+         aliases; exemplar model.rs carry_alias_list_from (Arc, not clone)"
+    );
+}

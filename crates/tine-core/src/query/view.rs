@@ -661,6 +661,14 @@ impl ExplainPlan {
     }
 }
 
+/// The most conjuncts that are explained one by one. The per-conjunct plan
+/// holds two probes per conjunct, the second carrying every OTHER conjunct, so
+/// its size and the evaluator's work grow with the square of the conjunct
+/// count; a 64 KB query source can hold thousands (I-22). Past this bound the
+/// query is explained as one whole conjunct, which is the same honest answer
+/// ("this query matches N rows") without the quadratic plan.
+pub const EXPLAIN_MAX_CONJUNCTS: usize = 64;
+
 /// Build the [`ExplainPlan`] for a resolved query. A non-executable query
 /// ([`ResolvedQuery::is_executable`](crate::query::ResolvedQuery::is_executable)
 /// false) gets an empty plan. Otherwise the evaluable (`Off`-free), normalized
@@ -668,7 +676,8 @@ impl ExplainPlan {
 /// probes per conjunct (it alone, then the `And` of all the others), and any
 /// other root yields one probe for the whole filter. Each probe keeps the
 /// query's anchor and source, has its diagnostics cleared, and is printed as
-/// TQL for the row label. Pure; O(conjuncts²) filter clones.
+/// TQL for the row label. Pure; O(conjuncts²) filter clones, bounded by
+/// [`EXPLAIN_MAX_CONJUNCTS`] (beyond it one whole-filter probe, O(conjuncts)).
 pub fn explain_empty_plan(resolved: &crate::query::ResolvedQuery) -> ExplainPlan {
     use crate::query::ir::Filter;
 
@@ -699,7 +708,7 @@ pub fn explain_empty_plan(resolved: &crate::query::ResolvedQuery) -> ExplainPlan
     let mut evaluable = query.clone();
     evaluable.filter = query.evaluable_filter();
     match evaluable.normalized().filter {
-        Filter::And { items } if items.len() > 1 => {
+        Filter::And { items } if (2..=EXPLAIN_MAX_CONJUNCTS).contains(&items.len()) => {
             for (index, item) in items.iter().enumerate() {
                 let others = items
                     .iter()
@@ -787,6 +796,32 @@ mod tests {
         assert_eq!(merged.sample, Some(3));
         assert_eq!(merged.view, Some(ViewKind::Table));
         assert!(merged.sort.is_empty());
+    }
+
+    /// I-12: the aggregate-list grammar has one authority (`parse_col_aggregates`);
+    /// the frontend's `decodeAggregateSegment(_, "query")` (Display editor and
+    /// schema rename) reads this same golden (`src/sheet/ogDupd3Codecs.test.ts`).
+    #[test]
+    fn the_shared_col_aggregates_golden_parses_as_recorded() {
+        let golden: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/i12-col-aggregates-golden.json"
+        ))
+        .expect("golden parses");
+        for case in golden["cases"].as_array().expect("cases") {
+            let value = case[0].as_str().unwrap();
+            let actual: Vec<serde_json::Value> = parse_col_aggregates(value)
+                .into_iter()
+                .map(|(field, agg)| {
+                    let name = match agg {
+                        AggFn::Count => "count",
+                        AggFn::Sum => "sum",
+                        AggFn::Avg => "avg",
+                    };
+                    serde_json::json!([field.as_str(), name])
+                })
+                .collect();
+            assert_eq!(case[1], serde_json::Value::Array(actual), "{value:?}");
+        }
     }
 
     #[test]

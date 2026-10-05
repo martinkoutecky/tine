@@ -159,6 +159,11 @@ impl QueryMemo {
             }
         }
         let (answer, plan) = compute();
+        // The memo is per day; an answer that read the instant (`now`) is
+        // stale within minutes, so it is returned but never retained.
+        if plan.as_ref().is_some_and(|plan| plan.reads_clock()) {
+            return answer;
+        }
         let pages = Arc::new(answer.pages());
         let bytes = answer
             .estimated_bytes()
@@ -340,6 +345,91 @@ mod tests {
             0,
             "I-22: all compiled regex reservations must count toward the memo entry ceiling"
         );
+    }
+
+    /// A plan reading `used_as_tag` owns a graph-wide tag-target set; each
+    /// memo entry holds its own, so it must count toward the entry ceiling
+    /// (checkpoint-5 L02 B3, I-22).
+    #[test]
+    fn b_query_memo_charges_the_graph_wide_tag_target_set() {
+        use tine_core::query::ir::*;
+        let memo = QueryMemo::default();
+        let config = ParseConfig::default();
+        let query = Query {
+            anchor: Anchor::Page,
+            filter: Filter::attr(Attr::UsedAsTag, CmpOp::Eq, Value::Bool { value: true }),
+            diagnostics: Vec::new(),
+            source: Source::Tql {
+                original: String::new(),
+                og_options: String::new(),
+            },
+        };
+        let targets: HashSet<String> = (0..150_000).map(|i| format!("tag-{i}")).collect();
+        let plan = Arc::new(Plan::new(
+            &query,
+            JournalDate::today(),
+            false,
+            false,
+            || Arc::new(tine_core::query::registry::Registry::empty(&config)),
+            || Arc::new(targets),
+        ));
+        let answer = memo.answer("tags".into(), JournalDate::today(), &config, || {
+            (groups(1), Some(plan))
+        });
+        assert_eq!(
+            total(&answer),
+            1,
+            "a budget may skip retention, never refuse"
+        );
+        assert_eq!(
+            memo.len(),
+            0,
+            "the tag-target set must be charged to the entry"
+        );
+    }
+
+    /// `now` is the evaluation's instant, but the memo is keyed by day: a
+    /// retained `created_at between -1d now` answer would serve yesterday-
+    /// minutes results all day (checkpoint-5 L02 B3). Midnight-anchored
+    /// tokens stay memoized.
+    #[test]
+    fn a_query_reading_the_clock_is_not_memoized_but_a_midnight_anchored_one_is() {
+        use tine_core::query::ir::*;
+        let config = ParseConfig::default();
+        let plan_of = |bound: &str| {
+            let query = Query {
+                anchor: Anchor::Block,
+                filter: Filter::attr(
+                    Attr::CreatedAt,
+                    CmpOp::Between,
+                    Value::List {
+                        items: vec![Value::date("-1d"), Value::date(bound)],
+                    },
+                ),
+                diagnostics: Vec::new(),
+                source: Source::Tql {
+                    original: String::new(),
+                    og_options: String::new(),
+                },
+            };
+            Arc::new(Plan::new(
+                &query,
+                JournalDate::today(),
+                false,
+                false,
+                || Arc::new(tine_core::query::registry::Registry::empty(&config)),
+                || unreachable!(),
+            ))
+        };
+        let memo = QueryMemo::default();
+        memo.answer("now".into(), JournalDate::today(), &config, || {
+            (groups(1), Some(plan_of("NOW")))
+        });
+        assert_eq!(memo.len(), 0, "a `now` bound must not be retained");
+        memo.answer("today".into(), JournalDate::today(), &config, || {
+            (groups(1), Some(plan_of("today")))
+        });
+        assert_eq!(memo.len(), 1, "a midnight-anchored bound stays memoized");
     }
 
     #[test]

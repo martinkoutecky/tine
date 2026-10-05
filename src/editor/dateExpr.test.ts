@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveDateToken, previewDate } from "./dateExpr";
+import { localCalendarDate } from "../journal";
+import golden from "../../tests/fixtures/i12-date-token-golden.json";
 
 // Fixed reference so relative math is deterministic: 2026-06-16.
 const TODAY = new Date(2026, 5, 16);
@@ -54,5 +56,22 @@ describe("resolveDateToken", () => {
   it("previewDate renders or blanks", () => {
     expect(previewDate("-30d", TODAY)).toBe("May 17th, 2026");
     expect(previewDate("Some Page", TODAY)).toBe("");
+  });
+});
+
+// I-12: `resolve_date_token` in Rust (advanced_patterns.rs) is the one grammar;
+// this preview reads the SAME golden file as its Rust test, so the two cannot
+// drift (OG-C5 mess dateExpr twin: `-7D`, `2026_01_05`, the 10,000-year bound
+// and the year-0 leap clamp all used to disagree).
+describe("resolveDateToken agrees with the native date-token golden", () => {
+  it("resolves every recorded case to the recorded ordinal", () => {
+    const mismatches: string[] = [];
+    for (const c of golden.cases) {
+      const today = localCalendarDate(Math.trunc(c.today / 10000), Math.trunc((c.today % 10000) / 100) - 1, c.today % 100)!;
+      const got = resolveDateToken(c.token, today);
+      const ordinal = got ? got.getFullYear() * 10000 + (got.getMonth() + 1) * 100 + got.getDate() : null;
+      if (ordinal !== c.ordinal) mismatches.push(`today ${c.today} token ${JSON.stringify(c.token)}: golden ${c.ordinal}, preview ${ordinal}`);
+    }
+    expect(mismatches).toEqual([]);
   });
 });

@@ -2,7 +2,7 @@ import { visibleBody } from "../render/block";
 import { MARKERS } from "../markers";
 import type { FieldSpec } from "./config";
 import { groupKeysForBlock, isFieldId, isFormulaField, type FieldId } from "./fields";
-import { liveFormulaRowNode, type FormulaEvalRow } from "./formulaEval";
+import { liveFormulaRowNode, readFormulaRowField, type FormulaEvalRow } from "./formulaEval";
 import { readField } from "./fields";
 import { recordFacets, rowRaw } from "./tableFields";
 
@@ -141,6 +141,7 @@ export function boardCardChips(row: FormulaEvalRow, groupBy: FieldId): { priorit
     priority: value("priority"),
     scheduled: value("scheduled"),
     deadline: value("deadline"),
-    tags: value("tags").split(/\s+/).filter(Boolean).map((t) => (t.startsWith("#") ? t : `#${t}`)),
+    // Members come from the field reader, so a multi-word tag stays one chip.
+    tags: groupBy === "tags" ? [] : (readFormulaRowField(row, "tags")?.items ?? []).map((t) => (t.startsWith("#") ? t : `#${t}`)),
   };
 }

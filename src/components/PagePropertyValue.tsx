@@ -4,6 +4,7 @@ import {
   isImplicitPageRefProperty,
   isQuotedPagePropertyValue,
   normalizeImplicitPageName,
+  splitLinkableProperty,
 } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 
@@ -20,16 +21,33 @@ export function PagePropertyValue(props: {
     return <InlineText text={props.value} format={props.format} />;
   }
   return (
-    <For each={props.value.split(/([,，])/g)}>
+    <For each={implicitPropertyParts(props.value)}>
       {(part) => {
-        if (part === "," || part === "，") return part;
-        const leading = part.match(/^\s*/)?.[0] ?? "";
-        const trailing = part.match(/\s*$/)?.[0] ?? "";
-        const value = part.slice(leading.length, part.length - trailing.length);
-        if (!value) return part;
-        const name = normalizeImplicitPageName(value);
-        return <>{leading}<PageRef name={name} alias={name} />{trailing}</>;
+        if (typeof part === "string") return part;
+        const name = normalizeImplicitPageName(part.value);
+        return <>{part.leading}<PageRef name={name} alias={name} />{part.trailing}</>;
       }}
     </For>
   );
+}
+
+/** The value as separator text and navigable members, in order. The member
+ *  boundaries come from the parser-side `split_linkable_property` (the same
+ *  separator the native reference scan uses), never from a separator list of
+ *  this file's own; the separator character itself is read back from the value. */
+export function implicitPropertyParts(value: string): (string | { leading: string; value: string; trailing: string })[] {
+  const out: (string | { leading: string; value: string; trailing: string })[] = [];
+  let at = 0;
+  splitLinkableProperty(value).forEach((member, index) => {
+    if (index > 0) {
+      out.push(value.slice(at, at + 1));
+      at += 1;
+    }
+    at += member.length;
+    const leading = member.match(/^\s*/)?.[0] ?? "";
+    const trailing = member.match(/\s*$/)?.[0] ?? "";
+    const trimmed = member.slice(leading.length, member.length - trailing.length);
+    out.push(trimmed ? { leading, value: trimmed, trailing } : member);
+  });
+  return out;
 }

@@ -201,6 +201,46 @@ mod depth_contract_tests {
         assert!(!parse_input_depth_within_limit(&source));
     }
 
+    /// OG-C5-Q L05: the guard's own fence grammar (same character, at least as
+    /// long) disagreed with lsdoc's (the next fence-marker line of EITHER
+    /// character closes it), so an outline after a shorter closer was hidden
+    /// from admission while the parser built the 129-deep tree.
+    #[test]
+    fn a_fence_the_parser_closes_early_does_not_hide_a_deep_outline() {
+        let deep = |closer: &str, tail: &str| {
+            let mut source = format!("````\ncode\n{closer}\n");
+            for depth in 0..129 {
+                source.push_str(&" ".repeat(depth));
+                source.push_str("- item\n");
+            }
+            source.push_str(tail);
+            source
+        };
+        for source in [deep("```", "````\n"), deep("~~~", "````\n")] {
+            // Ask the parser: the outline really is 129 deep after the closer.
+            let parsed = tine_core::doc::parse(&source);
+            let mut deepest = 0usize;
+            let mut todo: Vec<_> = parsed.roots.iter().map(|b| (b, 1usize)).collect();
+            while let Some((block, depth)) = todo.pop() {
+                deepest = deepest.max(depth);
+                todo.extend(block.children.iter().map(|c| (c, depth + 1)));
+            }
+            assert!(deepest > PARSE_INPUT_MAX_DEPTH, "parser depth {deepest}");
+            assert!(
+                !parse_input_depth_within_limit(&source),
+                "admission must see what the parser builds"
+            );
+        }
+        // A fence the parser really keeps open still hides its body.
+        let mut hidden = String::from("- a\n  ```\n");
+        for depth in 0..140 {
+            hidden.push_str(&" ".repeat(depth));
+            hidden.push_str("- not structure\n");
+        }
+        hidden.push_str("  ```\n");
+        assert!(parse_input_depth_within_limit(&hidden));
+    }
+
     #[test]
     fn org_headline_forms_and_markdown_stars_are_format_specific() {
         let org = Path::new("page.org");
@@ -421,6 +461,12 @@ pub(crate) trait GraphRead {
             .map(|(alias, owner, _)| (alias, owner))
             .collect()
     }
+    /// The alias relation, indexed (see [`crate::query::AliasEdges`]). A
+    /// snapshot builds it once and carries it across saves that moved no
+    /// alias; the default builds it from the alias list on every call.
+    fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
+        Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))
+    }
     fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>>;
     fn block_page_hint(&self, uuid: &str) -> Option<String>;
     fn page_list_arc(&self) -> Arc<Vec<PageEntry>>;
@@ -447,6 +493,9 @@ impl<R: GraphRead> GraphRead for Arc<R> {
     }
     fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
         self.as_ref().page_aliases_with_owners()
+    }
+    fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
+        self.as_ref().alias_edges()
     }
     fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
         self.as_ref().observed_page_mtimes()
@@ -483,9 +532,12 @@ pub(crate) struct ReadSnapshot {
     alias_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     referenced_name_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     real_page_names: Arc<crate::query::RealPageNames>,
-    aliases: std::sync::OnceLock<Vec<(String, String, String)>>,
+    /// Shared so a save that moved no alias carries it by refcount (I-25).
+    aliases: std::sync::OnceLock<Arc<Vec<(String, String, String)>>>,
+    /// The alias relation indexed for component walks; derived from `aliases`.
+    alias_edges: std::sync::OnceLock<Arc<crate::query::AliasEdges>>,
     /// Alias owner paths keyed by `page_key(alias)`, in `aliases` order.
-    alias_owner_paths_by_key: std::sync::OnceLock<HashMap<String, Vec<String>>>,
+    alias_owner_paths_by_key: std::sync::OnceLock<Arc<HashMap<String, Vec<String>>>>,
     referenced_names: std::sync::OnceLock<Vec<String>>,
     block_ref_counts: std::sync::OnceLock<Arc<SharedMap<String, usize>>>,
     public_block_ref_counts: std::sync::OnceLock<Arc<HashMap<String, usize>>>,
@@ -511,7 +563,7 @@ impl ReadSnapshot {
                         .or_default()
                         .push(path);
                 }
-                map
+                Arc::new(map)
             })
             .get(key)
     }
@@ -682,6 +734,7 @@ impl ReadSnapshot {
             referenced_name_index,
             real_page_names,
             aliases: std::sync::OnceLock::new(),
+            alias_edges: std::sync::OnceLock::new(),
             alias_owner_paths_by_key: std::sync::OnceLock::new(),
             referenced_names: std::sync::OnceLock::new(),
             block_ref_counts: std::sync::OnceLock::new(),
@@ -837,10 +890,13 @@ impl ReadSnapshot {
     /// names, paths and per-page aliases, so it is unchanged.
     fn carry_alias_list_from(&self, old: &Self) {
         if let Some(aliases) = old.aliases.get() {
-            let _ = self.aliases.set(aliases.clone());
+            let _ = self.aliases.set(Arc::clone(aliases));
+        }
+        if let Some(edges) = old.alias_edges.get() {
+            let _ = self.alias_edges.set(Arc::clone(edges));
         }
         if let Some(by_key) = old.alias_owner_paths_by_key.get() {
-            let _ = self.alias_owner_paths_by_key.set(by_key.clone());
+            let _ = self.alias_owner_paths_by_key.set(Arc::clone(by_key));
         }
     }
 
@@ -1094,6 +1150,12 @@ impl GraphRead for ReadSnapshot {
             }
         }
     }
+    fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
+        Arc::clone(
+            self.alias_edges
+                .get_or_init(|| Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))),
+        )
+    }
     fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
         self.aliases
             .get_or_init(|| {
@@ -1120,11 +1182,14 @@ impl GraphRead for ReadSnapshot {
                     }
                 }
                 owned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-                owned
-                    .into_iter()
-                    .map(|(_, alias, owner, path)| (alias, owner, path))
-                    .collect()
+                Arc::new(
+                    owned
+                        .into_iter()
+                        .map(|(_, alias, owner, path)| (alias, owner, path))
+                        .collect(),
+                )
             })
+            .as_ref()
             .clone()
     }
     fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
@@ -3448,9 +3513,12 @@ impl SnapshotMemos {
         // Resolve aliases BEFORE taking the derived lock (page_aliases may take the
         // cache lock); never hold derived while taking cache.
         let (aliases, real_pages) = if scope == Scope::Predicates {
-            (graph.page_aliases(), crate::query::real_page_names(graph))
+            (graph.alias_edges(), crate::query::real_page_names(graph))
         } else {
-            (Vec::new(), Arc::new(crate::query::RealPageNames::new()))
+            (
+                Arc::new(crate::query::AliasEdges::default()),
+                Arc::new(crate::query::RealPageNames::new()),
+            )
         };
         let journal = crate::query::journal_format(graph.config());
         let today = tine_core::date::JournalDate::today().ordinal_key();
@@ -4292,7 +4360,9 @@ impl Graph {
                     "refusing to drop an existing page preamble while authoring page-header properties",
                 ));
             }
-            if let Some(line) = newly_reclassified_page_property_line(existing_doc, &doc) {
+            if let Some(line) =
+                newly_reclassified_page_property_line(existing_doc, &doc, dto_is_org)
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("refusing to move page-header property into outline content: {line}"),
@@ -4415,48 +4485,49 @@ fn promote_first_root_page_header(doc: &mut Document) {
 fn newly_reclassified_page_property_line(
     existing_doc: &Document,
     proposed: &Document,
+    is_org: bool,
 ) -> Option<String> {
-    // The general data-preservation guard is intentionally a little broader
-    // than Tine's editable property grammar: Logseq graphs can contain Unicode
-    // or plugin-defined keys that Tine does not expose in its settings panel,
-    // but they still must never be reclassified into outline content.
-    fn page_header_property(line: &str) -> bool {
-        let Some((key, _)) = line.split_once("::") else {
-            return false;
+    // The parser owns what a property line is (I-12): `block_regions` reports
+    // the lines lsdoc accepted as properties and leaves out literal regions, so
+    // a fenced or inline-code example containing `key:: value` is prose, not a
+    // slot. Logseq graphs can carry Unicode or plugin-defined keys that Tine's
+    // settings panel does not expose; the parser accepts those too.
+    fn property_lines(raw: &str, is_org: bool, document: bool) -> Vec<String> {
+        if !raw.contains(':') && !raw.contains("#+") {
+            return Vec::new();
+        }
+        let regions = if document {
+            tine_core::block_regions::parse_document(raw, is_org)
+        } else {
+            tine_core::block_regions::parse(raw, is_org)
         };
-        let key = key.trim();
-        !key.is_empty() && key.chars().all(|ch| !ch.is_whitespace() && ch != ':')
-    }
-
-    fn pre_property_lines(raw: Option<&str>) -> Vec<&str> {
-        raw.unwrap_or("")
-            .split('\n')
-            .filter(|line| page_header_property(line))
+        regions
+            .page_properties()
+            .map(|p| p.line.slice(raw).trim_end_matches('\n').to_owned())
             .collect()
     }
 
-    fn outline_property_lines<'a>(blocks: &'a [DocBlock], out: &mut Vec<&'a str>) {
+    fn pre_property_lines(raw: Option<&str>, is_org: bool) -> Vec<String> {
+        property_lines(raw.unwrap_or(""), is_org, true)
+    }
+
+    fn outline_property_lines(blocks: &[DocBlock], is_org: bool, out: &mut Vec<String>) {
         for block in blocks {
-            out.extend(
-                block
-                    .raw()
-                    .split('\n')
-                    .filter(|line| page_header_property(line)),
-            );
-            outline_property_lines(&block.children, out);
+            out.extend(property_lines(block.raw(), is_org, false));
+            outline_property_lines(&block.children, is_org, out);
         }
     }
 
-    let existing_pre = pre_property_lines(existing_doc.pre_block.as_deref());
-    let proposed_pre = pre_property_lines(proposed.pre_block.as_deref());
+    let existing_pre = pre_property_lines(existing_doc.pre_block.as_deref(), is_org);
+    let proposed_pre = pre_property_lines(proposed.pre_block.as_deref(), is_org);
     if proposed_pre.len() >= existing_pre.len() {
         return None;
     }
 
     let mut existing_outline = Vec::new();
-    outline_property_lines(&existing_doc.roots, &mut existing_outline);
+    outline_property_lines(&existing_doc.roots, is_org, &mut existing_outline);
     let mut proposed_outline = Vec::new();
-    outline_property_lines(&proposed.roots, &mut proposed_outline);
+    outline_property_lines(&proposed.roots, is_org, &mut proposed_outline);
     if proposed_outline.len() <= existing_outline.len() {
         return None;
     }
@@ -4466,12 +4537,12 @@ fn newly_reclassified_page_property_line(
     // existing slots then cover changed/reordered pre-existing outline lines.
     let mut exact_slots: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for line in &existing_outline {
-        *exact_slots.entry(*line).or_default() += 1;
+        *exact_slots.entry(line.as_str()).or_default() += 1;
     }
     let mut unmatched = Vec::new();
     let mut exact_matches = 0usize;
-    for line in proposed_outline {
-        match exact_slots.get_mut(line) {
+    for line in &proposed_outline {
+        match exact_slots.get_mut(line.as_str()) {
             Some(count) if *count > 0 => {
                 *count -= 1;
                 exact_matches += 1;
@@ -4482,7 +4553,7 @@ fn newly_reclassified_page_property_line(
     let edited_provenance_slots = existing_outline.len() - exact_matches;
     unmatched
         .get(edited_provenance_slots)
-        .map(|line| (*line).to_string())
+        .map(|line| (*line).clone())
 }
 
 /// Atomically reserve a unique filename in `assets/` for `name`, de-duplicating
@@ -5724,11 +5795,16 @@ mod tests {
             has("linear ip", "Linear IP"),
             "bracketed tags:: value should appear"
         );
-        assert!(has("lp survey", "LP Survey"), "alias:: value should appear");
-        assert!(
-            has("paper notes", "Paper Notes"),
-            "aliases:: value should appear"
-        );
+        for alias in ["LP Survey", "Paper Notes"] {
+            let hit = crate::query::quick_switch(&snapshot, alias, 8)
+                .into_iter()
+                .find(|entry| tine_core::refs::same_page(&entry.name, alias));
+            assert_eq!(
+                hit.as_ref().map(|entry| entry.rel_path_str()),
+                Some("pages/paper.md"),
+                "an authored alias should be inserted while retaining its owning page identity"
+            );
+        }
         assert!(
             !has("private", "Private"),
             "quoted custom value stays literal"
@@ -5763,7 +5839,7 @@ mod tests {
         names: &[String],
         kind: ReferenceKind,
     ) {
-        let aliases = graph.page_aliases();
+        let aliases = graph.alias_edges();
         let real_pages = crate::query::real_page_names(graph);
         let journal = crate::query::journal_format(graph.config());
         let exact_paths = |pages: &[(PageEntry, Arc<Document>)]| {

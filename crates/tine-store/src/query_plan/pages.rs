@@ -20,13 +20,10 @@ struct ScoredPage {
 }
 
 impl ScoredPage {
+    /// Strictly better than `other`. Derived from [`Ord::cmp`] so the heap
+    /// eviction order, this predicate and the final sort are ONE comparator.
     fn is_better_than(&self, other: &Self) -> bool {
-        (!self.from_content && other.from_content)
-            || (self.from_content == other.from_content
-                && (self.match_class.rank() > other.match_class.rank()
-                    || (self.match_class == other.match_class
-                        && (self.score > other.score
-                            || (self.score == other.score && self.tie_key < other.tie_key)))))
+        self.cmp(other) == Ordering::Less
     }
 }
 
@@ -46,10 +43,12 @@ impl PartialOrd for ScoredPage {
 }
 impl Ord for ScoredPage {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Max-heap root is the WORST retained candidate, ready for eviction.
-        other
-            .from_content
-            .cmp(&self.from_content)
+        // Max-heap root is the WORST retained candidate, ready for eviction;
+        // "greater" therefore means "worse" and the ascending order is the
+        // result order: name matches before content matches, then match
+        // class, score (higher is better), tie key.
+        self.from_content
+            .cmp(&other.from_content)
             .then_with(|| other.match_class.rank().cmp(&self.match_class.rank()))
             .then_with(|| other.score.cmp(&self.score))
             .then_with(|| self.tie_key.cmp(&other.tie_key))
@@ -294,10 +293,21 @@ pub(super) fn execute_pages(
             );
         }
     }
-    let have: HashSet<String> = file_pages
+    let mut have: HashSet<String> = file_pages
         .iter()
         .map(|page| identity_fold(&page.name))
         .collect();
+    // GH #353 / #623: an alias of a file page names THAT page. The owner carries
+    // the identity (with `matched_alias` as display context), so the alias text
+    // must never also appear as a referenced, path-less page candidate: selecting
+    // that phantom row opened a standalone alias-named page instead of the owner.
+    // `aliases_by_owner` is the one physical-owner alias inventory above.
+    have.extend(
+        aliases_by_owner
+            .values()
+            .flatten()
+            .map(|alias| identity_fold(alias)),
+    );
     for name in if include_names {
         graph.referenced_page_names()
     } else {
@@ -339,13 +349,7 @@ pub(super) fn execute_pages(
     }
     let mut winners = heap.into_vec();
     if sort.is_empty() {
-        winners.sort_by(|a, b| {
-            a.from_content
-                .cmp(&b.from_content)
-                .then_with(|| b.match_class.rank().cmp(&a.match_class.rank()))
-                .then_with(|| b.score.cmp(&a.score))
-                .then_with(|| a.tie_key.cmp(&b.tie_key))
-        });
+        winners.sort();
     } else {
         let wanted: HashSet<&str> = winners
             .iter()
@@ -543,5 +547,64 @@ mod tests {
         store.close();
         assert_eq!(work, 0,
             "I-13/I-25: page-search winners need their preambles, not graph query facts; exemplar query_plan/pages.rs");
+    }
+}
+
+#[cfg(test)]
+mod page_order_tests {
+    use super::*;
+
+    fn page(from_content: bool, class: ObjectiveMatchClass, score: i32, tie: &str) -> ScoredPage {
+        ScoredPage {
+            from_content,
+            score,
+            match_class: class,
+            matched_text: String::new(),
+            matched_alias: None,
+            tie_key: tie.to_owned(),
+            candidate: PageCandidate::File(0),
+            content_text: from_content.then(String::new),
+        }
+    }
+
+    /// The bounded heap evicts by `Ord` (root = worst) and admits by
+    /// `is_better_than`; they must be one order (checkpoint-5 L02 B3, I-12).
+    /// Before, `Ord` ranked a content match BETTER than a name match while
+    /// `is_better_than` and the result sort ranked it worse, so a full heap
+    /// evicted the best name match and kept a content match.
+    #[test]
+    fn page_heap_keeps_the_best_name_matches_over_content_matches() {
+        use ObjectiveMatchClass::*;
+        let mut heap = BinaryHeap::new();
+        push_page(&mut heap, 2, page(false, Exact, 100, "a"));
+        push_page(&mut heap, 2, page(true, Fuzzy, 90, "b"));
+        push_page(&mut heap, 2, page(false, Prefix, 50, "c"));
+        let mut kept: Vec<_> = heap.into_vec();
+        kept.sort();
+        let kept: Vec<_> = kept.iter().map(|p| p.tie_key.as_str()).collect();
+        assert_eq!(kept, ["a", "c"], "the content match is the one evicted");
+    }
+
+    #[test]
+    fn page_order_and_better_than_agree_for_every_pair() {
+        use ObjectiveMatchClass::*;
+        let mut all = Vec::new();
+        for content in [false, true] {
+            for class in [Exact, Prefix, Substring, Fuzzy] {
+                for score in [1, 2] {
+                    for tie in ["x", "y"] {
+                        all.push(page(content, class, score, tie));
+                    }
+                }
+            }
+        }
+        for a in &all {
+            for b in &all {
+                assert_eq!(a.is_better_than(b), a.cmp(b) == Ordering::Less);
+                if a.is_better_than(b) {
+                    assert!(!b.is_better_than(a));
+                }
+            }
+        }
     }
 }

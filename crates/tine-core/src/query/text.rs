@@ -29,6 +29,37 @@ pub fn escape_like_literal(text: &str) -> String {
     out
 }
 
+/// Re-encode a `LIKE ... ESCAPE 'escape'` pattern into this module's one
+/// convention (`\` escapes the next scalar). A character after `escape` is
+/// literal; an unpaired trailing `escape` becomes an unpaired `\` (matches
+/// nothing, as in SQLite); with a different escape a plain `\` is literal.
+/// Linear in input scalars.
+pub fn reencode_like_escape(pattern: &str, escape: char) -> String {
+    if escape == '\\' {
+        return pattern.to_string();
+    }
+    let mut out = String::with_capacity(pattern.len());
+    let mut chars = pattern.chars();
+    while let Some(ch) = chars.next() {
+        if ch == escape {
+            match chars.next() {
+                Some(next) => {
+                    if matches!(next, '%' | '_' | '\\') {
+                        out.push('\\');
+                    }
+                    out.push(next);
+                }
+                None => out.push('\\'),
+            }
+        } else if ch == '\\' {
+            out.push_str("\\\\");
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// A compiled SQL `LIKE` pattern (semantics of [`like_matches`]).
 ///
 /// The pattern is split on `%` into segments; greedy leftmost placement of

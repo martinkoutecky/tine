@@ -118,6 +118,20 @@ impl Reader<'_> {
                 }
                 Kind::Set
             }
+            // Clojure reader macros an authored datalog query may carry: the
+            // anonymous-fn literal `#( .. )` reads as a list, a regex literal
+            // `#".."` as a string. Neither changes any key or value boundary.
+            b'#' if self.source[start..].starts_with("#(") => {
+                self.at += 1;
+                return self.form(depth).map(|mut form| {
+                    form.span.start = start;
+                    form
+                });
+            }
+            b'#' if self.source[start..].starts_with("#\"") => {
+                self.at = string_end(self.source, start + 1)?;
+                Kind::String
+            }
             b'#' if !self.source[start..].starts_with("##")
                 && !self.source[start..].starts_with("#'") =>
             {
@@ -284,6 +298,50 @@ pub fn edit_title(source: &str, title: &str) -> Option<String> {
     ))
 }
 
+/// Every top-level form of an authored query source, in order (the query
+/// vector, then any trailing `:inputs [..]`-style option pairs). Trivia and
+/// `#_` discards are skipped. Malformed, oversized or too-deep EDN yields
+/// `None`. O(source bytes).
+fn top_level_forms(source: &str) -> Option<Vec<Form>> {
+    if source.len() > MAX_BYTES {
+        return None;
+    }
+    let mut reader = Reader {
+        source,
+        at: 0,
+        page_refs: false,
+    };
+    let mut forms = Vec::new();
+    loop {
+        reader.trivia(0)?;
+        if reader.at == source.len() {
+            return Some(forms);
+        }
+        forms.push(reader.form(0)?);
+    }
+}
+
+/// Whether an authored advanced-query source *declares* the option `key`
+/// (for example `:result-transform`): either as a direct entry of a map form
+/// (`{:query [..] :result-transform (fn ..)}`) or as a top-level keyword
+/// followed by its value (`[:find ..] :inputs [..] :result-transform (fn ..)`).
+/// A mention inside a string, a comment, a `#_` discard or the query vector is
+/// not a declaration (I-12: the EDN owner decides, not a substring). Unreadable
+/// EDN declares nothing. O(source bytes).
+pub fn declares_option(source: &str, key: &str) -> bool {
+    let Some(forms) = top_level_forms(source) else {
+        return false;
+    };
+    forms.iter().any(|form| match form.kind {
+        Kind::Atom => &source[form.span.clone()] == key,
+        Kind::Map => form
+            .children
+            .chunks_exact(2)
+            .any(|pair| &source[pair[0].span.clone()] == key),
+        _ => false,
+    })
+}
+
 /// An EDN query stream's final map, only when another form precedes it.
 /// Logseq page references in the query form remain opaque authored atoms.
 pub fn split_trailing_map(source: &str) -> (String, String) {
@@ -362,6 +420,7 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
     let mut title = None;
     let mut query = None;
     let mut inputs = None;
+    let mut result_transform = None;
     for pair in form.children.chunks_exact(2) {
         let value = &source[pair[1].span.clone()];
         match &source[pair[0].span.clone()] {
@@ -381,6 +440,10 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
                 }
                 inputs = Some(value);
             }
+            // A Clojure function Tine never runs (ADR 0042). Carry it so the
+            // advanced lowerer sees it and refuses the whole query visibly,
+            // instead of running the bare vector as if the transform did not exist.
+            ":result-transform" => result_transform = Some(value),
             ":title" => {
                 if title.is_some() || pair[1].kind != Kind::String {
                     return Unsupported {
@@ -409,11 +472,12 @@ pub fn inspect_begin_query(payload: &str) -> BeginQueryMatch {
             reason: "expected an advanced :query vector",
         };
     };
-    Supported {
-        query: match inputs {
-            Some(inputs) => format!("{query} :inputs {inputs}"),
-            None => query.into(),
-        },
-        title,
+    let mut query = match inputs {
+        Some(inputs) => format!("{query} :inputs {inputs}"),
+        None => query.into(),
+    };
+    if let Some(transform) = result_transform {
+        query = format!("{query} :result-transform {transform}");
     }
+    Supported { query, title }
 }

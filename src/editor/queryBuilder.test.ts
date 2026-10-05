@@ -1410,3 +1410,24 @@ describe("no ⟨advanced⟩ for a shape the builder wrote (GH #619 item 5)", () 
     expect(filterLabel(rel).length).toBeLessThan(120);
   });
 });
+
+// I-12: the TypeScript readers below are twins of Rust functions; each reads
+// the SAME golden file as its Rust test (query/tql_tests.rs, query/parse_tests.rs).
+import likeGolden from "../../tests/fixtures/i12-like-escape-golden.json";
+import propsGolden from "../../tests/fixtures/i12-props-reader-golden.json";
+import { propsParts } from "./queryBuilder";
+import type { Filter as IrFilter } from "./queryIr";
+
+describe("twins agree with the native goldens", () => {
+  it("escapeLike and plainLikeSubstring match escape_like_literal / plain_like_substring", () => {
+    for (const [text, want] of likeGolden.escape as [string, string][]) expect(escapeLike(text), JSON.stringify(text)).toBe(want);
+    for (const [pattern, want] of likeGolden.plain as [string, string | null][]) expect(plainLikeSubstring(pattern), JSON.stringify(pattern)).toBe(want);
+  });
+  it("propsParts matches Filter::props_key / props_atom_test", () => {
+    for (const c of propsGolden.cases) {
+      const parts = propsParts(c.pred as IrFilter);
+      expect(parts?.key ?? null, c.name).toBe(c.key);
+      if (c.key !== null) expect(parts?.atom ?? null, c.name).toEqual(c.atom);
+    }
+  });
+});

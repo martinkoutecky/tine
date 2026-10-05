@@ -12,42 +12,27 @@ use tine_core::doc;
 pub(super) fn parse_input_depth_within_limit(input: &str) -> bool {
     let input: &str = &doc::normalize_line_endings(input); // a lone `\r` ends a line (K01a)
     let lines: Vec<_> = input.lines().collect();
-    let mut later_fence_runs = vec![[0usize; 2]; lines.len() + 1];
-    for i in (0..lines.len()).rev() {
-        later_fence_runs[i] = later_fence_runs[i + 1];
-        let body = lines[i].trim_start_matches([' ', '\t']);
-        if let Some(marker @ (b'`' | b'~')) = body.as_bytes().first().copied() {
-            let len = body.bytes().take_while(|byte| *byte == marker).count();
-            if len >= 3 {
-                let slot = if marker == b'`' { 0 } else { 1 };
-                later_fence_runs[i][slot] = later_fence_runs[i][slot].max(len);
-            }
-        }
-    }
+    // lsdoc's fence rule, transcribed (`v2/source.rs::is_fence_marker_line`,
+    // `block_common::find_matching_fence`): any line whose trimmed text starts
+    // with three backticks OR three tildes is a fence marker; a marker line with
+    // a LATER marker line opens a fence, and the very next marker line closes it
+    // whatever its character or length. (CommonMark's "same character, at least
+    // as long" is NOT the parser's rule: a four-backtick opener is closed by a
+    // three-backtick line, and the outline after it is real structure.)
+    let last_marker = lines.iter().rposition(|line| is_fence_marker_line(line));
     let mut bullet_columns = Vec::new();
     let mut containers = Vec::<String>::new();
     let mut literal: Option<String> = None;
-    let mut fence: Option<(u8, usize)> = None;
+    let mut in_fence = false;
     for (line_index, line) in lines.into_iter().enumerate() {
         let indent = line
             .bytes()
             .take_while(|byte| matches!(byte, b' ' | b'\t'))
             .count();
         let body = &line[indent..];
-        let marker = body.as_bytes().first().copied();
-        let fence_run = marker
-            .filter(|marker| matches!(marker, b'`' | b'~'))
-            .map(|marker| {
-                (
-                    marker,
-                    body.bytes().take_while(|byte| *byte == marker).count(),
-                )
-            })
-            .filter(|(_, len)| *len >= 3);
-        if let Some((open, minimum)) = fence {
-            if fence_run.is_some_and(|(candidate, len)| candidate == open && len >= minimum) {
-                fence = None;
-            }
+        let marker_line = is_fence_marker_line(line);
+        if in_fence {
+            in_fence = !marker_line;
             continue;
         }
         if let Some(open) = literal.as_deref() {
@@ -65,12 +50,9 @@ pub(super) fn parse_input_depth_within_limit(input: &str) -> bool {
             }
             continue;
         }
-        if let Some(marker) = fence_run {
-            let slot = if marker.0 == b'`' { 0 } else { 1 };
-            if later_fence_runs[line_index + 1][slot] >= marker.1 {
-                fence = Some(marker);
-                continue;
-            }
+        if marker_line && last_marker.is_some_and(|last| line_index < last) {
+            in_fence = true;
+            continue;
         }
         let list_item = body == "-"
             || body.starts_with("- ")
@@ -183,4 +165,16 @@ pub(super) fn parse_input_depth_within_limit(input: &str) -> bool {
         }
     }
     true
+}
+
+/// Three backticks or three tildes at the start of the line, after lsdoc's
+/// OCaml-style trim (space, tab, CR, LF, FF). Byte-wise on purpose: this
+/// admission guard runs before the parser and must not grow a text recognizer
+/// the I-12 block-region ratchet counts.
+fn is_fence_marker_line(line: &str) -> bool {
+    let trimmed = line.trim_start_matches([' ', '\t', '\r', '\n', '\x0c']);
+    matches!(
+        trimmed.as_bytes(),
+        [first @ (b'`' | b'~'), second, third, ..] if second == first && third == first
+    )
 }

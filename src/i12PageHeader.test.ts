@@ -33,6 +33,18 @@ describe("I-12 JS and Rust page-header save boundary", () => {
     }
   });
 
+  it("documents the two deliberate JS-side normalisations the shared golden excludes", () => {
+    // Enter leaves trailing newlines in the live header editor, and CRLF is only
+    // normalised by the Rust save. JS folds a flagless "tags:: books\n" root into
+    // pre_block before the DTO leaves the browser; Rust alone would keep the
+    // trailing-newline root as a bullet. The golden therefore holds neither shape.
+    resetStore();
+    loadSingle({ name: "NL", kind: "page", title: "NL", pre_block: null, format: "md",
+      blocks: [{ id: "b1", raw: "tags:: books\n", collapsed: false, children: [] }] } as PageDto);
+    const dto = pageToDto("NL")!;
+    expect({ pre_block: dto.pre_block ?? null, blocks: dto.blocks.map((b) => b.raw) }).toEqual({ pre_block: "tags:: books", blocks: [] });
+  });
+
   it("fails a planted divergent header answer", () => {
     const expected = { pre_block: "tags:: books", blocks: [] };
     const planted = { pre_block: null, blocks: ["tags:: books"] };

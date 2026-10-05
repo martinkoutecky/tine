@@ -18,10 +18,13 @@ use crate::date::JournalDate;
 /// The macro name chooses it when the block is saved (Q3): `{{query …}}` is the
 /// OG DSL, `{{tine-query …}}` is TQL. Both are the same IR afterwards — the
 /// dialect is a property of the TEXT, never of the query.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum QueryDialect {
+    /// The legacy OG DSL carried by `{{query …}}`.
+    #[default]
     Og,
+    /// Tine's TQL carried by `{{tine-query …}}`.
     Tql,
 }
 

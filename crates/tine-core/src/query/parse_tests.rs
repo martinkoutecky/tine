@@ -371,6 +371,59 @@ fn gh542_contains_narrowed_marker_lowers_to_a_task_leaf() {
     assert_eq!(ignored, vec!["result-transform"]);
 }
 
+/// Checkpoint-5 Q (REG-OG-C5-Q-RESULT-TRANSFORM): the refusal fires on a
+/// *declared* `:result-transform` option, not on the substring. The text may
+/// appear in a title, a string, a comment or a discarded form without the query
+/// carrying any transform, and a BEGIN_QUERY payload's transform must reach the
+/// lowerer instead of being dropped by the payload inspector.
+#[test]
+fn result_transform_refusal_follows_the_declared_option_not_the_substring() {
+    let vector = r#"[:find (pull ?h [*]) :where [?h :block/marker "TODO"]]"#;
+    for (label, src) in [
+        (
+            "title",
+            format!(r#"{{:title "see :result-transform docs" :query {vector}}}"#),
+        ),
+        (
+            "comment",
+            format!("{{:query {vector}\n ;; :result-transform is not used here\n}}"),
+        ),
+        (
+            "discard",
+            format!("{{:query {vector} #_ :result-transform}}"),
+        ),
+        (
+            "string in the query",
+            r#"[:find (pull ?h [*]) :where [?h :block/content ":result-transform"]]"#.to_string(),
+        ),
+    ] {
+        let (_, _, ignored) = advanced_pred(&src, None, TODAY);
+        assert!(
+            !ignored.iter().any(|item| item == "result-transform"),
+            "{label}: {ignored:?}"
+        );
+    }
+    let (lowered, _, ignored) = advanced_pred(
+        &format!(r#"{{:query {vector} :result-transform #(take 1 %)}}"#),
+        None,
+        TODAY,
+    );
+    assert!(lowered.is_none());
+    assert_eq!(ignored, vec!["result-transform"]);
+
+    // The BEGIN_QUERY payload inspector keeps the declared transform.
+    let payload = format!(r#"{{:query {vector} :result-transform (fn [xs] (take 1 xs))}}"#);
+    let crate::query_edn::BeginQueryMatch::Supported { query, .. } =
+        crate::query_edn::inspect_begin_query(&payload)
+    else {
+        panic!("the payload is a supported advanced query");
+    };
+    let (lowered, ran, ignored) = advanced_pred(&query, None, TODAY);
+    assert!(lowered.is_none(), "{query}");
+    assert!(ran.is_empty());
+    assert_eq!(ignored, vec!["result-transform"]);
+}
+
 /// §4.4: the binding boundary lowers an advanced source, replaces the
 /// provisional inspection diagnostic, and carries the clause report verbatim;
 /// an unsupported source resolves to `False` with the unsupported diagnostic.
@@ -506,4 +559,116 @@ fn a_datalog_keyword_inside_text_is_a_simple_query_at_every_answerer() {
     }
     assert!(is_advanced("[:find ?b :where [?b :block/marker]]"));
     assert!(is_advanced("[ :find ?b ]"));
+}
+
+/// I-12: `doc::property_key_norm` is the one property-key normaliser; the
+/// frontend's `propertyKeyNorm` and the legacy table's `columnKey` read this
+/// same golden (`src/components/legacyQueryTable.test.ts`), so a column named
+/// in `query-properties::` matches the key the engine stored.
+#[test]
+fn the_shared_property_key_golden_normalises_as_recorded() {
+    let golden: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/i12-property-key-norm-golden.json"
+    ))
+    .expect("golden parses");
+    for case in golden["cases"].as_array().expect("cases") {
+        let (key, want) = (case[0].as_str().unwrap(), case[1].as_str().unwrap());
+        assert_eq!(crate::doc::property_key_norm(key), want, "{key:?}");
+    }
+}
+
+/// I-12: the saved `(search "…")` form the frontend writes
+/// (`friendlySearchToSavedDsl`) reads back here as one content-match filter
+/// over exactly the trimmed friendly source, backslashes and quotes included;
+/// `src/editor/searchQuery.test.ts` reads the same golden for the TS side.
+#[test]
+fn the_shared_search_dsl_golden_reads_back_the_friendly_source() {
+    let golden: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/i12-search-dsl-golden.json"
+    ))
+    .expect("golden parses");
+    for case in golden["cases"].as_array().expect("cases") {
+        let (friendly, dsl) = (case[0].as_str().unwrap(), case[1].as_str().unwrap());
+        assert_eq!(
+            pred(dsl),
+            Filter::attr(Attr::Content, CmpOp::Match, Value::text(friendly.trim())),
+            "{dsl:?}"
+        );
+    }
+}
+
+/// I-12: the LIKE-literal encoder and its inverse, pinned against the
+/// frontend builder's `escapeLike` / `plainLikeSubstring` by one golden.
+#[test]
+fn the_shared_like_escape_golden_encodes_and_decodes_as_recorded() {
+    let golden: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/i12-like-escape-golden.json"
+    ))
+    .expect("golden parses");
+    for case in golden["escape"].as_array().expect("escape") {
+        let (text, want) = (case[0].as_str().unwrap(), case[1].as_str().unwrap());
+        assert_eq!(
+            crate::query::text::escape_like_literal(text),
+            want,
+            "{text:?}"
+        );
+    }
+    for case in golden["plain"].as_array().expect("plain") {
+        let pattern = case[0].as_str().unwrap();
+        assert_eq!(
+            crate::query::og::plain_like_substring(pattern).as_deref(),
+            case[1].as_str(),
+            "{pattern:?}"
+        );
+    }
+}
+
+/// I-22: the empty-result explanation holds two probes per conjunct and the
+/// second carries every OTHER conjunct, so a 64 KB source of a few thousand
+/// conjuncts built tens of millions of filter clones. Past
+/// `EXPLAIN_MAX_CONJUNCTS` the query is one whole probe.
+#[test]
+fn explaining_an_empty_result_is_linear_in_a_hostile_conjunct_count() {
+    use crate::query::view::{explain_empty_plan, EXPLAIN_MAX_CONJUNCTS};
+    let count_leaves = |plan: &crate::query::view::ExplainPlan| {
+        let mut leaves = 0usize;
+        for probe in &plan.probes {
+            probe.filter.for_each_leaf(&mut |_| leaves += 1);
+        }
+        leaves
+    };
+    let explain = |conjuncts: usize| {
+        let source = (0..conjuncts)
+            .map(|n| format!("content like '%x{n}%'"))
+            .collect::<Vec<_>>()
+            .join(" and ");
+        assert!(
+            source.len() <= QUERY_SOURCE_MAX_BYTES,
+            "fixture fits the ceiling"
+        );
+        let (query, _) = super::parse_query_input(
+            &source,
+            super::QueryInput::Tql,
+            TODAY,
+            super::registry::Registry::none(),
+        );
+        let resolved = resolve_for_execution(&query, &ExecutionContext::default(), TODAY);
+        assert!(
+            resolved.is_executable(),
+            "{:?}",
+            resolved.query().diagnostics
+        );
+        explain_empty_plan(&resolved)
+    };
+    // Small queries still explain every conjunct: two probes each.
+    let small = explain(5);
+    assert_eq!(small.probes.len(), 10);
+    // The bound is inclusive; one past it falls back to the whole filter.
+    assert_eq!(
+        explain(EXPLAIN_MAX_CONJUNCTS).probes.len(),
+        2 * EXPLAIN_MAX_CONJUNCTS
+    );
+    let hostile = explain(2_000);
+    assert_eq!(hostile.probes.len(), 1);
+    assert_eq!(count_leaves(&hostile), 2_000, "one probe, every leaf once");
 }

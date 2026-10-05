@@ -411,7 +411,7 @@ describe("Q4b: Display saves through the query block", () => {
     }
   });
 
-  it("persists a query table's Page header sort in the same query view", async () => {
+  it("sorts a query table's Page header locally and never writes the query view (D8/D11)", async () => {
     load(`${TQL_MACRO}\ntine.view:: table`);
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
     vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
@@ -424,7 +424,10 @@ describe("Q4b: Display saves through the query block", () => {
         return found;
       });
       header.click();
-      await vi.waitFor(() => expect(blockProperty("query", "tine.sort")).toBe("page asc"));
+      // A header click is browsing: the sort shows on the header and the
+      // query block's saved view is untouched.
+      await vi.waitFor(() => expect(header.textContent).toContain("\u25B2"));
+      expect(blockProperty("query", "tine.sort")).toBeNull();
     } finally { dispose(); }
   });
 });

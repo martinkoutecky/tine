@@ -998,7 +998,20 @@ pub(crate) fn block_hits_to_groups(hits: Vec<QueryHit>) -> Vec<tine_core::model:
 pub(crate) fn page_hits_to_entries(hits: Vec<QueryHit>) -> Vec<PageEntry> {
     hits.into_iter()
         .filter_map(|hit| match hit {
-            QueryHit::Page { page, .. } => Some(page),
+            // An authored alias is offered under its own spelling on its
+            // owner's identity (path), never as a pathless page (master GH
+            // #482 / #353: the alias row keeps `rel_path`, only `name` is the
+            // alias text).
+            QueryHit::Page {
+                mut page,
+                matched_alias,
+                ..
+            } => {
+                if let Some(alias) = matched_alias {
+                    page.name = alias;
+                }
+                Some(page)
+            }
             QueryHit::Block { .. } => None,
         })
         .collect()

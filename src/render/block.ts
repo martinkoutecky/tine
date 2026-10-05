@@ -10,13 +10,12 @@ import {
   split_linkable_property as splitLinkableProperty,
   is_render_hidden_prop as isRenderHiddenPropNative,
 } from "./wasm/lsdoc_wasm.js";
+import { propertyKeyNorm } from "../propertyKey";
 export { splitLinkableProperty };
 
 export { MARKERS };
 
-export function propertyKeyNorm(key: string): string {
-  return key.trim().toLowerCase().replace(/[ _]/g, "-");
-}
+export { propertyKeyNorm };
 
 // Property keys NOT shown as rendered chips (id/uuid/collapsed + Logseq internals
 // + display-only keys, `tine.*`, `logseq.table.*`, and the user's

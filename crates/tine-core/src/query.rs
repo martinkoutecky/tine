@@ -199,6 +199,10 @@ pub struct QueryExportSpec {
     pub key: String,
     /// Query expression source.
     pub query: String,
+    /// Dialect of `query`: `{{query …}}` is OG text, `{{tine-query …}}` is TQL.
+    /// Absent means OG (older callers).
+    #[serde(default)]
+    pub dialect: QueryDialect,
 }
 
 /// A single query macro's bounded, hierarchy-preserving export projection.

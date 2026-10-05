@@ -364,9 +364,23 @@ impl Lower<'_> {
                 any: false,
                 expr,
                 pattern,
-                escape_char: _,
+                escape_char,
             } => {
-                let filter = self.like(expr, pattern, scope);
+                let escape = match escape_char {
+                    None => '\\',
+                    Some(value) => match &value.value {
+                        SqlValue::SingleQuotedString(text) if text.chars().count() == 1 => {
+                            text.chars().next().unwrap_or('\\')
+                        }
+                        _ => {
+                            return self.reject(
+                                DiagnosticKind::Syntax,
+                                "`escape` takes a one-character quoted string",
+                            )
+                        }
+                    },
+                };
+                let filter = self.like(expr, pattern, escape, scope);
                 if *negated {
                     Filter::not(filter)
                 } else {
@@ -501,7 +515,7 @@ impl Lower<'_> {
     /// The pattern is always text, but whether `like` applies is decided by the
     /// TARGET's type, as `presence` does: §4.2.3 refuses it on a date or
     /// checkbox attribute.
-    fn like(&mut self, left: &Expr, pattern: &Expr, scope: Scope) -> Filter {
+    fn like(&mut self, left: &Expr, pattern: &Expr, escape: char, scope: Scope) -> Filter {
         let Some(target) = self.target(left, scope) else {
             return Filter::False;
         };
@@ -515,6 +529,10 @@ impl Lower<'_> {
                 "a `like` pattern is a quoted string",
             );
         };
+        // The IR's LIKE pattern always escapes with `\`; an `ESCAPE 'c'` clause
+        // is re-encoded into that convention here, so the stored pattern means
+        // what the author wrote and prints back without the clause.
+        let text = crate::query::text::reencode_like_escape(&text, escape);
         match crate::query::text::LikePattern::compile(&text).starts_with_prefix() {
             Some(prefix) => self.build(target, CmpOp::StartsWith, Value::text(prefix), ty),
             None => self.build(target, CmpOp::Like, Value::text(text), ty),

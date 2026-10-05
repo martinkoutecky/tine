@@ -149,9 +149,35 @@ pub(crate) fn planning_day(text: &str) -> Option<i64> {
 /// A block's planning timestamp: lsdoc's own-line one, else a `MARKER: <…>`
 /// anywhere in the block — Martin's model since f5f514878 (`TODO SCHEDULED:
 /// <…> text` on one line is an agenda item too), which master's walk lost.
-fn planning_text<'a>(projected: Option<&'a str>, raw: &'a str, marker: &str) -> Option<&'a str> {
+///
+/// The inline fallback asks the parser where it may look (I-12): a marker that
+/// sits inside a block-level literal (a fenced or `#+BEGIN_` container) or ends
+/// a longer word (`UNSCHEDULED:`) is documentation, not planning. Inline code
+/// stays eligible — that is the recorded og deviation. The parse runs only for
+/// a block whose text contains the marker and lsdoc found no planning of its own.
+fn planning_text<'a>(
+    projected: Option<&'a str>,
+    raw: &'a str,
+    is_org: bool,
+    marker: &str,
+) -> Option<&'a str> {
     projected.or_else(|| {
+        if !raw.contains(marker) {
+            return None;
+        }
+        let regions = tine_core::block_regions::parse(raw, is_org);
         raw.match_indices(marker)
+            .filter(|(at, _)| {
+                let word_boundary = raw[..*at]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|prev| !(prev.is_alphanumeric() || prev == '_'));
+                word_boundary
+                    && !regions
+                        .literal_blocks
+                        .iter()
+                        .any(|literal| literal.range.contains(*at))
+            })
             .map(|(at, _)| raw[at + marker.len()..].trim_start())
             .find(|rest| rest.starts_with('<'))
     })
@@ -353,6 +379,7 @@ fn eval_block_leaf(
                 planning_text(
                     block.projection().scheduled().as_deref(),
                     block.raw(),
+                    block.is_org(),
                     "SCHEDULED:",
                 ),
                 ctx,
@@ -363,6 +390,7 @@ fn eval_block_leaf(
                 planning_text(
                     block.projection().deadline().as_deref(),
                     block.raw(),
+                    block.is_org(),
                     "DEADLINE:",
                 ),
                 ctx,

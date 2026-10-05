@@ -584,7 +584,7 @@ pub(crate) fn advanced_pred(
     }
     // GH #542: a `:result-transform` is a Clojure function (ADR 0042 keeps
     // scripting out). It reorders or reshapes the answer, so say it did not run.
-    if query_src.contains(":result-transform") {
+    if crate::query_edn::declares_option(query_src, ":result-transform") {
         ignored.push("result-transform".into());
     }
     if ignored.iter().any(|item| item == "query-nesting-too-deep") {
@@ -1298,5 +1298,30 @@ mod date_token_tests {
             "units are lowercase"
         );
         assert_eq!(resolve_date_token("2026_01_05", today), Some(20260105));
+    }
+
+    /// The grammar golden shared with the frontend preview (`dateExpr.ts`,
+    /// I-12): this resolver is authoritative and `src/editor/dateExpr.test.ts`
+    /// reads the same file, so the TypeScript twin cannot drift from it.
+    #[test]
+    fn the_shared_date_token_golden_resolves_as_recorded() {
+        let golden: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/i12-date-token-golden.json"
+        ))
+        .expect("golden parses");
+        let mut mismatches = Vec::new();
+        for case in golden["cases"].as_array().expect("cases") {
+            let today = JournalDate::from_ordinal(case["today"].as_i64().expect("today"));
+            let token = case["token"].as_str().expect("token");
+            let expected = case["ordinal"].as_i64();
+            let actual = resolve_date_token(token, today);
+            if actual != expected {
+                mismatches.push(format!(
+                    "today {} token {token:?}: golden {expected:?}, resolver {actual:?}",
+                    case["today"]
+                ));
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
     }
 }

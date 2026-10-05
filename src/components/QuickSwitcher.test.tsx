@@ -192,6 +192,48 @@ describe("QuickSwitcher search syntax help", () => {
     dispose();
   });
 
+  it("shows alias context on an alias-matched page and navigates to the canonical owner (GH #353)", async () => {
+    vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
+      hits: [{
+        entity: "page",
+        page: { name: "Research Hub", kind: "page", date_key: null, path: "pages/research-hub.md" },
+        display_text: "book",
+        evidence: [{ clause_id: 1, field: "page_name", mode: "fuzzy", spans: [{ start: 0, end: 4 }] }],
+        score: 100,
+        match_class: "exact",
+        matched_alias: "book",
+      }],
+      diagnostics: [],
+      explanation: { branches: [] },
+      cancelled: false,
+      has_more: { pages: false, blocks: false },
+    });
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher();
+    try {
+      const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+      input.value = "book";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+
+      await vi.waitFor(() => {
+        const rows = [...root.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')];
+        expect(rows).toHaveLength(1);
+        expect(rows[0].textContent).toContain("Research Hub");
+        // The alias is display/match context, never the navigation target.
+        expect(rows[0].querySelector(".switcher-alias")?.textContent).toContain("book");
+        expect(rows[0].textContent).not.toContain("Create page:");
+      });
+
+      input.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Enter", bubbles: true, cancelable: true,
+      }));
+      expect(route()).toEqual({ kind: "page", name: "Research Hub", pageKind: "page", path: "pages/research-hub.md" });
+    } finally {
+      dispose();
+    }
+  });
+
   it("opens a selected page in the right sidebar on Shift-only Enter", async () => {
     const search = vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
       hits: [{

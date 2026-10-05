@@ -299,6 +299,186 @@
         "pre_block": null,
         "title": "I12_12"
       }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "ID:: 66aa"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "ID:: 66aa"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_13",
+        "pre_block": null,
+        "title": "I12_13"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "Collapsed:: true"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "Collapsed:: true"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_14",
+        "pre_block": null,
+        "title": "I12_14"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "alias:: a\nfoo:: multi\n  line"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "alias:: a\nfoo:: multi\n  line"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_15",
+        "pre_block": null,
+        "title": "I12_15"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [],
+        "pre_block": "tags::"
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "tags::"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_16",
+        "pre_block": null,
+        "title": "I12_16"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "tags:: a\n\nbody"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "tags:: a\n\nbody"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_17",
+        "pre_block": null,
+        "title": "I12_17"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "LOGSEQ.ORDER-LIST-TYPE:: number"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "LOGSEQ.ORDER-LIST-TYPE:: number"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_18",
+        "pre_block": null,
+        "title": "I12_18"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [
+          "tags:: a\n  \nfoo:: b"
+        ],
+        "pre_block": null
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "tags:: a\n  \nfoo:: b"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_19",
+        "pre_block": null,
+        "title": "I12_19"
+      }
+    },
+    {
+      "expected": {
+        "blocks": [],
+        "pre_block": "tags:: [[a]], [[b]]\nalias:: \u02bbx"
+      },
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "tags:: [[a]], [[b]]\nalias:: \u02bbx"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_20",
+        "pre_block": null,
+        "title": "I12_20"
+      }
     }
   ]
 }

@@ -13,6 +13,7 @@ import { expandTemplate } from "../render/inline";
 import { visibleBody, isRenderHiddenProp } from "../render/block";
 import { parseBlock, blockRegions, propertyValueInline } from "../render/parse";
 import { splitTrailingMap } from "../editor/edn";
+import { formFamilyForMacroName, isQueryMacroName } from "../editor/queryMacro";
 import {
   exportOutline,
   DEFAULT_EXPORT_OPTIONS,
@@ -105,7 +106,7 @@ const BUILT_IN_MACRO_NAMES = new Set([
 
 function isBuiltInMacro(name: string): boolean {
   const n = name.toLowerCase();
-  return BUILT_IN_MACRO_NAMES.has(n) || n.startsWith("zotero-");
+  return BUILT_IN_MACRO_NAMES.has(n) || isQueryMacroName(n) || n.startsWith("zotero-");
 }
 
 interface WarmTargets {
@@ -321,6 +322,8 @@ async function warmQueryMacros(
     return {
       key: macroKey(macro.name, macro.args),
       query: form,
+      // `{{tine-query}}` carries TQL; the macro name, not the text, chooses.
+      ...(formFamilyForMacroName(macro.name) === "tql" ? { dialect: "tql" as const } : {}),
     };
   });
   try {
@@ -393,8 +396,8 @@ async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<strin
     const macros = [...targets.macros.entries()].filter(([key]) => !seenMacros.has(key)).slice(0, 2000 - seenMacros.size);
     macros.forEach(([key]) => seenMacros.add(key));
     if (!macros.length) break;
-    await warmQueryMacros(macros.map(([,macro]) => macro).filter(macro => macro.name.toLowerCase() === "query"), warmed, owner);
-    await Promise.all(macros.map(([,macro]) => macro).filter(macro => macro.name.toLowerCase() !== "query")
+    await warmQueryMacros(macros.map(([,macro]) => macro).filter(macro => isQueryMacroName(macro.name)), warmed, owner);
+    await Promise.all(macros.map(([,macro]) => macro).filter(macro => !isQueryMacroName(macro.name))
       .map(macro => warmMacro(macro, warmed, pages, owner)));
     if (!owner()) return;
     for (const [key] of macros) {

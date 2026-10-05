@@ -138,6 +138,7 @@ fn all_whole_graph_questions_use_the_public_view() {
         .export_query_subtrees(&[QueryExportSpec {
             key: "one".into(),
             query: "(page Target)".into(),
+            dialect: Default::default(),
         }])
         .unwrap();
     assert_eq!(export.results.len(), 1);

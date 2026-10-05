@@ -45,14 +45,6 @@ export function queryMacroExtents(raw: string): MacroExtent[] {
   return found.map((extent) => ({ ...extent, start: toUnits(extent.start), end: toUnits(extent.end) }));
 }
 
-/** Recover the sole authored macro from an entire-block render. A property
- *  line or leading whitespace can move its raw offset; refuse ambiguity. */
-export function singleQueryMacroExtent(raw: string, displayed: MacroExtent): MacroExtent | undefined {
-  const extents = queryMacroExtents(raw);
-  const extent = extents.length === 1 ? extents[0] : undefined;
-  return extent?.name === displayed.name && extent.argument === displayed.argument ? extent : undefined;
-}
-
 const UTF8_ENCODER = new TextEncoder();
 
 /** The extent a parsed macro node's SPAN points at, or null. */

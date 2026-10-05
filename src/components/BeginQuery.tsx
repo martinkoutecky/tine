@@ -8,7 +8,17 @@ export type BeginQueryMatch =
   | { kind: "supported"; query: string; title?: string }
   | { kind: "unsupported"; reason: string };
 
-const WHOLE_BEGIN_QUERY = /^[ \t]*#\+BEGIN_QUERY[ \t]*(?:\r\n|\n|\r)([\s\S]*)(?:\r\n|\n|\r)[ \t]*#\+END_QUERY[ \t]*$/i;
+// Mirrored by `whole_begin_query_payload` (tine-graph-features render.rs); both read
+// tests/fixtures/i12-begin-query-container-golden.json. The payload is lazy so a
+// CRLF closing delimiter does not leave a stray CR in it, and one final line
+// ending after the closing delimiter is tolerated, as on the native side.
+const WHOLE_BEGIN_QUERY = /^[ \t]*#\+BEGIN_QUERY[ \t]*(?:\r\n|\n|\r)([\s\S]*?)(?:\r\n|\n|\r)[ \t]*#\+END_QUERY[ \t]*(?:\r\n|\n|\r)?$/i;
+
+/** The EDN payload when `raw` is exactly one terminated BEGIN_QUERY container
+ *  (the same regexp `inspectBeginQuery` runs; exported for the shared golden). */
+export function wholeBeginQueryPayload(raw: string): string | null {
+  return WHOLE_BEGIN_QUERY.exec(raw)?.[1] ?? null;
+}
 
 /** Match only a parser-confirmed, terminated custom/query that owns the whole block.
  * OG dispatches this exact markup node to its custom-query component rather than
