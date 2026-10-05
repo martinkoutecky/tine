@@ -64,7 +64,7 @@ import { Editor, SurfaceContext } from "./Block";
 import { SheetAggregateCornerToggle, SheetAggregateFooterCell } from "./SheetAggregateFooter";
 import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
 import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
-import { compareSortKeys, measuredGridTracks, nextQuerySort, queryColumnFieldId, queryColumnName, querySortFieldName, reorderedQueryColumns,
+import { compareSortKeys, measuredGridTracks, queryColumnFieldId, queryColumnName, querySortFieldName, reorderedQueryColumns,
   SCHEMA_PROP_TYPES, type SchemaMenuType, type SortKey, type SortState } from "../sheet/tablePresentation";
 import { queryTableFooter, type QueryDisplayControl } from "../sheet/queryTableFooter";
 import { FieldValueView } from "./SheetFieldValue";
@@ -374,16 +374,11 @@ export function SheetTable(props: {
     const col = columns().findIndex((field) => querySortFieldName(field) === entries[0][0]);
     return col < 0 ? null : { col, dir: entries[0][1] === "desc" ? -1 : 1 };
   });
-  createEffect(() => { if (props.queryDisplay?.view.sort) setSort(null); });
+  /** Clicking a header sorts THIS VIEW only (D8, D11): a header click is browsing
+   * and never writes the query or its display properties. A saved sort is set
+   * from the query's own sort control; a local sort here lays over it and the
+   * third click returns to the saved order. */
   const sortHeader = (col: number) => {
-    const control = props.queryDisplay;
-    const field = columns()[col];
-    const name = field && querySortFieldName(field);
-    if (control && name) {
-      setSort(null);
-      control.apply({ ...control.view, sort: nextQuerySort(control.view.sort, name) });
-      return;
-    }
     setSort((cur) => {
       if (!cur || cur.col !== col) return { col, dir: 1 };
       if (cur.dir === 1) return { col, dir: -1 };
