@@ -9,6 +9,7 @@ import { searchFold } from "./searchFold";
 import { pageIdentityKey } from "../pageIdentity";
 import { isEditablePropertyKey } from "./properties";
 import { codeFences, lineStartsInFence } from "./fences";
+import type { Format } from "../render/ast";
 
 export type TriggerKind =
   | "page"
@@ -91,6 +92,7 @@ export function detectTrigger(
   raw: string,
   caret: number,
   propertyValueKey?: string | null,
+  format: Format = "md",
 ): Trigger | null {
   // No trigger spans a newline: the `[[` inner forbids it, `#tag`/`/command`
   // are anchored at line start or after whitespace, and `<command` starts its
@@ -171,7 +173,7 @@ export function detectTrigger(
   })();
   // Code is literal: no property completion inside a fence. The parse behind that answer runs only
   // when a property trigger is actually pending, never for ordinary typing.
-  if (propertyTrigger && !lineStartsInFence(raw, lineStart)) return propertyTrigger;
+  if (propertyTrigger && !lineStartsInFence(raw, lineStart, format)) return propertyTrigger;
 
   // Opening Markdown fence language. Do not pop a menu for a bare fence typed
   // by hand (Enter keeps its established behavior); one language character is

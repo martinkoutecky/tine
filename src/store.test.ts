@@ -2537,15 +2537,26 @@ describe("toggleListItemAtIndex (positional checkbox toggle)", () => {
   it("flips the exact line among identical checkbox labels", () => {
     const b = blk("Title\n+ [ ] same\n+ [ ] same");
     load([b]);
-    toggleListItemAtIndex(b.id, 2); // line index 2 = the SECOND "+ [ ] same"
+    toggleListItemAtIndex(b.id, 2, 2); // line index 2 = the SECOND "+ [ ] same"; column 2 = its checkbox
     expect(doc.byId[b.id].raw).toBe("Title\n+ [ ] same\n+ [x] same");
   });
 
   it("ignores a non-checkbox line index (no-op, no corruption)", () => {
     const b = blk("Title\n+ [ ] a");
     load([b]);
-    toggleListItemAtIndex(b.id, 0); // "Title" is not a checkbox line
+    toggleListItemAtIndex(b.id, 0, 0); // "Title" is not a checkbox line
     expect(doc.byId[b.id].raw).toBe("Title\n+ [ ] a");
+  });
+
+  it("flips only the token at the given column (a literal `[ ]` in the label stays)", () => {
+    const b = blk("Tasks\n+ [x] literal [ ]");
+    load([b]);
+    toggleListItemAtIndex(b.id, 1, 2);
+    expect(doc.byId[b.id].raw).toBe("Tasks\n+ [ ] literal [ ]");
+    toggleListItemAtIndex(b.id, 1, 14); // an explicit column names whichever token a caller computed
+    expect(doc.byId[b.id].raw).toBe("Tasks\n+ [ ] literal [x]");
+    toggleListItemAtIndex(b.id, 1, 3); // not at a token boundary: no-op
+    expect(doc.byId[b.id].raw).toBe("Tasks\n+ [ ] literal [x]");
   });
 });
 

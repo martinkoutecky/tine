@@ -1,4 +1,6 @@
 import { blockRegions } from "../render/parse";
+import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
+import type { Format } from "../render/ast";
 
 // Parse pasted text into an outline tree (paste-as-blocks). Handles both a
 // Logseq outline (every line a `- ` bullet, indentation = nesting, continuation
@@ -75,11 +77,11 @@ interface Frame {
 
 /** Returns no nodes for text over `OUTLINE_MAX_SOURCE_CHARS` (callers treat an
  *  empty outline as nothing to insert). */
-export function parseOutline(text: string): OutlineNode[] {
+export function parseOutline(text: string, format: Format = "md"): OutlineNode[] {
   if (text.length > OUTLINE_MAX_SOURCE_CHARS) return [];
   const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = normalized.split("\n");
-  const literals = blockRegions(normalized).literals;
+  const literals = blockRegions(normalized, format).literals;
   const starts = [0];
   const utf8 = new TextEncoder();
   for (const line of lines) starts.push(starts.at(-1)! + utf8.encode(line).length + 1);
@@ -168,4 +170,46 @@ export function parseOutline(text: string): OutlineNode[] {
     sawBlank = false;
   }
   return roots;
+}
+
+// --- Plain-text paste classification. ONE module answers "what outline does pasted text hold", so the
+// decision, the outline parse and the paragraph split agree on which text is literal (a bullet-looking
+// or blank line inside a fenced payload is code, not structure; I-12). The classifier is OG's:
+// 6e7afa8eb src/main/frontend/handler/paste.cljs:101-107 (Markdown: -, +, *, ATX headings; Org: stars),
+// paragraphs split on blank lines and trimmed, paste.cljs:34-47,173-174. NAMED OG DIVERGENCE: OG applies
+// both to the raw text; here a line or break inside literal source (lsdoc's answer) is not counted.
+
+const BLOCKS_MD = /^\s*(?:[-+*]|#+)\s+/gm;
+const BLOCKS_ORG = /^\s*\*+\s+/gm;
+const PARAGRAPH_BREAK = /(?:\r?\n){2,}/g;
+
+/** UTF-16 ranges of literal source in `text`, each ending at its last non-blank character. */
+function literalSpans(text: string, format: Format): [number, number][] {
+  const at = utf8ToUtf16Cursor(text);
+  return blockRegions(text, format).literals.map(([a, b]) => {
+    const start = at(a);
+    return [start, start + text.slice(start, at(b)).trimEnd().length];
+  });
+}
+
+/** The blocks pasted plain text makes, or null when it should be inserted as text: an outline when a
+ *  non-literal line starts a bullet/heading, else the blank-line-separated paragraphs when a break
+ *  lies outside literal source, else null. At most `OUTLINE_MAX_SOURCE_CHARS` is considered. */
+export function pastedPlainBlocks(text: string, format: Format): OutlineNode[] | null {
+  const spans = literalSpans(text, format);
+  const literalAt = (at: number) => spans.some(([a, b]) => a <= at && at < b);
+  const marker = format === "org" ? BLOCKS_ORG : BLOCKS_MD;
+  for (const hit of text.matchAll(marker)) {
+    if (!literalAt(hit.index + hit[0].length - hit[0].trimStart().length)) return parseOutline(text, format);
+  }
+  const paragraphs: OutlineNode[] = [];
+  let from = 0;
+  for (const hit of text.matchAll(PARAGRAPH_BREAK)) {
+    if (spans.some(([a, b]) => a < hit.index && hit.index < b)) continue;
+    paragraphs.push({ raw: text.slice(from, hit.index).trim(), children: [] });
+    from = hit.index + hit[0].length;
+  }
+  if (!paragraphs.length) return null;
+  paragraphs.push({ raw: text.slice(from).trim(), children: [] });
+  return paragraphs;
 }

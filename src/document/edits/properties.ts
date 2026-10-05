@@ -1,7 +1,7 @@
 import type { PageDto } from "../../types";
 import { ordered_list_glyph } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
-import { blockRegions, editBlock } from "../../render/parse";
+import { blockRegions, editBlock, parserReady } from "../../render/parse";
 import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { pushUndo } from "../history";
@@ -361,26 +361,19 @@ export function orderedListMarker(id: string, ownProperties?: readonly (readonly
   return ordered_list_glyph(idx, depth);
 }
 
-/** Tick/untick a checkbox on one line of an in-block `+ [ ]` markdown list,
- *  identified by its exact source line. Pure `[ ]`↔`[x]` text swap — round-trips
- *  as standard markdown (and renders/ticks in OG + mobile). */
-export function toggleListItem(id: string, rawLine: string) {
-  const node = doc.byId[id];
-  if (!node) return;
-  toggleListItemAtIndex(id, node.raw.split("\n").indexOf(rawLine));
-}
-
-/** Flip the `[ ]`/`[x]` checkbox on a SPECIFIC raw line index. Targeting by index
- *  (not line text) is what makes the AST list checkbox toggle safe when two items
- *  share the same label — see toggleAstCheckbox in render/body.tsx. */
-export function toggleListItemAtIndex(id: string, lineIndex: number) {
+/** Flip the `[ ]`/`[x]` checkbox of ONE list item: the token at `column` (a UTF-16 offset in the raw
+ *  line `lineIndex`). Both coordinates come from the item's own lsdoc source span (render/body.tsx
+ *  `toggleAstCheckbox`), so the line's other `[ ]`/`[x]` text (a literal in the label) is never touched
+ *  and two items with the same label flip independently. Pure `[ ]`↔`[x]` text swap — round-trips
+ *  as standard markdown (and renders/ticks in OG + mobile). A position that is not a checkbox token is a no-op. */
+export function toggleListItemAtIndex(id: string, lineIndex: number, column: number) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
   const lines = node.raw.split("\n");
   const ln = lines[lineIndex];
-  if (ln === undefined || !/\[[ xX]\]/.test(ln)) return;
-  const next = /\[ \]/.test(ln) ? ln.replace(/\[ \]/, "[x]") : ln.replace(/\[[xX]\]/, "[ ]");
-  if (next === ln) return;
+  const token = ln?.slice(column, column + 3);
+  if (ln === undefined || token === undefined || !/^\[[ xX]\]$/.test(token)) return;
+  const next = ln.slice(0, column) + (token === "[ ]" ? "[x]" : "[ ]") + ln.slice(column + 3);
   pushUndo(`listcheck:${id}`, [node.page]);
   lines[lineIndex] = next;
   setDoc("byId", id, "raw", lines.join("\n"));
@@ -389,13 +382,20 @@ export function toggleListItemAtIndex(id: string, lineIndex: number) {
 
 export type HeadingState = number | true | null;
 
-const MARKDOWN_HEADING = /^#+\s+/;
-const clearMarkdownHeading = (raw: string): string => raw.replace(MARKDOWN_HEADING, "");
+// The ATX marker is the parser's to find (I-12): `header.heading` is the `#` count lsdoc accepted for
+// the block's first line, so `#tag`, a `#` run inside prose and a heading-looking line in a later
+// line are never mistaken for one. Only the whitespace after the known-length marker is removed here.
+const markdownHeadingLevel = (raw: string): number =>
+  parserReady() && raw.includes("#") ? blockRegions(raw, "md").header.heading ?? 0 : 0;
+const afterMarkdownHeading = (raw: string, level: number): string => raw.slice(level).replace(/^[ \t]+/, "");
+const clearMarkdownHeading = (raw: string): string => {
+  const level = markdownHeadingLevel(raw);
+  return level ? afterMarkdownHeading(raw, level) : raw;
+};
 const setMarkdownHeading = (raw: string, level: number): string => {
   const prefix = `${"#".repeat(level)} `;
-  return MARKDOWN_HEADING.test(raw)
-    ? raw.replace(MARKDOWN_HEADING, prefix)
-    : prefix + raw.trimStart();
+  const current = markdownHeadingLevel(raw);
+  return current ? prefix + afterMarkdownHeading(raw, current) : prefix + raw.trimStart();
 };
 
 /** Pure format-aware heading transition shared by single-block and selection

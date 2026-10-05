@@ -6,6 +6,8 @@
  * for the two toggles, the block they name. */
 import { For, type JSX } from "solid-js";
 import { node as docNode, pageByName, setRaw } from "../document";
+import { literalBlockOfLine } from "../editor/literalLines";
+import { hideAll, splitProps } from "../editor/properties";
 import { toggleMarkerLabel, toggleTaskDone } from "../editor/repeat";
 import type { LogbookInfo } from "../logbook";
 import { logbookWithSecondSupport, timetrackingEnabled, workflow } from "../ui";
@@ -104,17 +106,20 @@ export function resizeBlockEditor(editor: HTMLTextAreaElement): void {
   if (scroller && top !== undefined && scroller.scrollTop !== top) scroller.scrollTop = top;
 }
 
-/** First visible (non-`key:: value`) line of a block's raw markdown — what the
- *  block-reference picker shows as the candidate's label. */
-export function blockFirstLine(raw: string): string {
-  for (const line of raw.split("\n")) {
-    if (!/^\s*[\w-]+:: /.test(line) && line.trim() !== "") return line.trim();
+/** First visible (non-property) line of a block's raw text - what the block-reference picker shows as
+ *  the candidate's label. Which lines are properties is lsdoc's (`splitProps` over the block-region
+ *  door), so a `key:: value` line inside a code fence is content, not skipped metadata (I-12). */
+export function blockFirstLine(raw: string, format: "md" | "org" = "md"): string {
+  for (const line of splitProps(raw, hideAll, format).visible.split("\n")) {
+    if (line.trim() !== "") return line.trim();
   }
   return "";
 }
 
 /** If the caret sits on an in-block markdown list line (`+`/`*`/ordered — NOT the
- *  outline bullet `-`), return its parts, for caret-context list editing. */
+ *  outline bullet `-`), return its parts, for caret-context list editing. A line inside literal
+ *  source is never a list line. `text` is the buffer the caret is in; a body-only code view is
+ *  entirely literal, so its callers (Block.tsx `listLine`) do not ask. */
 // In-block list markers differ by format (see body.tsx): Markdown uses `+`/`*`
 // (a leading `-` is the outline bullet), Org uses `-`/`+` (a leading `*` is a
 // headline). Numbered works in both.
@@ -131,6 +136,8 @@ export function listLineAt(
   const re = format === "org" ? LIST_LINE_ORG : LIST_LINE_MD;
   const m = re.exec(text.slice(lineStart, lineEnd));
   if (!m) return null;
+  // A line of literal source (fence, `#+BEGIN_SRC`, example, `$$`) is code, not a list: lsdoc decides (I-12).
+  if (literalBlockOfLine(text, format)[text.slice(0, lineStart).split("\n").length - 1] !== -1) return null;
   return { indent: m[1], marker: m[2], hasCheckbox: !!m[4], lineStart, prefixLen: m[0].length };
 }
 

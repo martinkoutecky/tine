@@ -582,3 +582,39 @@ describe("multiline paste into editor-visible empty blocks", () => {
     }
   });
 });
+
+describe("plain-text paste classification leaves literal source whole (C5 B Block.tsx:1150,2937)", () => {
+  function pasteInto(text: string, format: "md" | "org" = "md") {
+    const block: BlockDto = { id: "aaaa3333-3333-4333-8333-333333333333", raw: "", collapsed: false, children: [] };
+    loadSingle({ name: "Paste", kind: "page", title: "Paste", pre_block: null, format, blocks: [block] });
+    startEditing(block.id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Paste")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+    try {
+      paste(root.querySelector("textarea") as HTMLTextAreaElement, text);
+      return pageByName("Paste")!.roots.map((id) => doc.byId[id].raw);
+    } finally { dispose(); }
+  }
+  it("a bullet-looking line inside a fenced payload does not make the paste an outline", () => {
+    const text = "```text\n- not a bullet\n```";
+    expect(pasteInto(text)).toEqual([text]);
+  });
+  it("a blank line inside a fenced payload does not split it into paragraphs", () => {
+    const text = "```text\na\n\nb\n```";
+    expect(pasteInto(text)).toEqual([text]);
+  });
+  it("blank lines outside the fence still separate paragraphs", () => {
+    expect(pasteInto("one\n\n```text\na\n\nb\n```\n\nthree")).toEqual(["one", "```text\na\n\nb\n```", "three"]);
+  });
+  it("a real bullet still makes an outline", () => {
+    expect(pasteInto("- a\n- b")).toEqual(["a", "b"]);
+  });
+  it("Org stars outside a source block still make an outline", () => {
+    expect(pasteInto("* a\n* b", "org")).toEqual(["a", "b"]);
+  });
+  it("Org stars inside a source block do not", () => {
+    const src = "#+BEGIN_SRC text\n* not a headline\n#+END_SRC";
+    expect(pasteInto(src, "org")).toEqual([src]);
+  });
+});
