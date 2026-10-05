@@ -77,7 +77,10 @@ fn deep_dto_is_the_shallow_dto_plus_projected_children() {
     assert_eq!(deep.scheduled.as_deref(), Some("2026-01-02 Fri"));
     assert_eq!(deep.deadline.as_deref(), Some("2026-01-03 Sat"));
     assert!(deep.tags.iter().any(|t| t == "tagged"), "{:?}", deep.tags);
-    assert!(deep.properties.iter().any(|(k, v)| k == "key" && v == "value"));
+    assert!(deep
+        .properties
+        .iter()
+        .any(|(k, v)| k == "key" && v == "value"));
     assert_eq!(deep.children.len(), 2);
     assert_eq!(deep.children[0].has_id, Some(true));
     assert_eq!(deep.children[0].marker.as_deref(), Some("DOING"));
