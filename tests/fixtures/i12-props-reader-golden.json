@@ -1,0 +1,288 @@
+{
+ "comment": "props predicate reader golden (I-12). Rust: Filter::props_key / props_atom_test (authoritative); TS: queryBuilder.ts propsParts. `atom` is null when the predicate is bare presence; a case with key null is no property predicate (the TS reader answers null, the Rust reader None; the atom is then not consulted).",
+ "cases": [
+  {
+   "name": "bare key",
+   "pred": {
+    "kind": "leaf",
+    "leaf": {
+     "kind": "attr",
+     "attr": "key",
+     "op": "eq",
+     "value": {
+      "kind": "text",
+      "text": "k"
+     }
+    }
+   },
+   "key": "k",
+   "atom": null
+  },
+  {
+   "name": "key and one atom",
+   "pred": {
+    "kind": "and",
+    "items": [
+     {
+      "kind": "leaf",
+      "leaf": {
+       "kind": "attr",
+       "attr": "key",
+       "op": "eq",
+       "value": {
+        "kind": "text",
+        "text": "k"
+       }
+      }
+     },
+     {
+      "kind": "leaf",
+      "leaf": {
+       "kind": "attr",
+       "attr": "value",
+       "op": "gt",
+       "value": {
+        "kind": "number",
+        "number": 1
+       }
+      }
+     }
+    ]
+   },
+   "key": "k",
+   "atom": {
+    "kind": "leaf",
+    "leaf": {
+     "kind": "attr",
+     "attr": "value",
+     "op": "gt",
+     "value": {
+      "kind": "number",
+      "number": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "atom before key",
+   "pred": {
+    "kind": "and",
+    "items": [
+     {
+      "kind": "leaf",
+      "leaf": {
+       "kind": "attr",
+       "attr": "value",
+       "op": "gt",
+       "value": {
+        "kind": "number",
+        "number": 1
+       }
+      }
+     },
+     {
+      "kind": "leaf",
+      "leaf": {
+       "kind": "attr",
+       "attr": "key",
+       "op": "eq",
+       "value": {
+        "kind": "text",
+        "text": "k"
+       }
+      }
+     }
+    ]
+   },
+   "key": "k",
+   "atom": {
+    "kind": "leaf",
+    "leaf": {
+     "kind": "attr",
+     "attr": "value",
+     "op": "gt",
+     "value": {
+      "kind": "number",
+      "number": 1
+     }
+    }
+   }
+  },
+  {
+   "name": "key and two atoms",
+   "pred": {
+    "kind": "and",
+    "items": [
+     {
+      "kind": "leaf",
+      "leaf": {
+       "kind": "attr",
+       "attr": "key",
+       "op": "eq",
+       "value": {
+        "kind": "text",
+        "text": "k"
+       }
+      }
+     },
+     {
+      "kind": "leaf",
+      "leaf": {
+       "kind": "attr",
+       "attr": "value",
+       "op": "gt",
+       "value": {
+        "kind": "number",
+        "number": 1
+       }
+      }
+     },
+     {
+      "kind": "leaf",
+      "leaf": {
+       "kind": "attr",
+       "attr": "value",
+       "op": "gt",
+       "value": {
+        "kind": "number",
+        "number": 2
+       }
+      }
+     }
+    ]
+   },
+   "key": "k",
+   "atom": {
+    "kind": "and",
+    "items": [
+     {
+      "kind": "leaf",
+      "leaf": {
+       "kind": "attr",
+       "attr": "value",
+       "op": "gt",
+       "value": {
+        "kind": "number",
+        "number": 1
+       }
+      }
+     },
+     {
+      "kind": "leaf",
+      "leaf": {
+       "kind": "attr",
+       "attr": "value",
+       "op": "gt",
+       "value": {
+        "kind": "number",
+        "number": 2
+       }
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "two keys",
+   "pred": {
+    "kind": "and",
+    "items": [
+     {
+      "kind": "leaf",
+      "leaf": {
+       "kind": "attr",
+       "attr": "key",
+       "op": "eq",
+       "value": {
+        "kind": "text",
+        "text": "a"
+       }
+      }
+     },
+     {
+      "kind": "leaf",
+      "leaf": {
+       "kind": "attr",
+       "attr": "key",
+       "op": "eq",
+       "value": {
+        "kind": "text",
+        "text": "b"
+       }
+      }
+     }
+    ]
+   },
+   "key": null,
+   "atom": null
+  },
+  {
+   "name": "key buried in a nested and",
+   "pred": {
+    "kind": "and",
+    "items": [
+     {
+      "kind": "and",
+      "items": [
+       {
+        "kind": "leaf",
+        "leaf": {
+         "kind": "attr",
+         "attr": "key",
+         "op": "eq",
+         "value": {
+          "kind": "text",
+          "text": "k"
+         }
+        }
+       },
+       {
+        "kind": "leaf",
+        "leaf": {
+         "kind": "attr",
+         "attr": "value",
+         "op": "gt",
+         "value": {
+          "kind": "number",
+          "number": 1
+         }
+        }
+       }
+      ]
+     },
+     {
+      "kind": "leaf",
+      "leaf": {
+       "kind": "attr",
+       "attr": "value",
+       "op": "gt",
+       "value": {
+        "kind": "number",
+        "number": 2
+       }
+      }
+     }
+    ]
+   },
+   "key": null,
+   "atom": null
+  },
+  {
+   "name": "no key",
+   "pred": {
+    "kind": "leaf",
+    "leaf": {
+     "kind": "attr",
+     "attr": "value",
+     "op": "gt",
+     "value": {
+      "kind": "number",
+      "number": 1
+     }
+    }
+   },
+   "key": null,
+   "atom": null
+  }
+ ]
+}

@@ -924,6 +924,51 @@ fn a_like_escape_clause_is_honoured_not_ignored() {
 }
 
 #[test]
+fn the_props_reader_answers_only_for_a_direct_key_shape() {
+    // OG-C5-Q B5: `props_key` recursed into nested `And`s and took the first of
+    // several keys, so a second key or a buried atom test was dropped silently
+    // by every printer and by the evaluator.
+    let key = |k: &str| Filter::attr(Attr::Key, CmpOp::Eq, Value::text(k));
+    let value = |n: f64| Filter::attr(Attr::Value, CmpOp::Gt, Value::Number { number: n });
+    // The §3.3 shapes still read.
+    assert_eq!(key("k").props_key().as_deref(), Some("k"));
+    assert_eq!(key("k").props_atom_test(), None);
+    let one = Filter::and(vec![key("k"), value(1.0)]);
+    assert_eq!(one.props_key().as_deref(), Some("k"));
+    assert_eq!(one.props_atom_test(), Some(value(1.0)));
+    let two = Filter::and(vec![value(1.0), key("k"), value(2.0)]);
+    assert_eq!(two.props_key().as_deref(), Some("k"));
+    assert_eq!(
+        two.props_atom_test(),
+        Some(Filter::and(vec![value(1.0), value(2.0)]))
+    );
+    // Shapes §3.3 does not write are no property predicate.
+    assert_eq!(Filter::and(vec![key("a"), key("b")]).props_key(), None);
+    let nested = Filter::and(vec![Filter::and(vec![key("k"), value(1.0)]), value(2.0)]);
+    assert_eq!(nested.props_key(), None);
+}
+
+#[test]
+fn the_shared_props_reader_golden_reads_as_recorded() {
+    // `src/editor/queryBuilder.test.ts` reads the same file for `propsParts`.
+    let golden: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/i12-props-reader-golden.json"
+    ))
+    .expect("golden parses");
+    for case in golden["cases"].as_array().expect("cases") {
+        let pred: Filter = serde_json::from_value(case["pred"].clone()).expect("pred");
+        let name = case["name"].as_str().unwrap();
+        assert_eq!(pred.props_key().as_deref(), case["key"].as_str(), "{name}");
+        if case["key"].is_string() {
+            let atom = pred.props_atom_test();
+            let want = (!case["atom"].is_null())
+                .then(|| serde_json::from_value::<Filter>(case["atom"].clone()).expect("atom"));
+            assert_eq!(atom, want, "{name}");
+        }
+    }
+}
+
+#[test]
 fn starts_with_recognises_only_a_single_trailing_wildcard() {
     assert_eq!(
         crate::query::text::LikePattern::compile("%").starts_with_prefix(),

@@ -576,3 +576,29 @@ fn the_shared_property_key_golden_normalises_as_recorded() {
         assert_eq!(crate::doc::property_key_norm(key), want, "{key:?}");
     }
 }
+
+/// I-12: the LIKE-literal encoder and its inverse, pinned against the
+/// frontend builder's `escapeLike` / `plainLikeSubstring` by one golden.
+#[test]
+fn the_shared_like_escape_golden_encodes_and_decodes_as_recorded() {
+    let golden: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/i12-like-escape-golden.json"
+    ))
+    .expect("golden parses");
+    for case in golden["escape"].as_array().expect("escape") {
+        let (text, want) = (case[0].as_str().unwrap(), case[1].as_str().unwrap());
+        assert_eq!(
+            crate::query::text::escape_like_literal(text),
+            want,
+            "{text:?}"
+        );
+    }
+    for case in golden["plain"].as_array().expect("plain") {
+        let pattern = case[0].as_str().unwrap();
+        assert_eq!(
+            crate::query::og::plain_like_substring(pattern).as_deref(),
+            case[1].as_str(),
+            "{pattern:?}"
+        );
+    }
+}

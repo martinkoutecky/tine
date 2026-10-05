@@ -504,7 +504,26 @@ impl Filter {
     /// form as `key = 'k'` conjoined with at most one atom test, so the key
     /// equality is what scopes the quantifier — this is the ONE reader of that
     /// convention (the walk, the candidate planner and both printers use it).
+    ///
+    /// Only the DIRECT shape is a property predicate: the predicate itself is
+    /// the key equality, or an `And` with exactly one direct key-equality item.
+    /// A second key, or a key buried in a nested `And`, is not a shape §3.3
+    /// writes; reading it anyway silently dropped the other key or the buried
+    /// atom test, so it answers `None` and the printers/evaluator treat the
+    /// predicate as the general one they already handle.
     pub fn props_key(&self) -> Option<String> {
+        match self {
+            Filter::And { items } => {
+                let mut keys = items.iter().filter_map(Filter::key_equality);
+                let key = keys.next()?;
+                keys.next().is_none().then_some(key)
+            }
+            other => other.key_equality(),
+        }
+    }
+
+    /// `key = 'k'` as a direct leaf.
+    fn key_equality(&self) -> Option<String> {
         match self {
             Filter::Leaf {
                 leaf:
@@ -514,7 +533,6 @@ impl Filter {
                         value: Value::Text { text },
                     },
             } => Some(text.clone()),
-            Filter::And { items } => items.iter().find_map(Filter::props_key),
             _ => None,
         }
     }
@@ -526,7 +544,7 @@ impl Filter {
             Filter::And { items } => {
                 let rest: Vec<Filter> = items
                     .iter()
-                    .filter(|item| item.props_key().is_none())
+                    .filter(|item| item.key_equality().is_none())
                     .cloned()
                     .collect();
                 match rest.len() {
@@ -535,7 +553,7 @@ impl Filter {
                     _ => Some(Filter::And { items: rest }),
                 }
             }
-            other if other.props_key().is_some() => None,
+            other if other.key_equality().is_some() => None,
             other => Some(other.clone()),
         }
     }
