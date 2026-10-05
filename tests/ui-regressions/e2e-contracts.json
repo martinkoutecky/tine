@@ -223,13 +223,13 @@
         { "class": "exact-safety-interoperability", "userOutcome": "PDF asset switches and target navigation isolate reader state without crashes or runaway resource use.", "blocking": true, "authority": "Tine PDF interoperability and reader resource-safety contract" }
       ],
       "acceptableVariations": ["Reader layout, coordinate normalization, theme presentation, and annotation menu placement may evolve while the persisted interoperability outcomes remain intact.", "Reader tools may move from the toolbar into a visible overflow menu in narrow panes.", "Highlight references may open in a companion notes tab; returning to Journals need not use Back history.", "Closing one PDF resource may reveal a different retained PDF tab."],
-      "nonRequirements": ["Exact drag threshold.", "Exact theme palette/RGB.", "Exact CSS filter/DOM strategy.", "Outline and Area being direct toolbar buttons at every pane width.", "A newly opened notes tab inheriting journal back-history.", "Closing one reader leaving no other PDF viewer mounted."],
+      "nonRequirements": ["Exact drag threshold.", "Exact theme palette/RGB.", "Exact CSS filter/DOM strategy.", "Outline and Area being direct toolbar buttons at every pane width.", "A newly opened notes tab inheriting journal back-history.", "Closing one reader leaving no other PDF viewer mounted.", "Writing reader page or zoom into the sidecar :extra: since GH #577 (Martin 2026-10-04) reading and zooming write no graph files, the position lives in the pane route, and an existing :extra still loads."],
       "stability": "stable"
     },
     "scripts/e2e-pdf-ownership.mjs": {
       "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "An in-place graph switch and ordinary safe close persist PDF work only through the window-local graph generation that created it.", "blocking": true, "authority": "Tine PDF graph-owner generation and safe-close persistence contract" }],
       "acceptableVariations": ["PDF rendering and graph-switch presentation may vary while the old graph is drained, the viewer is remounted, and sidecar bytes remain owner-isolated."],
-      "nonRequirements": ["Exact PDF pixels, graph-switch animation, or debounce completion time."],
+      "nonRequirements": ["Exact PDF pixels, graph-switch animation, or debounce completion time.", "Writing the reader position into the sidecar: since GH #577 (Martin 2026-10-04) it persists in the creating graph's session route instead, and reading or zooming leaves both sidecars byte-identical."],
       "stability": "stable"
     },
     "scripts/e2e-plugins.mjs": {
@@ -281,7 +281,7 @@
         { "class": "core-operation", "userOutcome": "A query created with /query and saved from the sheet's query text lands in the page file as an ordinary query block without touching the other query blocks, and reopens with the same answers after a restart.", "blocking": true },
         { "class": "stateful-ux", "userOutcome": "While the query sheet is open its results show inside it and follow the conditions as they are edited, before anything is saved, and previewing writes nothing to the page.", "blocking": true },
         { "class": "stateful-ux", "userOutcome": "A query's results group sibling matches under one parent breadcrumb, builder-made conditions (scheduled and deadline ranges included) read in plain words with no advanced label, the query text stays closed or open as last left across a restart, and the journal range condition answers journal blocks only.", "blocking": true },
-        { "class": "stateful-ux", "userOutcome": "A page result row's pencil opens the page's property panel; a property changed there is written to the page's file and the row shows the new value.", "blocking": true, "authority": "Martin 2026-10-03 (GH #619 item 8); the write is the existing guarded setPageProperty path" },
+        { "class": "stateful-ux", "userOutcome": "A page result row's pencil opens the page's property panel; a property changed there is written to the page's file and the row's properties show the new value.", "blocking": true, "authority": "Martin 2026-10-03 (GH #619 item 8); Search/List rows are title-only with properties one pencil-click away since Martin 2026-10-04 (UI-OG-QBV-QUERY-DISPLAY); the write is the existing guarded setPageProperty path" },
         { "class": "stateful-ux", "userOutcome": "Choosing Pages and blocks shows a Pages section above a Blocks section for the same conditions, stores the choice as the tine.result-kinds block property, and still shows both after a restart.", "blocking": true, "authority": "Martin 2026-10-03 (GH #619 item 9); the stored property is Tine-only and OG ignores it" }
       ],
       "acceptableVariations": ["The sentence wording, the macro name the engine prints (query or tine-query) and the why-empty table layout may evolve while the query and its answers stay the same; offscreen result groups may hydrate when scrolled into view."],

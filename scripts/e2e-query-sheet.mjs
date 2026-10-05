@@ -387,22 +387,30 @@ await withApp(4, async (browser) => {
   try { await browser.saveScreenshot(`${ARTIFACTS}/item45-plain-chips-text-closed.png`); } catch {}
 });
 
-// 9. GH #619 item 8 / follow-up B: a page result row shows the page's properties and lets the user EDIT
-// them from the row. The row only carries the answer, so the pencil loads the page and opens the existing
-// properties panel; the write is the ordinary guarded page-property write. The file and the row agree.
+// 9. GH #619 item 8 / follow-up B: a page result row lets the user EDIT the page's properties from the row.
+// Since UI-OG-QBV-QUERY-DISPLAY (Martin, 2026-10-04) Search/List page rows show the title only and keep the
+// properties one click away behind the pencil. The row only carries the answer, so the pencil loads the page and
+// opens the existing properties panel; the write is the ordinary guarded page-property write. The file and the
+// row's properties agree.
 const BOOK_FILE = `${GRAPH}/pages/Book A.md`;
+const openRowProperties = (browser) => browser.execute(() => {
+  const block = document.querySelectorAll(".page-blocks .query-block")[1];
+  const li = [...block.querySelectorAll(".query-results-list > li")].find((item) => (item.textContent ?? "").includes("Book A"));
+  const pencil = li?.querySelector(".query-page-props-edit");
+  if (!(pencil instanceof HTMLElement)) return false;
+  pencil.scrollIntoView({ block: "center" });
+  pencil.click();
+  return true;
+});
+const panelOwner = (browser) => browser.execute(() => {
+  const field = [...document.querySelectorAll(".page-props-panel .pp-field")].find((f) => f.querySelector(".pp-label")?.textContent?.trim() === "owner");
+  const input = field?.querySelector(".pp-input");
+  return input ? (input.value ?? input.textContent ?? "").trim() : null;
+});
 await withApp(5, async (browser) => {
   await openPageByName(browser, "Queries");
-  await waitForQuery(browser, 1, (t) => t.includes("Book A") && /owner:\s*Ada/.test(t), "the page row did not show its properties as text");
-  const edit = await browser.execute(() => {
-    const block = document.querySelectorAll(".page-blocks .query-block")[1];
-    const li = [...block.querySelectorAll(".query-results-list > li")].find((item) => (item.textContent ?? "").includes("Book A"));
-    const pencil = li?.querySelector(".query-page-props-edit");
-    if (!(pencil instanceof HTMLElement)) return false;
-    pencil.scrollIntoView({ block: "center" });
-    pencil.click();
-    return true;
-  });
+  await waitForQuery(browser, 1, (t) => t.includes("Book A"), "the Book A page row never showed");
+  const edit = await openRowProperties(browser);
   if (!edit) throw new Error("the Book A result row offered no way to edit its properties");
   await browser.$(".page-props-panel").waitForExist({ timeout: 10_000 });
   const marked = await browser.execute(() => {
@@ -422,8 +430,13 @@ await withApp(5, async (browser) => {
   });
   const onDisk = fs.readFileSync(BOOK_FILE, "utf8");
   if (/Ada/.test(onDisk) || !/type:: book/.test(onDisk) || !/- A book page/.test(onDisk)) throw new Error(`the property edit damaged the page:\n${onDisk}`);
-  // The row itself shows the new value (the query answered again after the save).
-  await waitForQuery(browser, 1, (t) => /owner:\s*Grace/.test(t) && !/owner:\s*Ada/.test(t), "the row did not show the edited value");
+  // The row's properties (one click away) show the new value: the query answered again after the save and the
+  // pencil reads the saved page, not a stale copy.
+  await waitForQuery(browser, 1, (t) => t.includes("Book A"), "the Book A page row disappeared after the edit");
+  await browser.waitUntil(async () => {
+    if (!(await browser.execute(() => !!document.querySelector(".page-props-panel")))) await openRowProperties(browser);
+    return (await panelOwner(browser)) === "Grace";
+  }, { timeout: 15_000, interval: 300, timeoutMsg: "the row's properties did not show the edited value" });
   try { await browser.saveScreenshot(`${ARTIFACTS}/item8-edit-from-row.png`); } catch {}
 });
 

@@ -1,6 +1,8 @@
 // Native H2 proof: delayed PDF work stays with the graph/window generation that
-// created it.  The oracle is sidecar bytes plus a real close/relaunch, never
-// pixels or debounce duration alone.
+// created it.  The oracle is sidecar bytes, each graph's own session file, plus a
+// real close/relaunch, never pixels or debounce duration alone. Reading and
+// zooming write no graph files (GH #577, Martin 2026-10-04): the reader position
+// persists in the window's pane route, saved to the creating graph's session.
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -196,11 +198,30 @@ function sidecar(graph) {
   return path.join(graph, "assets", "shared.edn");
 }
 
-function sidecarScale(graph) {
-  const text = fs.readFileSync(sidecar(graph), "utf8");
-  const value = Number(text.match(/:scale\s+([0-9.]+)/)?.[1]);
-  if (!Number.isFinite(value)) throw new Error(`missing sidecar scale in ${text}`);
-  return value;
+// The graph session file the backend keys by the graph folder name plus a path
+// hash (settings.rs session_id). Returns the scale of every saved PDF route for
+// shared.pdf, wherever it sits in the persisted tabs/layout.
+function sessionPdfScales(graph) {
+  const dir = path.join(appData, "sessions");
+  const prefix = `${path.basename(graph).replace(/[^A-Za-z0-9]/g, "_")}-`;
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  const files = names.filter((name) => name.startsWith(prefix) && /^[0-9a-f]{16}\.json$/.test(name.slice(prefix.length)));
+  const scales = [];
+  const visit = (value) => {
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (!value || typeof value !== "object") return;
+    if (value.kind === "pdf" && value.filename === "shared.pdf" && typeof value.scale === "number") scales.push(value.scale);
+    Object.values(value).forEach(visit);
+  };
+  for (const name of files) {
+    try { visit(JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"))); } catch {}
+  }
+  return scales;
+}
+
+function sessionHasScale(graph, scale) {
+  return sessionPdfScales(graph).some((value) => Math.abs(value - scale) < 0.0001);
 }
 
 async function openSharedPdf() {
@@ -249,28 +270,36 @@ try {
     "window manager did not become ready for native close",
   );
   await connect();
+  const originalA = fs.readFileSync(sidecar(GRAPH_A));
   const originalB = fs.readFileSync(sidecar(GRAPH_B));
   await openSharedPdf();
   await browser.$('button[title="Zoom in"]').click();
   const graphAScheduledZoom = Number((await browser.$(".pdf-zoom-level").getText()).replace("%", "")) / 100;
 
-  // Switch immediately, before the ordinary four-second view-state callback.
-  // The graph transaction must force A durable, unmount it, and bind B only
-  // after the old generation is quiescent.
+  // Switch immediately, before the ordinary debounced session save. The graph
+  // transaction must force A's position durable in A's own session, unmount the
+  // viewer, and bind B only after the old generation is quiescent.
   await switchGraph(GRAPH_B);
   await browser.$(".pdf-viewer").waitForExist({ reverse: true, timeout: 10_000 });
   await waitForNode(
-    () => Math.abs(sidecarScale(GRAPH_A) - graphAScheduledZoom) < 0.0001,
-    "graph switch did not flush graph A's pending PDF position",
+    () => sessionHasScale(GRAPH_A, graphAScheduledZoom),
+    `graph switch did not flush graph A's pending PDF position into A's session: ${JSON.stringify(sessionPdfScales(GRAPH_A))}`,
   );
   await sleep(4300); // expose any uncancelled old debounce; filesystem is the oracle
+  if (sessionHasScale(GRAPH_B, graphAScheduledZoom)) {
+    throw new Error(`graph A's PDF position landed in graph B's session: ${JSON.stringify(sessionPdfScales(GRAPH_B))}`);
+  }
   if (!fs.readFileSync(sidecar(GRAPH_B)).equals(originalB)) {
     throw new Error("graph A's stale PDF callback changed graph B's same-name sidecar");
   }
+  if (!fs.readFileSync(sidecar(GRAPH_A)).equals(originalA)) {
+    throw new Error("reading and zooming graph A's PDF rewrote its sidecar");
+  }
   receipt.graphSwitch = {
     graphAScheduledZoom,
-    graphAPersistedZoom: sidecarScale(GRAPH_A),
-    graphBByteStable: true,
+    graphASessionZooms: sessionPdfScales(GRAPH_A),
+    graphBSessionZooms: sessionPdfScales(GRAPH_B),
+    sidecarsByteStable: true,
     oldViewerUnmounted: true,
   };
 
@@ -283,9 +312,12 @@ try {
   const closeScheduledZoom = Number((await browser.$(".pdf-zoom-level").getText()).replace("%", "")) / 100;
   await closeTineNatively();
   await waitForNode(
-    () => Math.abs(sidecarScale(GRAPH_A) - closeScheduledZoom) < 0.0001,
-    "safe close did not persist the pending PDF position",
+    () => sessionHasScale(GRAPH_A, closeScheduledZoom),
+    `safe close did not persist the pending PDF position into A's session: ${JSON.stringify(sessionPdfScales(GRAPH_A))}`,
   );
+  if (!fs.readFileSync(sidecar(GRAPH_A)).equals(originalA)) {
+    throw new Error("safe close wrote graph A's reader position into its sidecar");
+  }
   try { await browser.deleteSession(); } catch {}
   browser = undefined;
   await stopDriver();
@@ -298,7 +330,7 @@ try {
   }
   receipt.safeClose = {
     closeScheduledZoom,
-    persistedZoom: sidecarScale(GRAPH_A),
+    sessionZooms: sessionPdfScales(GRAPH_A),
     relaunchedZoom,
   };
   fs.writeFileSync(path.join(ARTIFACTS, "pdf-ownership-native-receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
