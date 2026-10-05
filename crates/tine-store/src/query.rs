@@ -1905,7 +1905,27 @@ pub(crate) fn export_query_subtrees(
         const QUERY_EXPORT_CONSTRUCTION_ROWS: usize = 20_000;
         const QUERY_EXPORT_CONSTRUCTION_BYTES: usize = 32 * 1024 * 1024;
         // One answerer (I-12): the caller's `advanced` flag is not trusted.
-        let bounded = if tine_core::query::is_advanced(&spec.query) {
+        let bounded = if spec.dialect == tine_core::query::QueryDialect::Tql {
+            // `{{tine-query}}` carries TQL, never datalog; admission is the same
+            // I-22 source limit every dialect passes through `parse_query_text`.
+            if admit_source(&spec.query).is_err() {
+                BoundedGroups {
+                    groups: Vec::new(),
+                    total: 0,
+                    exceeded: false,
+                }
+            } else {
+                exec::run_dialect_query_at(
+                    graph,
+                    spec.dialect,
+                    &spec.query,
+                    QUERY_EXPORT_CONSTRUCTION_ROWS,
+                    QUERY_EXPORT_CONSTRUCTION_BYTES,
+                    JournalDate::today(),
+                )
+                .0
+            }
+        } else if tine_core::query::is_advanced(&spec.query) {
             let (result, exceeded, total) = run_advanced_query_bounded(
                 graph,
                 &spec.query,
@@ -4492,10 +4512,12 @@ mod tests {
                 QueryExportSpec {
                     key: "todo".into(),
                     query: "(task TODO)".into(),
+                    dialect: Default::default(),
                 },
                 QueryExportSpec {
                     key: "done".into(),
                     query: "(task DONE)".into(),
+                    dialect: Default::default(),
                 },
             ],
             64,
@@ -4555,6 +4577,7 @@ mod tests {
             &[QueryExportSpec {
                 key: "header".into(),
                 query: "(property status exported-state)".into(),
+                dialect: Default::default(),
             }],
             8,
             50,

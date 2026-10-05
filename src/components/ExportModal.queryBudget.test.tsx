@@ -63,4 +63,19 @@ describe("query clipboard/export hydration budget", () => {
     );
     expect(warmed.get(batch.results[1].key)?.nodes[0].children[0].raw).toBe("done");
   });
+
+  it("expands a tine-query macro through the native TQL dialect rather than leaving it literal", async () => {
+    const key = JSON.stringify(["tine-query", ["task = 'TODO'"]]);
+    const batch: QueryExportBatch = {
+      results: [{ key, groups: [{ page: "Tasks", kind: "page", blocks: [shallow("todo")] }], shown: 1, total: 1, omitted_nodes: 0 }],
+      omitted_queries: 0,
+    };
+    const native = vi.spyOn(backend(), "exportQuerySubtrees").mockResolvedValue(batch);
+    const warmed = new Map<string, any>();
+
+    await warmExportResolutions([{ raw: "{{tine-query task = 'TODO'}}", format: "md", children: [] }], warmed);
+
+    expect(native.mock.calls[0][0]).toEqual([{ key, query: "task = 'TODO'", dialect: "tql" }]);
+    expect(warmed.get(key)?.nodes[0].children[0].raw).toBe("todo");
+  });
 });

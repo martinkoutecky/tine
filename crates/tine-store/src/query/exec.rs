@@ -1141,7 +1141,20 @@ pub(crate) fn run_query_at(
     max_bytes: usize,
     today: JournalDate,
 ) -> (BoundedGroups, Arc<Plan>) {
-    let (query, view) = parse_query_text(source, QueryDialect::Og, today);
+    run_dialect_query_at(graph, QueryDialect::Og, source, max_rows, max_bytes, today)
+}
+
+/// [`run_query_at`] for a source in either dialect (`{{query}}` is OG text,
+/// `{{tine-query}}` is TQL); Copy/Export reads the macro name, not the text.
+pub(crate) fn run_dialect_query_at(
+    graph: &impl GraphRead,
+    dialect: QueryDialect,
+    source: &str,
+    max_rows: usize,
+    max_bytes: usize,
+    today: JournalDate,
+) -> (BoundedGroups, Arc<Plan>) {
+    let (query, view) = parse_query_text(source, dialect, today);
     let resolved = resolve_for_execution(&query, &ExecutionContext::none(), today);
     run_block_groups(graph, &resolved, &view, max_rows, max_bytes)
 }

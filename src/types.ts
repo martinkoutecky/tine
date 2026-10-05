@@ -36,6 +36,8 @@ export interface BlockPreview {
 export interface QueryExportSpec {
   key: string;
   query: string;
+  /** Dialect of `query`; the `tine-query` macro is TQL. Absent means OG. */
+  dialect?: "og" | "tql";
 }
 
 /** Native hierarchy projection for one query macro. */

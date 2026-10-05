@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- Copy and Export now expand a `{{tine-query …}}` macro into its result blocks like a `{{query}}` macro, instead of leaving the macro text (REG-OG-C5-Q-EXPORT-TINE-QUERY).
 - A `#+BEGIN_QUERY` block whose raw text ends with a line ending, or uses CRLF delimiters, is now recognised as a query in the editor exactly as the native renderer already did (REG-OG-C5-Q-BEGIN-QUERY-TWIN).
 - A `tine.col-aggregates` value with spaces after the equals sign (`cost = sum`) is now recognised by the Display editor as the engine already reads it, instead of being treated as foreign text and duplicated on the next edit (REG-OG-C5-Q-COL-AGG-TWIN).
 - Saving a page no longer re-walks every alias in the graph for each remembered backlinks answer, and an authored alias still appears in the quick switcher under its own spelling on its owning page (REG-OG-C5-Q-ALIAS-EDGES).
