@@ -18,7 +18,27 @@ impl WholeGraph {
     /// reference-only names and N is inventory entries. Alias owners are
     /// indexed once per snapshot instead of rescanned for every name.
     /// The result is stable in this view.
-    pub fn inventory(&self) -> Arc<Inventory> {
+    ///
+    /// [`InventoryScope::FilesAtOrUnder`] returns only the file-claimed
+    /// entries (pages and journals, `is_journal` telling them apart) whose
+    /// page key is the given key or lies under `key/`: a page and its
+    /// namespace descendants, each with the same file target and in the same
+    /// relative order as the full inventory. An alias or reference-only name
+    /// is never a file claim (the full inventory skips both for a claimed
+    /// key), so this is exactly the file-claimed subset a rename moves,
+    /// without building the alias and reference-name indexes (GH #623). Cost
+    /// O(P) page-key computations plus O(m log m) for m matches; no parse and
+    /// no disk access.
+    pub fn inventory(&self, scope: InventoryScope<'_>) -> Arc<Inventory> {
+        match scope {
+            InventoryScope::All => self.full_inventory(),
+            InventoryScope::FilesAtOrUnder(key) => {
+                Arc::new(Inventory(self.page_files_at_or_under(key)))
+            }
+        }
+    }
+
+    fn full_inventory(&self) -> Arc<Inventory> {
         let mut entries = Vec::new();
         let mut visited = HashSet::new();
         let mut claimed_names = HashSet::new();
@@ -93,17 +113,8 @@ impl WholeGraph {
         Arc::new(Inventory(entries))
     }
 
-    /// The [`Self::inventory`] entries that a file claims (pages and
-    /// journals, `is_journal` telling them apart) whose page key is `key` or
-    /// lies under `key/`: a page and its namespace descendants, each with the
-    /// same file target and in the same relative order as the full
-    /// inventory. An alias or reference-only name is never a file claim (the
-    /// inventory skips both for a claimed key), so this is exactly the
-    /// file-claimed subset a rename moves, without building the alias and
-    /// reference-name indexes the full inventory needs (GH #623). Cost O(P)
-    /// page-key computations plus O(m log m) for m matches; no parse and no
-    /// disk access.
-    pub fn page_files_at_or_under(&self, key: &str) -> Vec<InventoryEntry> {
+    /// [`InventoryScope::FilesAtOrUnder`]'s entries; see [`Self::inventory`].
+    fn page_files_at_or_under(&self, key: &str) -> Vec<InventoryEntry> {
         let prefix = format!("{key}/");
         let mut entries = Vec::new();
         let mut visited = HashSet::new();

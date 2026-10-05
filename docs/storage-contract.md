@@ -340,7 +340,7 @@ the temporary-payload counter; no new persisted record or transport bytes.
 A rename opens each rewritten referrer four times: the planner's read, the
 preflight base-revision stage, the final pre-rename guard inside
 `atomic_write_with_check`, and the publication read. The planner names only
-the renamed page's own files (`WholeGraph::page_files_at_or_under`), not the
+the renamed page's own files (`WholeGraph::inventory(InventoryScope::FilesAtOrUnder)`), not the
 whole-graph inventory. It queues each unmoved, marker-free referrer with
 `Transaction::rewrite_refs` and the text it read; the call reports whether the
 rewrite (`tine_core::refs::rename_rewrite`, the one rewriter both the planner

@@ -2593,7 +2593,7 @@ fn page_symlinks_are_not_indexed_or_reconciled() {
     let (store, _, _) = Store::open(&root, Default::default()).unwrap();
     let before = store.whole_graph().unwrap();
     assert!(before
-        .inventory()
+        .inventory(tine_store::InventoryScope::All)
         .0
         .iter()
         .all(|entry| entry.name != "Secret"));

@@ -2159,7 +2159,7 @@ pub(crate) fn publish_graph(
             }
         }
     }
-    for entry in &graph.whole.inventory().0 {
+    for entry in &graph.whole.inventory(tine_store::InventoryScope::All).0 {
         if let tine_store::Resolved::Alias { owners } = &entry.target {
             if let Some(slug) = owners.first().and_then(|owner| exported_ids.get(owner)) {
                 slugs

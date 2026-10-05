@@ -765,7 +765,7 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
         let mut v: Vec<String> = store
             .whole_graph()
             .unwrap()
-            .inventory()
+            .inventory(tine_store::InventoryScope::All)
             .0
             .iter()
             .filter(|entry| !entry.is_journal)

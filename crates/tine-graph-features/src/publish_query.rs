@@ -489,7 +489,7 @@ fn snapshot(
         .iter()
         .map(|p| (p.kind, p.name.to_lowercase()))
         .collect();
-    let inventory = graph.inventory();
+    let inventory = graph.inventory(tine_store::InventoryScope::All);
     // One pass over the inventory, not one per page (I-15).
     let mut days = HashMap::new();
     for entry in &inventory.0 {

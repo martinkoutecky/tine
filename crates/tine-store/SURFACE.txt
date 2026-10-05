@@ -16,6 +16,7 @@ use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
 enum store::Area
 enum store::Depth
+enum store::InventoryScope
 enum store::ChangeKind
 enum store::Origin
 enum store::WatchMode
@@ -69,7 +70,6 @@ use crate::transaction::{Content,IoError,Refusal,RenameMap,RewriteEffect,Rollbac
 # rewrite changes a file (the transaction keeps it for preflight, which does not
 # compute it again) and asks for the page files under one key instead of the
 # whole-graph inventory.
-fn store::WholeGraph::page_files_at_or_under
 # R3C2: two bounded publication verbs over existing staged door, no new Store methods/types.
 fn publish::query_publication_destination
 use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
@@ -216,7 +216,7 @@ field store::WatchBatch.first_event_at
 field store::WatchBatch.full_diff
 field store::WatchBatch.poll
 field store::WatchBatch.reconcile_started
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 struct store::GraphAccessInspection
 struct store::OpenOptions
 struct store::WholeGraph

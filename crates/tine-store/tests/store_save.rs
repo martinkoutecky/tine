@@ -908,7 +908,7 @@ fn own_journal_creation_updates_day_and_published_answers() {
         tine_store::Resolved::Existing { id: found, .. } if found == id
     ));
     assert!(view
-        .inventory()
+        .inventory(tine_store::InventoryScope::All)
         .0
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));

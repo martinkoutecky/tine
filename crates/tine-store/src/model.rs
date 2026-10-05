@@ -6616,7 +6616,7 @@ mod tests {
         let names: Vec<String> = store
             .whole_graph()
             .unwrap()
-            .inventory()
+            .inventory(tine_store::InventoryScope::All)
             .0
             .iter()
             .filter(|e| e.is_journal)
@@ -6918,7 +6918,7 @@ mod tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .inventory()
+            .inventory(tine_store::InventoryScope::All)
             .0
             .iter()
             .any(|e| e.name == "Jul 17th, 2030"));
@@ -6931,7 +6931,7 @@ mod tests {
             duplicate
                 .whole_graph()
                 .unwrap()
-                .inventory()
+                .inventory(tine_store::InventoryScope::All)
                 .0
                 .iter()
                 .filter(|e| e.day == Some(tine_store::Day(20300717)))

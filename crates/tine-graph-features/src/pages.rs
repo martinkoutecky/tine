@@ -420,7 +420,7 @@ fn rename_page_after_inventory(
         let prefix = format!("{old_key}/");
         // Only file-claimed names move: the full inventory's alias and
         // reference-only name discovery is not needed here (GH #623).
-        let owned = graph.page_files_at_or_under(&old_key);
+        let owned = graph.inventory(tine_store::InventoryScope::FilesAtOrUnder(&old_key));
         #[cfg(test)]
         after_inventory();
         let source = existing(graph.resolve(old, false));
@@ -432,7 +432,7 @@ fn rename_page_after_inventory(
         let mut identities = HashSet::new();
         let mut primary_is_file = false;
         let mut merge = None;
-        for entry in owned.iter().filter(|entry| !entry.is_journal) {
+        for entry in owned.0.iter().filter(|entry| !entry.is_journal) {
             let ids = physical(&entry.target);
             let primary = refs::normalize(&entry.name) == old_key;
             let new_name = if primary {
@@ -656,7 +656,7 @@ fn rename_page_after_inventory(
             .iter()
             .find(|page| unsaved_paths.contains(&page.path))
         {
-            let inventory = graph.inventory();
+            let inventory = graph.inventory(tine_store::InventoryScope::All);
             let name = inventory
                 .0
                 .iter()

@@ -35,7 +35,7 @@ pub(super) fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
     PageInventoryWire {
         rev: rev.into(),
         entries: view
-            .inventory()
+            .inventory(tine_store::InventoryScope::All)
             .0
             .iter()
             .map(|entry| PageInventoryEntryWire {

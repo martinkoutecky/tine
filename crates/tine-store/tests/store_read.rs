@@ -361,7 +361,7 @@ fn direct_first_read_publishes_creation_and_updates_name_claimants() {
         matches!(view.resolve("Arrived", false), Resolved::Existing { id: found, .. } if found == id)
     );
     assert!(view
-        .inventory()
+        .inventory(tine_store::InventoryScope::All)
         .0
         .iter()
         .any(|entry| entry.name == "Arrived"));
@@ -402,7 +402,7 @@ fn direct_first_read_updates_journal_day_and_derived_answers() {
         matches!(view.resolve("Sep 25th, 2026", true), Resolved::Existing { id: found, .. } if found == id)
     );
     assert!(view
-        .inventory()
+        .inventory(tine_store::InventoryScope::All)
         .0
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));

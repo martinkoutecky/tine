@@ -209,7 +209,11 @@ fn whole_graph_taken_before_close_keeps_answering() {
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
     let view = store.whole_graph().unwrap();
     store.close();
-    assert!(view.inventory().0.iter().any(|entry| entry.name == "A"));
+    assert!(view
+        .inventory(tine_store::InventoryScope::All)
+        .0
+        .iter()
+        .any(|entry| entry.name == "A"));
     assert!(matches!(store.whole_graph(), Err(LoadError::Closed)));
 }
 

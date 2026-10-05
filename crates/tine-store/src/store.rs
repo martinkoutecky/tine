@@ -2488,6 +2488,16 @@ pub struct InventoryEntry {
 
 /// Graph inventory entries in page-key order.
 pub struct Inventory(pub Vec<InventoryEntry>);
+
+/// Which names a [`WholeGraph::inventory`] lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InventoryScope<'a> {
+    /// Every name: file-claimed names, aliases and reference-only names.
+    All,
+    /// Only the file-claimed names whose page key is this key or lies under
+    /// `key/` (a page and its namespace descendants): what a rename moves.
+    FilesAtOrUnder(&'a str),
+}
 /// Inputs for the query-plan graph search.
 pub struct SearchRequest {
     /// Search expression.
@@ -3468,7 +3478,7 @@ mod rev5_tests {
         fs::write(pages.join("Café.md"), "- file wins over alias\n").unwrap();
         let store = Store::open(&root, Default::default()).unwrap().0;
         let view = store.whole_graph().unwrap();
-        let inventory = view.inventory();
+        let inventory = view.inventory(crate::InventoryScope::All);
         let ordered_names: Vec<_> = inventory.0.iter().map(|entry| entry.name.clone()).collect();
         let mut legacy_order = ordered_names.clone();
         legacy_order.sort_by(|a, b| {
@@ -3924,7 +3934,11 @@ mod rev5_tests {
             view.resolve("Meta", false),
             Resolved::Existing { .. }
         ));
-        assert!(view.inventory().0.iter().any(|entry| entry.name == "Meta"));
+        assert!(view
+            .inventory(crate::InventoryScope::All)
+            .0
+            .iter()
+            .any(|entry| entry.name == "Meta"));
         assert_eq!(
             view.search(
                 &SearchRequest {
@@ -4568,7 +4582,7 @@ mod rev5_tests {
         assert!(store
             .whole_graph()
             .unwrap()
-            .inventory()
+            .inventory(crate::InventoryScope::All)
             .0
             .iter()
             .any(|entry| entry.name == "Present"));
@@ -5032,7 +5046,7 @@ mod rev5_tests {
                     let _ = view.backlinks("Target").unwrap();
                     let _ = view.query("[[Target]]", QueryDialect::Simple).unwrap();
                     let _ = view.resolve("External", false);
-                    let _ = view.inventory();
+                    let _ = view.inventory(crate::InventoryScope::All);
                     assert_eq!(view.rev(), rev);
                     assert_eq!(view.corpus().pages.len(), page_count);
                     reads.fetch_add(1, Ordering::Relaxed);
@@ -5116,7 +5130,7 @@ mod rev5_tests {
                 "inventory",
                 format!(
                     "{:?}",
-                    view.inventory()
+                    view.inventory(crate::InventoryScope::All)
                         .0
                         .iter()
                         .map(|entry| &entry.name)
@@ -5233,7 +5247,7 @@ mod rev5_tests {
         let original_answers = view_answers(&old);
         let old_corpus = old.corpus().pages.len();
         let old_backlinks = old.backlinks("Target").unwrap().len();
-        let old_inventory = old.inventory().0.len();
+        let old_inventory = old.inventory(crate::InventoryScope::All).0.len();
         assert!(matches!(
             old.resolve("Added", false),
             Resolved::Absent { .. }
@@ -5299,7 +5313,10 @@ mod rev5_tests {
         assert!(fresh.rev() != old.rev());
         assert_eq!(old.corpus().pages.len(), old_corpus);
         assert_eq!(old.backlinks("Target").unwrap().len(), old_backlinks);
-        assert_eq!(old.inventory().0.len(), old_inventory);
+        assert_eq!(
+            old.inventory(crate::InventoryScope::All).0.len(),
+            old_inventory
+        );
         assert!(matches!(
             old.resolve("Added", false),
             Resolved::Absent { .. }

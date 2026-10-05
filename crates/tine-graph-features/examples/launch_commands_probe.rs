@@ -69,8 +69,12 @@ fn main() {
     let view = counted("wholeGraph", &mut out, || {
         store.whole_graph().expect("graph")
     });
-    counted("pageInventory_first", &mut out, || view.inventory());
-    counted("pageInventory_second", &mut out, || view.inventory());
+    counted("pageInventory_first", &mut out, || {
+        view.inventory(tine_store::InventoryScope::All)
+    });
+    counted("pageInventory_second", &mut out, || {
+        view.inventory(tine_store::InventoryScope::All)
+    });
     let queue = ConflictQueue::default();
     counted("conflictInventory_first", &mut out, || {
         queue.inventory(&store).unwrap()
