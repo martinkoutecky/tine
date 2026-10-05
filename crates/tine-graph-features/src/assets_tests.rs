@@ -97,3 +97,33 @@ fn asset_open_accepts_files_directories_and_the_assets_root() {
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_bounded_asset_read_refuses_an_oversized_file_and_accepts_the_limit() {
+    let root = std::env::temp_dir().join(format!(
+        "tine-bounded-asset-read-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("assets")).unwrap();
+    std::fs::write(root.join("assets/large.pdf"), b"12345").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    assert_eq!(
+        read_asset(&store, "large.pdf", Some(5)).unwrap(),
+        b"12345",
+        "a file exactly at the limit is read"
+    );
+    assert!(
+        matches!(
+            read_asset(&store, "large.pdf", Some(4)),
+            Err(AssetAccessError::Store(StoreError::TooLarge {
+                limit: 4,
+                ..
+            }))
+        ),
+        "one byte over the limit is refused before any bytes are returned"
+    );
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}

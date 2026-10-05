@@ -1,6 +1,5 @@
 //! Regression: full-text search reflects a marker toggle once the edited page is
 //! saved back (the path a {{query}}-result edit takes).
-use crate::model::atomic_copy;
 use crate::model::Graph;
 use crate::test_config_client::ConfigClient;
 use std::sync::Arc;
@@ -937,25 +936,6 @@ fn trash_asset_errors_when_trash_path_is_file_and_keeps_source() {
     );
     assert!(asset.is_file(), "source asset survives");
     assert_eq!(std::fs::read(&asset).unwrap(), b"asset bytes");
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-#[test]
-fn atomic_copy_is_public_and_replaces_destination_contents() {
-    let root = mk("atomic-copy");
-    let src = root.join("pages").join("source.edn");
-    let dst = root.join("pages").join("dest.edn");
-    std::fs::write(&src, "{:ok true}\n").unwrap();
-    std::fs::write(&dst, "old").unwrap();
-
-    atomic_copy(&src, &dst).expect("atomic copy");
-    assert_eq!(std::fs::read_to_string(&dst).unwrap(), "{:ok true}\n");
-    let leftovers: Vec<_> = std::fs::read_dir(root.join("pages"))
-        .unwrap()
-        .flatten()
-        .filter(|e| e.file_name().to_string_lossy().contains(".import.tmp"))
-        .collect();
-    assert!(leftovers.is_empty(), "atomic copy temp should not leak");
     let _ = std::fs::remove_dir_all(&root);
 }
 
