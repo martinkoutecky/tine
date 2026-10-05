@@ -279,6 +279,7 @@ export async function refreshSyncConflicts(notify: "new" | false = false): Promi
     if (result.kind === "stale" || !conflictRefreshCurrent(episode)) return;
     const previous = new Set(conflictQueue().map((conflict) => conflict.id));
     setConflictInventory(result.value);
+    if (result.value.unreadable?.length) reportUiFailure("unreadable-files", result.value.unreadable.join(", "));
     const arrived = result.value.queue.filter((c) => c.source === "sync-copy" && !previous.has(c.id));
     if (notify === "new" && arrived.length) {
       const first = arrived[0];

@@ -58,7 +58,9 @@ export type Finding =
 export interface DiffReport {
   tineVersion: string;
   lsdocVersion: string;
-  stats: { files: number; totalBytes: number };
+  /** `skipped`: files the scan left out (`path: reason`), so a partial
+   *  comparison never reads as the whole graph. */
+  stats: { files: number; totalBytes: number; skipped?: string[] };
   lsdocAvailable: boolean;
   bench?: { lsdoc: BenchSummary | null; mldoc: BenchSummary };
   findings?: Finding[];
@@ -104,8 +106,12 @@ export async function runComparison(
 
   const loaded = await readOwned(owner, backend().graphSourceFiles(opts.includeJournals));
   if (loaded.kind === "stale" || !owner()) return { kind: "stale" };
-  const files = loaded.value;
-  const stats = { files: files.length, totalBytes: files.reduce((n, f) => n + f.bytes, 0) };
+  const files = loaded.value.files;
+  const stats = {
+    files: files.length,
+    totalBytes: files.reduce((n, f) => n + f.bytes, 0),
+    skipped: loaded.value.skipped,
+  };
   const lsdocAvailable = lsdocDocumentAvailable();
   const parserVersion = lsdocVersion();
   const client = new MldocClient();

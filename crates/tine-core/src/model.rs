@@ -753,6 +753,10 @@ pub struct JournalFile {
     pub path: String,
     pub preview: String,
     pub canonical: bool,
+    /// Why this file's preview could not be read (undecodable, oversized, a
+    /// disk error). The file stays listed so the day remains reviewable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_error: Option<String>,
 }
 
 /// A journal day that resolves to more than one file (e.g. a canonical

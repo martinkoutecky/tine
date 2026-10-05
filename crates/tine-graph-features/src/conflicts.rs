@@ -1,9 +1,13 @@
 //! Concord (og family 8): sync-copy and VCS-marker discovery, the derived
 //! conflict queue, diffs, guarded merges, and recoverable trash. The conflict
 //! copy is never treated as a graph page or entered into the cache. Nothing
-//! here is persisted: the queue is recomputed from disk on every request.
+//! here is persisted: the queue is derived from disk once per open graph and
+//! refreshed per published change ([`ConflictQueue`]). A file that cannot be
+//! listed, read or diffed is skipped and reported in
+//! [`ConflictInventory::unreadable`]; it never withholds the healthy conflicts
+//! (I-22). Only a failure of the whole store or area scan fails the inventory.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 
 use tine_core::concord_queue::{
@@ -75,15 +79,90 @@ pub(crate) fn preview(store: &Store, file: &FileId) -> io::Result<String> {
         .unwrap_or_default())
 }
 
-fn listing(store: &Store, area: Area) -> io::Result<tine_store::Listing> {
+/// One area's listing: every listed file, plus `dir/name: reason` for each
+/// entry the scan could not read (reported by the caller, never a reason to
+/// drop the rest). A failed scan of the whole area is an error. The one
+/// answerer for both conflict listings and the journal listings.
+pub(crate) fn area_listing(
+    store: &Store,
+    area: Area,
+) -> io::Result<(Vec<tine_store::FileEntry>, Vec<String>)> {
     let listing = store.scan_area(area, None).map_err(crate::store_error)?;
-    if let Some((name, error)) = listing.unreadable.first() {
-        return Err(io::Error::new(
-            error.kind,
-            format!("conflict inventory is partial ({name}): {}", error.message),
-        ));
+    let config = store.config();
+    let dir = match area {
+        Area::Journals => &config.journals_dir,
+        _ => &config.pages_dir,
+    };
+    let unreadable = listing
+        .unreadable
+        .into_iter()
+        .map(|(name, error)| {
+            if name.is_empty() {
+                format!("{dir}: listing incomplete ({})", error.message)
+            } else {
+                format!("{dir}/{name}: {}", error.message)
+            }
+        })
+        .collect();
+    Ok((listing.files, unreadable))
+}
+
+/// Whether `error` is a failure of the whole store rather than of one file: a
+/// closed store, which [`crate::store_error`] maps to `BrokenPipe`. Such an
+/// error fails the request; every other per-file read, decode, size or parse
+/// failure skips that file and is reported (one bad file must not refuse the
+/// graph, I-22).
+pub(crate) fn store_failed(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::BrokenPipe
+}
+
+/// What the conflict walk could not read, kept by source so an incremental
+/// refresh replaces exactly the rows it re-derives.
+#[derive(Clone, Default)]
+struct Unreadable {
+    /// Listing entries of both areas from the last whole walk; a journal
+    /// refresh replaces the journal rows.
+    pages_listing: Vec<String>,
+    journals_listing: Vec<String>,
+    /// Per-file failures (marker read, copy preview or diff), by path.
+    files: BTreeMap<String, String>,
+    /// Duplicate-day files whose preview or diff failed, by path.
+    journal_days: BTreeMap<String, String>,
+}
+
+impl Unreadable {
+    /// Record a per-file result: `Ok(Some)` on success, `Ok(None)` for a file
+    /// gone since the listing (silent) or one that failed (reported under
+    /// `path`), `Err` only for a whole-store failure.
+    fn file<T>(&mut self, path: &str, result: io::Result<T>) -> io::Result<Option<T>> {
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(error) if store_failed(&error) => Err(error),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => {
+                self.files.insert(path.to_owned(), error.to_string());
+                Ok(None)
+            }
+        }
     }
-    Ok(listing)
+
+    /// The reported rows, once per path, sorted.
+    fn rows(&self) -> Vec<String> {
+        let mut by_path: BTreeMap<String, String> = BTreeMap::new();
+        for (path, reason) in self.journal_days.iter().chain(&self.files) {
+            by_path
+                .entry(path.clone())
+                .or_insert_with(|| format!("{path}: {reason}"));
+        }
+        let mut rows: Vec<String> = by_path.into_values().collect();
+        for row in self.journals_listing.iter().chain(&self.pages_listing) {
+            if !rows.contains(row) {
+                rows.push(row.clone());
+            }
+        }
+        rows.sort();
+        rows
+    }
 }
 
 /// The page kind, area-relative stem and display name of a page/journal file,
@@ -183,22 +262,30 @@ fn sort_copies(out: &mut [SyncConflict]) {
     });
 }
 
-/// List Syncthing, Dropbox and Seafile copies in pages and journals.
-/// Read errors and partial scans propagate; callers keep their last good list.
-/// Cost O(P + J + conflict-copy bytes), including winner presence checks.
+/// List Syncthing, Dropbox and Seafile copies in pages and journals. A copy
+/// that cannot be read is skipped and reported; a failed area scan or a closed
+/// store is an error and callers keep their last good list. Cost O(P + J +
+/// conflict-copy bytes), including winner presence checks.
 pub fn list_sync_conflicts(store: &Store) -> io::Result<Vec<SyncConflict>> {
+    Ok(sync_copies(store, &mut Unreadable::default())?)
+}
+
+fn sync_copies(store: &Store, bad: &mut Unreadable) -> io::Result<Vec<SyncConflict>> {
     let mut out = Vec::new();
     for area in [Area::Journals, Area::Pages] {
-        let listing = listing(store, area)?;
-        let present: std::collections::HashSet<_> = listing
-            .files
+        let (files, unreadable) = area_listing(store, area)?;
+        match area {
+            Area::Journals => bad.journals_listing = unreadable,
+            _ => bad.pages_listing = unreadable,
+        }
+        let present: std::collections::HashSet<_> = files
             .iter()
             .map(|entry| entry.id.as_str().to_owned())
             .collect();
-        for entry in &listing.files {
-            out.extend(sync_copy_entry(store, &entry.id, |winner| {
-                Ok(present.contains(winner))
-            })?);
+        for entry in &files {
+            let entry_result =
+                sync_copy_entry(store, &entry.id, |winner| Ok(present.contains(winner)));
+            out.extend(bad.file(entry.id.as_str(), entry_result)?.flatten());
         }
     }
     sort_copies(&mut out);
@@ -803,9 +890,15 @@ pub fn resolve_duplicate_journal_day(
 /// stray (a day with three files resolves pairwise; the queue re-derives with
 /// one file fewer after each fold). Id `journal:<keeper path>` is stable for
 /// the same disk state. Cost O(journal listing + duplicate file bytes).
-fn journal_objects(store: &Store) -> io::Result<Vec<ConflictObject>> {
+fn journal_objects(store: &Store, bad: &mut Unreadable) -> io::Result<Vec<ConflictObject>> {
     let mut out = Vec::new();
+    bad.journal_days.clear();
     for day in crate::journals::journal_conflicts(store)? {
+        for file in &day.files {
+            if let Some(reason) = &file.preview_error {
+                bad.journal_days.insert(file.path.clone(), reason.clone());
+            }
+        }
         let [keeper, strays @ ..] = day.files.as_slice() else {
             continue;
         };
@@ -817,7 +910,19 @@ fn journal_objects(store: &Store) -> io::Result<Vec<ConflictObject>> {
             label: file.name.clone(),
             path: Some(file.path.clone()),
         };
-        let diff = duplicate_journal_diff(store, &keeper.path, &first.path)?;
+        // A day whose pair cannot be diffed stays queued without row choices
+        // (as a cross-format pair does), and the unreadable file is reported.
+        let diff = match duplicate_journal_diff(store, &keeper.path, &first.path) {
+            Ok(diff) => diff,
+            Err(error) if store_failed(&error) => return Err(error),
+            Err(error) => {
+                if ![keeper, first].iter().any(|f| f.preview_error.is_some()) {
+                    bad.journal_days
+                        .insert(first.path.clone(), error.to_string());
+                }
+                None
+            }
+        };
         out.push(ConflictObject {
             id: format!("journal:{}", keeper.path),
             source: ConflictSource::DuplicateJournal,
@@ -837,7 +942,8 @@ fn journal_objects(store: &Store) -> io::Result<Vec<ConflictObject>> {
 /// The marker listing entry for one page or journal file, or `None` when it
 /// is not a graph page, is a sync copy, is unreadable, or carries no column-0
 /// VCS marker. Such files stay real, readable pages; the store refuses to save
-/// them (R-VCS-MARKERS). Read failures are errors, never absence. Cost: O(1)
+/// them (R-VCS-MARKERS). Read failures are errors, never absence: the caller
+/// reports the file as unreadable and keeps the rest. Cost: O(1)
 /// for a page the store has observed without an anchor line
 /// (`Store::vcs_anchor_state`, no read); otherwise one bounded read, O(file
 /// bytes), where a byte prefilter skips the UTF-8 check and line scan for files
@@ -874,14 +980,20 @@ fn marker_entry(store: &Store, file: &FileId) -> io::Result<Option<VcsMarkerConf
     }))
 }
 
-/// Marker-bearing pages. Failed or partial scans propagate. Cost: O(pages)
-/// store lookups plus one read per page that is uncached or may carry an
-/// anchor line (none in an unmarked graph; was O(graph bytes), GH #623).
-fn list_vcs_marker_pages(store: &Store) -> io::Result<Vec<VcsMarkerConflict>> {
+/// Marker-bearing pages. A file that cannot be read is skipped and reported;
+/// a failed area scan propagates. Unreadable listing entries are recorded by
+/// [`sync_copies`], which walks the same listings. Cost: O(pages) store
+/// lookups plus one read per page that is uncached or may carry an anchor line
+/// (none in an unmarked graph; was O(graph bytes), GH #623).
+fn list_vcs_marker_pages(
+    store: &Store,
+    bad: &mut Unreadable,
+) -> io::Result<Vec<VcsMarkerConflict>> {
     let mut out = Vec::new();
     for area in [Area::Journals, Area::Pages] {
-        for entry in listing(store, area)?.files {
-            out.extend(marker_entry(store, &entry.id)?);
+        for entry in area_listing(store, area)?.0 {
+            let found = marker_entry(store, &entry.id);
+            out.extend(bad.file(entry.id.as_str(), found)?.flatten());
         }
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
@@ -981,20 +1093,45 @@ fn sort_queue(queue: &mut [ConflictObject]) {
 /// Cost: the two whole-graph listings (one bounded read of every page and
 /// journal file) plus one diff per queued item (conflicts are few).
 pub fn conflict_inventory(store: &Store) -> io::Result<ConflictInventory> {
-    let sync_conflicts = list_sync_conflicts(store)?;
-    let vcs_markers = list_vcs_marker_pages(store)?;
-    let mut queue = journal_objects(store)?;
+    Ok(derive(store)?.published())
+}
+
+/// The inventory with what the walk could not read, kept by source.
+#[derive(Clone)]
+struct Derived {
+    inventory: ConflictInventory,
+    bad: Unreadable,
+}
+
+impl Derived {
+    fn published(&self) -> ConflictInventory {
+        ConflictInventory {
+            unreadable: self.bad.rows(),
+            ..self.inventory.clone()
+        }
+    }
+}
+
+fn derive(store: &Store) -> io::Result<Derived> {
+    let mut bad = Unreadable::default();
+    let sync_conflicts = sync_copies(store, &mut bad)?;
+    let vcs_markers = list_vcs_marker_pages(store, &mut bad)?;
+    let mut queue = journal_objects(store, &mut bad)?;
     for copy in &sync_conflicts {
-        queue.extend(copy_object(store, copy)?);
+        queue.extend(bad.file(&copy.path, copy_object(store, copy))?.flatten());
     }
     for marked in &vcs_markers {
-        queue.push(marker_object(store, marked)?);
+        queue.extend(bad.file(&marked.path, marker_object(store, marked))?);
     }
     sort_queue(&mut queue);
-    Ok(ConflictInventory {
-        sync_conflicts,
-        vcs_markers,
-        queue,
+    Ok(Derived {
+        inventory: ConflictInventory {
+            sync_conflicts,
+            vcs_markers,
+            queue,
+            unreadable: Vec::new(),
+        },
+        bad,
     })
 }
 
@@ -1006,7 +1143,7 @@ pub fn conflict_inventory(store: &Store) -> io::Result<ConflictInventory> {
 /// would compute from the same disk state; resolves never trust it.
 #[derive(Default)]
 pub struct ConflictQueue {
-    derived: std::sync::Mutex<Option<ConflictInventory>>,
+    derived: std::sync::Mutex<Option<Derived>>,
     problem: std::sync::Mutex<Option<tine_store::IoError>>,
 }
 
@@ -1019,7 +1156,7 @@ impl ConflictQueue {
         let mut derived = self.derived.lock().unwrap_or_else(|e| e.into_inner());
         let mut problem = self.problem.lock().unwrap_or_else(|e| e.into_inner());
         if derived.is_none() || problem.is_some() {
-            match conflict_inventory(store) {
+            match derive(store) {
                 Ok(value) => {
                     *derived = Some(value);
                     *problem = None;
@@ -1033,7 +1170,7 @@ impl ConflictQueue {
                 }
             }
         }
-        Ok(derived.as_ref().unwrap().clone())
+        Ok(derived.as_ref().unwrap().published())
     }
 
     /// Re-derive what one published store change can affect. An external
@@ -1045,11 +1182,13 @@ impl ConflictQueue {
     pub fn refresh_change(&self, store: &Store, change: &tine_store::Change) -> io::Result<bool> {
         let files: Vec<FileId> = {
             let derived = self.derived.lock().unwrap_or_else(|e| e.into_inner());
-            let Some(inventory) = derived.as_ref() else {
+            let Some(Derived { inventory, bad }) = derived.as_ref() else {
                 return Ok(false);
             };
             let named = |path: &str| {
                 sync_copy_winner(path).is_some()
+                    || bad.files.contains_key(path)
+                    || bad.journal_days.contains_key(path)
                     || inventory.vcs_markers.iter().any(|m| m.path == path)
                     || inventory.sync_conflicts.iter().any(|c| {
                         c.path == path || sync_copy_winner(&c.path).as_deref() == Some(path)
@@ -1077,7 +1216,9 @@ impl ConflictQueue {
     }
 
     /// Re-derive the entries `files` can affect: each file's own copy or
-    /// marker entry, and every copy whose winner is one of them. Returns
+    /// marker entry, and every copy whose winner is one of them. A changed file
+    /// that cannot be read is reported in `unreadable` (and leaves it once
+    /// readable); only a closed store or failed area scan errors. Returns
     /// whether the queue or listings changed. Before the first
     /// [`Self::inventory`] it does nothing and returns `false` (that walk will
     /// read the current disk). Idempotent: it re-reads the files, so applying
@@ -1090,9 +1231,12 @@ impl ConflictQueue {
         let Some(current) = derived.as_ref() else {
             return Ok(false);
         };
-        let mut inventory = current.clone();
-        let result = (|| -> io::Result<bool> {
-            let before = serde_json::to_string(&inventory).ok();
+        let before = serde_json::to_string(&current.published()).ok();
+        let Derived {
+            mut inventory,
+            mut bad,
+        } = current.clone();
+        let result = (|| -> io::Result<()> {
             let exists = |rel: &str| -> io::Result<bool> {
                 let file = id(store, rel)?;
                 match store.open_read(&file) {
@@ -1116,7 +1260,11 @@ impl ConflictQueue {
                     continue;
                 }
                 inventory.vcs_markers.retain(|m| m.path != path);
-                inventory.vcs_markers.extend(marker_entry(store, file)?);
+                bad.files.remove(path);
+                let found = marker_entry(store, file);
+                inventory
+                    .vcs_markers
+                    .extend(bad.file(path, found)?.flatten());
                 copies.extend(
                     inventory
                         .sync_conflicts
@@ -1127,11 +1275,14 @@ impl ConflictQueue {
             }
             for copy in &copies {
                 inventory.sync_conflicts.retain(|c| &c.path != copy);
+                bad.files.remove(copy);
                 let file = FileId::from(copy.clone());
-                if exists(copy)? {
+                let present = exists(copy);
+                if bad.file(copy, present)?.unwrap_or(false) {
+                    let entry = sync_copy_entry(store, &file, exists);
                     inventory
                         .sync_conflicts
-                        .extend(sync_copy_entry(store, &file, exists)?);
+                        .extend(bad.file(copy, entry)?.flatten());
                 }
             }
             inventory.vcs_markers.sort_by(|a, b| a.path.cmp(&b.path));
@@ -1150,25 +1301,32 @@ impl ConflictQueue {
                 .iter()
                 .filter(|c| copies.contains(&c.path))
             {
-                inventory.queue.extend(copy_object(store, copy)?);
+                let object = copy_object(store, copy);
+                inventory
+                    .queue
+                    .extend(bad.file(&copy.path, object)?.flatten());
             }
             for marked in inventory
                 .vcs_markers
                 .iter()
                 .filter(|m| files.iter().any(|f| f.as_str() == m.path))
             {
-                inventory.queue.push(marker_object(store, marked)?);
+                let object = marker_object(store, marked);
+                inventory.queue.extend(bad.file(&marked.path, object)?);
             }
             if journals {
-                inventory.queue.extend(journal_objects(store)?);
+                bad.journals_listing = area_listing(store, Area::Journals)?.1;
+                inventory.queue.extend(journal_objects(store, &mut bad)?);
             }
             sort_queue(&mut inventory.queue);
-            Ok(serde_json::to_string(&inventory).ok() != before)
+            Ok(())
         })();
         let mut problem = self.problem.lock().unwrap_or_else(|e| e.into_inner());
         match result {
-            Ok(changed) => {
-                *derived = Some(inventory);
+            Ok(()) => {
+                let next = Derived { inventory, bad };
+                let changed = serde_json::to_string(&next.published()).ok() != before;
+                *derived = Some(next);
                 *problem = None;
                 Ok(changed)
             }

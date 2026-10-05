@@ -338,6 +338,10 @@ pub(crate) struct JournalFeedPage {
     next_before_day: Option<i64>,
     done: bool,
     as_of_day: i64,
+    /// Journals this page skipped as unreadable (`path: reason`); omitted when
+    /// none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unreadable: Vec<String>,
 }
 
 /// Feed-only pagination by ordinal day.
@@ -356,6 +360,7 @@ pub(crate) async fn journal_feed_page(
             next_before_day: feed.next_before_day,
             done: feed.done,
             as_of_day: feed.as_of_day,
+            unreadable: feed.unreadable,
         })
     })
     .await
@@ -399,18 +404,20 @@ pub(crate) async fn resolve_page(
 /// `journals/` when `include_journals`), for the "Help improve Tine" diff panel.
 /// Mirrors `lsdoc/tools/graph-check.mjs`'s file scan: skips files over 8 MB, tags
 /// format by extension, returns graph-root-relative paths sorted for stable
-/// output. Read-only and local — the panel makes no network calls.
+/// output, and names every file it skipped. Read-only and local — the panel
+/// makes no network calls.
 #[tauri::command]
 pub(crate) async fn graph_source_files(
     include_journals: bool,
     state: GraphContext<'_>,
-) -> Result<Vec<tine_graph_features::sources::GraphSourceFile>, String> {
+) -> Result<tine_graph_features::sources::GraphSources, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::sources::graph_source_files(&slot.store, include_journals)
+            .map_err(|error| error.to_string())
     })
     .await
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?
 }
 
 #[derive(serde::Deserialize)]

@@ -23,7 +23,16 @@ fn parser_sources_keep_path_order_and_size_limit() {
     fs::write(root.join("pages/ignored.txt"), b"ignored").unwrap();
     let (store, _, _) = Store::open(&root, OpenOptions::default()).unwrap();
 
-    let pages = graph_source_files(&store, false);
+    let sources = graph_source_files(&store, false).unwrap();
+    assert!(
+        sources
+            .skipped
+            .iter()
+            .any(|row| row.starts_with("pages/too-large.md: ")),
+        "the size-limited file is reported, not silently dropped: {:?}",
+        sources.skipped
+    );
+    let pages = sources.files;
     assert_eq!(
         pages
             .iter()
@@ -34,7 +43,7 @@ fn parser_sources_keep_path_order_and_size_limit() {
     assert_eq!(pages[0].text, "- A\n");
     assert_eq!(pages[0].bytes, 4);
     assert_eq!(pages[1].format, "org");
-    let all = graph_source_files(&store, true);
+    let all = graph_source_files(&store, true).unwrap().files;
     assert_eq!(
         all.iter().map(|file| file.rel.as_str()).collect::<Vec<_>>(),
         ["journals/2026_09_25.md", "pages/A.md", "pages/nested/B.org"]
@@ -59,7 +68,7 @@ fn parser_sources_do_not_follow_links() {
     fs::write(root.join("pages/real.md"), b"- real\n").unwrap();
     symlink("real.md", root.join("pages/link.md")).unwrap();
     let (store, _, _) = Store::open(&root, OpenOptions::default()).unwrap();
-    let files = graph_source_files(&store, false);
+    let files = graph_source_files(&store, false).unwrap().files;
     assert_eq!(
         files
             .iter()
@@ -86,7 +95,7 @@ fn parser_sources_accept_every_graph_text_extension() {
     fs::write(root.join("pages/B.MD"), b"- b\n").unwrap();
     fs::write(root.join("pages/C.ORG"), b"* c\n").unwrap();
     let (store, _, _) = Store::open(&root, OpenOptions::default()).unwrap();
-    let files = graph_source_files(&store, false);
+    let files = graph_source_files(&store, false).unwrap().files;
     let formats: Vec<_> = files
         .iter()
         .map(|file| (file.rel.as_str(), file.format.as_str()))

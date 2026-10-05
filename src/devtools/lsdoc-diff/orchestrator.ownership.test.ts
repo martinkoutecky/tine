@@ -6,7 +6,7 @@ vi.mock("./mldoc-client", () => ({ MldocClient: class { parseWarm = mocks.warm; 
 vi.mock("./lsdoc-document", () => ({ lsdocDocumentAvailable: () => true, lsdocVersion: () => "test", parseLsdocDocument: () => ({ blocks: [], refs: { page: [], block: [] } }) }));
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
 it.each(["diff", "bench", "both"] as const)("L13:84: retired %s work releases the client and starts no more parses", async (mode) => {
-  vi.spyOn(backend(), "graphSourceFiles").mockResolvedValue(Array.from({ length: 3 }, (_, i) => ({ rel: `pages/P${i}.md`, bytes: 4, format: "md" as const, text: "- x\n" })));
+  vi.spyOn(backend(), "graphSourceFiles").mockResolvedValue({ files: Array.from({ length: 3 }, (_, i) => ({ rel: `pages/P${i}.md`, bytes: 4, format: "md" as const, text: "- x\n" })), skipped: [] });
   let live = true, finish!: (value: unknown) => void;
   mocks.warm.mockImplementationOnce(() => new Promise((r) => { finish = r; })).mockResolvedValue({ ok: true, projection: { blocks: [], refs: { page: [], block: [] } } });
   const progress = vi.fn();

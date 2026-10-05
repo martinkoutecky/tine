@@ -1012,8 +1012,7 @@ fn same_blocks(a: &[tine_core::model::BlockDto], b: &[tine_core::model::BlockDto
 /// example is literal text, never a header property (I-12: the parser owns
 /// regions; REG-OG-C5-L03-S2). One parse of `text`, O(text bytes).
 fn header_lines(text: &str, org: bool) -> Vec<(&str, Option<(String, String)>)> {
-    let regions =
-        crate::conflicts::pre_regions(text, if org { Format::Org } else { Format::Md });
+    let regions = crate::conflicts::pre_regions(text, if org { Format::Org } else { Format::Md });
     let mut at = 0;
     text.split_inclusive('\n')
         .map(|raw| {
@@ -1036,7 +1035,10 @@ mod header_property_tests {
     use super::header_lines;
 
     fn property(text: &str, org: bool) -> Option<(String, String)> {
-        header_lines(text, org).into_iter().next().and_then(|(_, p)| p)
+        header_lines(text, org)
+            .into_iter()
+            .next()
+            .and_then(|(_, p)| p)
     }
 
     #[test]

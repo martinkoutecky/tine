@@ -246,6 +246,11 @@ pub struct ConflictInventory {
     pub sync_conflicts: Vec<crate::model::SyncConflict>,
     pub vcs_markers: Vec<VcsMarkerConflict>,
     pub queue: Vec<ConflictObject>,
+    /// `path: reason` for every page or journal file the walk could not list,
+    /// read or diff. Those files are skipped, never a reason to withhold the
+    /// healthy conflicts (one bad file must not refuse the graph, I-22).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unreadable: Vec<String>,
 }
 
 /// A marker-bearing page's own conflict, ready for the in-page resolver: the

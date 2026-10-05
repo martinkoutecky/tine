@@ -2578,6 +2578,7 @@ impl Graph {
                         path: rel,
                         preview,
                         canonical,
+                        preview_error: None,
                     }
                 })
                 .collect();

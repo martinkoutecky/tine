@@ -90,6 +90,12 @@ function pageHasActiveEdit(name: string): boolean {
   return !!(edited && docNode(edited)?.page === name) || isDirty(name) || isSaving(name) || isConflicted(name) || isBlockMoving(name);
 }
 
+/** A journal the backend skipped as unreadable is named, never silently
+ *  missing from the feed (one bad file never blanks it, I-22). */
+function reportUnreadableJournals(response: JournalFeedPage): void {
+  if (response.unreadable?.length) reportUiFailure("unreadable-files", response.unreadable.join(", "));
+}
+
 function responseMatches(day: number, response: JournalFeedPage): boolean {
   return response.as_of_day === day && localDayKey() === day;
 }
@@ -196,6 +202,7 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
     const result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, null));
     if (result.kind === "stale") return null;
     const response = result.value;
+    reportUnreadableJournals(response);
     if (!responseMatches(browserDay, response)) {
       if (generation === feedGeneration && ownerIsLive(owner) && !retried && (rollover || !feedHasActiveEdit())) {
         return restartJournalFeed(owner, true, rollover);
@@ -460,6 +467,7 @@ export function PageView(): JSX.Element {
       const result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, cursor));
       if (result.kind === "stale") return;
       const response = result.value;
+      reportUnreadableJournals(response);
       if (
         generation !== feedGeneration || !ownerIsLive(owner) || asOfDay === null ||
         cursor !== nextBeforeDay || response.as_of_day !== asOfDay || !responseMatches(asOfDay, response)

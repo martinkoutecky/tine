@@ -48,7 +48,7 @@ import type {
   PublicationReceipt,
   DraftRecord,
 } from "./types";
-import type { GraphSourceFile, GraphFolderPickResult, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
+import type { GraphSources, GraphFolderPickResult, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
 import { dbg } from "./debug";
 import { assetFileName } from "./media";
 import type { EditKinds } from "./editKind";
@@ -198,7 +198,7 @@ export interface Backend {
   resolvePage(name: string, kind: "journal" | "page"): Promise<import("./types").ResolvedPage>;
   /** Raw source text of every md/org file in the open graph (+journals when
    *  asked), for the "Help improve Tine" diff panel. Read-only, local. */
-  graphSourceFiles(includeJournals: boolean): Promise<GraphSourceFile[]>;
+  graphSourceFiles(includeJournals: boolean): Promise<GraphSources>;
   /** Native backend: require a current graph binding, prepare bases (force
    * reads current UTF-8 bytes), and save ordered entries in one guarded
    * transaction. Success strings are file revisions; failure paths are
@@ -705,7 +705,7 @@ export interface Backend {
   watcherLatencyRecent(): Promise<unknown[]>;
 }
 
-export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, GraphSourceFile, GraphFolderPickResult, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
+export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, GraphSourceFile, GraphSources, GraphFolderPickResult, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange } from "./backendTypes";
 
 export function isTauri(): boolean {
@@ -936,7 +936,7 @@ class TauriBackend implements Backend {
     return this.call<import("./types").ResolvedPage>("resolve_page", { name, kind });
   }
   graphSourceFiles(includeJournals: boolean) {
-    return this.call<GraphSourceFile[]>("graph_source_files", { includeJournals });
+    return this.call<GraphSources>("graph_source_files", { includeJournals });
   }
   savePages(entries: SavePageEntry[], bindingGeneration = this.bindingGeneration) {
     return this.call<SavePagesResult>("save_pages", { entries }, bindingGeneration);

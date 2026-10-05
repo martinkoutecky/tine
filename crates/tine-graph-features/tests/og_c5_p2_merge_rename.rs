@@ -58,8 +58,14 @@ fn namespace_rename_keeps_the_child_suffix_across_spellings() {
             label,
             &[
                 ("logseq/config.edn", LOWBAR),
-                ("pages/Parent.md", &format!("title:: {parent_title}\n\n- parent\n")),
-                ("pages/Child.md", &format!("title:: {child_title}\n\n- child\n")),
+                (
+                    "pages/Parent.md",
+                    &format!("title:: {parent_title}\n\n- parent\n"),
+                ),
+                (
+                    "pages/Child.md",
+                    &format!("title:: {child_title}\n\n- child\n"),
+                ),
                 ("pages/Ref.md", &format!("- see [[{child_title}]]\n")),
             ],
         );

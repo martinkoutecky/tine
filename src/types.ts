@@ -188,6 +188,8 @@ export interface JournalFeedPage {
   next_before_day: number | null;
   done: boolean;
   as_of_day: number;
+  /** Journals this page skipped as unreadable (`path: reason`); absent when none. */
+  unreadable?: string[];
 }
 
 export interface GuidePage {
@@ -247,6 +249,8 @@ export interface JournalFile {
   path: string;
   preview: string;
   canonical: boolean; // name is the date stem (yyyy_MM_dd) — the one to keep
+  /** Why the preview could not be read; the file stays listed. */
+  preview_error?: string;
 }
 
 /** A journal day that resolves to >1 file (e.g. a date-stem file + a title-named
@@ -391,6 +395,8 @@ export interface ConflictInventory {
   sync_conflicts: SyncConflict[];
   vcs_markers: VcsMarkerConflict[];
   queue: ConflictObject[];
+  /** Files the walk could not list, read or diff (`path: reason`); absent when none. */
+  unreadable?: string[];
 }
 
 /** A marker-bearing page's own conflict, parsed from its marker sections. */

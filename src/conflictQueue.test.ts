@@ -48,6 +48,15 @@ describe("the derived conflict queue", () => {
     expect(toasts()).toEqual([expect.objectContaining({ kind: "error", sticky: true })]);
   });
 
+  // og C5 P2 (I-22): one unreadable file never withholds the queue; it is named.
+  it("keeps the healthy queue and reports files the walk could not read", async () => {
+    const inventory = { ...inventoryOf("A"), unreadable: ["pages/Bad.md: stream did not contain valid UTF-8"] };
+    vi.spyOn(backend(), "conflictInventory").mockResolvedValue(inventory);
+    await refreshSyncConflicts();
+    expect(conflictQueue().map((c) => c.page_name)).toEqual(["A"]);
+    expect(toasts()).toEqual([expect.objectContaining({ kind: "error", message: expect.stringContaining("couldn't be read") })]);
+  });
+
   it("settles a resolved object at once, and an older walk cannot resurrect it", async () => {
     setConflictInventory(inventoryOf("A", "B"));
     let finish!: (inventory: ConflictInventory) => void;
