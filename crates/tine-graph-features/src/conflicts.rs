@@ -276,14 +276,14 @@ pub fn sync_conflict_diff(
 /// directives. Content inside a literal container (fence, `#+BEGIN_SRC`, quote,
 /// ...) is never a property. Parsed once per text. A parser-refused text
 /// (quarantined) exposes nothing, so every line is plain text and kept as such.
-struct PreRegions {
+pub(crate) struct PreRegions {
     /// Byte offset of a property's line start -> (lowercase key, trimmed value).
     props: HashMap<usize, (String, String)>,
     /// Literal containers as (first line start, end) byte ranges.
     containers: Vec<(usize, usize)>,
 }
 
-fn pre_regions(text: &str, fmt: Format) -> PreRegions {
+pub(crate) fn pre_regions(text: &str, fmt: Format) -> PreRegions {
     let org = fmt == Format::Org;
     let regions = tine_core::block_regions::parse_document(text, org);
     let mut found = PreRegions {
@@ -311,12 +311,12 @@ fn pre_regions(text: &str, fmt: Format) -> PreRegions {
 
 impl PreRegions {
     /// The container whose lines include the line `start..end`, if any.
-    fn container_of(&self, start: usize, end: usize) -> Option<usize> {
+    pub(crate) fn container_of(&self, start: usize, end: usize) -> Option<usize> {
         self.containers
             .iter()
             .position(|&(from, to)| start < to && end > from)
     }
-    fn property(&self, line_start: usize) -> Option<&(String, String)> {
+    pub(crate) fn property(&self, line_start: usize) -> Option<&(String, String)> {
         self.props.get(&line_start)
     }
 }

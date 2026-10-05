@@ -23,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- Renaming a namespace parent whose title and a child's title use different Unicode forms of the same letters moves the child to `New/child`, not `Newchild` (REG-OG-C5-L03-S1).
+- Merging pages keeps a fenced `key:: value` example in the merged page's preamble inside its fence instead of dropping it or turning it into a page property (REG-OG-C5-L03-S2).
 - Page rename publication skips reparsing the old document and repeated transaction-record searches; loaded-page refresh uses one path lookup per touched page (GH #623).
 - Closing or switching PDFs no longer shows an annotation-loading error from a retired reader (GH #557).
 - Image picker and Upload keep the initiating editor through asset import, so delayed native blur does not discard the saved image link (GH #622, GH #493).
