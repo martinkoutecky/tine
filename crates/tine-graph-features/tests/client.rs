@@ -1123,7 +1123,10 @@ fn highlights_retry_external_sidecar_write_and_preserve_foreign_data() {
     pdf::write_highlights(&store, "other.pdf", "Other", &[highlight("h")], &[]).unwrap();
     let edn = fs::read_to_string(root.join("assets/other.edn")).unwrap();
     assert!(edn.contains("external") && edn.contains("h"));
-    assert!(edn.contains(":page 1"), "the existing view state survives the retry: {edn}");
+    assert!(
+        edn.contains(":page 1"),
+        "the existing view state survives the retry: {edn}"
+    );
     assert!(root.join("pages/hls__other.md").exists());
 }
 
