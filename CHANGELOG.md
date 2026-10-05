@@ -108,6 +108,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - REG-OG-P11B-BEGIN-QUERY: Static BEGIN_QUERY export uses the live EDN inspector, preserving escaped titles, discarded forms and typed positional inputs.
 - REG-OG-P11B-OUTLINE-LITERALS: Outline paste keeps parser-owned literal blocks and bullet continuations intact while preserving ordered list recognition.
 
+### Tests
+- Added native coverage for Ctrl+K alias navigation with ASCII/fullwidth commas and LF/CRLF headers (GH #623); the reported Windows failure was not reproduced on current og under Linux.
+- Added native Shift+click coverage across journals, main, sidebar and split panes, plus rendered modifier checks for page refs, tags, property values and block refs (GH #623); current og passes without a production change.
+
 ## [0.7.0-beta.1] - 2026-09-30
 
 ### Changed

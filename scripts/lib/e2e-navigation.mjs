@@ -67,22 +67,27 @@ async function openSwitcher(browser, opts, timeout) {
 
 /** Ensure the page named `name` is routed, through the Quick Switcher. Returns
  *  immediately when it already is. `opts.entry`: "shortcut" (Ctrl+K, default)
- *  or "button". */
+ *  or "button". `opts.query` searches another spelling (e.g. an alias) and
+ *  activates the highest-ranked page row, still expecting canonical `name`. */
 export async function openPageByName(browser, name, opts = {}) {
   const timeout = opts.timeout ?? DEFAULT_TIMEOUT_MS;
   if ((await currentPageTitle(browser)) === nfc(name)) return;
   const input = await openSwitcher(browser, opts, timeout);
-  await input.setValue(name);
-  const selectOnce = () => browser.execute((wanted) => {
+  await input.setValue(opts.query ?? name);
+  const selectOnce = () => browser.execute((wanted, firstPageResult) => {
     const target = wanted.trim().normalize("NFC");
-    const row = [...document.querySelectorAll(".switcher-row")].find((candidate) =>
-      !candidate.classList.contains("block-result")
-      && (candidate.querySelector(".switcher-name")?.textContent ?? "").trim().normalize("NFC") === target);
+    // Searching is shown for both the debounce and the outstanding read. A
+    // retained row belongs to the previous query until this status disappears.
+    if (document.querySelector('#switcher-results [role="status"]')) return false;
+    const pages = [...document.querySelectorAll(".switcher-row")].filter((candidate) =>
+      !candidate.classList.contains("block-result") && candidate.querySelector(".switcher-name"));
+    const named = pages.find((candidate) => (candidate.querySelector(".switcher-name")?.textContent ?? "").trim().normalize("NFC") === target);
+    const row = firstPageResult ? pages[0] : named;
     if (!row) return false;
     // Rows act on mousedown (QuickSwitcher.tsx): find and activate in one tick.
     row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
     return true;
-  }, name);
+  }, name, opts.query !== undefined);
   let offered = false;
   try {
     await browser.waitUntil(async () => {
@@ -92,8 +97,8 @@ export async function openPageByName(browser, name, opts = {}) {
     }, { timeout, interval: 150, timeoutMsg: "timed out" });
   } catch {
     throw new Error(`Quick Switcher did not open ${JSON.stringify(name)} (${offered
-      ? "the exact page row was activated, but the route never settled"
-      : "no non-block row with that exact name was offered"}); offering: ${JSON.stringify(await switcherPageRows(browser))}`);
+      ? "a page row was activated, but the route never settled"
+      : "no eligible page row was offered"}); offering: ${JSON.stringify(await switcherPageRows(browser))}`);
   }
   await waitForTitle(browser, name, timeout, "Quick Switcher");
   if (await browser.execute(() => Boolean(document.querySelector(".switcher-input")))) await browser.keys(["Escape"]);
