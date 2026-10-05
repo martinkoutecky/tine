@@ -71,7 +71,9 @@ pub(crate) fn set_watch_mode(
             WatchMode::Poll => "poll",
         });
     })?;
-    for (_, slot) in state.graphs.read().unwrap().entries() {
+    // Snapshot first (R2): restarting a watcher must not hold the registry.
+    let slots = state.graphs.read().unwrap().entries();
+    for (_, slot) in slots {
         slot.store.set_watch_mode(mode);
     }
     Ok(())

@@ -70,15 +70,12 @@ pub(crate) fn capture_target(state: State<'_, AppState>) -> Result<String, Strin
 
 fn capture_target_for_state(state: &AppState) -> Result<String, String> {
     let preferred = state.last_focused.lock().unwrap().clone();
-    if let Some(label) =
-        preferred.filter(|label| state.graphs.read().unwrap().slot(label).is_some())
-    {
+    // One registry read answers both questions (R2: no re-read under a guard).
+    let registry = state.graphs.read().unwrap();
+    if let Some(label) = preferred.filter(|label| registry.slot(label).is_some()) {
         return Ok(label);
     }
-    state
-        .graphs
-        .read()
-        .unwrap()
+    registry
         .entries()
         .into_iter()
         .next()
@@ -358,6 +355,52 @@ pub(crate) async fn load_graph(
     Ok(result)
 }
 
+/// The "root is already bound" branch of `load_graph_for_label`: the calling
+/// window's own graph answers `AlreadyCurrent`; a graph bound in another window
+/// is activated there (`activate` returns whether that window exists) and,
+/// when that moves capture routing, remembered as the last graph (`remember`
+/// fsyncs the settings file). `None` means no window owns `root_key`.
+fn route_bound_root(
+    state: &AppState,
+    root_key: &Path,
+    window_label: &str,
+    activate: impl FnOnce(&str) -> bool,
+    remember: impl FnOnce(&GraphSlot),
+) -> Result<Option<LoadGraphResult>, String> {
+    // R2: snapshot under one read guard and release it before acting. A
+    // guard kept alive by an `if let` head (edition 2021) would stay held
+    // while this thread re-reads the registry; std's RwLock queues that read
+    // behind a waiting writer (`bind`, the `Destroyed` handler), which waits
+    // on our guard: both threads and the UI freeze.
+    let (owner, own_slot) = {
+        let registry = state.graphs.read().unwrap();
+        let Some(owner) = registry.owner(root_key) else {
+            return Ok(None);
+        };
+        let own_slot = (owner == window_label).then(|| registry.slot(&owner));
+        (owner, own_slot)
+    };
+    if let Some(slot) = own_slot {
+        let slot = slot.ok_or_else(|| format!("no graph loaded for window {owner}"))?;
+        return Ok(Some(LoadGraphResult::AlreadyCurrent {
+            meta: graph_meta(&slot),
+            binding_generation: slot.binding_generation,
+            config_problem: config_problem(&slot.store),
+        }));
+    }
+    // `FocusedExisting` is an explicit activation request. Update capture
+    // routing now instead of depending solely on a subsequent OS focus event,
+    // which is not guaranteed on every WM/headless environment.
+    if activate(&owner) && state.note_focused(&owner) {
+        if let Ok(slot) = slot_for_window(state, &owner) {
+            remember(&slot);
+        }
+    }
+    Ok(Some(LoadGraphResult::FocusedExisting {
+        window_label: owner,
+    }))
+}
+
 pub(crate) fn load_graph_for_label(
     path: String,
     app: &tauri::AppHandle,
@@ -368,33 +411,26 @@ pub(crate) fn load_graph_for_label(
         .ok_or_else(|| "no graph path provided (set TINE_GRAPH or pass a path)".to_string())?;
     let root_key = canonical_graph_root(&root)?;
     let _load = state.graph_load.lock().unwrap();
-    if let Some(owner) = state.graphs.read().unwrap().owner(&root_key) {
-        if owner == window_label {
-            let slot = slot_for_window(&state, &owner)?;
-            return Ok(LoadGraphResult::AlreadyCurrent {
-                meta: graph_meta(&slot),
-                binding_generation: slot.binding_generation,
-                config_problem: config_problem(&slot.store),
-            });
-        }
-        if let Some(existing) = app.get_webview_window(&owner) {
+    let routed = route_bound_root(
+        state,
+        &root_key,
+        window_label,
+        |owner| {
+            let Some(existing) = app.get_webview_window(owner) else {
+                return false;
+            };
             let _ = existing.show();
             #[cfg(desktop)]
             let _ = existing.unminimize();
             let _ = existing.set_focus();
-            // `FocusedExisting` is an explicit activation request. Update
-            // capture routing now instead of depending solely on a subsequent
-            // OS focus event, which is not guaranteed on every WM/headless
-            // environment.
-            if state.note_focused(&owner) {
-                if let Ok(slot) = slot_for_window(state, &owner) {
-                    let _ = remember_graph(app, &slot.root_key.display().to_string());
-                }
-            }
-        }
-        return Ok(LoadGraphResult::FocusedExisting {
-            window_label: owner,
-        });
+            true
+        },
+        |slot| {
+            let _ = remember_graph(app, &slot.root_key.display().to_string());
+        },
+    )?;
+    if let Some(result) = routed {
+        return Ok(result);
     }
     let root = root_key.display().to_string();
     let approved_assets = approved_external_assets(app, &root_key);
@@ -826,6 +862,88 @@ mod tests {
         std::fs::create_dir_all(dir.join("journals")).unwrap();
         std::fs::create_dir_all(dir.join("pages")).unwrap();
         dir
+    }
+
+    fn bound_state(root: &Path, window: &str, focused: &str) -> Arc<AppState> {
+        let state = AppState {
+            graphs: std::sync::RwLock::new(Default::default()),
+            graph_load: std::sync::Mutex::new(()),
+            last_focused: std::sync::Mutex::new(Some(focused.into())),
+            capture_graph: std::sync::Mutex::new(Default::default()),
+            #[cfg(desktop)]
+            next_window: std::sync::atomic::AtomicU64::new(2),
+        };
+        let store = Store::open(root, OpenOptions::default()).unwrap().0;
+        state
+            .graphs
+            .write()
+            .unwrap()
+            .bind(
+                window.into(),
+                Arc::new(GraphSlot::new(store, root.to_path_buf())),
+            )
+            .unwrap();
+        Arc::new(state)
+    }
+
+    #[test]
+    fn opening_a_root_bound_in_another_window_survives_a_queued_registry_writer() {
+        // R2 / I-21: the "already open in another window" branch must not hold
+        // a registry read guard while it activates that window and re-reads
+        // the registry. std's RwLock blocks a new reader behind a queued
+        // writer (a window bind or the `Destroyed` handler), so a guard kept
+        // alive by an `if let` scrutinee (edition 2021) deadlocks both threads
+        // and the UI. Exemplar: `route_bound_root` snapshots, then acts.
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+        let dir = scratch("bound-root-queued-writer");
+        let state = bound_state(&dir, "graph-1", "graph-2");
+        let (entered_tx, entered) = channel();
+        let (go, go_rx) = channel::<()>();
+        let (done_tx, done) = channel();
+        let routing = {
+            let (state, dir) = (state.clone(), dir.clone());
+            std::thread::spawn(move || {
+                let result = route_bound_root(
+                    &state,
+                    &dir,
+                    "graph-2",
+                    |_| {
+                        entered_tx.send(()).unwrap();
+                        go_rx.recv().unwrap();
+                        true
+                    },
+                    |_| {},
+                );
+                let _ = done_tx.send(result.map(|routed| routed.is_some()));
+            })
+        };
+        entered.recv_timeout(Duration::from_secs(30)).unwrap();
+        let (wrote_tx, wrote) = channel();
+        {
+            let state = state.clone();
+            std::thread::spawn(move || {
+                drop(state.graphs.write().unwrap());
+                let _ = wrote_tx.send(());
+            });
+        }
+        // Give the writer time to queue behind any guard the router holds.
+        std::thread::sleep(Duration::from_millis(300));
+        go.send(()).unwrap();
+        let routed = done.recv_timeout(Duration::from_secs(10));
+        assert_eq!(
+            routed,
+            Ok(Ok(true)),
+            "the bound-root branch deadlocked against a queued registry writer"
+        );
+        wrote.recv_timeout(Duration::from_secs(10)).unwrap();
+        routing.join().unwrap();
+        assert_eq!(
+            state.last_focused.lock().unwrap().as_deref(),
+            Some("graph-1"),
+            "activation still moves capture routing to the owning window"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -38,6 +38,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - REG-OG-P12B-FENCES: Fence-aware editing (property and language autocomplete, code-body editing, calc blocks, hidden metadata) follows Logseq's parser instead of CommonMark: any fence run closes a fence, whatever its length.
 
 ### Fixed
+- Opening a graph that is already open in another window can no longer freeze the app when another window opens or closes at the same moment (REG-OG-C5-FLOW3-DEADLOCK).
 - A damaged or replaced settings, session or workspaces file, or a plugin manifest or module that is a pipe or device, is read with a size limit and never waits on a writer; an opener or external editor that was launched is always reaped (REG-OG-C5-C2-APPDATA-READ). A page whose property header the parser cannot read now says so instead of silently showing ordinary text (REG-OG-C5-C2-HEADER-READ).
 - The Guide now matches the query sheet and the conflicts list: `/query` opens the condition list (press **+ Add condition** for the field chooser), the query text is behind **Edit as text**, a condition can be dragged into another group, scheduled and deadline ranges are written as Logseq `(between scheduled …)`, and the conflicts list is described with its launch cache; the repeated Code blocks tip is one paragraph (REG-OG-C5-G-GUIDE-TRUTH).
 - A tine:// block link keeps the block id exactly as written and opens the page that actually holds the block, also when two files share a page name (REG-OG-C5-O-DEEPLINK).
