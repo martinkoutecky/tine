@@ -711,7 +711,7 @@ use fold::{casefold_substring_spans, fuzzy_evidence};
 mod blocks;
 #[path = "query_plan/pages.rs"]
 mod pages;
-use blocks::execute_blocks;
+use blocks::{execute_blocks, text_predicate_relevance};
 #[cfg(test)]
 use pages::best_page_match;
 use pages::execute_pages;
@@ -823,72 +823,6 @@ fn starts_at_word_boundary(value: &str, byte_offset: usize) -> bool {
             .chars()
             .next_back()
             .is_none_or(|ch| !ch.is_alphanumeric() && ch != '_')
-}
-
-fn text_predicate_relevance(
-    plan: &QueryPlan,
-    pred: &TextPredicate,
-    original: &str,
-    lower: &str,
-) -> Option<BlockRelevance> {
-    let text_len = original.encode_utf16().count();
-    let (match_class, word_boundary, first_offset, occurrences) = match pred.mode {
-        TextMatchMode::Contains | TextMatchMode::Phrase => {
-            let mut matches = lower.match_indices(&pred.value);
-            let (first, _) = matches.next()?;
-            let occurrences = 1 + matches.count();
-            let match_class = if lower == pred.value {
-                ObjectiveMatchClass::Exact
-            } else if first == 0 {
-                ObjectiveMatchClass::Prefix
-            } else {
-                ObjectiveMatchClass::Substring
-            };
-            (
-                match_class,
-                starts_at_word_boundary(lower, first),
-                lower[..first].encode_utf16().count(),
-                occurrences,
-            )
-        }
-        TextMatchMode::Regex => {
-            let regex = plan.regexes.get(&pred.clause_id)?;
-            let mut matches = regex.find_iter(original);
-            let first = matches.next()?;
-            let occurrences = 1 + matches.count();
-            let match_class = if first.start() == 0 && first.end() == original.len() {
-                ObjectiveMatchClass::Exact
-            } else if first.start() == 0 {
-                ObjectiveMatchClass::Prefix
-            } else {
-                ObjectiveMatchClass::Substring
-            };
-            (
-                match_class,
-                starts_at_word_boundary(original, first.start()),
-                original[..first.start()].encode_utf16().count(),
-                occurrences,
-            )
-        }
-        TextMatchMode::Fuzzy => {
-            let (_, match_class) = fuzzy_name_score(lower, &pred.value)?;
-            let first = lower.find(&pred.value).unwrap_or(0);
-            (
-                match_class,
-                starts_at_word_boundary(lower, first),
-                lower[..first].encode_utf16().count(),
-                1,
-            )
-        }
-    };
-    Some(BlockRelevance {
-        match_class,
-        word_boundary,
-        first_offset,
-        text_len,
-        occurrences,
-        positive: true,
-    })
 }
 
 fn block_relevance(

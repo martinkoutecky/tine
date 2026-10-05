@@ -143,3 +143,124 @@ pub(super) fn execute_blocks(
         ))
     })
 }
+
+pub(super) fn text_predicate_relevance(
+    plan: &QueryPlan,
+    pred: &TextPredicate,
+    original: &str,
+    lower: &str,
+) -> Option<BlockRelevance> {
+    let (match_class, word_boundary, first_offset, occurrences) = match pred.mode {
+        TextMatchMode::Contains | TextMatchMode::Phrase => {
+            let mut matches = lower.match_indices(&pred.value);
+            let (first, _) = matches.next()?;
+            let occurrences = 1 + matches.count();
+            let match_class = if lower == pred.value {
+                ObjectiveMatchClass::Exact
+            } else if first == 0 {
+                ObjectiveMatchClass::Prefix
+            } else {
+                ObjectiveMatchClass::Substring
+            };
+            (
+                match_class,
+                starts_at_word_boundary(lower, first),
+                lower[..first].encode_utf16().count(),
+                occurrences,
+            )
+        }
+        TextMatchMode::Regex => {
+            let regex = plan.regexes.get(&pred.clause_id)?;
+            let mut matches = regex.find_iter(original);
+            let first = matches.next()?;
+            let occurrences = 1 + matches.count();
+            let match_class = if first.start() == 0 && first.end() == original.len() {
+                ObjectiveMatchClass::Exact
+            } else if first.start() == 0 {
+                ObjectiveMatchClass::Prefix
+            } else {
+                ObjectiveMatchClass::Substring
+            };
+            (
+                match_class,
+                starts_at_word_boundary(original, first.start()),
+                original[..first.start()].encode_utf16().count(),
+                occurrences,
+            )
+        }
+        TextMatchMode::Fuzzy => {
+            let (_, match_class) = fuzzy_name_score(lower, &pred.value)?;
+            let first = lower.find(&pred.value).unwrap_or(0);
+            (
+                match_class,
+                starts_at_word_boundary(lower, first),
+                lower[..first].encode_utf16().count(),
+                1,
+            )
+        }
+    };
+    Some(BlockRelevance {
+        match_class,
+        word_boundary,
+        first_offset,
+        text_len: ranking_text_len(original),
+        occurrences,
+        positive: true,
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    static RANK_LENGTH_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn ranking_text_len(original: &str) -> usize {
+    #[cfg(test)]
+    RANK_LENGTH_BYTES.with(|count| count.set(count.get() + original.len()));
+    original.encode_utf16().count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    #[test]
+    fn graph_search_measures_rank_length_only_for_matching_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("pages")).unwrap();
+        for i in 0..30 {
+            std::fs::write(
+                dir.path().join(format!("pages/P{i}.md")),
+                "- unrelated text without a hit\n",
+            )
+            .unwrap();
+        }
+        std::fs::write(dir.path().join("pages/Hit.md"), "- needle 😀\n").unwrap();
+        let store = crate::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        let graph = store.whole_graph().unwrap();
+        let request = crate::SearchRequest {
+            text: "needle".into(),
+            within: None,
+            page_limit: 0,
+            block_limit: 10,
+            explain: false,
+            page_match_scope: None,
+            page_view: None,
+            block_view: None,
+        };
+        RANK_LENGTH_BYTES.with(|count| count.set(0));
+        let found = graph
+            .search(
+                &request,
+                &crate::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false))),
+            )
+            .unwrap();
+        assert_eq!(found.hits.len(), 1);
+        let work = RANK_LENGTH_BYTES.with(|count| count.get());
+        store.close();
+        assert_eq!(work, "needle 😀".len(),
+            "I-25: rejected graph-search candidates need no rank-length pass; exemplar query_plan/blocks.rs");
+    }
+}
