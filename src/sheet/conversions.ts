@@ -165,11 +165,14 @@ function gridTableData(id: string): { ok: true; data: GridTableData } | { ok: fa
     return { ok: false, reason: "Can't convert: the grid block needs a title line above its tine.* properties." };
   }
 
+  // Admit by the row count before copying or visiting any row (I-22): the work
+  // below is then bounded by the 200x30 cap, whatever the grid's size.
+  const tooLarge = { ok: false as const, reason: "Can't convert grids larger than 30 columns by 200 rows to a pipe table." };
+  if (node.children.length > MAX_PIPE_TABLE_ROWS) return tooLarge;
   const rows = [...node.children];
-  const colCount = Math.max(0, ...rows.map((rowId) => docNode(rowId)?.children.length ?? 0));
-  if (rows.length > MAX_PIPE_TABLE_ROWS || colCount > MAX_PIPE_TABLE_COLS) {
-    return { ok: false, reason: "Can't convert grids larger than 30 columns by 200 rows to a pipe table." };
-  }
+  let colCount = 0;
+  for (const rowId of rows) colCount = Math.max(colCount, docNode(rowId)?.children.length ?? 0);
+  if (colCount > MAX_PIPE_TABLE_COLS) return tooLarge;
   if (rows.length === 0 || colCount === 0) {
     return { ok: false, reason: "Can't convert an empty grid to a pipe table." };
   }
