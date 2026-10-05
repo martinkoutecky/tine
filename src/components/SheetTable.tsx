@@ -1,3 +1,4 @@
+import { sheetSourceRows } from "../sheet/sheetRows";
 import { sheetClickOffset, sheetCellMenu, displayLimitThrough } from "../sheet/interactions";
 import { cellIsSelected } from "../sheet/selection";
 import { formulaReferenceName } from "../sheet/boardColumns";
@@ -161,15 +162,7 @@ export function SheetTable(props: {
   });
   const formulaFields = createMemo<FieldId[]>(() => [...formulas().keys()].map(formulaFieldId));
 
-  const allRows = createMemo<RowRecord[]>(() => {
-    if (props.rowSource === "children") {
-      return (docNode(props.ownerId)?.children ?? []).map((id) => ({
-        id,
-        page: docNode(id)?.page ?? docNode(props.ownerId)?.page ?? "",
-      }));
-    }
-    return (props.groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, kind: g.kind, dto: b })));
-  });
+  const allRows = createMemo<RowRecord[]>(() => sheetSourceRows(props.rowSource, props.ownerId, props.groups));
   const filterState = createFormulaFilterMemo({
     rows: allRows,
     formulas,
