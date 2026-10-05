@@ -1037,7 +1037,6 @@ export const PUBLISHED_REFUSED_METHODS = [
   "rollbackPdfAreaImage",
   "setBackupKeep",
   "setCaptureEnterFiles",
-  "setLinkFirstMatch",
   "setWatchMode",
   "restoreBackup",
   "retryIndex",

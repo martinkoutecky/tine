@@ -467,7 +467,6 @@ const mockHighlights: Record<string, { label: string; highlights: Highlight[]; p
 let mockSession: string | null = null;
 const mockDrafts = new Map<string, DraftRecord>();
 let mockWorkspaces: string | null = null;
-let mockLinkFirstMatch = false;
 let mockGuideAnnounced = false;
 const mockAssets: Record<string, Uint8Array> = {};
 const mockAppBools: Record<string, boolean> = {};
@@ -1492,10 +1491,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       // no-op in the browser mock
     },
     async getLinkFirstMatch(): Promise<boolean> {
-      return mockLinkFirstMatch;
-    },
-    async setLinkFirstMatch(value: boolean): Promise<void> {
-      mockLinkFirstMatch = value;
+      return false; // the legacy key is read-only (migration source); never set
     },
     async getWatchMode(): Promise<string> {
       return "inotify";

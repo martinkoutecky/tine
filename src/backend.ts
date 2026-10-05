@@ -600,7 +600,6 @@ export interface Backend {
   /** `[[`/`#` autocomplete default: true → Enter links the first match; false
    *  (default, OG) → Enter creates a new page/tag unless an exact match exists. */
   getLinkFirstMatch(): Promise<boolean>;
-  setLinkFirstMatch(value: boolean): Promise<void>;
   /** How the file-watcher detects external edits: "inotify" (default, no idle
    *  wakeups) or "poll" (3s scan, for filesystems where inotify is flaky). */
   getWatchMode(): Promise<string>;
@@ -1365,9 +1364,6 @@ class TauriBackend implements Backend {
   }
   getLinkFirstMatch() {
     return this.call<boolean>("get_link_first_match");
-  }
-  setLinkFirstMatch(value: boolean) {
-    return this.call<void>("set_link_first_match", { value });
   }
   getWatchMode() {
     return this.call<string>("get_watch_mode");
