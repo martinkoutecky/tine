@@ -393,7 +393,7 @@ fn starts_numeric(tok: &str) -> bool {
     digits.as_bytes().first().is_some_and(u8::is_ascii_digit)
 }
 
-fn is_delim(c: u8) -> bool {
+pub(crate) fn is_delim(c: u8) -> bool {
     c.is_ascii_whitespace()
         || matches!(
             c,

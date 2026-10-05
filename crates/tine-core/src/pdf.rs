@@ -557,15 +557,29 @@ pub fn merge_hls_page_for_format(
             format!("#+FILE-PATH: {asset_path}"),
         ],
     };
-    if let Some(doc) = existing {
-        if let Some(prev) = &doc.pre_block {
-            for line in prev.lines() {
-                let key = page_property_key(line, format);
-                if matches!(key.as_deref(), Some("file") | Some("file-path")) {
-                    continue;
-                }
-                pre_lines.push(line.to_string());
+    if let Some(prev) = existing.and_then(|doc| doc.pre_block.as_deref()) {
+        // The parser owns which preamble lines are the page's `file`/`file-path`
+        // properties: an example inside a code fence is text and survives.
+        let regions = crate::block_regions::parse_document(prev, format == Format::Org);
+        if regions.quarantined {
+            // Unparseable preamble (refused input): rewrite nothing we cannot
+            // read. The existing pointers stay as they are; none are generated.
+            pre_lines.clear();
+        }
+        let generated: Vec<crate::block_regions::Range> = regions
+            .page_properties()
+            .filter(|p| matches!(p.key.to_ascii_lowercase().as_str(), "file" | "file-path"))
+            .map(|p| p.line)
+            .collect();
+        let mut at = 0;
+        for line in prev.split_inclusive('\n') {
+            let start = at;
+            at += line.len();
+            if generated.iter().any(|r| r.0 < at && start < r.1) {
+                continue;
             }
+            let line = line.strip_suffix('\n').unwrap_or(line);
+            pre_lines.push(line.strip_suffix('\r').unwrap_or(line).to_string());
         }
     }
     let pre = pre_lines.join("\n");
@@ -608,17 +622,6 @@ pub fn merge_hls_page_for_format(
     Document {
         pre_block: Some(pre),
         roots,
-    }
-}
-
-fn page_property_key(line: &str, format: Format) -> Option<String> {
-    match format {
-        Format::Md => crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase()),
-        Format::Org => line
-            .trim()
-            .strip_prefix("#+")
-            .and_then(|line| line.split_once(':'))
-            .map(|(key, _)| key.to_ascii_lowercase()),
     }
 }
 
@@ -990,6 +993,69 @@ mod tests {
             "file-path not updated: {pre}"
         );
         assert!(!pre.contains("old.pdf"), "stale file path kept: {pre}");
+    }
+
+    /// C5 L01-S2: only the parser's `file`/`file-path` page properties are
+    /// regenerated; lookalike lines inside a code fence are preamble text.
+    #[test]
+    fn merge_hls_page_keeps_fenced_lookalike_preamble_lines() {
+        let fence =
+            "```text\nfile:: keep this literal example\nfile-path:: keep this second example\n```";
+        let existing = crate::doc::parse(&format!(
+            "tags:: reading\nfile:: [old](../assets/old.pdf)\nfile-path:: ../assets/old.pdf\n\n{fence}\n"
+        ));
+        let pre = merge_hls_page(Some(&existing), "paper.pdf", "Paper", &[])
+            .pre_block
+            .unwrap();
+        assert_eq!(
+            pre,
+            format!("file:: [Paper](../assets/paper.pdf)\nfile-path:: ../assets/paper.pdf\ntags:: reading\n\n{fence}")
+        );
+        // Idempotent: a second merge over the first result changes nothing.
+        let again = merge_hls_page_for_format(
+            Some(&crate::doc::parse(&pre)),
+            "paper.pdf",
+            "Paper",
+            &[],
+            &HashSet::new(),
+            Format::Md,
+        );
+        assert_eq!(again.pre_block.as_deref(), Some(pre.as_str()));
+    }
+
+    #[test]
+    fn merge_hls_page_regenerates_org_file_directives_only() {
+        let existing = crate::org::parse_org(
+            "#+TITLE: hls\n#+FILE: [[../assets/old.pdf][old]]\n#+FILE-PATH: ../assets/old.pdf\n#+BEGIN_SRC text\n#+FILE: keep\n#+END_SRC\n* h\n:PROPERTIES:\n:id: x\n:END:\n",
+        );
+        let pre = merge_hls_page_for_format(
+            Some(&existing),
+            "paper.pdf",
+            "Paper",
+            &[],
+            &HashSet::new(),
+            Format::Org,
+        )
+        .pre_block
+        .unwrap();
+        assert_eq!(
+            pre,
+            "#+FILE: [[../assets/paper.pdf][Paper]]\n#+FILE-PATH: ../assets/paper.pdf\n#+TITLE: hls\n#+BEGIN_SRC text\n#+FILE: keep\n#+END_SRC"
+        );
+    }
+
+    /// Preamble text the parser refuses is never rewritten: no deletion, no
+    /// growth on every save.
+    #[test]
+    fn merge_hls_page_leaves_a_parser_refused_preamble_alone() {
+        let deep = ">".repeat(5000);
+        let pre_text = format!("file:: [old](../assets/old.pdf)\n{deep} x");
+        let existing = Document {
+            pre_block: Some(pre_text.clone()),
+            roots: Vec::new(),
+        };
+        let once = merge_hls_page(Some(&existing), "paper.pdf", "Paper", &[]);
+        assert_eq!(once.pre_block.as_deref(), Some(pre_text.as_str()));
     }
 
     #[test]

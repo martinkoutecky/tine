@@ -23,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- A Favorites (or other) settings edit no longer deletes an unrelated `config.edn` setting when an earlier entry's value is the same keyword; config keys are found only at key positions (REG-OG-C5-L01-S1).
+- Saving a PDF highlight keeps `file::`/`file-path::` example lines inside a code fence at the top of the annotation page; a failed cleanup of a leftover legacy sidecar, page or area image is now logged instead of silent (REG-OG-C5-L01-S2).
 - Page rename publication skips reparsing the old document and repeated transaction-record searches; loaded-page refresh uses one path lookup per touched page (GH #623).
 - Closing or switching PDFs no longer shows an annotation-loading error from a retired reader (GH #557).
 - Image picker and Upload keep the initiating editor through asset import, so delayed native blur does not discard the saved image link (GH #622, GH #493).

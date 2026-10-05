@@ -43,7 +43,11 @@ plus "reload only when the bytes changed" is its replacement.
 ## 3. Writing it
 
 A setter changes only its own **top-level** key: the key is found among the
-root map's direct entries, never inside a nested map (master DUP-3), and a
+root map's direct entries, never inside a nested map (master DUP-3), and only
+at a key position: a keyword that is an earlier entry's VALUE and spells the key
+is not the key (`{:backup :favorites :private "keep"}` has no `:favorites`). The
+readers and every setter share that one selector
+(`config::find_keyword_at_map_level`). A
 scalar setter replaces only the value token. Comments, unknown keys, nested
 maps and spacing elsewhere survive byte for byte. A missing, empty or
 comment-only file gets a new map after its comments.
@@ -83,6 +87,8 @@ risk.
 - crates/tine-store/tests/config_live_reload.rs::an_unsafe_delivered_config_keeps_the_served_one_and_pages_stay_observed
 - crates/tine-store/tests/config_live_reload.rs::a_removed_then_restored_config_is_followed
 - crates/tine-graph-features/tests/config_writes.rs::every_setter_edits_the_top_level_key_never_a_nested_shadow
+- crates/tine-graph-features/tests/config_writes.rs::every_setter_leaves_a_keyword_value_that_spells_its_key_alone
+- crates/tine-graph-features/tests/config_writes.rs::a_real_key_after_a_keyword_value_is_the_one_replaced
 - crates/tine-graph-features/tests/config_writes.rs::every_setter_refuses_a_config_that_is_not_a_balanced_map
 - crates/tine-graph-features/tests/config_writes.rs::a_malformed_config_never_blocks_open
 - crates/tine-graph-features/tests/config_writes.rs::a_config_write_killed_after_its_step_reopens_whole
