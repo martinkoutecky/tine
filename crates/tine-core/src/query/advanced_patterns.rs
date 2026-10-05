@@ -584,7 +584,7 @@ pub(crate) fn advanced_pred(
     }
     // GH #542: a `:result-transform` is a Clojure function (ADR 0042 keeps
     // scripting out). It reorders or reshapes the answer, so say it did not run.
-    if query_src.contains(":result-transform") {
+    if crate::query_edn::declares_option(query_src, ":result-transform") {
         ignored.push("result-transform".into());
     }
     if ignored.iter().any(|item| item == "query-nesting-too-deep") {

@@ -371,6 +371,59 @@ fn gh542_contains_narrowed_marker_lowers_to_a_task_leaf() {
     assert_eq!(ignored, vec!["result-transform"]);
 }
 
+/// Checkpoint-5 Q (REG-OG-C5-Q-RESULT-TRANSFORM): the refusal fires on a
+/// *declared* `:result-transform` option, not on the substring. The text may
+/// appear in a title, a string, a comment or a discarded form without the query
+/// carrying any transform, and a BEGIN_QUERY payload's transform must reach the
+/// lowerer instead of being dropped by the payload inspector.
+#[test]
+fn result_transform_refusal_follows_the_declared_option_not_the_substring() {
+    let vector = r#"[:find (pull ?h [*]) :where [?h :block/marker "TODO"]]"#;
+    for (label, src) in [
+        (
+            "title",
+            format!(r#"{{:title "see :result-transform docs" :query {vector}}}"#),
+        ),
+        (
+            "comment",
+            format!("{{:query {vector}\n ;; :result-transform is not used here\n}}"),
+        ),
+        (
+            "discard",
+            format!("{{:query {vector} #_ :result-transform}}"),
+        ),
+        (
+            "string in the query",
+            r#"[:find (pull ?h [*]) :where [?h :block/content ":result-transform"]]"#.to_string(),
+        ),
+    ] {
+        let (_, _, ignored) = advanced_pred(&src, None, TODAY);
+        assert!(
+            !ignored.iter().any(|item| item == "result-transform"),
+            "{label}: {ignored:?}"
+        );
+    }
+    let (lowered, _, ignored) = advanced_pred(
+        &format!(r#"{{:query {vector} :result-transform #(take 1 %)}}"#),
+        None,
+        TODAY,
+    );
+    assert!(lowered.is_none());
+    assert_eq!(ignored, vec!["result-transform"]);
+
+    // The BEGIN_QUERY payload inspector keeps the declared transform.
+    let payload = format!(r#"{{:query {vector} :result-transform (fn [xs] (take 1 xs))}}"#);
+    let crate::query_edn::BeginQueryMatch::Supported { query, .. } =
+        crate::query_edn::inspect_begin_query(&payload)
+    else {
+        panic!("the payload is a supported advanced query");
+    };
+    let (lowered, ran, ignored) = advanced_pred(&query, None, TODAY);
+    assert!(lowered.is_none(), "{query}");
+    assert!(ran.is_empty());
+    assert_eq!(ignored, vec!["result-transform"]);
+}
+
 /// §4.4: the binding boundary lowers an advanced source, replaces the
 /// provisional inspection diagnostic, and carries the clause report verbatim;
 /// an unsupported source resolves to `False` with the unsupported diagnostic.

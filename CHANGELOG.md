@@ -23,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- An advanced query is refused for a `:result-transform` only when it declares one (a title, string, comment or discarded form that mentions the word no longer blocks it), and a BEGIN_QUERY block that declares a transform now shows the "clauses Tine cannot run" refusal instead of silently running without it (REG-OG-C5-Q-RESULT-TRANSFORM).
+- Saving a page no longer fails with "refusing to move page-header property into outline content" when a code block shows `key:: value` syntax; the guard asks the parser which lines are properties (REG-OG-C5-Q-REFUSAL1).
 - A PDF link into a nested assets folder (`../assets/nested/report.pdf`) opens that PDF, not a same-named one in the assets root, and highlights made in it are saved under the nested PDF's own page and sidecar; opening the PDF from a highlight's page does the same (UI-OG-C5-P6-PDFLINK).
 - Image `{:width ...}` / `{:height ...}` metadata is read as EDN, so a quoted title that contains `:width 999` no longer sets the image width (UI-OG-C5-P6-IMAGEMETA).
 - PDF Find shows an error and clears stale results when a page cannot be read, and closing Find or changing the query stops a pending search from moving the reader (UI-OG-C5-P6-FIND); a PDF text layer that finishes after its page was re-rendered or the reader closed no longer installs, and a failed text render shows the PDF error (UI-OG-C5-P6-TEXTLAYER).

@@ -4277,7 +4277,9 @@ impl Graph {
                     "refusing to drop an existing page preamble while authoring page-header properties",
                 ));
             }
-            if let Some(line) = newly_reclassified_page_property_line(existing_doc, &doc) {
+            if let Some(line) =
+                newly_reclassified_page_property_line(existing_doc, &doc, dto_is_org)
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("refusing to move page-header property into outline content: {line}"),
@@ -4400,48 +4402,49 @@ fn promote_first_root_page_header(doc: &mut Document) {
 fn newly_reclassified_page_property_line(
     existing_doc: &Document,
     proposed: &Document,
+    is_org: bool,
 ) -> Option<String> {
-    // The general data-preservation guard is intentionally a little broader
-    // than Tine's editable property grammar: Logseq graphs can contain Unicode
-    // or plugin-defined keys that Tine does not expose in its settings panel,
-    // but they still must never be reclassified into outline content.
-    fn page_header_property(line: &str) -> bool {
-        let Some((key, _)) = line.split_once("::") else {
-            return false;
+    // The parser owns what a property line is (I-12): `block_regions` reports
+    // the lines lsdoc accepted as properties and leaves out literal regions, so
+    // a fenced or inline-code example containing `key:: value` is prose, not a
+    // slot. Logseq graphs can carry Unicode or plugin-defined keys that Tine's
+    // settings panel does not expose; the parser accepts those too.
+    fn property_lines(raw: &str, is_org: bool, document: bool) -> Vec<String> {
+        if !raw.contains(':') && !raw.contains("#+") {
+            return Vec::new();
+        }
+        let regions = if document {
+            tine_core::block_regions::parse_document(raw, is_org)
+        } else {
+            tine_core::block_regions::parse(raw, is_org)
         };
-        let key = key.trim();
-        !key.is_empty() && key.chars().all(|ch| !ch.is_whitespace() && ch != ':')
-    }
-
-    fn pre_property_lines(raw: Option<&str>) -> Vec<&str> {
-        raw.unwrap_or("")
-            .split('\n')
-            .filter(|line| page_header_property(line))
+        regions
+            .page_properties()
+            .map(|p| p.line.slice(raw).trim_end_matches('\n').to_owned())
             .collect()
     }
 
-    fn outline_property_lines<'a>(blocks: &'a [DocBlock], out: &mut Vec<&'a str>) {
+    fn pre_property_lines(raw: Option<&str>, is_org: bool) -> Vec<String> {
+        property_lines(raw.unwrap_or(""), is_org, true)
+    }
+
+    fn outline_property_lines(blocks: &[DocBlock], is_org: bool, out: &mut Vec<String>) {
         for block in blocks {
-            out.extend(
-                block
-                    .raw()
-                    .split('\n')
-                    .filter(|line| page_header_property(line)),
-            );
-            outline_property_lines(&block.children, out);
+            out.extend(property_lines(block.raw(), is_org, false));
+            outline_property_lines(&block.children, is_org, out);
         }
     }
 
-    let existing_pre = pre_property_lines(existing_doc.pre_block.as_deref());
-    let proposed_pre = pre_property_lines(proposed.pre_block.as_deref());
+    let existing_pre = pre_property_lines(existing_doc.pre_block.as_deref(), is_org);
+    let proposed_pre = pre_property_lines(proposed.pre_block.as_deref(), is_org);
     if proposed_pre.len() >= existing_pre.len() {
         return None;
     }
 
     let mut existing_outline = Vec::new();
-    outline_property_lines(&existing_doc.roots, &mut existing_outline);
+    outline_property_lines(&existing_doc.roots, is_org, &mut existing_outline);
     let mut proposed_outline = Vec::new();
-    outline_property_lines(&proposed.roots, &mut proposed_outline);
+    outline_property_lines(&proposed.roots, is_org, &mut proposed_outline);
     if proposed_outline.len() <= existing_outline.len() {
         return None;
     }
@@ -4451,12 +4454,12 @@ fn newly_reclassified_page_property_line(
     // existing slots then cover changed/reordered pre-existing outline lines.
     let mut exact_slots: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for line in &existing_outline {
-        *exact_slots.entry(*line).or_default() += 1;
+        *exact_slots.entry(line.as_str()).or_default() += 1;
     }
     let mut unmatched = Vec::new();
     let mut exact_matches = 0usize;
-    for line in proposed_outline {
-        match exact_slots.get_mut(line) {
+    for line in &proposed_outline {
+        match exact_slots.get_mut(line.as_str()) {
             Some(count) if *count > 0 => {
                 *count -= 1;
                 exact_matches += 1;
@@ -4467,7 +4470,7 @@ fn newly_reclassified_page_property_line(
     let edited_provenance_slots = existing_outline.len() - exact_matches;
     unmatched
         .get(edited_provenance_slots)
-        .map(|line| (*line).to_string())
+        .map(|line| (*line).clone())
 }
 
 /// Atomically reserve a unique filename in `assets/` for `name`, de-duplicating
