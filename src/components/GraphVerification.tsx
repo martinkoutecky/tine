@@ -48,7 +48,7 @@ export function GraphVerification(): JSX.Element {
     // running for an answer nobody can receive (I-21).
     const running = operation();
     if (running) {
-      void backend().cancelGraphVerification(running).catch((error) => {
+      void readOwned(ownedWhen(), backend().cancelGraphVerification(running)).catch((error) => {
         dbg(`graph verification cancel on close failed: ${String(error)}`);
       });
     }
