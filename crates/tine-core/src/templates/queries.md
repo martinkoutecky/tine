@@ -6,7 +6,7 @@ icon:: 🔎
 	- Every open task in this graph:
 	- {{query (task TODO DOING)}}
 - ## Create one yourself
-	- 1. Type `/query` and choose **Query**, or write `{{query (task TODO)}}` yourself. The slash command opens the query sheet with the field chooser ready.
+	- 1. Type `/query` and choose **Query**, or write `{{query (task TODO)}}` yourself. The slash command opens the query sheet on its empty condition list; press **+ Add condition** to choose the first field.
 	- 2. At rest a query block is one sentence — *Blocks where task: TODO* — with the number of results beside it. Click the sentence (or the ⚙ beside it) to open the **sheet**.
 	- 3. The sheet says what the query finds — **Find blocks ▾ where …** — and shows one row per condition: a handle to drag it (or move it with the arrow keys), a box to select it, the field, operator and value, a switch that turns it off without removing it, a ⋮ for the rest, and an × to remove it. **+ Add condition** adds one.
 	- 4. Tick two or more rows in the same list and press **Group selected ▾** to make them one **All of**, **Any of** or **None of** group. A group's ⋮ **Ungroup** puts its rows back.

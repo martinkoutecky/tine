@@ -38,7 +38,6 @@ fn emitted_fixture_corpus_is_accepted_by_lsdoc() {
         ("merge", "page_merge_delete_and_rescue_match_legacy_bytes/merge/pages/dst.md", "md"),
         ("rename", "page_rename_matches_legacy_for_refs_namespace_alias_and_title/simple/pages/Next Name.md", "md"),
         ("conflict resolve", "conflict_clients_match_legacy_values_and_disk_bytes/resolved_conflict/pages/Foo.md", "md"),
-        ("guide", "guide_creation_matches_legacy_tree_and_folder_choice/first_demo/pages/Welcome to Tine.md", "md"),
         ("PDF notes", "old_vs_new_matrix_on_identical_fixtures/first_highlight_notes/pages/hls__paper.md", "md"),
         ("Org merge", "org_merge_and_binary_rescue_match_legacy/org_merge/pages/dst.org", "org"),
     ] {
@@ -50,6 +49,15 @@ fn emitted_fixture_corpus_is_accepted_by_lsdoc() {
         assert!(!json.is_empty(),
             "I-4: {emitter} output must project to a Logseq tree; exemplar store_save.rs:293; fixture {rel}");
     }
+    // The Guide seed writes the bundled template bytes unchanged (pinned by
+    // client.rs), so the templates themselves are the emitted artifact.
+    let welcome = tine_core::guide::GUIDE_TEMPLATES
+        .iter()
+        .find(|template| template.title == "Welcome to Tine")
+        .expect("the Welcome page is bundled");
+    let parsed = lsdoc::parse_format(welcome.markdown, "md");
+    assert!(!parsed.blocks.is_empty(),
+        "I-4: guide output must parse as Logseq blocks; exemplar store_save.rs:293; template Welcome to Tine");
 }
 
 #[test]
