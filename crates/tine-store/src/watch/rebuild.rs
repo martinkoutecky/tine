@@ -210,9 +210,13 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    /// `refresh(Depth::Bytes)` (an export's freshness check) catches the same
-    /// same-length, stamp-restored rewrite a `Depth::Stamps` refresh misses,
+    /// The `Depth::Bytes` diff (an export's freshness check) catches the
+    /// same-length, stamp-restored rewrite the `Depth::Stamps` diff misses,
     /// and publishes it as an external change, without the rebuild's re-parse.
+    /// Both diffs run under the writer, as `refresh` runs them, so the poller
+    /// (which can notice the rewrite through other metadata) never observes
+    /// it first; graph-features' `publish_sees_a_same_size_rewrite_with_its_
+    /// stamp_restored` covers the public `refresh(Depth::Bytes)` door.
     #[test]
     fn a_bytes_refresh_catches_a_same_size_rewrite_that_stamps_miss() {
         let root = temp_root("bytes-same-size");
@@ -227,19 +231,23 @@ mod tests {
         let store = open(&root);
         let subscription = store.subscribe();
         {
-            // Holding the writer pauses the poller.
+            // Holding the writer pauses the poller, so the two diffs below are
+            // the only observers of the rewrite.
             let writer = store.writer.lock().unwrap();
             rewrite_keeping_stamp(&path, "- new one\n");
+            let core = store.watch.core_for_load();
+            core.reconcile_locked(None, true, true, DiffTrigger::Rescan)
+                .unwrap();
+            assert_eq!(
+                cached_first_block(&store, "A"),
+                "old one",
+                "a stamps diff was expected to miss this rewrite (test premise)"
+            );
+            core.reconcile_locked(None, true, true, DiffTrigger::Bytes)
+                .unwrap();
+            assert_eq!(cached_first_block(&store, "A"), "new one");
             drop(writer);
         }
-        store.refresh(crate::Depth::Stamps).unwrap();
-        assert_eq!(
-            cached_first_block(&store, "A"),
-            "old one",
-            "a stamps refresh was expected to miss this rewrite (test premise)"
-        );
-        store.refresh(crate::Depth::Bytes).unwrap();
-        assert_eq!(cached_first_block(&store, "A"), "new one");
         let mut seen = false;
         let deadline = Instant::now() + Duration::from_secs(10);
         while !seen && Instant::now() < deadline {
