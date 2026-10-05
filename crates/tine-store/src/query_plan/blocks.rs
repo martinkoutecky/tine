@@ -3,7 +3,7 @@ use super::*;
 
 pub(super) fn execute_blocks(
     plan: &QueryPlan,
-    graph: &impl GraphRead,
+    graph: &ReadSnapshot,
     branch: &QueryBranch,
     cancelled: &impl Fn() -> bool,
 ) -> Option<(Vec<QueryHit>, bool)> {

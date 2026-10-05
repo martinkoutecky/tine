@@ -188,7 +188,7 @@ pub(super) fn best_page_match(
 
 pub(super) fn execute_pages(
     plan: &QueryPlan,
-    graph: &impl GraphRead,
+    graph: &ReadSnapshot,
     branch: &QueryBranch,
     cancelled: &impl Fn() -> bool,
 ) -> Option<(Vec<QueryHit>, bool)> {

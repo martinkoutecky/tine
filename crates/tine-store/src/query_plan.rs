@@ -2,7 +2,7 @@
 //! This covers friendly search expressions and exact page scopes; `{{query}}`
 //! expressions use the separate query evaluator.
 
-use crate::model::GraphRead;
+use crate::model::ReadSnapshot;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -411,7 +411,7 @@ impl QueryPlan {
     /// candidates and before every block projection; no partial result escapes.
     pub(crate) fn execute(
         &self,
-        graph: &impl GraphRead,
+        graph: &ReadSnapshot,
         cancelled: impl Fn() -> bool,
     ) -> QueryExecution {
         self.execute_with_explain(graph, cancelled, true)
@@ -419,7 +419,7 @@ impl QueryPlan {
 
     pub(crate) fn execute_with_explain(
         &self,
-        graph: &impl GraphRead,
+        graph: &ReadSnapshot,
         cancelled: impl Fn() -> bool,
         explain: bool,
     ) -> QueryExecution {
@@ -1164,7 +1164,7 @@ mod tests {
     }
 
     fn reference_literal_search(
-        graph: &impl GraphRead,
+        graph: &ReadSnapshot,
         query: &str,
         limit: usize,
     ) -> Vec<(String, String)> {

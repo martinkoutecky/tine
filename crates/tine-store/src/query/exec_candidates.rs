@@ -39,7 +39,7 @@ pub(super) struct Candidates<'a> {
 }
 
 impl<'a> Candidates<'a> {
-    pub(super) fn new(graph: &impl GraphRead, pages: &'a Pages, plan: &Plan) -> Self {
+    pub(super) fn new(graph: &ReadSnapshot, pages: &'a Pages, plan: &Plan) -> Self {
         let names = required_names(&plan.filter, plan.anchor);
         let selected = names.as_ref().map(|names| {
             let named = graph

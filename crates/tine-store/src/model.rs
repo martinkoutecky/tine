@@ -443,77 +443,6 @@ pub(crate) struct Graph {
         std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
 }
 
-/// Read-only inputs consumed by graph evaluators. Disk and mutation helpers
-/// remain on `Graph`; a published generation supplies these answers directly.
-pub(crate) trait GraphRead {
-    fn with_pages<T>(&self, f: impl FnOnce(&Pages) -> T) -> T;
-    fn config(&self) -> &Config;
-    fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>>;
-    fn reference_candidate_pages(
-        &self,
-        names: &[String],
-        kind: ReferenceKind,
-    ) -> ReferenceCandidatePages;
-    fn page_aliases_with_owners(&self) -> Vec<(String, String, String)>;
-    fn page_aliases(&self) -> Vec<(String, String)> {
-        self.page_aliases_with_owners()
-            .into_iter()
-            .map(|(alias, owner, _)| (alias, owner))
-            .collect()
-    }
-    /// The alias relation, indexed (see [`crate::query::AliasEdges`]). A
-    /// snapshot builds it once and carries it across saves that moved no
-    /// alias; the default builds it from the alias list on every call.
-    fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
-        Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))
-    }
-    fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>>;
-    fn block_page_hint(&self, uuid: &str) -> Option<String>;
-    fn page_list_arc(&self) -> Arc<Vec<PageEntry>>;
-    fn referenced_page_names(&self) -> Vec<String>;
-    fn query_index(&self) -> Arc<crate::query::index::QueryIndex>;
-}
-
-impl<R: GraphRead> GraphRead for Arc<R> {
-    fn with_pages<T>(&self, f: impl FnOnce(&Pages) -> T) -> T {
-        self.as_ref().with_pages(f)
-    }
-    fn config(&self) -> &Config {
-        self.as_ref().config()
-    }
-    fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>> {
-        self.as_ref().reference_real_page_names()
-    }
-    fn reference_candidate_pages(
-        &self,
-        names: &[String],
-        kind: ReferenceKind,
-    ) -> ReferenceCandidatePages {
-        self.as_ref().reference_candidate_pages(names, kind)
-    }
-    fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
-        self.as_ref().page_aliases_with_owners()
-    }
-    fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
-        self.as_ref().alias_edges()
-    }
-    fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
-        self.as_ref().observed_page_mtimes()
-    }
-    fn block_page_hint(&self, uuid: &str) -> Option<String> {
-        self.as_ref().block_page_hint(uuid)
-    }
-    fn page_list_arc(&self) -> Arc<Vec<PageEntry>> {
-        self.as_ref().page_list_arc()
-    }
-    fn referenced_page_names(&self) -> Vec<String> {
-        self.as_ref().referenced_page_names()
-    }
-    fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
-        self.as_ref().query_index()
-    }
-}
-
 /// The immutable page and index input for one published generation. Evaluators
 /// borrow this value; write helpers and filesystem capabilities are absent.
 pub(crate) struct ReadSnapshot {
@@ -1083,17 +1012,25 @@ impl ReadSnapshot {
     }
 }
 
-impl GraphRead for ReadSnapshot {
-    fn with_pages<T>(&self, f: impl FnOnce(&Pages) -> T) -> T {
+/// Read-only inputs consumed by graph evaluators. Disk and mutation helpers
+/// remain on `Graph`; a published generation supplies these answers directly.
+impl ReadSnapshot {
+    pub(crate) fn page_aliases(&self) -> Vec<(String, String)> {
+        self.page_aliases_with_owners()
+            .into_iter()
+            .map(|(alias, owner, _)| (alias, owner))
+            .collect()
+    }
+    pub(crate) fn with_pages<T>(&self, f: impl FnOnce(&Pages) -> T) -> T {
         f(&self.pages)
     }
-    fn config(&self) -> &Config {
+    pub(crate) fn config(&self) -> &Config {
         &self.config
     }
-    fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>> {
+    pub(crate) fn reference_real_page_names(&self) -> Option<Arc<crate::query::RealPageNames>> {
         Some(Arc::clone(&self.real_page_names))
     }
-    fn reference_candidate_pages(
+    pub(crate) fn reference_candidate_pages(
         &self,
         names: &[String],
         kind: ReferenceKind,
@@ -1150,13 +1087,13 @@ impl GraphRead for ReadSnapshot {
             }
         }
     }
-    fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
+    pub(crate) fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
         Arc::clone(
             self.alias_edges
                 .get_or_init(|| Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))),
         )
     }
-    fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
+    pub(crate) fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
         self.aliases
             .get_or_init(|| {
                 let index = self.alias_index.get_or_init(|| {
@@ -1192,10 +1129,10 @@ impl GraphRead for ReadSnapshot {
             .as_ref()
             .clone()
     }
-    fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
+    pub(crate) fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
         Arc::clone(&self.observed_mtimes)
     }
-    fn block_page_hint(&self, uuid: &str) -> Option<String> {
+    pub(crate) fn block_page_hint(&self, uuid: &str) -> Option<String> {
         self.block_index
             .get_or_init(|| {
                 #[cfg(test)]
@@ -1205,14 +1142,14 @@ impl GraphRead for ReadSnapshot {
             })
             .hint(uuid)
     }
-    fn page_list_arc(&self) -> Arc<Vec<PageEntry>> {
+    pub(crate) fn page_list_arc(&self) -> Arc<Vec<PageEntry>> {
         self.list.materialize()
     }
-    fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
+    pub(crate) fn query_index(&self) -> Arc<crate::query::index::QueryIndex> {
         let positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
         (self.query_index).get(&self.pages, &positions, &self.config, self.cache_generation)
     }
-    fn referenced_page_names(&self) -> Vec<String> {
+    pub(crate) fn referenced_page_names(&self) -> Vec<String> {
         self.referenced_names
             .get_or_init(|| {
                 let index = self.referenced_name_index.get_or_init(|| {
@@ -3498,7 +3435,7 @@ impl SnapshotMemos {
     /// (all of them on a day rollover).
     fn scope_derived_invalidation(
         &self,
-        graph: &impl GraphRead,
+        graph: &ReadSnapshot,
         entry: &PageEntry,
         previous_doc: Option<&Document>,
         doc: &Document,
@@ -5834,7 +5771,7 @@ mod tests {
     }
 
     fn assert_reference_candidates_equal_full_scan(
-        graph: &impl GraphRead,
+        graph: &ReadSnapshot,
         target: &str,
         names: &[String],
         kind: ReferenceKind,
