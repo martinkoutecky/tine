@@ -5224,11 +5224,20 @@ mod tests {
         let org = tine_core::org::parse_org("* memo:: keep this sentence\n");
         assert!(doc_has_content(&org.roots), "Org prose is content");
         let drawer = tine_core::org::parse_org("* \n:PROPERTIES:\n:id: 6679-abc\n:END:\n");
-        assert!(!doc_has_content(&drawer.roots), "an Org head drawer alone is not");
+        assert!(
+            !doc_has_content(&drawer.roots),
+            "an Org head drawer alone is not"
+        );
         let md = tine_core::doc::parse("- memo:: only a property\n");
-        assert!(!doc_has_content(&md.roots), "a Markdown property block is not");
+        assert!(
+            !doc_has_content(&md.roots),
+            "a Markdown property block is not"
+        );
         let fenced = tine_core::doc::parse("- ```\n  key:: literal\n  ```\n");
-        assert!(doc_has_content(&fenced.roots), "a fenced property-shaped line is code");
+        assert!(
+            doc_has_content(&fenced.roots),
+            "a fenced property-shaped line is code"
+        );
     }
 
     #[test]
