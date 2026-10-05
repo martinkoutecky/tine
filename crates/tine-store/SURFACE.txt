@@ -1,8 +1,10 @@
 # tine-store public items ON the target surface (rev 5, 01-step1-interface.rs).
 # Counts against 01-arrival.md budget A, extended for batch save and read-only
-# transaction expectation: <=41 Store+Transaction ops,
-# <=26 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
+# transaction expectation. Enforced by tests/shallow_ratchet.rs.
 # Raised 40->41 and 25->26 for QF3b (GH #623 rename I/O: prepare_ref_rewrite, page_files_at_or_under), 2026-10-05.
+# og-surface step 1 (2026-10-05): the ratchet now scans every source file, counts
+# functions taking a Store/Transaction as operations and counts re-exported types
+# where they are defined. Honest baseline: 50 ops, 26 questions, 56 types.
 const model::PARSE_INPUT_MAX_BYTES
 enum edit_kind::EditKind
 use crate::edit_kind::EditKind
@@ -226,3 +228,13 @@ struct store::OpenOptions
 struct store::WholeGraph
 use store::tine_core::model::{FileId,PageId}
 use crate::launch_diag::LatencyHist
+# og-surface step 1: surface the old scan never saw (H1 files outside its hand
+# list, H3 a type re-exported from a private module).
+fn transaction::Store::read_is_current
+fn transaction::Transaction::trash_orphan_asset
+fn link_identity::Store::ensure_link_identity
+fn link_identity::Store::read_link_identity_at
+struct launch_diag::LatencyHist
+fn launch_diag::LatencyHist::new
+fn launch_diag::LatencyHist::record
+fn launch_diag::LatencyHist::to_json
