@@ -193,13 +193,23 @@ function noteBufferOnDisk(name: string) {
  *  claim is false, so it is cleared and the edit it froze is re-armed and
  *  saved against that baseline. Other conflict kinds are not about file bytes
  *  and stay. O(1). */
-export function applyObservedDivergence(name: string, observedRev: string | null | undefined): void {
+export function applyObservedDivergence(name: string, observedRev: string | null | undefined, observedEqualsBuffer = false): void {
   const baseline = baseRev.get(name);
+  const reason = conflictReasons()[name];
   const backToBaseline = typeof observedRev === "string" && observedRev === baseline;
-  if (!backToBaseline || conflictReasons()[name]?.kind !== "disk-changed") {
+  const liftable = backToBaseline && reason?.kind === "disk-changed";
+  // storage.qnt `table`, v == buf (Martin's ruling 2026-10-05, item 4): bytes
+  // another program wrote that equal this buffer (a sync client delivering
+  // Tine's own write back, two devices typing the same) advance the base
+  // silently. The input is still Tine's to save, so it stays dirty, and a page
+  // at risk keeps its risk and draft until that save's Published reply.
+  const equalBytes = !liftable && observedEqualsBuffer && typeof observedRev === "string"
+    && (!reason || reason.kind === "disk-changed");
+  if (!liftable && !equalBytes) {
     markConflict(name, { kind: "disk-changed" }, observedRev);
     return;
   }
+  if (equalBytes) baseRev.set(name, observedRev);
   // Risk is not retired here (noteRisk keeps it until a matching Published
   // reply): the frozen edit has no durable copy but its draft until it saves.
   clearConflict(name);

@@ -6,10 +6,11 @@ import { pushToast } from "../toasts";
 import { readOwned, bindingOwner } from "../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { toLoadablePage } from "./convert";
+import type { PageDto } from "../types";
 import { doc, feedNames, pageByName } from "./model";
 import { applyObservedDivergence, isConflicted } from "./save/engine";
 import { deferExternalReload, installDeferredReloadReplay } from "./deferredReload";
-import { rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, reportPageLoadRefusal, restoreTodayJournalInFeed } from "./workingSet";
+import { loadedContentEquals, rekeyPageIdentityByPath, reloadDisposition, reloadPageIfStillSafe, reportPageLoadRefusal, restoreTodayJournalInFeed } from "./workingSet";
 
 /** Route and feed actions belong to the app; the document module owns the
  * decision to call them. The snapshot keeps one watcher event on one UI view. */
@@ -94,6 +95,7 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
   const markObservedConflict = async () => {
     const id = pageByName(currentName)?.id;
     let revision: string | null | undefined;
+    let observed: (PageDto & { id?: string }) | null = null;
     try {
       if (c.removed) revision = null;
       else {
@@ -102,13 +104,14 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
           : backend().getPage(currentName, c.kind));
         if (result.kind === "stale") return;
         revision = result.value?.rev ?? null;
+        observed = result.value ?? null;
       }
     } catch {
       // Without a fresh observation, the old load revision remains a
       // conservative guard: Keep mine cannot clobber changed bytes.
     }
     if (owner() && pageByName(currentName)?.id === id && reloadDisposition(currentName) === "conflict")
-      applyObservedDivergence(currentName, revision);
+      applyObservedDivergence(currentName, revision, !!observed && loadedContentEquals(currentName, observed));
   };
   if (c.removed) {
     if (disp === "conflict") await markObservedConflict();

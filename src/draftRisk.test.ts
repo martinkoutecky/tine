@@ -8,8 +8,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { backend, type Backend, type GraphChange, type SavePageEntry } from "./backend";
 import { initParser } from "./render/parse";
-import { applyGraphChange, flushPage, installPageIdentityNavigation, setPageProperty, installExternalChangeUiHandler, isConflicted, isDirty, loadFeed, moveBlock, pageByName, resetStore, setRaw } from "./document";
-import { forceSave } from "./document/save/engine";
+import { applyGraphChange, flushAll, flushPage, installPageIdentityNavigation, setPageProperty, installExternalChangeUiHandler, isConflicted, isDirty, loadFeed, moveBlock, pageByName, resetStore, setRaw } from "./document";
+import { baseRevFor, forceSave } from "./document/save/engine";
 import { doc } from "./document/model";
 import { installDraftStore, REFRESH_MS, writeAtRisk } from "./draftStore";
 import { setToasts } from "./toasts";
@@ -197,5 +197,53 @@ describe("watcher observations on a page with unsaved input", () => {
     await vi.advanceTimersByTimeAsync(REFRESH_MS);
     expect(records()).toEqual([]);
     expect(raws()).toEqual(["mine"]);
+  });
+
+  it("ruling #4: bytes equal to the buffer advance the base silently, and the input stays Tine's to save", async () => {
+    loadFeed([page(NAME, "rev-1", [block("b1", "original")]) as never]);
+    const saves = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-3"] } as never);
+    setRaw("b1", "mine");
+    // A sync client (or another device) delivers the same bytes before Tine's save.
+    disk = page(NAME, "rev-2", [block("other-id", "mine")]);
+    await applyGraphChange(event({}));
+    expect(isConflicted(NAME), "equal bytes are not a conflict").toBe(false);
+    expect(baseRevFor(NAME)).toBe("rev-2");
+    expect(isDirty(NAME)).toBe(true);
+    await expect(flushAll()).resolves.toBe(true);
+    expect(saves.mock.calls.at(-1)![0][0].baseRev).toBe("rev-2");
+    expect(raws()).toEqual(["mine"]);
+  });
+
+  it("ruling #4: a conflicted page whose file now holds the buffer's bytes stays at risk with its draft until it saves", async () => {
+    loadFeed([page(NAME, "rev-1", [block("b1", "original")]) as never]);
+    setRaw("b1", "mine");
+    disk = page(NAME, "rev-2", [block("d1", "theirs")]);
+    await applyGraphChange(event({}));
+    expect(isConflicted(NAME)).toBe(true);
+    await writeAtRisk();
+    expect(draftText()).toEqual(["mine"]);
+    const slow = gate();
+    vi.spyOn(backend(), "savePages").mockImplementation(async (entries: SavePageEntry[]) => {
+      await slow.promise;
+      return { ok: entries.map(() => "rev-4") };
+    });
+    disk = page(NAME, "rev-3", [block("d2", "mine")]);
+    await applyGraphChange(event({}));
+    expect(isConflicted(NAME)).toBe(false);
+    expect(baseRevFor(NAME)).toBe("rev-3");
+    await vi.advanceTimersByTimeAsync(450);
+    expect(draftText()).toEqual(["mine"]);
+    slow.open();
+    await vi.advanceTimersByTimeAsync(REFRESH_MS);
+    expect(records()).toEqual([]);
+  });
+
+  it("ruling #4: different bytes still raise the conflict", async () => {
+    loadFeed([page(NAME, "rev-1", [block("b1", "original")]) as never]);
+    setRaw("b1", "mine");
+    disk = page(NAME, "rev-2", [block("d1", "mine, then theirs")]);
+    await applyGraphChange(event({}));
+    expect(isConflicted(NAME)).toBe(true);
+    expect(baseRevFor(NAME)).toBe("rev-1");
   });
 });

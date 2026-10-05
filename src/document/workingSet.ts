@@ -109,6 +109,16 @@ function pageContentMatches(dto: PageDto & { id?: string }, page: FeedPage): boo
   return dto.blocks.length === page.roots.length && dto.blocks.every((b, i) => eq(b, page.roots[i]));
 }
 
+/** Does file read `dto` hold exactly the content loaded page `name` holds now
+ *  (same file, pre-block, every block's raw and tree shape; block ids, which
+ *  are runtime identity, ignored)? The one answer to "equal bytes" for both the
+ *  self-write echo above and an observation on a page with unsaved input
+ *  (storage.qnt `table`, v == buf). O(page). */
+export function loadedContentEquals(name: string, dto: PageDto & { id?: string }): boolean {
+  const page = doc.pages.find((p) => p.name === name);
+  return !!page && pageContentMatches(dto, page);
+}
+
 /** Why a requested page file did not take its name slot (GH #254 family;
  * master 7bd793bd0). The working set is keyed by name, so a second file with
  * the same name (a duplicate journal day left by sync delivery or a date-format
