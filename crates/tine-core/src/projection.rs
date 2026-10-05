@@ -112,26 +112,12 @@ pub fn page_dto_document(page: &PageDto, is_org: bool) -> doc::Document {
 }
 
 /// Convert a parsed (cached) block to a DTO, carrying its stable uuid as the id.
+/// The node itself is [`block_to_shallow_dto`] (the one facet list); only the
+/// recursive children are added here.
 pub fn block_to_dto(b: &DocBlock) -> BlockDto {
-    BlockDto {
-        id: block_runtime_id(b),
-        has_id: Some(b.projection().regions.id.is_some()),
-        raw: b.raw.clone(),
-        collapsed: b.collapsed(),
-        children: b.children.iter().map(block_to_dto).collect(),
-        breadcrumb: Vec::new(),
-        page_property: false,
-        // All header facets off the one lsdoc projection (marker/priority/heading/
-        // properties/scheduled/deadline) — priority is header-position only, matching
-        // the chip, so a loaded block never shows a priority the edit path wouldn't.
-        marker: b.marker().map(str::to_string),
-        priority: b.priority().map(str::to_string),
-        heading_level: b.heading_level(),
-        scheduled: b.scheduled().map(str::to_string),
-        deadline: b.deadline().map(str::to_string),
-        tags: b.tags(),
-        properties: b.properties(),
-    }
+    let mut dto = block_to_shallow_dto(b);
+    dto.children = b.children.iter().map(block_to_dto).collect();
+    dto
 }
 
 /// Convert one block to the result-row wire shape. Result membership is about
@@ -148,6 +134,9 @@ pub fn block_to_shallow_dto(b: &DocBlock) -> BlockDto {
         children: Vec::new(),
         breadcrumb: Vec::new(),
         page_property: false,
+        // All header facets off the one lsdoc projection (marker/priority/heading/
+        // properties/scheduled/deadline) — priority is header-position only, matching
+        // the chip, so a loaded block never shows a priority the edit path wouldn't.
         marker: b.marker().map(str::to_string),
         priority: b.priority().map(str::to_string),
         heading_level: b.heading_level(),

@@ -111,7 +111,9 @@ fn unprojected_drafts_leave_identity_presence_unknown_and_off_the_wire() {
 
 #[test]
 fn identity_wire_facts_use_the_shared_projection_answerer() {
+    // One constructor spells the identity facts; the deep DTO is that constructor plus children
+    // (behaviour pinned by bounded_projection::deep_dto_is_the_shallow_dto_plus_projected_children).
     let source = include_str!("../src/projection.rs");
-    assert_eq!(source.matches("has_id: Some(b.projection().regions.id.is_some())").count(), 2,
-        "I-12/I-25: both DTO constructors reuse cached parser regions; exemplar projection.rs::block_to_dto");
+    assert_eq!(source.matches("has_id: Some(b.projection().regions.id.is_some())").count(), 1,
+        "I-12/I-25: DTO constructors reuse cached parser regions through block_to_shallow_dto; exemplar projection.rs::block_to_dto");
 }
