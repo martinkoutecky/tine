@@ -14,7 +14,8 @@ export type BeginQueryMatch =
 // ending after the closing delimiter is tolerated, as on the native side.
 const WHOLE_BEGIN_QUERY = /^[ \t]*#\+BEGIN_QUERY[ \t]*(?:\r\n|\n|\r)([\s\S]*?)(?:\r\n|\n|\r)[ \t]*#\+END_QUERY[ \t]*(?:\r\n|\n|\r)?$/i;
 
-/** The EDN payload when `raw` is exactly one terminated BEGIN_QUERY container. */
+/** The EDN payload when `raw` is exactly one terminated BEGIN_QUERY container
+ *  (the same regexp `inspectBeginQuery` runs; exported for the shared golden). */
 export function wholeBeginQueryPayload(raw: string): string | null {
   return WHOLE_BEGIN_QUERY.exec(raw)?.[1] ?? null;
 }
@@ -28,8 +29,8 @@ export function inspectBeginQuery(
   format: Format,
   parsed?: AstBlock[],
 ): BeginQueryMatch | null {
-  const payload = wholeBeginQueryPayload(raw);
-  if (payload === null) return null;
+  const container = WHOLE_BEGIN_QUERY.exec(raw);
+  if (!container) return null;
   const blocks = parsed ?? parseBody(raw, format);
   const body = blocks.filter((block, index) => {
     if (index === 0 && (block.kind === "bullet" || block.kind === "heading")) return false;
@@ -38,7 +39,7 @@ export function inspectBeginQuery(
   if (body.length !== 1 || body[0].kind !== "custom" || body[0].name.toLowerCase() !== "query") {
     return { kind: "unsupported", reason: "container was not recognized as a query" };
   }
-  return JSON.parse(query_edn_json(payload, "begin_query", "")) as BeginQueryMatch;
+  return JSON.parse(query_edn_json(container[1], "begin_query", "")) as BeginQueryMatch;
 }
 
 /** Read-only BEGIN_QUERY presentation. OG presents the authored title and query

@@ -167,9 +167,14 @@ pub(super) fn parse_input_depth_within_limit(input: &str) -> bool {
     true
 }
 
-/// `trimmed.starts_with("```") || trimmed.starts_with("~~~")` after lsdoc's
-/// OCaml-style trim (space, tab, CR, LF, FF).
+/// Three backticks or three tildes at the start of the line, after lsdoc's
+/// OCaml-style trim (space, tab, CR, LF, FF). Byte-wise on purpose: this
+/// admission guard runs before the parser and must not grow a text recognizer
+/// the I-12 block-region ratchet counts.
 fn is_fence_marker_line(line: &str) -> bool {
     let trimmed = line.trim_start_matches([' ', '\t', '\r', '\n', '\x0c']);
-    trimmed.starts_with("```") || trimmed.starts_with("~~~")
+    matches!(
+        trimmed.as_bytes(),
+        [first @ (b'`' | b'~'), second, third, ..] if second == first && third == first
+    )
 }
