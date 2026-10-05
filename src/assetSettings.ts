@@ -19,7 +19,7 @@ import { pushToast } from "./toasts";
 const KEY = "asset_name_format";
 
 /** Tine's default: the plain original filename (closest to OG for imported files).
- *  Collisions are still de-duplicated by the backend (`reserve_asset` → `_N`). */
+ *  Collisions are still de-duplicated by the backend (`assets::save_asset` → `_N`). */
 export const DEFAULT_ASSET_NAME_FORMAT = "%assetname.%ext";
 /** The previous Tine default — a sortable timestamp prefix — offered as a preset. */
 export const STAMPED_ASSET_NAME_FORMAT = "%yyyymmdd-%hhmmss-%assetname.%ext";
