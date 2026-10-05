@@ -46,7 +46,7 @@ const MESSAGES: Record<UiFailureFamily, string> = {
   "logbook": "Couldn't read or update a time-tracking entry.",
   "marker-read": "Couldn't read a task marker from a block. It is shown as plain text.",
   "export-preview": "Couldn't prepare a block for the export preview. It is shown unresolved.",
-  "sheet-export": "Couldn't read this sheet for export.",
+  "sheet-export": "Couldn't read the sheets for export. They are exported as plain outlines.",
   "config-read": "Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.",
   "conflict-inventory": "Couldn't refresh conflicts. The last successful inventory is kept.",
   "graph-verification": "Couldn't verify graph files.",

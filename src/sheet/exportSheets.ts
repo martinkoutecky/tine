@@ -6,6 +6,7 @@ import { backend } from "../backend";
 import { appNow } from "../journal";
 import { graphOwner, readOwned } from "../owned";
 import { workflow } from "../ui";
+import { reportUiFailure } from "../uiFailure";
 import { computeSheetExports, type SheetExport, type SheetScope } from "./staticExport";
 
 /** Sheets of `pages` (every page when omitted), computed against the live app
@@ -18,7 +19,9 @@ export async function exportSheets(pages?: string[], scope?: SheetScope): Promis
     const read = await readOwned(owner, backend().sheetExportInputs(pages, scope));
     if (read.kind !== "current") return [];
     return computeSheetExports(read.value, workflow(), appNow());
-  } catch {
+  } catch (error) {
+    // The contract (never rejects) stands; the user is told sheets were left out.
+    reportUiFailure("sheet-export", error);
     return [];
   }
 }
