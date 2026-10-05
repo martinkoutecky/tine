@@ -185,6 +185,28 @@ describe("favorites arrangement page", () => {
     expect(shape(disk.get("Favorites")!).text).toBe("- [[A]]\n- Kept\n- Work\n");
   });
 
+  it("an orphan recovery scheduled in one graph never lands in the next one (OG-C5 L12, I-20)", async () => {
+    toggleFavorite("A");
+    await settle();
+    vi.spyOn(backend(), "setFavorites").mockRejectedValueOnce(new Error("killed"));
+    addFavoriteGroup("Kept"); // page written, config never saw it
+    await settle();
+    seedFavorites(config.names, config.page); // reopen with the orphan on disk
+    await settle();
+    setToasts([]);
+    addFavoriteGroup("Work"); // finds the orphan and schedules its recovery
+    for (let i = 0; i < 60 && !toasts().length; i++) await Promise.resolve();
+    expect(toasts().some((t) => t.message.includes("Recovered the Favorites page"))).toBe(true);
+    // The next graph binds before the scheduled recovery runs.
+    disk.set("Other", { pre_block: "tine/favorites:: true", blocks: [b("[[X]]"), b("[[Y]]")], rev: 1 });
+    writes = [];
+    seedFavorites(["X"], "Other");
+    await settle();
+    await settle();
+    expect(writes).toEqual([]);
+    expect(md()).toBe("- [[X]]\n");
+  });
+
   it("an older page read that lands after a newer one is dropped (I-20)", async () => {
     toggleFavorite("A");
     toggleFavorite("B");
