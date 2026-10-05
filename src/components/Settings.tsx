@@ -1443,6 +1443,12 @@ function AssetsTab(): JSX.Element {
     try {
       const result = await writeOwned(owner, backend().trashAsset(a.name, binding.backendGeneration));
       if (result.kind === "stale") return;
+      if (result.value === "referenced") {
+        // A page started using the file after the scan (typed outcome, GH #623): keep it.
+        if (alive) setOrphanScan(list().filter((x) => x.name !== a.name));
+        pushToast(`${a.name} is used by a page now, so it was kept. Scan again to refresh the list.`, "info");
+        return;
+      }
       if (alive) setOrphanScan(list().filter((x) => x.name !== a.name));
       pushToast(`Moved ${a.name} to trash`, "success");
       await refreshTrash();

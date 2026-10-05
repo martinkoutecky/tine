@@ -1390,8 +1390,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         { name: "unused_clip_20260512_140233.mp4", size: 5_242_880, modified: 1_747_051_353 },
       ];
     },
-    async trashAsset(): Promise<void> {
-      // no-op in the browser mock
+    async trashAsset() {
+      return "trashed" as const; // no-op in the browser mock
     },
     async assetTrashStats() {
       return { count: 3, bytes: 1_572_864, pages: 1, journals: 0, conflicts: 0, other: 0 };

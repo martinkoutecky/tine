@@ -75,8 +75,9 @@ fn trash_rechecks_references_after_an_external_publication() {
     )
     .unwrap();
     store.scan_refresh().unwrap();
-    assert!(
-        assets::trash_asset(&store, "kept.png").is_err(),
+    assert_eq!(
+        assets::trash_asset(&store, "kept.png").unwrap(),
+        assets::TrashOutcome::Referenced,
         "latest published references must defeat old orphan listing"
     );
     assert_eq!(fs::read(root.join("assets/kept.png")).unwrap(), b"asset");

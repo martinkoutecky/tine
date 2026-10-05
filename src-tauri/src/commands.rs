@@ -2082,12 +2082,35 @@ pub(crate) async fn list_orphan_assets(state: GraphContext<'_>) -> Result<Vec<As
     .map_err(|error| error.to_string())?
 }
 
-/// Move an orphaned asset to the recoverable trash.
+/// Result of [`trash_asset`]: `referenced` means the published graph still uses
+/// the file, so it was kept (GH #623). A normal outcome, not an error.
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum TrashAssetWire {
+    Trashed,
+    Referenced,
+}
+
+impl From<tine_graph_features::assets::TrashOutcome> for TrashAssetWire {
+    fn from(outcome: tine_graph_features::assets::TrashOutcome) -> Self {
+        match outcome {
+            tine_graph_features::assets::TrashOutcome::Trashed => Self::Trashed,
+            tine_graph_features::assets::TrashOutcome::Referenced => Self::Referenced,
+        }
+    }
+}
+
+/// Move an unreferenced asset to the recoverable trash; a file the published
+/// graph still references is kept and reported as `referenced`.
 #[tauri::command]
-pub(crate) async fn trash_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
+pub(crate) async fn trash_asset(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<TrashAssetWire, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         tine_graph_features::assets::trash_asset(&slot.store, &name)
+            .map(TrashAssetWire::from)
             .map_err(|error| feature_asset_error(error, &slot))
     })
     .await

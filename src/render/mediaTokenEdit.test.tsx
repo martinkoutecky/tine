@@ -46,7 +46,7 @@ function resize(grip: Element) {
 }
 
 async function trash(button: Element) {
-  const trashAsset = vi.spyOn(backend(), "trashAsset").mockResolvedValue(undefined as never);
+  const trashAsset = vi.spyOn(backend(), "trashAsset").mockResolvedValue("trashed");
   vi.spyOn(backend(), "confirm").mockResolvedValue(true);
   button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   for (let i = 0; i < 10; i++) await Promise.resolve();
@@ -79,7 +79,8 @@ describe("media token edits target the clicked token", () => {
     const { host, dispose } = await mount("see ![**b**](../assets/x.png) here");
     const trashAsset = await trash(host.querySelector(".asset-action-trash")!);
     expect(doc.byId.body.raw).toBe("see here");
-    expect(trashAsset).toHaveBeenCalledTimes(1);
+    // The reference removal is saved before the file moves (GH #623), so the trash lands a few turns later.
+    await vi.waitFor(() => expect(trashAsset).toHaveBeenCalledTimes(1));
     dispose();
   });
 

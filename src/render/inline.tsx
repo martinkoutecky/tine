@@ -45,7 +45,7 @@ import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
-import { setRaw, formatForPage, formatForBlock, isBlockRefUuid, node as docNode } from "../document";
+import { setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode } from "../document";
 import { PaneContext, focusedPaneId, openRouteInOtherPane, openPdf } from "../panes";
 import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
@@ -912,12 +912,32 @@ function AssetImage(props: {
       pushToast("Couldn't find this image in the block's text; nothing was trashed", "error");
       return;
     }
+    // The backend trashes only a file the PUBLISHED graph no longer references,
+    // and setRaw only schedules a debounced save: make the reference removal
+    // durable first, or the trash races its own edit (GH #623, comment 17).
+    const pageName = docNode(props.blockId)?.page;
+    let saved = false;
+    try {
+      const flushed = pageName ? await writeOwned(owner, flushPage(pageName)) : null;
+      if (flushed?.kind === "stale") return;
+      saved = flushed?.value === true;
+    } catch { /* reported below as an unsaved edit */ }
+    if (!saved) {
+      pushToast("Couldn't save this block, so the image file was not moved to the trash.", "error");
+      return;
+    }
     try {
       const result = await writeOwned(owner, backend().trashAsset(name, binding.backendGeneration));
       if (result.kind === "stale") return;
+      if (result.value === "referenced") {
+        // Typed outcome: another place still uses the file. The block edit
+        // stands and the file stays in assets/.
+        pushToast("Image removed from this block. The file stays in assets because it is still used elsewhere.", "info");
+        return;
+      }
       pushToast("Asset moved to trash", "success");
     } catch (err) {
-      pushToast(`Couldn't trash the asset (${String(err)})`, "error");
+      pushToast(`Image removed from this block, but its file couldn't be moved to the trash (${String(err)})`, "error");
     }
   };
 

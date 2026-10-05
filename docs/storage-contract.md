@@ -209,7 +209,7 @@ Review rule: a new refusal must identify a reachable scenario involving an hones
 local user, sync or external editor. Source scans cannot prove reachability;
 the reviewer traces the path and records the scenario here before accepting it.
 
-| `transaction.rs::check_orphan_asset::ReadOnly` | 1 | A published external-editor/sync reference arrived after the orphan listing; retain the referenced asset and ask the caller to refresh. A partial reference inventory reports an IO failure rather than granting trash. |
+| `transaction.rs::check_orphan_asset::AssetReferenced` | 1 | The published graph still references the asset: an external-editor/sync reference arrived after the orphan listing, or another page uses a file the user just dropped from one block (GH #623). Retain the asset; `tine-graph-features::assets::trash_asset` returns it as the normal `TrashOutcome::Referenced` result (never an error), and the `trash_asset` command reports `referenced`. A partial reference inventory reports an IO failure rather than granting trash. |
 
 | `transaction.rs::check_orphan_asset::InvalidTarget` | 1 | An orphan-asset action is given a page/config/trash target; refuse without touching it. Ordinary trash remains available for intentional page or PDF artifact removal. |
 

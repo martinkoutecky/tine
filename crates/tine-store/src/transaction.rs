@@ -193,6 +193,10 @@ pub enum Refusal {
     RepeatedFile(FileId),
     /// The store was closed before commit.
     Closed,
+    /// An orphan-only asset trash found the published graph still references
+    /// the asset. The asset is kept; callers report this as a normal outcome
+    /// (the block edit that dropped one reference stands), not as a failure.
+    AssetReferenced,
 }
 
 /// Reason a transaction did not commit.

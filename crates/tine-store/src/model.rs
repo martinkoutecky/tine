@@ -7511,7 +7511,10 @@ mod tests {
             orphans.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
             vec!["stray.png"]
         );
-        assert!(tine_graph_features::assets::trash_asset(&store, "foo(bar).pdf").is_err());
+        assert_eq!(
+            tine_graph_features::assets::trash_asset(&store, "foo(bar).pdf").unwrap(),
+            tine_graph_features::assets::TrashOutcome::Referenced
+        );
         assert!(dir.join("assets/foo(bar).pdf").exists());
         let _ = fs::remove_dir_all(dir);
     }

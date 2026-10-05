@@ -57,6 +57,9 @@ import { isPublishedExport, publishedBackend } from "./publishedBackend";
 
 import { nativeTineLinks, type NativeTineLinks } from "./nativeTineLinks";
 
+/** Typed result of `trashAsset`: `referenced` = another reference remains, file kept. */
+export type TrashAssetOutcome = "trashed" | "referenced";
+
 export interface SavePageEntry {
   id: string;
   page: PageDto;
@@ -338,10 +341,13 @@ export interface Backend {
   detectMediaEditor(id: string): Promise<string>;
   /** Top-level `assets/` files no block references (orphans), for cleanup. */
   listOrphanAssets(): Promise<AssetInfo[]>;
-  /** Trash one top-level asset, whether referenced or not. Reads the whole file
-   * per attempt and retries revision conflicts up to four times. Missing assets
-   * and exhausted conflicts reject. Cost O(file bytes) per attempt. */
-  trashAsset(name: string, bindingGeneration: number): Promise<void>;
+  /** Move one top-level asset to the recoverable trash unless the published
+   * graph still references it: that resolves `"referenced"` with the file kept
+   * (GH #623; the caller reports it, never matching error text). Reads the whole
+   * file per attempt and retries revision conflicts up to four times. Missing
+   * assets and exhausted conflicts reject. Cost O(file bytes + graph references)
+   * per attempt. */
+  trashAsset(name: string, bindingGeneration: number): Promise<TrashAssetOutcome>;
   /** Count + total bytes of the recoverable asset trash (logseq/.tine-trash). */
   assetTrashStats(): Promise<TrashStats>;
   /** Permanently purge asset trash and return completed entry count. A failure
@@ -1072,7 +1078,7 @@ class TauriBackend implements Backend {
     return this.call<AssetInfo[]>("list_orphan_assets");
   }
   trashAsset(name: string, bindingGeneration: number) {
-    return this.assetCall<void>("trash_asset", { name }, bindingGeneration);
+    return this.assetCall<TrashAssetOutcome>("trash_asset", { name }, bindingGeneration);
   }
   search(query: string, limit: number, lane?: string) {
     return this.call<RefGroup[]>("search", { query, limit, lane });
