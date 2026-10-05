@@ -91,6 +91,7 @@ export async function createPage(
   if (resolved?.kind === "alias") throw new CreatePageRefusal("alias");
   const id = options.id ?? resolved!.id;
   if (!bindingCurrent(binding) || token !== graphToken) throw new CreatePageRefusal("graph-changed");
+  const covered = bufferVersion(name);
   if (pageInstanceGeneration(name) !== generation) throw new CreatePageRefusal("page-rebound");
   const wasTombstoned = deletedPages.delete(name); // an explicit create supersedes a completed delete
   try {
@@ -102,7 +103,7 @@ export async function createPage(
       setPageId(name, id);
       setBaseRev(name, rev);
       clearConflict(name);
-      forgetSaveFailure(name);
+      notePublished(name, covered);
     }
     if (options.baseRev == null) bumpPageInventoryRev();
     bumpDataRev();
@@ -139,13 +140,48 @@ export function clearConflict(name: string) {
 /** Told when a page starts or stops holding edits that cannot currently be saved
  *  (a conflict or a failed save), so it can keep a crash-surviving copy (og ADR
  *  0061). One keeper; installing replaces it. */
-type DraftKeeper = (name: string, atRisk: boolean) => void;
+type DraftKeeper = (name: string, atRisk: boolean, renamedFrom?: string) => void;
 let draftKeeper: DraftKeeper | null = null;
 export function installDraftKeeper(keeper: DraftKeeper | null) { draftKeeper = keeper; }
+/** og storage.qnt guarantee B / mutant MS: ONLY A MATCHING-VERSION PUBLISHED
+ *  REPLY RETIRES RISK. A page enters risk on a conflict, a failed save or a save
+ *  awaiting its automatic retry, and its draft is kept. Those causes ending
+ *  (a success, a lifted or overwritten conflict) does not by itself make the
+ *  buffer safe: the page stays in `riskHeld`, with its draft, until the buffer
+ *  version is covered by a Published reply (`notePublished`) or the buffer is
+ *  replaced by disk bytes the user chose (`noteBufferOnDisk`). Threat: a crash
+ *  or power loss after a save of an older buffer landed while newer typed text
+ *  existed only in memory (spec mutant MS; GAP-1/GAP-2 in the conformance map).
+ *  `bufferVersions` moves on every user edit (`markDirty`/`addDirty`);
+ *  `publishedVersions` is the version the last Published reply covered. */
+let bufferClock = 0;
+const bufferVersions = new Map<string, number>();
+const publishedVersions = new Map<string, number>();
+const riskHeld = new Set<string>();
+function bufferVersion(name: string): number {
+  return bufferVersions.get(name) ?? 0;
+}
 function noteRisk(name: string) {
   // A save awaiting its automatic retry is at risk too: a crash in that
   // window must still leave the crash-surviving copy (I-2).
-  draftKeeper?.(name, !!conflictReasons()[name] || lastSaveFailure.has(name) || transientSaveFailures.has(name));
+  if (conflictReasons()[name] || lastSaveFailure.has(name) || transientSaveFailures.has(name)) riskHeld.add(name);
+  else if (riskHeld.has(name) && publishedVersions.get(name) === bufferVersion(name)) riskHeld.delete(name);
+  draftKeeper?.(name, riskHeld.has(name));
+}
+/** A Published reply covered buffer version `covered` of `name`: the failure
+ *  bookkeeping of the attempts before it ends, and risk retires only if no edit
+ *  happened since that snapshot. A newer buffer keeps risk and its draft until
+ *  its own Published reply. O(1). */
+function notePublished(name: string, covered: number) {
+  publishedVersions.set(name, covered);
+  forgetSaveFailure(name);
+  noteRisk(name);
+}
+/** The user replaced the buffer with the bytes on disk (Use disk, an installed
+ *  Concord resolution): the buffer as it is now is on disk. O(1). */
+function noteBufferOnDisk(name: string) {
+  publishedVersions.set(name, bufferVersion(name));
+  noteRisk(name);
 }
 /** A watcher observation of a page holding unsaved edits (og I1c, master
  *  c68c0b6e7; Direct Files audit F17). `observedRev` is the file's revision now
@@ -593,9 +629,11 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
   if (!validGroupMembers(g, binding, token, generations)) return abortGroup(g);
   const entries: SavePageEntry[] = [];
   const drafts: PageDto[] = [];
+  const covered: number[] = [];
   for (const name of order) {
     const dto = pageToDto(name), target = ids.get(name)!;
     if (!dto) return abortGroup(g);
+    covered.push(bufferVersion(name));
     const decision = decidedConflict(g, name) ? conflictReason(name) : undefined;
     const ownerPage = target.owner && aliasOwnerPage(name, generations.get(name) ?? null, target.owner, dto);
     if (target.owner && !ownerPage) return failGroup(g, { index: order.indexOf(name), family: "conflict", undoFailed: [] }, order);
@@ -632,7 +670,7 @@ async function runGroup(g: SaveGroup, request: Promise<boolean>): Promise<boolea
       if (writtenHeader) adoptFoldedPageHeader(name, writtenHeader);
       if (entries[i].baseRev === null) bumpPageInventoryRev();
       if (forcedConflicts.has(name) && conflictReason(name) === forcedConflicts.get(name)) clearConflict(name);
-      forgetSaveFailure(name);
+      notePublished(name, covered[i]);
     }
     dissolveGroup(g);
     for (let i = 0; i < order.length; i++) {
@@ -700,6 +738,7 @@ export function isDirty(name: string): boolean {
 export function markDirty(name: string, kinds: IntentKinds) {
   const page = pageByName(name);
   if (page?.readOnly || page?.guide) return;
+  bufferVersions.set(name, ++bufferClock);
   dirty.add(name);
   noteKinds(name, kinds);
   scheduleSave();
@@ -709,6 +748,7 @@ export function markDirty(name: string, kinds: IntentKinds) {
 export function addDirty(name: string, kinds: IntentKinds) {
   const page = pageByName(name);
   if (page?.readOnly || page?.guide) return;
+  bufferVersions.set(name, ++bufferClock);
   dirty.add(name);
   noteKinds(name, kinds);
 }
@@ -780,7 +820,23 @@ export function rekeyPageSaveState(oldName: string, newName: string, rev: string
   if (kinds) kindLedger.set(newName, kinds);
   baseRev.delete(oldName);
   baseRev.set(newName, rev);
-  forgetSaveFailure(oldName);
+  // The buffer and its risk move with the file: an at-risk old name stays at
+  // risk under the new name (its draft is rewritten there before the old
+  // record retires), never retired by the rename itself.
+  const held = riskHeld.delete(oldName) || lastSaveFailure.has(oldName) || transientSaveFailures.has(oldName);
+  const version = bufferVersions.get(oldName), published = publishedVersions.get(oldName);
+  bufferVersions.delete(oldName); publishedVersions.delete(oldName);
+  if (version !== undefined) bufferVersions.set(newName, version);
+  if (published !== undefined) publishedVersions.set(newName, published);
+  if (held) {
+    clearSaveRetry(oldName);
+    lastSaveFailure.delete(oldName);
+    const toast = saveFailureToasts.get(oldName);
+    saveFailureToasts.delete(oldName);
+    if (toast !== undefined) dismissToast(toast);
+    riskHeld.add(newName);
+    draftKeeper?.(newName, true, oldName);
+  } else forgetSaveFailure(oldName);
   if (titleIdentityIntents.delete(oldName) && dirty.has(newName)) titleIdentityIntents.add(newName);
   const generation = pageInstanceGenerations.get(oldName);
   pageInstanceGenerations.delete(oldName);
@@ -826,7 +882,13 @@ export function forgetSaveState(name: string) {
   dirty.delete(name);
   kindLedger.delete(name);
   baseRev.delete(name);
+  // The buffer leaves the working set by the user's choice (discard, close
+  // without saving) or after it landed in another file (alias move).
+  riskHeld.delete(name);
+  bufferVersions.delete(name);
+  publishedVersions.delete(name);
   forgetSaveFailure(name);
+  noteRisk(name);
   titleIdentityIntents.delete(name);
 }
 /** After flushAll has drained before a graph switch, cancel timers, invalidate
@@ -857,6 +919,11 @@ export function resetSaveState() {
   groupOf.clear();
   sealedGroups.clear();
   saveAttempts.clear();
+  // The binding is already invalidated (resetStore): the keeper dropped its
+  // queue, and a draft already written stays on disk for recovery.
+  riskHeld.clear();
+  bufferVersions.clear();
+  publishedVersions.clear();
   for (const name of [...lastSaveFailure.keys()]) forgetSaveFailure(name);
   for (const name of [...saveRetryTimers.keys(), ...transientSaveFailures.keys()]) clearSaveRetry(name);
   setConflictReasons({});
@@ -960,6 +1027,7 @@ async function doSave(
     return false;
   }
   noteSaveAttempt(name);
+  const covered = bufferVersion(name);
   const baseline = decision?.observedRev !== undefined ? decision.observedRev : baseRev.get(name) ?? null;
   const kinds = pendingKinds(name, baseline === null);
   dirty.delete(name);
@@ -1005,7 +1073,6 @@ async function doSave(
         else aliasDraftRouteHandler?.(owner.name, owner.kind);
         pushToast(`Moved “${name}” into its alias owner “${owner.name}”.`, "info");
         bumpPageInventoryRev();
-        forgetSaveFailure(name);
         return true;
       }
       id = resolved.id;
@@ -1022,9 +1089,10 @@ async function doSave(
       setPageId(name, id);
       baseRev.set(name, rev);
       if (dto.pre_block) adoptFoldedPageHeader(name, dto.pre_block);
+      // Before the title settles: a rekey there moves whatever risk remains.
+      notePublished(name, covered);
       await settleSavedTitleIdentity(name, id, dto, rev);
       if (baseline === null) bumpPageInventoryRev();
-      forgetSaveFailure(name);
       return true;
     }
     return false;
@@ -1215,6 +1283,7 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
   else forgetPage(name);
   dirty.delete(name);
   kindLedger.delete(name);
+  noteBufferOnDisk(name);
   clearConflict(name);
   return true;
 }
@@ -1268,6 +1337,7 @@ export async function installLiveResolution(name: string, generation: number, re
   dirty.delete(name);
   kindLedger.delete(name);
   forgetSaveFailure(name);
+  noteBufferOnDisk(name);
   clearConflict(name);
   return "installed";
 }

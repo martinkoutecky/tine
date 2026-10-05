@@ -38,6 +38,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - REG-OG-P12B-FENCES: Fence-aware editing (property and language autocomplete, code-body editing, calc blocks, hidden metadata) follows Logseq's parser instead of CommonMark: any fence run closes a fence, whatever its length.
 
 ### Fixed
+- Text you type while Tine is still writing an earlier version of the same page now keeps its crash-safe copy when that earlier write lands, until the text itself is saved; before, a crash in that moment could lose it (REG-OG-DRAFTRISK-MS).
 - Opening a graph that is already open in another window can no longer freeze the app when another window opens or closes at the same moment (REG-OG-C5-FLOW3-DEADLOCK).
 - Toggling typography, changing the journal title format or renaming another page while a save is in flight no longer loses track of that save: a successful save no longer makes your next edit conflict with Tine's own write, and a failed save stays unsaved and is reported (REG-OG-C5-FLOW3-SAVE-EPOCH).
 - Saving a page, changing a setting, storing a draft, importing an asset or resolving a sync conflict no longer freezes the window while the write waits for the disk; repeated writes still land in the order you made them (REG-OG-C5-FLOW3-SYNC-WRITES).

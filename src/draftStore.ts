@@ -22,7 +22,9 @@ const newSessionId = () => typeof crypto !== "undefined" && "randomUUID" in cryp
 const session = newSessionId();
 const idFor = (name: string) => `${session}:${name}`;
 
-type Kept = { binding: Binding; written: string | null; risky: boolean };
+// `supersedes`: the name this page had before its file was renamed while at
+// risk; that record retires only once this one is written.
+type Kept = { binding: Binding; written: string | null; risky: boolean; supersedes?: string };
 const atRisk = new Map<string, Kept>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 let refusedOnce = false;
@@ -78,6 +80,12 @@ export async function writeAtRisk(): Promise<void> {
         // started writes finish even when the page becomes safe meanwhile.
         kept.written = text;
       });
+      const old = kept.supersedes !== undefined ? atRisk.get(kept.supersedes) : undefined;
+      if (kept.written === text && kept.supersedes !== undefined) {
+        const from = kept.supersedes;
+        kept.supersedes = undefined;
+        if (old && atRisk.get(from) === old) { old.risky = false; void retire(from, old); }
+      }
     } catch (error) {
       // Refused past the store's bound, or a disk error: the draft stays in this
       // window (recovery panel); say once that it will not survive a crash.
@@ -105,13 +113,16 @@ async function retire(name: string, kept: Kept) {
   }
 }
 
-function keep(name: string, risky: boolean) {
+function keep(name: string, risky: boolean, renamedFrom?: string) {
   if (risky) {
     // An entry left from another graph binding (a switch while it was at risk)
     // is not this page: start a fresh one, or this draft would never be kept.
-    const kept = atRisk.get(name);
-    if (!kept || !bindingCurrent(kept.binding)) atRisk.set(name, { binding: captureBinding(), written: null, risky: true });
+    let kept = atRisk.get(name);
+    if (!kept || !bindingCurrent(kept.binding)) atRisk.set(name, kept = { binding: captureBinding(), written: null, risky: true });
     else kept.risky = true;
+    // A rename while at risk: the old name's record stays until this one is
+    // durable, so the typed text always has a draft (storage.qnt guarantee B).
+    if (renamedFrom !== undefined && atRisk.has(renamedFrom)) kept.supersedes = renamedFrom;
     schedule();
     return;
   }
