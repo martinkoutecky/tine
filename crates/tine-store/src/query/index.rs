@@ -364,6 +364,8 @@ impl QueryIndex {
         generation: u64,
         positions: Arc<SharedMap<String, usize>>,
     ) -> QueryIndex {
+        #[cfg(test)]
+        BUILT_FACT_PAGES.with(|count| count.set(count.get() + pages.len()));
         let parse_config = ParseConfig::from_config(config);
         let mut facts = HashMap::with_capacity(pages.len());
         let mut delta = RegistryDelta::default();
@@ -740,6 +742,7 @@ impl QueryIndexSlot {
 #[cfg(test)]
 thread_local! {
     static REGISTRY_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static BUILT_FACT_PAGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]

@@ -25,7 +25,8 @@ pub(crate) mod memo;
 pub(crate) mod page_properties;
 #[cfg(test)]
 mod sample_seed_tests;
-use page_properties::{page_document_is_org, page_facets, page_property_lines};
+pub(crate) use page_properties::page_facets;
+use page_properties::{page_document_is_org, page_property_lines};
 
 #[derive(Debug, Clone)]
 pub(crate) struct BoundedGroups {

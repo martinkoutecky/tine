@@ -355,22 +355,16 @@ pub(super) fn execute_pages(
             })
             .collect();
         let keys = graph.with_pages(|pages| {
-            let index = graph.query_index();
             pages
                 .iter()
                 .filter(|(entry, _)| wanted.contains(entry.rel_path_str()))
                 .map(|(entry, doc)| {
-                    let facts = index.facts(entry, doc);
+                    let (properties, _) = crate::query::page_facets(doc);
                     (
                         entry.rel_path_str().to_owned(),
                         sort.iter()
                             .map(|(field, _)| {
-                                crate::query::exec::page_sort_decor(
-                                    field,
-                                    entry,
-                                    facts.properties(),
-                                    0,
-                                )
+                                crate::query::exec::page_sort_decor(field, entry, &properties, 0)
                             })
                             .collect::<Vec<_>>(),
                     )
@@ -413,8 +407,8 @@ pub(super) fn execute_pages(
         has_more = winners.len() > branch.limit;
         winners.truncate(branch.limit);
     }
-    // Hydrate only admitted physical pages. The query index owns the authored
-    // property projection; matching and row construction share one graph snapshot.
+    // Hydrate only admitted physical pages through the shared preamble reader.
+    // Search rows do not need the graph-wide block facts or property registry.
     let wanted: HashSet<&str> = winners
         .iter()
         .filter_map(|winner| match winner.candidate {
@@ -426,12 +420,11 @@ pub(super) fn execute_pages(
         HashMap::new()
     } else {
         graph.with_pages(|pages| {
-            let index = graph.query_index();
             pages
                 .iter()
                 .filter(|(entry, _)| wanted.contains(entry.rel_path_str()))
                 .map(|(entry, doc)| {
-                    let facts = index.facts(entry, doc);
+                    let (properties, _) = crate::query::page_facets(doc);
                     (
                         entry.rel_path_str().to_owned(),
                         tine_core::query::ir::PageRow {
@@ -439,7 +432,7 @@ pub(super) fn execute_pages(
                             name: entry.name.clone(),
                             kind: entry.kind,
                             journal_day: entry.date_key,
-                            properties: facts.properties().to_vec(),
+                            properties,
                         },
                     )
                 })
@@ -488,4 +481,67 @@ pub(super) fn execute_pages(
             .collect(),
         has_more,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn page_search_returns_authored_properties_without_building_graph_query_facts() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("pages")).unwrap();
+        for i in 0..30 {
+            std::fs::write(dir.path().join(format!("pages/P{i}.md")), "- unrelated\n").unwrap();
+        }
+        std::fs::write(dir.path().join("pages/Hit.md"), "color:: blue\n\n- body\n").unwrap();
+        std::fs::write(
+            dir.path().join("pages/Hit Org.org"),
+            "#+COLOR: red\n* body\n",
+        )
+        .unwrap();
+        let store = crate::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        let graph = store.whole_graph().unwrap();
+        let request = crate::SearchRequest {
+            text: "Hit".into(),
+            within: None,
+            page_limit: 10,
+            block_limit: 0,
+            explain: false,
+            page_match_scope: None,
+            page_view: None,
+            block_view: None,
+        };
+        crate::query::index::BUILT_FACT_PAGES.with(|count| count.set(0));
+        let found = graph
+            .search(
+                &request,
+                &crate::Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false))),
+            )
+            .unwrap();
+        let properties: Vec<_> = found
+            .hits
+            .iter()
+            .filter_map(|hit| match hit {
+                QueryHit::Page { row: Some(row), .. } => {
+                    Some((row.name.as_str(), row.properties.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            properties,
+            vec![
+                ("Hit", vec![("color".into(), "blue".into())]),
+                ("Hit Org", vec![("color".into(), "red".into())]),
+            ]
+        );
+        let work = crate::query::index::BUILT_FACT_PAGES.with(|count| count.get());
+        store.close();
+        assert_eq!(work, 0,
+            "I-13/I-25: page-search winners need their preambles, not graph query facts; exemplar query_plan/pages.rs");
+    }
 }
