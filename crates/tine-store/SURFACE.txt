@@ -26,6 +26,8 @@ enum transaction::Refusal
 enum transaction::StepResult
 enum transaction::TxOutcome
 enum transaction::Why
+# og-surface: trash and orphan-asset trash are one step with a condition.
+enum transaction::TrashIf
 field transaction::IoError.kind
 field store::ConfigState.config
 field store::ConfigState.problem
@@ -59,7 +61,7 @@ struct transaction::IoError
 struct transaction::RenameMap
 struct transaction::Rollback
 struct transaction::Transaction
-use crate::transaction::{Content,IoError,Refusal,RenameMap,Rollback,StepResult,Transaction,TxOutcome,Why,}
+use crate::transaction::{Content,IoError,Refusal,RenameMap,Rollback,StepResult,Transaction,TrashIf,TxOutcome,Why,}
 # QF3b (GH #623): the rename planner asks the transaction whether a reference
 # rewrite changes a file (the transaction keeps it for preflight, which does not
 # compute it again) and asks for the page files under one key instead of the
@@ -230,7 +232,6 @@ use crate::launch_diag::LatencyHist
 # og-surface step 1: surface the old scan never saw (H1 files outside its hand
 # list, H3 a type re-exported from a private module).
 fn transaction::Store::read_is_current
-fn transaction::Transaction::trash_orphan_asset
 fn link_identity::Store::ensure_link_identity
 fn link_identity::Store::read_link_identity_at
 struct launch_diag::LatencyHist

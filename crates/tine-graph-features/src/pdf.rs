@@ -360,7 +360,7 @@ fn rollback_pdf_area_file(
             .1;
         let mut tx = store.transaction(None);
         tx.expect(&sidecar_id, sidecar_rev);
-        tx.trash(file, crop_rev);
+        tx.trash(file, crop_rev, tine_store::TrashIf::Any);
         Ok(crate::commit_retry(tx.commit())?.then_some(()))
     })
 }
@@ -531,7 +531,7 @@ pub fn write_highlights(
         }
         if let (Some(id), Some((_, rev))) = (legacy_id.as_ref(), old.as_ref()) {
             let mut cleanup = store.transaction(None);
-            cleanup.trash(id, rev.clone());
+            cleanup.trash(id, rev.clone(), tine_store::TrashIf::Any);
             report_cleanup(cleanup.commit(), LEGACY_SIDECAR_LEFT);
         }
         let source_key = if old.is_some() { &legacy } else { &key };
@@ -574,7 +574,7 @@ pub fn write_highlights(
         }
         if let (Some(id), Some((_, rev))) = (legacy_page_id, legacy_page) {
             let mut cleanup = store.transaction(Some(tine_store::EditKind::DeletePage));
-            cleanup.trash(&id.file(), rev);
+            cleanup.trash(&id.file(), rev, tine_store::TrashIf::Any);
             report_cleanup(cleanup.commit(), LEGACY_PAGE_LEFT);
         }
         Ok(Some(merged))

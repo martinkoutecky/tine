@@ -7,8 +7,10 @@ use std::io;
 
 use tine_core::model::{Format, PageDto, PageKind};
 use tine_core::refs;
+#[cfg(any(test, feature = "test-faults"))]
+use tine_store::SaveOutcome;
 use tine_store::{
-    Area, FileId, FileRev, LoadError, PageId, PageRead, RenameMap, Resolved, SaveBase, SaveOutcome,
+    Area, FileId, FileRev, LoadError, PageId, PageRead, RenameMap, Resolved, SaveBase,
     SavePagesOutcome, Store, StoreError,
 };
 
@@ -317,7 +319,7 @@ pub fn delete_page_expected(
             return Err(error(io::ErrorKind::WouldBlock, "stale page revision"));
         }
         let mut tx = store.transaction(Some(tine_store::EditKind::DeletePage));
-        tx.trash(&file, rev);
+        tx.trash(&file, rev, tine_store::TrashIf::Any);
         let outcome = tx.commit();
         if is_conflict(&outcome) {
             if expected_rev.is_some() {
@@ -699,7 +701,7 @@ fn rename_page_after_inventory(
             tx.move_file(&id.file(), rev, &moves[&id], rewrite.then_some(&map));
         }
         if let (Some((src, _)), Some(survivor)) = (&merge, merged) {
-            tx.trash(&src.file(), survivor.src_rev);
+            tx.trash(&src.file(), survivor.src_rev, tine_store::TrashIf::Any);
         }
         if let Some((id, rev, bytes, _)) = &home {
             tx.replace(id, rev.clone(), bytes.clone());
@@ -849,7 +851,7 @@ pub fn merge_pages(store: &Store, src_rel: &str, dst_rel: &str) -> io::Result<()
             SaveBase::Existing(survivor.dst_rev),
             &survivor.doc,
         );
-        tx.trash(&src, survivor.src_rev);
+        tx.trash(&src, survivor.src_rev, tine_store::TrashIf::Any);
         Ok(crate::commit_retry(tx.commit())?.then_some(()))
     })
 }

@@ -772,7 +772,7 @@ fn fold_pair(
             SaveBase::Existing(win_rev),
             &merged,
         );
-        tx.trash(conf, conf_rev);
+        tx.trash(conf, conf_rev, tine_store::TrashIf::Any);
         Ok(crate::commit_retry(tx.commit())?.then_some(()))
     })
 }

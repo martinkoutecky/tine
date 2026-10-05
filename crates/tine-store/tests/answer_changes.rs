@@ -110,6 +110,7 @@ fn create_delete_and_rename_publish_both_answers() {
     tx.trash(
         &renamed,
         store.page(&PageId::from(renamed.as_str())).unwrap().rev,
+        tine_store::TrashIf::Any,
     );
     let TxOutcome::Committed { change, .. } = tx.commit() else {
         panic!("delete refused");

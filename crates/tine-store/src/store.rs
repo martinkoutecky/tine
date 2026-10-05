@@ -4349,7 +4349,7 @@ mod rev5_tests {
             .iter()
             .any(|(id, kind, _)| { id == &a.file() && *kind == ChangeKind::Removed }));
         let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
-        tx.trash(&b.file(), read_b.rev);
+        tx.trash(&b.file(), read_b.rev, crate::TrashIf::Any);
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         let trashed = changes.try_recv().unwrap().expect("own trash change");
         assert_eq!(trashed.origin, Origin::Own);
@@ -4441,6 +4441,7 @@ mod rev5_tests {
         tx.trash(
             &moved_id,
             FileRev::from_file(&root.join("assets/moved.bin")).unwrap(),
+            crate::TrashIf::Any,
         );
         assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
         assert_eq!(changes.try_recv().unwrap().unwrap().origin, Origin::Own);
@@ -4708,7 +4709,7 @@ mod rev5_tests {
             .any(|(id, _)| id == &a.file()));
         let mut trash_tx = store.transaction(Some(crate::EditKind::ReplacePage));
         let b = PageId::from("pages/B.md");
-        trash_tx.trash(&b.file(), b_rev);
+        trash_tx.trash(&b.file(), b_rev, crate::TrashIf::Any);
         assert!(matches!(
             trash_tx.commit(),
             crate::TxOutcome::Committed { .. }

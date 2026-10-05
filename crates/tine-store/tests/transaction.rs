@@ -294,7 +294,7 @@ fn step_successes_and_noop() {
     assert!(f.bytes("pages/B.md").is_none());
     assert_eq!(f.bytes("pages/C.md").unwrap(), b"- [[C]]\n");
     let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
-    tx.trash(&delete, f.rev(&delete));
+    tx.trash(&delete, f.rev(&delete), tine_store::TrashIf::Any);
     match &committed(tx.commit())[0] {
         StepResult::Trashed { trashed, .. } => {
             assert!(trashed.as_str().starts_with("logseq/.tine-trash/assets/"));
@@ -374,7 +374,7 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
         b"{:preferred-format :org}\n"
     );
     let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
-    tx.trash(&config, f.rev(&config));
+    tx.trash(&config, f.rev(&config), tine_store::TrashIf::Any);
     assert!(matches!(
         refused(tx.commit()).0,
         Why::Refused(Refusal::InvalidTarget(_))
@@ -531,7 +531,7 @@ fn stage_one_conflicts_for_guarded_steps() {
     tx.move_file(&x, stale.clone(), &f.id(Area::Assets, "y.bin"), None);
     assert!(matches!(refused(tx.commit()).0, Why::Conflict { .. }));
     let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
-    tx.trash(&x, stale);
+    tx.trash(&x, stale, tine_store::TrashIf::Any);
     assert!(matches!(refused(tx.commit()).0, Why::Conflict { .. }));
     assert_eq!(f.bytes("pages/A.md").unwrap(), b"- a\n");
     assert_eq!(f.bytes("assets/x.bin").unwrap(), b"x");
@@ -742,7 +742,7 @@ mod faults {
             &d,
             Some(&RenameMap(vec![("A".into(), "D".into())])),
         );
-        tx.trash(&c, f.rev(&c));
+        tx.trash(&c, f.rev(&c), tine_store::TrashIf::Any);
         f.store.inject_fault(point);
         if undo_writer {
             f.store.inject_fault(FaultPoint::UndoLiveWrite);
@@ -873,7 +873,7 @@ mod faults {
                     );
                 }
                 _ => {
-                    tx.trash(&x, f.rev(&x));
+                    tx.trash(&x, f.rev(&x), tine_store::TrashIf::Any);
                 }
             }
             f.store.inject_fault(FaultPoint::MidStepIo);
@@ -964,7 +964,7 @@ mod rename_faults {
         let c = f.id(Area::Assets, "c.bin");
         let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
         tx.move_file(&a, f.rev(&a), &b, None);
-        tx.trash(&c, f.rev(&c));
+        tx.trash(&c, f.rev(&c), tine_store::TrashIf::Any);
         tx.commit()
     }
 
@@ -1064,7 +1064,7 @@ fn trash_into_new_directories_syncs_every_created_entry() {
     assert!(!f.root.join("logseq/.tine-trash").exists());
     tine_store::directory_durability::take_synced_directories();
     let mut tx = f.store.transaction(None);
-    tx.trash(&clip, f.rev(&clip));
+    tx.trash(&clip, f.rev(&clip), tine_store::TrashIf::Any);
     let steps = committed(tx.commit());
     let synced = tine_store::directory_durability::take_synced_directories();
     let StepResult::Trashed { trashed, .. } = &steps[0] else {

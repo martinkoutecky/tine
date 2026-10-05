@@ -127,5 +127,6 @@ pub use store::{
 #[cfg(any(test, feature = "test-faults"))]
 pub use transaction::FaultPoint;
 pub use transaction::{
-    Content, IoError, Refusal, RenameMap, Rollback, StepResult, Transaction, TxOutcome, Why,
+    Content, IoError, Refusal, RenameMap, Rollback, StepResult, Transaction, TrashIf, TxOutcome,
+    Why,
 };

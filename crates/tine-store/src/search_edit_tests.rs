@@ -807,7 +807,11 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
         .read(&tine_store::PageId::from("pages/A.md").file(), None)
         .unwrap();
     let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-    tx.trash(&tine_store::PageId::from("pages/A.md").file(), rev);
+    tx.trash(
+        &tine_store::PageId::from("pages/A.md").file(),
+        rev,
+        tine_store::TrashIf::Any,
+    );
     assert!(matches!(
         tx.commit(),
         tine_store::TxOutcome::Committed { .. }

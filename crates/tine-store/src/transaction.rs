@@ -72,6 +72,16 @@ pub enum Content {
     },
 }
 
+/// The condition a [`Transaction::trash`] step requires at commit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrashIf {
+    /// Trash the file whatever references it.
+    Any,
+    /// Trash only an `assets/` file no published page references; a
+    /// referenced asset refuses with [`Refusal::AssetReferenced`].
+    UnreferencedAsset,
+}
+
 /// Old page or tag name to new name, compared using normalized references.
 /// Matching trims surrounding space, removes one boundary slash, then uses
 /// Unicode lowercase plus NFC: a `Foo` entry
@@ -608,11 +618,17 @@ impl<'a> Transaction<'a> {
 
     /// Guarded one-file trash; caller chooses twin claimants. Refusals preserve bytes.
     /// Returns a Journal/Conflict trash id; Org read-only can move. Cost O(bytes + P metadata).
-    pub fn trash(&mut self, file: &FileId, expected: FileRev) -> &mut Self {
+    /// [`TrashIf::UnreferencedAsset`] queues recoverable trash of an
+    /// unreferenced asset: commit checks the latest published graph under the
+    /// writer, refusing partial inventories and referenced assets. That costs
+    /// O(B + source bytes); unobserved external arrivals can still race after
+    /// the check. [`TrashIf::Any`] has no such orphan requirement (for example
+    /// intentional PDF annotation removal).
+    pub fn trash(&mut self, file: &FileId, expected: FileRev, when: TrashIf) -> &mut Self {
         self.steps.push(Step::Trash {
             file: file.clone(),
             expected,
-            orphan_only: false,
+            orphan_only: when == TrashIf::UnreferencedAsset,
         });
         self
     }
