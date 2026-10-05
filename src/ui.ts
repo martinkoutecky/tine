@@ -724,13 +724,12 @@ export function renamePageInNavigation(fromOrName: PageTarget | string, toOrName
     setRightSidebar(nextSidebar);
   }
 }
-/** A load resolved the requested page name `from` to the backend's page `to`.
- * A true case variant (same page identity) is the same page: every store adopts
- * the canonical spelling. An alias resolves to a DIFFERENT page (its owner):
- * only the views (Recent, sidebar) follow, and the durable favorites config is
- * never rewritten by merely opening it (I-9). */
+/** A load resolved the requested page name `from` to the backend's page `to`
+ * (a case variant, or an alias's owner). Only the views (Recent, sidebar)
+ * follow; opening a page never rewrites the favorites config (D11), and a case
+ * variant is already the same favorite by `favoriteKey`. */
 export function adoptResolvedPageName(from: string, to: string): void {
-  renamePageInNavigation(from, to, { favorites: pageIdentityKey(from) === pageIdentityKey(to) });
+  renamePageInNavigation(from, to, { favorites: false });
 }
 // Recently-visited pages (navigation history), newest first. Unlike Favorites,
 // Recent is graph-scoped session state and may retain one exact physical owner.

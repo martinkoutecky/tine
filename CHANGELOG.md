@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- Opening a favorite page through a different capitalization (a link, a restored tab, or a saved path) no longer rewrites the graph's favorites config; only an explicit rename changes it (REG-OG-C5-L14-FAV-CASE).
 - Opening Journals no longer replaces today's journal with the default template when it already holds text: Org heading prose such as `memo:: …`, a block id, or text nested under an empty bullet is kept; Org journals with such prose now count as written days for the calendar and carry (REG-OG-C5-L12-S1).
 - Page rename publication skips reparsing the old document and repeated transaction-record searches; loaded-page refresh uses one path lookup per touched page (GH #623).
 - Closing or switching PDFs no longer shows an annotation-loading error from a retired reader (GH #557).

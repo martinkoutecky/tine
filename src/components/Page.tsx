@@ -40,6 +40,7 @@ import { PageConflictResolution } from "./ConflictResolution";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
 import { conflictForPage } from "../conflictQueue";
+import { pageIdentityKey } from "../pageIdentity";
 import { liveConflictForPage } from "../liveConflicts";
 import { ExternalChangeBar } from "./ExternalChangeBar";
 
@@ -50,6 +51,11 @@ installPageIdentityNavigation((from, to) => {
   rewritePageTargetAcrossPanes(from, to);
   rewritePageTargetAcrossPanes({ name: from.name, pageKind: from.pageKind }, to);
 });
+
+/** A route load adopting a spelling of the same page identity is browsing and
+ *  never rewrites the favorites config (D11); a changed identity (the file's
+ *  page was renamed on disk) carries its favorite along. */
+const favoriteFollows = (from: string, to: string) => pageIdentityKey(from) !== pageIdentityKey(to);
 
 export const FEED_PAGE = 3;
 let journalAsOfDay: number | null = null;
@@ -388,7 +394,7 @@ export function PageView(): JSX.Element {
             && dto.id.toLowerCase() === r.path.toLowerCase()) {
             const from = { name: r.name, pageKind: r.pageKind, path: r.path };
             const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
-            renamePageInNavigation(from, to);
+            renamePageInNavigation(from, to, { favorites: favoriteFollows(from.name, to.name) });
             router.rewritePageTarget(from, to);
             return;
           }
@@ -400,7 +406,7 @@ export function PageView(): JSX.Element {
             }
             const from = { name: r.name, pageKind: r.pageKind, ...(r.path ? { path: r.path } : {}) };
             const to = { name: dto.name, pageKind: dto.kind, path: dto.id };
-            renamePageInNavigation(from, to);
+            renamePageInNavigation(from, to, { favorites: favoriteFollows(from.name, to.name) });
             rewritePageTargetAcrossPanes(from, to);
             return;
           }
