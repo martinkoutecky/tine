@@ -33,12 +33,6 @@ pub(super) fn emit_header_facets(marker: Option<&str>, priority: Option<&str>, o
     }
 }
 
-/// A block property is chrome we hide from the rendered page (the app hides these too):
-/// the block `id::`, the collapsed flag, and any `logseq.*` internal key.
-fn is_hidden_prop(key: &str) -> bool {
-    key == "id" || key == "collapsed" || key.starts_with("logseq.")
-}
-
 /// The trailing facet chrome shown BELOW a block's body: SCHEDULED / DEADLINE
 /// planning lines, the time-tracking summary, and the block's visible
 /// `key:: value` properties. The LOGBOOK drawer itself stays hidden, but the
@@ -47,6 +41,7 @@ pub(super) fn emit_trailer_facets(
     block: &DocBlock,
     raw: &str,
     props: &[(String, String)],
+    hidden: &[String],
     out: &mut String,
 ) {
     if let Some(s) = block.scheduled() {
@@ -70,8 +65,12 @@ pub(super) fn emit_trailer_facets(
             clocked % 60
         ));
     }
-    let visible: Vec<&(String, String)> =
-        props.iter().filter(|(k, _)| !is_hidden_prop(k)).collect();
+    // The app's own predicate (`tine_core::render_facets`): the graph's
+    // `:block-hidden-properties` hide chips here exactly as they do live.
+    let visible: Vec<&(String, String)> = props
+        .iter()
+        .filter(|(k, _)| !tine_core::render_facets::is_render_hidden_prop(k, hidden))
+        .collect();
     if !visible.is_empty() {
         out.push_str("<div class=\"block-props\">");
         for (k, v) in visible {

@@ -91,17 +91,17 @@ impl Lookups {
         Some(corpus.pages[*page].document.as_ref())
     }
 
-    /// The first page, in corpus order, whose name equals `name` ignoring ASCII case.
+    /// The first page, in corpus order, with `name`'s Logseq page identity (`refs::page_key`).
     pub(super) fn doc_named<'a>(&self, corpus: &'a Corpus, name: &str) -> Option<&'a Document> {
         let by_name = self.by_name.get_or_init(|| {
             count_page_probes(corpus.pages.len());
             let mut map = HashMap::new();
             for (i, page) in corpus.pages.iter().enumerate() {
-                map.entry(page.name.to_ascii_lowercase()).or_insert(i);
+                map.entry(tine_core::refs::page_key(&page.name)).or_insert(i);
             }
             map
         });
-        let page = by_name.get(&name.to_ascii_lowercase())?;
+        let page = by_name.get(&tine_core::refs::page_key(name))?;
         Some(corpus.pages[*page].document.as_ref())
     }
 
