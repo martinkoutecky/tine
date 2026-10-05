@@ -105,6 +105,26 @@ impl Plan {
             .saturating_add(std::mem::size_of::<Self>())
     }
 
+    /// Whether an answer depends on the wall-clock instant rather than the
+    /// day: a date bound spelled `now` resolves to the evaluation's
+    /// milliseconds (`resolve_timestamp_token`); every other date token is
+    /// anchored at the day's midnight. The memo files answers per day, so a
+    /// clock-reading answer must not be retained (checkpoint-5 L02 B3).
+    pub(super) fn reads_clock(&self) -> bool {
+        fn is_now(value: &tine_core::query::ir::Value) -> bool {
+            use tine_core::query::ir::Value;
+            match value {
+                Value::Date { literal } => literal.trim().eq_ignore_ascii_case("now"),
+                Value::List { items } => items.iter().any(is_now),
+                _ => false,
+            }
+        }
+        self.filter.any_leaf(&mut |leaf| match leaf {
+            Leaf::Attr { value, .. } => is_now(value),
+            Leaf::Rel { .. } => false,
+        })
+    }
+
     /// `block_rows` evaluates a `@page` query block-anchored (page attributes
     /// read through `block.page`), which is the legacy block-group bridge's
     /// semantics (master `block_anchored_filter`).

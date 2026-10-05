@@ -159,6 +159,11 @@ impl QueryMemo {
             }
         }
         let (answer, plan) = compute();
+        // The memo is per day; an answer that read the instant (`now`) is
+        // stale within minutes, so it is returned but never retained.
+        if plan.as_ref().is_some_and(|plan| plan.reads_clock()) {
+            return answer;
+        }
         let pages = Arc::new(answer.pages());
         let bytes = answer
             .estimated_bytes()
@@ -381,6 +386,50 @@ mod tests {
             0,
             "the tag-target set must be charged to the entry"
         );
+    }
+
+    /// `now` is the evaluation's instant, but the memo is keyed by day: a
+    /// retained `created_at between -1d now` answer would serve yesterday-
+    /// minutes results all day (checkpoint-5 L02 B3). Midnight-anchored
+    /// tokens stay memoized.
+    #[test]
+    fn a_query_reading_the_clock_is_not_memoized_but_a_midnight_anchored_one_is() {
+        use tine_core::query::ir::*;
+        let config = ParseConfig::default();
+        let plan_of = |bound: &str| {
+            let query = Query {
+                anchor: Anchor::Block,
+                filter: Filter::attr(
+                    Attr::CreatedAt,
+                    CmpOp::Between,
+                    Value::List {
+                        items: vec![Value::date("-1d"), Value::date(bound)],
+                    },
+                ),
+                diagnostics: Vec::new(),
+                source: Source::Tql {
+                    original: String::new(),
+                    og_options: String::new(),
+                },
+            };
+            Arc::new(Plan::new(
+                &query,
+                JournalDate::today(),
+                false,
+                false,
+                || Arc::new(tine_core::query::registry::Registry::empty(&config)),
+                || unreachable!(),
+            ))
+        };
+        let memo = QueryMemo::default();
+        memo.answer("now".into(), JournalDate::today(), &config, || {
+            (groups(1), Some(plan_of("NOW")))
+        });
+        assert_eq!(memo.len(), 0, "a `now` bound must not be retained");
+        memo.answer("today".into(), JournalDate::today(), &config, || {
+            (groups(1), Some(plan_of("today")))
+        });
+        assert_eq!(memo.len(), 1, "a midnight-anchored bound stays memoized");
     }
 
     #[test]
