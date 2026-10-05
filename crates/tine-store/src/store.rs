@@ -1241,10 +1241,12 @@ impl Store {
         self.config_state.read().unwrap().clone()
     }
 
-    /// Whether graph-wide answers are ready, without waiting for parsing or
-    /// recovery. `Ok(false)` means still loading; `Err(Failed)` means `page()`
+    /// Test oracle: whether graph-wide answers are ready, without waiting
+    /// for parsing or recovery. Production asks domain questions instead
+    /// (`page_named` routes on readiness internally). `Ok(false)` means still loading; `Err(Failed)` means `page()`
     /// can still read files but graph publication waits for `scan_refresh()`;
     /// `Err(Closed)` means this store is closed.
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn is_graph_ready(&self) -> Result<bool, LoadError> {
         match &*self.load.status.lock().unwrap() {
             LoadStatus::Loading => Ok(false),
@@ -1283,8 +1285,7 @@ impl Store {
     /// has a separate `Origin::Own` publication once a complete snapshot is
     /// available. Writer serialization orders these publications; whichever
     /// comes first has a view containing the save.
-    /// Failed load is observed without waiting by calling `is_graph_ready()`;
-    /// `whole_graph()` also returns the failure, but no `Change` announces it;
+    /// A failed load is returned by `whole_graph()`, but no `Change` announces it;
     /// no page read or write publishes while it remains failed.
     /// Multi-window clients must fan this single stream out themselves. A slow
     /// consumer can retain an unbounded number of queued changes in memory;
@@ -1941,7 +1942,47 @@ impl Store {
         .ok_or(StoreError::NotFound)
     }
 
-    /// Read an ordinary page by effective name, or a journal by its file
+    /// Resolve a page name (or alias) and read its current file: the one
+    /// page-by-name door (GH #623). Cost O(index lookup + page bytes).
+    ///
+    /// Before the graph is ready, a name some file claims opens from that
+    /// file without waiting for the index (the file-name listing below):
+    /// claimant order ranks a file named for the page above any `title::`
+    /// claimant, so this is the page the index would pick. A name only the
+    /// index can resolve (an alias) or one no file claims waits for the
+    /// graph, so a name the index could still resolve never reads as absent.
+    /// Once ready, the published index resolves the name; an alias reads its
+    /// first owner. After a failed initial parse, the file-name listing
+    /// answers. A closed store returns `StoreError::Closed`. A resolved file
+    /// that has disappeared reads as `None`. It writes no page bytes.
+    pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
+        if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
+            if let Some(read) = self.page_named_from_files(name, kind)? {
+                return Ok(Some(read));
+            }
+        }
+        let resolved = match self.whole_graph() {
+            Ok(view) => view.resolve(name, kind == PageKind::Journal),
+            Err(LoadError::Failed { .. }) => return self.page_named_from_files(name, kind),
+            Err(LoadError::Closed) => return Err(StoreError::Closed),
+        };
+        // `resolve` builds an alias only with at least one owner.
+        let id = match resolved {
+            Resolved::Existing { id, .. } => id,
+            Resolved::Alias { owners } => match owners.into_iter().next() {
+                Some(id) => id,
+                None => return Ok(None),
+            },
+            Resolved::Absent { .. } => return Ok(None),
+        };
+        match self.page(&id) {
+            Ok(read) => Ok(Some(read)),
+            Err(StoreError::NotFound) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// The file-name listing answer: read an ordinary page by effective name, or a journal by its file
     /// stem or parseable display title, without waiting for the initial
     /// parse. A page some file is named for is found from a listing of file
     /// names and the matching files; otherwise the first lookup or
@@ -1955,7 +1996,11 @@ impl Store {
     /// listed in `unreadable_files()` and one bad file never blocks the graph.
     /// The selected file is read through `page()`, with the same safety, revision, and publication
     /// rules, including lock wait and read errors. It writes no page bytes.
-    pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
+    fn page_named_from_files(
+        &self,
+        name: &str,
+        kind: PageKind,
+    ) -> Result<Option<PageRead>, StoreError> {
         let lookup = if kind == PageKind::Journal {
             self.graph
                 .current_journal_format()
@@ -1981,8 +2026,8 @@ impl Store {
     /// the wait; a held view never waits for later writes and its answers do
     /// not change. After a failed parse,
     /// later calls return `LoadError::Failed` without another parse attempt
-    /// until `scan_refresh()` retries it. Use `is_graph_ready()` to inspect the
-    /// state without waiting, or call this from a worker thread to wait.
+    /// until `scan_refresh()` retries it. Call this from a worker thread to
+    /// wait.
     /// The initial load restarts if an external edit invalidates a parse pass;
     /// continuous edits can keep this wait open indefinitely.
     /// An own save during loading can build the first cache synchronously for

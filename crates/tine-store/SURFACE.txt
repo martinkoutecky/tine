@@ -131,7 +131,6 @@ fn store::Subscription::try_recv
 fn store::Subscription::start_rev
 fn store::Subscription::observe_watch_status
 fn store::Store::journal_id
-fn store::Store::is_graph_ready
 fn store::Store::open_read
 fn store::Store::page
 fn store::Store::page_named

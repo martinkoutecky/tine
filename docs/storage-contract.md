@@ -65,22 +65,26 @@ methods. The graph-command boundary guard lives at
 `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
 `crates/tine-store/tests/client_root_boundary.rs`.
 
-`Store::is_graph_ready()` reports initial graph loading without waiting.
-`Ok(false)` means graph-wide answers can still block. After `Err(Failed(reason))`,
-`page()` can read and parse an existing file, but saves and observed edits do
-not publish a graph generation. `whole_graph()` returns the load error. A
-successful `scan_refresh()` retries the load and publishes a fresh generation;
-the answer becomes `Ok(true)`. `Err(Closed)` is terminal for that store.
+Initial graph loading is not exposed as a state (the readiness probe
+`is_graph_ready()` is a test-faults oracle). While the initial parse runs,
+graph-wide answers block. After a failed initial parse, `page()` can read and
+parse an existing file, but saves and observed edits do not publish a graph
+generation; `whole_graph()` returns the load error. A successful
+`scan_refresh()` retries the load and publishes a fresh generation. A closed
+store is terminal.
 
-A page open never waits for the whole graph (GH #623 BR3). While
-`is_graph_ready()` is `Ok(false)` (initial parse running, or a launch checkpoint
-served while its diff runs), `page()` and `page_named()` parse the file from
-disk without taking the writer; a name only the index can resolve (an alias, a
-`title::` page) waits for Ready. A save made in that window survives the load:
-the initial parse or launch diff sees its new stamp. After Ready, a page open
-reads only that page: canonicality comes from the published name index
-(`Store::canonical_claim`), never from rereading every page's preamble. Proof:
-`crates/tine-store/src/store/page_open_tests.rs`.
+A page open never waits for the whole graph (GH #623 BR3). `Store::page_named`
+is the one page-by-name door: while the graph is loading (initial parse
+running, or a launch checkpoint served while its diff runs), `page()` and
+`page_named()` parse the file from disk without taking the writer; a name only
+the index can resolve (an alias, a `title::` page no file is named for) waits
+for Ready. After a failed parse `page_named()` answers from the file-name
+listing. A save made in that window survives the load: the initial parse or
+launch diff sees its new stamp. After Ready, a page open reads only that page:
+canonicality comes from the published name index (`Store::canonical_claim`),
+never from rereading every page's preamble. Proof:
+`crates/tine-store/src/store/page_open_tests.rs`,
+`crates/tine-graph-features/tests/br3_page_open_before_ready.rs`.
 
 A save that changes only blocks' `collapsed::` property (value `true`, `false`
 or absent, decided by the parser, `model/collapse_only.rs`) publishes a

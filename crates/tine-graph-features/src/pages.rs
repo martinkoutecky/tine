@@ -23,40 +23,16 @@ pub enum PageReadError {
     Source(String),
 }
 
-/// Resolve a page name or alias and read its current file. Cost O(index lookup + page bytes).
-/// Before the graph is ready (GH #623), a name some file claims opens from
-/// that file without waiting for the index: `page_named` finds it from the
-/// file names, and claimant order ranks a file named for the page above any
-/// `title::` claimant, so this is the page the index would pick. A name only
-/// the index can resolve (an alias) or one no file claims waits for it, so a
-/// name the index could still resolve never reads as absent.
+/// Resolve a page name or alias and read its current file through the
+/// store's one page-by-name door, `Store::page_named` (which opens a page
+/// some file is named for before the graph is ready, GH #623). Cost
+/// O(index lookup + page bytes).
 pub fn get_page(
     store: &Store,
     name: &str,
     kind: PageKind,
 ) -> Result<Option<PageRead>, PageReadError> {
-    if store.is_graph_ready().is_ok_and(|ready| !ready) {
-        if let Some(read) = store.page_named(name, kind).map_err(PageReadError::Store)? {
-            return Ok(Some(read));
-        }
-    }
-    let resolved = match store.whole_graph() {
-        Ok(view) => view.resolve(name, kind == PageKind::Journal),
-        Err(LoadError::Failed { .. }) => {
-            return store.page_named(name, kind).map_err(PageReadError::Store)
-        }
-        Err(error) => return Err(PageReadError::Load(error)),
-    };
-    let id = match resolved {
-        Resolved::Existing { id, .. } => id,
-        Resolved::Alias { owners } => owners.into_iter().next().ok_or(PageReadError::EmptyAlias)?,
-        Resolved::Absent { .. } => return Ok(None),
-    };
-    match store.page(&id) {
-        Ok(read) => Ok(Some(read)),
-        Err(StoreError::NotFound) => Ok(None),
-        Err(error) => Err(PageReadError::Store(error)),
-    }
+    store.page_named(name, kind).map_err(PageReadError::Store)
 }
 
 /// Select a source identity and validate the existing OS hand-off path.
