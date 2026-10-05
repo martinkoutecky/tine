@@ -191,10 +191,28 @@ export function blockIsGridView(id: string | undefined): boolean {
   return !!n && sheetConfigFromRaw(n.raw, formatForBlock(id)).view === "grid";
 }
 
+// One opaque-sheet answer per live node and format, memoized on the node so a
+// keystroke re-reads only the edited block's facets, and a reader (the
+// feed-wide visible order) reruns only when the answer flips (og C, I-25). The
+// memo tracks nothing but its node's `raw`, so an evicted or replaced node
+// takes its memo with it: the WeakMap holds it by the node, and the unowned
+// root registers it with no long-lived owner or signal.
+const opaqueSheetMemo = new WeakMap<Node, { format: Format; isOpaque: () => boolean }>();
+
 export function blockIsOpaqueSheetView(id: string | undefined): boolean {
   const n = id ? doc.byId[id] : undefined;
-  const view = n ? sheetConfigFromRaw(n.raw, formatForBlock(id)).view : null;
-  return view === "grid" || view === "table" || view === "board";
+  if (!n) return false;
+  const format = formatForBlock(id);
+  let entry = opaqueSheetMemo.get(n);
+  if (!entry || entry.format !== format) {
+    const isOpaque = createRoot(() => createMemo(() => {
+      const view = sheetConfigFromRaw(n.raw, format).view;
+      return view === "grid" || view === "table" || view === "board";
+    }));
+    entry = { format, isOpaque };
+    opaqueSheetMemo.set(n, entry);
+  }
+  return entry.isOpaque();
 }
 
 let idCounter = 0;

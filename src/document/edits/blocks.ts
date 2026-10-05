@@ -398,6 +398,15 @@ export function mergeWithNext(
 function absorbInto(survivor: string, absorbed: string, editingSurface: string | null): boolean {
   const node = doc.byId[absorbed];
   if (doc.byId[survivor].page !== node.page) return false; // don't merge across pages
+  // The absorbed block's children move under the survivor, which may sit deeper
+  // (Backspace into the last leaf of a deep chain). Refuse before mutating, as
+  // every other reparenting door does; work is the moved subtrees only (I-22).
+  for (const child of node.children) {
+    if (!existingSubtreeFits(child, survivor)) {
+      pushToast("Outline is too deep to merge", "error");
+      return false;
+    }
+  }
   pushUndo("merge", [node.page]);
   const fmt = formatForBlock(absorbed); // same page (checked above) → same format
   // Merge visible content only; keep the survivor's hidden props (it keeps its

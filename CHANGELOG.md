@@ -86,6 +86,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Uppercase `.ORG` files retain Org format in conflict diffs, PDF annotations and page rename/merge (REG-OG-DUPAL2-F12).
 - Keep code examples in a user’s Favorites page from being adopted as favorites arrangement metadata (UI-OG-DUPBL1-FAVORITES-LITERAL-MARKER).
 - Preserve code literals during text, HTML and OPML export cleanup; recognize standalone embeds from parsed content; preserve early journal years and advance timed repeaters (REG-OG-DUPD2-D15–D19).
+- Typing in an expanded parent block no longer recomputes the visible order of every loaded journal page on each keystroke (REG-OG-C5-C-TYPING-ORDER).
+- Backspace or Delete at a block edge no longer merges a block whose children would land deeper than the 128-level outline limit, which left the page unsavable; the merge is refused with an error (UI-OG-C5-C-MERGE-DEPTH).
 
 ### Added
 
