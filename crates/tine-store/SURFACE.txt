@@ -222,13 +222,8 @@ struct store::GraphAccessInspection
 struct store::OpenOptions
 struct store::WholeGraph
 use store::tine_core::model::{FileId,PageId}
-use crate::launch_diag::LatencyHist
 # og-surface step 1: surface the old scan never saw (H1 files outside its hand
 # list, H3 a type re-exported from a private module).
 fn transaction::Store::read_is_current
 fn link_identity::Store::ensure_link_identity
 fn link_identity::Store::read_link_identity_at
-struct launch_diag::LatencyHist
-fn launch_diag::LatencyHist::new
-fn launch_diag::LatencyHist::record
-fn launch_diag::LatencyHist::to_json

@@ -14,6 +14,7 @@ pub mod doc;
 pub mod edn;
 pub mod guide;
 pub mod html_sanitize;
+pub mod latency;
 pub mod logbook;
 pub mod media_mime;
 pub mod model;

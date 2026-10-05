@@ -635,7 +635,7 @@ fn arrival_numeric_budgets() {
 // re-exported from private modules (H3).
 const OPS: usize = 43;
 const QUESTIONS: usize = 25;
-const TYPES: usize = 56;
+const TYPES: usize = 55;
 
 #[test]
 fn public_paths_are_only_inputs_and_handoffs() {

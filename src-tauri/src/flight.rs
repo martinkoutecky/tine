@@ -97,7 +97,7 @@ static DIRTY: AtomicBool = AtomicBool::new(false);
 
 static FLIGHT: Mutex<FlightRing> = Mutex::new(FlightRing::new());
 /// One bounded latency histogram per timing name in [`TIMING_NAMES`].
-static TIMINGS: Mutex<BTreeMap<&'static str, tine_store::LatencyHist>> =
+static TIMINGS: Mutex<BTreeMap<&'static str, tine_core::latency::LatencyHist>> =
     Mutex::new(BTreeMap::new());
 static START: OnceLock<std::time::Instant> = OnceLock::new();
 

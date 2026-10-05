@@ -24,14 +24,8 @@ const RECENT: usize = 16;
 /// Load passes kept (a pass restarts only when a file changed while parsing).
 const MAX_PASSES: usize = 8;
 
-pub(crate) fn micros(duration: Duration) -> u64 {
-    duration.as_micros().min(u128::from(u64::MAX)) as u64
-}
-
-/// Microseconds as milliseconds with one decimal (sub-millisecond phases stay visible).
-fn ms(us: u64) -> f64 {
-    (us as f64 / 100.0).round() / 10.0
-}
+pub(crate) use tine_core::latency::micros;
+use tine_core::latency::{ms, LatencyHist};
 
 /// Accumulates the time spent inside an iterator's `next` (the directory
 /// listing syscalls), leaving the loop body's own time (stat) to the caller.
@@ -298,57 +292,6 @@ impl SaveTiming {
     /// Call right after acquiring the writer lock.
     pub(crate) fn writer_acquired(&mut self) {
         self.writer_wait = self.began.elapsed().saturating_sub(self.publication_wait);
-    }
-}
-
-/// Upper bounds (ms) of the latency buckets; the last bucket is open-ended.
-const LATENCY_BOUNDS_MS: [u64; 5] = [1, 10, 100, 500, 2000];
-/// Most recent durations a histogram keeps verbatim.
-const LATENCY_RECENT: usize = 8;
-
-/// A bounded latency record: count, bucket counts, maximum and the last few
-/// durations. Fixed size whatever the traffic; numbers only (I-5). It is the
-/// one latency shape in the diagnostics (store lock waits and per-command
-/// latency in the app's flight recorder), so the two cannot drift (I-12).
-#[derive(Clone, Debug, Default)]
-pub struct LatencyHist {
-    count: u64,
-    buckets: [u64; LATENCY_BOUNDS_MS.len() + 1],
-    max_us: u64,
-    recent: VecDeque<u64>,
-}
-
-impl LatencyHist {
-    /// An empty histogram.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Count one duration (O(1), no allocation once the recent ring is full).
-    pub fn record(&mut self, elapsed: Duration) {
-        let us = micros(elapsed);
-        self.count += 1;
-        let bucket = LATENCY_BOUNDS_MS
-            .iter()
-            .position(|bound| us <= bound * 1000)
-            .unwrap_or(LATENCY_BOUNDS_MS.len());
-        self.buckets[bucket] += 1;
-        self.max_us = self.max_us.max(us);
-        if self.recent.len() == LATENCY_RECENT {
-            self.recent.pop_front();
-        }
-        self.recent.push_back(us);
-    }
-
-    /// Count, buckets with their upper bounds, maximum and last durations, in ms.
-    pub fn to_json(&self) -> Value {
-        json!({
-            "count": self.count,
-            "maxMs": ms(self.max_us),
-            "bucketUpperBoundsMs": LATENCY_BOUNDS_MS,
-            "buckets": self.buckets,
-            "lastMs": self.recent.iter().map(|us| ms(*us)).collect::<Vec<_>>(),
-        })
     }
 }
 
@@ -755,7 +698,10 @@ mod tests {
         let json = hist.to_json();
         assert_eq!(json["count"], 1012);
         assert_eq!(json["buckets"].as_array().unwrap().len(), 6);
-        assert_eq!(json["lastMs"].as_array().unwrap().len(), LATENCY_RECENT);
+        assert_eq!(
+            json["lastMs"].as_array().unwrap().len(),
+            tine_core::latency::LATENCY_RECENT
+        );
         assert_eq!(json["maxMs"], 9000.0);
         // 0 ms, 1 ms and the 1000 sub-ms records sit at or under the 1 ms bound.
         assert_eq!(json["buckets"][0], 1002);
