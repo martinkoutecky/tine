@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { setToasts, toasts } from "./toasts";
 
-const backendMock = vi.hoisted(() => ({ readAsset: vi.fn() }));
+const backendMock = vi.hoisted(() => ({ readAsset: vi.fn() } as { readAsset: ReturnType<typeof vi.fn>; graphBindingGeneration?: () => number }));
 vi.mock("./backend", () => ({ backend: () => backendMock }));
 
 import { __assetCacheStatsForTests, acquireAssetBlob, assetVersion, refreshAsset, clearAssetBlobCache, seedAssetBlob } from "./assetCache";
@@ -81,5 +82,25 @@ describe("asset blob cache bounds", () => {
     expect(backendMock.readAsset.mock.calls.filter(([path]) => path === "live-0.png")).toHaveLength(1);
     again.release();
     leases.forEach((lease) => lease.release());
+  });
+});
+
+describe("I-9: an asset read failure is not swallowed", () => {
+  afterEach(() => setToasts([]));
+  it("shows a sticky error when a graph asset cannot be read", async () => {
+    backendMock.graphBindingGeneration = vi.fn(() => 1);
+    backendMock.readAsset.mockRejectedValueOnce("io:PermissionDenied");
+    const lease = await acquireAssetBlob("locked.png");
+    expect(lease.url).toBe("");
+    expect(toasts().some((t) => t.kind === "error" && t.sticky)).toBe(true);
+    delete backendMock.graphBindingGeneration;
+  });
+  it("stays quiet for a missing asset: the broken-image placeholder is its visible form", async () => {
+    backendMock.graphBindingGeneration = vi.fn(() => 1);
+    backendMock.readAsset.mockRejectedValueOnce("not-found");
+    const lease = await acquireAssetBlob("gone.png");
+    expect(lease.url).toBe("");
+    expect(toasts()).toEqual([]);
+    delete backendMock.graphBindingGeneration;
   });
 });

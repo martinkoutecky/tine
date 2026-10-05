@@ -1,6 +1,6 @@
 export type ErrorFamily =
   | "conflict" | "deleted" | "twin" | "repeated" | "read-only" | "invalid-target"
-  | "closed" | "asset-too-large" | "result-too-large" | "stale-graph-binding" | "io" | "rollback-incomplete" | "publication-incomplete"
+  | "closed" | "not-found" | "asset-too-large" | "result-too-large" | "stale-graph-binding" | "io" | "rollback-incomplete" | "publication-incomplete"
   | "unreadable-owner" | "unknown";
 
 /** Classify exact Tauri wire tokens for control flow. Cost O(message length);
@@ -18,6 +18,7 @@ export function errorFamily(error: unknown): ErrorFamily {
     case "read-only":
     case "invalid-target":
     case "closed":
+    case "not-found":
     case "asset-too-large":
     case "result-too-large":
     case "stale-graph-binding":

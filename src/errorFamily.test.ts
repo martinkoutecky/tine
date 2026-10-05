@@ -13,3 +13,8 @@ it("recognizes the unreadable-owner creation refusal (R-CREATE-UNREADABLE-OWNER)
   expect(errorFamily(new Error("unreadable-owner"))).toBe("unreadable-owner");
   expect(errorFamily("an unreadable-owner happened")).toBe("unknown");
 });
+
+it("recognizes the exact not-found wire token for a missing graph asset, and never its prose", () => {
+  expect(errorFamily("not-found")).toBe("not-found");
+  expect(errorFamily("No such file or directory (os error 2)")).toBe("unknown");
+});

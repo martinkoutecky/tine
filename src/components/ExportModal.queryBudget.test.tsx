@@ -4,6 +4,8 @@ import { initParser } from "../render/parse";
 import type { BlockDto, QueryExportBatch } from "../types";
 import type { ExportNode } from "../editor/exportText";
 import { warmExportResolutions } from "./ExportModal";
+import { setToasts, toasts } from "../toasts";
+import { bumpGraphEpoch } from "../graphSession";
 
 const shallow = (id: string): BlockDto => ({
   id,
@@ -18,6 +20,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  setToasts([]);
 });
 
 describe("query clipboard/export hydration budget", () => {
@@ -62,5 +65,35 @@ describe("query clipboard/export hydration budget", () => {
       "showing first 1 of 20000 results; 17 descendant blocks omitted",
     );
     expect(warmed.get(batch.results[1].key)?.nodes[0].children[0].raw).toBe("done");
+  });
+});
+
+describe("I-9: export pre-warm failures are shown, not swallowed", () => {
+  const queryNodes: ExportNode[] = [{ raw: "{{query (task TODO)}}", format: "md", children: [] }];
+  it("shows a sticky error when the bounded query batch is rejected, and keeps the literal macro", async () => {
+    vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);
+    vi.spyOn(backend(), "exportQuerySubtrees").mockRejectedValue(new Error("io:Broken"));
+    const warmed = new Map<string, any>();
+    await warmExportResolutions(queryNodes, warmed);
+    expect(warmed.size).toBe(0);
+    expect(toasts().some((t) => t.kind === "error" && t.sticky)).toBe(true);
+  });
+  it("shows a sticky error when an embed preview is rejected", async () => {
+    vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);
+    vi.spyOn(backend(), "previewBlock").mockRejectedValue(new Error("io:Broken"));
+    const embed: ExportNode[] = [{ raw: "{{embed ((6a1b2c3d-0000-4000-8000-000000000009))}}", format: "md", children: [] }];
+    await warmExportResolutions(embed, new Map());
+    expect(toasts().some((t) => t.kind === "error")).toBe(true);
+  });
+  it("stays quiet when the graph changed before the failure landed", async () => {
+    vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);
+    let fail!: (error: Error) => void;
+    vi.spyOn(backend(), "exportQuerySubtrees").mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+    const pending = warmExportResolutions(queryNodes, new Map());
+    await vi.waitFor(() => expect(fail).toBeTypeOf("function"));
+    bumpGraphEpoch();
+    fail(new Error("old graph"));
+    await pending;
+    expect(toasts()).toEqual([]);
   });
 });

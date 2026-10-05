@@ -31,10 +31,24 @@ export type UiFailureFamily =
   | "config-read"
   | "conflict-inventory"
   | "graph-verification"
-  | "unreadable-files";
+  | "unreadable-files"
+  | "asset-read"
+  | "page-delete"
+  | "page-refresh"
+  | "logbook"
+  | "marker-cycle"
+  | "export-preview"
+  | "sheet-export";
 
 const MESSAGES: Record<UiFailureFamily, string> = {
   "custom-css": "Couldn't read custom.css. No custom CSS was applied.",
+  "asset-read": "Couldn't read a file from this graph's assets. It may be unreadable.",
+  "page-delete": "Couldn't delete the page. It was not removed.",
+  "page-refresh": "Couldn't refresh a page after a change. Reopen it to see the latest.",
+  "logbook": "Couldn't update the time-tracking entry.",
+  "marker-cycle": "Couldn't update the task marker.",
+  "export-preview": "Couldn't prepare a block for the export preview. It is shown unresolved.",
+  "sheet-export": "Couldn't read this sheet for export.",
   "config-read": "Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.",
   "conflict-inventory": "Couldn't refresh conflicts. The last successful inventory is kept.",
   "graph-verification": "Couldn't verify graph files.",
@@ -67,6 +81,7 @@ const GRAPH_READS: ReadonlySet<UiFailureFamily> = new Set<UiFailureFamily>([
   "query-hydration", "page-inventory", "session-read", "template-read", "journal-feed",
   "block-counts", "block-resolution", "backup-read", "asset-inventory", "trash-inventory",
   "custom-css", "config-read", "conflict-inventory", "graph-verification", "unreadable-files",
+  "asset-read", "page-refresh", "export-preview", "sheet-export",
 ]);
 
 /** Show a fixed message for `family` and log `error` only when debug is enabled.

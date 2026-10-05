@@ -601,6 +601,13 @@ mod save_wire_tests {
             "{RULE}"
         );
         assert_eq!(
+            read_asset_error(tine_graph_features::assets::AssetAccessError::Store(
+                StoreError::NotFound
+            )),
+            "not-found",
+            "{RULE}"
+        );
+        assert_eq!(
             sync_conflict_error(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
                 "secret"
@@ -1348,7 +1355,20 @@ pub(crate) fn read_asset(
     let slot = slot_for_context(&state)?;
     tine_graph_features::assets::read_asset(&slot.store, &name, max_bytes)
         .map(tauri::ipc::Response::new)
-        .map_err(feature_asset_access_error)
+        .map_err(read_asset_error)
+}
+
+/// Wire form of a failed `read_asset`. A missing file is the exact token
+/// `not-found` (the frontend treats it as a normal state and shows the
+/// broken-image placeholder); every other failure keeps its wire text and is
+/// reported to the user.
+fn read_asset_error(error: tine_graph_features::assets::AssetAccessError) -> String {
+    match error {
+        tine_graph_features::assets::AssetAccessError::Store(StoreError::NotFound) => {
+            "not-found".into()
+        }
+        other => feature_asset_access_error(other),
+    }
 }
 
 /// Validate one graph media file and return its top-level asset name for the
