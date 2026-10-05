@@ -666,13 +666,16 @@ fn commit(
     if total > MAX_EXPORT_BYTES {
         return Err(refusal("export byte budget exceeded"));
     }
-    let receipt =
-        tine_store::publish_site_external(store, parent.as_os_str(), leaf, &mut |writer| {
-            for (path, bytes) in &files {
-                writer.write(path, bytes)?;
-            }
-            Ok(())
-        })
+    let receipt = store
+        .publish(
+            tine_store::PublishDest::External { parent, leaf },
+            &mut |writer| {
+                for (path, bytes) in &files {
+                    writer.write(path, bytes)?;
+                }
+                Ok(())
+            },
+        )
         .map_err(|failure| io::Error::new(failure.cause.kind, failure.cause.message))?;
     Ok(ExportReceipt {
         path: receipt.site.display().to_string(),
@@ -768,27 +771,29 @@ pub fn publish_query_with_sheets(
         Some((request, &planned.parsed, &planned.result)),
     )?;
     app_files(&mut files, bundle, snap, &request.name)?;
-    let receipt = tine_store::publish::publish_query_site(
-        store,
-        &planned.plan.folder,
-        request.replace,
-        &mut |writer| {
-            for (path, bytes) in &files {
-                writer.write(path, bytes)?;
-            }
-            Ok(())
-        },
-    )
-    .map_err(|failure| {
-        let recovery = failure
-            .previous_kept
-            .map(|p| format!(" Previous export kept at {}.", p.display()))
-            .unwrap_or_default();
-        io::Error::new(
-            failure.cause.kind,
-            format!("{}{recovery}", failure.cause.message),
+    let receipt = store
+        .publish(
+            tine_store::PublishDest::QueryLeaf {
+                folder: &planned.plan.folder,
+                replace: request.replace,
+            },
+            &mut |writer| {
+                for (path, bytes) in &files {
+                    writer.write(path, bytes)?;
+                }
+                Ok(())
+            },
         )
-    })?;
+        .map_err(|failure| {
+            let recovery = failure
+                .previous_kept
+                .map(|p| format!(" Previous export kept at {}.", p.display()))
+                .unwrap_or_default();
+            io::Error::new(
+                failure.cause.kind,
+                format!("{}{recovery}", failure.cause.message),
+            )
+        })?;
     Ok(ExportReceipt {
         path: receipt.site.display().to_string(),
         pages: planned.selected.pages.len(),

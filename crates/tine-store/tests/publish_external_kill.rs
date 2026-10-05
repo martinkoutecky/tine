@@ -1,7 +1,7 @@
 use std::fs;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tine_store::{publish_site_external, Store};
+use tine_store::Store;
 
 #[test]
 fn a_killed_external_export_reopens_without_a_partial_site() {
@@ -11,10 +11,11 @@ fn a_killed_external_export_reopens_without_a_partial_site() {
         let store = Store::open(&base.join("graph"), Default::default())
             .unwrap()
             .0;
-        let _ = publish_site_external(
-            &store,
-            base.join("out").as_os_str(),
-            "site",
+        let _ = store.publish(
+            tine_store::PublishDest::External {
+                parent: &base.join("out"),
+                leaf: "site",
+            },
             &mut |writer| {
                 writer.write("index.html", b"partial")?;
                 std::process::exit(71);
@@ -42,13 +43,15 @@ fn a_killed_external_export_reopens_without_a_partial_site() {
     let store = Store::open(&base.join("graph"), Default::default())
         .unwrap()
         .0;
-    let result = publish_site_external(
-        &store,
-        base.join("out").as_os_str(),
-        "site",
-        &mut |writer| writer.write("index.html", b"complete"),
-    )
-    .unwrap();
+    let result = store
+        .publish(
+            tine_store::PublishDest::External {
+                parent: &base.join("out"),
+                leaf: "site",
+            },
+            &mut |writer| writer.write("index.html", b"complete"),
+        )
+        .unwrap();
     assert_eq!(
         fs::read(result.site.join("index.html")).unwrap(),
         b"complete"

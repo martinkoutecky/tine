@@ -15,7 +15,7 @@ fn staged_writer_publishes_files_and_retires_previous_site() {
     let (store, _, _) = Store::open(&root, OpenOptions::default()).unwrap();
 
     let first = store
-        .publish_site(&mut |writer| {
+        .publish(tine_store::PublishDest::GraphSite, &mut |writer| {
             writer.write("index.html", b"old")?;
             writer.write("assets/app.js", b"script")
         })
@@ -28,7 +28,9 @@ fn staged_writer_publishes_files_and_retires_previous_site() {
     );
 
     let second = store
-        .publish_site(&mut |writer| writer.write("index.html", b"new"))
+        .publish(tine_store::PublishDest::GraphSite, &mut |writer| {
+            writer.write("index.html", b"new")
+        })
         .unwrap();
     assert_eq!(second.files, 1);
     let recovery = second
@@ -39,7 +41,9 @@ fn staged_writer_publishes_files_and_retires_previous_site() {
     assert_eq!(fs::read(root.join("publish/index.html")).unwrap(), b"new");
     assert!(!root.join("publish/assets/app.js").exists());
 
-    let failure = store.publish_site(&mut |writer| writer.write("../outside", b"bad"));
+    let failure = store.publish(tine_store::PublishDest::GraphSite, &mut |writer| {
+        writer.write("../outside", b"bad")
+    });
     assert!(failure.is_err());
     assert!(!root.join("outside").exists());
     assert_eq!(fs::read(root.join("publish/index.html")).unwrap(), b"new");

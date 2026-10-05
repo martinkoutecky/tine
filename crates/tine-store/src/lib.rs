@@ -111,8 +111,8 @@ mod test_fixture_io;
 pub mod transaction;
 mod watch;
 pub use publish::{
-    publication_assets, publication_block_ref_counts, publish_site_external, PublishFailed,
-    PublishReceipt, SiteWriter,
+    publication_assets, publication_block_ref_counts, PublishDest, PublishFailed, PublishReceipt,
+    SiteWriter,
 };
 pub use restore::{RestoreFailed, RestoreFile, RestoreReport};
 #[cfg(any(test, feature = "test-faults"))]

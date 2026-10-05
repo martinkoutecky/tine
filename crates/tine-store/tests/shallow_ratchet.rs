@@ -633,9 +633,9 @@ fn arrival_numeric_budgets() {
 // Honest baseline (og-surface step 1, 2026-10-05): the earlier scan missed
 // files outside a hand list (H1), functions taking `&Store` (H2) and types
 // re-exported from private modules (H3).
-const OPS: usize = 47;
+const OPS: usize = 45;
 const QUESTIONS: usize = 26;
-const TYPES: usize = 57;
+const TYPES: usize = 58;
 
 #[test]
 fn public_paths_are_only_inputs_and_handoffs() {
@@ -667,8 +667,8 @@ fn public_paths_are_only_inputs_and_handoffs() {
             "known graph root input, read-only identity lookup before open",
         ),
         (
-            "publish::publish_site_external",
-            "user-chosen parent folder input (OsStr spelling of a path)",
+            "publish::PublishDest::External",
+            "user-chosen parent folder input",
         ),
         (
             "store::Store::path_for_os_handoff",

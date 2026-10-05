@@ -4,7 +4,7 @@ use std::{
     process::{Child, Command},
     time::{Duration, Instant},
 };
-use tine_store::{publish::publish_query_site, Store};
+use tine_store::Store;
 
 fn open(root: &Path) -> Store {
     Store::open(root, Default::default()).unwrap().0
@@ -36,11 +36,18 @@ fn replace_reports_the_leaf_that_arrived_after_review_and_leaves_siblings() {
     let review = tine_store::publish::query_publication_destination(&store, "tasks").unwrap();
     assert!(review.1);
     assert_eq!(review.2.as_deref(), Some("tasks-2"));
-    let result = publish_query_site(&store, "tasks", true, &mut |w| {
-        fs::write(root.join("published-queries/tasks/index.html"), b"arrived").unwrap();
-        w.write("index.html", b"new")
-    })
-    .unwrap();
+    let result = store
+        .publish(
+            tine_store::PublishDest::QueryLeaf {
+                folder: "tasks",
+                replace: true,
+            },
+            &mut |w| {
+                fs::write(root.join("published-queries/tasks/index.html"), b"arrived").unwrap();
+                w.write("index.html", b"new")
+            },
+        )
+        .unwrap();
     assert_eq!(
         fs::read(result.previous_kept.unwrap().join("index.html")).unwrap(),
         b"arrived"
@@ -63,9 +70,13 @@ fn publication_child() {
     let root = Path::new(&root);
     let store = open(root);
     let replace = std::env::var("TINE_QUERY_REPLACE").as_deref() == Ok("yes");
-    let result = publish_query_site(&store, "tasks", replace, &mut |w| {
-        w.write("index.html", b"new")
-    });
+    let result = store.publish(
+        tine_store::PublishDest::QueryLeaf {
+            folder: "tasks",
+            replace,
+        },
+        &mut |w| w.write("index.html", b"new"),
+    );
     match result {
         Ok(_) => fs::write(root.join("result"), b"success").unwrap(),
         Err(error) => fs::write(
@@ -132,10 +143,15 @@ fn killed_replace_reopens_with_the_complete_previous_leaf_in_recovery() {
     assert_eq!(fs::read(kept[0].join("index.html")).unwrap(), b"old");
     let store = open(root);
     assert_eq!(store.whole_graph().unwrap().corpus().pages.len(), 1);
-    let result = publish_query_site(&store, "tasks", false, &mut |w| {
-        w.write("index.html", b"complete")
-    })
-    .unwrap();
+    let result = store
+        .publish(
+            tine_store::PublishDest::QueryLeaf {
+                folder: "tasks",
+                replace: false,
+            },
+            &mut |w| w.write("index.html", b"complete"),
+        )
+        .unwrap();
     assert_eq!(
         fs::read(result.site.join("index.html")).unwrap(),
         b"complete"
@@ -230,10 +246,15 @@ fn review_suggestions_remain_portable_at_the_folder_limit() {
     assert!(exists);
     let suggestion = suggestion.unwrap();
     assert!(suggestion.len() <= 80);
-    publish_query_site(&store, &suggestion, false, &mut |w| {
-        w.write("index.html", b"new")
-    })
-    .unwrap();
+    store
+        .publish(
+            tine_store::PublishDest::QueryLeaf {
+                folder: &suggestion,
+                replace: false,
+            },
+            &mut |w| w.write("index.html", b"new"),
+        )
+        .unwrap();
     store.close();
 }
 

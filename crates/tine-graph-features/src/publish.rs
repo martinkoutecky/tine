@@ -24,7 +24,7 @@ pub fn publish_html(store: &Store) -> io::Result<(String, usize)> {
     let graph = RenderGraph::new(&corpus, &whole, store, None);
     let mut count = 0;
     let receipt = store
-        .publish_site(&mut |writer| {
+        .publish(tine_store::PublishDest::GraphSite, &mut |writer| {
             count = render::publish_graph(
                 &graph,
                 render::PageSelection::every_page(config.all_pages_public),
