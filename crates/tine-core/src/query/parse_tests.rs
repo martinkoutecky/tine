@@ -602,3 +602,53 @@ fn the_shared_like_escape_golden_encodes_and_decodes_as_recorded() {
         );
     }
 }
+
+/// I-22: the empty-result explanation holds two probes per conjunct and the
+/// second carries every OTHER conjunct, so a 64 KB source of a few thousand
+/// conjuncts built tens of millions of filter clones. Past
+/// `EXPLAIN_MAX_CONJUNCTS` the query is one whole probe.
+#[test]
+fn explaining_an_empty_result_is_linear_in_a_hostile_conjunct_count() {
+    use crate::query::view::{explain_empty_plan, EXPLAIN_MAX_CONJUNCTS};
+    let count_leaves = |plan: &crate::query::view::ExplainPlan| {
+        let mut leaves = 0usize;
+        for probe in &plan.probes {
+            probe.filter.for_each_leaf(&mut |_| leaves += 1);
+        }
+        leaves
+    };
+    let explain = |conjuncts: usize| {
+        let source = (0..conjuncts)
+            .map(|n| format!("content like '%x{n}%'"))
+            .collect::<Vec<_>>()
+            .join(" and ");
+        assert!(
+            source.len() <= QUERY_SOURCE_MAX_BYTES,
+            "fixture fits the ceiling"
+        );
+        let (query, _) = super::parse_query_input(
+            &source,
+            super::QueryInput::Tql,
+            TODAY,
+            super::registry::Registry::none(),
+        );
+        let resolved = resolve_for_execution(&query, &ExecutionContext::default(), TODAY);
+        assert!(
+            resolved.is_executable(),
+            "{:?}",
+            resolved.query().diagnostics
+        );
+        explain_empty_plan(&resolved)
+    };
+    // Small queries still explain every conjunct: two probes each.
+    let small = explain(5);
+    assert_eq!(small.probes.len(), 10);
+    // The bound is inclusive; one past it falls back to the whole filter.
+    assert_eq!(
+        explain(EXPLAIN_MAX_CONJUNCTS).probes.len(),
+        2 * EXPLAIN_MAX_CONJUNCTS
+    );
+    let hostile = explain(2_000);
+    assert_eq!(hostile.probes.len(), 1);
+    assert_eq!(count_leaves(&hostile), 2_000, "one probe, every leaf once");
+}

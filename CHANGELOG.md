@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Truncated left-sidebar page titles now show their full title on hover; fitting titles stay quiet (GH #563).
 
 ### Fixed
+- Asking why a query with thousands of conditions returned nothing no longer builds a quadratic explanation plan; queries over 64 conditions are explained as one whole condition (REG-OG-C5-Q-EXPLAIN-COST).
 - A property condition written with two keys, or with a nested group around its key, is no longer evaluated as if the extra key or condition were not there; the query builder reads property conditions with the same rule as the engine (REG-OG-C5-Q-PROPS-READER-TWIN).
 - A property column named in a legacy query table's `query-properties::` now finds the engine's key when the name has a space or a non-ASCII capital, matching how Tine stores property keys (REG-OG-C5-Q-KEY-NORM-TWIN).
 - The 128-level nesting limit on opened pages now follows the parser's own rule for where a code fence closes, so a very deep outline placed after a short fence closer can no longer slip past the limit (REG-OG-C5-Q-FENCE-DEPTH).
