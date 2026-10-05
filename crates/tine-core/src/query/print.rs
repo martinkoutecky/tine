@@ -512,23 +512,7 @@ fn single_name(pred: &Filter) -> Option<String> {
 }
 
 fn tql_attr_name(attr: Attr, through_page: bool) -> String {
-    let bare = match attr {
-        Attr::Content => "content",
-        Attr::Task => "task",
-        Attr::Priority => "priority",
-        Attr::Scheduled => "scheduled",
-        Attr::Deadline => "deadline",
-        Attr::CreatedAt => "created_at",
-        Attr::LastModifiedAt => "last_modified_at",
-        Attr::Name => "name",
-        Attr::Journal => "journal",
-        Attr::Day => "day",
-        Attr::Namespace => "namespace",
-        Attr::UsedAsTag => "used_as_tag",
-        Attr::Key => "key",
-        Attr::Value => "value",
-        Attr::AtomCount => "atom_count",
-    };
+    let bare = attr.tql_name();
     let page_row = matches!(
         attr,
         Attr::Name | Attr::Journal | Attr::Day | Attr::Namespace | Attr::UsedAsTag
