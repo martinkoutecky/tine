@@ -901,6 +901,29 @@ fn a_disabled_row_never_invalidates_through_the_prepass_reporters() {
 }
 
 #[test]
+fn a_like_escape_clause_is_honoured_not_ignored() {
+    // OG-C5-Q B7: `ESCAPE 'c'` was parsed and dropped, so `!%` kept `!` as a
+    // literal and `%` as a wildcard. The clause now re-encodes into the one
+    // backslash convention (and so prints back without it).
+    assert_eq!(
+        ok("content like '100!%' escape '!'"),
+        ok("content like '100\\%'")
+    );
+    assert_eq!(
+        ok("content like '%a!_b%' escape '!'"),
+        ok("content like '%a\\_b%'")
+    );
+    // With another escape character a backslash is an ordinary character.
+    assert_eq!(
+        ok("content like 'a\\b!!' escape '!'"),
+        ok("content like 'a\\\\b!'")
+    );
+    // A one-character quoted string is required.
+    let refused = rejected("content like 'x' escape 'ab'");
+    assert!(refused.iter().any(|d| d.message.contains("escape")));
+}
+
+#[test]
 fn starts_with_recognises_only_a_single_trailing_wildcard() {
     assert_eq!(
         crate::query::text::LikePattern::compile("%").starts_with_prefix(),
