@@ -5,6 +5,7 @@ import { displayMathOpenAfter, closesDisplayMath, fenceExitTrim } from "./fences
 import type { Format } from "../render/ast";
 import { blockRegions, editBlock, parserReady } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
+import { reportUiFailure } from "../uiFailure";
 
 import { property_line_json, page_regions_json, page_header_json } from "../render/wasm/lsdoc_wasm.js";
 import type { RegionProperty } from "../render/parse";
@@ -47,10 +48,10 @@ function pageHeader(raw: string): PageHeader {
   let json: string;
   try {
     json = page_header_json(raw);
-  } catch {
+  } catch (error) {
     // A parser trap (the glue already recovered a fresh instance) must not take the page down:
-    // read it as "no header" for this text, the same answer as before the parser is ready.
-    console.error("page header parse failed");
+    // read it as "no header" for this text, the same answer as before the parser is ready, and say so (I-9).
+    reportUiFailure("page-header-read", error);
     return NO_HEADER;
   }
   const parsed = JSON.parse(json) as { end: number; entries: PageHeader["entries"] };

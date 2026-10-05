@@ -18,11 +18,13 @@ vi.mock("./render/wasm/lsdoc_wasm.js", async (importOriginal) => {
     logbook_apply_marker_transition: guard(real.logbook_apply_marker_transition),
     logbook_info_json: guard(real.logbook_info_json),
     header_tokens_json: guard(real.header_tokens_json),
+    page_header_json: guard(real.page_header_json),
   };
 });
 
 import { applyMarkerTransition, logbookInfo } from "./logbook";
 import { headerTokens } from "./markers";
+import { splitPagePreamble } from "./editor/properties";
 
 beforeAll(() => initParser());
 beforeEach(() => { setToasts([]); wasm.fail = true; });
@@ -44,6 +46,11 @@ describe("parser faults are shown, with the fallback kept", () => {
   it("a block whose marker cannot be read shows plain text and says so", () => {
     expect(headerTokens("TODO fault-case-unique", "md")).toEqual({ marker: null, priority: null });
     expect(sticky("task marker")).toHaveLength(1);
+  });
+
+  it("a page whose property header cannot be read shows ordinary text and says so", () => {
+    expect(splitPagePreamble("title:: fault-case-header\n\nbody").properties).toBeNull();
+    expect(sticky("property header")).toHaveLength(1);
   });
 
   it("a repeated fault shares one toast", () => {

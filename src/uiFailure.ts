@@ -36,6 +36,7 @@ export type UiFailureFamily =
   | "page-refresh"
   | "logbook"
   | "marker-read"
+  | "page-header-read"
   | "export-preview"
   | "sheet-export";
 
@@ -45,6 +46,7 @@ const MESSAGES: Record<UiFailureFamily, string> = {
   "page-refresh": "Couldn't refresh a page after a change. Reopen it to see the latest.",
   "logbook": "Couldn't read or update a time-tracking entry.",
   "marker-read": "Couldn't read a task marker from a block. It is shown as plain text.",
+  "page-header-read": "Couldn't read a page's property header. It is shown as ordinary text.",
   "export-preview": "Couldn't prepare a block for the export preview. It is shown unresolved.",
   "sheet-export": "Couldn't read the sheets for export. They are exported as plain outlines.",
   "config-read": "Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.",
