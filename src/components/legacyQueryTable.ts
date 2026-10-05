@@ -3,9 +3,11 @@
 // (column set and order), `query-sort-by:: k` and `query-sort-desc:: false`.
 // OG parity (Discussion #617 audit #9); the same keys a Logseq graph already carries.
 import { ednSlice, readEdn } from "../editor/edn";
+import { propertyKeyNorm } from "../propertyKey";
 
-/** OG's key normalisation for property columns (`block.cljs` property keys). */
-export const columnKey = (name: string): string => name.trim().replace(/^:/, "").toLowerCase().replace(/_/g, "-");
+/** A property column's key: an EDN keyword's colon dropped, then the engine's own
+ *  normalisation (`propertyKeyNorm`), so it matches the key the engine stored. */
+export const columnKey = (name: string): string => propertyKeyNorm(name.trim().replace(/^:/, ""));
 
 /**
  * The columns `query-properties` names, in order, normalised; `null` when the

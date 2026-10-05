@@ -6,13 +6,12 @@ import { MARKERS, headerTokens } from "../markers";
 import { codeFences } from "../editor/fences";
 import { acceptedPropertyLine, pagePropertyEntries } from "../editor/properties";
 import { split_linkable_property as splitLinkableProperty } from "./wasm/lsdoc_wasm.js";
+import { propertyKeyNorm } from "../propertyKey";
 export { splitLinkableProperty };
 
 export { MARKERS };
 
-export function propertyKeyNorm(key: string): string {
-  return key.trim().toLowerCase().replace(/[ _]/g, "-");
-}
+export { propertyKeyNorm };
 
 // Property keys NOT shown as rendered chips (id/uuid/collapsed + Logseq internals
 // + display-only keys). Single source for the two render paths — Block.tsx's live

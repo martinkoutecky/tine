@@ -560,3 +560,19 @@ fn a_datalog_keyword_inside_text_is_a_simple_query_at_every_answerer() {
     assert!(is_advanced("[:find ?b :where [?b :block/marker]]"));
     assert!(is_advanced("[ :find ?b ]"));
 }
+
+/// I-12: `doc::property_key_norm` is the one property-key normaliser; the
+/// frontend's `propertyKeyNorm` and the legacy table's `columnKey` read this
+/// same golden (`src/components/legacyQueryTable.test.ts`), so a column named
+/// in `query-properties::` matches the key the engine stored.
+#[test]
+fn the_shared_property_key_golden_normalises_as_recorded() {
+    let golden: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/i12-property-key-norm-golden.json"
+    ))
+    .expect("golden parses");
+    for case in golden["cases"].as_array().expect("cases") {
+        let (key, want) = (case[0].as_str().unwrap(), case[1].as_str().unwrap());
+        assert_eq!(crate::doc::property_key_norm(key), want, "{key:?}");
+    }
+}
