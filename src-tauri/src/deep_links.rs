@@ -147,6 +147,13 @@ fn validate(request: &LinkRequest) -> Result<(), String> {
     }
     Ok(())
 }
+fn page_holds_block(blocks: &[tine_core::model::BlockDto], wanted: &str) -> bool {
+    blocks.iter().any(|block| {
+        block.id == wanted
+            || block.properties.iter().any(|(key, value)| key == "id" && value == wanted)
+            || page_holds_block(&block.children, wanted)
+    })
+}
 fn target_in_store(
     store: &Store,
     root: &str,
@@ -190,10 +197,29 @@ fn target_in_store(
     } else {
         return Ok(Some(target));
     };
-    let Resolved::Existing { id, .. } = view.resolve(&name, kind == PageKind::Journal) else {
+    let Resolved::Existing { id, others } = view.resolve(&name, kind == PageKind::Journal) else {
         return Ok(None);
     };
-    let page = store.page(&id).map_err(|e| format!("{e:?}"))?;
+    // `view.blocks` names only the logical page. Same-name pages (and duplicate
+    // journal days) are separate physical files, and the block belongs to ONE of
+    // them: keep that file, not whichever the page resolver prefers.
+    let page = match &block {
+        None => store.page(&id).map_err(|e| format!("{e:?}"))?,
+        Some(wanted) => {
+            let mut owner = None;
+            for candidate in std::iter::once(&id).chain(others.iter()) {
+                let read = store.page(candidate).map_err(|e| format!("{e:?}"))?;
+                if page_holds_block(&read.doc.blocks, wanted) {
+                    owner = Some(read);
+                    break;
+                }
+            }
+            let Some(owner) = owner else {
+                return Ok(None);
+            };
+            owner
+        }
+    };
     target.name = Some(page.doc.name);
     target.page_kind = Some(kind);
     target.path = Some(page.id.as_str().into());
@@ -337,5 +363,56 @@ mod tests {
             std::fs::read_to_string(temp.path().join("pages/B.md")).unwrap(),
             source
         );
+    }
+
+    #[test]
+    fn a_block_link_resolves_to_the_physical_page_that_holds_the_block() {
+        // Two files whose names differ only in case are one logical page whose
+        // physical members are separate files: the block link must name the
+        // file that holds the block, not the page resolver's preferred member.
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("pages")).unwrap();
+        let id = "abcdefab-1111-4111-8111-111111111111";
+        std::fs::write(temp.path().join("pages/Foo.md"), "- canonical only\n").unwrap();
+        std::fs::write(
+            temp.path().join("pages/foo.md"),
+            format!("- linked\n  id:: {id}\n"),
+        )
+        .unwrap();
+        let (store, _, _) = Store::open(temp.path(), Default::default()).unwrap();
+        let request = LinkRequest {
+            graph: None,
+            page: None,
+            block: Some(id.into()),
+        };
+        let target = target_in_store(&store, "fixture", &request)
+            .unwrap()
+            .unwrap();
+        assert_eq!(target.path.as_deref(), Some("pages/foo.md"));
+        assert_eq!(target.block.as_deref(), Some(id));
+        // The upper-case spelling of an authored id is a different block id:
+        // lookup is exact, so it must not be silently folded.
+        let upper = LinkRequest {
+            graph: None,
+            page: None,
+            block: Some(id.to_uppercase()),
+        };
+        assert!(target_in_store(&store, "fixture", &upper)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn id_shape_matches_the_shared_typescript_fixture() {
+        // `src/deepLinks.test.ts` asserts the same file: both languages accept
+        // exactly these spellings and neither folds a block id's case.
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/deep-link-ids.json")).unwrap();
+        for id in cases["valid"].as_array().unwrap() {
+            assert!(valid_id(id.as_str().unwrap()), "{id}");
+        }
+        for id in cases["invalid"].as_array().unwrap() {
+            assert!(!valid_id(id.as_str().unwrap()), "{id}");
+        }
     }
 }
