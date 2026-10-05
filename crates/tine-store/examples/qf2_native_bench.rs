@@ -1,6 +1,7 @@
 //! Native release measurement through the same Store doors used by commands.
 //! Run only on graph copies containing QF2 Small/Sixty/Big fixtures.
-//! Usage: graph_scale_bench <graph> <checkpoint|cold> <launch|actions|memory>.
+//! Usage: qf2_native_bench <graph> <checkpoint path|cold> <mode>.
+//! Modes: launch, actions, memory, sixty, stages, simple, tql.
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -140,6 +141,10 @@ fn main() {
                 search_sections(&store, text, 0, 100)
             ]);
         }
+    }
+    if mode == "simple" || mode == "tql" {
+        let tql = mode == "tql";
+        out["query"] = json!([query(&store, tql), query(&store, tql)]);
     }
     if mode == "launch" && checkpoint != "cold" {
         out["checkpointWrite"] = json!(format!("{:?}", store.write_checkpoint_now()));
