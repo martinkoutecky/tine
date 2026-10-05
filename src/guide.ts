@@ -1,5 +1,6 @@
 import { backend } from "./backend";
 import { graphOwner, readOwned, writeOwned, type Owner } from "./owned";
+import { focusedSurfaceOwner } from "./focusedSurface";
 import { openPage, openPageInNewTab } from "./router";
 import { loadGuidePages, pageByName } from "./document";
 import { bumpPageInventoryRev, graphMeta, setGraphMeta } from "./graphSession";
@@ -73,13 +74,17 @@ export async function ensureGuidePagesLoaded(force = false): Promise<GuidePage[]
 }
 
 export async function openGuide(): Promise<void> {
-  const owner = graphOwner();
+  // The new tab opens in the surface the user asked from: if they moved to
+  // another pane, tab or route while the Guide loaded, it must not appear there
+  // (I-20). A failure still reports while the graph itself is current.
+  const owner = focusedSurfaceOwner();
+  const graphWhenAsked = graphOwner();
   try {
     await ensureGuidePagesLoaded(true);
     if (!owner()) return;
     openPageInNewTab(guidePageName(GUIDE_INDEX_TITLE), "page", undefined, true);
   } catch (e) {
-    if (owner()) pushToast(`Couldn't open the Guide. (${String(e)})`, "error");
+    if (graphWhenAsked()) pushToast(`Couldn't open the Guide. (${String(e)})`, "error");
   }
 }
 
@@ -88,7 +93,10 @@ export async function openGuide(): Promise<void> {
  * displayed as toasts and this function still resolves, so completion does
  * not certify that a copy exists. Cost follows copied Guide pages/assets. */
 export async function copyGuideIntoGraph(pageName: string): Promise<void> {
+  // The graph owner gates the bookkeeping and the success toast (the copy exists
+  // in that graph either way); the surface owner gates only the navigation.
   const owner = graphOwner();
+  const surface = focusedSurfaceOwner();
   const page = pageByName(pageName);
   const title = guideTitleFromName(page?.name ?? pageName);
   try {
@@ -102,7 +110,7 @@ export async function copyGuideIntoGraph(pageName: string): Promise<void> {
         : "The guide is already in your graph - opened it.",
       "success"
     );
-    openPage(result.name, "page");
+    if (surface()) openPage(result.name, "page");
   } catch (e) {
     pushToast(`Couldn't copy the Guide into your graph. (${String(e)})`, "error");
   }

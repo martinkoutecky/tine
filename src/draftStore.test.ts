@@ -153,11 +153,38 @@ describe("crash-surviving drafts (og ADR 0061)", () => {
   });
 
   it("a draft store that cannot be read never blocks open", async () => {
-    vi.mocked(backend().loadDrafts!).mockRejectedValueOnce(new Error("unreadable"));
+    // Persistent: setGraphMeta and the epoch bump each start an offer; the first
+    // owner is retired by the bump, so only the current one may report.
+    vi.mocked(backend().loadDrafts!).mockRejectedValue(new Error("unreadable"));
     setGraphMeta({ root: "/g", name: "g" } as unknown as GraphMeta);
     bumpGraphEpoch();
     await vi.advanceTimersByTimeAsync(0);
     expect(earlierDrafts()).toEqual([]);
+    // I-9: the failure is a sticky error, not a 3-second warning that is gone
+    // before anyone reads it.
+    expect(toasts().filter((t) => t.kind === "error" && t.sticky && t.message.includes("earlier session"))).toHaveLength(1);
     setGraphMeta(null);
+  });
+
+  it("a crash-safe write the store refuses is a sticky error, said once", async () => {
+    vi.mocked(backend().storeDraft!).mockRejectedValue(new Error("store full"));
+    setRaw("p1", "typed");
+    await settle();
+    setRaw("p1", "typed more");
+    await settle();
+    const shown = toasts().filter((t) => t.message.includes("crash-safe copy"));
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toMatchObject({ kind: "error", sticky: true });
+  });
+
+  it("a crash-safe copy that cannot be removed is a sticky error", async () => {
+    setRaw("p1", "typed");
+    await settle();
+    expect(records()).toHaveLength(1);
+    vi.mocked(backend().retireDraft!).mockRejectedValue(new Error("locked"));
+    failing = false;
+    await flushAll();
+    await settle();
+    expect(toasts().filter((t) => t.kind === "error" && t.sticky && t.message.includes("remove the crash-safe copy"))).toHaveLength(1);
   });
 });

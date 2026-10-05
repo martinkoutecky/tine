@@ -1,6 +1,7 @@
 import { optionsUpdater } from "./primitives";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { graphOwner, readOwned, type Owner } from "../owned";
+import { reportUiFailure } from "../uiFailure";
 import { exportModal, closeExportModal, typographyMode, type ExportRequest } from "../ui";
 import { pushToast } from "../toasts";
 import { graphMeta } from "../graphSession";
@@ -254,8 +255,9 @@ function collectRawTargets(raw: string, format: Format, targets: WarmTargets): v
     for (const property of blockRegions(raw, format).properties) {
       if (!isRenderHiddenProp(property.key)) collectInlineTargets(propertyValueInline(property, format), targets);
     }
-  } catch {
-    /* keep export usable if a malformed block misses pre-warm */
+  } catch (error) {
+    // Keep the export usable if a malformed block misses pre-warm, and say so (I-9).
+    reportUiFailure("export-preview", error);
   }
 }
 
@@ -302,8 +304,9 @@ async function warmMacro(
     }
     const text = literalBuiltInMacroText(name, macro.args);
     if (text != null) warmed.set(key, { kind: "text", text });
-  } catch {
-    /* fall back to the literal macro text */
+  } catch (error) {
+    // Fall back to the literal macro text, and say so (I-9).
+    if (owner()) reportUiFailure("export-preview", error);
   }
 }
 
@@ -348,9 +351,11 @@ async function warmQueryMacros(
             : undefined,
       });
     }
-  } catch {
+  } catch (error) {
     // Leave the literal macro visible when native resolution rejects the bounded
-    // request; never fall back to whole-page hydration in the WebView.
+    // request; never fall back to whole-page hydration in the WebView. The
+    // failure is shown (I-9).
+    if (owner()) reportUiFailure("export-preview", error);
   }
 }
 
@@ -375,7 +380,10 @@ async function warmExportResolutionsOwned(nodes: ExportNode[], warmed: Map<strin
       const refs = [...targets.refs].filter(uuid => !seenRefs.has(uuid)).slice(0, 2000 - seenRefs.size);
       if (!refs.length) break;
       refs.forEach(uuid => seenRefs.add(uuid));
-      await Promise.all(refs.map(uuid => readOwned(owner, resolveBlockBatched(uuid).catch(() => null))));
+      await Promise.all(refs.map(uuid => readOwned(owner, resolveBlockBatched(uuid).catch((error) => {
+        if (owner()) reportUiFailure("export-preview", error);
+        return null;
+      }))));
       if (!owner()) return;
       for (const uuid of refs) {
         const resolved = resolveExportBlockRef(uuid);

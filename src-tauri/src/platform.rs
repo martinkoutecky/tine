@@ -125,45 +125,63 @@ mod clipboard_file_tests {
     }
 }
 
-/// On Linux, hand a PNG to the OS clipboard via `wl-copy` (Wayland) or `xclip`/
-/// `xsel` (X11). These tools FORK a daemon that serves the selection until it's
-/// replaced — which is exactly what an image clipboard needs. `arboard` (what the
-/// Tauri plugin uses) tries to do this in-process and frequently drops the image
-/// on WebKitGTK, so we prefer the native tools and only fall back to the plugin.
+/// How long the foreground clipboard tool gets to report whether it took the
+/// image. `wl-copy`/`xclip`/`xsel` hand the selection to a forked server and the
+/// foreground process exits at once, so a healthy tool answers well inside this;
+/// a tool that is still running afterwards is serving the selection from the
+/// foreground and counts as success.
 #[cfg(target_os = "linux")]
-fn linux_copy_image(bytes: &[u8]) -> Result<(), String> {
+const CLIPBOARD_TOOL_VERDICT: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Reap `child` on a detached thread so a process we stop caring about never
+/// becomes a zombie (I-21: every exit path reaps its child).
+#[cfg(desktop)]
+fn reap_in_background(mut child: std::process::Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+}
+
+/// Spawn a fire-and-forget helper (browser or file-manager opener) and reap it
+/// when it exits. The caller learns only whether it started.
+#[cfg(desktop)]
+pub(crate) fn spawn_reaped(command: &mut std::process::Command) -> Result<(), String> {
+    command
+        .spawn()
+        .map(reap_in_background)
+        .map_err(|error| error.to_string())
+}
+
+/// Stop a child we are abandoning and collect it. `kill` may fail because it
+/// already exited; `wait` then still reaps it.
+#[cfg(target_os = "linux")]
+fn kill_and_reap(child: &mut std::process::Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Feed `bytes` to each clipboard tool in turn. A tool counts as having taken
+/// the image only when it exits successfully, or is still serving it after
+/// `verdict`; a tool that fails to start, cannot be written to, or exits with a
+/// failure status falls through to the next one, and every child is reaped on
+/// every path. The error names the last tool's failure.
+#[cfg(target_os = "linux")]
+fn copy_with_tools(
+    tools: &[(String, Vec<String>)],
+    bytes: &[u8],
+    verdict: std::time::Duration,
+) -> Result<(), String> {
     use std::io::Write;
     use std::process::{Command, Stdio};
-    // Prefer the tool matching the active session, but try all — a Wayland session
-    // under Xwayland may have only xclip, and vice versa.
-    let mut order: Vec<(&str, Vec<&str>)> = Vec::new();
-    let push = |o: &mut Vec<(&str, Vec<&str>)>, prog: &'static str| {
-        let args: Vec<&str> = match prog {
-            "wl-copy" => vec!["--type", "image/png"],
-            "xclip" => vec!["-selection", "clipboard", "-t", "image/png"],
-            "xsel" => vec!["--clipboard", "--input"],
-            _ => vec![],
-        };
-        o.push((prog, args));
-    };
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        push(&mut order, "wl-copy");
-        push(&mut order, "xclip");
-        push(&mut order, "xsel");
-    } else {
-        push(&mut order, "xclip");
-        push(&mut order, "xsel");
-        push(&mut order, "wl-copy");
-    }
     let mut last_err = String::from("no clipboard tool found (install wl-clipboard or xclip)");
-    for (prog, args) in order {
-        let child = Command::new(prog)
-            .args(&args)
+    for (prog, args) in tools {
+        let spawned = Command::new(prog)
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
-        let mut child = match child {
+        let mut child = match spawned {
             Ok(c) => c,
             Err(e) => {
                 last_err = format!("{prog}: {e}");
@@ -171,19 +189,67 @@ fn linux_copy_image(bytes: &[u8]) -> Result<(), String> {
             }
         };
         if let Some(mut stdin) = child.stdin.take() {
-            if let Err(e) = stdin.write_all(bytes) {
+            let written = stdin.write_all(bytes);
+            drop(stdin); // EOF: the tool now owns the whole image
+            if let Err(e) = written {
+                kill_and_reap(&mut child);
                 last_err = format!("{prog}: write stdin: {e}");
                 continue;
             }
         }
-        // wl-copy/xclip fork a server and the foreground process exits promptly;
-        // reap it on a thread so we neither block here nor leak a zombie.
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-        return Ok(());
+        let deadline = std::time::Instant::now() + verdict;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(status)) => {
+                    last_err = format!("{prog}: exited with {status}");
+                    break;
+                }
+                Ok(None) if std::time::Instant::now() >= deadline => {
+                    // Still running: it serves the selection from the foreground.
+                    reap_in_background(child);
+                    return Ok(());
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                Err(e) => {
+                    kill_and_reap(&mut child);
+                    last_err = format!("{prog}: wait: {e}");
+                    break;
+                }
+            }
+        }
     }
     Err(last_err)
+}
+
+/// On Linux, hand a PNG to the OS clipboard via `wl-copy` (Wayland) or `xclip`/
+/// `xsel` (X11). These tools FORK a daemon that serves the selection until it's
+/// replaced — which is exactly what an image clipboard needs. `arboard` (what the
+/// Tauri plugin uses) tries to do this in-process and frequently drops the image
+/// on WebKitGTK, so we prefer the native tools and only fall back to the plugin.
+#[cfg(target_os = "linux")]
+fn linux_copy_image(bytes: &[u8]) -> Result<(), String> {
+    // Prefer the tool matching the active session, but try all — a Wayland session
+    // under Xwayland may have only xclip, and vice versa.
+    let tool = |prog: &str| -> (String, Vec<String>) {
+        let args: &[&str] = match prog {
+            "wl-copy" => &["--type", "image/png"],
+            "xclip" => &["-selection", "clipboard", "-t", "image/png"],
+            "xsel" => &["--clipboard", "--input"],
+            _ => &[],
+        };
+        (
+            prog.to_string(),
+            args.iter().map(|a| a.to_string()).collect(),
+        )
+    };
+    let names: [&str; 3] = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        ["wl-copy", "xclip", "xsel"]
+    } else {
+        ["xclip", "xsel", "wl-copy"]
+    };
+    let order: Vec<_> = names.iter().map(|name| tool(name)).collect();
+    copy_with_tools(&order, bytes, CLIPBOARD_TOOL_VERDICT)
 }
 
 /// Starting the clipboard tool (PATH search, exec, writing the image to its
@@ -321,8 +387,7 @@ pub(crate) async fn open_external(app: tauri::AppHandle, url: String) -> Result<
             let mut command = opener_command_env("xdg-open", OpenerEnvPolicy::Browser);
             #[cfg(target_os = "macos")]
             let mut command = opener_command("open");
-            command.arg(&url).spawn().map_err(|e| e.to_string())?;
-            Ok(())
+            spawn_reaped(command.arg(&url))
         }
         // Windows: do NOT spawn `explorer <url>`. explorer.exe treats an http(s)/
         // mailto argument as a shell item and frequently opens a File Explorer
@@ -424,30 +489,16 @@ pub(crate) fn open_page_source(path: &std::path::Path) -> Result<(), String> {
     let mut command = opener_command("open");
     #[cfg(target_os = "windows")]
     let mut command = opener_command("explorer");
-    command
-        .arg(path)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    spawn_reaped(command.arg(path))
 }
 
 #[cfg(desktop)]
 pub(crate) fn reveal_page_source(path: &std::path::Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    return opener_command("open")
-        .arg("-R")
-        .arg(path)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| error.to_string());
+    return spawn_reaped(opener_command("open").arg("-R").arg(path));
 
     #[cfg(target_os = "windows")]
-    return opener_command("explorer")
-        .arg("/select,")
-        .arg(path)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| error.to_string());
+    return spawn_reaped(opener_command("explorer").arg("/select,").arg(path));
 
     #[cfg(target_os = "linux")]
     {
@@ -473,11 +524,7 @@ pub(crate) fn reveal_page_source(path: &std::path::Path) -> Result<(), String> {
         let parent = path
             .parent()
             .ok_or_else(|| "page source has no parent directory".to_string())?;
-        opener_command("xdg-open")
-            .arg(parent)
-            .spawn()
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        spawn_reaped(opener_command("xdg-open").arg(parent))
     }
 }
 
@@ -898,5 +945,138 @@ mod file_url_tests {
         // A remote authority is not a local path on this platform.
         #[cfg(not(target_os = "windows"))]
         assert_eq!(file_url_to_path("file://example.com/share/a.txt"), None);
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tool_tests {
+    // Script tools need a POSIX shell; an inner cfg keeps the module visible to
+    // the production-source scan (og-enforcement) as test code.
+    #![cfg(target_os = "linux")]
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    fn script(dir: &std::path::Path, name: &str, body: &str) -> (String, Vec<String>) {
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (path.to_string_lossy().into_owned(), Vec::new())
+    }
+    fn pid_of(dir: &std::path::Path, file: &str) -> u32 {
+        std::fs::read_to_string(dir.join(file))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
+    }
+    /// The process still has a /proc entry: running, or a zombie nobody waited for.
+    fn lingers(pid: u32) -> bool {
+        std::path::Path::new(&format!("/proc/{pid}")).exists()
+    }
+    const QUICK: Duration = Duration::from_millis(400);
+
+    #[test]
+    fn a_tool_that_exits_with_failure_is_not_a_copy_and_the_next_tool_is_tried() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = vec![
+            script(dir.path(), "bad", "cat >/dev/null; exit 3"),
+            script(dir.path(), "good", "cat >/dev/null; exit 0"),
+        ];
+        assert!(copy_with_tools(&tools, b"png", QUICK).is_ok());
+    }
+
+    #[test]
+    fn every_tool_failing_reports_the_failure_instead_of_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = vec![
+            script(dir.path(), "bad1", "cat >/dev/null; exit 3"),
+            script(dir.path(), "bad2", "cat >/dev/null; exit 4"),
+        ];
+        let error = copy_with_tools(&tools, b"png", QUICK).unwrap_err();
+        assert!(error.contains("bad2") && error.contains("exit"), "{error}");
+    }
+
+    #[test]
+    fn a_missing_tool_falls_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = vec![
+            ("/nonexistent/tine-clip-tool".to_string(), Vec::new()),
+            script(dir.path(), "good", "cat >/dev/null"),
+        ];
+        assert!(copy_with_tools(&tools, b"png", QUICK).is_ok());
+    }
+
+    #[test]
+    fn a_tool_that_stops_reading_is_killed_and_reaped_before_the_next_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let tools = vec![
+            // Records its pid and exits without reading: the 4 MiB write hits EPIPE.
+            script(
+                dir.path(),
+                "deaf",
+                &format!("echo $$ > {}", pidfile.display()),
+            ),
+            script(dir.path(), "good", "cat >/dev/null"),
+        ];
+        assert!(copy_with_tools(&tools, &vec![0u8; 4 << 20], QUICK).is_ok());
+        let pid = pid_of(dir.path(), "pid");
+        assert!(
+            !lingers(pid),
+            "the abandoned tool {pid} was left as a zombie"
+        );
+    }
+
+    #[test]
+    fn a_tool_still_serving_in_the_foreground_counts_as_success_and_is_reaped_after_it_exits() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let tools = vec![script(
+            dir.path(),
+            "server",
+            &format!(
+                "echo $$ > {}; cat >/dev/null; exec sleep 30",
+                pidfile.display()
+            ),
+        )];
+        let started = Instant::now();
+        assert!(copy_with_tools(&tools, b"png", Duration::from_millis(200)).is_ok());
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let pid = pid_of(dir.path(), "pid");
+        assert!(lingers(pid), "the serving tool must keep running");
+        // The selection owner is replaced: it exits, and the reaper collects it.
+        unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while lingers(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            !lingers(pid),
+            "an exited serving tool {pid} was never reaped"
+        );
+    }
+
+    #[test]
+    fn spawn_reaped_collects_a_finished_opener() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let (prog, _) = script(
+            dir.path(),
+            "opener",
+            &format!("echo $$ > {}", pidfile.display()),
+        );
+        spawn_reaped(&mut std::process::Command::new(prog)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pidfile.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let pid = pid_of(dir.path(), "pid");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while lingers(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!lingers(pid), "opener {pid} stayed a zombie");
+        assert!(spawn_reaped(&mut std::process::Command::new("/nonexistent/tine-opener")).is_err());
     }
 }

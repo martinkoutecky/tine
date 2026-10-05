@@ -21,6 +21,8 @@ import { journalTitle, appNow } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { pushToast, pushToastUnique } from "../toasts";
 import { resetReferenceSectionState } from "../referenceSectionState";
+import { dbg } from "../debug";
+import { reportUiFailure } from "../uiFailure";
 
 let publishIdentityNavigation: ((from: PageTarget, to: PageTarget) => void) | null = null;
 /** The UI installs the exact-path route, tab, Recent and sidebar rewrite. */
@@ -310,7 +312,10 @@ export async function deletePage(
   tombstone(name);
   try {
     await deletePageOnDisk(name, kind, expectedPath);
-  } catch {
+  } catch (error) {
+    // The caller shows the visible failure from `false`; the cause is logged so
+    // "Delete failed" is diagnosable (I-9).
+    dbg(`page delete failed for ${name}: ${String(error)}`);
     releaseReservation?.();
     if (!stillBound(binding)) return false;
     untombstone(name); // delete failed — lift the tombstone; page + edits stay intact
@@ -320,8 +325,9 @@ export async function deletePage(
   if (!stillBound(binding)) return false;
   try {
     retireRoutes?.();
-  } catch {
+  } catch (error) {
     // UI-only: a durable delete still retires the loaded page below.
+    dbg(`route retirement after deleting ${name} failed: ${String(error)}`);
   }
   forgetPage(name); // success — now drop it from the working set + feed
   removeDeletedPageFromNavigation({ name, pageKind: kind, ...(expectedPath ? { path: expectedPath } : {}) });
@@ -411,7 +417,10 @@ export function reloadPageIfStillSafe(name: string, dto: PageDto & { id?: string
 export async function reloadHlsIfLoaded(name: string): Promise<boolean> {
   if (!pageByName(name)) return false;
   const retryWhenFree = () => {
-    if (reloadDisposition(name) === "skip") whenPageReplaceable(name, "hls-refresh", () => void reloadHlsIfLoaded(name));
+    if (reloadDisposition(name) === "skip") whenPageReplaceable(name, "hls-refresh", () => {
+      // Nobody awaits a deferred retry, so its failure must be shown here (I-9).
+      void reloadHlsIfLoaded(name).catch((error) => reportUiFailure("page-refresh", error));
+    });
     return false;
   };
   if (reloadDisposition(name) !== "reload") return retryWhenFree();

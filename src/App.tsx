@@ -765,7 +765,9 @@ export function App(): JSX.Element {
           openPublishedPermalink(await loadPublishedSnapshot(), window.location.hash, paneRouter(focusedPaneId()));
         } catch { console.error("published permalink unavailable"); }
       }
-      if (owner()) setFirstLoadDone(true);
+      // The load above retires `owner` (opening a graph moves the binding), so the
+      // VIEW, not the graph binding, owns this completion.
+      if (alive) setFirstLoadDone(true);
       if (!isPublishedExport() && alive) {
         disposeLinks = await installTineLinks(() => alive);
         if (!alive) disposeLinks();

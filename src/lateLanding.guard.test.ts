@@ -26,12 +26,9 @@ const EXEMPT: Record<string, string> = {
   "src/debug.ts#dbg": "best-effort process log has no UI landing",
   "src/editor/linkDefault.ts#initLinkDefault": "migration write reports failure independently of the current policy request",
   "src/editor/linkDefault.ts#setLinkFirstMatch": "legacy preference write reports failure independently",
-  "src/graphSession.ts#setJournalTemplate": "graph binding owns the template update",
   "src/launcherRanking.ts#initLauncherRankingSetting": "preference revision gates the device-local signal",
   "src/localFileSettings.ts#initLocalFileSettings": "preference revision gates the device-local signal",
   "src/mediaEditorSettings.ts#initMediaEditorSettings": "preference revision gates the device-local signal",
-  "src/nativeChrome.ts#setNativeFrame": "device-local write reports its own failure",
-  "src/nativeChrome.ts#initNativeChrome": "preference revision gates the device-local signal",
   "src/navSettings.ts#initNavSettings": "preference revision gates the device-local signal",
   "src/plugins/manager.ts#loadSettings": "process-wide plugin settings have no graph owner",
   "src/plugins/manager.ts#storeSettings": "process-wide plugin settings queue owns writes",
@@ -70,12 +67,9 @@ const EXEMPT_CALLS: Record<string, string[]> = {
   "src/debug.ts#dbg": ["debugLog"],
   "src/editor/linkDefault.ts#initLinkDefault": ["setAppString"],
   "src/editor/linkDefault.ts#setLinkFirstMatch": ["setLinkFirstMatch"],
-  "src/graphSession.ts#setJournalTemplate": ["setDefaultJournalTemplate"],
   "src/launcherRanking.ts#initLauncherRankingSetting": ["getAppBool"],
   "src/localFileSettings.ts#initLocalFileSettings": ["getAppBool"],
   "src/mediaEditorSettings.ts#initMediaEditorSettings": ["getAppString", "getAppString"],
-  "src/nativeChrome.ts#setNativeFrame": ["setAppBool"],
-  "src/nativeChrome.ts#initNativeChrome": ["getAppBool"],
   "src/navSettings.ts#initNavSettings": ["getAppBool"],
   "src/plugins/manager.ts#loadSettings": ["getAppString"],
   "src/plugins/manager.ts#storeSettings": ["setAppString", "setAppString"],
@@ -97,7 +91,10 @@ const EXEMPT_CALLS: Record<string, string[]> = {
   "src/plugins/manager.ts#install": ["installPlugin"],
   "src/plugins/registry.ts#verifiedIndex": ["verifyPluginRegistry"],
 };
-const OWNERS = new Set(["graphOwner", "ownedWhen", "latestOwner", "revisionOwner"]);
+// `focusedSurfaceOwner` (src/focusedSurface.ts) is an owner constructor too: it
+// composes graphOwner with the focused router, tab, intent and route. The test
+// below pins that it really does start from graphOwner.
+const OWNERS = new Set(["graphOwner", "ownedWhen", "latestOwner", "revisionOwner", "focusedSurfaceOwner"]);
 const BOUNDARIES = new Set(["readOwned", "readOwnedResource", "writeOwned", "serializeOwned", "serializeDurable"]);
 // Durable backend operations are classified by interface verb, including names
 // such as rename and paste that a write-prefix expression cannot recognize.
@@ -177,7 +174,7 @@ export function lateLandingViolations(file: string, source: string): string[] {
   const ownedConstructors = new Set<string>();
   for (const statement of tree.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) ||
-      !/\/?owned$/.test(statement.moduleSpecifier.text)) continue;
+      !/\/?(owned|focusedSurface)$/.test(statement.moduleSpecifier.text)) continue;
     const names = statement.importClause?.namedBindings;
     if (!names || !ts.isNamedImports(names)) continue;
     for (const specifier of names.elements) {
@@ -389,5 +386,10 @@ describe("I-20 owned backend completion syntax", () => {
     const methods = planted.map((violation) => violation.split(":")[2]).sort();
     expect(methods).not.toEqual([...EXEMPT_CALLS["src/graph.ts#loadGraphPath"]].sort());
     expect(methods).toContain("getPage");
+  });
+  it("accepts focusedSurfaceOwner only because it is built on graphOwner", () => {
+    expect(readFileSync("src/focusedSurface.ts", "utf8")).toMatch(/return graphOwner\(/);
+    expect(lateLandingViolations("src/planted.ts", "import { focusedSurfaceOwner } from './focusedSurface'; import { readOwned } from './owned'; async function safe() { const r = await readOwned(focusedSurfaceOwner(), backend().getPage('a', 'page')); if (r.kind === 'stale') return; setPage(r.value); }")).toHaveLength(0);
+    expect(lateLandingViolations("src/planted.ts", "function focusedSurfaceOwner() { return () => true; } async function f() { await readOwned(focusedSurfaceOwner(), backend().getPage('a', 'page')); }")).not.toHaveLength(0);
   });
 });

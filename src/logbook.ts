@@ -4,6 +4,7 @@ import {
 } from "./render/wasm/lsdoc_wasm.js";
 import { parserReady } from "./render/parse";
 import { leadingMarker } from "./editor/marker";
+import { reportUiFailure } from "./uiFailure";
 import type { Format } from "./types";
 
 export interface LogbookRow {
@@ -38,8 +39,9 @@ export function applyMarkerTransition(
       enabled,
       withSeconds,
     );
-  } catch (e) {
-    console.error("logbook marker transition failed");
+  } catch (error) {
+    // The edit goes through without its LOGBOOK entry; say so (I-9).
+    reportUiFailure("logbook", error);
     return nextRaw;
   }
 }
@@ -52,7 +54,8 @@ export function logbookInfo(raw: string, format: Format): LogbookInfo {
       summary: parsed.summary || "0s",
       rows: Array.isArray(parsed.rows) ? parsed.rows : [],
     };
-  } catch {
+  } catch (error) {
+    reportUiFailure("logbook", error);
     return EMPTY_INFO;
   }
 }

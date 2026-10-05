@@ -1,5 +1,9 @@
 import { createStore, reconcile } from "solid-js/store";
 import { backend } from "./backend";
+import { dbg } from "./debug";
+import { errorFamily } from "./errorFamily";
+import { graphOwner } from "./owned";
+import { reportUiFailure } from "./uiFailure";
 import { mime_from_path } from "./render/wasm/lsdoc_wasm";
 
 // Cache of graph-asset blob URLs keyed by path relative to `assets/`. Without it
@@ -90,7 +94,14 @@ function prune(protectedKey: string) {
   }
 }
 
-function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: string): CacheEntry {
+/** How a failed read is presented. `graph` reads are the user's own assets: a
+ * missing file is a normal state (the broken-image placeholder is its visible
+ * form) but any other failure is reported. `device` reads are opt-in files
+ * outside the graph whose refusal (setting off, moved file) is an expected state
+ * that the placeholder already shows, so they are logged only. */
+type ReadKind = "graph" | "device";
+
+function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: string, kind: ReadKind): CacheEntry {
   const hit = cache.get(key);
   if (hit) {
     touch(key, hit);
@@ -99,6 +110,7 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
   const live = liveEntries.get(key);
   if (live) return live;
   const entry: CacheEntry = { promise: Promise.resolve(""), bytes: 0, leases: 0, evicted: false };
+  const owner = graphOwner();
   // Publish identity before starting the limiter: its first two tasks begin
   // synchronously, and must see themselves in the cache.
   cache.set(key, entry);
@@ -117,8 +129,10 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
         prune(key);
       }
       return url;
-    } catch {
+    } catch (error) {
       if (cache.get(key) === entry) cache.delete(key);
+      if (kind === "graph" && errorFamily(error) !== "not-found" && owner()) reportUiFailure("asset-read", error);
+      else dbg(`asset read failed (${kind}) ${key}: ${String(error)}`);
       return "";
     }
   });
@@ -147,7 +161,7 @@ async function acquire(entry: CacheEntry): Promise<BlobLease> {
 /** A blob URL for the asset at `rel` (relative to `assets/`), reading it over IPC
  *  at most once per open graph. Resolves to "" if the asset is missing/unreadable. */
 export function acquireAssetBlob(rel: string): Promise<BlobLease> {
-  return acquire(cachedBlob(rel, () => backend().readAsset(rel, MAX_IMAGE_BYTES), rel));
+  return acquire(cachedBlob(rel, () => backend().readAsset(rel, MAX_IMAGE_BYTES), rel, "graph"));
 }
 
 /** A blob URL for an image at an ABSOLUTE local `path` outside the graph, read over
@@ -156,7 +170,7 @@ export function acquireAssetBlob(rel: string): Promise<BlobLease> {
  *  opt-in is off or the file is missing/unreadable/too big. */
 export function acquireLocalImageBlob(path: string): Promise<BlobLease> {
   const key = `local:${path}`;
-  return acquire(cachedBlob(key, () => backend().readLocalImage(path), path));
+  return acquire(cachedBlob(key, () => backend().readLocalImage(path), path, "device"));
 }
 
 /** Pre-populate the cache for `rel` from in-memory bytes (e.g. a just-pasted

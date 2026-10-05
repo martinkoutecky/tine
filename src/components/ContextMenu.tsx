@@ -694,6 +694,12 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
   const submit = async () => {
     const title = name().trim();
     if (!title) return;
+    // The menu can close or be replaced while the name inventory is read, and
+    // `props` then reads through a retired `Match` accessor (it throws, or names
+    // another block). Everything the submission needs is captured here (I-20).
+    const id = props.id;
+    const close = props.close;
+    const asksToOmitParent = hasChildren() && !includeParent();
     const owner = graphOwner();
     let existing;
     try {
@@ -708,16 +714,16 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
       return;
     }
     // A permission/read-only change can land while the name read is pending.
-    if (!blockWritable(props.id)) {
+    if (!blockWritable(id)) {
       reportUiFailure("template-write", "read-only");
       return;
     }
-    setBlockProperty(props.id, "template", title);
-    if (hasChildren() && !includeParent()) {
-      setBlockProperty(props.id, "template-including-parent", "false");
+    setBlockProperty(id, "template", title);
+    if (asksToOmitParent) {
+      setBlockProperty(id, "template-including-parent", "false");
     }
     pushToast(`Template “${title}” created.`, "success");
-    props.close();
+    close();
   };
 
   return (

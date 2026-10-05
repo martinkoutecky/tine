@@ -1,10 +1,23 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { startEditing } from "../editorController";
+import { openPage } from "../router";
+import { resetPaneLayoutToSingle } from "../panes";
+
+vi.mock("../editorController", async (original) => ({ ...(await original<object>()), startEditing: vi.fn() }));
+vi.mock("../document", async (original) => ({
+  ...(await original<object>()),
+  resolveBlockRef: vi.fn(() => "runtime-1"),
+  node: vi.fn(() => ({ raw: "aBooksbBooksc" })),
+}));
 import { render } from "solid-js/web";
 import { OccurrenceControls, ReferenceExcerptBlocks, buildFullMarkedSegments, occurrenceSelection } from "./ReferenceEvidence";
 import type { BlockDto, ReferenceBlockEvidence, ReferenceOccurrence } from "../types";
 
 afterEach(() => {
   document.body.innerHTML = "";
+  vi.useRealTimers();
+  vi.mocked(startEditing).mockClear();
+  resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
 });
 
 const occ = (start: number): ReferenceOccurrence => ({
@@ -119,5 +132,26 @@ describe("occurrence jumps land on a selection, not a collapsed caret", () => {
       end: 9,
       direction: "forward",
     });
+  });
+});
+
+describe("I-20: a mention jump belongs to the surface the click opened", () => {
+  const click = () => {
+    const host = renderExcerpt(2, 4);
+    host.querySelector<HTMLButtonElement>(".reference-excerpt-mark")!.click();
+  };
+  it("focuses the mention in the opened page", () => {
+    vi.useFakeTimers();
+    click();
+    vi.advanceTimersByTime(200);
+    expect(startEditing).toHaveBeenCalledOnce();
+  });
+  it("does not grab the editor after the user navigated elsewhere", () => {
+    vi.useFakeTimers();
+    click();
+    vi.advanceTimersByTime(20);
+    openPage("Somewhere else");
+    vi.advanceTimersByTime(500);
+    expect(startEditing).not.toHaveBeenCalled();
   });
 });

@@ -81,7 +81,7 @@ export async function writeAtRisk(): Promise<void> {
     } catch (error) {
       // Refused past the store's bound, or a disk error: the draft stays in this
       // window (recovery panel); say once that it will not survive a crash.
-      if (!refusedOnce) pushToast(`Couldn't keep a crash-safe copy of “${name}” — ${String(error)}. It is still open in this window.`, "warn");
+      if (!refusedOnce) pushToast(`Couldn't keep a crash-safe copy of “${name}” — ${String(error)}. It is still open in this window.`, "error");
       refusedOnce = true;
     }
   }
@@ -101,7 +101,7 @@ async function retire(name: string, kept: Kept) {
       if (!kept.risky && atRisk.get(name) === kept) atRisk.delete(name);
     });
   } catch (error) {
-    pushToast(`Couldn't remove the crash-safe copy of “${name}” (${String(error)}). The page is saved; the copy may be offered again later.`, "warn");
+    pushToast(`Couldn't remove the crash-safe copy of “${name}” (${String(error)}). The page is saved; the copy may be offered again later.`, "error");
   }
 }
 
@@ -170,7 +170,7 @@ async function offerEarlier() {
   } catch (error) {
     // The backend sets an unreadable store aside, so this is a disk error or a
     // missing app-data dir: opening the graph goes on without earlier drafts.
-    pushToast(`Couldn't read drafts kept from an earlier session (${String(error)}).`, "warn");
+    pushToast(`Couldn't read drafts kept from an earlier session (${String(error)}).`, "error");
     return;
   }
   if (result.kind === "stale") return;

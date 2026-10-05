@@ -6,9 +6,10 @@
 import { backend } from "./backend";
 import { graphMeta } from "./graphSession";
 import { isJournalTitle } from "./journal";
-import { graphOwner, readOwned } from "./owned";
+import { readOwned } from "./owned";
+import { focusedSurfaceOwner } from "./focusedSurface";
 import { focusedRouter } from "./panes";
-import { openJournals, sameRoute } from "./router";
+import { openJournals } from "./router";
 import { pushToast } from "./toasts";
 
 /** Configured home page name, trimmed (the backend keeps the config value
@@ -38,15 +39,11 @@ export type HomeOutcome = "opened" | "unresolved" | "stale";
 export async function openConfiguredHomePage(): Promise<HomeOutcome> {
   const name = configuredHomePage();
   if (!name) return "unresolved";
-  // Own the focused pane's router, its active tab and its monotonic route
-  // intent revision (the ContextMenu rename exemplar): an A→B→A navigation or
-  // a focus move to another pane/tab showing an equal route retires the read.
+  // Own the focused surface (router, active tab, route intent and route): an
+  // A→B→A navigation or a focus move to another pane/tab showing an equal
+  // route retires the read.
   const router = focusedRouter();
-  const tabId = router.activeId();
-  const intent = router.routeIntentRevision();
-  const startingRoute = { ...router.route() };
-  const owner = graphOwner(() => focusedRouter() === router && router.activeId() === tabId
-    && router.routeIntentRevision() === intent && sameRoute(router.route(), startingRoute));
+  const owner = focusedSurfaceOwner();
   try {
     // A journal-titled home (OG resolves any page entity) opens that journal;
     // the classifier is the one `[[links]]` and favorites use.

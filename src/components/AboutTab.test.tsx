@@ -64,6 +64,24 @@ describe("AboutTab", () => {
     } finally { dispose(); host.remove(); }
   });
 
+  it("I-20: a platform lookup that lands after the tab closed starts no update-settings read", async () => {
+    isTauriMock.mockReturnValue(true);
+    let release!: (kind: "desktop") => void;
+    platformKindMock.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <AboutTab />, host);
+    await flush();
+    dispose();
+    host.remove();
+    getAppBoolMock.mockClear();
+    getVersionMock.mockClear();
+    release("desktop");
+    await flush();
+    expect(getAppBoolMock).not.toHaveBeenCalled();
+    expect(getVersionMock).not.toHaveBeenCalled();
+  });
+
   it("displays and copies the channel with the full prerelease version", async () => {
     isTauriMock.mockReturnValue(true);
     getVersionMock.mockResolvedValueOnce("0.7.0-beta.1");
