@@ -72,8 +72,10 @@ public class MwWin {
   // Windows grants the foreground only to the process that last had input; a
   // synthetic Alt press first makes this helper that process.
   public static bool Activate(IntPtr h) {
+    if (GetForegroundWindow() == h) return true;
+    if (IsIconic(h)) ShowWindow(h, 9);
+    if (SetForegroundWindow(h) && GetForegroundWindow() == h) return true;
     for (int i = 0; i < 5; i++) {
-      if (IsIconic(h)) ShowWindow(h, 9);
       keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero);
       SetForegroundWindow(h);
       System.Threading.Thread.Sleep(200);
@@ -290,14 +292,14 @@ await check("open", async () => {
 
 // Each check asserts the whole page file, so text landing in the wrong block
 // (or a key that split one) fails instead of passing on a substring.
-const expectPage = (lines, what) => until(() => disk() === lines.map((l) => `- ${l}\n`).join(""), 15_000, `${what}: ${JSON.stringify(disk())}`);
+const expectPage = (lines, what, ms = 15_000) => until(() => disk() === lines.map((l) => `- ${l}\n`).join(""), ms, `${what}: ${JSON.stringify(disk())}`);
 
 await check("type-save", async () => {
   if (!popup) throw new Error("no new window");
   activate(popup);
   await editFirstBlock();
-  typeText(" hostedone");
-  await expectPage(["alpha one hostedone", "alpha two", "alpha three"], "text typed in the new window did not reach disk as typed");
+  typeText(" hosted");
+  await expectPage(["alpha one hosted", "alpha two", "alpha three"], "text typed in the new window did not reach disk as typed");
   return "text typed in the new window was saved to the page file";
 });
 
@@ -310,8 +312,18 @@ await check("main-minimized", async () => {
   const after = windows();
   log(`after minimizing main: ${JSON.stringify(after)}`);
   debugShot("main-minimized");
+  const typedAt = Date.now();
   typeText(" minimized");
-  await expectPage(["alpha one hostedone minimized", "alpha two", "alpha three"], "with main minimized, typing in the new window did not reach disk as typed");
+  const want = ["alpha one hosted minimized", "alpha two", "alpha three"];
+  try {
+    await expectPage(want, "with main minimized, typing in the new window did not reach disk as typed");
+  } catch (error) {
+    // Diagnose a stalled save: keep the main window minimized and record when
+    // (if ever) the typed text lands without any further input.
+    const landed = await expectPage(want, "still not saved", 120_000).then(() => true, () => false);
+    log(`main-minimized: ${landed ? `saved after ${Date.now() - typedAt} ms` : `not saved after ${Date.now() - typedAt} ms`}`);
+    throw error;
+  }
   const state = after.find((w) => w.id === main.id);
   return `typing continued and saved while main was minimized${state?.minimized ? " (main reported iconic)" : ""}`;
 });
@@ -319,10 +331,10 @@ await check("main-minimized", async () => {
 await check("close", async () => {
   if (!popup) throw new Error("no new window");
   await editNextBlock();
-  typeText(" closingtwo");
+  typeText(" closing");
   closeNatively(popup);
   await until(() => !exists(popup), 15_000, "the new window did not close");
-  await expectPage(["alpha one hostedone minimized", "alpha two closingtwo", "alpha three"], "text typed just before the native close did not reach disk as typed");
+  await expectPage(["alpha one hosted minimized", "alpha two closing", "alpha three"], "text typed just before the native close did not reach disk as typed");
   await sleep(1500);
   if (!alive()) throw new Error(`the app exited when the new window closed (${JSON.stringify(exited)})`);
   if (!exists(main)) throw new Error("main window vanished with the new window");
