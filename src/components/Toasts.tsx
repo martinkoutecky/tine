@@ -6,6 +6,7 @@ import { createImageViewerGestures, type Transform } from "../imageViewerGesture
 import { stepIndex } from "../imageGallery";
 import { copyImageFromSrc as copyLightboxImage } from "../copyImage";
 import { registerTransientLayer } from "../transientLayers";
+import { queryAllWindows } from "../windowRealm";
 
 // Bottom-right transient notifications.
 export function Toasts(): JSX.Element {
@@ -90,7 +91,7 @@ export function Lightbox(): JSX.Element {
     if (!lightbox()) return;
     const unregister = registerTransientLayer({
       id: "image-lightbox",
-      root: () => document.querySelector<HTMLElement>(".lightbox-overlay"),
+      root: () => queryAllWindows<HTMLElement>(".lightbox-overlay"),
       dismiss: () => {
         if (menu()) { setMenu(null); return true; }
         setLightbox(null);

@@ -31,6 +31,7 @@ import { isPublishedExport } from "./publishedBackend";
 import { clearWorkspaces } from "./workspaces";
 import { reportUiFailure } from "./uiFailure";
 import { reportGraphOpenFailure } from "./graphOpenFailure";
+import { activeElement, isHTMLElementNode } from "./windowRealm";
 export const [graphConfigProblem, setGraphConfigProblem] = createSignal<unknown>(null);
 
 const GRAPH_KEY = "tine.graphPath";
@@ -135,8 +136,8 @@ export async function loadGraphPath(
   }
   try {
   if (ownsTransition) {
-    const active = document.activeElement;
-    if (active instanceof HTMLElement) active.blur();
+    const active = activeElement();
+    if (isHTMLElementNode(active)) active.blur();
     endEdit("graph-switch");
     // Let the textarea blur handler commit its final buffer before we inspect dirty.
     await Promise.resolve();

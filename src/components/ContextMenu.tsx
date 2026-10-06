@@ -29,6 +29,7 @@ import { cutBlocks } from "../cut";
 import { copyBlockLink, copyTineLink } from "./blockLinkCopy";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
+import { isHTMLElementNode, requestFrame, viewportOf } from "../windowRealm";
 
 function reportCopy(write: Promise<void>, okMsg: string): void {
   void write.then(() => pushToast(okMsg, "success"))
@@ -103,11 +104,12 @@ export function ContextMenu(): JSX.Element {
     setPlace(null);
     if (!cm) return;
     const { x, y } = cm;
-    requestAnimationFrame(() => {
+    requestFrame(menuEl, () => {
       const el = menuEl;
       if (!el || contextMenu() !== cm) return;
       const r = el.getBoundingClientRect();
-      const placed = placeContextMenu(x, y, r.width, r.height, window.innerWidth, window.innerHeight);
+      const viewport = viewportOf(el);
+      const placed = placeContextMenu(x, y, r.width, r.height, viewport.width, viewport.height);
       setPlace(placed);
       // Submenus are laid out but hidden by `visibility`, so they are measurable
       // here (GH #471). One side for the whole menu: sibling submenus opening
@@ -116,7 +118,7 @@ export function ContextMenu(): JSX.Element {
         0,
         ...[...el.querySelectorAll<HTMLElement>(".ctx-submenu-menu")].map((sub) => sub.getBoundingClientRect().width),
       );
-      setSubmenuSide(placeSubmenu(placed.left, r.width, widest, window.innerWidth));
+      setSubmenuSide(placeSubmenu(placed.left, r.width, widest, viewport.width));
       if (cm.kind === "page") {
         el.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
       }
@@ -232,7 +234,7 @@ function handlePageMenuKeyDown(
   menu: HTMLElement,
   close: () => void,
 ) {
-  const target = event.target instanceof HTMLElement ? event.target : null;
+  const target = isHTMLElementNode(event.target) ? event.target : null;
   // The inline rename field owns ordinary text-editing keys. Its first Escape
   // is a separate transient rung and remounts/focuses the rename menu item.
   if (target?.closest(".ctx-rename-form")) return;
@@ -243,7 +245,7 @@ function handlePageMenuKeyDown(
   }
   const items = pageMenuItems(menu);
   if (!items.length) return;
-  const current = items.indexOf(document.activeElement as HTMLButtonElement);
+  const current = items.indexOf(menu.ownerDocument.activeElement as HTMLButtonElement);
   let next: number | null = null;
   if (event.key === "ArrowDown") next = current < 0 ? 0 : (current + 1) % items.length;
   else if (event.key === "ArrowUp") next = current < 0 ? items.length - 1 : (current - 1 + items.length) % items.length;

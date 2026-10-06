@@ -32,6 +32,7 @@ import {
   type SheetPoint,
   type SheetRect,
 } from "./mutations";
+import { queryAllWindows, queryAllWindowsAll, requestFrame } from "../windowRealm";
 
 export const SEAM_STEPPING = true;
 
@@ -106,7 +107,7 @@ function inferUniqueMountedSurface(gridId: string): string | undefined {
   if (typeof document === "undefined") return undefined;
   const esc = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(gridId) : gridId.replace(/["\\]/g, "\\$&");
   const surfaces = new Set(
-    [...document.querySelectorAll<HTMLElement>(`[data-sheet-grid-id="${esc}"][data-sheet-surface-id]`)]
+    queryAllWindowsAll<HTMLElement>(`[data-sheet-grid-id="${esc}"][data-sheet-surface-id]`)
       .map((el) => el.dataset.sheetSurfaceId)
       .filter((value): value is string => !!value)
   );
@@ -824,7 +825,7 @@ function cellElement(sel: CellSelInput): HTMLElement | null {
   const esc = (value: string) =>
     typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
   const surface = sel.surfaceId ? `[data-sheet-surface-id="${esc(sel.surfaceId)}"]` : "";
-  return document.querySelector(
+  return queryAllWindows<HTMLElement>(
     `.sheet-cell[data-sheet-grid-id="${esc(sel.gridId)}"]${surface}[data-row="${sel.row}"][data-col="${sel.col}"]`
   );
 }
@@ -852,7 +853,7 @@ function replaceThroughMountedEditor(sel: CellSelInput, text: string): void {
   };
   queueMicrotask(() => {
     if (apply()) return;
-    if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => apply());
+    if (typeof requestAnimationFrame === "function") requestFrame(cellElement(sel), () => apply());
     else setTimeout(() => apply(), 0);
   });
 }

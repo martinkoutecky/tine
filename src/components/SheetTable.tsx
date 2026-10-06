@@ -69,6 +69,7 @@ import { FieldValueView } from "./SheetFieldValue";
 import { displayFieldValue, isEnumFieldType } from "../sheet/cellPresentation";
 import { fieldIdsForRecords, recordFacets, rowRaw, tableFieldOrder, tableRowTitle } from "../sheet/tableFields";
 import { createTableColumnResize } from "../sheet/tableColumnResize";
+import { windowOf } from "../windowRealm";
 
 interface RowRecord extends FormulaEvalRow {}
 
@@ -474,15 +475,16 @@ export function SheetTable(props: {
     const pointerId = event.pointerId;
     const startX = event.clientX;
     const startY = event.clientY;
+    const dragWindow = windowOf(event); // the drag's own window (P1)
     let dragging = false;
     let active = true;
 
     const cleanup = () => {
       if (!active) return;
       active = false;
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
+      dragWindow.removeEventListener("pointermove", onMove);
+      dragWindow.removeEventListener("pointerup", onUp);
+      dragWindow.removeEventListener("pointercancel", onCancel);
       if (cancelFieldHeaderDrag === cleanup) cancelFieldHeaderDrag = undefined;
       setDraggingFieldHeader(null);
       setFieldHeaderDrop(null);
@@ -496,7 +498,7 @@ export function SheetTable(props: {
         setDraggingFieldHeader(field);
       }
       move.preventDefault();
-      const header = document.elementFromPoint(move.clientX, move.clientY)
+      const header = dragWindow.document.elementFromPoint(move.clientX, move.clientY)
         ?.closest<HTMLElement>("[data-sheet-field-header]");
       const target = header?.dataset.sheetField as FieldId | undefined;
       if (!header || !target || !canDropFieldHeader(target, field)) {
@@ -526,9 +528,9 @@ export function SheetTable(props: {
     };
 
     cancelFieldHeaderDrag = cleanup;
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onCancel);
+    dragWindow.addEventListener("pointermove", onMove);
+    dragWindow.addEventListener("pointerup", onUp);
+    dragWindow.addEventListener("pointercancel", onCancel);
   };
   onCleanup(() => cancelFieldHeaderDrag?.());
   const changeFieldType = (field: FieldId, type: SchemaMenuType) => {

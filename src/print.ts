@@ -14,6 +14,7 @@ import { clearOnBindingInvalidated } from "./binding";
 import { pushToast } from "./toasts";
 import { flushAll } from "./document";
 import type { PrintOpts } from "./types";
+import { mainWindow } from "./windowRealm";
 
 /** The default export options (match the Rust `PrintOpts::default`). */
 export const DEFAULT_PRINT_OPTS: PrintOpts = {
@@ -46,7 +47,8 @@ function loadPrintRenderers() {
 
 function bundledStylesheets(): HTMLLinkElement[] {
   const current = new URL(document.baseURI);
-  return [...document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][href]')]
+  // The bundle's stylesheets live in the main window's <head> (popups mirror it).
+  return [...mainWindow.document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][href]')]
     .filter((link) => {
       try {
         const url = new URL(link.href, document.baseURI);
@@ -137,7 +139,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
   activePrint = controller;
   const owner = graphOwner(() => activePrint === controller && !controller.signal.aborted);
   const abort = () => controller.abort();
-  window.addEventListener("pagehide", abort);
+  mainWindow.addEventListener("pagehide", abort);
   window.addEventListener("beforeunload", abort);
   let iframe: HTMLIFrameElement | undefined;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -150,7 +152,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     clearTimeout(watchdog);
     iframe?.remove();
     controller.signal.removeEventListener("abort", cleanup);
-    window.removeEventListener("pagehide", abort);
+    mainWindow.removeEventListener("pagehide", abort);
     window.removeEventListener("beforeunload", abort);
     if (activePrint === controller) activePrint = null;
     cancel();
@@ -229,7 +231,8 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     iframe.onerror = cleanup;
     // A failed load, stalled font, or missing afterprint must release the guard.
     watchdog = setTimeout(cleanup, 60_000);
-    document.body.appendChild(iframe);
+    // The print frame is the main window's; the OS print dialog belongs to it.
+    mainWindow.document.body.appendChild(iframe);
   } catch {
     const current = owner();
     cleanup();

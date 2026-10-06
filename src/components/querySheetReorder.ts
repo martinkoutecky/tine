@@ -1,6 +1,7 @@
 // **Reordering a condition inside the query sheet (SPEC §7.4, P6).** The pointer loop itself is NOT here: …
 import { registerTransientLayer } from "../transientLayers";
 import { beginRowReorderDrag } from "./rowReorder";
+import { documentOf } from "../windowRealm";
 
 /** The live drop position: which list, which sibling, and which side of it. */
 export interface QuerySheetDropTarget {
@@ -56,6 +57,8 @@ function endsAt(from: number, target: { index: number; before: boolean }): numbe
 export function beginQuerySheetReorder(event: PointerEvent, request: QuerySheetReorderRequest): void {
   if (event.button !== 0) return;
   cancelQuerySheetReorder();
+  // The drag's own window: listeners follow the pointer's document.
+  const doc = documentOf(event);
 
   let finished = false;
   const finish = () => {
@@ -63,15 +66,15 @@ export function beginQuerySheetReorder(event: PointerEvent, request: QuerySheetR
     finished = true;
     if (cancelInFlight === cancel) cancelInFlight = null;
     unregister();
-    document.removeEventListener("pointerup", finish);
-    document.removeEventListener("pointercancel", finish);
-    document.removeEventListener("lostpointercapture", cancel);
+    doc.removeEventListener("pointerup", finish);
+    doc.removeEventListener("pointercancel", finish);
+    doc.removeEventListener("lostpointercapture", cancel);
     request.setTarget(null);
   };
   const cancel = () => {
     if (finished) return;
     // The same event a real cancellation sends, so the shared loop drops its own listeners and releases the …
-    document.dispatchEvent(new Event("pointercancel"));
+    doc.dispatchEvent(new Event("pointercancel"));
     finish();
   };
   const unregister = registerTransientLayer({
@@ -115,7 +118,7 @@ export function beginQuerySheetReorder(event: PointerEvent, request: QuerySheetR
   );
 
   // Registered AFTER the shared loop, on the same target and phase, so its own `pointerup` — which is where …
-  document.addEventListener("pointerup", finish);
-  document.addEventListener("pointercancel", finish);
-  document.addEventListener("lostpointercapture", cancel);
+  doc.addEventListener("pointerup", finish);
+  doc.addEventListener("pointercancel", finish);
+  doc.addEventListener("lostpointercapture", cancel);
 }

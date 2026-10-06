@@ -10,6 +10,7 @@ import { dismissTopTransient, registerTransientLayer } from "../transientLayers"
 import { bindingCurrent, type Binding } from "../binding";
 import { pushToast } from "../toasts";
 import "../styles/props-panel.css";
+import { viewportOf } from "../windowRealm";
 
 // Properties panel: labelled fields for the properties of a page's pre-block or
 // of one block. Every field reads the current value and writes back through the
@@ -94,8 +95,9 @@ const sameKeys = (a: PagePropSpec[], b: PagePropSpec[]) =>
   a.length === b.length && a.every((row, i) => row.key === b[i].key);
 
 function Panel(props: { scope: PropsPanelScope; x: number; y: number; binding: Binding }): JSX.Element {
-  const w = typeof window !== "undefined" ? window.innerWidth : 1280;
-  const h = typeof window !== "undefined" ? window.innerHeight : 800;
+  const viewport = typeof window !== "undefined" ? viewportOf() : { width: 1280, height: 800 };
+  const w = viewport.width;
+  const h = viewport.height;
   const left = Math.max(8, Math.min(props.x, w - 332));
   // Anchor at the click, then once mounted lift the panel up by its measured
   // height so its full content stays on-screen — no scrollbar for normal content.

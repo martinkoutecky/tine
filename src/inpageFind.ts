@@ -9,6 +9,7 @@ import { sameRoute } from "./router";
 import { captureBinding, stillBound } from "./binding";
 import { searchSubstringSpans } from "./editor/searchQuery";
 import { rightSidebar, rightSidebarOpen, sidebarItemKey, searchRemoveAccents } from "./ui";
+import { activeDocument, activeElement, activeWindow, bodyOf, createRangeIn, isElementNode, queryAllWindows, queryAllWindowsAll, registeredWindows, requestFrame, viewportOf, windowOf } from "./windowRealm";
 
 export interface InPageFindMatch {
   blockId: string;
@@ -94,7 +95,7 @@ let revealToken = 0;
 let highlightToken = 0;
 let overlayRoot: HTMLDivElement | null = null;
 let surfaceObserver: MutationObserver | null = null;
-let surfaceObserverFrame = 0;
+let surfaceObserverFrame: (() => void) | undefined;
 
 export const inPageFindOpen = state.open;
 export const inPageFindQuery = state.query;
@@ -218,7 +219,7 @@ function findScopes(): { id: string; roots: readonly string[]; format: Format }[
 }
 
 export function openInPageFind() {
-  if (typeof document !== "undefined") restoreFocusEl = document.activeElement as HTMLElement | null;
+  if (typeof document !== "undefined") restoreFocusEl = activeElement() as HTMLElement | null;
   batch(() => {
     state.setPaneId(notesPaneId(focusedPaneId()));
     state.setPreserveEditorBlur(true);
@@ -246,7 +247,7 @@ export function closeInPageFind(opts: { restoreFocus?: boolean } = {}) {
     return;
   }
   queueMicrotask(() => {
-    const fallback = document.querySelector(".block-editor") as HTMLElement | null;
+    const fallback = activeDocument().querySelector(".block-editor") as HTMLElement | null;
     const el = target?.isConnected ? target : fallback;
     el?.focus?.({ preventScroll: true });
     state.setPreserveEditorBlur(false);
@@ -323,34 +324,37 @@ function surfaceSelector(id: string): string {
 /** Resolve a rendered block in its pane or sidebar item. O(DOM in that view),
  * returning null while a lazy block is unmounted; callers reveal/wait first. */
 export function inPageFindBlockElement(id: string, scopeId = currentFindPaneId()): HTMLElement | null {
-  return (document.querySelector(paneSelector(scopeId)) as HTMLElement | null)?.querySelector(blockSelector(id)) as HTMLElement | null;
+  return queryAllWindows<HTMLElement>(paneSelector(scopeId))?.querySelector(blockSelector(id)) as HTMLElement | null;
 }
 
 function inPageFindSurfaceElement(id: string, paneId = currentFindPaneId()): HTMLElement | null {
-  return (document.querySelector(paneSelector(paneId)) as HTMLElement | null)?.querySelector(surfaceSelector(id)) as HTMLElement | null;
+  return queryAllWindows<HTMLElement>(paneSelector(paneId))?.querySelector(surfaceSelector(id)) as HTMLElement | null;
 }
 
 function disconnectFindSurfaceObserver() {
   surfaceObserver?.disconnect();
   surfaceObserver = null;
-  if (surfaceObserverFrame) cancelAnimationFrame(surfaceObserverFrame);
-  surfaceObserverFrame = 0;
+  surfaceObserverFrame?.();
+  surfaceObserverFrame = undefined;
 }
 
 function observeCurrentFindSurfaces() {
   disconnectFindSurfaceObserver();
   if (!state.open() || typeof MutationObserver === "undefined") return;
-  const pane = document.body;
-  surfaceObserver = new MutationObserver((records) => {
+  // The body of the window that holds the find pane (OG-MULTIWINDOW P1).
+  const win = findWindow();
+  const pane = win.document.body;
+  const Observer = (win as Window & typeof globalThis).MutationObserver ?? MutationObserver;
+  surfaceObserver = new Observer((records) => {
     if (records.every((record) => {
-      const target = record.target instanceof Element ? record.target : record.target.parentElement;
+      const target = isElementNode(record.target) ? record.target : record.target.parentElement;
       if (target?.closest(".inpage-find-overlays,.inpage-find-bar")) return true;
       return record.type === "childList" && [...record.addedNodes, ...record.removedNodes].every((node) =>
-        node instanceof Element && node.matches(".inpage-find-overlays,.inpage-find-bar"));
+        isElementNode(node) && node.matches(".inpage-find-overlays,.inpage-find-bar"));
     })) return;
     if (surfaceObserverFrame) return;
-    surfaceObserverFrame = requestAnimationFrame(() => {
-      surfaceObserverFrame = 0;
+    surfaceObserverFrame = requestFrame(pane, () => {
+      surfaceObserverFrame = undefined;
       state.setSurfaceRevision((revision) => revision + 1);
       const matches = inPageFindMatches();
       if (!matches.length) state.setActiveIndex(-1);
@@ -364,7 +368,7 @@ function observeCurrentFindSurfaces() {
 
 function animationFrame(): Promise<void> {
   return new Promise((resolve) => {
-    if (typeof requestAnimationFrame !== "undefined") requestAnimationFrame(() => resolve());
+    if (typeof requestAnimationFrame !== "undefined") requestFrame(findWindow(), () => resolve());
     else setTimeout(resolve, 0);
   });
 }
@@ -444,7 +448,8 @@ function centerInPageFindOccurrence(blockEl: HTMLElement, ordinalInBlock: number
     const scRect = scroller.getBoundingClientRect();
     scroller.scrollTop += occurrenceCenter - (scRect.top + scroller.clientHeight / 2);
   } else {
-    window.scrollBy({ top: occurrenceCenter - window.innerHeight / 2 });
+    const win = windowOf(blockEl);
+    win.scrollBy({ top: occurrenceCenter - win.innerHeight / 2 });
   }
   return true;
 }
@@ -510,7 +515,7 @@ function textRanges(root: HTMLElement, query: string): Range[] {
     const a = pointForStart(m.start);
     const b = pointForEnd(m.end);
     if (!a || !b) continue;
-    const range = document.createRange();
+    const range = createRangeIn(root);
     range.setStart(a[0], a[1]);
     range.setEnd(b[0], b[1]);
     ranges.push(range);
@@ -527,7 +532,7 @@ function applyOverlayHighlights(ranges: Range[], active: Range | null) {
   clearOverlayHighlights();
   overlayRoot = document.createElement("div");
   overlayRoot.className = "inpage-find-overlays";
-  document.body.appendChild(overlayRoot);
+  bodyOf(active?.startContainer ?? ranges[0]?.startContainer ?? findWindow()).appendChild(overlayRoot);
   const add = (range: Range, activeRange: boolean) => {
     for (const rect of Array.from(range.getClientRects())) {
       if (rect.width <= 0 || rect.height <= 0) continue;
@@ -546,8 +551,10 @@ function applyOverlayHighlights(ranges: Range[], active: Range | null) {
 
 function applyCssHighlights(ranges: Range[], active: Range | null): boolean {
   if (typeof CSS === "undefined") return false;
-  const registry = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights as any;
-  const HighlightCtor = (window as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
+  // CSS.highlights paints only its own realm's document: use the find window's.
+  const win = windowOf(active?.startContainer ?? ranges[0]?.startContainer ?? findWindow());
+  const registry = cssHighlightsOf(win);
+  const HighlightCtor = (win as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
   if (!registry || !HighlightCtor) return false;
   registry.delete(FIND_HIGHLIGHT);
   registry.delete(FIND_ACTIVE_HIGHLIGHT);
@@ -559,13 +566,10 @@ function applyCssHighlights(ranges: Range[], active: Range | null): boolean {
 
 export function clearInPageFindHighlights() {
   highlightToken++;
-  if (typeof CSS !== "undefined") {
-    ((CSS as unknown as { highlights?: Map<string, unknown> }).highlights as any)?.delete?.(FIND_HIGHLIGHT);
-    ((CSS as unknown as { highlights?: Map<string, unknown> }).highlights as any)?.delete?.(FIND_ACTIVE_HIGHLIGHT);
-  }
+  resetCssHighlights();
   clearOverlayHighlights();
   if (typeof document === "undefined") return;
-  document.querySelectorAll(".inpage-find-active-block").forEach((el) => el.classList.remove("inpage-find-active-block"));
+  queryAllWindowsAll(".inpage-find-active-block").forEach((el) => el.classList.remove("inpage-find-active-block"));
 }
 
 function blockIdForElement(el: Element): string | null {
@@ -573,7 +577,7 @@ function blockIdForElement(el: Element): string | null {
 }
 
 function findScopeElement(id: string): HTMLElement | null {
-  return typeof document === "undefined" ? null : document.querySelector(paneSelector(id));
+  return typeof document === "undefined" ? null : queryAllWindows<HTMLElement>(paneSelector(id));
 }
 
 function elementMatchKey(el: HTMLElement, id: string): string {
@@ -586,8 +590,9 @@ function matchKey(match: InPageFindMatch): string {
 
 function isViewportVisible(el: HTMLElement, clipRect?: DOMRect): boolean {
   const rect = el.getBoundingClientRect();
-  const height = window.innerHeight || document.documentElement.clientHeight;
-  const width = window.innerWidth || document.documentElement.clientWidth;
+  const viewport = viewportOf(el);
+  const height = viewport.height || el.ownerDocument.documentElement.clientHeight;
+  const width = viewport.width || el.ownerDocument.documentElement.clientWidth;
   if (rect.bottom < 0 || rect.right < 0 || rect.top > height || rect.left > width) return false;
   if (!clipRect) return true;
   return rect.bottom >= clipRect.top && rect.top <= clipRect.bottom && rect.right >= clipRect.left && rect.left <= clipRect.right;
@@ -608,10 +613,24 @@ function visibleFindSurfaceElements(): HTMLElement[] {
   return visibleFindElements("[data-inpage-find-surface]");
 }
 
+function cssHighlightsOf(win: Window): any {
+  return ((win as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS ?? (typeof CSS === "undefined" ? undefined : CSS) as { highlights?: Map<string, unknown> } | undefined)?.highlights as any;
+}
+
+/** The window that renders the pane being searched; the active window when that
+ * pane is not mounted. */
+function findWindow(): Window {
+  const scope = findScopeElement(currentFindPaneId());
+  return scope ? windowOf(scope) : activeWindow();
+}
+
 function resetCssHighlights() {
   if (typeof CSS === "undefined") return;
-  ((CSS as unknown as { highlights?: Map<string, unknown> }).highlights as any)?.delete?.(FIND_HIGHLIGHT);
-  ((CSS as unknown as { highlights?: Map<string, unknown> }).highlights as any)?.delete?.(FIND_ACTIVE_HIGHLIGHT);
+  for (const win of registeredWindows().length ? registeredWindows() : [undefined]) {
+    const registry = win ? cssHighlightsOf(win) : (CSS as unknown as { highlights?: Map<string, unknown> }).highlights as any;
+    registry?.delete?.(FIND_HIGHLIGHT);
+    registry?.delete?.(FIND_ACTIVE_HIGHLIGHT);
+  }
 }
 
 export function refreshInPageFindHighlights() {
@@ -620,7 +639,7 @@ export function refreshInPageFindHighlights() {
     clearInPageFindHighlights();
     return;
   }
-  document.querySelectorAll(".inpage-find-active-block").forEach((el) => el.classList.remove("inpage-find-active-block"));
+  queryAllWindowsAll(".inpage-find-active-block").forEach((el) => el.classList.remove("inpage-find-active-block"));
   const query = state.query().trim();
   if (!query) {
     clearInPageFindHighlights();

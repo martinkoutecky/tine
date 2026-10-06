@@ -29,6 +29,7 @@ import { changeGraphSetting, writeGraphSignal } from "./graphPreferences";
 export { appearancePreference, theme, resolveTheme, applyTheme, setAppearancePreference } from "./themePreference";
 export type { ThemePreference } from "./themePreference";
 import { theme, setAppearancePreference } from "./themePreference";
+import { isHTMLElementNode, onEachWindow } from "./windowRealm";
 
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
 export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
@@ -372,14 +373,19 @@ export function installPaneTracker(): () => void {
     if (target?.closest?.("[data-pane-focus-neutral]")) return;
     update(e);
   };
-  window.addEventListener("pointerdown", pointerdown, true);
-  window.addEventListener("focusin", update, true);
+  const stopWindows = onEachWindow((win) => {
+    win.addEventListener("pointerdown", pointerdown, true);
+    win.addEventListener("focusin", update, true);
+    return () => {
+      win.removeEventListener("pointerdown", pointerdown, true);
+      win.removeEventListener("focusin", update, true);
+    };
+  });
   return () => {
     alive = false;
     stopBackup?.();
     stopPending();
-    window.removeEventListener("pointerdown", pointerdown, true);
-    window.removeEventListener("focusin", update, true);
+    stopWindows();
   };
 }
 
@@ -1316,7 +1322,7 @@ export function openPageContextMenu(
     : (typeof pageKindOrFileActions === "boolean" ? pageKindOrFileActions : false);
   const owner = typeof targetOrName === "string"
     ? focusOwner
-    : (fileActionsOrFocus instanceof HTMLElement ? fileActionsOrFocus : undefined);
+    : (isHTMLElementNode(fileActionsOrFocus) ? fileActionsOrFocus : undefined);
   setContextMenu({ x, y, kind: "page", ...target, fileActions, focusOwner: owner });
 }
 export function openBlockRefContextMenu(

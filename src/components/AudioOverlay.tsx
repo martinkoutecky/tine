@@ -15,6 +15,7 @@ import { reportUiFailure } from "../uiFailure";
 import { readOr } from "../resourceRead";
 import { assetRelPath } from "../render/inline";
 import { mime_from_path } from "../render/wasm/lsdoc_wasm";
+import { queryAllWindows, requestFrame, useOwnerWindow, viewportOf } from "../windowRealm";
 const isExternal = (u: string) => /^(https?:|data:|blob:)/.test(u);
 
 function fmtTime(t: number): string {
@@ -27,7 +28,7 @@ function fmtTime(t: number): string {
 /** Paint a streaming progress bar with a played/unplayed split and playhead. */
 function drawWave(canvas: HTMLCanvasElement | undefined, progress: number): void {
   if (!canvas) return;
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = viewportOf(canvas).dpr;
   const cssW = canvas.clientWidth || 800;
   const cssH = canvas.clientHeight || 96;
   const w = Math.round(cssW * dpr);
@@ -129,6 +130,8 @@ export function AudioOverlay(): JSX.Element {
 
   let audioEl: HTMLAudioElement | undefined;
   let canvasEl: HTMLCanvasElement | undefined;
+  // The window this overlay renders into (OG-MULTIWINDOW P1).
+  const ownerWindow = useOwnerWindow();
   const [playing, setPlaying] = createSignal(false);
   const [cur, setCur] = createSignal(0);
   const [dur, setDur] = createSignal(0);
@@ -143,7 +146,7 @@ export function AudioOverlay(): JSX.Element {
     if (!audioPlayer()) return;
     const unregister = registerTransientLayer({
       id: "expanded-audio",
-      root: () => document.querySelector<HTMLElement>(".audio-overlay"),
+      root: () => queryAllWindows<HTMLElement>(".audio-overlay"),
       dismiss: () => { close(); return true; },
     });
     onCleanup(unregister);
@@ -183,8 +186,8 @@ export function AudioOverlay(): JSX.Element {
         togglePlay();
       }
     };
-    window.addEventListener("keydown", onKey, true);
-    onCleanup(() => window.removeEventListener("keydown", onKey, true));
+    ownerWindow.addEventListener("keydown", onKey, true);
+    onCleanup(() => ownerWindow.removeEventListener("keydown", onKey, true));
   });
 
   // Redraw whenever the position or duration changes.
@@ -196,18 +199,18 @@ export function AudioOverlay(): JSX.Element {
   createEffect(() => {
     if (!audioPlayer()) return;
     const redraw = () => drawWave(canvasEl, dur() ? cur() / dur() : 0);
-    const frame = requestAnimationFrame(redraw);
-    window.addEventListener("resize", redraw);
-    onCleanup(() => { cancelAnimationFrame(frame); window.removeEventListener("resize", redraw); });
+    const cancelFrame = requestFrame(ownerWindow, redraw);
+    ownerWindow.addEventListener("resize", redraw);
+    onCleanup(() => { cancelFrame(); ownerWindow.removeEventListener("resize", redraw); });
   });
 
   // Smooth playhead while playing (timeupdate alone fires only ~4×/s).
-  let raf = 0;
+  let raf: (() => void) | undefined;
   const tick = () => {
     if (audioEl) setCur(audioEl.currentTime);
-    raf = requestAnimationFrame(tick);
+    raf = requestFrame(ownerWindow, tick);
   };
-  onCleanup(() => cancelAnimationFrame(raf));
+  onCleanup(() => raf?.());
 
   const onWavePointer = (e: PointerEvent) => {
     const c = canvasEl, track = audioPlayer(), audio = audioEl;
@@ -223,17 +226,17 @@ export function AudioOverlay(): JSX.Element {
     const onMove = (next: PointerEvent) => { if (next.pointerId === e.pointerId) at(next.clientX); };
     const end = (next: PointerEvent) => { if (next.pointerId === e.pointerId) cancel(); };
     const cancel = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
+      ownerWindow.removeEventListener("pointermove", onMove);
+      ownerWindow.removeEventListener("pointerup", end);
+      ownerWindow.removeEventListener("pointercancel", end);
       c.removeEventListener("lostpointercapture", end);
       if (cancelScrub === cancel) cancelScrub = () => {};
     };
     cancelScrub = cancel;
     at(e.clientX);
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", end);
-    window.addEventListener("pointercancel", end);
+    ownerWindow.addEventListener("pointermove", onMove);
+    ownerWindow.addEventListener("pointerup", end);
+    ownerWindow.addEventListener("pointercancel", end);
     c.addEventListener("lostpointercapture", end);
   };
 
@@ -283,12 +286,12 @@ export function AudioOverlay(): JSX.Element {
             onDurationChange={(e) => setDur(e.currentTarget.duration || 0)}
             onPlay={() => {
               setPlaying(true);
-              cancelAnimationFrame(raf);
-              raf = requestAnimationFrame(tick);
+              raf?.();
+              raf = requestFrame(ownerWindow, tick);
             }}
             onPause={() => {
               setPlaying(false);
-              cancelAnimationFrame(raf);
+              raf?.();
             }}
             onTimeUpdate={(e) => setCur(e.currentTarget.currentTime)}
             onEnded={() => setPlaying(false)}

@@ -27,6 +27,7 @@ import { ownedWhen, readOwnedResource, type Owned } from "./owned";
 import { isPublishedExport } from "./publishedBackend";
 import { pushToast } from "./toasts";
 import { graphTransitioning } from "./ui";
+import { onAppReturn } from "./windowRealm";
 
 /** Minimum spacing between focus-driven rescans; below it, a return to the
  *  window is answered by the in-memory replay alone. */
@@ -212,8 +213,8 @@ let installed = false;
 export function installReloadOnFocus(): void {
   if (installed || typeof window === "undefined" || isPublishedExport()) return;
   installed = true;
-  window.addEventListener("focus", () => void refreshOnReturnToWindow());
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) void refreshOnReturnToWindow(); });
+  // Returning to ANY Tine window is a return to the app (OG-MULTIWINDOW P5).
+  onAppReturn(() => void refreshOnReturnToWindow());
 }
 
 /** Subscribe the window to the watcher's checkout-sized batches and to a

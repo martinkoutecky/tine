@@ -60,6 +60,7 @@ import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
 import { galleryFor } from "../imageGallery";
 import { queryMacroRenderRun } from "./queryMacroRender";
+import { windowOf } from "../windowRealm";
 
 // ===========================================================================
 // AST renderer (lsdoc). Renders an `Inline[]` produced by the Rust parser to
@@ -783,14 +784,15 @@ function mediaResizeGrip(
     const owner = bindingOwner(() => alive && docNode(id) === original);
     event.preventDefault(); event.stopPropagation();
     const grip = event.currentTarget as HTMLElement;
+    const dragWindow = windowOf(event); // the drag's own window (P1)
     const refW = blockRefWidth(wrap), startX = event.clientX, startW = wrap.getBoundingClientRect().width;
     const oldWidth = wrap.style.width, element = media(), oldMediaWidth = element?.style.width ?? "";
     if (element) element.style.width = "100%";
     const stop = (restore = true) => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", cancelled);
-      window.removeEventListener("blur", cancel);
+      dragWindow.removeEventListener("pointermove", move);
+      dragWindow.removeEventListener("pointerup", up);
+      dragWindow.removeEventListener("pointercancel", cancelled);
+      dragWindow.removeEventListener("blur", cancel);
       grip.removeEventListener("lostpointercapture", cancelled);
       if (restore) { wrap.style.width = oldWidth; if (element) element.style.width = oldMediaWidth; }
       cancel = () => {};
@@ -809,10 +811,10 @@ function mediaResizeGrip(
     };
     const cancelled = (next: PointerEvent) => { if (next.pointerId === event.pointerId) cancel(); };
     cancel = () => stop();
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", cancelled);
-    window.addEventListener("blur", cancel);
+    dragWindow.addEventListener("pointermove", move);
+    dragWindow.addEventListener("pointerup", up);
+    dragWindow.addEventListener("pointercancel", cancelled);
+    dragWindow.addEventListener("blur", cancel);
     grip.addEventListener("lostpointercapture", cancelled);
   };
 }

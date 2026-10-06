@@ -13,6 +13,7 @@ import { openSwitcher, closeSwitcher, openCommandPalette, openDevtools, toggleTh
 import { pushToast } from "./toasts";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { zoomReset } from "./zoom";
+import { onEachWindow, queryAllWindows } from "./windowRealm";
 import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
 import {
@@ -788,7 +789,7 @@ function focusedGridSurface(gridId: string): string | null {
   if (typeof document === "undefined") return expected;
   const esc = (value: string) =>
     typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
-  const pane = document.querySelector<HTMLElement>(`[data-pane-id="${esc(paneId)}"]`);
+  const pane = queryAllWindows<HTMLElement>(`[data-pane-id="${esc(paneId)}"]`);
   if (!pane) return expected;
   const surfaces = new Set(
     [...pane.querySelectorAll<HTMLElement>(`[data-sheet-grid-id="${esc(gridId)}"][data-sheet-surface-id]`)]
@@ -1109,20 +1110,28 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     );
   }
 
-  window.addEventListener("keydown", handler, true);
-  window.addEventListener("paste", pasteHandler, true);
-  window.addEventListener("keydown", superTracker, true);
-  window.addEventListener("keyup", superTracker, true);
-  window.addEventListener("blur", clearSuper);
-  window.addEventListener("auxclick", mouseNav, true);
+  // One set of listeners per Tine window (OG-MULTIWINDOW P1): a shortcut typed
+  // in a workspace window reaches the same handler, and its window's listeners
+  // go away with it.
+  const uninstallWindows = onEachWindow((win) => {
+    win.addEventListener("keydown", handler, true);
+    win.addEventListener("paste", pasteHandler, true);
+    win.addEventListener("keydown", superTracker, true);
+    win.addEventListener("keyup", superTracker, true);
+    win.addEventListener("blur", clearSuper);
+    win.addEventListener("auxclick", mouseNav, true);
+    return () => {
+      win.removeEventListener("keydown", handler, true);
+      win.removeEventListener("paste", pasteHandler, true);
+      win.removeEventListener("keydown", superTracker, true);
+      win.removeEventListener("keyup", superTracker, true);
+      win.removeEventListener("blur", clearSuper);
+      win.removeEventListener("auxclick", mouseNav, true);
+    };
+  });
   return () => {
     disposed = true;
     unlistenNativeMouseHistory();
-    window.removeEventListener("keydown", handler, true);
-    window.removeEventListener("paste", pasteHandler, true);
-    window.removeEventListener("keydown", superTracker, true);
-    window.removeEventListener("keyup", superTracker, true);
-    window.removeEventListener("blur", clearSuper);
-    window.removeEventListener("auxclick", mouseNav, true);
+    uninstallWindows();
   };
 }

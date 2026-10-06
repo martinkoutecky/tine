@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MAIN_WINDOW_ID, registerWindow } from "./windowRealm";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal } from "./keybindings";
 import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherOpen, switcherPluginBlock } from "./ui";
@@ -85,17 +86,23 @@ function installFakeWindow() {
     },
   };
 
+  const fakeDocument = {
+    activeElement: null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  // A window owns its document and refers to itself, as a real one does.
+  Object.assign(fakeWindow, { document: fakeDocument, window: fakeWindow });
+
   Object.defineProperty(globalThis, "window", { value: fakeWindow, configurable: true });
-  Object.defineProperty(globalThis, "document", {
-    value: {
-      activeElement: null,
-      querySelector: () => null,
-      querySelectorAll: () => [],
-    },
-    configurable: true,
-  });
+  Object.defineProperty(globalThis, "document", { value: fakeDocument, configurable: true });
+
+  // The app registers its real main window at load (src/windowRealm.ts); this
+  // node-pool fake stands in for it so installKeybindings' onEachWindow reaches it.
+  const unregisterFake = registerWindow(MAIN_WINDOW_ID, fakeWindow as unknown as Window);
 
   restoreFakeGlobals = () => {
+    unregisterFake();
     if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
     else delete (globalThis as { window?: Window }).window;
     if (documentDescriptor) Object.defineProperty(globalThis, "document", documentDescriptor);

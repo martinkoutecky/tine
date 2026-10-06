@@ -3,6 +3,7 @@ import { captureEditorScrollAnchor } from "./editor/scrollAnchor";
 import { batch, createSignal } from "solid-js";
 import { renderedBlocks } from "./lazyObserve";
 import { notifyClearOutlineSelection, notifyEditingStarted } from "./modeHooks";
+import { requestFrame } from "./windowRealm";
 
 // Where to put the caret when a block starts editing. Either a concrete offset
 // (clicks, splits, most callers) OR a column descriptor for cross-block Up/Down
@@ -97,7 +98,7 @@ export function captureRawHistoryViewport(blockId: string): (() => void) | undef
   if (!target || !viewport) return;
   const anchor = captureEditorScrollAnchor(viewport.editor, viewport.scroller);
   if (!anchor) return;
-  return () => requestAnimationFrame(() => {
+  return () => void requestFrame(viewport.editor, () => {
     const restored = [...historyEditorTargets].find((candidate) =>
       candidate.blockId === blockId && candidate.surface === target.surface && candidate.focused?.());
     anchor.restore(restored?.viewport?.().editor ?? null);

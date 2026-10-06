@@ -21,6 +21,7 @@ import { splitProps, joinProps, isBuiltinHidden } from "../editor/properties";
 import { editorOffsetFromRenderedRange } from "../render/spans";
 import { isAnnotationBlock } from "./annotation";
 import { calcSource } from "./calc";
+import { queryAllWindows, selectionOf } from "../windowRealm";
 
 function blockRowOf(node: Node | null): Element | null {
   if (!node) return null;
@@ -39,8 +40,8 @@ function blockRowOf(node: Node | null): Element | null {
 export function deleteRenderedTextSelection(): boolean {
   if (typeof window === "undefined" || typeof document === "undefined") return false;
   // A modal owns keystrokes while open — never mutate background blocks behind it.
-  if (document.querySelector(".modal-overlay")) return false;
-  const sel = window.getSelection?.();
+  if (queryAllWindows(".modal-overlay")) return false;
+  const sel = selectionOf();
   if (!sel || sel.rangeCount === 0) return false;
   const range = sel.getRangeAt(0);
   if (range.collapsed) return false;

@@ -11,6 +11,7 @@ import {
   stepInPageFind,
 } from "../inpageFind";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
+import { onEachWindow } from "../windowRealm";
 
 const FIND_QUERY_DEBOUNCE_MS = 110;
 
@@ -76,11 +77,17 @@ export function InPageFind(): JSX.Element {
 
   onMount(() => {
     const refresh = () => refreshInPageFindHighlights();
-    window.addEventListener("scroll", refresh, true);
-    window.addEventListener("resize", refresh);
+    // Highlights can sit in any Tine window's panes (OG-MULTIWINDOW P1).
+    const stopWindows = onEachWindow((win) => {
+      win.addEventListener("scroll", refresh, true);
+      win.addEventListener("resize", refresh);
+      return () => {
+        win.removeEventListener("scroll", refresh, true);
+        win.removeEventListener("resize", refresh);
+      };
+    });
     onCleanup(() => {
-      window.removeEventListener("scroll", refresh, true);
-      window.removeEventListener("resize", refresh);
+      stopWindows();
       cancelScheduledQuery();
     });
   });

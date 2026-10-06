@@ -63,6 +63,7 @@ import {
 } from "./queryMacroSupport";
 export { boundedFeature, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY };
 import { QueryLegacyTable } from "./QueryLegacyTable";
+import { documentOf, mainWindow } from "../windowRealm";
 
 const QUERY_VIEW_LABEL: Record<QueryView, string> = {
   search: "Search",
@@ -1197,7 +1198,8 @@ function loadYoutubeApi(): Promise<YoutubeApi | null> {
         settle(ytWindow.YT);
       }
     };
-    let script = document.getElementById(YOUTUBE_API_SCRIPT_ID) as HTMLScriptElement | null;
+    // The IFrame API is one process-wide script in the main realm's <head>.
+    let script = mainWindow.document.getElementById(YOUTUBE_API_SCRIPT_ID) as HTMLScriptElement | null;
     if (!script) {
       script = document.createElement("script");
       script.id = YOUTUBE_API_SCRIPT_ID;
@@ -1216,7 +1218,8 @@ function loadYoutubeApi(): Promise<YoutubeApi | null> {
 // extensions/video/youtube.cljs:85-101).
 export function youtubePlayerForTarget(target: Node): YoutubePlayer | undefined {
   if (typeof document === "undefined" || typeof Node === "undefined") return undefined;
-  const iframe = Array.from(document.getElementsByTagName("iframe"))
+  // Players before the target in the TARGET's own window (OG-MULTIWINDOW P1).
+  const iframe = Array.from(documentOf(target).getElementsByTagName("iframe"))
     .filter((node) => node.src.includes("youtube.com"))
     .filter((node) => (node.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
     .at(-1);

@@ -4,6 +4,7 @@ import { blockPageReadOnly, pageByName, setBlockProperty, setPageProperty, node 
 import { astToExpr, encodeFormulaExpr, formulaNameValid, parseFormula, type Ast, type BinaryOp } from "../sheet/formula";
 import { registerTransientLayer } from "../transientLayers";
 import { refuseStaleWrite } from "../binding";
+import { useOwnerWindow } from "../windowRealm";
 
 const STDLIB_CHIPS = [
   "if()",
@@ -197,8 +198,9 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
     return parsed.ok ? parsed.ast : null;
   })();
   const [rawMode, setRawMode] = createSignal(initialParsed == null);
-  const [winW, setWinW] = createSignal(typeof window !== "undefined" ? window.innerWidth : 1280);
-  const [winH, setWinH] = createSignal(typeof window !== "undefined" ? window.innerHeight : 800);
+  const ownerWindow = typeof window !== "undefined" ? useOwnerWindow() : undefined;
+  const [winW, setWinW] = createSignal(ownerWindow ? ownerWindow.innerWidth : 1280);
+  const [winH, setWinH] = createSignal(ownerWindow ? ownerWindow.innerHeight : 800);
   let firstInput: HTMLInputElement | HTMLTextAreaElement | undefined;
   let textarea: HTMLTextAreaElement | undefined;
 
@@ -296,13 +298,14 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
 
   onMount(() => {
     queueMicrotask(() => firstInput?.focus());
+    if (!ownerWindow) return;
     const onResize = () => {
-      setWinW(window.innerWidth);
-      setWinH(window.innerHeight);
+      setWinW(ownerWindow.innerWidth);
+      setWinH(ownerWindow.innerHeight);
     };
-    window.addEventListener("resize", onResize);
+    ownerWindow.addEventListener("resize", onResize);
     onCleanup(() => {
-      window.removeEventListener("resize", onResize);
+      ownerWindow.removeEventListener("resize", onResize);
     });
   });
 

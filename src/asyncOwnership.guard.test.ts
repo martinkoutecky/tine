@@ -66,7 +66,7 @@ describe("async ownership guard", () => {
       /removeEventListener\("pointercancel", cancelled\)/,
       /removeEventListener\("lostpointercapture", cancelled\)/,
     ]);
-    expect([...inline.matchAll(/window\.addEventListener\("pointer(?:move|up)"/g)], `${RULE}: media listeners belong to mediaResizeGrip, never component copies`).toHaveLength(2);
+    expect([...inline.matchAll(/\b\w*[wW]indow\.addEventListener\("pointer(?:move|up)"/g)], `${RULE}: media listeners belong to mediaResizeGrip, never component copies`).toHaveLength(2);
     const save = readFileSync("src/document/save/engine.ts", "utf8");
     expect([...save.matchAll(/reloadDisposition\((?:target\.)?owner\.name\) !== "reload"/g)],
       `${RULE}: alias owner replacement must ask reloadDisposition before and after single/group saves; exemplar runGroup`).toHaveLength(4);

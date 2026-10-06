@@ -43,6 +43,7 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetAggregateFooterCell, useSheetFooterCorner } from "./SheetAggregateFooter";
 import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
+import { isElementNode, isKeyboardEventValue, requestFrame, windowOf } from "../windowRealm";
 
 const MAX_GRID_DEPTH = 5;
 export const GRID_RENDER_PAGE = 200;
@@ -363,7 +364,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
       setSeamStyle(seamStyleFor(gridRef, sel, { rows: renderedRows(), cols: renderedCols(), rowStart: rowStart(), colStart: columnStart() }));
     };
     update();
-    if (typeof requestAnimationFrame === "function") requestAnimationFrame(update);
+    if (typeof requestAnimationFrame === "function") requestFrame(gridRef, update);
   });
 
   const previewColumn = (col: number, px: number) => {
@@ -381,7 +382,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     // rendered children) belongs to that block's own click-to-edit handler. The
     // parent grid must not begin a cell selection here — doing so preventDefaults
     // the pointerdown and the nested block can never be clicked into edit.
-    if (e.target instanceof Element && e.target.closest(".sheet-nested-lines")) return;
+    if (isElementNode(e.target) && e.target.closest(".sheet-nested-lines")) return;
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     const grid = e.currentTarget as HTMLDivElement;
     const hit = e.shiftKey ? null : hitRuling(
@@ -409,6 +410,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     }
 
     const resizeCol = hit.at - 1;
+    const dragWindow = windowOf(grid); // the drag's own window (P1)
     const anchor = cellInGrid(grid, 0, resizeCol);
     const startWidth = anchor?.getBoundingClientRect().width ?? 40;
     const startX = e.clientX;
@@ -425,9 +427,9 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
       me.preventDefault();
     };
     const finish = (me: PointerEvent) => {
-      window.removeEventListener("pointermove", onMove, true);
-      window.removeEventListener("pointerup", finish, true);
-      window.removeEventListener("pointercancel", cancel, true);
+      dragWindow.removeEventListener("pointermove", onMove, true);
+      dragWindow.removeEventListener("pointerup", finish, true);
+      dragWindow.removeEventListener("pointercancel", cancel, true);
       if (dragging) {
         setColumnWidth(props.id, resizeCol, lastWidth);
         setResizing(false);
@@ -437,15 +439,15 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
       me.preventDefault();
     };
     const cancel = () => {
-      window.removeEventListener("pointermove", onMove, true);
-      window.removeEventListener("pointerup", finish, true);
-      window.removeEventListener("pointercancel", cancel, true);
+      dragWindow.removeEventListener("pointermove", onMove, true);
+      dragWindow.removeEventListener("pointerup", finish, true);
+      dragWindow.removeEventListener("pointercancel", cancel, true);
       setResizing(false);
       restoreColumns();
     };
-    window.addEventListener("pointermove", onMove, true);
-    window.addEventListener("pointerup", finish, true);
-    window.addEventListener("pointercancel", cancel, true);
+    dragWindow.addEventListener("pointermove", onMove, true);
+    dragWindow.addEventListener("pointerup", finish, true);
+    dragWindow.addEventListener("pointercancel", cancel, true);
   };
 
   const onDoubleClick = (e: MouseEvent) => {
@@ -480,7 +482,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   const activateEmptyGrid = (e: MouseEvent | KeyboardEvent) => {
     if (readOnly()) return;
-    if (e instanceof KeyboardEvent && e.key !== "Enter" && e.key !== " ") return;
+    if (isKeyboardEventValue(e) && e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
     e.stopPropagation();
     growAndEdit("row");

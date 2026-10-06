@@ -9,6 +9,7 @@ import { captureBinding, bindingCurrent, refuseStaleWrite } from "../binding";
 
 import { parseRepeater, type RepMode } from "../editor/repeat";
 import { appNow, journalTitle, localCalendarDate } from "../journal";
+import { isHTMLElementNode, newResizeObserver, useOwnerWindow } from "../windowRealm";
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
@@ -43,7 +44,9 @@ function propDateSelection(bid: string, field: FieldId): { y: number; m: number;
 function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: number }): JSX.Element {
   let root: HTMLDivElement | undefined;
   const binding = captureBinding();
-  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const ownerWindow = useOwnerWindow();
+  const focused = ownerWindow.document.activeElement;
+  const opener = isHTMLElementNode(focused) ? focused : null;
   const close = () => {
     closeDatePicker();
     queueMicrotask(() => {
@@ -152,8 +155,8 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
   // Keep the popup on-screen. Reactive to the window size so it stays visible
   // even when the host window resizes after the picker opens — the quick-capture
   // window grows to make room for the picker, and this repositions it into view.
-  const [winW, setWinW] = createSignal(typeof window !== "undefined" ? window.innerWidth : 1280);
-  const [winH, setWinH] = createSignal(typeof window !== "undefined" ? window.innerHeight : 800);
+  const [winW, setWinW] = createSignal(ownerWindow ? ownerWindow.innerWidth : 1280);
+  const [winH, setWinH] = createSignal(ownerWindow ? ownerWindow.innerHeight : 800);
   // Keep the popup on-screen: clamp its left edge so the full width (see
   // `.date-picker` = 284px in app.css, +margin) fits before the right window edge.
   const left = () => Math.max(4, Math.min(props.x, winW() - 300));
@@ -162,17 +165,17 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
   onMount(() => {
     queueMicrotask(focusDay);
     const measure = () => setHeight(root?.getBoundingClientRect().height || 300);
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    const observer = root ? newResizeObserver(root, measure) : null;
     if (root) observer?.observe(root);
     measure();
     const onResize = () => {
-      setWinW(window.innerWidth);
-      setWinH(window.innerHeight);
+      setWinW(ownerWindow.innerWidth);
+      setWinH(ownerWindow.innerHeight);
     };
-    window.addEventListener("resize", onResize);
+    ownerWindow.addEventListener("resize", onResize);
     onCleanup(() => {
       observer?.disconnect();
-      window.removeEventListener("resize", onResize);
+      ownerWindow.removeEventListener("resize", onResize);
     });
   });
 

@@ -13,6 +13,7 @@
 // window between the OS recognizer firing and our menu appearing.
 
 import { dropSelection } from "../dragSelectionGuard";
+import { isPointerEventValue, windowOf } from "../windowRealm";
 
 export const LONG_PRESS_DELAY = 500; // ms — the conventional hold time
 export const LONG_PRESS_MOVE_TOLERANCE = 10; // px — beyond it, the hold is a scroll/drag
@@ -77,7 +78,7 @@ export function createLongPress(target: () => HTMLElement | undefined): LongPres
     if (ownedContextMenuEvents.has(event) || ownedClickPointer === null) return;
     // Android can deliver its native hold menu after our timer opened the
     // overlay. Keyboard/mouse context menus have a different pointer identity.
-    if (!(event instanceof PointerEvent) || event.pointerId !== ownedClickPointer ||
+    if (!isPointerEventValue(event) || event.pointerId !== ownedClickPointer ||
         event.pointerType !== ownedPointerType) return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -85,7 +86,7 @@ export function createLongPress(target: () => HTMLElement | undefined): LongPres
   };
   const consumeOwnedClick = (event: MouseEvent) => {
     if (event.detail === 0 || ownedClickPointer === null) return;
-    if (event instanceof PointerEvent && event.pointerId !== ownedClickPointer) return;
+    if (isPointerEventValue(event) && event.pointerId !== ownedClickPointer) return;
     // A newly opened menu can retarget this hold's compatibility click to its
     // overlay. Capture the gesture before that new target can activate/close.
     event.preventDefault();
@@ -112,7 +113,7 @@ export function createLongPress(target: () => HTMLElement | undefined): LongPres
         clickDocument.addEventListener("contextmenu", consumeOwnedContextMenu, true);
         clickDocument.addEventListener("click", consumeOwnedClick, true);
         clickDocument.addEventListener("pointerdown", nextGesture, true);
-        const contextMenu = new MouseEvent("contextmenu", {
+        const contextMenu = new (windowOf(el) as Window & typeof globalThis).MouseEvent("contextmenu", {
           bubbles: true,
           cancelable: true,
           clientX: armedNow.x,
@@ -121,7 +122,7 @@ export function createLongPress(target: () => HTMLElement | undefined): LongPres
         ownedContextMenuEvents.add(contextMenu);
         // The OS recognizer may have selected the held word first; the menu is
         // about to open over it.
-        dropSelection();
+        dropSelection(el);
         el.dispatchEvent(contextMenu);
       }, LONG_PRESS_DELAY);
     },

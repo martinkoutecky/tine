@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { format_journal_date, parse_journal_format_json } from "./render/wasm/lsdoc_wasm.js";
+import { onAppReturn } from "./windowRealm";
 
 /** Journal dates and title formatting. `journalTitle` and `parseJournalTitle`
  * read the graph's active display format set by `setJournalTitleFormat`;
@@ -69,10 +70,7 @@ export function installBackendClock(read: () => Promise<BackendClock>): void {
   const refresh = () => void read().then(setBackendClock, () => {});
   refresh();
   window.setInterval(refresh, 10 * 60_000);
-  window.addEventListener("focus", refresh);
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) refresh();
-  });
+  onAppReturn(refresh);
 }
 
 /** Stable local calendar day, also across DST changes. */
@@ -115,8 +113,7 @@ export function currentDayKey(): number {
     };
     arm();
     const sync = () => setDayKey(localDayKey());
-    window.addEventListener("focus", sync);
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) sync(); });
+    onAppReturn(sync);
   }
   return dayKey();
 }

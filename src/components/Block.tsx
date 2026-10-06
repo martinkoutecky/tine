@@ -150,6 +150,7 @@ import { wireBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
+import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
 type SheetSlashView = "grid" | "table" | "board";
 
 export function applySheetViewSlashAction(id: string, view: SheetSlashView): string | null {
@@ -653,7 +654,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     const setRawOpts = opts && "timetracking" in opts ? { timetracking: opts.timetracking } : undefined;
     // GH #515: capture once for the autosize frame, before live mirrors above react.
     if (pendingScrollAnchor === undefined) {
-      pendingScrollAnchor = ref && document.activeElement === ref
+      pendingScrollAnchor = ref && documentOf(ref).activeElement === ref
         ? captureEditorScrollAnchor(ref, nearestScrollableY(ref)) : null;
     }
     autosize();
@@ -730,21 +731,19 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const acStyle = (): Record<string, string> => {
     const r = acRect();
     if (!r) return {};
-    const below = window.innerHeight - r.bottom;
+    const viewportHeight = viewportOf(ref).height;
+    const below = viewportHeight - r.bottom;
     const openUp = below < 300 && r.top > below;
     return openUp
-      ? { left: `${r.left}px`, bottom: `${window.innerHeight - r.top + 2}px` }
+      ? { left: `${r.left}px`, bottom: `${viewportHeight - r.top + 2}px` }
       : { left: `${r.left}px`, top: `${r.bottom + 2}px` };
   };
   onMount(() => {
     const reanchor = () => { if (ac()) updateAcRect(); };
     // capture phase so an inner scroller (the feed, the sidebar body) also fires.
-    window.addEventListener("scroll", reanchor, true);
-    window.addEventListener("resize", reanchor);
-    onCleanup(() => {
-      window.removeEventListener("scroll", reanchor, true);
-      window.removeEventListener("resize", reanchor);
-    });
+    // The editor's own window: a popup scrolls and resizes independently of main.
+    onCleanup(listen(ref, "scroll", reanchor, true));
+    onCleanup(listen(ref, "resize", reanchor));
   });
 
   const closeAc = () => {
@@ -1717,10 +1716,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
   // Coalesce layout measurements; mount uses the immediate version.
   const resizeNow = () => resizeBlockEditor(ref);
-  let autosizeRaf: number | undefined;
+  let autosizeRaf: (() => void) | undefined;
   const autosize = () => {
     if (autosizeRaf !== undefined) return; // already scheduled this frame
-    autosizeRaf = requestAnimationFrame(() => {
+    autosizeRaf = requestFrame(ref, () => {
       autosizeRaf = undefined;
       resizeNow();
       pendingScrollAnchor?.restore();
@@ -1803,7 +1802,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       surface: surfaceKey,
       selection: () => codeView.selection(ref),
       viewport: () => ({ editor: ref, scroller: nearestScrollableY(ref) }),
-      focused: () => typeof document !== "undefined" && document.activeElement === ref,
+      focused: () => !!ref && documentOf(ref).activeElement === ref,
     });
     onCleanup(unregisterHistoryTarget);
     // If this block is rendered in several surfaces at once (main pane + sidebar),
@@ -1823,8 +1822,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       // focus by the next microtask, take it ourselves so the caret never vanishes.
       queueMicrotask(() => {
         if (!ref.isConnected || editingId() !== props.id) return;
-        const ae = document.activeElement;
-        const taken = ae instanceof HTMLTextAreaElement && ae.classList.contains("block-editor");
+        const ae = documentOf(ref).activeElement;
+        const taken = isElementTag(ae, "textarea") && ae.classList.contains("block-editor");
         if (!taken) {
           focusNow();
           clearFocusSurface(props.id);
@@ -1836,14 +1835,14 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // measurement. Observe width only so the height write in `resizeNow` cannot
     // feed an observer loop; `autosize` keeps repeated layout changes to one
     // measurement per animation frame.
-    if (typeof ResizeObserver !== "undefined") {
-      let observedWidth = ref.clientWidth;
-      const resizeObserver = new ResizeObserver(() => {
-        const width = ref.clientWidth;
-        if (width === observedWidth) return;
-        observedWidth = width;
-        autosize();
-      });
+    let observedWidth = ref.clientWidth;
+    const resizeObserver = newResizeObserver(ref, () => {
+      const width = ref.clientWidth;
+      if (width === observedWidth) return;
+      observedWidth = width;
+      autosize();
+    });
+    if (resizeObserver) {
       resizeObserver.observe(ref);
       onCleanup(() => resizeObserver.disconnect());
     }
@@ -2021,10 +2020,11 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       // frame lets Android dismiss the IME despite the later focus.
       const move = outlineScope && !outlineScope.navOnly ? moveItem(props.id, dir) : moveBlockFeed(props.id, dir);
       if (ref === movedEditor && movedEditor.isConnected && editingId() === props.id
-        && (document.activeElement === movedEditor || document.activeElement === document.body)) restore();
+        && (documentOf(movedEditor).activeElement === movedEditor
+          || documentOf(movedEditor).activeElement === documentOf(movedEditor).body)) restore();
       await move;
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      if (document.activeElement !== ref) restore();
+      await nextFrame(ref);
+      if (documentOf(ref).activeElement !== ref) restore();
     }).catch(() => console.error("Block move failed"));
     return true;
   };
@@ -2812,18 +2812,23 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
       return;
     }
-    // The whole window lost focus (switched to another app/window): stay in edit
-    // mode and remember the caret so onWindowFocus can resume exactly here. Commit
-    // as-is — we're still editing, not exiting.
-    if (!document.hasFocus()) {
+    // The editor's own window lost focus (switched to another app or window): stay
+    // in edit mode and remember the caret so onWindowFocus can resume exactly here.
+    // Commit as-is — we're still editing, not exiting. If the window that gains
+    // focus next is another Tine window, onOtherWindowFocus ends the edit there.
+    if (!documentHasFocus(ref)) {
       commit(ref.value);
       savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
       return;
     }
-    // A real exit (clicking elsewhere, Escape, Enter→new block): move any
-    // SCHEDULED/DEADLINE planning line to its canonical position (OG layout) as we
-    // commit — type-anywhere-while-editing, normalize-on-exit (M1c). The editor is
-    // closing, so there is no caret to preserve.
+    exitEditOnBlur();
+  };
+
+  // A real exit (clicking elsewhere, Escape, Enter→new block, another Tine window
+  // taking focus): move any SCHEDULED/DEADLINE planning line to its canonical
+  // position (OG layout) as we commit — type-anywhere-while-editing,
+  // normalize-on-exit (M1c). The editor is closing, so there is no caret to preserve.
+  const exitEditOnBlur = () => {
     const calcExit = isCalc();
     commit(calcExit || codeShown() ? ref.value : normalizePlanning(ref.value, pageFmt()), calcExit ? { calc: true } : undefined);
     finishPageHeaderEdit(props.id);
@@ -2845,8 +2850,19 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       savedSel = null;
     }
   };
-  onMount(() => window.addEventListener("focus", onWindowFocus));
-  onCleanup(() => window.removeEventListener("focus", onWindowFocus));
+  // Another Tine window gained focus while this editor's window had lost it: the
+  // user moved to a different workspace window, so the edit ends (one editing
+  // transaction app-wide). Switching to another application keeps editing.
+  const onOtherWindowFocus = () => {
+    if (editingId() !== props.id || !ref || !ref.isConnected) return;
+    if (documentHasFocus(ref)) return;
+    savedSel = null;
+    exitEditOnBlur();
+  };
+  onMount(() => onCleanup(onEachWindow((win) => listen(win, "focus", () => {
+    if (win === windowOf(ref)) onWindowFocus();
+    else onOtherWindowFocus();
+  }))));
 
   // Paste copied files/images as graph assets. Native file lists use path-based
   // imports; browser-only file payloads use a bounded byte fallback. Ordinary

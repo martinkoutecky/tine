@@ -22,6 +22,7 @@ import { PageTypingTarget } from "./Page";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { endEditForSurface } from "../editorController";
 import { FailureBoundary } from "./FailureBoundary";
+import { isHTMLElementNode, mainWindow } from "../windowRealm";
 
 function surfaceKey(item: SidebarItem): string {
   return `sidebar:${sidebarItemKey(item)}`;
@@ -50,8 +51,8 @@ type Row = ReturnType<typeof rowAttrs>;
  * disclosure removes the owning surface. Then clear any remaining edit owner
  * (for example when the window-focus preservation path kept edit mode alive). */
 function prepareSurfaceForUnmount(key: string) {
-  const active = document.activeElement;
-  if (active instanceof HTMLElement) {
+  const active = mainWindow.document.activeElement;
+  if (isHTMLElementNode(active)) {
     const surface = active.closest<HTMLElement>("[data-sidebar-surface]");
     if (surface?.dataset.sidebarSurface === key) active.blur();
   }
@@ -60,7 +61,7 @@ function prepareSurfaceForUnmount(key: string) {
 
 function restoreDisclosureFocus(key: string) {
   queueMicrotask(() => {
-    const surface = [...document.querySelectorAll<HTMLElement>("[data-sidebar-surface]")]
+    const surface = [...mainWindow.document.querySelectorAll<HTMLElement>("[data-sidebar-surface]")]
       .find((element) => element.dataset.sidebarSurface === key);
     surface?.querySelector<HTMLButtonElement>("[data-right-sidebar-item-toggle]")?.focus();
   });
@@ -101,7 +102,7 @@ export function RightSidebar(): JSX.Element {
   };
   const onMenuKeyDown: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent> = (event) => {
     const buttons = [...(actionsMenu?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
-    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const index = buttons.indexOf(mainWindow.document.activeElement as HTMLButtonElement);
     let next = index;
     if (event.key === "ArrowDown") next = (index + 1 + buttons.length) % buttons.length;
     else if (event.key === "ArrowUp") next = (index - 1 + buttons.length) % buttons.length;
@@ -129,14 +130,14 @@ export function RightSidebar(): JSX.Element {
           onMouseDown={(e) => {
             e.preventDefault();
             const onMove = (ev: MouseEvent) =>
-              resizeSidebar("right", window.innerWidth - ev.clientX);
+              resizeSidebar("right", mainWindow.innerWidth - ev.clientX);
             const onUp = () => {
-              window.removeEventListener("mousemove", onMove);
-              window.removeEventListener("mouseup", onUp);
+              mainWindow.removeEventListener("mousemove", onMove);
+              mainWindow.removeEventListener("mouseup", onUp);
               commitSidebarWidth("right");
             };
-            window.addEventListener("mousemove", onMove);
-            window.addEventListener("mouseup", onUp);
+            mainWindow.addEventListener("mousemove", onMove);
+            mainWindow.addEventListener("mouseup", onUp);
           }}
         />
         <div class="right-sidebar-header">
@@ -179,7 +180,7 @@ export function RightSidebar(): JSX.Element {
               {(item, i) => {
                 const key = surfaceKey(item);
                 const collapse = (control: HTMLButtonElement) => {
-                  const keepFocus = document.activeElement === control;
+                  const keepFocus = mainWindow.document.activeElement === control;
                   const next = !item.collapsed;
                   if (next) prepareSurfaceForUnmount(key);
                   setRightSidebarItemCollapsed(i(), next);

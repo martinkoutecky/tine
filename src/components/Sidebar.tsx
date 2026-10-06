@@ -22,6 +22,7 @@ import { isMobilePlatform } from "../nativeChrome";
 import { graphRowMenuActions } from "./graphRowMenu";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
+import { queryAllWindows } from "../windowRealm";
 
 // Cap the rendered "All pages" list. Beyond this, rendering every row (each
 // reading route() for its active state) makes both the initial render and every
@@ -346,7 +347,7 @@ export function GraphSwitcher(props: {
     if (!open()) return;
     const unregister = registerTransientLayer({
       id: "graph-switch-menu",
-      root: () => document.querySelector(".graph-switch-menu"),
+      root: () => queryAllWindows<HTMLElement>(".graph-switch-menu"),
       dismiss: () => { close(); return true; },
     });
     onCleanup(unregister);

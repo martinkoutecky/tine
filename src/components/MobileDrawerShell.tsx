@@ -10,6 +10,7 @@ import {
   type DrawerDismissReason,
   type DrawerSide,
 } from "../mobileDrawers";
+import { mainWindow } from "../windowRealm";
 
 type BackgroundSide = DrawerSide | "any";
 
@@ -164,11 +165,11 @@ export function MobileDrawerController(): JSX.Element {
     const contain = () => {
       const side = activeDrawer();
       if (!side) return;
-      const drawer = document.querySelector<HTMLElement>(side === "left" ? ".left-sidebar" : ".right-sidebar");
+      const drawer = mainWindow.document.querySelector<HTMLElement>(side === "left" ? ".left-sidebar" : ".right-sidebar");
       if (drawer) containDrawerFocus(drawer);
     };
-    document.addEventListener("focusin", contain, true);
-    onCleanup(() => document.removeEventListener("focusin", contain, true));
+    mainWindow.document.addEventListener("focusin", contain, true);
+    onCleanup(() => mainWindow.document.removeEventListener("focusin", contain, true));
   });
 
   return (

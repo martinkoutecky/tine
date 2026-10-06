@@ -53,6 +53,7 @@ import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydra
 import { registerTransientLayer } from "../transientLayers";
 
 import { appNow } from "../journal";
+import { elementFromPointIn, windowOf } from "../windowRealm";
 interface RowRecord extends FormulaEvalRow {}
 
 type BoardColumn = BoardColumnOf<RowRecord>;
@@ -107,7 +108,7 @@ export function SheetBoard(props: {
       if (this.owns(pointerId, cancel)) activeBoardDrag = null;
     },
     targetAtPoint(x, y) {
-      const column = (document.elementFromPoint(x, y) as HTMLElement | null)
+      const column = (elementFromPointIn(boardElement, x, y) as HTMLElement | null)
         ?.closest(".sheet-board-column") as HTMLElement | null;
       if (!column || column.closest(".sheet-board") !== boardElement) return null;
       const col = Number(column.dataset.boardCol);
@@ -650,6 +651,7 @@ function BoardCard(props: {
     if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
     cancelActiveDrag?.();
     const card = e.currentTarget as HTMLElement;
+    const dragWindow = windowOf(card); // the drag's own window (P1)
     if (typeof card.setPointerCapture === "function" && typeof e.pointerId === "number") {
       card.setPointerCapture(e.pointerId);
     }
@@ -677,24 +679,24 @@ function BoardCard(props: {
       ghost.setAttribute("aria-hidden", "true");
       ghost.style.width = `${rect.width}px`;
       ghost.style.minHeight = `${rect.height}px`;
-      document.body.appendChild(ghost);
-      document.body.classList.add("sheet-board-dragging");
+      dragWindow.document.body.appendChild(ghost);
+      dragWindow.document.body.classList.add("sheet-board-dragging");
       updateGhost(ev);
       props.setDrag(dragState());
     };
     const cleanup = () => {
       ghost?.remove();
       ghost = null;
-      if (!document.body.querySelector(".sheet-board-drag-ghost")) {
-        document.body.classList.remove("sheet-board-dragging");
+      if (!dragWindow.document.body.querySelector(".sheet-board-drag-ghost")) {
+        dragWindow.document.body.classList.remove("sheet-board-dragging");
       }
       props.setDrag(null);
     };
     const removeListeners = () => {
-      window.removeEventListener("pointermove", onMove, true);
-      window.removeEventListener("pointerup", onUp, true);
-      window.removeEventListener("pointercancel", onPointerCancel, true);
-      window.removeEventListener("blur", onCancel, true);
+      dragWindow.removeEventListener("pointermove", onMove, true);
+      dragWindow.removeEventListener("pointerup", onUp, true);
+      dragWindow.removeEventListener("pointercancel", onPointerCancel, true);
+      dragWindow.removeEventListener("blur", onCancel, true);
       card.removeEventListener("lostpointercapture", onLostPointerCapture, true);
     };
     const onMove = (ev: PointerEvent) => {
@@ -768,10 +770,10 @@ function BoardCard(props: {
         return true;
       },
     });
-    window.addEventListener("pointermove", onMove, true);
-    window.addEventListener("pointerup", onUp, true);
-    window.addEventListener("pointercancel", onPointerCancel, true);
-    window.addEventListener("blur", onCancel, true);
+    dragWindow.addEventListener("pointermove", onMove, true);
+    dragWindow.addEventListener("pointerup", onUp, true);
+    dragWindow.addEventListener("pointercancel", onPointerCancel, true);
+    dragWindow.addEventListener("blur", onCancel, true);
     card.addEventListener("lostpointercapture", onLostPointerCapture, true);
     cancelActiveDrag = onCancel;
   };

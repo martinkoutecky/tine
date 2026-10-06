@@ -3,6 +3,7 @@ import { FloatingPortal } from "../components/FloatingPortal";
 import { RefBlocks } from "../components/RefBlocks";
 import type { BlockDto } from "../types";
 import { registerTransientLayer } from "../transientLayers";
+import { useOwnerWindow, viewportOf } from "../windowRealm";
 
 export const PeekContext = createContext(false);
 
@@ -74,6 +75,7 @@ export function PeekPopup(props: {
   onDismiss: () => void;
 }): JSX.Element {
   let popupEl: HTMLDivElement | undefined;
+  const ownerWindow = useOwnerWindow();
   const layerId = `peek-popup-${createUniqueId()}`;
   const [style, setStyle] = createSignal<Record<string, string>>({});
 
@@ -82,8 +84,10 @@ export function PeekPopup(props: {
     if (!anchor) return;
 
     const rect = anchor.getBoundingClientRect();
-    const viewportWidth = window.innerWidth || document.documentElement.clientWidth || POPUP_FALLBACK_WIDTH;
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || POPUP_FALLBACK_HEIGHT;
+    const viewport = viewportOf(anchor);
+    const root = anchor.ownerDocument.documentElement;
+    const viewportWidth = viewport.width || root.clientWidth || POPUP_FALLBACK_WIDTH;
+    const viewportHeight = viewport.height || root.clientHeight || POPUP_FALLBACK_HEIGHT;
     const width = Math.min(
       popupEl?.offsetWidth || POPUP_FALLBACK_WIDTH,
       Math.max(0, viewportWidth - POPUP_MARGIN * 2),
@@ -124,11 +128,11 @@ export function PeekPopup(props: {
       if (popupEl && t && (popupEl === t || popupEl.contains(t))) return;
       close();
     };
-    window.addEventListener("scroll", onScroll, true);
-    window.addEventListener("resize", close);
+    ownerWindow.addEventListener("scroll", onScroll, true);
+    ownerWindow.addEventListener("resize", close);
     onCleanup(() => {
-      window.removeEventListener("scroll", onScroll, true);
-      window.removeEventListener("resize", close);
+      ownerWindow.removeEventListener("scroll", onScroll, true);
+      ownerWindow.removeEventListener("resize", close);
     });
   });
 

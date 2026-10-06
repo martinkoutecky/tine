@@ -1,3 +1,4 @@
+import { isHTMLElementNode } from "../windowRealm";
 // Interactive targets that must NOT enter edit on mousedown (mirrors OG's
 // target-forbidden-edit?). Their own handlers run on click, so entering edit
 // first would swap the DOM out from under them.
@@ -66,7 +67,7 @@ export function forbidsEditEntry(e: MouseEvent): boolean {
   // severs that chain; this is the second line, ported from master 2617ff194.
   if (target && !host.contains(target)) return true;
   for (let node = target; node && host.contains(node); node = node.parentElement) {
-    if (node instanceof HTMLElement && pressIsOnHorizontalScrollbar(node, e)) return true;
+    if (isHTMLElementNode(node) && pressIsOnHorizontalScrollbar(node, e)) return true;
     if (node === host) break;
   }
   const hit = target?.closest?.(FORBID_EDIT_SELECTOR);

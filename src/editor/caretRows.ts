@@ -1,3 +1,4 @@
+import { bodyOf, createRangeIn } from "../windowRealm";
 // Visual-row detection for a <textarea>. Vertical caret navigation (Arrow and
 // Shift+Arrow) must move WITHIN a block's wrapped text and only cross to an
 // adjacent block when the caret is on the first/last VISUAL row. A source-`\n`
@@ -71,12 +72,12 @@ export function textareaCaretPoints(ta: HTMLTextAreaElement): Array<{ x: number;
   // and progressively displaces the drag endpoint on subsequent visual rows.
   const text = document.createTextNode(ta.value + "\u200b");
   div.appendChild(text);
-  document.body.appendChild(div);
+  bodyOf(ta).appendChild(div); // measure in the textarea's own window (P1)
   try {
     const points: Array<{ x: number; y: number }> = [];
     if (!div.offsetHeight) return null;
     const origin = div.getBoundingClientRect();
-    const range = document.createRange();
+    const range = createRangeIn(ta);
     for (let offset = 0; offset <= ta.value.length; offset++) {
       range.setStart(text, offset);
       range.collapse(true);
@@ -87,7 +88,7 @@ export function textareaCaretPoints(ta: HTMLTextAreaElement): Array<{ x: number;
     }
     return points;
   } finally {
-    document.body.removeChild(div);
+    div.remove();
   }
 }
 
@@ -100,7 +101,7 @@ function camelToKebab(s: string): string {
 function measureRows(ta: HTMLTextAreaElement, offsets: number[]): number[] | null {
   if (typeof document === "undefined") return null;
   const div = buildMirror(ta);
-  document.body.appendChild(div);
+  bodyOf(ta).appendChild(div); // measure in the textarea's own window (P1)
   try {
     div.textContent = "M";
     const lh = div.offsetHeight;
@@ -117,7 +118,7 @@ function measureRows(ta: HTMLTextAreaElement, offsets: number[]): number[] | nul
       return Math.round(span.offsetTop / lh);
     });
   } finally {
-    document.body.removeChild(div);
+    div.remove();
   }
 }
 
@@ -210,7 +211,7 @@ export function textareaCaretLeft(ta: HTMLTextAreaElement, offset: number): numb
   div.style.wordWrap = "normal";
   div.style.overflowWrap = "normal";
   div.style.width = "auto";
-  document.body.appendChild(div);
+  bodyOf(ta).appendChild(div); // measure in the textarea's own window (P1)
   try {
     div.textContent = "";
     div.appendChild(document.createTextNode(ta.value.slice(0, offset)));
@@ -220,6 +221,6 @@ export function textareaCaretLeft(ta: HTMLTextAreaElement, offset: number): numb
     if (!div.offsetHeight) return null; // no layout (tests)
     return marker.offsetLeft;
   } finally {
-    document.body.removeChild(div);
+    div.remove();
   }
 }

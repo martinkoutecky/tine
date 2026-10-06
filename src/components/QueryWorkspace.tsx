@@ -52,6 +52,7 @@ import { openRouteInOtherPane } from "../panes";
 import { openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { readLatestOr, readOr } from "../resourceRead";
+import { documentOf } from "../windowRealm";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -591,10 +592,10 @@ function AdvancedModal(props: {
             const first = focusable[0];
             const last = focusable[focusable.length - 1];
             if (!first || !last) return;
-            if (event.shiftKey && document.activeElement === first) {
+            if (event.shiftKey && documentOf(event).activeElement === first) {
               event.preventDefault();
               last.focus();
-            } else if (!event.shiftKey && document.activeElement === last) {
+            } else if (!event.shiftKey && documentOf(event).activeElement === last) {
               event.preventDefault();
               first.focus();
             }

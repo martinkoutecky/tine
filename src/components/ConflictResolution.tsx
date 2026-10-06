@@ -41,6 +41,7 @@ import {
   visibleDiffRows,
 } from "./DiffRows";
 import type { ConflictObject, MergeDecision, PageDto, SyncConflictDiff } from "../types";
+import { listen, newIntersectionObserver, newResizeObserver } from "../windowRealm";
 
 function errorDetail(error: unknown): string {
   // Tauri rejects a `Result<T, String>` with the bare string; keep its text.
@@ -139,26 +140,27 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   onMount(() => {
     // The sentinel sits directly below the panel: a half-visible tall panel,
     // or one still below the fold on a short window, does not dock.
-    if (!sentinel || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver((entries) => {
+    if (!sentinel) return;
+    const io = newIntersectionObserver(sentinel, (entries) => {
       const entry = entries[entries.length - 1];
       if (!entry) return;
       const above = !entry.isIntersecting && entry.boundingClientRect.top < 0;
       setDocked(above);
       if (!above) setExpanded(false);
     });
+    if (!io) return;
     io.observe(sentinel);
     onCleanup(() => io.disconnect());
   });
   createEffect(() => {
     if (!docked()) return;
     measureDock();
-    window.addEventListener("resize", measureDock);
+    const stopResize = listen(inlineSlot ?? sentinel, "resize", measureDock);
     const scroller = inlineSlot?.closest(".main-content");
-    const ro = typeof ResizeObserver !== "undefined" && scroller ? new ResizeObserver(measureDock) : undefined;
+    const ro = scroller ? newResizeObserver(scroller, measureDock) : null;
     if (ro && scroller) ro.observe(scroller);
     onCleanup(() => {
-      window.removeEventListener("resize", measureDock);
+      stopResize();
       ro?.disconnect();
     });
   });

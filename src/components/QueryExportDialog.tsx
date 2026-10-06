@@ -7,6 +7,7 @@ import { bindingOwner, writeOwned } from "../owned";
 import type { QueryPublicationRequest } from "../types";
 import { readOr } from "../resourceRead";
 import { initQueryExportBudget, queryExportBudgetBytes } from "../queryExportBudget";
+import { activeWindow, listen } from "../windowRealm";
 
 /** Review complete owner pages, then publish a graph query leaf as a static
  * site and read-only browser app, preserving/reporting replaced output. The backend rechecks the fingerprint
@@ -65,8 +66,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     const key = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); closeQueryExport(); }
     };
-    window.addEventListener("keydown", key, true);
-    onCleanup(() => window.removeEventListener("keydown", key, true));
+    onCleanup(listen(activeWindow(), "keydown", key, true));
   });
   return (
     <div class="modal-overlay" onClick={closeQueryExport}>

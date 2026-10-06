@@ -1,3 +1,4 @@
+import { newResizeObserver, requestFrame, viewportOf, windowOf } from "../windowRealm";
 // **A query-sheet popover always fits the viewport (GH #619).** The popovers are `position:absolute` under their
 // trigger. A long list (the Task value list in the original report, the field chooser) hung off the bottom of
 // the screen, and since the sheet is `position:fixed` nothing could scroll it back: the wheel had nowhere to
@@ -49,19 +50,38 @@ function scrollingAncestor(menu: HTMLElement): HTMLElement | null {
 /** Fit `menu` (a `.qs-menu`) to the viewport relative to its positioned parent, now and on every resize of
  *  the popover, scroll or window resize. Returns the cleanup. */
 export function fitPopoverToViewport(menu: HTMLElement): () => void {
-  let frame = 0;
+  let frame: (() => void) | undefined;
   let alive = true;
   let revealed = false;
+  // Listeners and the observer come from the window the menu is INSERTED into
+  // (OG-MULTIWINDOW P1), which is only known once it is connected.
+  let stopWatching: (() => void) | undefined;
+  const watch = () => {
+    const win = windowOf(menu);
+    win.addEventListener("resize", schedule);
+    win.addEventListener("scroll", schedule, true);
+    const observer = newResizeObserver(menu, schedule);
+    observer?.observe(menu);
+    for (const child of Array.from(menu.children)) observer?.observe(child);
+    stopWatching = () => {
+      win.removeEventListener("resize", schedule);
+      win.removeEventListener("scroll", schedule, true);
+      observer?.disconnect();
+    };
+  };
   const apply = () => {
+    frame = undefined;
     if (!alive) return;
     const anchor = menu.offsetParent ?? menu.parentElement;
     if (!menu.isConnected || !anchor) {
-      frame = requestAnimationFrame(apply);
+      frame = requestFrame(undefined, apply);
       return;
     }
-    const view = window.visualViewport;
-    const height = view?.height ?? window.innerHeight;
-    const width = view?.width ?? window.innerWidth;
+    if (!stopWatching) watch();
+    const viewport = viewportOf(menu);
+    const view = viewport.visual;
+    const height = view?.height ?? viewport.height;
+    const width = view?.width ?? viewport.width;
     const box = anchor.getBoundingClientRect();
     // Measure the NATURAL height: with last frame's clamp still applied the list had already shrunk, which read
     // as "fits" and flipped the popover into an oscillation.
@@ -95,22 +115,15 @@ export function fitPopoverToViewport(menu: HTMLElement): () => void {
       menu.style.right = crosses ? "0" : "";
     }
   };
-  const schedule = () => {
+  function schedule() {
     if (!alive) return;
-    cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(apply);
-  };
+    frame?.();
+    frame = requestFrame(menu.isConnected ? menu : undefined, apply);
+  }
   schedule();
-  window.addEventListener("resize", schedule);
-  window.addEventListener("scroll", schedule, true);
-  const observer = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : undefined;
-  observer?.observe(menu);
-  for (const child of Array.from(menu.children)) observer?.observe(child);
   return () => {
     alive = false;
-    cancelAnimationFrame(frame);
-    window.removeEventListener("resize", schedule);
-    window.removeEventListener("scroll", schedule, true);
-    observer?.disconnect();
+    frame?.();
+    stopWatching?.();
   };
 }

@@ -28,6 +28,7 @@ import { exportHtml } from "../editor/exportHtml";
 import type { Block, Format, Inline, ListItem } from "../render/ast";
 import type { BlockDto, PageDto, QueryExportResult, QueryExportSpec, RefGroup } from "../types";
 import { registerTransientLayer } from "../transientLayers";
+import { activeWindow, listen } from "../windowRealm";
 
 const STORE_KEY = "tine.exportOptions";
 type ExportFormat = "text" | "opml" | "html";
@@ -524,8 +525,8 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
         copy();
       }
     };
-    window.addEventListener("keydown", onKey, true);
-    onCleanup(() => window.removeEventListener("keydown", onKey, true));
+    // The modal's own window (the window it was opened in); OG-MULTIWINDOW P1.
+    onCleanup(listen(activeWindow(), "keydown", onKey, true));
   });
 
   const visibleToggles = () => format() === "text" ? [...COMMON_TOGGLES, ...TEXT_TOGGLES] : COMMON_TOGGLES;

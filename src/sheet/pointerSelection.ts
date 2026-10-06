@@ -1,21 +1,22 @@
 import type { SheetCellCtx } from "./context";
 import { graphOwner } from "../owned";
 import { extendCellSelectionTo, setCellRangeSelection, setCellSel } from "./selection";
+import { isElementNode, windowOf } from "../windowRealm";
 
 const DRAG_THRESHOLD_PX = 4;
 const INTERACTIVE_SELECTOR = "textarea, input, select, button, a, [contenteditable='true']";
 
 export function sheetGridIdFromEventTarget(target: EventTarget | null): string | null {
-  const el = target instanceof Element ? target.closest("[data-sheet-grid-id]") as HTMLElement | null : null;
+  const el = isElementNode(target) ? target.closest("[data-sheet-grid-id]") as HTMLElement | null : null;
   return el?.dataset.sheetGridId ?? null;
 }
 
 export function isSheetPointerInteractive(target: EventTarget | null): boolean {
-  return target instanceof Element && !!target.closest(INTERACTIVE_SELECTOR);
+  return isElementNode(target) && !!target.closest(INTERACTIVE_SELECTOR);
 }
 
 export function sheetCellFromEventTarget(target: EventTarget | null, gridId: string): SheetCellCtx | null {
-  if (!(target instanceof Element)) return null;
+  if (!isElementNode(target)) return null;
   const cell = target.closest(".sheet-cell[data-sheet-grid-id][data-row][data-col]") as HTMLElement | null;
   if (!cell || cell.dataset.sheetGridId !== gridId) return null;
   const row = Number(cell.dataset.row);
@@ -54,6 +55,7 @@ export function beginCellPointerSelection(e: PointerEvent, gridId: string): bool
   // and any failure removes the listeners.
   const anchorEl = (e.target as Element).closest(".sheet-cell");
   const pointerId = e.pointerId;
+  const dragWindow = windowOf(e); // the drag's own window (P1)
   const owner = graphOwner(() => !!anchorEl?.isConnected);
   const startX = e.clientX;
   const startY = e.clientY;
@@ -62,7 +64,7 @@ export function beginCellPointerSelection(e: PointerEvent, gridId: string): bool
   let lastCol = anchor.col;
 
   const focusAt = (ev: PointerEvent): SheetCellCtx | null => {
-    const target = document.elementFromPoint(ev.clientX, ev.clientY);
+    const target = dragWindow.document.elementFromPoint(ev.clientX, ev.clientY);
     return sheetCellFromEventTarget(target, gridId);
   };
   const updateFocus = (focus: SheetCellCtx): void => {
@@ -72,10 +74,10 @@ export function beginCellPointerSelection(e: PointerEvent, gridId: string): bool
     setCellRangeSelection(gridId, { row: anchor.row, col: anchor.col }, { row: focus.row, col: focus.col }, anchor.surfaceId);
   };
   const removeListeners = () => {
-    window.removeEventListener("pointermove", onMove, true);
-    window.removeEventListener("pointerup", onUp, true);
-    window.removeEventListener("pointercancel", onCancel, true);
-    window.removeEventListener("blur", onCancel);
+    dragWindow.removeEventListener("pointermove", onMove, true);
+    dragWindow.removeEventListener("pointerup", onUp, true);
+    dragWindow.removeEventListener("pointercancel", onCancel, true);
+    dragWindow.removeEventListener("blur", onCancel);
   };
   const onMove = (ev: PointerEvent) => {
     if (ev.pointerId !== pointerId) return;
@@ -84,7 +86,7 @@ export function beginCellPointerSelection(e: PointerEvent, gridId: string): bool
     moved = true;
     const focus = focusAt(ev);
     if (focus) updateFocus(focus);
-    window.getSelection()?.removeAllRanges();
+    dragWindow.getSelection()?.removeAllRanges();
     ev.preventDefault();
   };
   const onUp = (ev: PointerEvent) => {
@@ -96,9 +98,9 @@ export function beginCellPointerSelection(e: PointerEvent, gridId: string): bool
     removeListeners();
   };
 
-  window.addEventListener("pointermove", onMove, true);
-  window.addEventListener("pointerup", onUp, true);
-  window.addEventListener("pointercancel", onCancel, true);
-  window.addEventListener("blur", onCancel);
+  dragWindow.addEventListener("pointermove", onMove, true);
+  dragWindow.addEventListener("pointerup", onUp, true);
+  dragWindow.addEventListener("pointercancel", onCancel, true);
+  dragWindow.addEventListener("blur", onCancel);
   return true;
 }

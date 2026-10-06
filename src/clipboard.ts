@@ -4,6 +4,7 @@
 import { backend } from "./backend";
 import type { Format, PageKind } from "./types";
 import { graphMeta } from "./graphSession";
+import { onEachWindow } from "./windowRealm";
 
 export const CLIPBOARD_PAYLOAD_MAX_BLOCKS = 10_000;
 export const CLIPBOARD_PAYLOAD_MAX_RAW_BYTES = 4 * 1024 * 1024;
@@ -195,6 +196,12 @@ export function copyBlockOutline(
 // writer to route through the facade. Block-selection shortcuts prevent their
 // native event, so this only clears clipboard content that really replaced it.
 if (typeof document !== "undefined") {
-  document.addEventListener("copy", clearClipboardPayload, true);
-  document.addEventListener("cut", clearClipboardPayload, true);
+  onEachWindow((win) => {
+    win.document.addEventListener("copy", clearClipboardPayload, true);
+    win.document.addEventListener("cut", clearClipboardPayload, true);
+    return () => {
+      win.document.removeEventListener("copy", clearClipboardPayload, true);
+      win.document.removeEventListener("cut", clearClipboardPayload, true);
+    };
+  });
 }

@@ -111,6 +111,7 @@ import { installSessionActivity } from "./sessionActivity";
 import { initSettingsLayout } from "./settingsLayout";
 import { initCodeDisplay } from "./codeDisplay";
 import { initContentWidths } from "./contentWidth";
+import { isElementNode, isHTMLElementNode, isNodeValue, mainWindow, newResizeObserver, registeredWindows, requestFrame, windowOf } from "./windowRealm";
 
 const Settings = lazy(() => import("./components/Settings").then((module) => ({ default: module.Settings })));
 
@@ -118,8 +119,11 @@ const Settings = lazy(() => import("./components/Settings").then((module) => ({ 
  * root Back.  Callers choose only the final platform action. */
 export const safeClose = createSafeCloseCoordinator({
   blurActive() {
-    const active = document.activeElement;
-    if (active instanceof HTMLElement) active.blur();
+    // Every Tine window: an editor focused in a workspace popup commits too.
+    for (const win of registeredWindows()) {
+      const active = win.document.activeElement;
+      if (isHTMLElementNode(active)) active.blur();
+    }
   },
   endEdit() {
     endEdit("graph-switch");
@@ -255,6 +259,7 @@ function PaneResizer(props: { dir: "row" | "col"; path: number[] }): JSX.Element
       onPointerDown={(e) => {
         e.preventDefault();
         const box = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+        const win = windowOf(e); // the drag continues in the seam's own window
         const onMove = (ev: PointerEvent) => {
           const raw =
             props.dir === "row"
@@ -263,11 +268,11 @@ function PaneResizer(props: { dir: "row" | "col"; path: number[] }): JSX.Element
           setSplitRatio(props.path, raw);
         };
         const onUp = () => {
-          window.removeEventListener("pointermove", onMove);
-          window.removeEventListener("pointerup", onUp);
+          win.removeEventListener("pointermove", onMove);
+          win.removeEventListener("pointerup", onUp);
         };
-        window.addEventListener("pointermove", onMove);
-        window.addEventListener("pointerup", onUp);
+        win.addEventListener("pointermove", onMove);
+        win.addEventListener("pointerup", onUp);
       }}
     />
   );
@@ -328,16 +333,16 @@ function PaneScroller(props: {
   };
   onMount(() => {
     measure();
-    const frame = requestAnimationFrame(measure);
-    if (typeof ResizeObserver === "undefined") {
-      onCleanup(() => cancelAnimationFrame(frame));
+    const cancelFrame = requestFrame(scroller, measure);
+    const observer = newResizeObserver(scroller, measure);
+    if (!observer) {
+      onCleanup(cancelFrame);
       return;
     }
-    const observer = new ResizeObserver(measure);
     observer.observe(scroller);
     observer.observe(inner);
     onCleanup(() => {
-      cancelAnimationFrame(frame);
+      cancelFrame();
       observer.disconnect();
     });
   });
@@ -532,7 +537,7 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
 
   const onClick = (e: MouseEvent) => {
     const target = e.target;
-    const el = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+    const el = isElementNode(target) ? target : isNodeValue(target) ? target.parentElement : null;
     const a = el?.closest?.("a[href]") as HTMLAnchorElement | null;
     const href = a?.getAttribute("href")?.trim() ?? "";
     const scheme = a ? /^([a-z][a-z0-9+.-]*):/i.exec(href)?.[1]?.toLowerCase() : undefined;
@@ -546,8 +551,9 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
     void backend().openExternal(a.href);
   };
 
-  document.addEventListener("click", onClick, true);
-  return () => document.removeEventListener("click", onClick, true);
+  // Mobile only, where main is the sole window.
+  mainWindow.document.addEventListener("click", onClick, true);
+  return () => mainWindow.document.removeEventListener("click", onClick, true);
 }
 
 /** Install the graph window's capture receiver. Each request is deduplicated
@@ -728,7 +734,7 @@ export function App(): JSX.Element {
         // The edge swipe never closes the app: iOS has no root rung.
         back: () => { dispatchAppBack({ ...backDeps, closeRoot() {} }); },
         openDrawer: () => setLeftSidebarOpen(true),
-        surface: () => document.querySelector<HTMLElement>(".app-container > .main-container"),
+        surface: () => mainWindow.document.querySelector<HTMLElement>(".app-container > .main-container"),
       });
     })();
     onCleanup(() => { disposed = true; uninstall(); });
@@ -1149,12 +1155,13 @@ export function App(): JSX.Element {
               const onMove = (ev: MouseEvent) =>
                 resizeSidebar("left", ev.clientX);
               const onUp = () => {
-                window.removeEventListener("mousemove", onMove);
-                window.removeEventListener("mouseup", onUp);
+                mainWindow.removeEventListener("mousemove", onMove);
+                mainWindow.removeEventListener("mouseup", onUp);
                 commitSidebarWidth("left");
               };
-              window.addEventListener("mousemove", onMove);
-              window.addEventListener("mouseup", onUp);
+              // The left sidebar exists only in the main window.
+              mainWindow.addEventListener("mousemove", onMove);
+              mainWindow.addEventListener("mouseup", onUp);
             }}
           />
         </MobileDrawerPanel>

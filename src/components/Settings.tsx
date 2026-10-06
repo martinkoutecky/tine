@@ -75,6 +75,7 @@ import { JOURNAL_TITLE_FORMATS } from "../journalTitleFormats";
 import { writePreference, loadPreference } from "../preferenceWrites";
 import { bindingOwner, graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
 import { readOr } from "../resourceRead";
+import { activeWindow, listen, queryAllWindows, queryAllWindowsAll } from "../windowRealm";
 const TABS: { id: SettingsTabId; label: string }[] = [
   { id: "appearance", label: "Appearance" },
   { id: "editor", label: "Editor" },
@@ -97,7 +98,7 @@ export function Settings(): JSX.Element {
   const openSearchResult = (entry: SettingSearchEntry) => {
     setTab(entry.tab);
     queueMicrotask(() => {
-      const fields = [...document.querySelectorAll<HTMLElement>("[data-setting-label]")];
+      const fields = queryAllWindowsAll<HTMLElement>("[data-setting-label]");
       fields.find((field) => field.dataset.settingLabel === entry.label)?.scrollIntoView({ block: "center" });
     });
   };
@@ -129,7 +130,7 @@ export function Settings(): JSX.Element {
     if (!settingsOpen()) return;
     const unregister = registerTransientLayer({
       id: "settings",
-      root: () => document.querySelector<HTMLElement>(".settings-modal"),
+      root: () => queryAllWindows<HTMLElement>(".settings-modal"),
       dismiss: () => {
         if (recording()) { setRecording(null); return true; }
         if (settingsQuery()) { setSettingsQuery(""); return true; }
@@ -158,8 +159,7 @@ export function Settings(): JSX.Element {
       setShortcutOverride(id, b);
       setRecording(null);
     };
-    window.addEventListener("keydown", onKey, true);
-    onCleanup(() => window.removeEventListener("keydown", onKey, true));
+    onCleanup(listen(activeWindow(), "keydown", onKey, true));
   });
 
   return (

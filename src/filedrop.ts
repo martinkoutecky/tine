@@ -16,6 +16,7 @@ import { captureBinding } from "./binding";
 import { bindingOwner, readOwned, writeOwned } from "./owned";
 import { graphMeta } from "./graphSession";
 import type { OutlineNode } from "./editor/outline";
+import { MAIN_WINDOW_ID, mainWindow, windowById } from "./windowRealm";
 
 const MAX_DROPPED_CELLS = 5000;
 
@@ -48,7 +49,11 @@ export async function installFileDrop(): Promise<() => void> {
   } catch {
     return () => {};
   }
-  const setActive = (on: boolean) => document.body.classList.toggle("file-drop-active", on);
+  // `getCurrentWebview()` is MAIN's webview: these OS drop events and their
+  // physical coordinates belong to the main window only. A workspace window's
+  // drops are not wired (RECEIPT-OG-MW: product gap).
+  const main = windowById(MAIN_WINDOW_ID) ?? mainWindow;
+  const setActive = (on: boolean) => main.document.body.classList.toggle("file-drop-active", on);
 
   const unlisten = await webview.onDragDropEvent(async (event) => {
     const p = event.payload;
@@ -62,8 +67,8 @@ export async function installFileDrop(): Promise<() => void> {
     // Resolve the drop target: the block under the drop point, else the last
     // visible block (drops in the page whitespace land at the end). Tauri gives a
     // physical-pixel position; elementFromPoint wants CSS pixels.
-    const dpr = window.devicePixelRatio || 1;
-    const el = document.elementFromPoint(p.position.x / dpr, p.position.y / dpr);
+    const dpr = main.devicePixelRatio || 1;
+    const el = main.document.elementFromPoint(p.position.x / dpr, p.position.y / dpr);
     const onBlock = el?.closest("[data-block-id]")?.getAttribute("data-block-id") ?? null;
     const order = visibleOrder();
     const afterId = onBlock ?? order[order.length - 1] ?? null;

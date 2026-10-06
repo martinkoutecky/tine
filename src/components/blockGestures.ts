@@ -23,6 +23,7 @@ import { blockDropPosition, type BlockDropPosition } from "../editor/blockDrag";
 import { textareaCaretPoints } from "../editor/caretRows";
 import { isBuiltinHidden, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
+import { documentOf, isElementTag } from "../windowRealm";
 
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
@@ -42,6 +43,8 @@ export { dragId, dropInd };
 export function beginDrag(id: string, e: MouseEvent) {
   const binding = captureBinding(), startX = e.clientX;
   const startY = e.clientY;
+  // The drag's own window: listeners and hit tests follow the pointer's document.
+  const doc = documentOf(e);
   let capturedIds: string[] | null = null;
   dragMoved = false;
   const onMove = (ev: MouseEvent) => {
@@ -56,11 +59,11 @@ export function beginDrag(id: string, e: MouseEvent) {
       // Moving a block is not a text gesture. WebKit otherwise runs its own
       // selection drag from the bullet and paints every block the pointer
       // crosses blue (GH #424, macOS; Chromium does not do this).
-      setDragSelectionSuppressed(true);
+      setDragSelectionSuppressed(true, doc);
     }
     // WebKit can re-anchor a selection mid-drag; the class alone is not enough.
-    dropSelection();
-    const el = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest(
+    dropSelection(doc);
+    const el = (doc.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest(
       ".ls-block"
     ) as HTMLElement | null;
     const tid = el?.dataset.blockId;
@@ -75,8 +78,8 @@ export function beginDrag(id: string, e: MouseEvent) {
     }
   };
   const onUp = () => {
-    document.removeEventListener("mousemove", onMove);
-    document.removeEventListener("mouseup", onUp);
+    doc.removeEventListener("mousemove", onMove);
+    doc.removeEventListener("mouseup", onUp);
     setDragSelectionSuppressed(false);
     const ind = dropInd();
     if (bindingCurrent(binding) && dragMoved && ind && docNode(ind.id)) {
@@ -88,8 +91,8 @@ export function beginDrag(id: string, e: MouseEvent) {
     setDropInd(null);
     setTimeout(() => (dragMoved = false), 0);
   };
-  document.addEventListener("mousemove", onMove);
-  document.addEventListener("mouseup", onUp);
+  doc.addEventListener("mousemove", onMove);
+  doc.addEventListener("mouseup", onUp);
 }
 
 // --- Click / drag gesture on rendered block content -------------------------
@@ -117,8 +120,8 @@ interface EditGesture {
   caretPoints: Array<{ x: number; y: number }> | null | undefined;
 }
 
-function blockIdAtPoint(x: number, y: number): string | null {
-  const el = document.elementFromPoint(x, y);
+function blockIdAtPoint(doc: Document, x: number, y: number): string | null {
+  const el = doc.elementFromPoint(x, y);
   const row = el?.closest?.(".ls-block");
   return row?.getAttribute("data-block-id") ?? null;
 }
@@ -146,18 +149,20 @@ export function beginEditGesture(
   // edit before mouseup exactly like OG's mousedown path.
   e.preventDefault();
   startEditing(g.blockId, g.offset, g.owner);
+  // The gesture's own window: listeners and hit tests follow the pointer's document.
+  const doc = documentOf(e);
   const onMove = (ev: MouseEvent) => {
     const moved =
       Math.abs(ev.clientX - g.startX) > DRAG_THRESHOLD_PX || Math.abs(ev.clientY - g.startY) > DRAG_THRESHOLD_PX;
     if (!moved) return;
-    const over = blockIdAtPoint(ev.clientX, ev.clientY);
+    const over = blockIdAtPoint(doc, ev.clientX, ev.clientY);
     if (g.escalated) {
       if (over) extendSelectionTo(over, g.outlineScope);
       return;
     }
     if (over === g.blockId) {
-      const active = document.activeElement;
-      if (active instanceof HTMLTextAreaElement && active.classList.contains("block-editor")) {
+      const active = doc.activeElement;
+      if (isElementTag(active, "textarea") && active.classList.contains("block-editor")) {
         if (g.caretPoints === undefined) {
           // Edit entry maps raw source offsets into the actual textarea (code
           // wrappers, for example, are hidden). Continue from that native
@@ -196,18 +201,18 @@ export function beginEditGesture(
       // the gesture (never de-escalate — flipping modes mid-drag is jarring).
       g.escalated = true;
       endEdit("select-block");
-      window.getSelection()?.removeAllRanges();
+      doc.getSelection()?.removeAllRanges();
       selectBlock(g.blockId, g.outlineScope);
       extendSelectionTo(over, g.outlineScope);
     }
   };
   const onUp = (ev: MouseEvent) => {
-    document.removeEventListener("mousemove", onMove, true);
-    document.removeEventListener("mouseup", onUp, true);
+    doc.removeEventListener("mousemove", onMove, true);
+    doc.removeEventListener("mouseup", onUp, true);
     if (g.escalated) return; // block selection stands
   };
-  document.addEventListener("mousemove", onMove, true);
-  document.addEventListener("mouseup", onUp, true);
+  doc.addEventListener("mousemove", onMove, true);
+  doc.addEventListener("mouseup", onUp, true);
 }
 
 /** Click on rendered block content -> raw caret offset for the editor, placing

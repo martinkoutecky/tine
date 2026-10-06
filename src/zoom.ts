@@ -18,6 +18,7 @@ import { isTauri } from "./backend";
 import { activePane } from "./ui";
 import { platformKind } from "./platform";
 import { pushToast } from "./toasts";
+import { onEachWindow, requestFrame } from "./windowRealm";
 
 const ZOOM_KEY = "logseq-claude.zoom";
 const MIN = 0.5;
@@ -143,8 +144,10 @@ export function installInterfaceZoomKeys(): () => void {
       zoomReset();
     }
   };
-  window.addEventListener("keydown", onKey, true);
-  return () => window.removeEventListener("keydown", onKey, true);
+  return onEachWindow((win) => {
+    win.addEventListener("keydown", onKey, true);
+    return () => win.removeEventListener("keydown", onKey, true);
+  });
 }
 
 /** Ctrl/Cmd + mouse-wheel → interface zoom, routed by POINTER (not focus): a wheel
@@ -156,10 +159,10 @@ export function installInterfaceZoomKeys(): () => void {
  *  Returns an uninstaller. */
 export function installInterfaceZoomWheel(): () => void {
   let pending = 0;
-  let raf = 0;
+  let raf: (() => void) | undefined;
   let wheelZoomState: WheelZoomGestureState = {};
   const flush = () => {
-    raf = 0;
+    raf = undefined;
     const d = pending;
     pending = 0;
     if (d !== 0) setZoom(interfaceZoom() * (d < 0 ? 1.1 : 1 / 1.1));
@@ -176,11 +179,14 @@ export function installInterfaceZoomWheel(): () => void {
     e.stopPropagation();
     if (!decision.zoom) return;
     pending += e.deltaY; // sign-based step is robust to wheel vs. line deltaMode
-    if (!raf) raf = requestAnimationFrame(flush);
+    if (!raf) raf = requestFrame(e, flush);
   };
-  window.addEventListener("wheel", onWheel, { passive: false, capture: true });
+  const stopWindows = onEachWindow((win) => {
+    win.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => win.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
+  });
   return () => {
-    window.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
-    if (raf) cancelAnimationFrame(raf);
+    stopWindows();
+    raf?.();
   };
 }

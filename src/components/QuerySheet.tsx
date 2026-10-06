@@ -76,6 +76,7 @@ import {
   Listbox,
   ListboxOption,
 } from "./querySheetParts";
+import { documentOf, listen } from "../windowRealm";
 
 export {
   QuerySentence,
@@ -155,8 +156,9 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
         cancelReorderFocus();
         return;
       }
-      const active = document.activeElement;
-      if (active !== intent.origin && active !== document.body) {
+      const doc = documentOf(sheetEl);
+      const active = doc.activeElement;
+      if (active !== intent.origin && active !== doc.body) {
         cancelReorderFocus();
         return;
       }
@@ -170,7 +172,8 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
     if (immediate) focus();
     else queueMicrotask(focus);
   };
-  onMount(() => document.addEventListener("focusin", handleFocusChange, true));
+  let stopFocusListen: (() => void) | undefined;
+  onMount(() => { stopFocusListen = listen(sheetEl, "focusin", handleFocusChange, { capture: true, on: "document" }); });
 
   /** **A loc is a path into a ROOT REVISION, not a node's identity.**
   *
@@ -193,7 +196,7 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
     restoreReorderFocus(intent);
   });
   onCleanup(() => {
-    document.removeEventListener("focusin", handleFocusChange, true);
+    stopFocusListen?.();
     cancelReorderFocus();
     cancelQuerySheetReorder();
   });
@@ -239,7 +242,7 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
         sourceRoot: root,
         expectedRoot: reorderRootRevision(next),
         target: [...pos.parentLoc, to],
-        origin: document.activeElement === origin ? origin : null,
+        origin: documentOf(sheetEl).activeElement === origin ? origin : null,
         saved: false,
         scheduled: false,
       };

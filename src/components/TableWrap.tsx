@@ -1,4 +1,5 @@
 import { onCleanup, onMount, type JSX } from "solid-js";
+import { listen, newResizeObserver, requestFrame } from "../windowRealm";
 
 /** Given measured geometry, return the viewport width and leftward offset:
  * preserve fitting content; center wider content on the text column within
@@ -22,9 +23,8 @@ export function TableWrap(props: { children: JSX.Element }): JSX.Element {
     if (!parent || !pane || el.closest(".sheet-cell")) return;
     const surface = el.firstElementChild as HTMLElement;
     const column = el.closest<HTMLElement>(".main-content-inner") ?? parent;
-    let frame = 0;
+    let frame: (() => void) | undefined;
     const measure = () => {
-      frame = 0;
       const p = parent.getBoundingClientRect(), m = pane.getBoundingClientRect(), c = column.getBoundingClientRect();
       const parentStyle = getComputedStyle(parent);
       const normalLeft = p.left + (parseFloat(parentStyle.paddingLeft) || 0);
@@ -34,12 +34,12 @@ export function TableWrap(props: { children: JSX.Element }): JSX.Element {
       el.style.setProperty("--table-bleed-width", `${width}px`);
       el.style.setProperty("--table-bleed-shift", `${shift}px`);
     };
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    const schedule = () => { if (!frame) frame = requestFrame(el, () => { frame = undefined; measure(); }); };
+    const observer = newResizeObserver(el, schedule);
     for (const node of [parent, pane, column, surface]) observer?.observe(node);
-    window.addEventListener("resize", schedule);
+    const stopResize = listen(el, "resize", schedule);
     schedule();
-    onCleanup(() => { observer?.disconnect(); cancelAnimationFrame(frame); window.removeEventListener("resize", schedule); });
+    onCleanup(() => { observer?.disconnect(); frame?.(); stopResize(); });
   });
   return <div ref={el} class="md-table-wrap">{props.children}</div>;
 }

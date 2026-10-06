@@ -4,6 +4,7 @@
  */
 import { createEffect, onCleanup, type JSX } from "solid-js";
 import { EmojiText } from "../render/emoji";
+import { newResizeObserver } from "../windowRealm";
 
 /** Render an emoji-safe label; horizontal overflow on pointer hover exposes
  * fullTitle (or text). Recheck hovered width/content changes, clear on leave. */
@@ -26,9 +27,7 @@ export function SidebarTitle(props: { text: string; fullTitle?: string }): JSX.E
     onMouseEnter={() => {
       hovered = true;
       refresh();
-      if (typeof ResizeObserver !== "undefined") {
-        observer = new ResizeObserver(refresh);
-        observer.observe(label);
-      }
+      observer = newResizeObserver(label, refresh) ?? undefined;
+      observer?.observe(label);
     }} onMouseLeave={leave}><EmojiText text={props.text} /></span>;
 }

@@ -22,6 +22,7 @@ import type { QueryPageScope } from "../types";
 import { blockDtoExternalId } from "../blockIdentity";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
+import { queryAllWindows } from "../windowRealm";
 
 // One selectable result row.
 type Item =
@@ -491,7 +492,7 @@ export function QuickSwitcher(): JSX.Element {
     if (!switcherOpen()) return;
     const unregister = registerTransientLayer({
       id: "quick-switcher",
-      root: () => document.querySelector(".switcher"),
+      root: () => queryAllWindows<HTMLElement>(".switcher"),
       trigger: () => inputRef ?? null,
       dismiss: () => {
         if (syntaxOpen()) { setSyntaxOpen(false); queueMicrotask(() => inputRef?.focus()); return true; }

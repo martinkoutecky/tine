@@ -15,6 +15,7 @@ import { editingId } from "../editorController";
 import { clearOnBindingInvalidated } from "../binding";
 import { listenForOutlinePrint, printingOutline, registerOutlineWindow } from "../outlineViewport";
 import { Block, CollapseSurfaceContext, SurfaceContext } from "./Block";
+import { elementFromPointIn, newIntersectionObserver, newResizeObserver, windowOf } from "../windowRealm";
 
 const GROUP = 24;
 const WINDOW_AT = 80;
@@ -84,18 +85,23 @@ function WindowedList(props: { groups: readonly (readonly string[])[] }): JSX.El
   const [width, setWidth] = createSignal(900);
   const [font, setFont] = createSignal("16px sans-serif");
   const callbacks = new WeakMap<Element, (near: boolean) => void>();
-  const observer = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver((entries) => {
-    for (const entry of entries) callbacks.get(entry.target)?.(entry.isIntersecting);
-  }, { rootMargin: "600px 0px" });
+  // Created on first use from the list's own window: an IntersectionObserver's
+  // implicit root is its realm's viewport (OG-MULTIWINDOW P1).
+  let observer: IntersectionObserver | null | undefined;
   onCleanup(() => observer?.disconnect());
   const observe = (host: HTMLElement, callback: (near: boolean) => void) => {
+    if (observer === undefined) {
+      observer = newIntersectionObserver(host, (entries) => {
+        for (const entry of entries) callbacks.get(entry.target)?.(entry.isIntersecting);
+      }, { rootMargin: "600px 0px" });
+    }
     callbacks.set(host, callback); observer?.observe(host);
     return () => { observer?.unobserve(host); callbacks.delete(host); };
   };
   onMount(() => {
     const update = () => batch(() => { setWidth(container.clientWidth || 900); setFont(getComputedStyle(container).font || "16px sans-serif"); });
     update();
-    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    const resize = newResizeObserver(container, update);
     resize?.observe(container);
     onCleanup(() => resize?.disconnect());
   });
@@ -171,15 +177,15 @@ function BlockWindow(props: { ids: readonly string[]; first: boolean; width: num
     const press = (event: MouseEvent) => {
       if (untrack(mounted)) return;
       warm();
-      const target = document.elementFromPoint(event.clientX, event.clientY);
+      const target = elementFromPointIn(host, event.clientX, event.clientY);
       if (target && host.contains(target)) {
         event.stopImmediatePropagation();
-        target.dispatchEvent(new MouseEvent(event.type, event));
+        target.dispatchEvent(new (windowOf(host) as Window & typeof globalThis).MouseEvent(event.type, event));
       }
     };
     host.addEventListener("mousemove", warm, true);
     host.addEventListener("mousedown", press, true);
-    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+    const resize = newResizeObserver(host, () => {
       if (untrack(mounted)) remember();
       else {
         const cached = heights.get(cacheKey());

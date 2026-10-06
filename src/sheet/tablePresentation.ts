@@ -1,5 +1,6 @@
 import type { FieldId } from "./fields";
 import { isSheetBuiltinField, SCHEMA_PROP_TYPES } from "./config";
+import { isHTMLElementNode } from "../windowRealm";
 export { SCHEMA_PROP_TYPES };
 
 export type SortState = { col: number; dir: 1 | -1 } | null;
@@ -18,7 +19,7 @@ export function queryFieldEncodable(value: string): boolean {
  * O(columns); null means the browser has not measured a usable grid yet. */
 export function measuredGridTracks(grid: HTMLElement, count: number): string | null {
   const cells = [...grid.children].filter((child): child is HTMLElement =>
-    child instanceof HTMLElement && child.classList.contains("sheet-cell"));
+    isHTMLElementNode(child) && child.classList.contains("sheet-cell"));
   const tracks: string[] = [];
   for (const cell of cells.slice(0, count)) {
     const width = cell.getBoundingClientRect().width;

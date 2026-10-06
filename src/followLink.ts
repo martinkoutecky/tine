@@ -19,6 +19,7 @@ import { backend } from "./backend";
 import { blockRefTarget, resolveBlockBatched } from "./resolveBatch";
 import { ownedWhen, readOwned } from "./owned";
 import { focusedSurfaceOwner } from "./focusedSurface";
+import { activeElement, isElementTag } from "./windowRealm";
 
 type CaretContext = { text: string; caret: number; format: Format };
 
@@ -27,8 +28,8 @@ type CaretContext = { text: string; caret: number; format: Format };
  *  disagree on what is literal (e.g. `~[[x]]~` is Org code). */
 function caretContext(): CaretContext | null {
   if (typeof document === "undefined") return null;
-  const active = document.activeElement;
-  if (!(active instanceof HTMLTextAreaElement)) return null;
+  const active = activeElement();
+  if (!isElementTag(active, "textarea")) return null;
   const id = editingId();
   const node = id ? docNode(id) : undefined;
   const format: Format = node && pageByName(node.page)?.format === "org" ? "org" : "md";

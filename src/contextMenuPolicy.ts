@@ -1,8 +1,9 @@
 import { isMobilePlatform } from "./nativeChrome";
 import { isLongPressContextMenu } from "./render/longPress";
+import { isElementNode, isElementTag, isMouseEventValue } from "./windowRealm";
 
 function editableTarget(target: EventTarget | null): boolean {
-  const element = target instanceof Element ? target : null;
+  const element = isElementNode(target) ? target : null;
   return !!element?.closest("textarea,input,select,[contenteditable='true']");
 }
 
@@ -13,9 +14,9 @@ export function shouldOpenBlockContextMenu(
   target: EventTarget | null,
   mobile = isMobilePlatform,
 ): boolean {
-  if (!mobile && target instanceof HTMLTextAreaElement && target.classList.contains("code-edit") && target.selectionStart === target.selectionEnd) return true;
+  if (!mobile && isElementTag(target, "textarea") && target.classList.contains("code-edit") && target.selectionStart === target.selectionEnd) return true;
   if (editableTarget(target)) return false;
-  const element = target instanceof Element ? target : null;
+  const element = isElementNode(target) ? target : null;
   return !mobile || !!element?.closest(".bullet-container");
 }
 
@@ -26,7 +27,7 @@ export function shouldOpenTextContextMenu(
   targetOrEvent: EventTarget | MouseEvent | null,
   mobile = isMobilePlatform,
 ): boolean {
-  const event = targetOrEvent instanceof MouseEvent ? targetOrEvent : null;
+  const event = isMouseEventValue(targetOrEvent) ? targetOrEvent : null;
   const target: EventTarget | null = event
     ? event.target
     : targetOrEvent as EventTarget | null;

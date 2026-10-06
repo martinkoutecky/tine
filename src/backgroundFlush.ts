@@ -1,4 +1,5 @@
 import { externalActivityHeld } from "./externalActivity";
+import { anyWindowVisible, onEachWindow } from "./windowRealm";
 
 export interface BackgroundFlushDeps {
   endEdit(): void;
@@ -19,11 +20,13 @@ const triggers = ["visibilitychange", "pagehide", "freeze"] as const;
  * writes). Startup errors and rejections are logged and swallowed; a resolved false
  * is ignored, so dirty/conflicted work can remain unsaved. Listener setup can throw.
  * Dispose removes all three listeners. This cannot keep a native WebView alive until
- * the flush settles. */
+ * the flush settles.
+ *
+ * Workspace windows (OG-MULTIWINDOW P5): "hidden" means NO Tine window is
+ * visible, so minimizing main while the user types in a workspace window keeps
+ * the edit open. The triggers are listened for on every window's document. */
 export function installBackgroundFlush(deps: BackgroundFlushDeps): () => void {
-  const add = deps.addEventListener ?? document.addEventListener.bind(document);
-  const remove = deps.removeEventListener ?? document.removeEventListener.bind(document);
-  const isHidden = deps.isHidden ?? (() => document.visibilityState !== "visible");
+  const isHidden = deps.isHidden ?? (() => !anyWindowVisible());
   const pickerHeld = deps.externalActivityHeld ?? externalActivityHeld;
   let inFlight = false;
   const flush = () => {
@@ -39,6 +42,14 @@ export function installBackgroundFlush(deps: BackgroundFlushDeps): () => void {
       inFlight = false;
     }
   };
-  for (const trigger of triggers) add(trigger, flush);
-  return () => { for (const trigger of triggers) remove(trigger, flush); };
+  if (deps.addEventListener && deps.removeEventListener) {
+    const { addEventListener: add, removeEventListener: remove } = deps;
+    for (const trigger of triggers) add(trigger, flush);
+    return () => { for (const trigger of triggers) remove(trigger, flush); };
+  }
+  return onEachWindow((win) => {
+    const doc = win.document;
+    for (const trigger of triggers) doc.addEventListener(trigger, flush);
+    return () => { for (const trigger of triggers) doc.removeEventListener(trigger, flush); };
+  });
 }

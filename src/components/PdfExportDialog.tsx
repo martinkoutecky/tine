@@ -4,6 +4,7 @@ import { pdfExportPage, closePdfExport } from "../ui";
 import { exportPagePdf, DEFAULT_PRINT_OPTS } from "../print";
 import type { PrintOpts } from "../types";
 import { registerTransientLayer } from "../transientLayers";
+import { activeWindow, listen } from "../windowRealm";
 
 const STORE_KEY = "tine.pdfExportOpts";
 
@@ -73,8 +74,7 @@ function Dialog(props: { name: string }): JSX.Element {
         doExport();
       }
     };
-    window.addEventListener("keydown", onKey, true);
-    onCleanup(() => window.removeEventListener("keydown", onKey, true));
+    onCleanup(listen(activeWindow(), "keydown", onKey, true));
   });
 
   return (

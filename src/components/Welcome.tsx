@@ -7,6 +7,7 @@ import { isTauri } from "../backend";
 import { WindowControls } from "./WindowChrome";
 import { osDrawsWindowControls } from "../nativeChrome";
 import { registerTransientLayer } from "../transientLayers";
+import { queryAllWindows } from "../windowRealm";
 
 /** First-run onboarding. Shown (as a full-cover layer) when the app starts with
  *  no graph configured: choose to open an existing Logseq graph, or create a new
@@ -157,7 +158,7 @@ export function WelcomeLayer(props: {
     if (!dismissible()) return;
     const unregister = registerTransientLayer({
       id: "welcome",
-      root: () => document.querySelector<HTMLElement>(".welcome-card"),
+      root: () => queryAllWindows<HTMLElement>(".welcome-card"),
       dismiss: () => { props.onClose(); return true; },
     });
     onCleanup(unregister);

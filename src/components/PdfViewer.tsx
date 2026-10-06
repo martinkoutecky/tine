@@ -35,6 +35,7 @@ import { PDF_THEME_KEY, MAX_PDF_BYTES, MAX_PDF_PAGES, PDF_CANVAS_CACHE_PIXEL_BUD
   PDF_CANVAS_CACHE_PAGE_CAP, storedPdfTheme, isPdfPageRef, discardPdfDocument,
   isPdfAreaModifier, pageDimensionsError, safeCanvasSize, cropPdfArea,
   errorMessage, type PendingArea, type PdfTarget } from "./pdfViewerPrimitives";
+import { newIntersectionObserver, requestFrame, useOwnerWindow } from "../windowRealm";
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 export { PDF_CANVAS_CACHE_PIXEL_BUDGET, isPdfAreaModifier } from "./pdfViewerPrimitives";
@@ -58,6 +59,8 @@ export function PdfViewer(props: {
   onViewState?: (state: { page: number; scale: number }) => void;
 }): JSX.Element {
   const owner = props.owner, binding = captureBinding();
+  // The Tine window this viewer renders in: its listeners and frames live there.
+  const ownerWindow = useOwnerWindow();
   const instanceStem = `pdf-viewer-${createUniqueId()}`;
   const findLayerId = `${instanceStem}-find`;
   const surfaceLayerId = `${instanceStem}-surface`;
@@ -94,7 +97,7 @@ export function PdfViewer(props: {
   const [curPage, setCurPage] = createSignal(1);
   const [pageField, setPageField] = createSignal("1");
   let pageInputFocused = false;
-  let scrollRaf: number | undefined;
+  let scrollRaf: (() => void) | undefined;
   let viewStateReady = false;
   let viewStateBaseline: { page: number; scale: number } | null = null;
   const [theme, setTheme] = createSignal<PdfTheme>(storedPdfTheme());
@@ -359,7 +362,7 @@ export function PdfViewer(props: {
     io?.disconnect();
     // Modest prefetch margin: render/text only pages near the viewport, so a
     // fresh open doesn't do heavy text-layer work for a whole screenful ahead.
-    io = new IntersectionObserver(onIntersect, { root: scrollRef, rootMargin: "200px 0px" });
+    io = newIntersectionObserver(scrollRef, onIntersect, { root: scrollRef, rootMargin: "200px 0px" });
 
     const s = scale();
     for (let n = 1; n <= pdfDoc.numPages; n++) {
@@ -381,7 +384,7 @@ export function PdfViewer(props: {
       pageEls[n] = wrap;
       textLayers[n] = textLayer;
       hlLayers[n] = hl;
-      io.observe(wrap);
+      io?.observe(wrap);
     }
   }
 
@@ -464,7 +467,7 @@ export function PdfViewer(props: {
       .reduce((total, pageNumber) => total + (canvasPixels[pageNumber] ?? 0), 0);
     const availablePixels = Math.max(1, PDF_CANVAS_CACHE_PIXEL_BUDGET
       - (s > 3 ? PDF_TILE_PIXEL_BUDGET : 0) - otherVisiblePixels);
-    const canvasSize = safeCanvasSize(viewport.width, viewport.height, availablePixels);
+    const canvasSize = safeCanvasSize(viewport.width, viewport.height, availablePixels, wrap);
     if (!canvasSize) {
       failPdf(`PDF page ${n} couldn't be sized safely for rendering.`);
       return;
@@ -816,13 +819,13 @@ export function PdfViewer(props: {
     clearTimeout(textTimer);
     findController.cancel();
     if (scrollRaf !== undefined) {
-      cancelAnimationFrame(scrollRaf);
+      scrollRaf();
       scrollRaf = undefined;
     }
     for (const k of Object.keys(tasks)) tasks[Number(k)]?.cancel();
     for (const k of Object.keys(textInflight)) cancelInflightText(Number(k));
-    window.removeEventListener("mousemove", onAreaMove);
-    window.removeEventListener("mouseup", onAreaUp);
+    ownerWindow.removeEventListener("mousemove", onAreaMove);
+    ownerWindow.removeEventListener("mouseup", onAreaUp);
     areaDrag?.band.remove();
     areaDrag = null;
   }
@@ -1051,8 +1054,8 @@ export function PdfViewer(props: {
     }
   };
   onMount(() => {
-    window.addEventListener("keydown", onKeyZoom);
-    onCleanup(() => window.removeEventListener("keydown", onKeyZoom));
+    ownerWindow.addEventListener("keydown", onKeyZoom);
+    onCleanup(() => ownerWindow.removeEventListener("keydown", onKeyZoom));
   });
 
   const captureTextSelection = (target: EventTarget | null, anchor?: { x: number; y: number }) => {
@@ -1079,10 +1082,10 @@ export function PdfViewer(props: {
         if (!findOpen()) captureTextSelection(viewerRootEl ?? null);
       }, 120);
     };
-    document.addEventListener("selectionchange", selectionChanged);
+    ownerWindow.document.addEventListener("selectionchange", selectionChanged);
     onCleanup(() => {
       clearTimeout(timer);
-      document.removeEventListener("selectionchange", selectionChanged);
+      ownerWindow.document.removeEventListener("selectionchange", selectionChanged);
     });
   });
 
@@ -1098,7 +1101,7 @@ export function PdfViewer(props: {
       image: null,
     };
     highlightState.edit([...highlights(), h]);
-    window.getSelection()?.removeAllRanges();
+    ownerWindow.getSelection()?.removeAllRanges();
     closeHighlightMenu();
     pending = null;
     if (await persist()) await copyCreatedHighlightRef(h.id);
@@ -1130,8 +1133,8 @@ export function PdfViewer(props: {
     band.className = "pdf-area-band";
     wrap.appendChild(band);
     areaDrag = { page: Number(wrap.dataset.page), wrap, startX: start.x, startY: start.y, band };
-    window.addEventListener("mousemove", onAreaMove);
-    window.addEventListener("mouseup", onAreaUp, { once: true });
+    ownerWindow.addEventListener("mousemove", onAreaMove);
+    ownerWindow.addEventListener("mouseup", onAreaUp, { once: true });
   };
   const onAreaMove = (e: MouseEvent) => {
     if (!areaDrag) return;
@@ -1144,7 +1147,7 @@ export function PdfViewer(props: {
     });
   };
   const onAreaUp = (e: MouseEvent) => {
-    window.removeEventListener("mousemove", onAreaMove);
+    ownerWindow.removeEventListener("mousemove", onAreaMove);
     const drag = areaDrag;
     areaDrag = null;
     if (!drag) return;
@@ -1285,7 +1288,7 @@ export function PdfViewer(props: {
       if (tilePages[n] && pageEls[n]) pdfTiles.refresh(tilePages[n], n, pageEls[n], scrollRef, scale());
     }
     if (scrollRaf !== undefined) return;
-    scrollRaf = requestAnimationFrame(updateCurPage);
+    scrollRaf = requestFrame(scrollRef, updateCurPage);
   };
   // Keep the page field showing the scrolled page (unless it's being edited).
   createEffect(() => {

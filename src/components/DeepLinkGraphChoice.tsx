@@ -2,6 +2,7 @@ import { createSignal, createEffect, onCleanup, For, Show } from "solid-js";
 import { registerTransientLayer } from "../transientLayers";
 import type { LinkTarget } from "../deepLinkNavigation";
 import "./DeepLinkGraphChoice.css";
+import { documentOf } from "../windowRealm";
 const [choice, setChoice] = createSignal<{ candidates: LinkTarget[]; finish: (target: LinkTarget | null) => void } | null>(null);
 /** One explicit choice for a copied graph. O(number of matching known roots).
  * Cancellation resolves null; a subsequent chooser cancels its predecessor. */
@@ -26,8 +27,8 @@ export function DeepLinkGraphChoice() {
       if (event.key === "Tab" && root) {
         const buttons = [...root.querySelectorAll<HTMLButtonElement>("button")];
         const first = buttons[0], last = buttons.at(-1);
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+        if (event.shiftKey && documentOf(event).activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && documentOf(event).activeElement === last) { event.preventDefault(); first?.focus(); }
       }
     }}>
       <section ref={root} class="tine-link-choice" role="dialog" aria-modal="true" aria-label="Choose graph for Tine link">

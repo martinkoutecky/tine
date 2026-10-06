@@ -22,6 +22,7 @@ import { retirePdfNavigationIntent } from "./pdfNavigation";
 import { VIEW_KINDS } from "./editor/queryIr";
 import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
 import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
+import { mainWindow, requestFrame } from "./windowRealm";
 export type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 
 /** The one reader of a query presentation; null is "unreadable". */
@@ -403,7 +404,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       !!window.history &&
       typeof window.history.pushState === "function" &&
       typeof window.history.back === "function" &&
-      typeof window.addEventListener === "function"
+      typeof mainWindow.addEventListener === "function"
     );
   }
 
@@ -413,7 +414,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       scrollerElement = null;
     }
     if (typeof document === "undefined") return null; // no-DOM (unit tests)
-    return document.querySelector(".main-content");
+    // The journal feed scroller exists only in the main window.
+    return mainWindow.document.querySelector(".main-content");
   }
 
   /** Record the current scroll offset against the active tab's current route.
@@ -510,13 +512,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
         void extendFeedForScroll().then((grew) => {
           extending = false;
           if (!current()) return;
-          if (grew ? tries++ < 400 : tries++ < 60) requestAnimationFrame(tick);
+          if (grew ? tries++ < 400 : tries++ < 60) requestFrame(mainScroller(), tick);
         });
         return;
       }
-      if (tries++ < 60) requestAnimationFrame(tick);
+      if (tries++ < 60) requestFrame(mainScroller(), tick);
     };
-    requestAnimationFrame(tick);
+    requestFrame(mainScroller(), tick);
   }
 
   // Navigate the active tab to a new route, pushing it onto the history stack

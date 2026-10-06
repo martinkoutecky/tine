@@ -7,6 +7,7 @@ import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from ".
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { LiveRefGroup } from "./LiveRefGroup";
+import { requestFrame } from "../windowRealm";
 
 interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean }
 
@@ -17,12 +18,12 @@ interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean }
  * Without browser layout all groups mount immediately, like observeNear. */
 export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?: boolean; paused?: boolean }): JSX.Element {
   const [keys, setKeys] = createSignal<string[]>([]);
-  let frame: number | undefined;
+  let frame: (() => void) | undefined;
   let generation = 0;
   let wasPaused = false;
   const cancel = () => {
     generation += 1;
-    if (frame !== undefined) cancelAnimationFrame(frame);
+    frame?.();
     frame = undefined;
   };
   onCleanup(cancel);
@@ -50,11 +51,11 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
       const end = Math.min(cursor + 32, pending.length);
       while (cursor < end) retained.add(pending[cursor++]);
       setKeys(all.filter((key) => retained.has(key)));
-      if (cursor < pending.length) frame = requestAnimationFrame(advance);
+      if (cursor < pending.length) frame = requestFrame(undefined, advance);
     };
     // Give a reopened foreground picker a chance to claim the next frame
     // before starting work on the newly uncovered background list.
-    if (resumed) frame = requestAnimationFrame(advance);
+    if (resumed) frame = requestFrame(undefined, advance);
     else advance();
   });
   const pendingHeight = createMemo(() => {

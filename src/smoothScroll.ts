@@ -17,17 +17,19 @@ import { backend } from "./backend";
 import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
 import { readOwned, ownedWhen } from "./owned";
 import { pushToast } from "./toasts";
+import { mainWindow, requestFrame } from "./windowRealm";
 
 const [enabled, setEnabled] = createSignal(false);
 /** Reactive: is smooth scrolling currently on? (drives the Settings toggle) */
 export const smoothScrollEnabled = enabled;
 
 let lenis: Lenis | null = null;
-let rafId = 0;
+let cancelFrame: (() => void) | undefined;
 
 function install(): void {
   if (lenis) return;
-  const wrapper = document.querySelector<HTMLElement>(".main-content");
+  // The journal feed's scroller exists only in the main window.
+  const wrapper = mainWindow.document.querySelector<HTMLElement>(".main-content");
   const content = wrapper?.querySelector<HTMLElement>(".main-content-inner");
   if (!wrapper || !content) return; // feed not mounted yet — apply() retries on next toggle
   lenis = new Lenis({
@@ -42,14 +44,14 @@ function install(): void {
   });
   const loop = (t: number) => {
     lenis?.raf(t);
-    rafId = requestAnimationFrame(loop);
+    cancelFrame = requestFrame(mainWindow, loop);
   };
-  rafId = requestAnimationFrame(loop);
+  cancelFrame = requestFrame(mainWindow, loop);
 }
 
 function destroy(): void {
-  if (rafId) cancelAnimationFrame(rafId);
-  rafId = 0;
+  cancelFrame?.();
+  cancelFrame = undefined;
   lenis?.destroy();
   lenis = null;
 }

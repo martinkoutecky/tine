@@ -8,6 +8,7 @@ import { parseBlock, parserReady } from "../render/parse";
 import { inlineText } from "../render/facets";
 import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes } from "../panes";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
+import { isHTMLElementNode, newResizeObserver, useOwnerWindow } from "../windowRealm";
 
 /** One predicate for the strip's ✕ and the overview's close button: closing is
  *  effective when another tab remains, or when this lone non-feed tab can close
@@ -140,7 +141,7 @@ function edgeSideAt(x: number, y: number, rect: DOMRect): SplitSide | null {
 }
 
 function isRootEdge(pane: HTMLElement, side: SplitSide): boolean {
-  const row = document.querySelector(".content-row") as HTMLElement | null;
+  const row = pane.ownerDocument.querySelector(".content-row") as HTMLElement | null;
   if (!row) return false;
   const paneRect = pane.getBoundingClientRect();
   const rowRect = row.getBoundingClientRect();
@@ -242,6 +243,8 @@ function applyTabDrop(sourcePaneId: string, tabId: string, target: TabDropTarget
 // pill signals that tabs exist (a feature OG Logseq lacks) without costing
 // extra vertical space.
 export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneStrip?: boolean; focused?: boolean }): JSX.Element {
+  // The window this tab bar renders into (OG-MULTIWINDOW P1).
+  const ownerWindow = useOwnerWindow();
   let suppressClick = false;
   let root: HTMLDivElement | undefined;
   let strip: HTMLDivElement | undefined;
@@ -286,19 +289,19 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
   const positionOverview = () => {
     const rect = overviewTrigger?.getBoundingClientRect();
     if (!rect) return;
-    const width = Math.min(360, Math.max(240, window.innerWidth - 16));
+    const width = Math.min(360, Math.max(240, ownerWindow.innerWidth - 16));
     setOverviewPosition({
-      left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
+      left: Math.max(8, Math.min(rect.right - width, ownerWindow.innerWidth - width - 8)),
       top: rect.bottom + 5,
       width,
     });
   };
   const focusOverviewRow = (index: number) => {
-    const rows = [...(document.getElementById(overviewId)?.querySelectorAll<HTMLElement>("[data-tab-overview-row]") ?? [])];
+    const rows = [...(ownerWindow.document.getElementById(overviewId)?.querySelectorAll<HTMLElement>("[data-tab-overview-row]") ?? [])];
     rows[Math.min(Math.max(index, 0), rows.length - 1)]?.focus();
   };
   const focusOverviewTab = (tabId: string) => {
-    document.getElementById(overviewId)
+    ownerWindow.document.getElementById(overviewId)
       ?.querySelector<HTMLElement>(`[data-tab-overview-row][data-tab-id="${cssEsc(tabId)}"]`)
       ?.focus();
   };
@@ -324,7 +327,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     });
   };
   const onOverviewKeyDown: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent> = (event) => {
-    const rows = [...(document.getElementById(overviewId)?.querySelectorAll<HTMLElement>("[data-tab-overview-row]") ?? [])];
+    const rows = [...(ownerWindow.document.getElementById(overviewId)?.querySelectorAll<HTMLElement>("[data-tab-overview-row]") ?? [])];
     if (!rows.length) return;
     const row = (event.target as HTMLElement).closest<HTMLElement>("[data-tab-overview-row]");
     const index = Math.max(0, rows.indexOf(row ?? rows[0]));
@@ -367,9 +370,9 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     const cleanup = () => {
       if (!active) return;
       active = false;
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
+      ownerWindow.removeEventListener("pointermove", onMove);
+      ownerWindow.removeEventListener("pointerup", onUp);
+      ownerWindow.removeEventListener("pointercancel", onCancel);
       if (cancelOverviewReorder === cleanup) {
         cancelOverviewReorder = undefined;
         setOverviewDragId(null);
@@ -385,7 +388,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
         setOverviewDragId(tabId);
       }
       move.preventDefault();
-      const row = document.elementFromPoint(move.clientX, move.clientY)
+      const row = ownerWindow.document.elementFromPoint(move.clientX, move.clientY)
         ?.closest<HTMLElement>("[data-tab-overview-row]");
       const targetId = row?.dataset.tabId;
       if (!row || !targetId || targetId === tabId) {
@@ -411,9 +414,9 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
       if (didDrag) queueMicrotask(() => focusOverviewTab(tabId));
     };
     cancelOverviewReorder = cleanup;
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onCancel);
+    ownerWindow.addEventListener("pointermove", onMove);
+    ownerWindow.addEventListener("pointerup", onUp);
+    ownerWindow.addEventListener("pointercancel", onCancel);
   };
 
   createEffect(() => {
@@ -428,7 +431,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     if (!overviewOpen()) return;
     const unregister = registerTransientLayer({
       id: overviewId,
-      root: () => document.getElementById(overviewId),
+      root: () => ownerWindow.document.getElementById(overviewId),
       trigger: () => overviewTrigger ?? null,
       dismiss: () => {
         // The capture dispatcher owns ordinary Escape.  Let its registry
@@ -443,29 +446,29 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
       const activeIndex = Math.max(0, router.tabs().findIndex((tab) => tab.id === router.activeId()));
       focusOverviewRow(activeIndex);
     });
-    window.addEventListener("resize", positionOverview);
-    window.addEventListener("scroll", positionOverview, true);
+    ownerWindow.addEventListener("resize", positionOverview);
+    ownerWindow.addEventListener("scroll", positionOverview, true);
     onCleanup(() => {
       cancelOverviewReorder?.();
       unregister();
-      window.removeEventListener("resize", positionOverview);
-      window.removeEventListener("scroll", positionOverview, true);
+      ownerWindow.removeEventListener("resize", positionOverview);
+      ownerWindow.removeEventListener("scroll", positionOverview, true);
     });
   });
   // The overview panel is portalled out of `root`, so both count as inside.
   dismissOnOutsidePointer({
     open: overviewOpen,
-    inside: () => [root, document.getElementById(overviewId)],
+    inside: () => [root, ownerWindow.document.getElementById(overviewId)],
     dismiss: () => dismissOverview(),
   });
   onMount(() => {
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(revealActive) : null;
+    const observer = newResizeObserver(ownerWindow, revealActive);
     if (strip) observer?.observe(strip);
-    window.addEventListener("resize", revealActive);
+    ownerWindow.addEventListener("resize", revealActive);
     queueMicrotask(revealActive);
     onCleanup(() => {
       observer?.disconnect();
-      window.removeEventListener("resize", revealActive);
+      ownerWindow.removeEventListener("resize", revealActive);
     });
   });
 
@@ -479,8 +482,9 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     activeStripDragSession?.cancel();
     const card = e.currentTarget as HTMLElement;
     const pointerId = e.pointerId;
-    const restoreTarget = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
-      ? document.activeElement
+    const focused = card.ownerDocument.activeElement;
+    const restoreTarget = isHTMLElementNode(focused) && focused !== card.ownerDocument.body
+      ? focused
       : card;
     const sourcePaneId = router.paneId;
     const startX = e.clientX;
@@ -497,10 +501,10 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     const finish = (cancelled: boolean, restoreFocus: boolean) => {
       if (finished) return;
       finished = true;
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
-      window.removeEventListener("blur", onBlur, true);
+      ownerWindow.removeEventListener("pointermove", onMove);
+      ownerWindow.removeEventListener("pointerup", onUp);
+      ownerWindow.removeEventListener("pointercancel", onCancel);
+      ownerWindow.removeEventListener("blur", onBlur, true);
       card.removeEventListener("lostpointercapture", onLostPointerCapture, true);
       try {
         if (typeof card.hasPointerCapture === "function" &&
@@ -537,7 +541,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
         setActiveTabDrag({ paneId: sourcePaneId, tabId });
       }
       ev.preventDefault();
-      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const el = ownerWindow.document.elementFromPoint(ev.clientX, ev.clientY);
       setCurrentTabDropTarget(tabDropTargetAt(el, ev.clientX, ev.clientY, sourcePaneId));
     };
     const onUp = (event: PointerEvent) => {
@@ -569,10 +573,10 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     });
     try { card.setPointerCapture?.(pointerId); } catch { /* optional platform support */ }
 
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onCancel);
-    window.addEventListener("blur", onBlur, true);
+    ownerWindow.addEventListener("pointermove", onMove);
+    ownerWindow.addEventListener("pointerup", onUp);
+    ownerWindow.addEventListener("pointercancel", onCancel);
+    ownerWindow.addEventListener("blur", onBlur, true);
     card.addEventListener("lostpointercapture", onLostPointerCapture, true);
   }
 

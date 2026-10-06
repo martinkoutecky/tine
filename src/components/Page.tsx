@@ -44,6 +44,7 @@ import { conflictForPage } from "../conflictQueue";
 import { pageIdentityKey } from "../pageIdentity";
 import { liveConflictForPage } from "../liveConflicts";
 import { ExternalChangeBar } from "./ExternalChangeBar";
+import { isElementNode, mainWindow, newIntersectionObserver, onAppReturn, requestFrame } from "../windowRealm";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -520,14 +521,11 @@ export function PageView(): JSX.Element {
     const onFocus = () => {
       if (journalAsOfDay !== localDayKey() || pendingFeedRestart) restart();
     };
-    const onVisibility = () => { if (!document.hidden) onFocus(); };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibility);
+    const stopReturn = onAppReturn(onFocus);
     onCleanup(() => {
       disposed = true;
       if (timer !== undefined) window.clearTimeout(timer);
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
+      stopReturn();
     });
   });
 
@@ -572,8 +570,9 @@ export function PageView(): JSX.Element {
   createEffect(() => {
     if (currentRoute().kind !== "journals") return;
     if (!isLoaded() || feedNames().length === 0) return; // re-runs when the feed populates
-    requestAnimationFrame(() => {
-      const el = document.querySelector<HTMLElement>(".main-content");
+    // The journals feed is the main window's (its scroller is main-only).
+    requestFrame(mainWindow, () => {
+      const el = mainWindow.document.querySelector<HTMLElement>(".main-content");
       if (!el) return;
       void el.scrollHeight; // read: flush pending layout
       const prev = el.style.overflowY;
@@ -852,7 +851,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     if (id) startEditing(id, docNode(id).raw.length);
   };
   const editPageHeader = (event?: MouseEvent) => {
-    if (event?.target instanceof Element && event.target.closest("a, button")) return;
+    if (isElementNode(event?.target) && event.target.closest("a, button")) return;
     const id = beginPageHeaderEdit(props.page.name);
     if (id) startEditing(id, docNode(id).raw.length, null, editSurface());
   };
@@ -1329,9 +1328,10 @@ function LoadMore(props: { onHit: () => void }): JSX.Element {
   let sentinel: HTMLDivElement | undefined;
   createEffect(() => {
     if (!sentinel) return;
-    const obs = new IntersectionObserver((entries) => {
+    const obs = newIntersectionObserver(sentinel, (entries) => {
       if (entries.some((e) => e.isIntersecting)) props.onHit();
     });
+    if (!obs) return;
     obs.observe(sentinel);
     onCleanup(() => obs.disconnect());
   });

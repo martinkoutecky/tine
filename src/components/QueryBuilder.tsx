@@ -49,17 +49,12 @@ import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLay
 import { QueryDisplay } from "./QueryDisplay";
 import { QueryLivePreview } from "./QueryLivePreview";
 import { readLatestOr } from "../resourceRead";
+import { activeWindow, newResizeObserver, queryAllWindows, registeredWindows, requestFrame, viewportOf, windowOf } from "../windowRealm";
 
-/** One animation frame later (a timer where there is no rAF). */
-const nextFrame = (callback: () => void): number =>
-  typeof requestAnimationFrame === "function"
-    ? requestAnimationFrame(callback)
-    : (setTimeout(callback, 16) as unknown as number);
-const cancelFrame = (handle: number) => {
-  if (!handle) return;
-  if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(handle);
-  else clearTimeout(handle);
-};
+/** One animation frame later on the active window's clock (a timer where there
+ * is no rAF); returns the canceller (OG-MULTIWINDOW P1). */
+const nextFrame = (callback: () => void): (() => void) => requestFrame(undefined, () => callback());
+const cancelFrame = (cancel: (() => void) | undefined) => cancel?.();
 
 // **The visual query builder: a resting SENTENCE that expands into a SHEET** (SPEC §7.2–§7.4).
 
@@ -588,7 +583,7 @@ export function QueryBuilder(props: {
   if (props.blockId) {
     createEffect(() => {
       if (queryBuilderAutoOpen() !== props.blockId) return;
-      let frame = 0;
+      let frame: (() => void) | undefined;
       let alive = true;
       const take = () => {
         if (!alive || queryBuilderAutoOpen() !== props.blockId) return;
@@ -729,8 +724,8 @@ export function QueryBuilder(props: {
     inside: () =>
       openMenu() !== null
       || sheetEl?.querySelector(".qs-menu, .qb-picker, .qb-menu")
-      || document.querySelector(`[data-transient-parent="${sheetLayerId}"]`)
-        ? [document.body]
+      || queryAllWindows(`[data-transient-parent="${sheetLayerId}"]`)
+        ? registeredWindows().map((win) => win.document.body)
         : [sheetEl ?? null, sentenceEl ?? null],
     dismiss: () => setOpen(false),
   });
@@ -748,7 +743,8 @@ export function QueryBuilder(props: {
     const box = element.getBoundingClientRect();
     // The sheet's own height (known once it is mounted) decides whether it hangs below, flips above, or is
     // pushed up so it never runs off the window. Hidden until that has been measured, so it never jumps.
-    const view = window.visualViewport?.height ?? window.innerHeight;
+    const viewport = viewportOf(element);
+    const view = viewport.visual?.height ?? viewport.height;
     const next = {
       top: sheetEl ? placeSheetTop(box.top, box.bottom, sheetEl.offsetHeight, view) : box.bottom,
       left: box.left,
@@ -768,7 +764,7 @@ export function QueryBuilder(props: {
       return;
     }
     let alive = true;
-    let frame = 0;
+    let frame: (() => void) | undefined;
     const settle = () => {
       if (!alive) return;
       if (!measure()) {
@@ -784,11 +780,13 @@ export function QueryBuilder(props: {
     settle();
     const remeasure = () => void measure();
     let observer: ResizeObserver | undefined;
-    if (typeof window !== "undefined") {
-      window.addEventListener("scroll", remeasure, true);
-      window.addEventListener("resize", remeasure);
-      if (typeof ResizeObserver === "function") {
-        const watching = new ResizeObserver(remeasure);
+    // The builder's own window (OG-MULTIWINDOW P1).
+    const ownerWindow = typeof window !== "undefined" ? (sentenceEl?.isConnected ? windowOf(sentenceEl) : activeWindow()) : undefined;
+    if (ownerWindow) {
+      ownerWindow.addEventListener("scroll", remeasure, true);
+      ownerWindow.addEventListener("resize", remeasure);
+      const watching = newResizeObserver(ownerWindow, remeasure);
+      if (watching) {
         observer = watching;
         let watchedSheet: Element | undefined;
         // The sheet mounts only after the first measurement; watch it from the first measurement after that.
@@ -808,9 +806,9 @@ export function QueryBuilder(props: {
       cancelFrame(frame);
       observer?.disconnect();
       observeSheet = undefined;
-      if (typeof window === "undefined") return;
-      window.removeEventListener("scroll", remeasure, true);
-      window.removeEventListener("resize", remeasure);
+      if (!ownerWindow) return;
+      ownerWindow.removeEventListener("scroll", remeasure, true);
+      ownerWindow.removeEventListener("resize", remeasure);
     });
   });
 

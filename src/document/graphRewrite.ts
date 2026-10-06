@@ -15,6 +15,7 @@ import { pageRefsInText } from "../render/pageRefs";
 import type { Format } from "../render/ast";
 import type { RenameDone, RenameTouchedPage } from "../types";
 import { graphMeta, setGraphMeta } from "../graphSession";
+import { activeElement, isHTMLElementNode } from "../windowRealm";
 
 let refreshRenamedNavigation: ((from: string, to: string, target?: PageTarget) => void) | null = null;
 
@@ -60,8 +61,8 @@ export async function renamePageOnDisk(
   if (graphRewriteFrozen()) return "busy";
   // Blur is synchronous: commit the current editor buffer before closing the
   // write gate, with no await or input event between the two steps.
-  if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement)
-    document.activeElement.blur();
+  const focused = typeof document !== "undefined" ? activeElement() : null;
+  if (isHTMLElementNode(focused)) focused.blur();
   const release = tryFreezeGraphRewrite();
   if (!release) return "busy";
   const owner = bindingOwner();

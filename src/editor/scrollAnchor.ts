@@ -1,3 +1,4 @@
+import { documentOf } from "../windowRealm";
 /** One editor commit/frame owns only displacement caused above that editor.
  * User scrolling and another focus/scroll owner always take precedence.
  * Returns null unless `editor` is connected and focused inside a scroller;
@@ -6,7 +7,7 @@
  * gesture, focus change, scroll-owner change or disconnect intervened, and
  * `cancel()` drops it. Both detach the gesture listeners. O(1). */
 export function captureEditorScrollAnchor(editor: HTMLTextAreaElement, scroller: HTMLElement | null) {
-  if (!scroller || !editor.isConnected || document.activeElement !== editor) return null;
+  if (!scroller || !editor.isConnected || documentOf(editor).activeElement !== editor) return null;
   const top = editor.getBoundingClientRect().top;
   const scrollTop = scroller.scrollTop;
   let canceled = false;
@@ -21,7 +22,7 @@ export function captureEditorScrollAnchor(editor: HTMLTextAreaElement, scroller:
     restore(currentEditor: HTMLTextAreaElement | null = editor) {
       cleanup();
       if (canceled || !currentEditor?.isConnected || !scroller.isConnected || !scroller.contains(currentEditor) ||
-          document.activeElement !== currentEditor || scroller.scrollTop !== scrollTop) return;
+          documentOf(currentEditor).activeElement !== currentEditor || scroller.scrollTop !== scrollTop) return;
       const displacement = currentEditor.getBoundingClientRect().top - top;
       if (Math.abs(displacement) > 0.5) scroller.scrollTop += displacement;
     },

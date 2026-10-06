@@ -16,6 +16,7 @@ import { markDirty, persistTogether } from "../save/engine";
 import { copyStripCollapsed, copyIncludeSubtree } from "../../copySettings";
 import { blockSubtreeMarkdown } from "./serialize";
 import { pushToast } from "../../toasts";
+import { activeDocument, queryAllWindows, requestFrame } from "../../windowRealm";
 
 installClearOutlineSelection(() => clearSelection());
 // I-20: selected ids name blocks of the bound graph; a same-id block in the next
@@ -235,10 +236,11 @@ export function cycleSelectionTasks(): boolean {
 function scrollBlockRowIntoView(id: string) {
   // No-op under the test/headless runtime (no rAF/DOM); only the real webview scrolls.
   if (typeof requestAnimationFrame !== "function" || typeof document === "undefined") return;
-  requestAnimationFrame(() => {
+  requestFrame(undefined, () => {
     const sel = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id;
     revealOutlineBlock(id);
-    const row = document.querySelector(`.ls-block[data-block-id="${sel}"] > .block-main`);
+    const row = activeDocument().querySelector(`.ls-block[data-block-id="${sel}"] > .block-main`)
+      ?? queryAllWindows(`.ls-block[data-block-id="${sel}"] > .block-main`);
     row?.scrollIntoView({ block: "nearest" });
   });
 }
