@@ -220,6 +220,25 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn workspace_windows_are_documented() {
+        let context = include_str!("templates/keep-context-visible.md");
+        for detail in [
+            "## Open a page in its own window",
+            "**Open in new window**",
+            "**Open current page in new window**",
+            "It has no left or right sidebar.",
+            "text you just typed is kept",
+            "the ones that were open come back",
+            "Switching to another graph closes them.",
+        ] {
+            assert!(
+                context.contains(detail),
+                "missing workspace-window Guide detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
     fn selection_menu_and_keyboard_calendar_are_documented() {
         let tips = include_str!("templates/tips.md");
         for action in [

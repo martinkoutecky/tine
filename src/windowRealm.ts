@@ -348,11 +348,16 @@ export function requestFrame(target: RealmTarget, cb: FrameRequestCallback): () 
   let pending = pendingFrames.get(win);
   if (!pending) pendingFrames.set(win, (pending = new Map()));
   const frames = pending;
-  const id = win.requestAnimationFrame((time) => {
+  // A requestAnimationFrame that calls back synchronously (polyfills, test
+  // doubles) has already run cb: it is not pending.
+  let ran = false;
+  let id = 0;
+  id = win.requestAnimationFrame((time) => {
+    ran = true;
     frames.delete(id);
     cb(time);
   });
-  frames.set(id, cb);
+  if (!ran) frames.set(id, cb);
   return () => {
     if (!frames.delete(id)) return;
     try { win.cancelAnimationFrame(id); } catch { /* closing */ }

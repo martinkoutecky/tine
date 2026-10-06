@@ -1,7 +1,7 @@
 icon:: 📌
 
 - # Keep context visible
-  - Source beside draft, note beside plan: this tour builds a working layout step by step — park a page in the right sidebar, collect places in tabs, split the window for true side-by-side, and save the arrangement as a workspace. Each part ends with what you should see. The shortcut map is [[Features/Tips & shortcuts]].
+  - Source beside draft, note beside plan: this tour builds a working layout step by step — park a page in the right sidebar, collect places in tabs, split the window for true side-by-side, give a page its own window, and save the arrangement as a workspace. Each part ends with what you should see. The shortcut map is [[Features/Tips & shortcuts]].
 - ## Park a source in the right sidebar
   - 1. On the page you're writing, **Shift-click** a link (or a bullet's dot) to open it in the right sidebar. It's a full editor, not a preview — you can write in either place.
   - 2. Two more ways to park things: in **Ctrl+K**, press **Shift+Enter** on any page or block result; while editing, **Ctrl+Shift+O** sends the link at the caret across.
@@ -22,6 +22,12 @@ icon:: 📌
   - 5. From the keyboard, **Ctrl+1** … **Ctrl+9** focus panes in reading order, **Ctrl+Alt+←↑↓→** moves focus to the nearest pane in that direction, and **Ctrl+Alt+Shift+←↑↓→** moves the active tab there instead.
   - 6. Prefer staged control? **Esc** climbs from editing to block selection into pane-select mode — a hint pill at the bottom tells you when it's on (the command palette's **Pane select mode** enters it directly). Arrows step between panes, seams, and window edges; **Enter** on a seam makes a mirror split; typing opens the new pane with the search box pre-filled. Another **Esc** backs out.
   - What you should see: two note panes that scroll, navigate, and keep tabs independently — source and draft side by side, never fighting over one cursor.
+- ## Open a page in its own window
+  - 1. Desktop only: right-click a page link or a page in the left sidebar and choose **Open in new window** — the page title's ⋯ menu has it too, and so does the command palette (**Ctrl+Shift+P**) as **Open current page in new window**. The page opens in a separate OS window you can move to another monitor.
+  - 2. The window is a full workspace of its own: its own tabs, splits, and back/forward history. Links, **Ctrl+K**, and search results you use there open there. It has no left or right sidebar.
+  - 3. Edits made in the window save exactly like edits in the main window, show up in the main window as you type, and **Ctrl+Z** undoes them from either place. Up to 8 windows can be open at once.
+  - 4. Close it with its own title-bar button whenever you like — text you just typed is kept. Quitting Tine closes every window; the ones that were open come back, with their tabs, the next time you start Tine. Switching to another graph closes them.
+  - What you should see: the same page in two windows on two screens, edited in either, with every change in the one file on disk.
 - ## Save the arrangement as a workspace
   - 1. With the layout where you want it — splits, every pane's tabs and histories, both sidebars — click the workspace name at the top of the left sidebar and choose **+ New workspace**; name it once.
   - 2. Come back to it from the same switcher: hover the name for a quick-switch list, or click it for the full menu with **Rename** and **Delete**. Each graph keeps its own set, and the active one comes back after a restart.

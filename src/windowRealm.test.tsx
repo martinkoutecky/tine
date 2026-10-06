@@ -186,6 +186,18 @@ describe("window realm helpers with a second document", () => {
     expect(cancelled).not.toHaveBeenCalled();
   });
 
+  it("a requestAnimationFrame that calls back synchronously runs the frame once and leaves nothing pending", async () => {
+    const popup = openPopup();
+    const el = popup.doc.createElement("div");
+    popup.doc.body.append(el);
+    vi.spyOn(popup.win, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => { cb(0); return 7; });
+    const ran = vi.fn();
+    expect(() => requestFrame(el, ran)).not.toThrow();
+    popup.close();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(ran).toHaveBeenCalledOnce();
+  });
+
   it("lazyObserve uses one IntersectionObserver per window, from that window's realm", () => {
     const made: { realm: string; observed: Element[] }[] = [];
     const ioFor = (realm: string) => class {
