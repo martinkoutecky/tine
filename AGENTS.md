@@ -9,20 +9,9 @@ working:
 /aux/koutecky/logseq/tine-agents/AGENTS.md
 ```
 
-**Current plan of record (Martin, 2026-08-06): Direct Files bugs outrank managed
-storage.** Read before proposing or starting work:
-
-```
-/aux/koutecky/logseq/tine-agents/specs/handoffs/2026-08-06-direct-files-program.md
-```
-
-Its §0 settles, at source level, the defect the whole program rests on: managed-
-storage shadow-import capture machinery runs on the classic Direct Markdown save
-path, so every save does a two-pass whole-graph byte-retaining walk plus a parse
-of every document — to answer a filename question. Fix it by **cutting**, not by
-caching. Don't re-derive that diagnosis, and don't build a repro from the
-underlying audit without reading its §11 verification: two of its exemplars are
-wrong even where the mechanism is right.
+Priority comes from the maintainer's queue (see the agreement), never from a
+document. Current model routing is in
+`/aux/koutecky/logseq/tine-agents/ROUTING.md`.
 
 Private engineering & data-safety specs live alongside it under
 `/aux/koutecky/logseq/tine-agents/specs/` (audits, perf-batch, data-safety fixes,

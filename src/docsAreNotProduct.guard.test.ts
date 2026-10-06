@@ -20,15 +20,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-// The root READMEs, CHANGELOG.md, CONTRIBUTING.md and website/ are waived too:
+// The root READMEs, CHANGELOG.md, CONTRIBUTING.md, the agent pointers
+// AGENTS.md / CLAUDE.md, and website/ are waived too:
 // `--test-only` skips the build for them and `--docs-only` skips every gate.
 const EXCLUDED_FROM_BUILD_INPUTS =
-  /include_(?:str|bytes)!\s*\(\s*"([^"]*(?:docs\/|website\/|src-tauri\/gen\/schemas\/|(?:README[^"\/]*|CHANGELOG|CONTRIBUTING)\.md(?="))[^"]*)"/g;
+  /include_(?:str|bytes)!\s*\(\s*"([^"]*(?:docs\/|website\/|src-tauri\/gen\/schemas\/|(?:README[^"\/]*|CHANGELOG|CONTRIBUTING|AGENTS|CLAUDE)\.md(?="))[^"]*)"/g;
 
 // The frontend can make the same mistake in one line: Vite bundles any file a
 // module imports (`import notes from "../CHANGELOG.md?raw"`).
 const FRONTEND_DOCS_IMPORT =
-  /(?:\bfrom\s*|\bimport\s*\(?\s*)["']([^"']*(?:\/docs\/|\/website\/|(?:README[^"'\/]*|CHANGELOG|CONTRIBUTING)\.md)[^"']*)["']/g;
+  /(?:\bfrom\s*|\bimport\s*\(?\s*)["']([^"']*(?:\/docs\/|\/website\/|(?:README[^"'\/]*|CHANGELOG|CONTRIBUTING|AGENTS|CLAUDE)\.md)[^"']*)["']/g;
 
 export function frontendDocsImports(source: string): string[] {
   return [...source.matchAll(FRONTEND_DOCS_IMPORT)].map((match) => match[1]!);
@@ -156,7 +157,7 @@ describe("docs are not a product input", () => {
     );
     expect(
       offenders,
-      "docs/, website/, root README*.md, CHANGELOG.md and CONTRIBUTING.md are integrated with " +
+      "docs/, website/, root README*.md, CHANGELOG.md, CONTRIBUTING.md, AGENTS.md and CLAUDE.md are integrated with " +
         "`tine-coordination integrate --docs-only` (no gates, no build); importing one into the " +
         "frontend would ship it unbuilt. Link to it instead (see src/components/AboutTab.tsx).",
     ).toEqual([]);
