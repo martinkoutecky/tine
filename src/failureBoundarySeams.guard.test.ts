@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -87,35 +87,134 @@ function mountCount(file: string, source: string, component: string): number {
   return count;
 }
 
-// App's structural shells coordinate layout/drawers; its independently loaded
-// child surfaces must own a boundary. Scan unknown mounts too, so adding a new
-// dialog without adding a name to REQUIRED_SEAMS still fails (I-20).
+// A window root's structural shells coordinate layout/drawers; its independently
+// loaded child surfaces must own a boundary. Scan unknown mounts too, so adding a
+// new dialog without adding a name to REQUIRED_SEAMS still fails (I-20).
 const APP_SHELLS = new Set(["Show", "Suspense", "FailureBoundary", "DrawerBackground",
   "MobileDrawerPanel", "MobileDrawerController", "PaneTree", "PaneEdgeHighlights",
   "PaneSelectHint", "ResizeGrips", "Toasts",
-  // A container: each surface inside it owns a boundary (REQUIRED_SEAMS above).
-  "WindowOverlays"]);
-export function unboundedAppSurfaces(source: string): string[] {
-  const tree = parse("App.tsx", source);
-  const names = new Set<string>();
+  // Context providers carry a value; their children are judged as the root's own.
+  "WindowContext.Provider"]);
+/** Shells that are pure containers of top-level surfaces: the scan follows the
+ * import and judges their mounts as if they were the root's own (review F7). */
+const CONTAINERS = new Set(["WindowOverlays"]);
+/** Window roots that are not workspace surfaces, with the reason. */
+const ROOT_EXEMPT: Record<string, string> = {
+  Capture: "The quick-capture window is a single-surface webview with its own realm; its root IS the surface.",
+};
+
+type Source = { file: string; source: string };
+function read(file: string): Source {
+  return { file, source: readFileSync(path.join(REPO_ROOT, file), "utf8") };
+}
+
+/** The function (declaration or `const X = (...) =>`) named `name` in `tree`. */
+function findComponent(tree: ts.SourceFile, name: string): ts.Node | null {
+  let found: ts.Node | null = null;
   const visit = (node: ts.Node) => {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === "App") {
-      const mounts = (child: ts.Node) => {
-        const name = tagName(child);
-        if (name && /^[A-Z]/.test(name) && !APP_SHELLS.has(name)) names.add(name);
-        ts.forEachChild(child, mounts);
-      };
-      mounts(node);
-    } else ts.forEachChild(node, visit);
+    if (found) return;
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) found = node;
+    else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name && node.initializer) found = node.initializer;
+    else ts.forEachChild(node, visit);
   };
   visit(tree);
-  return [...names].flatMap(name => unboundedMountSites("App.tsx", source, name).map(line => `${name}:${line}`));
+  return found;
+}
+
+/** Where `name`, used in `from`, is defined: the same file or a relative import. */
+function resolveComponent(from: Source, name: string): Source | null {
+  const tree = parse(from.file, from.source);
+  if (findComponent(tree, name)) return from;
+  for (const statement of tree.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings) || !bindings.elements.some((el) => el.name.text === name)) continue;
+    const base = path.join(path.dirname(from.file), statement.moduleSpecifier.text);
+    for (const ext of [".tsx", ".ts"]) {
+      if (existsSync(path.join(REPO_ROOT, base + ext))) return read(base + ext);
+    }
+  }
+  return null;
+}
+
+/** Unbounded top-level surfaces mounted by component `root` of `from`,
+ * following CONTAINERS into the files that define them. */
+export function unboundedSurfaces(from: Source, root: string, resolve = resolveComponent): string[] {
+  const tree = parse(from.file, from.source);
+  const fn = findComponent(tree, root);
+  if (!fn) throw new Error(`${from.file}: component ${root} not found`);
+  const names = new Set<string>();
+  const containers = new Set<string>();
+  const mounts = (child: ts.Node) => {
+    const name = tagName(child);
+    if (name && /^[A-Z]/.test(name)) {
+      if (CONTAINERS.has(name)) containers.add(name);
+      else if (!APP_SHELLS.has(name)) names.add(name);
+    }
+    ts.forEachChild(child, mounts);
+  };
+  mounts(fn);
+  const own = [...names].flatMap(name => unboundedMountSites(from.file, from.source, name).map(line => `${from.file} ${name}:${line}`));
+  const nested = [...containers].flatMap((name) => {
+    const target = resolve(from, name);
+    if (!target) throw new Error(`${from.file}: container ${name} not resolvable`);
+    return unboundedSurfaces(target, name, resolve);
+  });
+  return [...own, ...nested];
+}
+
+/** Kept for the App-only probes below: the surfaces App itself mounts. */
+export function unboundedAppSurfaces(source: string): string[] {
+  return unboundedSurfaces({ file: "App.tsx", source }, "App", () => null).map((entry) => entry.slice("App.tsx ".length));
+}
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(path.join(REPO_ROOT, dir), { withFileTypes: true }).flatMap((entry) => {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) return entry.name === "fixtures" || entry.name === "tests" ? [] : sourceFiles(file);
+    return /\.tsx$/.test(entry.name) && !/\.(test|spec)\.tsx$/.test(entry.name) ? [file] : [];
+  });
+}
+
+/** Every Solid window root in the app: `render(() => <Root .../>, mount)`.
+ * Derived from the source, so a new window kind cannot escape the scan. */
+export function windowRoots(files: Source[]): Array<{ from: Source; root: string }> {
+  return files.flatMap((from) => {
+    const out: Array<{ from: Source; root: string }> = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "render") {
+        const arg = node.arguments[0];
+        if (arg && ts.isArrowFunction(arg)) {
+          const name = tagName(ts.isParenthesizedExpression(arg.body) ? arg.body.expression : arg.body);
+          if (name && /^[A-Z]/.test(name)) out.push({ from, root: name });
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(parse(from.file, from.source));
+    return out;
+  });
 }
 
 describe("failure-boundary seams (GH #490/#332)", () => {
-  it("requires a boundary for every top-level app surface, including new mounts", () => {
-    expect(unboundedAppSurfaces(readFileSync(path.join(REPO_ROOT, "src/App.tsx"), "utf8")),
+  it("requires a boundary for every top-level surface of every window root, including new mounts", () => {
+    const roots = windowRoots(sourceFiles("src").map(read));
+    // Not vacuous: the main app and the workspace window shell are both roots.
+    expect(roots.map(({ root }) => root)).toEqual(expect.arrayContaining(["App", "WorkspaceWindowShell"]));
+    const failures = roots.filter(({ root }) => !ROOT_EXEMPT[root]).flatMap(({ from, root }) => {
+      const owner = resolveComponent(from, root);
+      if (!owner) throw new Error(`${from.file}: window root ${root} not resolvable`);
+      return unboundedSurfaces(owner, root);
+    });
+    expect(failures,
       "I-20: independently loaded surfaces own failures; wrap the mount in FailureBoundary. Exemplar: src/App.tsx, QueryExportDialog.").toEqual([]);
+  });
+  it("follows a container into the file that defines it (review F7 probe)", () => {
+    const shell = { file: "src/Shell.tsx", source: 'import { WindowOverlays } from "./Overlays";\nfunction Shell() { return <Show><WindowOverlays /></Show>; }' };
+    const overlays = { file: "src/Overlays.tsx", source: 'export function WindowOverlays() {\n  return <><FailureBoundary region="a"><Ok /></FailureBoundary><NewDialog /></>;\n}' };
+    expect(unboundedSurfaces(shell, "Shell", (_from, name) => (name === "WindowOverlays" ? overlays : null)))
+      .toEqual(["src/Overlays.tsx NewDialog:2"]);
+    expect(windowRoots([{ file: "src/w.tsx", source: "render(() => <Shell id={x} />, mount);" }]).map(({ root }) => root)).toEqual(["Shell"]);
   });
   it("detects a newly introduced top-level surface", () => {
     expect(unboundedAppSurfaces("function App() { return <Show><NewPanel /></Show>; }")).toEqual(["NewPanel:1"]);

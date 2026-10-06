@@ -63,9 +63,69 @@ const REALM_ALLOW: Record<string, string> = {
     "Writes the main window's <head> stylesheet, the single source that src/workspaceWindows.ts mirrors into every workspace window.",
   "src/graph.ts document.getElementById":
     "Writes the main window's <head> stylesheet, the single source that src/workspaceWindows.ts mirrors into every workspace window.",
+  "src/App.tsx mainWindow.document.addEventListener":
+    "installMobileExternalLinkHandler returns inert on desktop; on iOS/Android main is the only window.",
+  "src/App.tsx mainWindow.document.removeEventListener":
+    "installMobileExternalLinkHandler returns inert on desktop; on iOS/Android main is the only window.",
+  "src/App.tsx mainWindow.document.querySelector":
+    "The edge-swipe surface is installed only on touch platforms, where main is the only window.",
+  "src/App.tsx mainWindow.addEventListener":
+    "The left sidebar and its resizer exist only in the main window (workspace windows render no sidebars).",
+  "src/App.tsx mainWindow.removeEventListener":
+    "The left sidebar and its resizer exist only in the main window (workspace windows render no sidebars).",
+  "src/components/Macro.tsx mainWindow.document.getElementById":
+    "The YouTube IFrame API is one process-wide script loaded once into the main realm's <head>.",
+  "src/components/MobileDrawerShell.tsx mainWindow.document.querySelector":
+    "Mobile drawers classify and contain focus in the main window's sidebars; workspace windows are desktop-only and have no sidebars.",
+  "src/components/MobileDrawerShell.tsx mainWindow.document.addEventListener":
+    "Mobile drawers classify and contain focus in the main window's sidebars; workspace windows are desktop-only and have no sidebars.",
+  "src/components/MobileDrawerShell.tsx mainWindow.document.removeEventListener":
+    "Mobile drawers classify and contain focus in the main window's sidebars; workspace windows are desktop-only and have no sidebars.",
+  "src/components/RightSidebar.tsx mainWindow.document.activeElement":
+    "The right sidebar (its focus handling and resizer) exists only in the main window; workspace windows render no sidebars.",
+  "src/components/RightSidebar.tsx mainWindow.document.querySelectorAll":
+    "The right sidebar (its focus handling and resizer) exists only in the main window; workspace windows render no sidebars.",
+  "src/components/RightSidebar.tsx mainWindow.innerWidth":
+    "The right sidebar (its focus handling and resizer) exists only in the main window; workspace windows render no sidebars.",
+  "src/components/RightSidebar.tsx mainWindow.addEventListener":
+    "The right sidebar (its focus handling and resizer) exists only in the main window; workspace windows render no sidebars.",
+  "src/components/RightSidebar.tsx mainWindow.removeEventListener":
+    "The right sidebar (its focus handling and resizer) exists only in the main window; workspace windows render no sidebars.",
+  "src/mobileDrawers.ts mainWindow.matchMedia":
+    "Mobile drawers classify and contain focus in the main window's sidebars; workspace windows are desktop-only and have no sidebars.",
+  "src/mobileDrawers.ts mainWindow.document.querySelector":
+    "Mobile drawers classify and contain focus in the main window's sidebars; workspace windows are desktop-only and have no sidebars.",
+  "src/mobileDrawers.ts mainWindow.document.activeElement":
+    "Mobile drawers classify and contain focus in the main window's sidebars; workspace windows are desktop-only and have no sidebars.",
+  "src/outlineViewport.ts mainWindow.addEventListener":
+    "Printing runs from a hidden frame in the main window, which owns the OS print dialog and the bundle's stylesheets.",
+  "src/print.ts mainWindow.document.querySelectorAll":
+    "Printing runs from a hidden frame in the main window, which owns the OS print dialog and the bundle's stylesheets.",
+  "src/print.ts mainWindow.addEventListener":
+    "Printing runs from a hidden frame in the main window, which owns the OS print dialog and the bundle's stylesheets.",
+  "src/print.ts mainWindow.removeEventListener":
+    "Printing runs from a hidden frame in the main window, which owns the OS print dialog and the bundle's stylesheets.",
+  "src/print.ts mainWindow.document.body":
+    "Printing runs from a hidden frame in the main window, which owns the OS print dialog and the bundle's stylesheets.",
+  "src/router.ts mainWindow.addEventListener":
+    "Mobile history back (popstate) is installed only on iOS/Android, where main is the only window.",
+  "src/router.ts mainWindow.document.querySelector":
+    "Fallback only before a pane registered its scroller (App.tsx setScrollerElement does so in every window); main's feed is the pre-multiwindow default.",
+  "src/smoothScroll.ts mainWindow.document.querySelector":
+    "The experimental opt-in Lenis smoother is one instance on main's feed scroller; workspace windows scroll natively (declared gap in RECEIPT-OG-MW).",
+  "src/workspaceWindows.ts mainWindow.document":
+    "Main's document is the single stylesheet/attribute source mirrored into every workspace window.",
+  "src/workspaceWindows.ts mainWindow.addEventListener":
+    "Main's own pagehide takes the shared JS realm, so every workspace window, with it; the listener belongs to main by definition.",
+  "src/workspaceWindows.ts mainWindow.removeEventListener":
+    "Main's own pagehide takes the shared JS realm, so every workspace window, with it; the listener belongs to main by definition.",
 };
 
-const GLOBAL_WINDOWS = new Set(["window", "globalThis", "self"]);
+// `mainWindow` (exported by the blessed module) is the global realm under
+// another name: a listener or focus read on it is the same P2 bug as on
+// `window`, so it is judged as a global owner too (review F5).
+const GLOBAL_WINDOWS = new Set(["window", "globalThis", "self", "mainWindow"]);
+const ownerKey = (owner: string) => (owner === "mainWindow" ? "mainWindow" : "window");
 
 /** Whether identifier `node` reads a global binding rather than naming a
  * property, declaration, parameter or type member. */
@@ -102,7 +162,7 @@ export function realmViolations(file: string, source: string): { key: string; li
         const event = member.endsWith("EventListener") ? firstArgEvent(node) : null;
         // `window.document.X` is judged by its document member below.
         const isDocumentChain = member === "document" && ts.isPropertyAccessExpression(node.parent);
-        if (!(event && PROCESS_EVENTS.has(event)) && !isDocumentChain) report(node, `window.${member}`);
+        if (!(event && PROCESS_EVENTS.has(event)) && !isDocumentChain) report(node, `${ownerKey(owner)}.${member}`);
       }
       if (owner === "document" && DOCUMENT_MEMBERS.has(member)) report(node, `document.${member}`);
     }
@@ -110,7 +170,8 @@ export function realmViolations(file: string, source: string): { key: string; li
     if (ts.isPropertyAccessExpression(node) && ts.isPropertyAccessExpression(node.expression)
       && ts.isIdentifier(node.expression.expression) && GLOBAL_WINDOWS.has(node.expression.expression.text)
       && node.expression.name.text === "document" && DOCUMENT_MEMBERS.has(node.name.text)) {
-      report(node, `document.${node.name.text}`);
+      const owner = node.expression.expression.text;
+      report(node, owner === "mainWindow" ? `mainWindow.document.${node.name.text}` : `document.${node.name.text}`);
     }
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && BARE_CALLS.has(node.expression.text)) {
       const event = node.arguments[0] && ts.isStringLiteralLike(node.arguments[0]) ? node.arguments[0].text : null;
@@ -176,6 +237,10 @@ describe("window realm guard (OG-MULTIWINDOW P2)", () => {
   it("catches each planted violation (mutation probe)", () => {
     const planted: Array<[string, string]> = [
       ["window.addEventListener(\"keydown\", f);", "window.addEventListener"],
+      // `mainWindow` is the global realm under another name (review F5).
+      ["mainWindow.addEventListener(\"keydown\", f);", "mainWindow.addEventListener"],
+      ["const a = mainWindow.document.activeElement;", "mainWindow.document.activeElement"],
+      ["const s = mainWindow.getSelection();", "mainWindow.getSelection"],
       ["document.addEventListener(\"pointerdown\", f);", "document.addEventListener"],
       ["const a = document.activeElement;", "document.activeElement"],
       ["const s = window.getSelection();", "window.getSelection"],

@@ -44,7 +44,7 @@ import { conflictForPage } from "../conflictQueue";
 import { pageIdentityKey } from "../pageIdentity";
 import { liveConflictForPage } from "../liveConflicts";
 import { ExternalChangeBar } from "./ExternalChangeBar";
-import { isElementNode, mainWindow, newIntersectionObserver, onAppReturn, requestFrame } from "../windowRealm";
+import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow } from "../windowRealm";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -567,12 +567,14 @@ export function PageView(): JSX.Element {
   // that relayout ourselves once the feed has content. Invisible + a no-op where
   // the quirk doesn't occur (Linux/WebKitGTK, Chromium). Runs on the journals
   // route whenever the feed transitions to non-empty.
+  // A workspace window can show a journals feed too: nudge the scroller in the
+  // window this page renders into.
+  const ownerWindow = useOwnerWindow();
   createEffect(() => {
     if (currentRoute().kind !== "journals") return;
     if (!isLoaded() || feedNames().length === 0) return; // re-runs when the feed populates
-    // The journals feed is the main window's (its scroller is main-only).
-    requestFrame(mainWindow, () => {
-      const el = mainWindow.document.querySelector<HTMLElement>(".main-content");
+    requestFrame(ownerWindow, () => {
+      const el = ownerWindow.document.querySelector<HTMLElement>(".main-content");
       if (!el) return;
       void el.scrollHeight; // read: flush pending layout
       const prev = el.style.overflowY;
