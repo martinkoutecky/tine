@@ -26,7 +26,7 @@
  * fired. */
 import { createEffect, createRoot, on } from "solid-js";
 import type { GraphChange } from "../backend";
-import { captureBinding, clearOnBindingInvalidated, stillBound, type Binding } from "../binding";
+import { captureBinding, clearOnBindingInvalidated, bindingCurrent, type Binding } from "../binding";
 import { editingId } from "../editorController";
 import { dataRev } from "../graphSession";
 import { isBlockMoving } from "./edits/moves";
@@ -69,11 +69,11 @@ export function replayDeferredExternalReloads(): void {
   for (const [page, forPage] of [...waiters]) {
     if (!replay.ready(page)) continue;
     waiters.delete(page);
-    for (const entry of forPage.values()) if (stillBound(entry.binding)) entry.run();
+    for (const entry of forPage.values()) if (bindingCurrent(entry.binding)) entry.run();
   }
   if (deferred.size === 0) return;
   for (const [name, entry] of [...deferred]) {
-    if (!stillBound(entry.binding)) { deferred.delete(name); continue; }
+    if (!bindingCurrent(entry.binding)) { deferred.delete(name); continue; }
     if (!replay.ready(name)) continue;
     deferred.delete(name);
     // Fire and forget like a live watcher event; a decline re-defers.

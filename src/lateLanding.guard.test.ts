@@ -91,8 +91,9 @@ const EXEMPT_CALLS: Record<string, string[]> = {
 };
 // `focusedSurfaceOwner` (src/focusedSurface.ts) is an owner constructor too: it
 // composes graphOwner with the focused router, tab, intent and route. The test
-// below pins that it really does start from graphOwner.
-const OWNERS = new Set(["graphOwner", "ownedWhen", "latestOwner", "revisionOwner", "focusedSurfaceOwner"]);
+// below pins that it really does start from graphOwner. `bindingOwner` is the
+// write-side owner (graph binding without the display epoch, R4) from src/owned.ts.
+const OWNERS = new Set(["graphOwner", "bindingOwner", "ownedWhen", "latestOwner", "revisionOwner", "focusedSurfaceOwner"]);
 const BOUNDARIES = new Set(["readOwned", "readOwnedResource", "writeOwned", "serializeOwned", "serializeDurable"]);
 // Durable backend operations are classified by interface verb, including names
 // such as rename and paste that a write-prefix expression cannot recognize.
@@ -252,7 +253,7 @@ export function lateLandingViolations(file: string, source: string): string[] {
           }
         }
         if (ts.isFunctionLike(parent) && parent.parameters.some((param) =>
-          ts.isIdentifier(param.name) && param.name.text === arg.text && param.type?.getText(tree) === "Owner"))
+          ts.isIdentifier(param.name) && param.name.text === arg.text && ["Owner", "WriteOwner"].includes(param.type?.getText(tree) ?? "")))
           return OWNER_PARAM_HELPERS.has(`${file}#${functionName(arg)}`);
       }
       return false;
@@ -384,6 +385,10 @@ describe("I-20 owned backend completion syntax", () => {
     const methods = planted.map((violation) => violation.split(":")[2]).sort();
     expect(methods).not.toEqual([...EXEMPT_CALLS["src/graph.ts#loadGraphPath"]].sort());
     expect(methods).toContain("getPage");
+  });
+  it("accepts bindingOwner only when imported from owned", () => {
+    expect(lateLandingViolations("src/planted.ts", "import { bindingOwner, readOwned } from './owned'; async function safe() { const r = await readOwned(bindingOwner(), backend().getPage('a', 'page')); if (r.kind === 'stale') return; setPage(r.value); }")).toHaveLength(0);
+    expect(lateLandingViolations("src/planted.ts", "function bindingOwner() { return () => true; } async function f() { await readOwned(bindingOwner(), backend().getPage('a', 'page')); }")).not.toHaveLength(0);
   });
   it("accepts focusedSurfaceOwner only because it is built on graphOwner", () => {
     expect(readFileSync("src/focusedSurface.ts", "utf8")).toMatch(/return graphOwner\(/);

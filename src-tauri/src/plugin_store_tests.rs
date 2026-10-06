@@ -265,9 +265,12 @@ fn production_plugin_writes_stay_on_the_no_replace_store_path() {
         let start = &production[production.find(signature).unwrap()..];
         start[..start.find("\n}\n").unwrap()].to_string()
     };
-    let install = body("pub(crate) fn install_plugin(");
+    // R3 (og-flow3): the command runs its work off the main thread in
+    // install_plugin_blocking; the store-path property is that function's.
+    assert!(body("pub(crate) async fn install_plugin(").contains("install_plugin_blocking("));
+    let install = body("fn install_plugin_blocking(");
     assert!(install.contains("publish_package(") && !install.contains("std::fs::"));
-    let uninstall = body("pub(crate) fn uninstall_plugin(");
+    let uninstall = body("pub(crate) async fn uninstall_plugin(");
     assert!(uninstall.contains("uninstall_package(") && !uninstall.contains("remove_dir_all"));
     assert!(body("fn plugins_dir(").contains("plugin_store_root("));
     assert!(body("fn plugin_store_root(").contains("recover_plugin_store_once("));

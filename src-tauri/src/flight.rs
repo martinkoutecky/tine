@@ -271,15 +271,20 @@ pub(crate) fn mark_clean_shutdown() {
 /// window is still a live session whose crash the recorder must report, and
 /// `RunEvent::Exit` is its orderly end.
 #[tauri::command]
-pub(crate) fn diagnostic_session_active(active: bool) {
+pub(crate) async fn diagnostic_session_active(active: bool) {
     if !cfg!(mobile) {
         return;
     }
     let mut fields = Map::new();
     fields.insert("active".into(), json!(active));
     record_fixed_event("runtime.session_active", fields);
-    flush_now();
-    set_session_active(active);
+    // The history and the marker are fsynced (R3): off the main thread.
+    let _ = crate::state::off_ui(move || {
+        flush_now();
+        set_session_active(active);
+        Ok(())
+    })
+    .await;
 }
 
 /// Whether the recorder is persisted, and whether the previous run ended
@@ -776,7 +781,7 @@ pub(crate) async fn save_diagnostic_report(
 /// Drop every retained event of this run and the previous one, record
 /// `diagnostics.cleared` and republish the history. O(1) plus one flush.
 #[tauri::command]
-pub(crate) fn clear_diagnostics() {
+pub(crate) async fn clear_diagnostics() {
     if let Ok(mut ring) = FLIGHT.lock() {
         *ring = FlightRing::new();
     }
@@ -787,7 +792,12 @@ pub(crate) fn clear_diagnostics() {
         persisted.previous.clear();
     }
     record_fixed_event("diagnostics.cleared", Map::new());
-    flush_now();
+    // The cleared history is fsynced (R3): off the main thread.
+    let _ = crate::state::off_ui(|| {
+        flush_now();
+        Ok(())
+    })
+    .await;
 }
 
 #[cfg(test)]

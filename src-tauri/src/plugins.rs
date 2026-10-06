@@ -117,13 +117,13 @@ pub(crate) fn load_plugin_registry_cache(app: tauri::AppHandle) -> PluginRegistr
 }
 
 #[tauri::command]
-pub(crate) fn store_plugin_registry_cache(
+pub(crate) async fn store_plugin_registry_cache(
     index_json: String,
     signature: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let path = crate::settings::settings_path(&app).ok_or("no app-data dir")?;
-    store_plugin_registry_cache_at(&path, index_json, signature)
+    crate::state::off_ui(move || store_plugin_registry_cache_at(&path, index_json, signature)).await
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -683,7 +683,16 @@ fn plugin_states_at(path: &Path) -> Result<std::collections::HashMap<String, Plu
 /// leaves it disabled; enabling is a separate explicit action after the frontend
 /// has validated the complete manifest and WebAssembly ABI.
 #[tauri::command]
-pub(crate) fn install_plugin(
+pub(crate) async fn install_plugin(
+    manifest_json: String,
+    wasm_b64: String,
+    app: tauri::AppHandle,
+) -> Result<InstalledPlugin, String> {
+    // Every package file and directory is fsynced (R3): off the main thread.
+    crate::state::off_ui(move || install_plugin_blocking(manifest_json, wasm_b64, app)).await
+}
+
+fn install_plugin_blocking(
     manifest_json: String,
     wasm_b64: String,
     app: tauri::AppHandle,
@@ -711,18 +720,21 @@ pub(crate) fn install_plugin(
 /// half-removed plugin. Per-plugin settings are retained while another version
 /// remains and removed with the last version. Graph files are never in scope.
 #[tauri::command]
-pub(crate) fn uninstall_plugin(
+pub(crate) async fn uninstall_plugin(
     id: String,
     version: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let root = plugins_dir(&app)?;
-    let (_, _, last_version) = validate_uninstall_target(&root, &id, &version)?;
-    crate::settings::update_settings(&app, |json| {
-        clear_uninstalled_plugin_settings(json, &id, &version, last_version)
-    })?;
-    uninstall_package(&root, &id, &version)?;
-    Ok(())
+    crate::state::off_ui(move || {
+        let root = plugins_dir(&app)?;
+        let (_, _, last_version) = validate_uninstall_target(&root, &id, &version)?;
+        crate::settings::update_settings(&app, |json| {
+            clear_uninstalled_plugin_settings(json, &id, &version, last_version)
+        })?;
+        uninstall_package(&root, &id, &version)?;
+        Ok(())
+    })
+    .await
 }
 
 /// List valid packages under app-owned plugin storage, across all versions.
@@ -830,7 +842,7 @@ pub(crate) fn read_plugin_entry(
 }
 
 #[tauri::command]
-pub(crate) fn set_plugin_enabled(
+pub(crate) async fn set_plugin_enabled(
     id: String,
     version: String,
     enabled: bool,
@@ -838,7 +850,8 @@ pub(crate) fn set_plugin_enabled(
 ) -> Result<(), String> {
     let root = plugins_dir(&app)?;
     let settings = crate::settings::settings_path(&app).ok_or("no app-data dir")?;
-    set_plugin_enabled_at(&root, &settings, &id, &version, enabled)
+    crate::state::off_ui(move || set_plugin_enabled_at(&root, &settings, &id, &version, enabled))
+        .await
 }
 
 fn set_plugin_enabled_at(
@@ -891,7 +904,12 @@ mod tests {
         // is pinned at the source and the result checked behaviourally.
         let source = include_str!("plugins.rs");
         let production = source.split("#[cfg(test)]").next().unwrap();
-        let install = &production[production.find("pub(crate) fn install_plugin(").unwrap()..];
+        // R3 (og-flow3): the async command delegates to install_plugin_blocking.
+        let command = &production[production
+            .find("pub(crate) async fn install_plugin(")
+            .unwrap()..];
+        assert!(command[..command.find("\n}\n").unwrap()].contains("install_plugin_blocking("));
+        let install = &production[production.find("fn install_plugin_blocking(").unwrap()..];
         let install = &install[..install.find("\n}\n").unwrap()];
         assert!(
             install.contains("publish_package(") && !install.contains("std::fs::write("),

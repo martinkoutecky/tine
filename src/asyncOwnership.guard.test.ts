@@ -18,12 +18,12 @@ function check(file: string, start: string, end: string, rules: RegExp[]) {
 
 describe("async ownership guard", () => {
   it("pins graph-bound component and module continuations", () => {
-    check("src/components/ContextMenu.tsx", "function MakeTemplate(", "function PageMenu(", [/graphOwner\(\)/, /readOwned\(owner, backend\(\)\.listTemplates/, /existing\.kind === "stale"\) return/]);
-    check("src/components/blockGestures.ts", "export function beginDrag(", "// --- Click / drag gesture", [/captureBinding\(\)/, /stillBound\(binding\) && dragMoved/]);
+    check("src/components/ContextMenu.tsx", "function MakeTemplate(", "function PageMenu(", [/bindingOwner\(\)/, /readOwned\(owner, backend\(\)\.listTemplates/, /existing\.kind === "stale"\) return/]);
+    check("src/components/blockGestures.ts", "export function beginDrag(", "// --- Click / drag gesture", [/captureBinding\(\)/, /bindingCurrent\(binding\) && dragMoved/]);
     // Every panel write (Field, bool, Remove, AddRow) goes through writeOne: graph session + subject instance.
-    check("src/components/PageProps.tsx", "function writeOne(", "function scopeWritable(", [/stillBound\(binding\)/, /subjectOf\(scope\) !== subject/]);
-    check("src/components/WorkspaceSwitcher.tsx", "  const remove = async", "  return (", [/graphOwner\(\)/, /confirmed\.kind === "stale"/, /writeOwned\(owner, deleteWorkspace/]);
-    check("src/workspaces.ts", "function enqueue<", "function cloneSession(", [/graphOwner\(\)/, /assert\(\)/, /serializeDurable\(operationQueue, owner, run\)/]);
+    check("src/components/PageProps.tsx", "function writeOne(", "function scopeWritable(", [/bindingCurrent\(binding\)/, /subjectOf\(scope\) !== subject/]);
+    check("src/components/WorkspaceSwitcher.tsx", "  const remove = async", "  return (", [/bindingOwner\(\)/, /confirmed\.kind === "stale"/, /writeOwned\(owner, deleteWorkspace/]);
+    check("src/workspaces.ts", "function enqueue<", "function cloneSession(", [/bindingOwner\(\)/, /assert\(\)/, /serializeDurable\(operationQueue, owner, run\)/]);
     check("src/guide.ts", "function markGuideAnnounced(", "export function maybeShowGuideAnnouncement", [/if \(!owner\(\)\) return/, /writeOwned\(owner, backend\(\)\.setGuideAnnounced/]);
     check("src/graph.ts", "async function injectCustomCss(", "export async function switchGraph(", [/graphOwner\(\)/, /readOwned\(owner, backend\(\)\.readCustomCss\(\)\)/, /if \(!owner\(\)\) return/]);
     check("src/components/Page.tsx", "function PageSection(", "  return (\n    <div class=\"page-section\">", [/routeIntentRevision\(\)/, /backendGeneration/, /router\.activeId\(\)/]);
@@ -32,16 +32,16 @@ describe("async ownership guard", () => {
     check("src/ui.ts", "export async function enterFocusMode(", "export function toggleTheme", [/setFocusFullscreen\(true\)/, /setFocusFullscreen\(false\)/]);
     check("src/mediaEditorSettings.ts", "export async function detectMediaEditorCommand", "export async function initMediaEditorSettings", [/latestOwner\(commandProbes, ed\.settingKey, revisionOwner\(key, currentRevision\(key\)\)\)/, /readOwned\(owner, backend\(\)\.detectMediaEditor/, /result\.kind === "stale"/, /command: mediaEditorCommand\(ed\.settingKey\), applied: false/]);
     const restore = readFileSync("src/backupRestore.ts", "utf8");
-    expect(restore, `${RULE}: backup restore must retain its graph owner across confirmation and writes`).toMatch(/graphOwner\(\)[\s\S]*readOwned\(owner, backend\(\)\.confirm[\s\S]*confirmed\.kind === "stale"[\s\S]*writeOwned\(owner, backend\(\)\.restoreBackup/);
+    expect(restore, `${RULE}: backup restore must retain its graph owner across confirmation and writes`).toMatch(/bindingOwner\(\)[\s\S]*readOwned\(owner, backend\(\)\.confirm[\s\S]*confirmed\.kind === "stale"[\s\S]*writeOwned\(owner, backend\(\)\.restoreBackup/);
     expect(restore, `${RULE}: an old restore must not release a newer graph transition`).toMatch(/if \(transitioning && ownsTransition\(\)\) setGraphTransitioning\(false\)/);
     const session = readFileSync("src/session.ts", "utf8");
-    expect(session, `${RULE}: session restore must discard a stale graph read`).toMatch(/export async function restoreSession[\s\S]*graphOwner\(\)[\s\S]*readOwned\(owner, backend\(\)\.loadSession[\s\S]*result\.kind === "stale"/);
+    expect(session, `${RULE}: session restore must discard a stale graph read`).toMatch(/export async function restoreSession[\s\S]*bindingOwner\(\)[\s\S]*readOwned\(owner, backend\(\)\.loadSession[\s\S]*result\.kind === "stale"/);
   });
 
   it("owns capture delivery, acknowledgement, page targets and media gestures", () => {
     check("src/App.tsx", "export async function installQuickCaptureReceiver(", "export function App(", [
       /bindingGeneration !== backend\(\)\.graphBindingGeneration\(\)/,
-      /graphOwner\(owner\)/, /writeOwned\(saveOwner/,
+      /bindingOwner\(owner\)/, /writeOwned\(saveOwner/,
       /readOwnedResource\(owner, listen/, /if \(!owner\(\) \|\| e\.payload\?\.target/,
     ]);
     check("src/capture.tsx", "  const scratchMarkdown =", "  const captureApi:", [
@@ -60,7 +60,7 @@ describe("async ownership guard", () => {
     const inline = readFileSync("src/render/inline.tsx", "utf8");
     expect([...inline.matchAll(/const onGripDown = mediaResizeGrip\(/g)], `${RULE}: image and video use one owned gesture; exemplar mediaResizeGrip`).toHaveLength(2);
     check("src/render/inline.tsx", "function mediaResizeGrip(", "// Image embed:", [
-      /graphOwner\(\(\) => alive && docNode\(id\) === original\)/,
+      /bindingOwner\(\(\) => alive && docNode\(id\) === original\)/,
       /onCleanup\(\(\) => \{ alive = false; cancel\(\); \}\)/,
       /next\.pointerId !== event\.pointerId/,
       /removeEventListener\("pointercancel", cancelled\)/,

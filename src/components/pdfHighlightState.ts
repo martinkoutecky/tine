@@ -2,7 +2,7 @@ import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
 import { flushPage, isConflicted, isDirty, reloadHlsIfLoaded, trackAssetWrite } from "../document";
-import { graphOwner, latestOwner, readOwned, serializeOwned, writeOwned, type Owner } from "../owned";
+import { bindingOwner, latestOwner, readOwned, serializeOwned, writeOwned, type Owner } from "../owned";
 import { hlsPageName } from "../pdf";
 import { isPdfOwnershipCurrent, trackPdfMutation, type PdfOwnership } from "../pdfOwnership";
 import { pushToast } from "../toasts";
@@ -66,7 +66,7 @@ export function createPdfHighlightState(options: {
   let committed: Highlight[] = [];
   const pendingCrops = new Map<string, Crop>();
   const queue = {}, intents = {};
-  const graphCurrent = graphOwner(() => isPdfOwnershipCurrent(owner));
+  const graphCurrent = bindingOwner(() => isPdfOwnershipCurrent(owner));
 
   const load = (items: Highlight[]) => {
     committed = items;

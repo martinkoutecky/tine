@@ -9,6 +9,7 @@ import { pasteClipboardPayload } from "./edits/paste";
 import { moveBlock, moveItem } from "./edits/moves";
 import { installRenameRefreshHandler, renamePageOnDisk } from "./graphRewrite";
 import { bumpGraphEpoch, graphMeta, setGraphMeta } from "../graphSession";
+import { invalidateBinding } from "../binding";
 import type { GraphMeta } from "../types";
 import { setToasts, toasts } from "../toasts";
 
@@ -60,7 +61,8 @@ it("reports a durable rename failure after the graph owner retires", async () =>
     new Promise((_resolve, reject) => { rejectRename = reject; }));
   const pending = renamePageOnDisk("A", "B");
   await vi.waitFor(() => expect(rename).toHaveBeenCalledOnce());
-  bumpGraphEpoch();
+  // The graph owner is the binding (R4): a graph switch/restore retires it.
+  invalidateBinding();
   const failure = new Error("rename rollback incomplete");
   rejectRename(failure);
   await expect(pending).rejects.toBe(failure);

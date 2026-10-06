@@ -324,12 +324,15 @@ pub(crate) async fn defender_hint(
 
 /// "Dismiss", or "not now": one per graph, never shown again for it.
 #[tauri::command]
-pub(crate) fn dismiss_defender_hint(
+pub(crate) async fn dismiss_defender_hint(
     app: tauri::AppHandle,
     ctx: crate::state::GraphContext<'_>,
 ) -> Result<(), String> {
     let (slot, dir) = graph_context(&ctx, &app)?;
-    crate::settings::set_notice_at(&dir, &slot.root_key, NOTICE_KEY, true)
+    crate::state::off_ui(move || {
+        crate::settings::set_notice_at(&dir, &slot.root_key, NOTICE_KEY, true)
+    })
+    .await
 }
 
 /// The click on "Add an exclusion for this graph folder". Never called without

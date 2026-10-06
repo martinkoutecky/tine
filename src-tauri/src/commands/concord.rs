@@ -65,7 +65,7 @@ pub(crate) fn sync_conflict_diff(
 /// `pre_choice`: "mine"/"theirs"/"union".
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn resolve_sync_conflict(
+pub(crate) async fn resolve_sync_conflict(
     winner: String,
     conflict: String,
     decisions: std::collections::HashMap<String, String>,
@@ -76,36 +76,46 @@ pub(crate) fn resolve_sync_conflict(
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    let bases = if merge_base_rev.is_some() {
-        ledger_bases(&slot, &winner, &conflict)
-    } else {
-        Vec::new()
-    };
-    let outcome = tine_graph_features::conflicts::resolve_sync_conflict(
-        &slot.store,
-        &winner,
-        &conflict,
-        &decisions,
-        &base_rev,
-        &conflict_rev,
-        merge_base_rev.as_deref(),
-        &bases,
-        pre_choice.as_deref().unwrap_or("union"),
-    )
-    .map_err(sync_conflict_error);
-    settle_queue(&slot, &[&winner, &conflict]);
-    outcome
+    // The resolution takes the store writer and the ledger fsyncs (R3).
+    crate::state::off_ui(move || {
+        let bases = if merge_base_rev.is_some() {
+            ledger_bases(&slot, &winner, &conflict)
+        } else {
+            Vec::new()
+        };
+        let outcome = tine_graph_features::conflicts::resolve_sync_conflict(
+            &slot.store,
+            &winner,
+            &conflict,
+            &decisions,
+            &base_rev,
+            &conflict_rev,
+            merge_base_rev.as_deref(),
+            &bases,
+            pre_choice.as_deref().unwrap_or("union"),
+        )
+        .map_err(sync_conflict_error);
+        settle_queue(&slot, &[&winner, &conflict]);
+        outcome
+    })
+    .await
 }
 
 /// Discard a sync-conflict copy without merging (move it to the recoverable
 /// trash). Refuses anything that isn't a conflict copy.
 #[tauri::command]
-pub(crate) fn trash_sync_conflict(conflict: String, state: GraphContext<'_>) -> Result<(), String> {
+pub(crate) async fn trash_sync_conflict(
+    conflict: String,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    let outcome = tine_graph_features::conflicts::trash_sync_conflict(&slot.store, &conflict)
-        .map_err(|e| e.to_string());
-    settle_queue(&slot, &[&conflict]);
-    outcome
+    crate::state::off_ui(move || {
+        let outcome = tine_graph_features::conflicts::trash_sync_conflict(&slot.store, &conflict)
+            .map_err(|e| e.to_string());
+        settle_queue(&slot, &[&conflict]);
+        outcome
+    })
+    .await
 }
 
 /// Two-way diff of a duplicate journal day's canonical file against one stray

@@ -3,7 +3,7 @@ import { backend } from "./backend";
 import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
 import { parseBlockPos, type QueryRoute } from "./routeTypes";
 import { blockPositionRef } from "./document";
-import { graphOwner, readOwned, writeOwned } from "./owned";
+import { bindingOwner, readOwned, writeOwned, type WriteOwner } from "./owned";
 import { dismissToast, pushToastUnique } from "./toasts";
 import { isSinglePaneShell } from "./nativeChrome";
 import {
@@ -60,7 +60,7 @@ let currentWorkspaceId: string | null = null;
 let restoredWorkspaceId: string | null = null;
 let restoredSessionPresent: boolean | null = null;
 let sessionIntentRevision = 0;
-let restoreEvidence: { owner: ReturnType<typeof graphOwner>; snapshot: string; intent: string; present: boolean | null; workspaceId: string | null } | null = null;
+let restoreEvidence: { owner: WriteOwner; snapshot: string; intent: string; present: boolean | null; workspaceId: string | null } | null = null;
 
 function intentToken(): string {
   return JSON.stringify([sessionIntentRevision, ...layoutPaneIds().map((id) => [id, paneRouter(id).routeIntentRevision()])]);
@@ -442,7 +442,7 @@ function clearSessionSaveFailure(): void {
  * certifies persistence for the current graph. Cost follows session bytes and backend latency. */
 export async function flushSession(): Promise<void> {
   sessionIntentRevision++;
-  const owner = graphOwner();
+  const owner = bindingOwner();
   clearTimeout(saveTimer);
   if (windowUnbound()) return;
   try {
@@ -457,7 +457,7 @@ export async function flushSession(): Promise<void> {
 
 export function scheduleSessionSave() {
   sessionIntentRevision++;
-  const owner = graphOwner();
+  const owner = bindingOwner();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     if (!owner() || windowUnbound()) return;
@@ -477,7 +477,7 @@ export function scheduleSessionSave() {
  * toast. Backend loads may migrate legacy session/registry files. Cost follows
  * session and registry bytes; recovery may write the session file. */
 export async function restoreSession(): Promise<void> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   discardWorkspaceRestoreEvidence();
   const initialSession = JSON.stringify(buildPersistedSession());
   const initialIntent = intentToken();

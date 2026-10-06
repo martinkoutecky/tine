@@ -1,6 +1,6 @@
 import { blockIsGridView, blockPageReadOnly, blockProperty, blockSubtreeMarkdown, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, outlineFits, replaceChildOrders, setRaw, pageByName, setBlockProperty, undo, withUndoUnit, node as docNode } from "../document";
 import { clipboardWriteRevision, copyRich } from "../clipboard";
-import { captureBinding, stillBound } from "../binding";
+import { captureBinding, bindingCurrent } from "../binding";
 import { isSheetCellHidden, joinProps, splitProps } from "../editor/properties";
 import { parseOutline, type OutlineNode } from "../editor/outline";
 import { visibleBody } from "../render/block";
@@ -444,7 +444,7 @@ export function copySheetSelection(sel: SheetMutationSelection): Promise<void> {
   const copy = { fingerprint: text, outlineMd: sheetSelectionOutlineMarkdown(sel) };
   const write = copyRich(text, html);
   const ownership = clipboardWriteRevision();
-  return write.then(() => { if (stillBound(binding) && clipboardWriteRevision() === ownership) lastSheetCopy = copy; });
+  return write.then(() => { if (bindingCurrent(binding) && clipboardWriteRevision() === ownership) lastSheetCopy = copy; });
 }
 
 export function clearSheetSelection(sel: SheetMutationSelection): boolean {
@@ -474,7 +474,7 @@ export async function cutSheetSelection(sel: SheetMutationSelection): Promise<vo
     const copy = copySheetSelection(sel);
     const ownership = clipboardWriteRevision();
     await copy;
-    if (stillBound(binding)
+    if (bindingCurrent(binding)
       && clipboardWriteRevision() === ownership
       && JSON.stringify(sheetCellIds(sel)) === JSON.stringify(ids)
       && sheetSelectionOutlineMarkdown(sel) === before

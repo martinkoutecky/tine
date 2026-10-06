@@ -1,5 +1,5 @@
 import { backend } from "../../backend";
-import { graphOwner, readOwned } from "../../owned";
+import { readOwned, bindingOwner } from "../../owned";
 import { ensurePageLoaded } from "../workingSet";
 import { pageByName } from "../model";
 import { captureEmptyPage } from "../convert";
@@ -15,7 +15,7 @@ export async function ensurePagePropertyOnKeyPage(name: string, key: string, val
   if (!name) throw new Error("A property key needs a page name.");
   if (!pageByName(name)) {
     if (value === null) return;
-    const reading = await readOwned(graphOwner(), backend().getPage(name, "page"));
+    const reading = await readOwned(bindingOwner(), backend().getPage(name, "page"));
     if (reading.kind === "stale") throw new Error("The graph changed before the type could be saved.");
     const dto = reading.value ?? captureEmptyPage(name, "page");
     const refused = ensurePageLoaded(dto);

@@ -409,6 +409,23 @@ pub(crate) fn slot_for_context(ctx: &GraphContext<'_>) -> Result<Arc<GraphSlot>,
     slot_for_bound_window(&ctx.state, ctx.window.label(), ctx.binding_generation)
 }
 
+/// R3 / I-21: run a command's blocking work (the store writer, an fsync, a
+/// directory sync) on the blocking pool and await it, so the main thread keeps
+/// painting and serving IPC. A synchronous Tauri command runs on the main
+/// thread and every other synchronous command queues behind it. Ordering: a
+/// synchronous command was ordered by the main thread; an async one is not, so
+/// the frontend issues these commands through its ordered lane (`ORDERED_COMMANDS`
+/// in src/orderedWrites.ts) and the shared state each touches keeps its own lock
+/// (store writer, SETTINGS_LOCK, DRAFTS_LOCK, NOTICES_LOCK, WORKSPACES_LOCK).
+/// Exemplar: commands.rs `save_pages`. A panicking job returns its join error.
+pub(crate) async fn off_ui<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 /// Resolve a normal graph-window command. Quick Capture intentionally has no
 /// graph slot, so this path cannot be used to grant it any GraphContext command
 /// (including save, delete, trash, or other mutations).
@@ -692,6 +709,104 @@ mod tests {
             "the destroyed window's Store must close with the registry lock released"
         );
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// Registry guards taken in the head of an `if let` / `while let` /
+    /// `match` / `for` live for the whole body (edition 2021 temporary
+    /// lifetime). Returns `file:line` for each such head.
+    fn registry_guards_in_branch_heads(file: &str, source: &str) -> Vec<String> {
+        let code: String = source
+            .lines()
+            .map(|line| {
+                if line.trim_start().starts_with("//") {
+                    ""
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let bytes = code.as_bytes();
+        let mut found = Vec::new();
+        for keyword in ["if let ", "while let ", "match ", "for "] {
+            for (start, _) in code.match_indices(keyword) {
+                let boundary = start == 0 || !(bytes[start - 1] as char).is_alphanumeric();
+                if !boundary || (start > 0 && bytes[start - 1] == b'_') {
+                    continue;
+                }
+                let (mut depth, mut end) = (0i32, None);
+                for (offset, ch) in code[start..].char_indices() {
+                    match ch {
+                        '(' | '[' => depth += 1,
+                        ')' | ']' => {
+                            depth -= 1;
+                            if depth < 0 {
+                                break; // inside a string or argument list
+                            }
+                        }
+                        '{' if depth == 0 => {
+                            end = Some(start + offset);
+                            break;
+                        }
+                        ';' if depth == 0 => break,
+                        _ => {}
+                    }
+                }
+                let Some(end) = end else { continue };
+                let head: String = code[start..end].split_whitespace().collect();
+                if head.contains("graphs.read()") || head.contains("graphs.write()") {
+                    let line = code[..start].matches('\n').count() + 1;
+                    found.push(format!("{file}:{line}"));
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn registry_guards_never_live_across_a_branch_body() {
+        // R2 / I-21: a registry guard in a branch head stays held while the
+        // body re-reads the registry, activates windows, fsyncs settings or
+        // stops watchers. A new `read()` then blocks behind any queued writer
+        // (bind, the `Destroyed` handler) that itself waits on the held guard:
+        // a deadlock that freezes the UI. Snapshot into a `let`, then act.
+        // Exemplar: graph.rs `route_bound_root`.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut pending = vec![dir];
+        let mut offenders = Vec::new();
+        let mut scanned = 0;
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let source = std::fs::read_to_string(&path).unwrap();
+                    scanned += 1;
+                    offenders.extend(registry_guards_in_branch_heads(
+                        &path.display().to_string(),
+                        &source,
+                    ));
+                }
+            }
+        }
+        assert!(scanned > 20, "the scan must cover the crate's sources");
+        assert_eq!(
+            registry_guards_in_branch_heads(
+                "probe",
+                concat!(
+                    "if let Some(o) = state.graphs.",
+                    "read().unwrap().owner(r) {}"
+                ),
+            ),
+            vec!["probe:1".to_string()],
+            "the scanner must recognise the forbidden shape"
+        );
+        assert!(
+            offenders.is_empty(),
+            "registry guard held across a branch body (snapshot into a `let` first; \
+             exemplar graph.rs route_bound_root): {offenders:?}"
+        );
     }
 
     #[test]

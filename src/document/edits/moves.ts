@@ -2,7 +2,7 @@ import { doc, setDoc, formatForBlock, formatForPage, pageByName, DocState } from
 import { blockWritable, pageWritable, orderListTypeFromRaw, rawWithInheritedOrderListType } from "./properties";
 import { produce } from "solid-js/store";
 import { markDirty, persistTogether, refuseConflictedMove } from "../save/engine";
-import { captureBinding, stillBound } from "../../binding";
+import { captureBinding, bindingCurrent } from "../../binding";
 import { pushMoveSelectionUndo, pushUndo } from "../history";
 import { createSignal } from "solid-js";
 import { rootsOf, nextVisible, existingSubtreeFits } from "../tree";
@@ -40,7 +40,7 @@ export async function moveBlock(
   const newPage = newParent ? doc.byId[newParent].page : (targetPage ?? oldPage);
   if (!pageWritable(oldPage) || !pageWritable(newPage)) return;
   if (newPage !== oldPage && refuseConflictedMove([oldPage, newPage])) return;
-  if (!stillBound(binding)) return;
+  if (!bindingCurrent(binding)) return;
   if (!doc.byId[id]) return; // block vanished during the async flush
   if (!pageWritable(oldPage) || !pageWritable(newPage)) return;
   const sourceFormat = formatForBlock(id);
@@ -422,10 +422,10 @@ async function crossDayMove(
   binding: ReturnType<typeof captureBinding>,
 ): Promise<boolean> {
   const target = await feedNeighbor(from, dir);
-  if (!stillBound(binding)) return false;
+  if (!bindingCurrent(binding)) return false;
   if (!target || target === from || !pageWritable(target)) return false;
   if (refuseConflictedMove([from, target])) return false;
-  if (!stillBound(binding)) return false;
+  if (!bindingCurrent(binding)) return false;
   if (!stillRootsOf(ids, from)) return false; // moved or vanished during the await (H3)
   if (!pageWritable(from) || !pageWritable(target)) return false;
   pushUndo(undoKind, [from, target]);

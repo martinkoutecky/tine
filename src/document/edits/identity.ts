@@ -1,7 +1,7 @@
 import { type Format, type PageKind } from "../../types";
 import { doc, formatForBlock, pageByName, setDoc } from "../model";
-import { captureBinding, stillBound } from "../../binding";
-import { graphOwner, readOwned } from "../../owned";
+import { captureBinding, bindingCurrent } from "../../binding";
+import { readOwned, bindingOwner } from "../../owned";
 import { blockWritable } from "./properties";
 import { markDirty, flushPage, isConflicted, persistTogether } from "../save/engine";
 import { backend } from "../../backend";
@@ -149,7 +149,7 @@ export async function ensureBlockId(id: string): Promise<string | null> {
   // Even a pre-existing id may not be on disk yet (added in-memory, not flushed);
   // flush and only hand back the uuid if the write actually landed.
   const ok = await flushPage(node.page);
-  return ok && !isConflicted(node.page) && stillBound(binding) ? uuid : null;
+  return ok && !isConflicted(node.page) && bindingCurrent(binding) ? uuid : null;
 }
 
 /** A live reference to a loaded block: its durable external UUID plus its exact
@@ -189,7 +189,7 @@ async function stampBlockId(id: string, committed: string): Promise<string | nul
     markDirty(node.page, "save-block");
   }
   const ok = await flushPage(node.page);
-  return ok && !isConflicted(node.page) && stillBound(binding) && doc.byId[id]?.page === node.page
+  return ok && !isConflicted(node.page) && bindingCurrent(binding) && doc.byId[id]?.page === node.page
     && existingBlockId(doc.byId[id].raw, fmt) === uuid ? uuid : null;
 }
 
@@ -243,7 +243,7 @@ export async function persistBlockRefTarget(
   externalId: string = uuid,
   insertReference?: () => string | null,
 ): Promise<boolean> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const ref: LoadedBlockRef = { uuid: externalId, page, pageKind: kind, ...(path ? { path } : {}) };
   if (!resolveBlockRef(ref)) {
     const result = await readOwned(owner, path

@@ -2,8 +2,8 @@ import { createSignal } from "solid-js";
 import { type GraphMeta } from "./types";
 import { backend } from "./backend";
 import { pushToast } from "./toasts";
-import { captureBinding, stillBound } from "./binding";
-import { advanceRevision, currentRevision, graphOwner, serializeDurable } from "./owned";
+import { captureBinding, bindingCurrent } from "./binding";
+import { bindingOwner, advanceRevision, currentRevision, serializeDurable } from "./owned";
 
 export const [graphMeta, setGraphMeta] = createSignal<GraphMeta | null>(null);
 
@@ -41,14 +41,14 @@ export function setJournalTemplate(name: string | null) {
   const root = m?.root;
   const revision = advanceRevision(journalTemplateWrites);
   if (m) setGraphMeta({ ...m, default_journal_template: name });
-  void serializeDurable(journalTemplateWrites, graphOwner(), () => backend().setDefaultJournalTemplate(name))
+  void serializeDurable(journalTemplateWrites, bindingOwner(), () => backend().setDefaultJournalTemplate(name))
     .then((result) => {
       if (result.kind === "current" && root !== undefined && confirmedTemplate?.root === root) confirmedTemplate = { root, value: name };
     })
     .catch((e) => {
       // A durable failure is reported even when the graph has since changed.
       pushToast(`Couldn't save the journal template setting. (${String(e)})`, "error");
-      if (!stillBound(binding) || currentRevision(journalTemplateWrites) !== revision) return;
+      if (!bindingCurrent(binding) || currentRevision(journalTemplateWrites) !== revision) return;
       const cur = graphMeta();
       if (cur && cur.root === root && confirmedTemplate?.root === root) {
         setGraphMeta({ ...cur, default_journal_template: confirmedTemplate.value });

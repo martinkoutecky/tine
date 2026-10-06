@@ -3,12 +3,12 @@
 // import the document store. The panel belongs to the graph it was opened for; a
 // graph switch closes it by retiring that binding.
 import { createSignal } from "solid-js";
-import { captureBinding, clearOnBindingInvalidated, stillBound, type Binding } from "./binding";
+import { captureBinding, clearOnBindingInvalidated, bindingCurrent, type Binding } from "./binding";
 
 const [openFor, setOpenFor] = createSignal<Binding | null>(null);
 export const unsavedRecoveryOpen = (): boolean => {
   const binding = openFor();
-  return binding !== null && stillBound(binding);
+  return binding !== null && bindingCurrent(binding);
 };
 export const openUnsavedRecovery = (): void => { setOpenFor(captureBinding()); };
 export const closeUnsavedRecovery = (): void => { setOpenFor(null); };

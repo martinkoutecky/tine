@@ -3,7 +3,7 @@
 // copies the draft. A failed save's toast leads to the same panel.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { backend } from "./backend";
+import { backend, type Backend } from "./backend";
 import { initParser } from "./render/parse";
 import { flushAll, isDirty, loadFeed, pageByName, resetStore, setRaw } from "./document";
 import { safeClose } from "./App";
@@ -69,6 +69,28 @@ describe("unsaved-changes recovery (GH #540)", () => {
       await vi.waitFor(() => expect(root.textContent).toContain("All pending changes saved"));
       expect(isDirty("P")).toBe(false);
       expect(toasts().some((t) => t.action?.label === "Review unsaved")).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("MX: a draft the store refused at a graph switch is shown from the previous graph until dismissed", async () => {
+    vi.spyOn(backend() as Required<Backend>, "storeDraft").mockRejectedValue(new Error("the draft store keeps at most 64 pages"));
+    const { keepAtSwitch, switchHeldDrafts } = await import("./draftStore");
+    const kept = keepAtSwitch("/old/graph");
+    resetStore();
+    expect(await kept).toEqual(["P"]);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const { openUnsavedRecovery } = await import("./unsavedRecovery");
+    openUnsavedRecovery();
+    const dispose = render(() => <UnsavedRecovery />, root);
+    try {
+      const entry = [...root.querySelectorAll("section")].find((section) => section.textContent?.includes("/old/graph"));
+      expect(entry?.querySelector("h3")?.textContent).toBe("P — from the previous graph (/old/graph)");
+      expect(entry?.querySelector("pre")?.textContent).toBe("- typed draft\n\t- child");
+      [...entry!.querySelectorAll("button")].find((button) => button.textContent === "Dismiss this draft")!.click();
+      expect(switchHeldDrafts()).toEqual([]);
     } finally {
       dispose();
     }

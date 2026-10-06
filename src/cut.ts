@@ -1,4 +1,4 @@
-import { captureBinding, stillBound } from "./binding";
+import { captureBinding, bindingCurrent } from "./binding";
 import { cancelClipboardCutGrant, clipboardWriteRevision, copyBlockOutline, peekClipboardPayload } from "./clipboard";
 import { buildClipboardPayload, node as docNode } from "./document";
 
@@ -39,7 +39,7 @@ export async function cutBlocks(
   const ownership = clipboardWriteRevision();
   const generation = peekClipboardPayload()?.generation;
   await write;
-  const sameSource = stillBound(binding)
+  const sameSource = bindingCurrent(binding)
     && currentText() === text
     && sourceSnapshot(ids) === snapshot
     && JSON.stringify(buildClipboardPayload(ids)?.sourcePages) === sourcePages;

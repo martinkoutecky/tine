@@ -7,7 +7,7 @@ import {
 import { PAGE_PROP_SPECS, isEditablePropertyKey, isSheetCellHidden, type PagePropSpec } from "../editor/properties";
 import { facetsOf } from "../render/facets";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
-import { stillBound, type Binding } from "../binding";
+import { bindingCurrent, type Binding } from "../binding";
 import { pushToast } from "../toasts";
 import "../styles/props-panel.css";
 
@@ -50,7 +50,7 @@ const subjectOf = (scope: PropsPanelScope): object | undefined =>
  *  otherwise it is refused visibly and the panel closes, so a typed edit is
  *  never dropped silently and never overwrites an intervening change. */
 function writeOne(scope: PropsPanelScope, binding: Binding, subject: object | undefined, key: string, value: string | null): boolean {
-  const stale = !stillBound(binding) ? "The graph changed" : !subject || subjectOf(scope) !== subject
+  const stale = !bindingCurrent(binding) ? "The graph changed" : !subject || subjectOf(scope) !== subject
     ? `This ${scope.kind} changed or was reloaded` : null;
   if (stale) {
     pushToast(`${stale} while its properties panel was open, so "${key}" was not saved. Reopen the panel to edit it.`, "error");

@@ -8,7 +8,7 @@ use crate::state::{slot_for_context, GraphContext};
 /// Cost O(sidecar + crop bytes) per attempt, up to four attempts; binding,
 /// missing/malformed sidecar, target, I/O and exhausted conflicts reject.
 #[tauri::command]
-pub(crate) fn rollback_pdf_area_image(
+pub(crate) async fn rollback_pdf_area_image(
     pdf: String,
     page: i64,
     id: String,
@@ -16,6 +16,10 @@ pub(crate) fn rollback_pdf_area_image(
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
-    tine_graph_features::pdf::rollback_pdf_area_image(&slot.store, &pdf, page, &id, stamp)
-        .map_err(|error| error.to_string())
+    // A write through the store writer (R3): off the main thread.
+    crate::state::off_ui(move || {
+        tine_graph_features::pdf::rollback_pdf_area_image(&slot.store, &pdf, page, &id, stamp)
+            .map_err(|error| error.to_string())
+    })
+    .await
 }

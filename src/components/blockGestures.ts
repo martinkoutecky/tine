@@ -13,7 +13,7 @@
  *   crosses into another block escalates to block selection. Callers need not
  *   know the listeners. */
 import { createSignal } from "solid-js";
-import { captureBinding, stillBound } from "../binding";
+import { captureBinding, bindingCurrent } from "../binding";
 import { clearSelection, extendSelectionTo, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
 import { endEdit, startEditing } from "../editorController";
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
@@ -79,7 +79,7 @@ export function beginDrag(id: string, e: MouseEvent) {
     document.removeEventListener("mouseup", onUp);
     setDragSelectionSuppressed(false);
     const ind = dropInd();
-    if (stillBound(binding) && dragMoved && ind && docNode(ind.id)) {
+    if (bindingCurrent(binding) && dragMoved && ind && docNode(ind.id)) {
       // One transaction: normalizes nested captures, refuses a drop into a
       // moved subtree, and persists a cross-page move as one save group.
       void moveBlocksRelative(capturedIds ?? [id], ind.id, ind.position);

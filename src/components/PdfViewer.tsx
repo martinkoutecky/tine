@@ -5,7 +5,7 @@ import { PdfViewerView } from "./pdfViewerView";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
-import { graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
+import { bindingOwner, graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
 import { errorFamily } from "../errorFamily";
 import { writeClipboardText } from "../clipboard";
 import { activePane, requestBlockReferences } from "../ui";
@@ -252,7 +252,7 @@ export function PdfViewer(props: {
   const highlightConflict = highlightState.conflict;
   const highlightDecisionBusy = highlightState.decisionBusy;
   const highlightCleanupPending = highlightState.cleanupPending;
-  const highlightGraphOwner = graphOwner(() => isPdfOwnershipCurrent(owner));
+  const highlightGraphOwner = bindingOwner(() => isPdfOwnershipCurrent(owner));
   const persist = highlightState.persist;
   const useDiskHighlights = highlightState.useDiskVersion;
   const keepMineHighlights = highlightState.keepMine;

@@ -10,9 +10,21 @@
  * that check and the supplied operation. A queued call waits for the cumulative
  * duration of earlier calls with the same object key. Read failures are hidden
  * only when the owner has retired; durable failures always reject. */
-import { captureBinding, stillBound } from "./binding";
+import { bindingCurrent, captureBinding, stillBound } from "./binding";
 
-export type Owner = () => boolean;
+declare const displayBrand: unique symbol;
+/** A predicate owner. `[displayBrand]` is present (true) only on an owner whose
+ * token includes the display epoch (`graphOwner`, or a composition of one). */
+export type Owner = (() => boolean) & { readonly [displayBrand]?: boolean };
+/** R4 / I-20: an owner whose token is the display epoch as well as the graph
+ * binding. Right for render and read-only results; never for a durable write. */
+export type DisplayOwner = (() => boolean) & { readonly [displayBrand]: true };
+/** An owner that carries no display epoch: the only kind `writeOwned` and
+ * `serializeDurable` accept, so a repaint (typography, journal title format,
+ * another page's rename) cannot retire a write's success or failure handling.
+ * A plain predicate, `bindingOwner`, `ownedWhen`/`latestOwner`/`revisionOwner`
+ * over write owners all qualify. Exemplar: `bindingOwner` in src/owned.ts. */
+export type WriteOwner = (() => boolean) & { readonly [displayBrand]?: never };
 export type Owned<T> = { kind: "current"; value: T } | { kind: "stale" };
 const STALE: Owned<never> = Object.freeze({ kind: "stale" });
 const revisions = new WeakMap<object, number>();
@@ -24,13 +36,25 @@ const invoking = new WeakSet<object>();
  * binding generation, then compose optional live predicates. No graph object is
  * captured. Construction is O(1); each check is O(number of predicates).
  * Backend binding or supplied predicates may throw. */
-export function graphOwner(...live: Owner[]): Owner {
+export function graphOwner(...live: Owner[]): DisplayOwner {
   const binding = captureBinding();
-  return () => stillBound(binding) && live.every((predicate) => predicate());
+  return (() => stillBound(binding) && live.every((predicate) => predicate())) as DisplayOwner;
+}
+
+/** Capture the current graph binding (store reset + backend binding
+ * generation, NOT the display epoch), then compose optional live predicates.
+ * The owner for a durable write and the bookkeeping of its outcome (R4 / I-20).
+ * Construction is O(1); each check is O(number of predicates). */
+export function bindingOwner(...live: WriteOwner[]): WriteOwner {
+  const binding = captureBinding();
+  return () => bindingCurrent(binding) && live.every((predicate) => predicate());
 }
 
 /** Compose route, tab or surface predicates with another owner. O(number of
- * predicates); a predicate failure is observable to the caller. */
+ * predicates); a predicate failure is observable to the caller. Composing a
+ * display owner yields a display owner. */
+export function ownedWhen(...live: WriteOwner[]): WriteOwner;
+export function ownedWhen(...live: Owner[]): DisplayOwner;
 export function ownedWhen(...live: Owner[]): Owner {
   return () => live.every((predicate) => predicate());
 }
@@ -38,6 +62,8 @@ export function ownedWhen(...live: Owner[]): Owner {
 /** Capture the newest request for a resource key within a scope. Supersedes
  * older requests for that key only. Construction is O(1); each check is
  * O(number of live predicates), which may throw. */
+export function latestOwner(scope: object, key: string, ...live: WriteOwner[]): WriteOwner;
+export function latestOwner(scope: object, key: string, ...live: Owner[]): DisplayOwner;
 export function latestOwner(scope: object, key: string, ...live: Owner[]): Owner {
   let keys = latest.get(scope);
   if (!keys) { keys = new Map(); latest.set(scope, keys); }
@@ -60,6 +86,8 @@ export function currentRevision(key: object): number {
 
 /** Own one revision, optionally subject to more live predicates. O(number of
  * predicates); a predicate failure is observable to the caller. */
+export function revisionOwner(key: object, revision: number, ...live: WriteOwner[]): WriteOwner;
+export function revisionOwner(key: object, revision: number, ...live: Owner[]): DisplayOwner;
 export function revisionOwner(key: object, revision: number, ...live: Owner[]): Owner {
   return () => currentRevision(key) === revision && live.every((predicate) => predicate());
 }
@@ -82,7 +110,7 @@ export async function readOwned<T>(owner: Owner, work: Promise<T>): Promise<Owne
  * type cannot prove the work is durable; callers must pass the write promise
  * and report its rejection. Failures reject unchanged, including after owner
  * retirement. Ownership filters only the successful return value. */
-export async function writeOwned<T>(owner: Owner, work: Promise<T>): Promise<Owned<T>> {
+export async function writeOwned<T>(owner: WriteOwner, work: Promise<T>): Promise<Owned<T>> {
   const value = await work;
   return owner() ? { kind: "current", value } : STALE;
 }
@@ -114,7 +142,7 @@ export async function readOwnedResource<T>(owner: Owner, work: Promise<T>, clean
  * distinguished from outside callers; do not await a nested same-key call.
  * A never-settling operation blocks later calls for that key. An owner error
  * at dequeue rejects this call and lets the queue advance. */
-export function serializeOwned<T>(key: object, owner: Owner, work: () => Promise<T>): Promise<Owned<T>> {
+export function serializeOwned<T>(key: object, owner: WriteOwner, work: () => Promise<T>): Promise<Owned<T>> {
   return serialize(key, owner, work, readOwned, "serializeOwned");
 }
 
@@ -124,11 +152,11 @@ export function serializeOwned<T>(key: object, owner: Owner, work: () => Promise
  * no delivered value. Same-key synchronous nesting rejects. The same after-
  * await limitation as serializeOwned applies. An owner error at dequeue rejects
  * this call and lets the queue advance. Callers must report failures. */
-export function serializeDurable<T>(key: object, owner: Owner, work: () => Promise<T>): Promise<Owned<T>> {
+export function serializeDurable<T>(key: object, owner: WriteOwner, work: () => Promise<T>): Promise<Owned<T>> {
   return serialize(key, owner, work, writeOwned, "serializeDurable");
 }
 
-function serialize<T>(key: object, owner: Owner, work: () => Promise<T>, read: typeof readOwned, name: string): Promise<Owned<T>> {
+function serialize<T, O extends Owner>(key: object, owner: O, work: () => Promise<T>, read: (owner: O, work: Promise<T>) => Promise<Owned<T>>, name: string): Promise<Owned<T>> {
   if (invoking.has(key)) return Promise.reject(new Error(`${name}: reentrant same key`));
   const before = queues.get(key) ?? Promise.resolve();
   const result = before.then(() => {

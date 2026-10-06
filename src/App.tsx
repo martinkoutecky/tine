@@ -64,7 +64,7 @@ import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { openPublishedPermalink, publishedPermalinkForWorkspace, replacePublishedPermalink } from "./publishedPermalink";
 import { maybeShowDefenderHint } from "./defenderHint";
-import { graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner } from "./owned";
+import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, readOwnedResource, writeOwned, type Owned, type Owner, type WriteOwner } from "./owned";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -558,7 +558,7 @@ export async function installMobileExternalLinkHandler(owner: Owner = ownedWhen(
  * and callbacks; writes capture graphOwner before starting. Save failure
  * acknowledges false and preserves the sender's scratch. Dispose
  * the returned listener when the app surface retires. */
-export async function installQuickCaptureReceiver(live: Owner = ownedWhen(() => true)): Promise<() => void> {
+export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen(() => true)): Promise<() => void> {
   const owner = ownedWhen(live);
   const inFlight = new Map<string, Promise<boolean>>();
   const completed = new Map<string, boolean>();
@@ -598,7 +598,7 @@ export async function installQuickCaptureReceiver(live: Owner = ownedWhen(() => 
       ack(id, false);
       return;
     }
-    const saveOwner = graphOwner(owner);
+    const saveOwner = bindingOwner(owner);
     const text = e.payload?.text ?? "";
     if (!text.trim()) {
       ack(id, false);
@@ -933,7 +933,7 @@ export function App(): JSX.Element {
         // Close only this graph window. The backend exits the process (including
         // Linux WebKit cleanup) only when this is the final graph window.
         try {
-          await writeOwned(graphOwner(), backend().closeGraphWindow());
+          await writeOwned(bindingOwner(), backend().closeGraphWindow());
           return;
         } catch {
           // fall through to the direct close below

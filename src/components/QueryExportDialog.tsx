@@ -3,7 +3,7 @@ import { backend } from "../backend";
 import { exportSheets } from "../sheet/exportSheets";
 import { closeQueryExport, openSettings } from "../ui";
 import { pushToast } from "../toasts";
-import { graphOwner, writeOwned } from "../owned";
+import { bindingOwner, writeOwned } from "../owned";
 import type { QueryPublicationRequest } from "../types";
 import { readOr } from "../resourceRead";
 import { initQueryExportBudget, queryExportBudgetBytes } from "../queryExportBudget";
@@ -38,7 +38,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const publish = async () => {
     const selection = reviewed();
     if (!selection || !folder() || !canExport()) return;
-    const owner = graphOwner(() => mounted);
+    const owner = bindingOwner(() => mounted);
     setBusy(true);
     setError(""); setOverBudget(false);
     try {

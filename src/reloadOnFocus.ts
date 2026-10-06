@@ -21,7 +21,7 @@
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import { noteFocusReturn, type FocusPhase } from "./focusTiming";
-import { captureBinding, stillBound, type Binding } from "./binding";
+import { captureBinding, bindingCurrent, type Binding } from "./binding";
 import { applyGraphChangesBulk, replayDeferredExternalReloads } from "./document";
 import { ownedWhen, readOwnedResource, type Owned } from "./owned";
 import { isPublishedExport } from "./publishedBackend";
@@ -76,7 +76,7 @@ class StaleFocusRefresh extends Error {}
 
 /** A graph switch retires the throttle and every pending completion. */
 function retireChangedBinding(): boolean {
-  if (stateBinding && stillBound(stateBinding)) return false;
+  if (stateBinding && bindingCurrent(stateBinding)) return false;
   stateBinding = captureBinding();
   lastRescan = 0;
   for (const waiter of waiters.values()) waiter.reject(new StaleFocusRefresh());
@@ -141,14 +141,14 @@ export function refreshOnReturnToWindow(now = Date.now(), force = false, rebuild
   if (active) {
     // A forced (Settings) rescan must itself start after the click, so it waits
     // for a rescan already in flight and runs its own.
-    if (!force && !changed && stillBound(active.binding)) return active.refresh;
+    if (!force && !changed && bindingCurrent(active.binding)) return active.refresh;
     return active.refresh.then(() => refreshOnReturnToWindow(now, force, rebuild));
   }
   const api = backend();
   if (!api.rescanGraphNow || !api.onGraphRescanComplete || (!force && now - lastRescan < FOCUS_RESCAN_THROTTLE_MS)) return Promise.resolve();
   lastRescan = now;
   const binding = stateBinding!;
-  const current = () => { if (!stillBound(binding)) throw new StaleFocusRefresh(); };
+  const current = () => { if (!bindingCurrent(binding)) throw new StaleFocusRefresh(); };
   beginRefreshNotice();
   const startedAt = performance.now();
   // A forced/rebuild rescan is a different, much longer operation (Settings):
@@ -181,7 +181,7 @@ export function refreshOnReturnToWindow(now = Date.now(), force = false, rebuild
     } catch (error) {
       // A refusal because the graph was switched or restored meanwhile is the
       // stale case too: the new binding's load read the disk itself.
-      if (error instanceof StaleFocusRefresh || !stillBound(binding)) return;
+      if (error instanceof StaleFocusRefresh || !bindingCurrent(binding)) return;
       // The watcher stays primary; a failed fallback must clear the notice.
       pushToast(`Tine couldn't finish checking for external changes. Editing is available, but reopen the page before relying on it being current. (${String(error)})`, "error");
     } finally {

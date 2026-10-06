@@ -1,5 +1,5 @@
 import { backend } from "./backend";
-import { graphOwner, readOwned, writeOwned, type Owner } from "./owned";
+import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner, type WriteOwner } from "./owned";
 import { focusedSurfaceOwner } from "./focusedSurface";
 import { openPage, openPageInNewTab } from "./router";
 import { loadGuidePages, pageByName } from "./document";
@@ -95,7 +95,7 @@ export async function openGuide(): Promise<void> {
 export async function copyGuideIntoGraph(pageName: string): Promise<void> {
   // The graph owner gates the bookkeeping and the success toast (the copy exists
   // in that graph either way); the surface owner gates only the navigation.
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const surface = focusedSurfaceOwner();
   const page = pageByName(pageName);
   const title = guideTitleFromName(page?.name ?? pageName);
@@ -116,7 +116,7 @@ export async function copyGuideIntoGraph(pageName: string): Promise<void> {
   }
 }
 
-function markGuideAnnounced(owner: Owner) {
+function markGuideAnnounced(owner: WriteOwner) {
   if (!owner()) return;
   const meta = graphMeta();
   if (meta && !meta.guide_announced) {
@@ -138,7 +138,7 @@ export function maybeShowGuideAnnouncement() {
   const meta = graphMeta();
   if (!meta || meta.guide_announced || announcementShownForRoot.has(meta.root)) return;
   announcementShownForRoot.add(meta.root);
-  const owner = graphOwner();
+  const owner = bindingOwner();
   pushToast("New: in-app Guide \u2014 learn Sheets, formulas & queries.", "info", {
     sticky: true,
     action: {

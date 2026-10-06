@@ -2,12 +2,13 @@
 // persisting the choice so it reopens next launch.
 
 import { backend, type GraphConfigChange } from "./backend";
-import { captureBinding, stillBound } from "./binding";
-import { graphOwner, readOwned, writeOwned, type Owner } from "./owned";
+import { captureBinding, bindingCurrent } from "./binding";
+import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, bumpDataRev, graphMeta, graphEpoch } from "./graphSession";
 import { setWorkflow, setRightSidebar, seedFavorites, favorites, pruneSidebarBlocks, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, closePageProps, setAudioPlayer } from "./ui";
 import { createSignal } from "solid-js";
 import { pushToast } from "./toasts";
+import { openUnsavedRecovery } from "./unsavedRecovery";
 import { keepAtSwitch } from "./draftStore";
 import { resetStore, flushAll, createPage, journalTemplatePage, demoJournalPage, installRenameRefreshHandler, renamePageOnDisk, favoritesArrangementPage, favoritesArrangementBlocks, reloadHlsIfLoaded } from "./document";
 import { installFavoritesPageDoor } from "./favorites";
@@ -99,7 +100,7 @@ export type LoadGraphPathOutcome =
  * device. Denial or stale graph ownership returns false; inspection or
  * approval errors reject. Cost follows path inspection and one approval write. */
 export async function authorizeGraphAccess(path: string): Promise<boolean> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const inspected = await readOwned(owner, backend().inspectGraphAccess(path));
   if (inspected.kind === "stale") return false;
   const access = inspected.value;
@@ -139,7 +140,7 @@ export async function loadGraphPath(
     endEdit("graph-switch");
     // Let the textarea blur handler commit its final buffer before we inspect dirty.
     await Promise.resolve();
-    if (!stillBound(startingBinding)) return { kind: "aborted" };
+    if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
   }
   // Whether we're switching to a *different* graph than last time. Only then do
   // we drop the persisted right-sidebar items; reopening the same graph at
@@ -155,7 +156,7 @@ export async function loadGraphPath(
   const hadGraph = !!graphMeta();
   const rebindsPdfOwner = hadGraph && (switching || options.forceRefresh === true);
   const flushed = await flushAll();
-  if (!stillBound(startingBinding)) return { kind: "aborted" };
+  if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
   if (hadGraph && !flushed) {
     pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
     return { kind: "aborted" };
@@ -166,9 +167,9 @@ export async function loadGraphPath(
     try { await flushSession(); }
     catch { console.warn("Session not saved before graph switch"); }
   }
-  if (!stillBound(startingBinding)) return { kind: "aborted" };
+  if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
   if (!(await authorizeGraphAccess(path))) return { kind: "aborted" };
-  if (!stillBound(startingBinding)) return { kind: "aborted" };
+  if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
   // This is the last await before the backend graph binding can change.  Flush
   // delayed view state plus complete highlight/area mutations under A; only a
   // successful drain permits us to invalidate that authority and unmount it.
@@ -176,7 +177,7 @@ export async function loadGraphPath(
     pushToast("PDF changes couldn't be saved — the current graph is still open.", "error");
     return { kind: "aborted" };
   }
-  if (!stillBound(startingBinding)) return { kind: "aborted" };
+  if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
   if (rebindsPdfOwner) {
     retirePdfOwnership();
   }
@@ -188,7 +189,7 @@ export async function loadGraphPath(
     pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
     return { kind: "aborted" };
   }
-  if (!stillBound(startingBinding)) {
+  if (!bindingCurrent(startingBinding)) {
     if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
     return { kind: "aborted" };
   }
@@ -218,11 +219,15 @@ export async function loadGraphPath(
   const oldRoot = hadGraph ? graphMeta()?.root : undefined;
   const kept = oldRoot ? keepAtSwitch(oldRoot) : null;
   resetStore();
-  void kept?.then((lost) => {
-    if (lost.length > 0) {
-      pushToast(`Couldn't keep unsaved edits to ${lost.map((n) => `“${n}”`).join(", ")} from the previous graph.`, "error", { sticky: true });
-    }
-  });
+  // storage.qnt mutant MX: the switch goes on only once that text is durable
+  // in the old graph's draft store, or, if the store refused it (disk error,
+  // its 64-page / 8 MiB bound), is held in this window and the user is told.
+  const lost = kept ? await kept : [];
+  if (lost.length > 0) {
+    pushToast(`Couldn't keep a crash-safe copy of unsaved edits to ${lost.map((n) => `“${n}”`).join(", ")} from the previous graph. `
+      + "They are held in this window until you dismiss them: copy them from Review unsaved.", "error",
+      { sticky: true, action: { label: "Review unsaved", run: openUnsavedRecovery } });
+  }
   clearWorkspaces();
   closePageProps();
   setAudioPlayer(null);
@@ -321,7 +326,7 @@ export type RenameOutcome = Exclude<Awaited<ReturnType<typeof renamePageOnDisk>>
 export async function renameOrMergePage(
   from: string, to: string, target?: PageTarget, onRefreshed?: (owner: Owner) => void,
 ): Promise<RenameOutcome> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const found = await readOwned(owner, backend().resolvePage(to, "page"));
   if (found.kind === "stale") return "cancelled";
   const reached = found.value.kind === "existing" ? (found.value.others.length ? [] : [found.value.id])
@@ -469,7 +474,7 @@ async function injectCustomCss(): Promise<void> {
  * delegates to loadGraphPath, which flushes the old graph before switching.
  * Desktop picker errors reject; graph-load cost follows graph files. */
 export async function switchGraph(): Promise<LoadGraphPathOutcome> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const platform = await platformKind();
   if (!owner()) return { kind: "aborted" };
   if (platform === "android") {
@@ -531,7 +536,7 @@ async function openPickedGraphPath(path: string): Promise<LoadGraphPathOutcome> 
  * loaded outcome. Creation errors toast and return aborted; picker/parent errors
  * reject. Cost follows graph creation, templates and the graph load. */
 export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const dirResult = (await isMobile())
     ? await readOwned(owner, backend().defaultGraphParent())
     : await readOwned(owner, backend().pickFolder("Choose where to create your new graph"));
@@ -552,7 +557,7 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     pushToast(`Created the graph at ${root}, but kept the current graph open.`, "info");
     return loaded;
   }
-  const loadedOwner = graphOwner();
+  const loadedOwner = bindingOwner();
   await seedTodayJournal();
   if (!loadedOwner()) return { kind: "aborted" };
   openPage("Welcome to Tine", "page"); // land on the tour, not the empty journal feed
@@ -563,7 +568,7 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
  *  Journals view isn't empty on first open. The caller awaits this best-effort seed. */
 async function seedTodayJournal(): Promise<void> {
   const binding = captureBinding();
-  const owner = graphOwner();
+  const owner = bindingOwner();
   try {
     const title = journalTitle(appNow());
     const page = await readOwned(owner, backend().getPage(title, "journal"));

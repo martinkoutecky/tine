@@ -11,7 +11,7 @@
  *  (`notices.json`, never in the graph). An unreadable answer costs no hint:
  *  recovery over refusal (a missing hint never harms the graph). */
 import { backend } from "./backend";
-import { graphOwner, readOwned, writeOwned } from "./owned";
+import { bindingOwner, readOwned, writeOwned } from "./owned";
 import { pushToast } from "./toasts";
 
 /** The hint wording (Martin reviews this text; the Guide page quotes it). */
@@ -39,7 +39,7 @@ export function exclusionResultMessage(result: ExclusionOutcome): { text: string
 /** Ask the backend whether to show the hint for the graph that just opened; show
  *  it as a sticky toast whose action performs the exclusion. */
 export async function maybeShowDefenderHint(): Promise<void> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   let show = false;
   try {
     const answer = await readOwned(owner, backend().defenderHint());

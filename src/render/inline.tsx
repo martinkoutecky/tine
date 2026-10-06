@@ -36,7 +36,7 @@ import { parseImageMetaBrace } from "./imageMeta";
 import { AstBody } from "./body";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
-import { graphOwner, readOwned, writeOwned } from "../owned";
+import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { writeClipboardText } from "../clipboard";
 import { acquireAssetBlob, acquireLocalImageBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
@@ -780,7 +780,7 @@ function mediaResizeGrip(
     cancel();
     const wrap = wrapper(), id = blockId(), original = id && docNode(id), source = token();
     if (!wrap || !id || !original || event.button !== 0) return;
-    const owner = graphOwner(() => alive && docNode(id) === original);
+    const owner = bindingOwner(() => alive && docNode(id) === original);
     event.preventDefault(); event.stopPropagation();
     const grip = event.currentTarget as HTMLElement;
     const refW = blockRefWidth(wrap), startX = event.clientX, startW = wrap.getBoundingClientRect().width;
@@ -897,7 +897,7 @@ function AssetImage(props: {
   const onTrashAsset = async (e: MouseEvent) => {
     e.stopPropagation();
     const binding = captureBinding();
-    const owner = graphOwner();
+    const owner = bindingOwner();
     const name = assetRelPath(props.url);
     if (!name || !props.blockId) return;
     const confirmed = await readOwned(owner, backend().confirm(
@@ -950,7 +950,7 @@ function AssetImage(props: {
   const onEditAsset = async (e: MouseEvent) => {
     e.stopPropagation();
     const binding = captureBinding();
-    const owner = graphOwner();
+    const owner = bindingOwner();
     const name = assetRelPath(props.url);
     const ed = editor();
     if (!name || !ed) return;

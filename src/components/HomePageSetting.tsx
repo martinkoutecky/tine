@@ -1,7 +1,7 @@
 import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { graphMeta, setGraphMeta } from "../graphSession";
-import { graphOwner, readOwned, writeOwned } from "../owned";
+import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
 import { readOr } from "../resourceRead";
 
@@ -19,7 +19,7 @@ export function HomePageSetting(): JSX.Element {
   });
   const matches = () => readOr(matchesResource, undefined, "home page search");
   const commit = async (name: string | null) => {
-    const owner = graphOwner();
+    const owner = bindingOwner();
     const previous = graphMeta();
     if (!owner() || !previous) return;
     try {

@@ -370,7 +370,18 @@ fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
             // differs.
             let key = if aliases { "alias" } else { "other" };
             let body = format!("{key}:: Alias-number-{index}\n\n- block {index}\n");
-            fs::write(root.join("pages").join(format!("Page{index:05}.md")), body).unwrap();
+            let path = root.join("pages").join(format!("Page{index:05}.md"));
+            fs::write(&path, body).unwrap();
+            // Outside the 2 s racy window (§5.4): otherwise the watcher's racy
+            // follow-up re-hashes all 10k fresh files on another thread inside a
+            // measured save (the 1-6.5 MB Windows noise). Exemplar:
+            // launch_one_read.rs `backdate`.
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600))
+                .unwrap();
         }
         let store = Store::open(&root, Default::default()).unwrap().0;
         let id = PageId::from("pages/Page00000.md".to_string());

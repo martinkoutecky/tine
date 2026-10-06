@@ -3,6 +3,7 @@ import { backend } from "./backend";
 import { renameOrMergePage, renameOutcomeMessage } from "./graph";
 import { tryFreezeGraphRewrite } from "./document/graphRewriteState";
 import { bumpGraphEpoch } from "./graphSession";
+import { invalidateBinding } from "./binding";
 import { resetStore } from "./document";
 import { recentPages, setRecentPages, rightSidebar, setRightSidebar } from "./ui";
 
@@ -74,11 +75,25 @@ it("distinguishes a busy rewrite from an unsaved edit and an uncertain commit", 
   vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((done) => { finish = () => done({ outcome: "renamed", touched: [] }); }));
   const pending = renameOrMergePage("Old", "New");
   await vi.waitFor(() => expect(backend().renamePage).toHaveBeenCalledOnce());
-  bumpGraphEpoch();
+  // The graph owner is the binding (R4): a graph switch/restore retires it.
+  invalidateBinding();
   finish();
   expect(await pending).toBe("uncertain");
   expect(renameOutcomeMessage("uncertain", "Old", "New")).toContain("Check whether");
   expect(renameOutcomeMessage("busy", "Old", "New")).not.toContain("pending edits");
+});
+
+// R4 / I-20 (og-flow3): a display repaint (here: another page's rename bumping
+// the epoch) on the same graph does not make a landed rename "uncertain".
+it("a rename that lands after a display repaint reports what it did", async () => {
+  vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/New.md" });
+  let finish!: () => void;
+  vi.spyOn(backend(), "renamePage").mockImplementationOnce(() => new Promise((done) => { finish = () => done({ outcome: "renamed", touched: [] }); }));
+  const pending = renameOrMergePage("Old", "New");
+  await vi.waitFor(() => expect(backend().renamePage).toHaveBeenCalledOnce());
+  bumpGraphEpoch();
+  finish();
+  expect(await pending).toBe("renamed");
 });
 
 // og 12b Rule 2 B2: the backend also writes nothing for a name no file and no

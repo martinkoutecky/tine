@@ -7,7 +7,7 @@ import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
 import { openPageInSidebar, openBlockInSidebar, pageIdentityKey, openQueryExport, switcherOpen } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
-import { advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
+import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
 import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 import { resolveBlockBatched } from "../resolveBatch";
 import { LiveRefGroup } from "./LiveRefGroup";
@@ -123,7 +123,7 @@ function dismissCrossingNoticeForever(): void {
   const revision = advanceRevision(crossingNoticePreference);
   setCrossingNoticeDismissed(true);
   void writeOwned(
-    revisionOwner(crossingNoticePreference, revision, graphOwner()),
+    revisionOwner(crossingNoticePreference, revision, bindingOwner()),
     backend().setAppBool(CROSSING_NOTICE_KEY, true),
   ).catch((error: unknown) => pushToast(`Couldn't save the notice preference: ${errorText(error)}`, "error"));
 }
@@ -511,7 +511,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const rawAtStart = docNode(blockId).raw;
     const previousDisplay = displayEdit ? new Map(displayPropertyPatch(reading()?.view ?? {})) : null;
     const previousGroup = displayEdit ? reading()?.view.group_by : undefined;
-    const owner = graphOwner(() => docNode(blockId)?.raw === rawAtStart);
+    const owner = bindingOwner(() => docNode(blockId)?.raw === rawAtStart);
     const current = macroName();
     let name = current;
     let dialect = macroPrintDialect(name);
@@ -610,7 +610,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       if (nextOptions === opts()) return;
       const nextQuery: Query = { ...current.query, source: { ...current.query.source, og_options: nextOptions } as Source };
       const printed = await readOwned(
-        graphOwner(() => docNode(blockId)?.raw === rawAtStart),
+        bindingOwner(() => docNode(blockId)?.raw === rawAtStart),
         backend().printQuery(nextQuery, current.view, sourcePrintDialect(current.query.source), true),
       );
       if (printed.kind === "stale") {

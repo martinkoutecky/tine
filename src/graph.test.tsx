@@ -263,6 +263,49 @@ describe("default journal template graph bind", () => {
     expect(record).toMatchObject({ kind: "unsaved", page_name: "Typed", path: "pages/Typed.md", page });
     expect(harness.resetStore).toHaveBeenCalled(); // the reset drops the working set (harness)
   });
+  it("MX: the switch waits until the old graph's late edit is durably drafted", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    const page = { name: "Typed", kind: "page", title: "Typed", pre_block: null,
+      blocks: [{ id: "b", raw: "typed during the load", collapsed: false, children: [] }] } as PageDto;
+    let finish!: () => void;
+    harness.api.storeDraft.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    harness.api.loadGraph.mockImplementationOnce(async () => {
+      harness.unsaved.push({ name: "Typed", state: "Not saved", path: "pages/Typed.md", page });
+      return { kind: "loaded" as const, meta: { ...META, root: "/tmp/next-graph" }, binding_generation: 2 };
+    });
+    let done = false;
+    const switching = harness.loadGraphPath("/tmp/next-graph").then((outcome) => { done = true; return outcome; });
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(harness.api.storeDraft).toHaveBeenCalledTimes(1);
+    expect(done, "the switch must not finish while the only copy of the edit is not durable").toBe(false);
+    expect(harness.resetTabsToJournals).not.toHaveBeenCalled();
+    finish();
+    await expect(switching).resolves.toMatchObject({ kind: "loaded", root: "/tmp/next-graph" });
+    expect(harness.resetTabsToJournals).toHaveBeenCalled();
+  });
+  it("MX: a late edit whose draft the store refuses stays in this window, and a sticky error says where", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    const page = { name: "Typed", kind: "page", title: "Typed", pre_block: null,
+      blocks: [{ id: "b", raw: "typed during the load", collapsed: false, children: [] }] } as PageDto;
+    harness.api.storeDraft.mockRejectedValueOnce(new Error("the draft store keeps at most 64 pages"));
+    harness.api.loadGraph.mockImplementationOnce(async () => {
+      harness.unsaved.push({ name: "Typed", state: "Not saved", path: "pages/Typed.md", page });
+      return { kind: "loaded" as const, meta: { ...META, root: "/tmp/next-graph" }, binding_generation: 2 };
+    });
+    await harness.loadGraphPath("/tmp/next-graph");
+    const draftStore = await import("./draftStore");
+    expect(draftStore.switchHeldDrafts?.().map((held) => [held.root, held.record.page_name, held.record.page.blocks[0].raw]))
+      .toEqual([[META.root, "Typed", "typed during the load"]]);
+    const { toasts } = await import("./toasts");
+    const error = toasts().find((toast) => toast.kind === "error" && toast.message.includes("Typed"));
+    expect(error).toMatchObject({ sticky: true, action: { label: "Review unsaved" } });
+    // Dismissing is the user's explicit release.
+    draftStore.dismissHeldDraft(draftStore.switchHeldDrafts()[0].record.id);
+    expect(draftStore.switchHeldDrafts()).toEqual([]);
+  });
   it("still switches graph when the current session cannot be saved", async () => {
     const { loadGraphPath, api } = await loadHarness(null);
     await loadGraphPath(META.root);

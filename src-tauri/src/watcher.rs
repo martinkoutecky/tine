@@ -55,7 +55,7 @@ pub(crate) fn get_watch_mode(app: tauri::AppHandle) -> String {
 }
 
 #[tauri::command]
-pub(crate) fn set_watch_mode(
+pub(crate) async fn set_watch_mode(
     mode: String,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -65,16 +65,22 @@ pub(crate) fn set_watch_mode(
     } else {
         WatchMode::Notify
     };
-    update_settings(&app, |settings| {
-        settings["watch_mode"] = serde_json::json!(match mode {
-            WatchMode::Notify => "inotify",
-            WatchMode::Poll => "poll",
-        });
-    })?;
-    for (_, slot) in state.graphs.read().unwrap().entries() {
-        slot.store.set_watch_mode(mode);
-    }
-    Ok(())
+    // Snapshot first (R2): restarting a watcher must not hold the registry.
+    let slots = state.graphs.read().unwrap().entries();
+    // Settings fsync and watcher restarts (joins) (R3): off the main thread.
+    crate::state::off_ui(move || {
+        update_settings(&app, |settings| {
+            settings["watch_mode"] = serde_json::json!(match mode {
+                WatchMode::Notify => "inotify",
+                WatchMode::Poll => "poll",
+            });
+        })?;
+        for (_, slot) in slots {
+            slot.store.set_watch_mode(mode);
+        }
+        Ok(())
+    })
+    .await
 }
 
 /// The v0.6.5 window events for one publication: `graph-changed` payloads in

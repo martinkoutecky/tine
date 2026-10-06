@@ -1,0 +1,1 @@
+Second Tine Beta. Faster on large graphs: page renames, search, queries and saving do much less work on graphs with thousands of pages. Phone photos and uploads insert into the block again. Unsaved edits are kept through graph switches and failed saves. Adds tine:// links to graphs, pages and blocks, and line numbers for code blocks.

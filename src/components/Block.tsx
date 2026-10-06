@@ -28,6 +28,7 @@ import { navigationName } from "../pageIndex";
 import { pluginManager } from "../plugins/manager";
 import { bindPluginBlockSnapshot, isPluginGraphOwnerCurrent } from "../plugins/ownership";
 import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairEdit, SELECTION_WRAP } from "../editor/autopair";
+import { holdExternalActivity } from "../externalActivity";
 import { typoTypeReplace } from "../render/typography";
 import { rangeInLiteral } from "../editor/inlineLiteral";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
@@ -97,8 +98,8 @@ import { pushToast, dismissToast } from "../toasts";
 import { copyBlockLink } from "./blockLinkCopy";
 import { seedAssetBlob } from "../assetCache";
 import { assetEditorIsCurrent, captureAssetEditor, importCaptureToOrigin, reportStaleAsset, type AssetEditorToken } from "../assetLanding";
-import { captureBinding, stillBound } from "../binding";
-import { graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
+import { captureBinding, bindingCurrent } from "../binding";
+import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { EditorAutocomplete } from "./EditorAutocomplete";
 import { blockRefCount } from "../blockRefCounts";
 import { parserReady } from "../render/parse";
@@ -1083,7 +1084,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // insert a link to the STORED name at the caret (the backend may de-dup the candidate name).
   // Shared by clipboard-image paste and mobile capture (camera / voice memo).
   const insertAssetBytes = async (token: AssetEditorToken, bytes: Uint8Array, origName?: string, captureExt?: string) => {
-    const owner = graphOwner(() => assetEditorCurrent(token));
+    const owner = bindingOwner(() => assetEditorCurrent(token));
     const candidate = captureExt !== undefined ? captureAssetFileName(captureExt) : assetFileName(origName);
     // Cache key is the bare filename — assetRelPath() strips the `assets/` prefix
     // before loadAssetBlob() (see render/inline.tsx). Seed it so the asset renders
@@ -1160,7 +1161,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
    * at most one bounded byte buffer/base64 IPC payload is live at a time. */
   const pasteClipboardFiles = async (eventFiles: File[]) => {
     const editorToken = captureAssetEditorToken();
-    const owner = graphOwner();
+    const owner = bindingOwner();
     const toastId = pushToast("Pasting files…", "info");
     let skipped = 0;
     let nativeUnavailable = false;
@@ -1237,7 +1238,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       inserted = insertStoredAssets(editorToken, stored);
     } finally {
       dismissToast(toastId);
-      if (!stillBound(editorToken.binding)) return;
+      if (!bindingCurrent(editorToken.binding)) return;
       if (inserted) {
         pushToast(`Inserted ${stored.length} file${stored.length === 1 ? "" : "s"}`, "success");
       }
@@ -1258,7 +1259,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const withNativeAssetPicker = async (work: (token: AssetEditorToken) => Promise<void>) => {
     const token = captureAssetEditorToken();
     nativeAssetPickers++;
-    try { await work(token); } finally { nativeAssetPickers--; }
+    const release = holdExternalActivity();
+    try { await work(token); } finally { nativeAssetPickers--; release(); }
   };
   // Mobile: take/pick a photo (Android camera plugin) → insert at the caret.
   const capturePhotoCmd = () => withNativeAssetPicker(async (editorToken) => {
@@ -1266,7 +1268,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     try {
       res = await backend().capturePhoto();
     } catch (err) {
-      if (stillBound(editorToken.binding)) pushToast(`Couldn’t capture a photo (${String(err)})`, "error");
+      if (bindingCurrent(editorToken.binding)) pushToast(`Couldn’t capture a photo (${String(err)})`, "error");
       return;
     }
     if (res.status === "ok" && res.path) {
@@ -1310,10 +1312,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     try {
       res = await backend().startRecording();
     } catch (err) {
-      if (stillBound(editorToken.binding)) pushToast(`Couldn’t start recording (${String(err)})`, "error");
+      if (bindingCurrent(editorToken.binding)) pushToast(`Couldn’t start recording (${String(err)})`, "error");
       return;
     }
-    if (!stillBound(editorToken.binding)) { if (res.status === "recording") void backend().cancelRecording(); return; }
+    if (!bindingCurrent(editorToken.binding)) { if (res.status === "recording") void backend().cancelRecording(); return; }
     if (res.status === "recording") {
       mobileRecordingEditorToken = editorToken;
       setRecordingAudio(true);
@@ -1350,7 +1352,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
   };
   const uploadAsset = () => withNativeAssetPicker(async (editorToken) => {
-    const owner = graphOwner();
+    const owner = bindingOwner();
     const picked = await readOwned(ownedWhen(() => editorMounted), backend().pickFile());
     if (picked.kind === "stale" || !picked.value) return; const path = picked.value;
     try {
@@ -1367,7 +1369,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // editor. assetRefresh updates the image when Tine regains focus.
   const createDrawioDiagram = async () => {
     const editorToken = captureAssetEditorToken();
-    const owner = graphOwner(() => assetEditorCurrent(editorToken));
+    const owner = bindingOwner(() => assetEditorCurrent(editorToken));
     const ed = MEDIA_EDITORS.find((e) => e.id === "drawio");
     if (!ed?.blank) return;
     try {
@@ -1430,16 +1432,16 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const editorValue = ref.value;
       let inserted = false;
       void persistBlockRefTarget(uuid, page, kind, undefined, externalId, () => {
-        if (!stillBound(binding) || ac() !== trigger || ref.value !== editorValue) return null;
+        if (!bindingCurrent(binding) || ac() !== trigger || ref.value !== editorValue) return null;
         const sourcePage = docNode(props.id)?.page;
         if (!sourcePage) return null;
         replaceTrigger(`((${externalId}))`);
         inserted = true;
         return sourcePage;
       }).then((saved) => {
-        if (!saved && stillBound(binding) && (inserted || ac() === trigger))
+        if (!saved && bindingCurrent(binding) && (inserted || ac() === trigger))
           pushToast("Could not save the block reference. Resolve the page save and try again.", "error");
-      }).catch((error) => { if (stillBound(binding)) pushToast(`Could not save the block reference: ${String(error)}`, "error"); });
+      }).catch((error) => { if (bindingCurrent(binding)) pushToast(`Could not save the block reference: ${String(error)}`, "error"); });
       return;
     }
     if (item.plugin) {
@@ -3000,7 +3002,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     );
     const toastId = looksImage ? pushToast("Pasting image…", "info") : 0;
     const editorToken = captureAssetEditorToken();
-    const owner = graphOwner(() => assetEditorCurrent(editorToken));
+    const owner = bindingOwner(() => assetEditorCurrent(editorToken));
     void (async () => {
       let bytes: Uint8Array | null = null;
       try {

@@ -4,7 +4,7 @@
 // newest→oldest so the newest carried tasks end up on top of today.
 
 import { backend } from "./backend";
-import { graphOwner, readOwned, type Owner } from "./owned";
+import { readOwned, type Owner, bindingOwner } from "./owned";
 import { pageByName, admitPageFile, ensurePageLoaded, carryUnfinished, flushPage, carryTodayPage, refuseConflictedMove, reportPageLoadRefusal } from "./document";
 import { journalTitle, appNow } from "./journal";
 import { carryKeepsContext, carryHeaderText } from "./ui";
@@ -58,7 +58,7 @@ async function report(n: number, today: string, owner: Owner): Promise<void> {
  * reports an error toast. Moving is in memory before today's page
  * save; a save failure leaves moved tasks in the editor for resolution. */
 export async function carryPrevDay(): Promise<void> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   const today = appNow();
   const todayKey =
     today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
@@ -87,7 +87,7 @@ export async function carryPrevDay(): Promise<void> {
  * toast. Page-read failures also toast. Cost follows the source/day blocks
  * plus any page load and grouped save. */
 export async function carryDay(pageName: string): Promise<void> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   try {
     const today = await ensureToday(owner);
     if (!today || !owner()) return;
@@ -107,7 +107,7 @@ export async function carryDay(pageName: string): Promise<void> {
  * work grows with days and the loaded blocks. The numeric argument is not
  * clamped or validated. A failed final save leaves moves in memory and toasts. */
 export async function carryDaysBack(days: number): Promise<void> {
-  const owner = graphOwner();
+  const owner = bindingOwner();
   try {
     const today = await ensureToday(owner);
     if (!today || !owner()) return;

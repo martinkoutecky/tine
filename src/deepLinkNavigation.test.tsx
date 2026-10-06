@@ -12,6 +12,7 @@ import { loadSingle } from "./document/workingSet";
 import { resetStore, pageByName } from "./document";
 import { setGraphMeta, bumpGraphEpoch } from "./graphSession";
 import { setToasts, toasts } from "./toasts";
+import { invalidateBinding } from "./binding";
 import { focusedRouter, resetPaneLayoutToSingle, splitPane, focusPane, paneRouter } from "./panes";
 const id = "11111111-1111-4111-8111-111111111111";
 const root = "/fixture";
@@ -120,12 +121,21 @@ describe("GH #181 literal menu and navigation boundaries", () => {
     expect(api.tineLinks!.handoff).not.toHaveBeenCalled();
     expect(toasts().at(-1)?.message).toContain(error ?? "target not found in the chosen graph copy");
   });
+  // A graph switch moves the binding (switchGraph -> resetStore -> invalidateBinding,
+  // and loadGraph's new backend binding generation) and repaints (graphEpoch).
+  const switchGraph = () => { invalidateBinding(); bumpGraphEpoch(); };
   it("cancels stale identity copies and resolutions after a graph switch", async () => {
     const api = setup(); const write = vi.spyOn(api, "writeText");
-    vi.mocked(api.tineLinks!.identity).mockImplementation(async () => { bumpGraphEpoch(); return id; });
+    vi.mocked(api.tineLinks!.identity).mockImplementation(async () => { switchGraph(); return id; });
     await copyTineLink({ page: dto.name }); expect(write).not.toHaveBeenCalled();
     const before = focusedRouter().route();
-    vi.mocked(api.tineLinks!.scanKnownGraphs).mockImplementation(async () => { bumpGraphEpoch(); return [{ root }]; });
+    vi.mocked(api.tineLinks!.scanKnownGraphs).mockImplementation(async () => { switchGraph(); return [{ root }]; });
     await openTineLink({ kind: "url", url: pageLink(dto.name, id) }); expect(focusedRouter().route()).toEqual(before);
+  });
+  it("finishes a link copy across a display-only repaint of the same graph (R4)", async () => {
+    const api = setup(); const write = vi.spyOn(api, "writeText");
+    vi.mocked(api.tineLinks!.identity).mockImplementation(async () => { bumpGraphEpoch(); return id; });
+    await copyTineLink({ page: dto.name });
+    expect(write).toHaveBeenCalledWith(pageLink(dto.name, id));
   });
 });

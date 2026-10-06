@@ -32,10 +32,24 @@ export function bindingIdentity(): string {
   return `${resetGeneration}:${backend().graphBindingGeneration?.() ?? 0}`;
 }
 
-export function stillBound(binding: Binding): boolean {
-  return binding.epoch === graphEpoch()
-    && binding.resetGeneration === resetGeneration
+/** R4 / I-20: is the graph binding captured in `binding` still the current
+ * one? This is exactly the binding lifetime (store reset + backend binding
+ * generation) and ignores the display epoch, so it is the token for a data
+ * write or its bookkeeping: a save's base revision, a restored dirty mark, a
+ * conflict mark. A typography toggle, a journal-title-format change or a
+ * rename of another page repaints the same graph and must not retire a write
+ * already in flight. Exemplar: `doSave` in src/document/save/engine.ts. O(1). */
+export function bindingCurrent(binding: Binding): boolean {
+  return binding.resetGeneration === resetGeneration
     && binding.backendGeneration === (backend().graphBindingGeneration?.() ?? 0);
+}
+
+/** The binding is current AND no display-only repaint has happened since it
+ * was captured. Use it for a render or read-only result that depends on
+ * display state (journal title format, typography, page names); never as the
+ * owner of a data write, which uses `bindingCurrent`. O(1). */
+export function stillBound(binding: Binding): boolean {
+  return binding.epoch === graphEpoch() && bindingCurrent(binding);
 }
 
 /** Retire every binding (store reset: graph switch, restore): bumps a
