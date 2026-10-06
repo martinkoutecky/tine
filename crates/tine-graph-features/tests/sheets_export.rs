@@ -343,7 +343,7 @@ fn inputs_sent_to_the_app_are_bounded() {
         page.push_str(&format!("  - row {i}\n"));
     }
     fs::write(base.join("graph/pages/Big.md"), page).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let inputs = sheet_export_inputs(&store, Some(&["Big".to_owned()]), None).unwrap();
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].rows.len(), 5_000);
@@ -361,7 +361,7 @@ fn a_sheet_inside_a_grid_cell_is_found_by_its_path_and_laid_out_in_the_cell() {
         "public:: true\n\n- Outer\n  tine.view:: grid\n  -\n    - Inner\n      tine.view:: table\n      - one\n      - two\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let inputs = sheet_export_inputs(&store, Some(&["Nested".to_owned()]), None).unwrap();
     let paths: Vec<_> = inputs.iter().map(|i| i.path.clone()).collect();
     assert_eq!(
@@ -529,7 +529,7 @@ fn a_query_sheet_leaves_out_a_row_on_an_unpublished_page_and_keeps_the_rest() {
         "- TODO hidden-secret-row\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let scope = SheetScope::Live { all_pages: false };
     let inputs =
         sheet_export_inputs(&store, Some(&["Tail-queries".to_owned()]), Some(&scope)).unwrap();
@@ -599,7 +599,7 @@ fn grid_render_uses_only_rows_sent_for_aggregates_and_charges_their_area() {
             page.push_str(&format!("  - row {i}\n    - value-{i}\n"));
         }
         fs::write(base.join("graph/pages/Big.md"), page).unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         let input = sheet_export_inputs(&store, Some(&["Big".to_owned()]), None)
             .unwrap()
             .remove(0);

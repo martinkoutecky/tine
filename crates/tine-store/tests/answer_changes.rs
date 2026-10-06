@@ -27,7 +27,7 @@ fn save(store: &Store, raw: &str) -> Value {
     serde_json::to_value(change.expect("changed save publishes")).unwrap()
 }
 /// External edits reach the store through its file watcher as well as through
-/// `scan_refresh`; under load the watcher may publish part of a bulk edit first.
+/// `refresh`; under load the watcher may publish part of a bulk edit first.
 /// Each publication carries final counts for the targets it changed, so read
 /// publications until `target` reaches `count` and report whether any of them
 /// changed the inventory.
@@ -110,6 +110,7 @@ fn create_delete_and_rename_publish_both_answers() {
     tx.trash(
         &renamed,
         store.page(&PageId::from(renamed.as_str())).unwrap().rev,
+        tine_store::TrashIf::Any,
     );
     let TxOutcome::Committed { change, .. } = tx.commit() else {
         panic!("delete refused");
@@ -128,7 +129,7 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
         format!("alias:: Outside\n- (({ONE}))\n"),
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let (inventory, single) = settled(&sub, ONE, 1);
     assert!(inventory);
     counts(&single, json!({ONE:1}));
@@ -139,7 +140,7 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
         )
         .unwrap();
     }
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let (inventory, bulk) = settled(&sub, TWO, 40);
     assert!(inventory);
     counts(&bulk, json!({TWO:40}));
@@ -150,7 +151,7 @@ fn external_single_and_bulk_changes_publish_final_target_counts() {
         )
         .unwrap();
     }
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let (_, removed) = settled(&sub, TWO, 0);
     assert_eq!(removed["inventoryChanged"], false);
     counts(&removed, json!({TWO:0}));

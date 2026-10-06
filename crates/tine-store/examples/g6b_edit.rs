@@ -28,7 +28,14 @@ fn main() {
     let store = Store::open(Path::new(&graph), Default::default())
         .expect("open")
         .0;
-    let ids = store.whole_graph().expect("load").parsed_page_ids();
+    let ids: Vec<_> = store
+        .whole_graph()
+        .expect("load")
+        .corpus()
+        .pages
+        .into_iter()
+        .map(|page| page.id)
+        .collect();
     if mode == "dump" {
         let mut out = BufWriter::new(fs::File::create(file).expect("create dump"));
         for id in ids {
@@ -68,11 +75,12 @@ fn main() {
                 match store.page(&id) {
                     Err(_) => "read-failed".to_string(),
                     Ok(read) => {
-                        let outcome = store.save(
-                            EditKind::SaveBlock,
-                            &id,
+                        let outcome = single_save(
+                            &store,
+                            id.clone(),
                             SaveBase::Existing(read.rev),
-                            &doc,
+                            doc.clone(),
+                            EditKind::SaveBlock,
                         );
                         match outcome {
                             SaveOutcome::Saved(_) | SaveOutcome::Unchanged(_) => {
@@ -183,4 +191,18 @@ fn classify_change(before: &[u8], after: &[u8], marker_line: usize, span_lines: 
         return "line-ending-change".into();
     }
     "other-serialization".into()
+}
+
+/// One-page save through the production door, `Store::save_pages`.
+fn single_save(
+    store: &tine_store::Store,
+    id: tine_store::PageId,
+    base: tine_store::SaveBase,
+    doc: tine_core::model::PageDto,
+    kind: tine_store::EditKind,
+) -> tine_store::SaveOutcome {
+    match store.save_pages(&[(id, base, doc, vec![kind])]) {
+        tine_store::SavePagesOutcome::Ok { mut outcomes, .. } => outcomes.remove(0),
+        tine_store::SavePagesOutcome::Failed { outcome, .. } => outcome,
+    }
 }

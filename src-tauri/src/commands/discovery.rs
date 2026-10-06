@@ -35,7 +35,7 @@ pub(super) fn page_inventory_wire(view: &WholeGraph) -> PageInventoryWire {
     PageInventoryWire {
         rev: rev.into(),
         entries: view
-            .inventory()
+            .inventory(tine_store::InventoryScope::All)
             .0
             .iter()
             .map(|entry| PageInventoryEntryWire {
@@ -225,7 +225,7 @@ mod inventory_adapter_tests {
         let root = temp_root("partial");
         let store = open(&root, &[("pages/Good.md", "- good\n")]);
         std::fs::write(root.join("pages/Bad.md"), b"title:: unknown \xff\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         let wire = page_inventory_wire(&store.whole_graph().unwrap());
         assert!(wire.entries.iter().any(|entry| entry.name == "Good"));
         assert_eq!(wire.unreadable, vec!["pages/Bad.md".to_owned()]);
@@ -238,7 +238,7 @@ mod inventory_adapter_tests {
             ResolvedWire::Absent { .. }
         ));
         std::fs::write(root.join("pages/Bad.md"), "- repaired\n").unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         assert!(page_inventory_wire(&store.whole_graph().unwrap())
             .unreadable
             .is_empty());

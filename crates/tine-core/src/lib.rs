@@ -3,6 +3,7 @@
 //! belong to `tine-store`), no GUI dependencies — fully unit
 //! testable without the Tauri shell.
 
+pub mod asset_refs;
 pub mod block_regions;
 pub mod concord_queue;
 pub mod config;
@@ -13,11 +14,13 @@ pub mod doc;
 pub mod edn;
 pub mod guide;
 pub mod html_sanitize;
+pub mod latency;
 pub mod logbook;
 pub mod media_mime;
 pub mod model;
 pub mod org;
 mod outline;
+pub mod page_properties;
 pub mod pdf;
 pub mod projection;
 mod property_line;

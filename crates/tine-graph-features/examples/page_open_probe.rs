@@ -114,7 +114,7 @@ fn main() {
             // A new file (today's journal, a created page) changes the file set.
             let created = root.join("pages").join("page_open_probe_new.md");
             std::fs::write(&created, "- probe\n").unwrap();
-            store.scan_refresh().unwrap();
+            store.refresh(tine_store::Depth::Stamps).unwrap();
             let after_create = opens(&store, &names[concurrent + 1..], began);
             let _ = std::fs::remove_file(&created);
             println!(

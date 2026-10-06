@@ -5150,6 +5150,7 @@ dependencies = [
  "tempfile",
  "time",
  "tine-core",
+ "tine-graph-features",
  "tine-store",
 ]
 

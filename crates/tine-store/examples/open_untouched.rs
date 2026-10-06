@@ -11,7 +11,12 @@ fn main() {
         .expect("usage: open_untouched <graph copy>");
     let (store, _, _) = Store::open(Path::new(&root), OpenOptions::default()).expect("open graph");
     let graph = store.whole_graph().expect("initial load");
-    let ids = graph.parsed_page_ids();
+    let ids: Vec<_> = graph
+        .corpus()
+        .pages
+        .into_iter()
+        .map(|page| page.id)
+        .collect();
     for id in &ids {
         store.page(id).expect("read page");
     }

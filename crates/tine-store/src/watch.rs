@@ -633,17 +633,7 @@ impl Core {
                 reason: error.to_string(),
             })?;
         *self.dirs.write().unwrap() = [self.graph.root.clone()];
-        *self.config.write().unwrap() = ConfigState {
-            config: Arc::new(config),
-            problem,
-            assets_directory_name: self
-                .graph
-                .assets_path()
-                .file_name()
-                .and_then(|part| part.to_str())
-                .unwrap_or("dir")
-                .to_owned(),
-        };
+        *self.config.write().unwrap() = ConfigState::of(&self.graph, Arc::new(config), problem);
         Ok(())
     }
 
@@ -829,6 +819,13 @@ impl WatchHandle {
     }
 
     pub(crate) fn scan_refresh(&self) -> Result<(), LoadError> {
+        self.scan_refresh_with(DiffTrigger::Rescan)
+    }
+
+    /// `scan_refresh`, with `DiffTrigger::Bytes` hashing every file on a
+    /// ready graph instead of trusting unchanged stamps. A failed load is
+    /// recovered the same way either way (already a cold build).
+    pub(crate) fn scan_refresh_with(&self, trigger: DiffTrigger) -> Result<(), LoadError> {
         let mut status = self.core.load.status.lock().unwrap();
         while matches!(*status, LoadStatus::Loading) {
             status = self.core.load.ready.wait(status).unwrap();
@@ -879,7 +876,7 @@ impl WatchHandle {
             LoadStatus::Ready => drop(status),
             LoadStatus::Loading => unreachable!(),
         }
-        let result = self.core.reconcile(None, true, true, DiffTrigger::Rescan);
+        let result = self.core.reconcile(None, true, true, trigger);
         if result.is_ok() {
             self.core.observe_assets(&HashSet::new(), true);
         }

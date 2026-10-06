@@ -459,11 +459,12 @@ fn run_edit_cycles(root: &Path, query: &str) -> io::Result<EditCycleResult> {
         }
 
         let started = Instant::now();
-        let new_rev = match store.save(
-            tine_store::EditKind::ReplacePage,
-            &id,
+        let new_rev = match single_save(
+            &store,
+            id.clone(),
             SaveBase::Existing(base_rev),
-            &page,
+            page.clone(),
+            tine_store::EditKind::ReplacePage,
         ) {
             SaveOutcome::Saved(rev) | SaveOutcome::Unchanged(rev) => rev,
             other => return Err(io::Error::other(format!("save failed: {other:?}"))),
@@ -580,5 +581,19 @@ fn print_table(rows: &[BenchRow]) {
             row.primary_results,
             row.compound_results
         );
+    }
+}
+
+/// One-page save through the production door, `Store::save_pages`.
+fn single_save(
+    store: &tine_store::Store,
+    id: tine_store::PageId,
+    base: tine_store::SaveBase,
+    doc: tine_core::model::PageDto,
+    kind: tine_store::EditKind,
+) -> tine_store::SaveOutcome {
+    match store.save_pages(&[(id, base, doc, vec![kind])]) {
+        tine_store::SavePagesOutcome::Ok { mut outcomes, .. } => outcomes.remove(0),
+        tine_store::SavePagesOutcome::Failed { outcome, .. } => outcome,
     }
 }

@@ -34,7 +34,7 @@ fn print_counts(unrelated: usize) -> cost_counters::Counts {
     // Finish the launch reconciliation first: its by-path stamps must not be
     // billed to the print.
     store.whole_graph().unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     cost_counters::reset();
     let html = print::page_print_html(&store, "Target", Default::default())
         .unwrap()

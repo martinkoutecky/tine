@@ -1,36 +1,6 @@
 use super::{property_key_norm, strip_ref};
-use tine_core::doc::{DocBlock, Document};
-
-/// Page properties owned by lsdoc, including Org directives and head drawers.
-/// O(input bytes + AST nodes), without I/O; literal/prose entries are excluded.
-pub(crate) fn page_property_lines(text: &str, is_org: bool) -> Vec<(String, String)> {
-    tine_core::block_regions::parse_document(text, is_org)
-        .page_properties()
-        .map(|p| {
-            (
-                if is_org {
-                    p.key.to_ascii_lowercase()
-                } else {
-                    p.key.clone()
-                },
-                p.value.clone(),
-            )
-        })
-        .collect()
-}
-
-/// The first root carries the format; an empty document's parser-owned Org
-/// metadata distinguishes an Org drawer/directive preamble from Markdown.
-pub(crate) fn page_document_is_org(doc: &Document) -> bool {
-    doc.roots.first().map(DocBlock::is_org).unwrap_or_else(|| {
-        doc.pre_block.as_deref().is_some_and(|pre| {
-            tine_core::block_regions::parse_document(pre, true)
-                .page_properties()
-                .next()
-                .is_some()
-        })
-    })
-}
+use tine_core::doc::Document;
+pub(crate) use tine_core::page_properties::{page_document_is_org, page_property_lines};
 
 /// Extract property pairs and comma-separated tags only from document preblock.
 /// A properties-only first root is excluded, unlike document_aliases. Malformed

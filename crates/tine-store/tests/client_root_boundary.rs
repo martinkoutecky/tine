@@ -44,6 +44,7 @@ impl RootCalls {
                 .is_some_and(|name| name == "root_key" || self.tainted.contains(&name.to_string())),
             syn::Expr::Field(field) => {
                 field.member.to_token_stream().to_string() == "root_key"
+                    || field.member.to_token_stream().to_string() == "asset_trash_location"
                     || (field.member.to_token_stream().to_string() == "root"
                         && field.base.to_token_stream().to_string() == "source")
             }
@@ -53,7 +54,7 @@ impl RootCalls {
             syn::Expr::Try(value) => self.graph_value(&value.expr),
             syn::Expr::MethodCall(call) => {
                 let method = call.method.to_string();
-                ["path_for_os_handoff", "asset_trash_location_for_user"].contains(&method.as_str())
+                method == "path_for_os_handoff"
                     || ([
                         "join",
                         "clone",
@@ -216,7 +217,7 @@ fn planted_handoff_path_write_is_detected() {
         "File::create must reject a hand-off path"
     );
     let trash = r#"fn bad(store: &Store) {
-        let path = store.asset_trash_location_for_user();
+        let path = store.config().asset_trash_location;
         std::fs::write(&path, b"bad").unwrap();
     }"#;
     assert!(

@@ -6,7 +6,7 @@
 //! [`Store::read`] and [`Store::open_read`] provide raw file data. These calls
 //! are synchronous and should run off a UI thread.
 //!
-//! Use [`Store::save`] for one guarded page edit, or [`Transaction`] for a set
+//! Use [`Store::save_pages`] for guarded page edits, or [`Transaction`] for a set
 //! of guarded file changes, including a read-only revision expectation that
 //! can precede a dependent write. Structured page saves require an [`EditKind`]; raw
 //! page-file changes use [`Store::transaction`] with `Some(kind)`, while
@@ -81,7 +81,6 @@ pub mod model;
 #[cfg(test)]
 mod outside_roots_tests;
 pub use file_kind::{is_asset_sidecar, is_graph_text};
-pub use launch_diag::LatencyHist;
 pub use model::{parse_input_depth_within_limit, PARSE_INPUT_MAX_BYTES};
 mod asset_watch;
 mod atomic_file;
@@ -110,22 +109,22 @@ mod test_config_client;
 mod test_fixture_io;
 pub mod transaction;
 mod watch;
-pub use publish::{
-    publication_assets, publication_block_ref_counts, publish_site_external, PublishFailed,
-    PublishReceipt, SiteWriter,
-};
+pub use publish::{PublishDest, PublishFailed, PublishReceipt, SiteWriter};
 pub use restore::{RestoreFailed, RestoreFile, RestoreReport};
 #[cfg(any(test, feature = "test-faults"))]
 pub use store::checkpoint::CheckpointWrite;
 pub use store::{
-    Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, FacetPolicy, FileEntry, FileId,
-    FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry, IrAnswer,
-    IrRequest, Listing, LoadError, OpenError, OpenOptions, Origin, PageId, PageRead, QueryDialect,
-    QueryError, QueryResult, Resolved, SaveBase, SaveOutcome, SavePagesOutcome, SearchRequest,
+    Area, Budget, Cancel, Change, ChangeKind, ConfigState, Day, Depth, FacetPolicy, FileEntry,
+    FileId, FileMeta, FileRev, GraphAccessInspection, GraphRev, Inventory, InventoryEntry,
+    InventoryScope, IrAnswer, IrRequest, Listing, LoadError, OpenError, OpenOptions, Origin,
+    PageId, PageRead, QueryError, Resolved, SaveBase, SaveOutcome, SavePagesOutcome, SearchRequest,
     Store, StoreError, Subscription, SubscriptionEnd, TrashKind, WatchBatch, WatchMode, WholeGraph,
 };
 #[cfg(any(test, feature = "test-faults"))]
+pub use store::{QueryDialect, QueryResult};
+#[cfg(any(test, feature = "test-faults"))]
 pub use transaction::FaultPoint;
 pub use transaction::{
-    Content, IoError, Refusal, RenameMap, Rollback, StepResult, Transaction, TxOutcome, Why,
+    Content, IoError, Refusal, RenameMap, RewriteEffect, Rollback, StepResult, TitleRebind,
+    Transaction, TrashIf, TxOutcome, Why,
 };

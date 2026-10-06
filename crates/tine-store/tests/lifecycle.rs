@@ -209,7 +209,11 @@ fn whole_graph_taken_before_close_keeps_answering() {
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
     let view = store.whole_graph().unwrap();
     store.close();
-    assert!(view.inventory().0.iter().any(|entry| entry.name == "A"));
+    assert!(view
+        .inventory(tine_store::InventoryScope::All)
+        .0
+        .iter()
+        .any(|entry| entry.name == "A"));
     assert!(matches!(store.whole_graph(), Err(LoadError::Closed)));
 }
 
@@ -218,7 +222,7 @@ fn same_root_scan_keeps_old_commands_open() {
     let fixture = Fixture::new("scan-load");
     std::fs::write(fixture.root().join("pages/A.md"), "- before\n").unwrap();
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(store.whole_graph().is_ok());
     let id = store.file_id(Area::Pages, "AfterCancel.md").unwrap();
     let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));

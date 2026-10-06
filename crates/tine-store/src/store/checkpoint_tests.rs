@@ -568,7 +568,7 @@ fn r5_an_unseen_rewrite_is_served_until_rescan_but_page_reads_see_disk() {
         "a page open reads disk"
     );
     assert_eq!(read.rev, FileRev::from_bytes(b"- links [[Two]]\n"));
-    store.rebuild_graph().unwrap();
+    store.refresh(crate::Depth::Rebuild).unwrap();
     assert_eq!(backlink_pages(&store, "Two"), vec!["A".to_owned()]);
     assert!(backlink_pages(&store, "One").is_empty());
 }
@@ -600,7 +600,7 @@ fn rescan_replaces_the_checkpoint() {
     unseen_rewrite(root.path(), &cp, "pages/A.md", "- links [[Two]]\n", false);
     let store = open_cp(root.path(), &cp);
     store.whole_graph_reconciled().unwrap();
-    store.rebuild_graph().unwrap();
+    store.refresh(crate::Depth::Rebuild).unwrap();
     // The Rescan's request is answered; wait for it through a second one.
     assert!(matches!(
         store.write_checkpoint_now(),

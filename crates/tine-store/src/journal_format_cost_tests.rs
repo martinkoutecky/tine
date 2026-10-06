@@ -23,7 +23,7 @@ fn inventory_reuses_compiled_journal_formats_and_refreshes_them_on_config_change
         "{:journal/file-name-format \"dd-MM-yyyy\"}\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(crate::Depth::Stamps).unwrap();
     let changed = store.graph.current_journal_format();
     assert_eq!(
         changed.file_stem(tine_core::date::JournalDate::from_ordinal(20260929)),

@@ -1,6 +1,6 @@
 //! Family 11: an outside `logseq/config.edn` edit (Logseq, a text editor, a
 //! sync delivery) is taken in by the running store on its own watcher cycle,
-//! without `scan_refresh()` and without reopening the graph. Master contract:
+//! without `refresh()` and without reopening the graph. Master contract:
 //! `docs/contracts/config-live-reload.md`; og's is the same file in this repo.
 
 use std::path::{Path, PathBuf};
@@ -48,7 +48,7 @@ fn deliver(root: &Path, rel: &str, text: &str) {
     std::fs::rename(temp, root.join(rel)).unwrap();
 }
 
-/// Wait (no `scan_refresh`) for an External publication naming `rel`.
+/// Wait (no `refresh`) for an External publication naming `rel`.
 fn external_change_naming(subscription: &Subscription, rel: &str, within: Duration) -> bool {
     let deadline = Instant::now() + within;
     while Instant::now() < deadline {

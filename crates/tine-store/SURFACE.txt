@@ -1,41 +1,130 @@
-# tine-store public items ON the target surface (rev 5, 01-step1-interface.rs).
-# Counts against 01-arrival.md budget A, extended for batch save and read-only
-# transaction expectation: <=41 Store+Transaction ops,
-# <=26 WholeGraph questions, <=55 pub types. Enforced by tests/shallow_ratchet.rs.
-# Raised 40->41 and 25->26 for QF3b (GH #623 rename I/O: prepare_ref_rewrite, page_files_at_or_under), 2026-10-05.
-const model::PARSE_INPUT_MAX_BYTES
-enum edit_kind::EditKind
-use crate::edit_kind::EditKind
-fn model::parse_input_depth_within_limit
-fn file_kind::is_graph_text
-fn file_kind::is_asset_sidecar
-fn directory_durability::sync_directory_entry
-use crate::file_kind::{is_asset_sidecar,is_graph_text}
-use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
-enum store::Area
-enum store::ChangeKind
-enum store::Origin
+# tine-store public surface, budgeted per concept (og-surface review §6 rule 2).
+# Enforced by tests/shallow_ratchet.rs:
+# - every production public item sits in exactly one `## Concept (ceiling: N)`
+#   section, and N is that section's entry count: a cut lowers it, growth is a
+#   visible edit of it;
+# - the concept list is fixed in shallow_ratchet.rs; a NEW concept needs Martin;
+# - raising a ceiling names, in the commit, the existing item of that concept
+#   that cannot answer the need with a parameter, and why (rule 3: performance
+#   work adds no surface: a cheaper answer is an internal fast path or a
+#   parameter such as `InventoryScope` or `Depth`, never a sibling method);
+# - each `fn`/`const`/`field` has a production caller in graph-features,
+#   src-tauri or a tine-store binary, or carries `# test-oracle: <reason>` and a
+#   `test-faults` gate (rule 4);
+# - no public name, signature or doc promises cache, load or readiness state,
+#   and nothing answers `Option<bool>` (rule 5).
+# Totals (operations, WholeGraph questions, types) are derived from these
+# sections and printed with TINE_SHALLOW_PRINT=1; they are not targets.
+# History: honest baseline 50 ops / 26 questions / 56 types (og-surface step 1,
+# 2026-10-05); after the og-surface cut 40 / 23 / 59.
+## Lifecycle (ceiling: 19)
 enum store::WatchMode
-enum store::IrRequest
-enum store::IrAnswer
 enum store::OpenError
-enum transaction::Content
-enum transaction::Refusal
-enum transaction::StepResult
-enum transaction::TxOutcome
-enum transaction::Why
-field transaction::IoError.kind
-field store::ConfigState.config
-field store::ConfigState.problem
-field store::ConfigState.assets_directory_name
 field store::GraphAccessInspection.external_assets
 field store::GraphAccessInspection.root
 field store::OpenOptions.approved_external_assets
 field store::OpenOptions.launch_checkpoint
 field store::OpenOptions.watch
+fn store::Store::close
+fn store::Store::create_graph
+fn store::Store::inspect
+fn store::Store::canonical_root
+fn store::GraphAccessInspection::approves_external_assets
+fn store::Store::open
+fn store::Store::set_watch_mode
+struct store::Store
+struct store::GraphAccessInspection
+struct store::OpenOptions
+# og-surface step 1: surface the old scan never saw (H1, a file outside its hand list).
+fn link_identity::Store::ensure_link_identity
+fn link_identity::Store::read_link_identity_at
+
+## Freshness (ceiling: 26)
+enum store::Depth
+enum store::ChangeKind
+enum store::Origin
 field store::Change.files
 field store::Change.graph_rev
 field store::Change.origin
+enum store::LoadError
+fn store::Store::refresh
+fn store::Store::subscribe
+fn store::Change::page
+fn store::Subscription::recv
+# test-oracle: tests drain the change feed without blocking; production waits with `recv`.
+fn store::Subscription::try_recv
+fn store::Subscription::start_rev
+fn store::Subscription::observe_watch_status
+struct store::GraphRev
+struct store::Change
+enum store::SubscriptionEnd
+struct store::Subscription
+struct store::WatchBatch
+field store::Change.watch
+field store::WatchBatch.event_paths
+field store::WatchBatch.first_event_at
+field store::WatchBatch.full_diff
+field store::WatchBatch.poll
+field store::WatchBatch.reconcile_started
+# og-surface step 1: surface the old scan never saw (H3, a method defined in the
+# private transaction module).
+fn transaction::Store::read_is_current
+
+## Identity (ceiling: 9)
+fn file_kind::is_graph_text
+fn file_kind::is_asset_sidecar
+# og 21a: a live-conflict review finds its Concord-ledger base by the draft's revision.
+fn store::FileRev::from_bytes
+fn store::Store::as_page
+fn store::Store::file_id
+fn store::Store::journal_id
+fn store::Store::path_for_os_handoff
+struct store::Day
+struct store::FileRev
+
+## Reads (ceiling: 13)
+const model::PARSE_INPUT_MAX_BYTES
+fn model::parse_input_depth_within_limit
+field store::PageRead.doc
+field store::PageRead.id
+field store::PageRead.read_only
+field store::PageRead.rev
+fn store::Store::may_carry_vcs_markers
+fn store::Store::open_read
+fn store::Store::page
+fn store::Store::page_named
+fn store::Store::read
+fn store::Store::whole_graph
+struct store::PageRead
+
+## Config (ceiling: 6)
+field store::ConfigState.config
+field store::ConfigState.problem
+field store::ConfigState.assets_directory_name
+field store::ConfigState.asset_trash_location
+fn store::Store::config
+struct store::ConfigState
+
+## Save (ceiling: 7)
+enum edit_kind::EditKind
+fn directory_durability::sync_directory_entry
+enum store::SaveBase
+enum store::SaveOutcome
+enum store::SavePagesOutcome
+enum store::StoreError
+fn store::Store::save_pages
+
+## Transaction steps (ceiling: 29)
+enum transaction::Content
+enum transaction::Refusal
+enum transaction::StepResult
+enum transaction::TxOutcome
+enum transaction::Why
+# og-surface: trash and orphan-asset trash are one step with a condition.
+enum transaction::TrashIf
+enum transaction::TitleRebind
+enum transaction::RewriteEffect
+field transaction::IoError.kind
 field transaction::IoError.message
 field transaction::IoError.operation
 field transaction::IoError.os_error
@@ -49,6 +138,9 @@ fn transaction::Transaction::create_unique
 fn transaction::Transaction::expect
 fn transaction::Transaction::move_file
 fn transaction::Transaction::replace
+# GH #623: the rename planner asks the transaction whether a reference rewrite
+# changes a file; the transaction keeps the result for preflight. One door for a
+# moved page's title rebind too (og-surface row 6).
 fn transaction::Transaction::rewrite_refs
 fn transaction::Transaction::save_page
 fn transaction::Transaction::trash
@@ -56,49 +148,18 @@ struct transaction::IoError
 struct transaction::RenameMap
 struct transaction::Rollback
 struct transaction::Transaction
-use crate::transaction::{Content,IoError,Refusal,RenameMap,Rollback,StepResult,Transaction,TxOutcome,Why,}
-# QF3b (GH #623): the rename planner asks the transaction whether a reference
-# rewrite changes a file (the transaction keeps it for preflight, which does not
-# compute it again) and asks for the page files under one key instead of the
-# whole-graph inventory.
-fn transaction::Transaction::prepare_ref_rewrite
-fn store::WholeGraph::page_files_at_or_under
-fn publish::publication_assets
-fn publish::publication_block_ref_counts
-fn publish::publish_site_external
-# R3C2: two bounded publication verbs over existing staged door, no new Store methods/types.
-fn publish::query_publication_destination
-fn publish::publish_query_site
-use crate::publish::{publication_assets,publication_block_ref_counts,publish_site_external,PublishFailed,PublishReceipt,SiteWriter,}
-use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
-enum store::Budget
-enum store::FacetPolicy
-enum store::LoadError
-enum store::QueryDialect
-enum store::QueryError
-enum store::QueryResult
-enum store::Resolved
-enum store::SaveBase
-enum store::SaveOutcome
-enum store::SavePagesOutcome
-enum store::StoreError
+fn transaction::IoError::kind
+
+## Trash admin (ceiling: 3)
 enum store::TrashKind
-field store::PageRead.doc
-field store::PageRead.id
-field store::PageRead.read_only
-field store::PageRead.rev
-field store::SearchRequest.block_limit
-field store::SearchRequest.block_view
-field store::SearchRequest.page_match_scope
-field store::SearchRequest.explain
-field store::SearchRequest.page_limit
-field store::SearchRequest.page_view
-field store::SearchRequest.text
-field store::SearchRequest.within
-field store::InventoryEntry.name
-field store::InventoryEntry.target
-field store::InventoryEntry.is_journal
-field store::InventoryEntry.day
+fn store::Store::trash_stats
+fn store::Store::purge_asset_trash
+
+## Diagnostics (ceiling: 1)
+fn store::Store::diagnostics
+
+## Listing (ceiling: 15)
+enum store::Area
 field store::FileEntry.area
 field store::FileEntry.id
 field store::FileEntry.meta
@@ -109,48 +170,28 @@ field store::FileMeta.len
 field store::FileMeta.mtime
 field store::Listing.files
 field store::Listing.unreadable
-# og 21a: a live-conflict review finds its Concord-ledger base by the draft's revision.
-fn store::FileRev::from_bytes
-fn store::Store::as_page
-fn store::Store::file_id
-fn store::Store::config
-fn store::Store::diagnostics
-fn store::Store::rebuild_graph
-fn store::Store::vcs_anchor_state
-fn store::Store::close
-fn store::Store::create_graph
-fn store::Store::inspect
-fn store::Store::canonical_root
-fn store::GraphAccessInspection::approves_external_assets
-fn store::Store::open
-fn store::Store::scan_refresh
-fn store::Store::set_watch_mode
-fn store::Store::subscribe
-fn store::Change::page
-fn store::Subscription::recv
-fn store::Subscription::try_recv
-fn store::Subscription::start_rev
-fn store::Subscription::observe_watch_status
-fn store::Store::journal_id
-fn store::Store::is_graph_ready
-fn store::Store::open_read
-fn store::Store::page
-fn store::Store::page_named
-fn store::Store::path_for_os_handoff
-fn store::Store::asset_trash_location_for_user
-fn store::Store::read
 fn store::Store::scan_area
-fn store::Store::save
-fn store::Store::save_pages
-fn store::Store::trash_stats
-fn store::Store::purge_asset_trash
-fn store::Store::whole_graph
-fn publish::Store::publish_site
-fn restore::Store::restore
+struct store::FileEntry
+struct store::FileMeta
+struct store::Listing
+
+## Publication (ceiling: 12)
+# R3C2: two bounded publication verbs over existing staged door, no new Store methods/types.
+fn publish::query_publication_destination
+fn publish::Store::publish
 fn publish::SiteWriter::write
+enum publish::PublishDest
 struct publish::PublishFailed
 struct publish::PublishReceipt
 struct publish::SiteWriter
+field publish::PublishFailed.cause
+field publish::PublishFailed.previous_kept
+field publish::PublishReceipt.site
+field publish::PublishReceipt.files
+field publish::PublishReceipt.previous_kept
+
+## Restore (ceiling: 15)
+fn restore::Store::restore
 struct restore::RestoreFile
 struct restore::RestoreReport
 struct restore::RestoreFailed
@@ -158,6 +199,7 @@ field restore::RestoreFile.area
 field restore::RestoreFile.rel
 field restore::RestoreFile.source
 field restore::RestoreFile.len
+# test-oracle: tests check how many files a restore copied; the app reports recovery locations only.
 field restore::RestoreReport.restored
 field restore::RestoreReport.recovery
 field restore::RestoreReport.kept_external
@@ -165,64 +207,74 @@ field restore::RestoreReport.graph_rev
 field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
-field publish::PublishFailed.cause
-field publish::PublishFailed.previous_kept
-field publish::PublishReceipt.site
-field publish::PublishReceipt.files
-field publish::PublishReceipt.previous_kept
-fn transaction::IoError::kind
-fn store::QueryError::bridge_search_hits
-fn store::WholeGraph::backlink_filter_context
-fn store::WholeGraph::backlinks
-fn store::WholeGraph::block_ref_counts
-fn store::WholeGraph::block_referrers
-fn store::WholeGraph::blocks
+
+## WholeGraph: Names (ceiling: 16)
+enum store::InventoryScope
+enum store::Resolved
+field store::InventoryEntry.name
+field store::InventoryEntry.target
+field store::InventoryEntry.is_journal
+field store::InventoryEntry.day
 fn store::WholeGraph::complete_page_names
-fn store::WholeGraph::explicit_referrers
-fn store::WholeGraph::export_query_subtrees
-fn store::WholeGraph::find_blocks
+# GH #623: the rename planner asks for the page files under one key through
+# `InventoryScope` instead of a sibling method (rule 3).
 fn store::WholeGraph::inventory
 fn store::WholeGraph::corpus
 fn store::WholeGraph::journal_content_days
-fn store::WholeGraph::page_icons
-fn store::WholeGraph::parsed_page_ids
-fn store::WholeGraph::preview_block
-fn store::WholeGraph::property_facets
-fn store::WholeGraph::query
-fn store::WholeGraph::query_ir
 fn store::WholeGraph::resolve
 fn store::WholeGraph::rev
-fn store::WholeGraph::referenced_assets
-fn store::WholeGraph::search
-fn store::WholeGraph::templates
-fn store::WholeGraph::unlinked_references
 fn store::WholeGraph::unreadable_files
-struct store::Cancel
-struct store::Day
-struct store::FileRev
-struct store::GraphRev
-struct store::FileEntry
-struct store::FileMeta
-struct store::Listing
 struct store::Inventory
 struct store::InventoryEntry
-struct store::PageRead
-struct store::SearchRequest
-struct store::Store
-struct store::ConfigState
-struct store::Change
-enum store::SubscriptionEnd
-struct store::Subscription
-struct store::WatchBatch
-field store::Change.watch
-field store::WatchBatch.event_paths
-field store::WatchBatch.first_event_at
-field store::WatchBatch.full_diff
-field store::WatchBatch.poll
-field store::WatchBatch.reconcile_started
-use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryDialect,QueryError,QueryResult,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
-struct store::GraphAccessInspection
-struct store::OpenOptions
 struct store::WholeGraph
+
+## WholeGraph: References (ceiling: 5)
+fn store::WholeGraph::backlink_filter_context
+fn store::WholeGraph::backlinks
+fn store::WholeGraph::explicit_referrers
+fn store::WholeGraph::referenced_assets
+fn store::WholeGraph::unlinked_references
+
+## WholeGraph: Block refs (ceiling: 4)
+fn store::WholeGraph::block_ref_counts
+fn store::WholeGraph::block_referrers
+fn store::WholeGraph::blocks
+fn store::WholeGraph::preview_block
+
+## WholeGraph: Search/Query (ceiling: 20)
+enum store::IrRequest
+enum store::IrAnswer
+enum store::Budget
+enum store::FacetPolicy
+enum store::QueryError
+field store::SearchRequest.block_limit
+field store::SearchRequest.block_view
+field store::SearchRequest.page_match_scope
+field store::SearchRequest.explain
+field store::SearchRequest.page_limit
+field store::SearchRequest.page_view
+field store::SearchRequest.text
+field store::SearchRequest.within
+fn store::QueryError::bridge_search_hits
+fn store::WholeGraph::export_query_subtrees
+fn store::WholeGraph::find_blocks
+fn store::WholeGraph::query_ir
+fn store::WholeGraph::search
+struct store::Cancel
+struct store::SearchRequest
+
+## WholeGraph: View meta (ceiling: 3)
+fn store::WholeGraph::page_icons
+fn store::WholeGraph::property_facets
+fn store::WholeGraph::templates
+
+## Re-exports (ceiling: 8)
+use crate::edit_kind::EditKind
+use crate::file_kind::{is_asset_sidecar,is_graph_text}
+use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
+use crate::transaction::{Content,IoError,Refusal,RenameMap,RewriteEffect,Rollback,StepResult,TitleRebind,Transaction,TrashIf,TxOutcome,Why,}
+use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
+use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
+use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}
-use crate::launch_diag::LatencyHist
+

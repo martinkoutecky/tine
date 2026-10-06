@@ -104,7 +104,7 @@ fn crash_transaction_worker() {
         &page("A", "new A"),
     );
     tx.move_file(&b, b_rev, &d, None);
-    tx.trash(&c, c_rev);
+    tx.trash(&c, c_rev, tine_store::TrashIf::Any);
     store.inject_fault(FaultPoint::AbortAfterStep(boundary.parse().unwrap()));
     let _ = tx.commit();
     panic!("I-2: transaction fault did not abort; exemplar Transaction::commit");

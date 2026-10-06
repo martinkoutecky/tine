@@ -37,11 +37,12 @@ fn main() {
             let mut doc = read.doc;
             doc.blocks[0].raw.push_str(" e-b3-bench");
             assert!(matches!(
-                store.save(
-                    tine_store::EditKind::ReplacePage,
-                    &id,
+                single_save(
+                    &store,
+                    id.clone(),
                     SaveBase::Existing(read.rev),
-                    &doc
+                    doc.clone(),
+                    tine_store::EditKind::ReplacePage
                 ),
                 SaveOutcome::Saved(_)
             ));
@@ -49,4 +50,18 @@ fn main() {
     }
     println!("{:.6}", start.elapsed().as_secs_f64() * 1000.0);
     store.close();
+}
+
+/// One-page save through the production door, `Store::save_pages`.
+fn single_save(
+    store: &tine_store::Store,
+    id: tine_store::PageId,
+    base: tine_store::SaveBase,
+    doc: tine_core::model::PageDto,
+    kind: tine_store::EditKind,
+) -> tine_store::SaveOutcome {
+    match store.save_pages(&[(id, base, doc, vec![kind])]) {
+        tine_store::SavePagesOutcome::Ok { mut outcomes, .. } => outcomes.remove(0),
+        tine_store::SavePagesOutcome::Failed { outcome, .. } => outcome,
+    }
 }

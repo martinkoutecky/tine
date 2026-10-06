@@ -190,7 +190,7 @@ fn trash_current(
     } else {
         store.transaction(None)
     };
-    tx.trash(id, rev);
+    tx.trash(id, rev, tine_store::TrashIf::Any);
     Ok(commit_retry(tx.commit())?.then_some(()))
 }
 

@@ -297,6 +297,29 @@ pub fn rename_tags_property(raw: &str, from: &str, to: &str, is_org: bool) -> St
     rename_tags_property_multi(raw, &map, is_org)
 }
 
+/// The one reference rewrite a page rename applies to a file's text:
+/// `renames`' links, tags and embeds ([`rename_refs_multi`]), then bare
+/// `tags::` values ([`rename_tags_property_multi`]). Keys are raw old names,
+/// normalized here; values are display names. The store's rename steps and the
+/// rename planner both call this, so they cannot disagree on whether a rename
+/// changes a file. Pure, O(text).
+pub fn rename_rewrite(
+    text: &str,
+    is_org: bool,
+    renames: &[(String, String)],
+    file_name_format: FileNameFormat,
+) -> String {
+    let renames: std::collections::HashMap<String, String> = renames
+        .iter()
+        .map(|(from, to)| (normalize(from), to.clone()))
+        .collect();
+    rename_tags_property_multi(
+        &rename_refs_multi(text, &renames, is_org, file_name_format),
+        &renames,
+        is_org,
+    )
+}
+
 /// Multi-target `rename_tags_property`: rewrite bare `tags::` values that
 /// normalize to ANY key in `renames` in a single pass (code ranges computed once).
 /// The namespace-rename companion to [`rename_refs_multi`].

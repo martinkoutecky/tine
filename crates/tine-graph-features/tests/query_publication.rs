@@ -60,7 +60,7 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
         "public:: true\n- TODO changed\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(publish_query(&store, &request, &plan.fingerprint, &bundle()).is_err());
     assert!(!graph.join("published-queries/my-todos").exists());
 
@@ -116,7 +116,7 @@ fn live_snapshot_bakes_queries_on_selected_pages_and_closes_their_rows() {
         "public:: true\n- TODO selected\n- {{query (task DOING)}}\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     publish_live(&store, &output, "Dashboard", false, &bundle()).unwrap();
     let snapshot: serde_json::Value =
         serde_json::from_slice(&fs::read(output.join("dashboard/app/snapshot.json")).unwrap())
@@ -138,7 +138,7 @@ fn query_export_nested_queries_do_not_disclose_outside_match_counts() {
         "public:: true\n- TODO selected\n- {{query (task DOING)}}\n- {{tine-query @page}}\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let request = QueryExportRequest {
         argument: "(task TODO)".into(),
         dialect: QueryTextDialect::MacroQuery,
@@ -174,7 +174,7 @@ fn static_fallback_renders_tql_page_rows_from_the_ir_answerer() {
         "public:: true\n- {{tine-query @page}}\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     publish_live(&store, &output, "Page query", false, &bundle()).unwrap();
     let html = fs::read_to_string(output.join("page-query/public.html")).unwrap();
     assert!(html.contains("query-count\">1</span>"), "{html}");
@@ -190,7 +190,7 @@ fn selected_static_page_keeps_outside_references_inert() {
         "public:: true\n- TODO selected [[Secret]] and #secret\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let request = QueryExportRequest {
         argument: "(task TODO)".into(),
         dialect: QueryTextDialect::MacroQuery,
@@ -230,7 +230,7 @@ fn live_export_artifact_cost_is_bounded_per_selected_block() {
     for (count, name) in [(1, "one"), (60, "sixty")] {
         let source = format!("public:: true\n{}", "- TODO selected\n".repeat(count));
         fs::write(graph.join("pages/Public.md"), source).unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         publish_live(&store, &output, name, false, &bundle()).unwrap();
         let request = QueryExportRequest {
             argument: "(task TODO)".into(),
@@ -333,7 +333,7 @@ fn live_publication_survives_multibyte_text_at_every_probed_offset() {
         ),
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     publish_live(&store, &output, "Multibyte", false, &bundle()).unwrap();
     assert!(output.join("multibyte/app/snapshot.json").is_file());
     store.close();
@@ -345,7 +345,7 @@ fn live_publication_survives_multibyte_text_at_every_probed_offset() {
 fn live_publication_of_a_graph_without_public_pages_exports_nothing() {
     let (graph, output, store) = fixture();
     fs::write(graph.join("pages/Public.md"), "- alpha body\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let receipt = publish_live(&store, &output, "Nothing public", false, &bundle()).unwrap();
     assert_eq!(
         receipt.pages, 0,
@@ -378,7 +378,7 @@ fn query_export_uses_the_graph_leaf_and_reports_missing_assets() {
         "- TODO ![missing](../assets/missing.png)\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let request = QueryExportRequest {
         argument: "(task TODO)".into(),
         dialect: QueryTextDialect::MacroQuery,
@@ -421,7 +421,7 @@ fn query_export_default_budget_accepts_assets_above_the_old_ceiling() {
         "- TODO [video](../assets/video.mp4)\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let request = QueryExportRequest {
         argument: "(task TODO)".into(),
         dialect: QueryTextDialect::MacroQuery,
@@ -458,7 +458,7 @@ fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
     }
     let text = "- TODO assets\n  ![left](../assets/left/pic.png) ![right](../assets/right/pic.png)\n  [PDF](../assets/notes.pdf) [audio](../assets/clip.ogg) ![space](../assets/space%20name.png)\n";
     fs::write(graph.join("pages/Public.md"), text).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let mut request = QueryExportRequest {
         argument: "(task TODO)".into(),
         dialect: QueryTextDialect::MacroQuery,

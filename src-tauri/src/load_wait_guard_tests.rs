@@ -32,10 +32,10 @@ fn commands(source: &str) -> Vec<(String, bool, String)> {
 
 fn reaches_load_wait(body: &str) -> bool {
     // Include the direct store calls and feature functions that delegate to
-    // Store::whole_graph / scan_refresh / the cold-cache publication wait.
+    // Store::whole_graph / refresh / the cold-cache publication wait.
     [
         ".whole_graph(",
-        ".scan_refresh(",
+        ".refresh(",
         // Opens a Store, joins the startup-open worker, and tears the
         // displaced graph's Store down (~200 ms for a Ready graph, measured on
         // a copy of the anonymized graph; master abf7af831884).

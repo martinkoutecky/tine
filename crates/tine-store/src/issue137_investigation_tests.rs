@@ -67,7 +67,7 @@ impl FixtureGraph {
     }
 
     fn invalidate_cache(&self) {
-        self.store.scan_refresh().unwrap();
+        self.store.refresh(tine_store::Depth::Stamps).unwrap();
     }
 
     fn find_entry(&self, name: &str, kind: PageKind) -> Option<PageId> {

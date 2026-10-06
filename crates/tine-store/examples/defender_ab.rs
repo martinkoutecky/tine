@@ -3,11 +3,11 @@
 //! branch `diagnose/gh623-defender`).
 //! Usage: defender_ab <cold|warm|prims> <graph copy> [checkpoint file]
 //!   cold  open with no checkpoint: first page, Ready, get_page (largest, median),
-//!         Ctrl-K, scan_refresh x3 (the focus-return full freshness diff), then
+//!         Ctrl-K, refresh(Stamps) x3 (the focus-return full freshness diff), then
 //!         write the checkpoint.
 //!   warm  open from that checkpoint: first page, Ready, then the same reads.
 //!   Both store modes also time a focus-return page click: a page read issued
-//!   while a focus rescan (`scan_refresh`) runs on another thread, the shape of
+//!   while a focus rescan (`refresh(Stamps)`) runs on another thread, the shape of
 //!   Ellis's "Loading page..." after returning to the window.
 //!   prims raw per-file primitives, first touch (list, stat all, open all,
 //!         read all) then second touch (read all again); no Store.
@@ -136,7 +136,7 @@ fn main() {
     }
     let ready_ms = ms(began);
     let view = store.whole_graph().expect("ready");
-    let pages = view.parsed_page_ids().len();
+    let pages = view.corpus().pages.len();
     let t = Instant::now();
     store.page(&largest).expect("largest");
     let page_largest_ms = ms(t);
@@ -148,7 +148,7 @@ fn main() {
     let mut scans = Vec::new();
     for _ in 0..3 {
         let t = Instant::now();
-        store.scan_refresh().expect("scan_refresh");
+        store.refresh(tine_store::Depth::Stamps).expect("refresh");
         scans.push(ms(t));
     }
     // A page click right after a focus return: the rescan runs on its own thread
@@ -157,7 +157,7 @@ fn main() {
     for _ in 0..3 {
         std::thread::scope(|scope| {
             scope.spawn(|| {
-                let _ = store.scan_refresh();
+                let _ = store.refresh(tine_store::Depth::Stamps);
             });
             let t = Instant::now();
             store.page(&median).expect("page during rescan");

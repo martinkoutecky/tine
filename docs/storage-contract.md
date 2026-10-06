@@ -60,27 +60,41 @@ pages conflicted, and tells the user which files need inspection before retry.
 
 A held `WholeGraph` view does not wait for later writers. Acquiring the first
 view with `whole_graph()` can wait for the initial parse. The public operation
-surface is 38 combined operations: 29 `Store` methods and nine `Transaction`
-methods. The graph-command boundary guard lives at
-`crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
+surface is 40 operations: the methods of `Store` and `Transaction` plus every
+public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
+concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
+The graph-command boundary guard lives at `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
 `crates/tine-store/tests/client_root_boundary.rs`.
 
-`Store::is_graph_ready()` reports initial graph loading without waiting.
-`Ok(false)` means graph-wide answers can still block. After `Err(Failed(reason))`,
-`page()` can read and parse an existing file, but saves and observed edits do
-not publish a graph generation. `whole_graph()` returns the load error. A
-successful `scan_refresh()` retries the load and publishes a fresh generation;
-the answer becomes `Ok(true)`. `Err(Closed)` is terminal for that store.
+Initial graph loading is not exposed as a state (the readiness probe
+`is_graph_ready()` is a test-faults oracle). While the initial parse runs,
+graph-wide answers block. After a failed initial parse, `page()` can read and
+parse an existing file, but saves and observed edits do not publish a graph
+generation; `whole_graph()` returns the load error. A successful
+`refresh()` (at any `Depth`) retries the load and publishes a fresh
+generation. A closed store is terminal.
 
-A page open never waits for the whole graph (GH #623 BR3). While
-`is_graph_ready()` is `Ok(false)` (initial parse running, or a launch checkpoint
-served while its diff runs), `page()` and `page_named()` parse the file from
-disk without taking the writer; a name only the index can resolve (an alias, a
-`title::` page) waits for Ready. A save made in that window survives the load:
-the initial parse or launch diff sees its new stamp. After Ready, a page open
-reads only that page: canonicality comes from the published name index
-(`Store::canonical_claim`), never from rereading every page's preamble. Proof:
-`crates/tine-store/src/store/page_open_tests.rs`.
+`Store::refresh(Depth)` is the one refresh door. `Depth::Stamps` trusts a file
+whose modification time, length and identity are unchanged (the watcher's
+depth and the focus-return rescan's); `Depth::Bytes` hashes every graph-text
+file and publishes the ones whose bytes differ as ordinary external changes
+(scenario: a sync client or restore tool rewrites a file and puts its stamp
+back; an export must not publish the stale document); `Depth::Rebuild` does
+that and then re-parses every file through the cold-launch build (Settings
+"Rescan graph").
+
+A page open never waits for the whole graph (GH #623 BR3). `Store::page_named`
+is the one page-by-name door: while the graph is loading (initial parse
+running, or a launch checkpoint served while its diff runs), `page()` and
+`page_named()` parse the file from disk without taking the writer; a name only
+the index can resolve (an alias, a `title::` page no file is named for) waits
+for Ready. After a failed parse `page_named()` answers from the file-name
+listing. A save made in that window survives the load: the initial parse or
+launch diff sees its new stamp. After Ready, a page open reads only that page:
+canonicality comes from the published name index (`Store::canonical_claim`),
+never from rereading every page's preamble. Proof:
+`crates/tine-store/src/store/page_open_tests.rs`,
+`crates/tine-graph-features/tests/br3_page_open_before_ready.rs`.
 
 A save that changes only blocks' `collapsed::` property (value `true`, `false`
 or absent, decided by the parser, `model/collapse_only.rs`) publishes a
@@ -217,7 +231,8 @@ Launch config metadata and its read failure come from the same bounded read. A s
 
 ### Query publication (OG-R3C2)
 
-`Store::publish_site` and `publish::publish_query_site` use one stage/commit door.
+`Store::publish(PublishDest::{GraphSite, QueryLeaf, External}, emit)` is the one
+publication door; its graph-site and query-leaf arms share one stage/commit.
 A query leaf is `published-queries/<portable-folder>/`; the shared discovery
 predicate excludes the whole directory from pages, watching and graph backups.
 Review (`query_publication_destination`) creates nothing, reports collisions and
@@ -232,9 +247,10 @@ An interruption may leave an unpublished hidden stage; it never exposes a partia
 leaf. After retirement the previous leaf remains in recovery, even if installation
 has not happened. Callers inspect output/recovery on any post-rename I/O failure.
 
-`publication_assets` uses the existing asset-reference answerer, validates names
-and bounds reads during copying. Its caller supplies the cumulative budget and a
-warning collection. Query exports use one Rust default of 1 GiB, optionally
+`tine-graph-features::publish_query::publication_assets` takes names from
+`tine_core::Corpus::asset_refs` (the orphan detector's collector), reads each
+through `Store::file_id(Area::Assets)` + `Store::read`, and bounds reads during
+copying. Its caller supplies the cumulative budget and a warning collection. Query exports use one Rust default of 1 GiB, optionally
 replaced by the device-local Settings limit. `TooLarge` becomes typed
 `AssetBudgetExceeded` / IPC `assetBudget`; no leaf or recovery is touched on that
 refusal. A missing asset is a visible warning. Live/CLI limits remain unchanged.
@@ -284,7 +300,9 @@ Before the atomic rename, the source is live; after it, original bytes are
 live at the new spelling. There is no intermediate Trash-only window or
 manual page restoration step. After the existing atomic rewrite, updated
 title/reference bytes are live there. Retrying after the rename finishes an
-old explicit title in place. An I/O failure attempts ordinary transaction undo;
+old explicit title in place, through `Transaction::rewrite_refs` with
+`TitleRebind::Own` under the same revision guard; `move_file` onto its own
+source names one file twice and is refused (`RepeatedFile`). An I/O failure attempts ordinary transaction undo;
 failed undo keeps live or recoverable bytes. Changed directories use the
 existing sync policy. The no-replace primitive retains Windows write-through;
 the folded-alias fallback uses the same replacement/durability policy as
@@ -323,11 +341,16 @@ the temporary-payload counter; no new persisted record or transport bytes.
 A rename opens each rewritten referrer four times: the planner's read, the
 preflight base-revision stage, the final pre-rename guard inside
 `atomic_write_with_check`, and the publication read. The planner names only
-the renamed page's own files (`WholeGraph::page_files_at_or_under`), not the
-whole-graph inventory. It asks the transaction whether each referrer's
-rewrite changes it (`Transaction::prepare_ref_rewrite`, the store's own
-rewriter); the transaction keeps a changing rewrite for that file and rename
-map, and preflight still stages the file against the expected revision and
+the renamed page's own files (`WholeGraph::inventory(InventoryScope::FilesAtOrUnder)`), not the
+whole-graph inventory. It queues each unmoved, marker-free referrer with
+`Transaction::rewrite_refs` and the text it read; the call reports whether the
+rewrite (`tine_core::refs::rename_rewrite`, the one rewriter both the planner
+and the store use) changes it, queues nothing for an unchanged non-title
+referrer, and keeps a changing rewrite in the queued step. Moved and
+marker-bearing referrers are asked of `rename_rewrite` directly, since a move
+rewrites inside its own step and a marker-bearing file must not be queued
+before the planner's VCS-marker skip. Preflight still stages the file against
+the expected revision and
 reuses the kept bytes only when the staged bytes are byte-identical to the
 prepared old bytes and the filename format is unchanged, otherwise it
 recomputes; the read-only Org and

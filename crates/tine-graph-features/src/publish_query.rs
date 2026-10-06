@@ -385,17 +385,15 @@ fn collect_static(
         },
     )?;
     files.extend(
-        tine_store::publication_assets(store, corpus, asset_budget, warnings).map_err(|error| {
-            match error {
-                tine_store::StoreError::TooLarge { len, .. } if query_export => io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    AssetBudgetExceeded {
-                        limit: asset_budget,
-                        len,
-                    },
-                ),
-                other => crate::store_error(other),
-            }
+        publication_assets(store, corpus, asset_budget, warnings).map_err(|error| match error {
+            tine_store::StoreError::TooLarge { len, .. } if query_export => io::Error::new(
+                io::ErrorKind::InvalidInput,
+                AssetBudgetExceeded {
+                    limit: asset_budget,
+                    len,
+                },
+            ),
+            other => crate::store_error(other),
         })?,
     );
     Ok(files)
@@ -478,7 +476,6 @@ fn baked_queries(graph: &WholeGraph, corpus: &tine_core::Corpus) -> io::Result<V
 }
 
 fn snapshot(
-    store: &Store,
     graph: &WholeGraph,
     corpus: &tine_core::Corpus,
     name: &str,
@@ -492,7 +489,7 @@ fn snapshot(
         .iter()
         .map(|p| (p.kind, p.name.to_lowercase()))
         .collect();
-    let inventory = graph.inventory();
+    let inventory = graph.inventory(tine_store::InventoryScope::All);
     // One pass over the inventory, not one per page (I-15).
     let mut days = HashMap::new();
     for entry in &inventory.0 {
@@ -597,7 +594,7 @@ fn snapshot(
             _ => None,
         })
         .collect();
-    let block_ref_counts = tine_store::publication_block_ref_counts(store, corpus);
+    let block_ref_counts = corpus.block_ref_counts();
     let snapshot = json!({ "schema": 1, "name": name, "exported_at": export_time()?,
         "home": home, "pages": pages, "entries": entries, "backlinks": backlinks,
         "block_ref_counts": block_ref_counts, "aliases": aliases, "icons": icons, "queries": queries });
@@ -655,6 +652,77 @@ fn app_files(
     Ok(())
 }
 
+/// Read the assets exactly the supplied parsed pages mention, through the
+/// store's validated asset reader. Candidate names come from tine-core's one
+/// asset-reference collector (`Corpus::asset_refs`, shared with orphan-asset
+/// detection). Missing files and non-files warn; `TooLarge` refuses the
+/// caller's cumulative byte budget before publication. Reads are bounded by
+/// the remaining budget. Cost O(selected text + asset bytes); no graph writes.
+fn publication_assets(
+    store: &Store,
+    corpus: &tine_core::Corpus,
+    budget: u64,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<(String, Vec<u8>)>, tine_store::StoreError> {
+    let mut names = corpus.asset_refs();
+    // The orphan scanner keeps raw and decoded URL spellings. A browser
+    // decodes the URL, so copy only the decoded name when both were seen.
+    let encoded: Vec<_> = names
+        .iter()
+        .filter(|name| name.contains('%'))
+        .cloned()
+        .collect();
+    for name in encoded {
+        if tine_core::asset_refs::percent_decode(&name) != name {
+            names.remove(&name);
+        }
+    }
+    // The shared orphan answerer also marks ancestors (PDF area-image
+    // directories). Publication copies files, so remove those directory
+    // markers while preserving the complete nested reference.
+    let referenced: Vec<_> = names.iter().cloned().collect();
+    for name in referenced {
+        for parent in Path::new(&name).ancestors().skip(1) {
+            if let Some(parent) = parent.to_str() {
+                names.remove(parent);
+            }
+        }
+    }
+    let mut names: Vec<_> = names.into_iter().collect();
+    names.sort();
+    let mut out = Vec::new();
+    let mut remaining = budget;
+    for name in names {
+        // The scanner over-collects on purpose (orphan detection must not
+        // miss a reference), so a candidate may be prose after `assets/`
+        // rather than a file name. One that cannot name a file is simply
+        // not an asset: skip it like a missing one instead of failing the
+        // whole publication. A real read failure of an asset still fails.
+        let Ok(id) = store.file_id(tine_store::Area::Assets, &name) else {
+            continue;
+        };
+        match store.read(&id, Some(remaining)) {
+            Ok((bytes, _)) => {
+                remaining = remaining.saturating_sub(bytes.len() as u64);
+                out.push((format!("assets/{name}"), bytes));
+            }
+            Err(tine_store::StoreError::InvalidTarget(_)) => {
+                warnings.push(format!("Asset {name} was omitted: not a regular file."));
+            }
+            Err(tine_store::StoreError::NotFound) => {
+                warnings.push(format!("Asset {name} was omitted: file not found."));
+            }
+            Err(tine_store::StoreError::Io(error))
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::InvalidFilename | io::ErrorKind::NotADirectory
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(out)
+}
+
 fn commit(
     store: &Store,
     parent: &Path,
@@ -666,13 +734,16 @@ fn commit(
     if total > MAX_EXPORT_BYTES {
         return Err(refusal("export byte budget exceeded"));
     }
-    let receipt =
-        tine_store::publish_site_external(store, parent.as_os_str(), leaf, &mut |writer| {
-            for (path, bytes) in &files {
-                writer.write(path, bytes)?;
-            }
-            Ok(())
-        })
+    let receipt = store
+        .publish(
+            tine_store::PublishDest::External { parent, leaf },
+            &mut |writer| {
+                for (path, bytes) in &files {
+                    writer.write(path, bytes)?;
+                }
+                Ok(())
+            },
+        )
         .map_err(|failure| io::Error::new(failure.cause.kind, failure.cause.message))?;
     Ok(ExportReceipt {
         path: receipt.site.display().to_string(),
@@ -760,7 +831,6 @@ pub fn publish_query_with_sheets(
         home.push_str(" 2");
     }
     let snap = snapshot(
-        store,
         &graph,
         &planned.selected,
         &request.name,
@@ -768,27 +838,29 @@ pub fn publish_query_with_sheets(
         Some((request, &planned.parsed, &planned.result)),
     )?;
     app_files(&mut files, bundle, snap, &request.name)?;
-    let receipt = tine_store::publish::publish_query_site(
-        store,
-        &planned.plan.folder,
-        request.replace,
-        &mut |writer| {
-            for (path, bytes) in &files {
-                writer.write(path, bytes)?;
-            }
-            Ok(())
-        },
-    )
-    .map_err(|failure| {
-        let recovery = failure
-            .previous_kept
-            .map(|p| format!(" Previous export kept at {}.", p.display()))
-            .unwrap_or_default();
-        io::Error::new(
-            failure.cause.kind,
-            format!("{}{recovery}", failure.cause.message),
+    let receipt = store
+        .publish(
+            tine_store::PublishDest::QueryLeaf {
+                folder: &planned.plan.folder,
+                replace: request.replace,
+            },
+            &mut |writer| {
+                for (path, bytes) in &files {
+                    writer.write(path, bytes)?;
+                }
+                Ok(())
+            },
         )
-    })?;
+        .map_err(|failure| {
+            let recovery = failure
+                .previous_kept
+                .map(|p| format!(" Previous export kept at {}.", p.display()))
+                .unwrap_or_default();
+            io::Error::new(
+                failure.cause.kind,
+                format!("{}{recovery}", failure.cause.message),
+            )
+        })?;
     Ok(ExportReceipt {
         path: receipt.site.display().to_string(),
         pages: planned.selected.pages.len(),
@@ -893,7 +965,7 @@ fn live(
         32 * 1024 * 1024,
         &mut Vec::new(),
     )?;
-    let snap = snapshot(store, &graph, &corpus, name, &home, None)?;
+    let snap = snapshot(&graph, &corpus, name, &home, None)?;
     app_files(&mut files, bundle, snap, name)?;
     commit(store, parent, &slug(name), files, corpus.pages.len())
 }
@@ -936,6 +1008,33 @@ pub fn publish_static(
 #[cfg(test)]
 mod snapshot_consistency_tests {
     use super::*;
+
+    // The asset-reference scanner over-collects (orphan detection must not miss a
+    // reference), so prose after `assets/` becomes a candidate name. A candidate
+    // longer than a file name may be must be skipped like a missing asset, not
+    // fail the whole publication (the Guide's own `assets/` sentence did).
+    #[test]
+    fn prose_after_assets_prefix_does_not_fail_publication_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        std::fs::write(root.join("assets/pic.png"), b"png").unwrap();
+        let prose = "x".repeat(300);
+        std::fs::write(
+            root.join("pages/a.md"),
+            format!("- Files in `assets/ {prose}` are watched.\n- ![p](../assets/pic.png)\n"),
+        )
+        .unwrap();
+        let (store, _, _) = Store::open(root, Default::default()).unwrap();
+        let corpus = store.whole_graph().unwrap().corpus();
+        let assets =
+            publication_assets(&store, &corpus, 32 * 1024 * 1024, &mut Vec::new()).unwrap();
+        let names: Vec<_> = assets.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["assets/pic.png"]);
+        store.close();
+    }
     #[test]
     fn snapshot_uses_held_reviewed_sources_after_an_external_edit() {
         let temp = tempfile::tempdir().unwrap();
@@ -964,8 +1063,8 @@ mod snapshot_consistency_tests {
             "public:: true\n- TODO unreviewed\n",
         )
         .unwrap();
-        store.scan_refresh().unwrap();
-        let bytes = snapshot(&store, &graph, &reviewed.selected, "Export", "Public", None).unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
+        let bytes = snapshot(&graph, &reviewed.selected, "Export", "Public", None).unwrap();
         let value: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["pages"][0]["blocks"][0]["raw"], "TODO reviewed", "I-20: all publication projections use the held reviewed corpus; exemplar publish_query::snapshot");
         let repeated = resolve_plan(&store, &graph, &request).unwrap();

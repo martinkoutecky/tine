@@ -170,7 +170,7 @@ fn restore_journal_updates_day_and_view() {
         matches!(view.resolve("Sep 25th, 2026", true), tine_store::Resolved::Existing { id, .. } if id.as_str() == "journals/2026_09_25.org")
     );
     assert!(view
-        .inventory()
+        .inventory(tine_store::InventoryScope::All)
         .0
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));

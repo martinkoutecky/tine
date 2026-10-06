@@ -262,7 +262,7 @@ fn an_external_stray_enters_the_open_queue_on_its_change_event() {
     let queue = ConflictQueue::default();
     assert!(day(&queue.inventory(&store).unwrap().queue).is_none());
     fs::write(root.join(STRAY), "- theirs\n").unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(queue
         .refresh_files(&store, &[FileId::from(STRAY.to_owned())])
         .unwrap());
@@ -303,7 +303,7 @@ fn a_journal_title_format_change_that_reveals_a_twin_queues_the_day() {
 fn opening_the_day_by_title_reads_the_file_the_queue_object_names() {
     let root = duplicate_day("open");
     let store = open(&root);
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let queue = conflicts::conflict_inventory(&store).unwrap().queue;
     let object = day(&queue).expect("queued");
     let read = tine_graph_features::pages::get_page(&store, &object.page_name, PageKind::Journal)

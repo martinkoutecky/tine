@@ -280,7 +280,7 @@ fn page_reads_and_publishes_external_edit() {
     );
     let _ = store.whole_graph().unwrap().complete_page_names("Note", 10);
     f.put("pages/Note.md", b"- after edit\n");
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let second = store.page(&id).unwrap();
     assert_eq!(second.doc.blocks[0].raw, "after edit");
     assert_ne!(first.rev, second.rev);
@@ -361,7 +361,7 @@ fn direct_first_read_publishes_creation_and_updates_name_claimants() {
         matches!(view.resolve("Arrived", false), Resolved::Existing { id: found, .. } if found == id)
     );
     assert!(view
-        .inventory()
+        .inventory(tine_store::InventoryScope::All)
         .0
         .iter()
         .any(|entry| entry.name == "Arrived"));
@@ -402,7 +402,7 @@ fn direct_first_read_updates_journal_day_and_derived_answers() {
         matches!(view.resolve("Sep 25th, 2026", true), Resolved::Existing { id: found, .. } if found == id)
     );
     assert!(view
-        .inventory()
+        .inventory(tine_store::InventoryScope::All)
         .0
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
@@ -551,7 +551,7 @@ fn unreadable_files_reports_skipped_non_utf8_page() {
         .iter()
         .all(|page| page.id != "pages/Bad.md"));
     f.put("pages/Bad.md", b"- now readable\n");
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     assert!(store
         .whole_graph()
         .unwrap()

@@ -126,7 +126,7 @@ fn a_repaired_file_no_longer_blocks_its_name() {
         b"title:: Target\ntags:: cafe\n\n- body\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     // Now readable: Target exists and resolves to Other.md.
     assert!(matches!(
         store.whole_graph().unwrap().resolve("Target", false),
@@ -195,7 +195,7 @@ fn a_fifo_in_pages_blocks_no_creation() {
         .status()
         .unwrap();
     assert!(status.success());
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let (_, outcome) = create_by_name(&store, "Target");
     assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
     let _ = fs::remove_dir_all(root);

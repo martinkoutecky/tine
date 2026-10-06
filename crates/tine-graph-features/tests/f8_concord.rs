@@ -851,7 +851,7 @@ fn resaving_highlights_leaves_unchanged_files_and_hand_notes_alone() {
         written.trim_end()
     );
     fs::write(&page, &with_note).unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let mut recoloured = h.clone();
     recoloured.color = "green".into();
     pdf::write_highlights(&store, "paper.pdf", "Paper", &[recoloured], &[h]).unwrap();

@@ -6,7 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::pages::{self, RenameOutcome};
-use tine_store::{PageId, RenameMap, Store, TxOutcome};
+use tine_store::{PageId, RenameMap, Store, TitleRebind, TxOutcome};
 
 fn graph(label: &str, files: &[(&str, &str)]) -> (PathBuf, Store) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -111,7 +111,13 @@ fn the_store_refuses_a_reference_rewrite_inside_a_marker_bearing_file() {
     let id = PageId::from("pages/Conflicted.md");
     let (_, rev) = store.read(&id.file(), None).unwrap();
     let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-    tx.rewrite_refs(&id, rev, &RenameMap(vec![("alpha".into(), "Beta".into())]));
+    tx.rewrite_refs(
+        &id,
+        rev,
+        None,
+        &RenameMap(vec![("alpha".into(), "Beta".into())]),
+        TitleRebind::Keep,
+    );
     assert!(matches!(tx.commit(), TxOutcome::NotCommitted { .. }));
     assert_eq!(
         fs::read_to_string(root.join("pages/Conflicted.md")).unwrap(),

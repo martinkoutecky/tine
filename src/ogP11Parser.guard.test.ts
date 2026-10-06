@@ -23,9 +23,12 @@ describe("OG-P11 parser ownership", () => {
     expect(structuralRegexes("const key = /^([A-Za-z0-9_]+)::/.exec(raw);")).toHaveLength(1);
   });
   it("I-12: asset targets come from tine_core::render::parse_inline_bounded, never delimiter scanning", () => {
-    const source = readFileSync("crates/tine-store/src/model.rs", "utf8");
-    const collector = source.slice(source.indexOf("pub(crate) fn collect_asset_refs("), source.indexOf("fn insert_asset_path("));
-    expect(collector).toContain("tine_core::render::parse_inline_bounded");
+    // og-surface (3d3d32bc9) moved the one collector from tine-store's model.rs
+    // to tine-core, where Corpus::asset_refs and the store both call it.
+    expect(readFileSync("crates/tine-store/src/model.rs", "utf8")).not.toContain("fn collect_asset_refs(");
+    const source = readFileSync("crates/tine-core/src/asset_refs.rs", "utf8");
+    const collector = source.slice(source.indexOf("pub fn collect_asset_refs("), source.indexOf("fn insert_asset_path("));
+    expect(collector).toContain("crate::render::parse_inline_bounded");
     expect(collector).toContain("Inline::Link");
     expect(collector).not.toMatch(/\.find\(|\.lines\(|Regex|regex/);
     expect(collector).toContain("conservative_asset_mentions(text, into)");

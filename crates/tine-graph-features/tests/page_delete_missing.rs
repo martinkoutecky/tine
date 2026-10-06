@@ -30,7 +30,7 @@ fn delete_after_external_removal_accepts_the_displayed_path_without_writes() {
         let (root, store) = fixture(&[(path, "- displayed body\n"), ("pages/Kept.md", "- kept\n")]);
         let revision = pages::get_page(&store, name, kind).unwrap().unwrap().rev;
         fs::remove_file(root.path().join(path)).unwrap();
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         pages::delete_page_expected(&store, name, kind, Some(path), Some(&revision)).unwrap();
         // Repeated Delete and restart are equally harmless; no trash or page is created.
         pages::delete_page_expected(&store, name, kind, Some(path), None).unwrap();

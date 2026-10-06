@@ -179,12 +179,12 @@ fn main() {
         out["simple"] = json!([query(&store, false), query(&store, false)]);
         out["tql"] = json!([query(&store, true), query(&store, true)]);
         let scan = Instant::now();
-        store.scan_refresh().unwrap();
+        store.refresh(tine_store::Depth::Stamps).unwrap();
         out["focusMs"] = json!(scan.elapsed().as_secs_f64() * 1e3);
         let store = Arc::new(store);
         let copy = Arc::clone(&store);
         let scan = std::thread::spawn(move || {
-            copy.scan_refresh().unwrap();
+            copy.refresh(tine_store::Depth::Stamps).unwrap();
         });
         std::thread::sleep(Duration::from_millis(2));
         out["pageDuringFocus"] = timed(|| {

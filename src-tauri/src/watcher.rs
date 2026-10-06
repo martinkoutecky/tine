@@ -294,9 +294,9 @@ impl RescanCursor {
 
 /// Run one rescan for the calling window's graph and answer the sequence
 /// number its `graph-rescan-complete` event will carry. By default it is the
-/// full stat diff `Store::scan_refresh` documents (one stat per graph-text
+/// full stat diff `Store::refresh(Depth::Stamps)` documents (one stat per graph-text
 /// file plus the bytes of changed files), which the focus return uses; with
-/// `rebuild` (Settings "Rescan graph") it is `Store::rebuild_graph`, which
+/// `rebuild` (Settings "Rescan graph") it is `Store::refresh(Depth::Rebuild)`, which
 /// ignores every stamp and re-reads and re-parses every file. The scan runs
 /// on the blocking pool and the command answers after it. A failed scan is
 /// returned as the command's error (I-9), so the caller shows it instead of
@@ -345,9 +345,9 @@ fn run_rescan(
     }
     let began = std::time::Instant::now();
     let scanned = if rebuild {
-        store.rebuild_graph()
+        store.refresh(tine_store::Depth::Rebuild)
     } else {
-        store.scan_refresh()
+        store.refresh(tine_store::Depth::Stamps)
     };
     if focus_scan {
         crate::flight::record_timing("rescan.scan", began.elapsed());
@@ -680,7 +680,7 @@ mod tests {
         slot.store.whole_graph().unwrap();
         let subscription = slot.store.subscribe();
         edit();
-        slot.store.scan_refresh().unwrap();
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
         let mut events = Vec::new();
         while let Some(change) = subscription.try_recv().unwrap() {
             events.extend(window_events(&change).0);
@@ -815,7 +815,7 @@ mod tests {
             vec![event(false, true)]
         );
         atomic_write(&root, "pages/New.md", "title:: New\n\n- winner\n");
-        slot.store.scan_refresh().unwrap();
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
         slot.store.whole_graph().unwrap();
         let subscription = slot.store.subscribe();
         atomic_write(
@@ -823,7 +823,7 @@ mod tests {
             "pages/New.sync-conflict-20260705-120000-ABCDEFG.md",
             "title:: New\n\n- theirs\n",
         );
-        slot.store.scan_refresh().unwrap();
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
         let change = subscription
             .try_recv()
             .unwrap()
@@ -944,7 +944,7 @@ mod tests {
         );
         atomic_write(&root, "pages/P.md", "- page\n");
         tine_graph_features::assets::save_asset(&slot.store, "own.png", b"mine").unwrap();
-        slot.store.scan_refresh().unwrap();
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
         let (mut payloads, mut page_events, mut conflicts) = (Vec::new(), 0, false);
         while let Some(change) = subscription.try_recv().unwrap() {
             let (events, dirty) = window_events(&change);

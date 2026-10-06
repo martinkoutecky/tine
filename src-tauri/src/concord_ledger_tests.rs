@@ -115,7 +115,7 @@ fn external(slot: &GraphSlot, rel: &str, text: &str) {
     let temp = path.with_extension("ext-tmp");
     std::fs::write(&temp, text).unwrap();
     std::fs::rename(temp, path).unwrap();
-    slot.store.scan_refresh().unwrap();
+    slot.store.refresh(tine_store::Depth::Stamps).unwrap();
 }
 
 fn files(dir: &Path) -> LedgerFiles {
@@ -435,7 +435,7 @@ fn a_copy_equal_to_the_newest_base_stays_two_way_without_reaching_older_bases() 
     let (slot, _sub) = open_slot(&dir, dir.join("appdata"));
     std::fs::write(dir.join("graph/pages/Desk.md"), body("reverted")).unwrap();
     std::fs::write(dir.join("graph").join(COPY), body("ancestor")).unwrap();
-    slot.store.scan_refresh().unwrap();
+    slot.store.refresh(tine_store::Depth::Stamps).unwrap();
     let bases = vec![body("ancestor"), body("reverted-from")];
     let diff = conflicts::sync_conflict_diff(&slot.store, "pages/Desk.md", COPY, &bases)
         .unwrap()

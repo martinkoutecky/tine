@@ -1037,3 +1037,48 @@ fn gen_sample_export() {
     fs::write(&pfile, print).unwrap();
     println!("SAMPLE_PRINT_HTML={}", pfile.display());
 }
+
+/// og-surface row 2: an export sees every byte on disk. A sync client or a
+/// restore tool can rewrite a page with the same length and put its stamp
+/// back; the stamp-trusting refresh misses that, so `publish_html` refreshes
+/// at `Depth::Bytes` and publishes the new text, not the cached document.
+#[test]
+fn publish_sees_a_same_size_rewrite_with_its_stamp_restored() {
+    let dir = std::env::temp_dir().join(format!("tine-publish-bytes-fresh-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("pages")).unwrap();
+    fs::create_dir_all(dir.join("logseq")).unwrap();
+    let page = dir.join("pages/Alpha.md");
+    fs::write(&page, "public:: true\n- old words\n").unwrap();
+    let settled = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    fs::File::options()
+        .write(true)
+        .open(&page)
+        .unwrap()
+        .set_modified(settled)
+        .unwrap();
+    let store = Store::open(
+        &dir,
+        tine_store::OpenOptions {
+            watch: tine_store::WatchMode::Poll,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .0;
+    store.whole_graph().unwrap();
+    fs::write(&page, "public:: true\n- new words\n").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&page)
+        .unwrap()
+        .set_modified(settled)
+        .unwrap();
+    let (outdir, count) = publish_graph(&store).unwrap();
+    assert_eq!(count, 1);
+    let html = fs::read_to_string(Path::new(&outdir).join("alpha.html")).unwrap();
+    assert!(html.contains("new words"), "{html}");
+    assert!(!html.contains("old words"), "{html}");
+    store.close();
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -1,6 +1,6 @@
 //! The forced full rebuild behind the Settings "Rescan graph" button
-//! (`Store::rebuild_graph`). The focus-return rescan stays the cheap stat
-//! diff in `scan_refresh`; only this path ignores every stamp.
+//! (`Store::refresh(Depth::Rebuild)`). The focus-return rescan stays the cheap stat
+//! diff in `refresh(Depth::Stamps)`; only this path ignores every stamp.
 //!
 //! Unit cost: one stat plus one full read per graph file for the hash pass,
 //! then the cold-launch parse (one read plus one parse per file, parallel);
@@ -20,7 +20,7 @@ use crate::store::{LoadError, LoadStatus};
 const REBUILD_ATTEMPTS: u32 = 8;
 
 impl WatchHandle {
-    /// The forced rebuild behind `Store::rebuild_graph` (Settings "Rescan
+    /// The forced rebuild behind `Store::refresh(Depth::Rebuild)` (Settings "Rescan
     /// graph"). Step 1 hashes every file ignoring every stamp and publishes
     /// the ones whose bytes moved, with their page events, through the
     /// ordinary reconcile. Step 2 re-reads and re-parses every file through
@@ -150,7 +150,7 @@ mod tests {
 
     /// The Settings "Rescan graph" button must catch what the focus-return
     /// stat diff cannot: a same-length rewrite with the mtime restored. The
-    /// stat diff (`scan_refresh`'s own reconcile) leaves the stale document; the
+    /// stat diff (`refresh(Depth::Stamps)`'s own reconcile) leaves the stale document; the
     /// forced rebuild replaces it and publishes the file as an external change.
     #[test]
     fn rebuild_catches_a_same_size_rewrite_that_a_stat_diff_misses() {
@@ -186,7 +186,7 @@ mod tests {
             drop(writer);
         }
 
-        store.rebuild_graph().unwrap();
+        store.refresh(crate::Depth::Rebuild).unwrap();
         assert_eq!(cached_first_block(&store, "A"), "new one");
         let mut seen = false;
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -210,6 +210,66 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// The `Depth::Bytes` diff (an export's freshness check) catches the
+    /// same-length, stamp-restored rewrite the `Depth::Stamps` diff misses,
+    /// and publishes it as an external change, without the rebuild's re-parse.
+    /// Both diffs run under the writer, as `refresh` runs them, so the poller
+    /// (which can notice the rewrite through other metadata) never observes
+    /// it first; graph-features' `publish_sees_a_same_size_rewrite_with_its_
+    /// stamp_restored` covers the public `refresh(Depth::Bytes)` door.
+    #[test]
+    fn a_bytes_refresh_catches_a_same_size_rewrite_that_stamps_miss() {
+        let root = temp_root("bytes-same-size");
+        let path = root.join("pages/A.md");
+        fs::write(&path, "- old one\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(3600))
+            .unwrap();
+        let store = open(&root);
+        let subscription = store.subscribe();
+        {
+            // Holding the writer pauses the poller, so the two diffs below are
+            // the only observers of the rewrite.
+            let writer = store.writer.lock().unwrap();
+            rewrite_keeping_stamp(&path, "- new one\n");
+            let core = store.watch.core_for_load();
+            core.reconcile_locked(None, true, true, DiffTrigger::Rescan)
+                .unwrap();
+            assert_eq!(
+                cached_first_block(&store, "A"),
+                "old one",
+                "a stamps diff was expected to miss this rewrite (test premise)"
+            );
+            core.reconcile_locked(None, true, true, DiffTrigger::Bytes)
+                .unwrap();
+            assert_eq!(cached_first_block(&store, "A"), "new one");
+            drop(writer);
+        }
+        let mut seen = false;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !seen && Instant::now() < deadline {
+            match subscription.try_recv().unwrap() {
+                Some(change) => {
+                    seen = change.origin == Origin::External
+                        && change.files.iter().any(|(id, kind, _)| {
+                            id.as_str() == "pages/A.md" && *kind == ChangeKind::Modified
+                        });
+                }
+                None => std::thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        assert!(
+            seen,
+            "the refreshed file was never published as an external change"
+        );
+        store.close();
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// An open editor keeps its base revision across the rebuild: a save made
     /// over a file the rebuild found changed is refused as a stale save.
     #[test]
@@ -226,7 +286,7 @@ mod tests {
             rewrite_keeping_stamp(&path, "- new one\n");
             drop(writer);
         }
-        store.rebuild_graph().unwrap();
+        store.refresh(crate::Depth::Rebuild).unwrap();
 
         let mut doc = open_editor.doc.clone();
         doc.blocks[0].raw = "editor text".into();
@@ -263,7 +323,7 @@ mod tests {
             fs::write(root.join("pages/Fresh.md"), "- fresh\n").unwrap();
             drop(writer);
         }
-        store.rebuild_graph().unwrap();
+        store.refresh(crate::Depth::Rebuild).unwrap();
         let graph = store.whole_graph().unwrap();
         let corpus = graph.corpus();
         let names: Vec<&str> = corpus.pages.iter().map(|p| p.name.as_str()).collect();

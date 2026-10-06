@@ -554,7 +554,7 @@ fn inventory_targets_agree_with_resolve_for_case_twins() {
     std::fs::write(fixture.0.join("pages/Twin.md"), "- upper\n").unwrap();
     std::fs::write(fixture.0.join("pages/twin.md"), "- lower\n").unwrap();
     let view = fixture.view();
-    let inventory = view.inventory();
+    let inventory = view.inventory(tine_store::InventoryScope::All);
     let twins: Vec<_> = inventory
         .0
         .iter()
@@ -607,7 +607,7 @@ fn case_twin_writes_fold_into_one_page_on_windows() {
         "- lower\n"
     );
     let view = fixture.view();
-    let inventory = view.inventory();
+    let inventory = view.inventory(tine_store::InventoryScope::All);
     let twins: Vec<_> = inventory
         .0
         .iter()

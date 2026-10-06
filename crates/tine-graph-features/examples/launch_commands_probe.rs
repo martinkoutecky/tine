@@ -69,8 +69,12 @@ fn main() {
     let view = counted("wholeGraph", &mut out, || {
         store.whole_graph().expect("graph")
     });
-    counted("pageInventory_first", &mut out, || view.inventory());
-    counted("pageInventory_second", &mut out, || view.inventory());
+    counted("pageInventory_first", &mut out, || {
+        view.inventory(tine_store::InventoryScope::All)
+    });
+    counted("pageInventory_second", &mut out, || {
+        view.inventory(tine_store::InventoryScope::All)
+    });
     let queue = ConflictQueue::default();
     counted("conflictInventory_first", &mut out, || {
         queue.inventory(&store).unwrap()
@@ -83,10 +87,10 @@ fn main() {
     });
     // The focus-return rescan (stat diff) on the unchanged graph.
     counted("scanRefresh_unchanged", &mut out, || {
-        store.scan_refresh().unwrap()
+        store.refresh(tine_store::Depth::Stamps).unwrap()
     });
     counted("scanRefresh_unchanged_2", &mut out, || {
-        store.scan_refresh().unwrap()
+        store.refresh(tine_store::Depth::Stamps).unwrap()
     });
     // A page click is `get_page`: `whole_graph` then `Store::page`, which takes
     // the store's writer lock. Time it while that lock is busy with a focus
@@ -141,7 +145,7 @@ fn main() {
         let origin = Instant::now();
         for n in 0..8 {
             let t = Instant::now();
-            store.scan_refresh().unwrap();
+            store.refresh(tine_store::Depth::Stamps).unwrap();
             eprintln!("rescan {n} at +{:.0} ms took {:.0} ms", ms(origin), ms(t));
         }
     });

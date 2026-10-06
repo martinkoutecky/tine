@@ -41,7 +41,7 @@ fn favorites_layout_page_is_never_a_reference_source() {
         "{:tine/favorites-page \"favorites\"}\n",
     )
     .unwrap();
-    store.scan_refresh().unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
     let graph = store.whole_graph().unwrap();
     assert_eq!(
         names(&graph.backlinks("Target").unwrap()),
