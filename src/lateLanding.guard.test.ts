@@ -121,7 +121,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "graphBindingGeneration", "inspectGraphAccess", "loadGraph", "openGraphWindow", "startupGraphPath",
   "captureTarget", "bindCaptureGraph", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
   "readPluginEntry", "verifyPluginRegistry", "loadPluginRegistryCache", "defaultGraphParent", "quit",
-  "closeGraphWindow", "openDevtools", "pageInventory", "journalFeedPage", "journalContentDays",
+  "closeGraphWindow", "trayApply", "openDevtools", "pageInventory", "journalFeedPage", "journalContentDays",
   "getPage", "resolvePage", "loadDrafts", "graphSourceFiles", "guidePages", "getBacklinks",
   "getBacklinkFilterContext", "getUnlinkedRefs", "warmDone", "getBlockRefCounts", "getBlockReferrers",
   "pagePrintHtml", "sheetExportInputs", "exportQuerySubtrees", "parseQuery", "printQuery", "queryOgExpressible", "queryRegistry",

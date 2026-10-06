@@ -326,10 +326,21 @@ pub(crate) fn take_main_config(
 /// `main` from the configuration itself: a windowless process would hold the
 /// single-instance lock, so every later launch would forward to it and show
 /// nothing (review F3).
-pub(crate) fn create_main(app: &tauri::App, config: &tauri::utils::config::WindowConfig) {
+pub(crate) fn create_main(
+    app: &tauri::App,
+    config: &tauri::utils::config::WindowConfig,
+    start_hidden: bool,
+) {
     let build = |with_identity: bool| -> tauri::Result<tauri::WebviewWindow> {
         let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), config)?;
         let builder = attach(builder, app.handle(), &config.label);
+        // Start-minimized to the tray (GH #625): the frontend's own reveal
+        // after first paint stands down; the tray (or a second launch) shows it.
+        let builder = if start_hidden {
+            builder.initialization_script("globalThis.__TINE_START_HIDDEN__ = true;")
+        } else {
+            builder
+        };
         #[cfg(target_os = "linux")]
         let builder = if with_identity {
             crate::youtube_identity::configure(builder, app.handle())

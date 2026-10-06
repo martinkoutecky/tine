@@ -49,7 +49,7 @@ import type {
   PublicationReceipt,
   DraftRecord,
 } from "./types";
-import type { GraphSources, GraphFolderPickResult, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
+import type { GraphSources, GraphFolderPickResult, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus } from "./backendTypes";
 import { dbg } from "./debug";
 import type { EditKinds } from "./editKind";
 import { mockBackend } from "./mock";
@@ -182,6 +182,11 @@ export interface Backend {
    *  process exits. */
   quit(): Promise<void>;
   closeGraphWindow(): Promise<void>;
+  /** Desktop system tray (GH #625): create or remove the tray icon to match the
+   *  stored `tray_*` device settings and report whether it exists. Mobile and the
+   *  mock report `supported: false`. The three settings themselves go through
+   *  `getAppBool`/`setAppBool`; the native side reads them from the same file. */
+  trayApply(): Promise<TrayStatus>;
   /** Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
    *  debugging. No-op on a build without devtools compiled in. */
   openDevtools(): Promise<void>;
@@ -916,6 +921,9 @@ class TauriBackend implements Backend {
   }
   closeGraphWindow() {
     return this.call<void>("close_graph_window");
+  }
+  trayApply() {
+    return this.call<TrayStatus>("tray_apply");
   }
   openDevtools() {
     return this.call<void>("tine_open_devtools");

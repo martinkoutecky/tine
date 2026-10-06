@@ -796,6 +796,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async setSystemBarAppearance() {},
     async quit() {},
     async closeGraphWindow() {},
+    async trayApply() {
+      return { supported: false, active: false, problem: null };
+    },
     async openDevtools() {},
     async captureTarget() {
       return "main";
@@ -972,6 +975,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "setSystemBarAppearance",
   "quit",
   "closeGraphWindow",
+  "trayApply",
   "openDevtools",
   "captureTarget",
   "bindCaptureGraph",

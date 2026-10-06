@@ -115,6 +115,16 @@ export interface MediaCaptureResult {
   ext?: string | null;
 }
 
+/** The desktop system tray's state after `tray_apply` (src-tauri/src/tray.rs).
+ *  `supported` is false on mobile (and the mock): the tray settings are absent.
+ *  `problem` is a fixed sentence when an icon was requested and the desktop has
+ *  no tray to show it (the options are then off for this run). */
+export interface TrayStatus {
+  supported: boolean;
+  active: boolean;
+  problem: string | null;
+}
+
 export interface KnownGraph {
   path: string;
   name: string;

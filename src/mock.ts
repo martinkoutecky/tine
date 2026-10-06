@@ -806,6 +806,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async closeGraphWindow(): Promise<void> {
       // No-op in the mock/screenshot harness.
     },
+    async trayApply() {
+      return { supported: false, active: false, problem: null };
+    },
     async openDevtools(): Promise<void> {
       // No-op in the mock/screenshot harness — no native WebView inspector.
     },

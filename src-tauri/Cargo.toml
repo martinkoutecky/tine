@@ -76,6 +76,10 @@ tauri-plugin-updater = { version = "2", default-features = false, features = ["n
 reqwest = { version = "0.13", default-features = false, features = ["system-proxy"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# System tray (GH #625): desktop only, so the feature is requested only here.
+# `tray-icon` was already in Cargo.lock as tauri's optional dependency; on
+# Linux it dlopens libayatana-appindicator at run time (no link-time need).
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"
 # Read OS-native copied-file lists (CF_HDROP / NSPasteboard file URLs /

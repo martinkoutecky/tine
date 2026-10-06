@@ -50,6 +50,7 @@ import { openConflicts, openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
 import { Field, Toggle } from "./settingsField";
+import { TraySettings } from "./TraySettings";
 import { AlwaysAskSetting } from "./AlwaysAskSetting";
 import { ContentWidthFields } from "./ContentWidthFields";
 import { QueryExportLimitSetting } from "./QueryExportLimitSetting";
@@ -531,6 +532,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
           <span style={{ color: "var(--text-muted)", "font-size": "12px" }}>Native (macOS)</span>
         </Field>
       </Show>
+
+      {/* System tray (GH #625): renders nothing unless the native side has one. */}
+      <TraySettings />
 
     </>
   );

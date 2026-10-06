@@ -48,6 +48,7 @@ mod search_workspace;
 mod settings;
 mod spellcheck;
 mod state;
+mod tray;
 mod watcher;
 mod workspace_windows;
 mod youtube_identity;
@@ -237,6 +238,11 @@ fn schedule_main_window_reveal_fallback(app: &tauri::AppHandle) {
             let Some(window) = main_thread_app.get_webview_window("main") else {
                 return;
             };
+            // Start-minimized keeps main hidden on purpose (the tray icon
+            // exists, or the setting would not be in effect).
+            if tray::main_start_hidden_pending(&main_thread_app) {
+                return;
+            }
             if !window.is_visible().unwrap_or(false) {
                 let _ = window.show();
             }
@@ -250,7 +256,7 @@ fn schedule_main_window_reveal_fallback(app: &tauri::AppHandle) {
 /// autocomplete popup, the date picker) without running off the bottom edge.
 /// No-op if the window is missing.
 #[cfg(desktop)]
-fn show_capture(app: &tauri::AppHandle) {
+pub(crate) fn show_capture(app: &tauri::AppHandle) {
     if app.get_webview_window("capture").is_none() {
         return;
     }
@@ -715,7 +721,12 @@ pub fn run() {
                     });
                 }
                 cli::LaunchRequest::Link(url) => deep_links::receive_url(app, url),
-                cli::LaunchRequest::Focus => focus_last_graph_window(app),
+                cli::LaunchRequest::Focus => {
+                    // A second launch always surfaces main, even when the tray
+                    // (or start-minimized) is hiding it.
+                    tray::reveal_main_if_hidden(app);
+                    focus_last_graph_window(app);
+                }
             }
         }))
         // In-app self-update. The updater reads `plugins.updater` from
@@ -742,6 +753,10 @@ pub fn run() {
                 })
                 .build(),
         );
+
+    // Desktop system tray (GH #625). Mobile has no tray and no state for it.
+    #[cfg(desktop)]
+    let builder = builder.manage(tray::TrayState::default());
 
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_folder_picker::init());
@@ -771,6 +786,8 @@ pub fn run() {
         .on_page_load(workspace_windows::page_load)
         .on_window_event(|window, event| {
             workspace_windows::window_event(window, event);
+            #[cfg(desktop)]
+            tray::window_event(window, event);
             let label = window.label();
             if label != "main" && !label.starts_with("graph-") {
                 return;
@@ -827,9 +844,13 @@ pub fn run() {
             diag("setup() begin");
             #[cfg(target_os = "linux")]
             youtube_identity::create_windows(app, &youtube_windows);
+            // The tray decides first whether main is created hidden
+            // (start-minimized); a tray that cannot be created never hides it.
+            #[cfg(desktop)]
+            let start_hidden = tray::init(app);
             #[cfg(desktop)]
             if let Some(config) = &main_window {
-                workspace_windows::create_main(app, config);
+                workspace_windows::create_main(app, config, start_hidden);
             }
             #[cfg(desktop)]
             if let cli::LaunchRequest::Link(url) = cli::launch_request_env() {
@@ -1058,7 +1079,8 @@ pub fn run() {
             defender::add_defender_exclusion,
             tine_quit,
             close_graph_window,
-            tine_open_devtools
+            tine_open_devtools,
+            tray::tray_apply
         ])
         .build(context)
         .expect("error while building tauri application")

@@ -69,6 +69,10 @@ const communityExtensionsReady = isPublishedExport() ? Promise.resolve() : start
 // case we paint the default journals tab and the session is simply not restored.
 async function revealMainWindowAfterStableFrame(): Promise<void> {
   if (!isTauri()) return;
+  // Start-minimized to the tray (GH #625): native created this window hidden on
+  // purpose and shows it from the tray icon or a second launch. Nothing below
+  // waits on a frame, so the app finishes loading while hidden.
+  if ((globalThis as { __TINE_START_HIDDEN__?: boolean }).__TINE_START_HIDDEN__) return;
   // The window starts hidden, so the user never sees the default white webview,
   // unthemed controls, or an empty root. A hidden WebKit view may throttle
   // requestAnimationFrame indefinitely, so wait one microtask after Solid mounts
