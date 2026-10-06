@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ## [Unreleased]
 
 ### Added
+- Desktop: optional system-tray icon. Settings → Appearance adds **Show Tine in the system tray** (menu: Open Tine, Quick Capture, Quit), **Minimize to tray** (minimizing the main window hides it from the taskbar or dock) and **Start minimized to tray** (launch with the main window hidden, graph already loaded). All three are off by default; closing the main window still quits; a desktop without a tray host keeps the window shown and says so in Settings (GH #625, UI-OG-GH625).
 - Desktop: **Open in new window** opens a page in a separate OS window (page right-click menu, the page title's ⋯ menu, or the command palette's **Open current page in new window**). Each window has its own tabs, splits and back/forward history, and no sidebars; edits save and undo exactly as in the main window, closing a window from its title bar keeps text typed just before, and open windows (up to 8) come back at the next launch. Switching graphs closes them. Documented in Workflows > Keep context visible (UI-OG-MULTIWINDOW).
 
 ## [0.7.0-beta.2] - 2026-10-05

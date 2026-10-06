@@ -182,10 +182,7 @@ export interface Backend {
    *  process exits. */
   quit(): Promise<void>;
   closeGraphWindow(): Promise<void>;
-  /** Desktop system tray (GH #625): create or remove the tray icon to match the
-   *  stored `tray_*` device settings and report whether it exists. Mobile and the
-   *  mock report `supported: false`. The three settings themselves go through
-   *  `getAppBool`/`setAppBool`; the native side reads them from the same file. */
+  /** Desktop tray (GH #625, src/tray.ts): sync the icon to the `tray_*` device settings. */
   trayApply(): Promise<TrayStatus>;
   /** Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
    *  debugging. No-op on a build without devtools compiled in. */

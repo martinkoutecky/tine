@@ -5,6 +5,8 @@
 // owns what they DO; this module only names the keys and answers which
 // controls are available. Absent on mobile: the native `tray_apply` reports
 // `supported: false` there and the Settings section renders nothing.
+import { backend } from "./backend";
+import { pushToast } from "./toasts";
 import type { TrayStatus } from "./backendTypes";
 
 export const KEY_TRAY_SHOW = "tray_show";
@@ -22,4 +24,24 @@ export function trayDependentControlsEnabled(show: boolean): boolean {
  *  desktop could not show it. O(1). */
 export function trayNote(show: boolean, status: TrayStatus | null): string | null {
   return show && status?.supported && status.problem ? status.problem : null;
+}
+
+/** Ask the native side to make the icon match the stored settings and report
+ *  whether it exists. Rejects when the call itself fails. Device-local: no
+ *  graph or route landing. */
+export async function applyTray(): Promise<TrayStatus> {
+  return backend().trayApply();
+}
+
+/** Persist one tray preference, then apply it so no restart is needed. A
+ *  failed write rejects, so `writePreference` rolls the toggle back and toasts;
+ *  a failed apply (the preference IS saved) toasts here and leaves the
+ *  toggle where the user put it. Resolves to the fresh status. */
+export async function persistTrayPreference(key: string, next: boolean): Promise<TrayStatus | void> {
+  await backend().setAppBool(key, next);
+  try {
+    return await backend().trayApply();
+  } catch {
+    pushToast("The tray setting was saved but could not be applied now.", "error");
+  }
 }

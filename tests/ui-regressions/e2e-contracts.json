@@ -186,6 +186,16 @@
       "nonRequirements": ["Windows WebView2 or macOS WKWebView certification from a Linux WebKitGTK run (the hosted multiwindow workflow covers those).", "Exact pixels, frame decorations, focus order after a close, or incidental DOM nesting.", "Right sidebar, file drop and IME composition inside a workspace window.", "The exact zoom factor or viewport width (the journey checks only that the window narrows when zoomed in and returns on reset)."],
       "stability": "stable"
     },
+    "scripts/e2e-tray.mjs": {
+      "contracts": [
+        { "class": "stateful-ux", "userOutcome": "With the tray, Minimize to tray and Start minimized to tray on and a tray host present, Tine registers a tray icon whose menu offers Open Tine, Quick Capture and Quit, launches with main hidden while its graph loads, and the tray's Open Tine shows main with a page that renders and saves an edit to disk.", "blocking": true },
+        { "class": "stateful-ux", "userOutcome": "Minimizing main with Minimize to tray on hides it from the window list instead of leaving a taskbar entry, and Open Tine restores it; a second launch shows a hidden main; closing main still quits.", "blocking": true },
+        { "class": "exact-safety-interoperability", "userOutcome": "When no tray host exists the app is never left invisible: the window is shown despite Start minimized, Settings is told the tray is unavailable, and minimize is an ordinary minimize.", "blocking": true, "authority": "GH #625 manager decision: never leave the user with an invisible app" }
+      ],
+      "acceptableVariations": ["Menu entry order and mnemonic underscores, tray icon artwork, window position and size, and how long the window takes to appear may vary while the three menu entries, the hidden/shown state and the saved bytes remain correct."],
+      "nonRequirements": ["The tray's left click (AppIndicator delivers none on Linux; the click rule is covered by the decision-function unit tests).", "Windows notification-area or macOS menu-bar rendering from a Linux run (hosted compilation covers those).", "Exact tray icon pixels or the host panel's own menu rendering."],
+      "stability": "stable"
+    },
     "scripts/e2e-native-titlebar.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "A native Linux titlebar close uses Tine's safe persistence path and closes the real window.", "blocking": true }],
       "acceptableVariations": ["Window-manager decoration details and button geometry may vary."],

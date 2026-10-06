@@ -569,6 +569,29 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn desktop_guide_documents_the_system_tray_settings() {
+        // GH #625: three off-by-default device switches, the menu, and the
+        // no-tray-host fallback have to be findable without reading the code.
+        let platforms = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "**Show Tine in the system tray**",
+            "**Minimize to tray**",
+            "**Start minimized to tray**",
+            "**Open Tine**, **Quick Capture** and **Quit**",
+            "All three are off by default",
+            "Closing the main window still quits Tine",
+            "has no tray",
+            "Starting Tine again always brings the main window forward",
+            "`libayatana-appindicator3`",
+        ] {
+            assert!(
+                platforms.contains(outcome),
+                "missing system-tray Guide outcome: {outcome}"
+            );
+        }
+    }
+
+    #[test]
     fn mobile_guide_names_the_touch_gestures_and_the_one_back_ladder() {
         // GH #501 / #492: a gesture nothing announces reads as missing, so the
         // mobile page has to say what each swipe does and which one is Back.

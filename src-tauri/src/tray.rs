@@ -140,7 +140,7 @@ pub(crate) use desktop::{
 mod desktop {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Mutex, mpsc};
+    use std::sync::{mpsc, Mutex};
     use std::time::{Duration, Instant};
     use tauri::menu::{Menu, MenuEvent, MenuItem};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -165,7 +165,10 @@ mod desktop {
             *self.behaviour.lock().unwrap_or_else(|e| e.into_inner()) = value;
         }
         fn problem(&self) -> Option<String> {
-            self.problem.lock().unwrap_or_else(|e| e.into_inner()).clone()
+            self.problem
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
         }
         fn set_problem(&self, value: Option<String>) {
             *self.problem.lock().unwrap_or_else(|e| e.into_inner()) = value;
@@ -255,7 +258,9 @@ mod desktop {
             supported: true,
             active: present,
             problem: if prefs.show && !present {
-                state(app).problem().or_else(|| Some(NO_TRAY_HOST.to_string()))
+                state(app)
+                    .problem()
+                    .or_else(|| Some(NO_TRAY_HOST.to_string()))
             } else {
                 None
             },
@@ -289,7 +294,9 @@ mod desktop {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
-        state(app).start_hidden_pending.store(false, Ordering::SeqCst);
+        state(app)
+            .start_hidden_pending
+            .store(false, Ordering::SeqCst);
     }
 
     /// A second launch shows `main` when the tray (or a start-minimized
@@ -444,8 +451,10 @@ mod desktop {
                 set_dock_visible(app, true);
             }
             tauri::WindowEvent::Focused(false) => {
-                *tray.main_blurred_at.lock().unwrap_or_else(|e| e.into_inner()) =
-                    Some(Instant::now());
+                *tray
+                    .main_blurred_at
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
                 // macOS reports no resize for a miniaturize; check once it
                 // has settled.
                 #[cfg(target_os = "macos")]
@@ -541,13 +550,11 @@ mod desktop {
 
         /// The libraries libappindicator-sys loads, in its order.
         fn library_present() -> Result<(), String> {
-            for name in [
-                c"libayatana-appindicator3.so.1",
-                c"libappindicator3.so.1",
-            ] {
+            for name in [c"libayatana-appindicator3.so.1", c"libappindicator3.so.1"] {
                 // SAFETY: dlopen of a shared library by soname; the handle is
                 // deliberately kept (the tray library loads the same one).
-                let handle = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL) };
+                let handle =
+                    unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL) };
                 if !handle.is_null() {
                     return Ok(());
                 }
@@ -569,7 +576,14 @@ mod tests {
 
     #[test]
     fn everything_is_off_by_default() {
-        assert_eq!(Prefs::default(), Prefs { show: false, minimize: false, start_minimized: false });
+        assert_eq!(
+            Prefs::default(),
+            Prefs {
+                show: false,
+                minimize: false,
+                start_minimized: false
+            }
+        );
         assert_eq!(behaviour(Prefs::default(), false), Behaviour::default());
         assert_eq!(behaviour(Prefs::default(), true), Behaviour::default());
     }
@@ -580,15 +594,36 @@ mod tests {
         assert_eq!(behaviour(without_icon_setting, true), Behaviour::default());
         assert_eq!(
             behaviour(ALL, true),
-            Behaviour { minimize_to_tray: true, start_hidden: true }
+            Behaviour {
+                minimize_to_tray: true,
+                start_hidden: true
+            }
         );
         assert_eq!(
-            behaviour(Prefs { start_minimized: false, ..ALL }, true),
-            Behaviour { minimize_to_tray: true, start_hidden: false }
+            behaviour(
+                Prefs {
+                    start_minimized: false,
+                    ..ALL
+                },
+                true
+            ),
+            Behaviour {
+                minimize_to_tray: true,
+                start_hidden: false
+            }
         );
         assert_eq!(
-            behaviour(Prefs { minimize: false, ..ALL }, true),
-            Behaviour { minimize_to_tray: false, start_hidden: true }
+            behaviour(
+                Prefs {
+                    minimize: false,
+                    ..ALL
+                },
+                true
+            ),
+            Behaviour {
+                minimize_to_tray: false,
+                start_hidden: true
+            }
         );
     }
 
@@ -606,8 +641,14 @@ mod tests {
         let hidden = behaviour(ALL, true);
         assert!(starts_hidden(hidden, &LaunchRequest::Focus));
         assert!(starts_hidden(hidden, &LaunchRequest::Capture));
-        assert!(!starts_hidden(hidden, &LaunchRequest::Open("/tmp/graph".into())));
-        assert!(!starts_hidden(hidden, &LaunchRequest::Link("tine://x".into())));
+        assert!(!starts_hidden(
+            hidden,
+            &LaunchRequest::Open("/tmp/graph".into())
+        ));
+        assert!(!starts_hidden(
+            hidden,
+            &LaunchRequest::Link("tine://x".into())
+        ));
         // No tray: never hidden, whatever was launched.
         let shown = behaviour(ALL, false);
         assert!(!starts_hidden(shown, &LaunchRequest::Focus));
@@ -630,7 +671,10 @@ mod tests {
         assert_eq!(START_MINIMIZED_KEY, "tray_start_minimized");
         let source = include_str!("tray.rs");
         for label in ["\"Open Tine\"", "\"Quick Capture\"", "\"Quit\""] {
-            assert!(source.contains(label), "tray menu item {label} is part of the contract");
+            assert!(
+                source.contains(label),
+                "tray menu item {label} is part of the contract"
+            );
         }
     }
 
@@ -646,5 +690,21 @@ mod tests {
             assert!(!code.contains(forbidden), "tray code must not call {forbidden}: quitting goes through the windows' close handler");
         }
         assert!(code.contains("window.close()"));
+    }
+
+    /// AGENTS.md section 2: a platform cfg list must name every shipped target
+    /// or it silently selects a fallback. The tray's platform split is
+    /// `desktop` (Linux, Windows, macOS: tray) versus mobile (Android, iOS:
+    /// nothing); the only per-OS arms are the macOS dock and the Linux host
+    /// probe, each with an explicit counterpart, and no list names a subset.
+    #[test]
+    fn tray_cfgs_never_name_a_partial_platform_list() {
+        let source = include_str!("tray.rs");
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        assert!(!code.contains("target_os = \"android\"") && !code.contains("target_os = \"ios\""));
+        assert!(
+            !code.contains("cfg(any(target_os"),
+            "name platforms through `desktop`, not an os list"
+        );
     }
 }
