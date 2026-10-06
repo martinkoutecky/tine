@@ -35,10 +35,11 @@ afterEach(() => {
   resetNearObserverForTests();
 });
 
-function openPopup(id = "ws-1-1"): { win: Window; doc: Document; close: () => void } {
+type Realm = Window & typeof globalThis;
+function openPopup(id = "ws-1-1"): { win: Realm; doc: Document; close: () => void } {
   const frame = document.createElement("iframe");
   document.body.append(frame);
-  const win = frame.contentWindow!;
+  const win = frame.contentWindow as Realm;
   const unregister = registerWindow(id, win);
   const close = () => { unregister(); frame.remove(); };
   cleanups.push(close);

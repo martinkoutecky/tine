@@ -29,7 +29,7 @@ import { changeGraphSetting, writeGraphSignal } from "./graphPreferences";
 export { appearancePreference, theme, resolveTheme, applyTheme, setAppearancePreference } from "./themePreference";
 export type { ThemePreference } from "./themePreference";
 import { theme, setAppearancePreference } from "./themePreference";
-import { isHTMLElementNode, onEachWindow } from "./windowRealm";
+import { isHTMLElementNode, onEachWindow, windowOf } from "./windowRealm";
 
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
 export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
@@ -300,8 +300,10 @@ export async function refreshSyncConflicts(notify: "new" | false = false): Promi
 // --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole
 // interface, pdf → the PDF's own scale). Transient session state, not persisted. ---
 export const [activePane, setActivePane] = createSignal<"notes" | "pdf">("notes");
-let paneFocusSetter: ((paneId: string) => void) | undefined;
-export function registerPaneFocusSetter(setter: (paneId: string) => void) {
+/** `paneId` null = an interaction outside every pane of `win` (the window it
+ * happened in decides the default pane, src/panes.ts). */
+let paneFocusSetter: ((paneId: string | null, win: Window) => void) | undefined;
+export function registerPaneFocusSetter(setter: (paneId: string | null, win: Window) => void) {
   paneFocusSetter = setter;
 }
 /** Track the focused pane from clicks / focus moves. Capture-phase so it sees
@@ -348,10 +350,11 @@ export function installPaneTracker(): () => void {
     // "?? main" default reset pane focus on EVERY switcher open, so palette
     // splits and Ctrl+K picks always landed in "main" (Martin's Jul 8
     // wrong-pane report). Deliberate pointer clicks outside keep the old
-    // main default.
+    // default: "main" in the main window, the window's own first pane in a
+    // workspace window.
     if (e.type === "focusin" && !container) return;
-    const paneId = container?.getAttribute("data-pane-id") ?? "main";
-    paneFocusSetter?.(paneId);
+    const paneId = container?.getAttribute("data-pane-id") ?? null;
+    paneFocusSetter?.(paneId, windowOf(e));
     setActivePane(paneId === "pdf" ? "pdf" : "notes");
   };
   const pointerdown = (e: Event) => {

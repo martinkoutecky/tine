@@ -44,6 +44,8 @@ const CLASSIFIED: Record<string, string> = {
   "src/pageIndex.ts#held": "read cache keyed by graph generation; resetPageIndex on switch; never written back",
   "src/pageIconBatch.ts#iconMap": "display cache, dropped on a new graph; never written back",
   "src/paneSelect.ts#paneSel": "pane layout target (pane ids, seams), not graph content",
+  "src/panes.ts#layouts": "per-window pane layout trees keyed by window id (pane ids, split ratios), not graph content; page routes live in the routers",
+  "src/panes.ts#focusedPanes": "focused pane id per window id, not graph content",
   "src/plugins/registry.ts#registryPersistenceError": "device-local registry message",
   "src/ui.ts#accentColor": "device preference",
   "src/ui.ts#pagePropsPanel": "carries its own captureBinding(); loadGraphPath closes it and writeOne refuses when !bindingCurrent (asyncOwnership guard)",

@@ -6,15 +6,18 @@ import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properti
 import { EmojiText } from "../render/emoji";
 import { parseBlock, parserReady } from "../render/parse";
 import { inlineText } from "../render/facets";
-import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes } from "../panes";
+import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes, layoutRoot, windowOfPane } from "../panes";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
-import { isHTMLElementNode, newResizeObserver, useOwnerWindow } from "../windowRealm";
+import { MAIN_WINDOW_ID, isHTMLElementNode, newResizeObserver, useOwnerWindow } from "../windowRealm";
 
 /** One predicate for the strip's ✕ and the overview's close button: closing is
  *  effective when another tab remains, or when this lone non-feed tab can close
  *  its whole split pane (the router's closeTab hands it to the pane close). */
 function closeOffered(router: PaneRouter, t: Tab): boolean {
-  return router.tabs().length > 1 || (router.tabRoute(t).kind !== "journals" && layoutHasMultiplePanes());
+  // A workspace window's last pane closes the window itself (src/panes.ts closePane).
+  const windowId = windowOfPane(router.paneId);
+  return router.tabs().length > 1 || (router.tabRoute(t).kind !== "journals"
+    && (layoutHasMultiplePanes(layoutRoot(windowId)) || windowId !== MAIN_WINDOW_ID));
 }
 
 const MAX_TITLE = 32;

@@ -12,7 +12,9 @@ describe("pane focus tracker", () => {
 
   beforeEach(() => {
     calls = [];
-    registerPaneFocusSetter((id) => calls.push(id));
+    // A click outside every pane reports null plus its window; src/panes.ts
+    // resolves that to "main" in the main window (see panes.window.test.tsx).
+    registerPaneFocusSetter((id, win) => calls.push(id ?? (win === window ? "main" : "<other window>")));
     dispose = installPaneTracker();
     document.body.innerHTML = `
       <div data-pane-id="pane-7"><input id="inside" /></div>

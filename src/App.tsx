@@ -90,6 +90,7 @@ import {
   paneRouter,
   openPdfNotes,
   layoutPaneIds,
+  allPaneIds,
   setSplitRatio,
   type LayoutNode,
 } from "./panes";
@@ -111,7 +112,7 @@ import { installSessionActivity } from "./sessionActivity";
 import { initSettingsLayout } from "./settingsLayout";
 import { initCodeDisplay } from "./codeDisplay";
 import { initContentWidths } from "./contentWidth";
-import { isElementNode, isHTMLElementNode, isNodeValue, mainWindow, newResizeObserver, registeredWindows, requestFrame, windowOf } from "./windowRealm";
+import { MAIN_WINDOW_ID, isElementNode, isHTMLElementNode, isNodeValue, mainWindow, newResizeObserver, registeredWindows, requestFrame, useWindowId, windowOf } from "./windowRealm";
 
 const Settings = lazy(() => import("./components/Settings").then((module) => ({ default: module.Settings })));
 
@@ -187,7 +188,7 @@ function journalsFeedOwner(
     graphEpoch: epoch,
     isLive: () =>
       graphEpoch() === epoch && owners.some((p) =>
-        layoutPaneIds().includes(p.paneId) && sameRoute(paneRouter(p.paneId).route(), p.route)
+        allPaneIds().includes(p.paneId) && sameRoute(paneRouter(p.paneId).route(), p.route)
       ),
   };
 }
@@ -200,7 +201,7 @@ function requestJournalFeedWatcherRestart(
 }
 
 installExternalChangeUiHandler(() => {
-  const routes = layoutPaneIds().map((paneId) => ({ paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() }));
+  const routes = allPaneIds().map((paneId) => ({ paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() }));
   return {
     pageOpen: (name: string) => routes.some((p) => p.route.kind === "page" && p.route.name === name),
     journalsOpen: routes.some((p) => p.route.kind === "journals"),
@@ -250,6 +251,7 @@ export function PaneTree(props: { node: LayoutNode; path: number[] }): JSX.Eleme
 }
 
 function PaneResizer(props: { dir: "row" | "col"; path: number[] }): JSX.Element {
+  const windowId = useWindowId(); // the seam's path is relative to its own window's tree
   return (
     <div
       class={`pane-resizer pane-resizer-${props.dir}`}
@@ -265,7 +267,7 @@ function PaneResizer(props: { dir: "row" | "col"; path: number[] }): JSX.Element
             props.dir === "row"
               ? (ev.clientX - box.left) / Math.max(1, box.width)
               : (ev.clientY - box.top) / Math.max(1, box.height);
-          setSplitRatio(props.path, raw);
+          setSplitRatio(props.path, raw, windowId);
         };
         const onUp = () => {
           win.removeEventListener("pointermove", onMove);
@@ -403,7 +405,8 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
 
 function PaneLeaf(props: { paneId: string }): JSX.Element {
   const router = paneRouter(props.paneId);
-  const multi = () => layoutHasMultiplePanes();
+  const windowId = useWindowId();
+  const multi = () => layoutHasMultiplePanes(layoutRoot(windowId));
   // STATIC per pane: context provider values freeze at mount, so the surface
   // must not depend on the pane's current route. Page.tsx's endEditForSurface
   // key uses the same mapping.
@@ -783,8 +786,8 @@ export function App(): JSX.Element {
 
   createEffect(() => {
     if (!isPublishedExport() || !firstLoadDone() || !graphMeta()) return;
-    const panes = layoutPaneIds();
-    const router = paneRouter(panes[0] ?? focusedPaneId());
+    const panes = layoutPaneIds(layoutRoot(MAIN_WINDOW_ID));
+    const router = paneRouter(panes[0] ?? focusedPaneId(MAIN_WINDOW_ID));
     const target = publishedPermalinkForWorkspace(panes.length, router.tabs().length, router.route());
     if (target !== undefined) replacePublishedPermalink(target);
   });
@@ -1233,10 +1236,10 @@ export function App(): JSX.Element {
           {/* The tab strip is a desktop feature; on a phone it only crowds the
               single-row toolbar (and its pill clips). Hide it there, keeping a
               flex spacer so the right-side icons stay pinned to the edge. */}
-          <Show when={!isMobilePlatform && !layoutHasMultiplePanes()} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
+          <Show when={!isMobilePlatform && !layoutHasMultiplePanes(layoutRoot(MAIN_WINDOW_ID))} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
             {/* Keyed on the SOLE pane's id: after closing panes the survivor
                 need not be "main", and TabBar freezes its router at mount. */}
-            <Show when={firstPaneId(layoutRoot()) ?? "main"} keyed>
+            <Show when={firstPaneId(layoutRoot(MAIN_WINDOW_ID)) ?? "main"} keyed>
               {(soloId) => <FailureBoundary region="The tabs"><TabBar router={paneRouter(soloId)} /></FailureBoundary>}
             </Show>
           </Show>
@@ -1328,7 +1331,7 @@ export function App(): JSX.Element {
           <DrawerBackground class="drawer-workspace" blockedBy="right">
           <PaneEdgeHighlights />
           <PaneSelectHint />
-          <PaneTree node={visibleLayoutNode()} path={[]} />
+          <PaneTree node={visibleLayoutNode(MAIN_WINDOW_ID)} path={[]} />
           </DrawerBackground>
           <FailureBoundary region="The reference sidebar"><RightSidebar /></FailureBoundary>
         </div>
