@@ -19,7 +19,9 @@
  * Timers are deliberately NOT routed through popups: a timer scheduled in a
  * popup's realm dies with the popup, and the save engine's debounce must
  * survive a closed window. Main-realm timers are throttled (not stopped) while
- * main is minimized, which the spike measured as still saving within a second.
+ * main is minimized: the hosted multi-window journey (run 37495725604) saved
+ * typing in a workspace window 0.7 s (Linux), 1.3 s (macOS) and 3.1 s (Windows)
+ * after main had been minimized for 5.5 minutes.
  * Animation frames are per window because WebKit stops main-realm frames
  * outright while main is minimized; `requestFrame` re-dispatches a pending frame
  * on the main realm when its window closes, so a callback is never lost.
