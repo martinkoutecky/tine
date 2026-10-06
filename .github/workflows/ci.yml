@@ -476,9 +476,13 @@ jobs:
       - run: cargo build --features custom-protocol --manifest-path src-tauri/Cargo.toml
       - name: Linux journey (X11 + openbox)
         if: runner.os == 'Linux'
+        env:
+          MW_DEBUG: "1"
         run: xvfb-run -a -s '-screen 0 2000x1100x24' dbus-run-session -- bash -c 'openbox > /tmp/openbox.log 2>&1 & node scripts/hosted-multiwindow.mjs'
       - name: Windows or macOS journey
         if: runner.os != 'Linux'
+        env:
+          MW_DEBUG: "1"
         run: node scripts/hosted-multiwindow.mjs
       - name: Upload evidence (even on failure)
         if: always()

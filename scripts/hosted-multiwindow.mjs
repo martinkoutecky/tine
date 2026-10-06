@@ -113,10 +113,24 @@ function exists(win) {
   if (process.platform === "linux") {
     try { run("xdotool", ["getwindowname", win.id]); return true; } catch { return false; }
   }
+  if (process.platform === "darwin") return Boolean(current(win, false));
   return windows().some((w) => w.id === win.id);
 }
 
+/** System Events names a window only by its title, and both titles move after
+ * launch (main: "Tine" -> "Tine — <graph>"; the new window takes its page's
+ * title), so on macOS a window is re-found by its role before every action. */
+const MAIN_TITLE = /^Tine( Beta)?( — .*)?$/;
+function current(win, required = true) {
+  if (process.platform !== "darwin" || !win.role) return win;
+  const found = windows().find((w) => (win.role === "main" ? MAIN_TITLE.test(w.title) : !MAIN_TITLE.test(w.title)));
+  if (!found && required) throw new Error(`no ${win.role} window among ${JSON.stringify(windows().map((w) => w.title))}`);
+  if (found) { win.id = found.id; win.title = found.title; }
+  return found;
+}
+
 function activate(win) {
+  current(win);
   if (process.platform === "linux") run("xdotool", ["windowactivate", "--sync", win.id]);
   else if (process.platform === "win32") powershell("activate", "", { MW_TITLE: win.title });
   else osa(`tell application "System Events" to tell ${MAC_PROC}
@@ -148,6 +162,7 @@ function press(key) {
 }
 
 function minimize(win) {
+  current(win);
   if (process.platform === "linux") run("xdotool", ["windowminimize", "--sync", win.id]);
   else if (process.platform === "win32") powershell("minimize", win.id);
   else osa(`tell application "System Events" to tell ${MAC_PROC} to set value of attribute "AXMinimized" of window (system attribute "MW_TITLE") to true`, { MW_TITLE: win.title });
@@ -155,6 +170,7 @@ function minimize(win) {
 
 /** The window manager's own close (title-bar button / WM_CLOSE / AXCloseButton). */
 function closeNatively(win) {
+  current(win);
   if (process.platform === "linux") { run("xdotool", ["windowactivate", "--sync", win.id]); run("xdotool", ["key", "--clearmodifiers", "alt+F4"]); }
   else if (process.platform === "win32") powershell("close", win.id);
   else osa(`tell application "System Events" to tell ${MAC_PROC} to click (first button of window (system attribute "MW_TITLE") whose subrole is "AXCloseButton")`, { MW_TITLE: win.title });
@@ -197,6 +213,21 @@ async function editNextBlock() {
   debugShot("editing-next");
 }
 
+/** Back in the new window after its edit ended elsewhere: nothing is being
+ * edited, so the same keyboard path as the first edit applies, one block on. */
+async function editBlockAfterReturn() {
+  press("escape");
+  await sleep(500);
+  press("enter");
+  await sleep(500);
+  debugShot("return-selected");
+  press("down");
+  await sleep(400);
+  press("enter");
+  await sleep(500);
+  debugShot("return-editing");
+}
+
 let debugCount = 0;
 const debugShot = (name) => { if (process.env.MW_DEBUG) screenshot(`dbg-${String(++debugCount).padStart(2, "0")}-${name}`); };
 
@@ -217,6 +248,7 @@ let popup;
 await check("launch", async () => {
   const wins = await until(() => { const list = windows(); return list.length ? list : null; }, 90_000, "the main window never appeared");
   main = await until(() => windows().find((w) => /Tine/.test(w.title)), 30_000, `no main window titled Tine (${JSON.stringify(wins)})`);
+  main.role = "main";
   await sleep(4000); // the graph's first paint; nothing below depends on it beyond keyboard routing
   return `main window "${main.title}"`;
 });
@@ -236,10 +268,13 @@ await check("open", async () => {
   typeText("Open current page in new window");
   await sleep(900);
   press("enter");
-  popup = await until(() => windows().find((w) => !before.has(w.id)), 20_000, `no new window appeared (${JSON.stringify(windows())})`);
+  const isNew = (w) => (process.platform === "darwin" ? !MAIN_TITLE.test(w.title) : !before.has(w.id));
+  popup = await until(() => windows().find(isNew), 20_000, `no new window appeared (${JSON.stringify(windows())})`);
+  popup.role = "popup";
   await sleep(1500);
-  popup = windows().find((w) => w.id === popup.id || (process.platform === "darwin" && w.title !== main.title)) ?? popup;
-  if (process.platform === "darwin") main = windows().find((w) => w.title !== popup.title) ?? main;
+  popup = Object.assign(popup, windows().find((w) => w.id === popup.id) ?? {});
+  current(popup);
+  current(main);
   screenshot("01-open");
   return `new window "${popup.title}"${popup.title.startsWith("Alpha") ? " (titled after its page)" : " (page title not mirrored natively)"}`;
 });
@@ -255,10 +290,18 @@ await check("type-save", async () => {
 
 await check("main-minimized", async () => {
   if (!popup || !main) throw new Error("no windows");
+  // The user's path: go to main (focusing another Tine window ends the new
+  // window's edit by design), minimize it, come back and edit the next block.
+  activate(main);
+  await sleep(800);
+  debugShot("main-active");
   minimize(main);
   await sleep(1500);
+  log(`after minimizing main: ${JSON.stringify(windows())}`);
   activate(popup);
-  await editNextBlock();
+  await sleep(500);
+  debugShot("popup-back");
+  await editBlockAfterReturn();
   typeText(" minimizedtwo");
   await until(() => disk().includes("minimizedtwo"), 15_000, `with main minimized, text typed in the new window never reached disk: ${JSON.stringify(disk())}`);
   const state = windows().find((w) => w.id === main.id);
