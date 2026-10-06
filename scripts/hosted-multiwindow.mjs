@@ -87,6 +87,9 @@ switch ($Action) {
 `);
 const powershell = (action, arg = "", extra = {}) => run("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1, action, String(arg)], extra);
 const osa = (script, extra = {}) => run("osascript", ["-e", script], extra);
+// osascript reads `system attribute` values as MacRoman, which mangles the em
+// dash in "Tine — graph"; titles therefore go into the script as literals.
+const asStr = (text) => `"${text.replace(/[\\"]/g, "\\$&")}"`;
 const MAC_PROC = `(first process whose unix id is ${child.pid})`;
 
 /** Visible titled windows of the app: [{ id, title, minimized }]. */
@@ -132,11 +135,11 @@ function current(win, required = true) {
 function activate(win) {
   current(win);
   if (process.platform === "linux") run("xdotool", ["windowactivate", "--sync", win.id]);
-  else if (process.platform === "win32") powershell("activate", "", { MW_TITLE: win.title });
+  else if (process.platform === "win32") powershell("activate", "");
   else osa(`tell application "System Events" to tell ${MAC_PROC}
   set frontmost to true
-  perform action "AXRaise" of window (system attribute "MW_TITLE")
-end tell`, { MW_TITLE: win.title });
+  perform action "AXRaise" of window ${asStr(win.title)}
+end tell`);
 }
 
 /** A chord over mod (Ctrl, or Cmd on macOS) [+ shift] and one letter. */
@@ -165,7 +168,7 @@ function minimize(win) {
   current(win);
   if (process.platform === "linux") run("xdotool", ["windowminimize", "--sync", win.id]);
   else if (process.platform === "win32") powershell("minimize", win.id);
-  else osa(`tell application "System Events" to tell ${MAC_PROC} to set value of attribute "AXMinimized" of window (system attribute "MW_TITLE") to true`, { MW_TITLE: win.title });
+  else osa(`tell application "System Events" to tell ${MAC_PROC} to set value of attribute "AXMinimized" of window ${asStr(win.title)} to true`);
 }
 
 /** The window manager's own close (title-bar button / WM_CLOSE / AXCloseButton). */
@@ -173,7 +176,7 @@ function closeNatively(win) {
   current(win);
   if (process.platform === "linux") { run("xdotool", ["windowactivate", "--sync", win.id]); run("xdotool", ["key", "--clearmodifiers", "alt+F4"]); }
   else if (process.platform === "win32") powershell("close", win.id);
-  else osa(`tell application "System Events" to tell ${MAC_PROC} to click (first button of window (system attribute "MW_TITLE") whose subrole is "AXCloseButton")`, { MW_TITLE: win.title });
+  else osa(`tell application "System Events" to tell ${MAC_PROC} to click (first button of window ${asStr(win.title)} whose subrole is "AXCloseButton")`);
 }
 
 function screenshot(name) {
@@ -249,6 +252,12 @@ await check("launch", async () => {
   const wins = await until(() => { const list = windows(); return list.length ? list : null; }, 90_000, "the main window never appeared");
   main = await until(() => windows().find((w) => /Tine/.test(w.title)), 30_000, `no main window titled Tine (${JSON.stringify(wins)})`);
   main.role = "main";
+  // Main takes the graph's name once the graph is open; keys sent before that
+  // reach a window with no graph (seen locally: "Tine Beta", no new window).
+  try {
+    main = await until(() => windows().find((w) => /^Tine — /.test(w.title)), 60_000, "graph title");
+    main.role = "main";
+  } catch { log(`main never took the graph title: ${JSON.stringify(windows())}`); }
   await sleep(4000); // the graph's first paint; nothing below depends on it beyond keyboard routing
   return `main window "${main.title}"`;
 });
@@ -310,7 +319,9 @@ await check("main-minimized", async () => {
 
 await check("close", async () => {
   if (!popup) throw new Error("no new window");
-  activate(popup);
+  // The new window is still in front and editing from the previous check. (On
+  // hosted Windows, WScript AppActivate of the already-foreground window ended
+  // that edit, committing it; the journey does not re-activate here.)
   await editNextBlock();
   typeText(" closingthree");
   closeNatively(popup);
