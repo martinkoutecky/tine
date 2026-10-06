@@ -5,7 +5,6 @@ import {
   KEY_TRAY_MINIMIZE,
   KEY_TRAY_SHOW,
   KEY_TRAY_START_MINIMIZED,
-  trayDependentControlsEnabled,
   trayNote,
 } from "./tray";
 
@@ -13,11 +12,6 @@ const root = path.resolve(import.meta.dirname, "..");
 const rust = fs.readFileSync(path.join(root, "src-tauri/src/tray.rs"), "utf8");
 
 describe("system tray settings (GH #625)", () => {
-  it("minimize and start-minimized are enabled only while the icon setting is on", () => {
-    expect(trayDependentControlsEnabled(false)).toBe(false);
-    expect(trayDependentControlsEnabled(true)).toBe(true);
-  });
-
   it("the note appears only for a requested icon the desktop could not show", () => {
     const problem = { supported: true, active: false, problem: "No system tray was found." };
     expect(trayNote(true, problem)).toBe("No system tray was found.");

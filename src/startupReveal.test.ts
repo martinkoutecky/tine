@@ -60,7 +60,10 @@ describe("start minimized to the tray (GH #625)", () => {
   });
 
   it("only a created tray can hide main: the decision is behaviour(prefs, tray_present)", () => {
-    expect(tray).toContain("let behaviour = behaviour(prefs, tray_present(handle));");
+    // The hidden decision still goes through behaviour(prefs, tray_present):
+    // the only other branch is the provisional wait for a LATE host.
+    expect(tray).toContain("behaviour(prefs, tray_present(handle))");
+    expect(tray).toContain("let hidden = starts_hidden(behaviour, &launch);");
     expect(windows).toContain("__TINE_START_HIDDEN__");
     expect(native).toContain("let start_hidden = tray::init(app);");
   });

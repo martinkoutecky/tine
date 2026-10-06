@@ -79,6 +79,11 @@ reqwest = { version = "0.13", default-features = false, features = ["system-prox
 # System tray (GH #625): desktop only, so the feature is requested only here.
 # `tray-icon` was already in Cargo.lock as tauri's optional dependency; on
 # Linux it dlopens libayatana-appindicator at run time (no link-time need).
+# LOAD-BEARING PLACEMENT: tauri-cli reads only `[dependencies].tauri` features
+# (and `app.trayIcon` in tauri.conf.json). Finding `tray-icon` there makes it add
+# a hard `Depends` on libayatana-appindicator3 to the .deb/.rpm and bundle the
+# .so into the AppImage; this target table is invisible to it, which keeps the
+# library a `recommends` (src/trayPackaging.guard.test.ts fails on a move).
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"

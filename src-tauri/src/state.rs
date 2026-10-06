@@ -171,6 +171,52 @@ pub(crate) fn release_window_graph(graphs: &RwLock<GraphRegistry>, window: &str)
     empty
 }
 
+/// Windows (`main`, `graph-*`) whose close request has arrived and which have
+/// not been destroyed yet: their frontend is flushing, or waiting on a prompt.
+///
+/// **Question answered.** "May the process exit now, or is another window
+/// still saving?" The exit paths (`close_graph_window`, the `Destroyed` hook)
+/// both ask [`ClosingWindows::others`]; a window that is not the last one to
+/// finish only destroys itself and leaves the exit to the last finisher. A
+/// cancelled close leaves its entry behind, which is harmless: that window is
+/// still open, so the process rightly stays alive.
+#[derive(Default)]
+pub(crate) struct ClosingWindows(Mutex<std::collections::HashSet<WindowKey>>);
+
+impl ClosingWindows {
+    pub(crate) fn begin(&self, label: &str) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(label.to_string());
+    }
+
+    pub(crate) fn end(&self, label: &str) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(label);
+    }
+
+    /// How many windows other than `own` are mid-close and still exist.
+    pub(crate) fn others(&self, own: &str, exists: impl Fn(&str) -> bool) -> usize {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|label| label.as_str() != own && exists(label))
+            .count()
+    }
+}
+
+/// Whether a closing window may take the process down with it. The window
+/// exits only when it is the last one standing: no other window is still
+/// closing (its flush may be running), and no graph is left that another
+/// window owns (`own_slot` is whether the closing window holds a graph).
+pub(crate) fn may_exit(own_slot: bool, graph_slots: usize, others_closing: usize) -> bool {
+    others_closing == 0 && graph_slots <= usize::from(own_slot)
+}
+
 #[derive(Default)]
 pub(crate) struct GraphRegistry {
     by_window: HashMap<WindowKey, Arc<GraphSlot>>,
@@ -470,6 +516,53 @@ pub(crate) fn capture_quick_switch_slot(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The quit race: with several windows closing at once, an early finisher
+    /// must not exit the process while another window is still flushing.
+    #[test]
+    fn the_process_exits_only_when_the_last_closing_window_finishes() {
+        // Sole window, sole graph: exits (the ordinary quit).
+        assert!(may_exit(true, 1, 0));
+        // Slotless window and no graph at all: exits.
+        assert!(may_exit(false, 0, 0));
+        // Another graph window is open and not closing: only this one closes.
+        assert!(!may_exit(true, 2, 0));
+        // A slotless window must not take a still-open graph down with it.
+        assert!(!may_exit(false, 1, 0));
+        // The race itself: this window is the last graph, but another window
+        // is still flushing, so it must wait for that window to finish.
+        assert!(!may_exit(true, 1, 1));
+        assert!(!may_exit(false, 0, 1));
+    }
+
+    #[test]
+    fn closing_windows_ignore_themselves_and_windows_that_are_gone() {
+        let closing = ClosingWindows::default();
+        closing.begin("main");
+        closing.begin("graph-2");
+        assert_eq!(closing.others("main", |_| true), 1);
+        assert_eq!(closing.others("graph-9", |_| true), 2);
+        // A destroyed window is not a pending flush.
+        assert_eq!(closing.others("main", |label| label != "graph-2"), 0);
+        closing.end("graph-2");
+        assert_eq!(closing.others("main", |_| true), 0);
+    }
+
+    /// Both exit paths must consult the in-flight set; a path that decides from
+    /// the graph count alone is the original race (tray Quit closes every window
+    /// at once, so the first finisher exited under the others' saves).
+    #[test]
+    fn every_exit_path_waits_for_windows_still_closing() {
+        let commands = include_str!("commands.rs");
+        let close = &commands[commands.find("fn close_graph_window").unwrap()..];
+        let close = &close[..close.find("\n}\n").unwrap()];
+        assert!(close.contains("may_exit(") && close.contains("ClosingWindows"));
+        let lib = include_str!("lib.rs");
+        let destroyed = &lib[lib.find("WindowEvent::Destroyed => {").unwrap()..];
+        let destroyed = &destroyed[..destroyed.find("_ => {}").unwrap()];
+        assert!(destroyed.contains(".others(") && destroyed.contains("app.exit(0)"));
+        assert!(lib.contains("WindowEvent::CloseRequested { .. } => {"));
+    }
 
     fn graph(root: &Path) -> Arc<GraphSlot> {
         std::fs::create_dir_all(root.join("pages")).unwrap();

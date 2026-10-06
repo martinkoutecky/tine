@@ -581,7 +581,9 @@ mod rename_guide_tests {
             "All three are off by default",
             "Closing the main window still quits Tine",
             "has no tray",
-            "Starting Tine again always brings the main window forward",
+            "Starting Tine again shows the main window if the tray had hidden it",
+            "If the tray disappears while Tine is running",
+            "waits a few seconds for a late tray",
             "`libayatana-appindicator3`",
         ] {
             assert!(

@@ -7,7 +7,6 @@ import {
   KEY_TRAY_MINIMIZE,
   KEY_TRAY_SHOW,
   KEY_TRAY_START_MINIMIZED,
-  trayDependentControlsEnabled,
   applyTray,
   persistTrayPreference,
   trayNote,
@@ -60,15 +59,15 @@ export function TraySettings(): JSX.Element {
       </Field>
       <Field
         label="Minimize to tray"
-        hint="Minimizing the main window hides it from the taskbar or dock; restore it from the tray icon. Needs “Show Tine in the system tray”."
+        hint="Minimizing the main window hides the window instead of leaving it in the taskbar; restore it from the tray icon. Needs “Show Tine in the system tray”."
       >
-        <Toggle on={minimize()} disabled={!trayDependentControlsEnabled(show())} onClick={() => toggleMinimize()} />
+        <Toggle on={minimize()} disabled={!show()} onClick={() => toggleMinimize()} />
       </Field>
       <Field
         label="Start minimized to tray"
         hint="Launch with the main window hidden; open it from the tray icon. Launching Tine again, or opening a graph or link, always shows it. Needs “Show Tine in the system tray”."
       >
-        <Toggle on={start()} disabled={!trayDependentControlsEnabled(show())} onClick={() => toggleStart()} />
+        <Toggle on={start()} disabled={!show()} onClick={() => toggleStart()} />
       </Field>
       <Show when={trayNote(show(), status())}>
         {(note) => <div class="settings-hint settings-field-hint" role="status" data-tray-note>{note()}</div>}

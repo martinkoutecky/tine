@@ -14,15 +14,27 @@
 //! never touched by minimize-to-tray, and Quit closes every graph window
 //! through that same handler instead of exiting the process directly.
 //!
-//! Mobile has no tray: the module compiles everywhere (the decision functions
-//! and the status command), but every tauri tray call is `cfg(desktop)`.
+//! The tray never changes the application's activation policy: minimize to
+//! tray hides the window only, on every platform (Martin/coordinator decision,
+//! 2026-10-06; macOS keeps its Dock icon, menu bar and Cmd-Tab entry).
+//!
+//! A tray that disappears while Tine runs (the StatusNotifier host quits or
+//! crashes) must not strand a hidden window: [`desktop::host_lost`] shows
+//! `main` and turns both behaviours off until the icon is created again.
+//!
+//! Mobile has no tray: the module compiles everywhere (the status command and
+//! the stable keys); the decision functions and every tauri tray call are
+//! `desktop` only.
 
 use serde::Serialize;
 
 /// Device-settings keys (tine-settings.json), read natively at startup and by
 /// the Settings controls through `get_app_bool` / `set_app_bool`.
+#[cfg(any(desktop, test))]
 pub(crate) const SHOW_KEY: &str = "tray_show";
+#[cfg(any(desktop, test))]
 pub(crate) const MINIMIZE_KEY: &str = "tray_minimize";
+#[cfg(any(desktop, test))]
 pub(crate) const START_MINIMIZED_KEY: &str = "tray_start_minimized";
 
 #[cfg(desktop)]
@@ -42,7 +54,14 @@ const QUIT_SURFACE_AFTER_MS: u64 = 1_500;
 /// the click event arrives, so "main was focused" means "lost focus just now".
 #[cfg(desktop)]
 const CLICK_FOCUS_GRACE_MS: u64 = 500;
+/// How long a start-minimized launch waits for a tray host that is not up yet
+/// (autostart can run before the panel) before it shows the window.
+#[cfg(target_os = "linux")]
+const HOST_WAIT_MS: u64 = 8_000;
+#[cfg(target_os = "linux")]
+const HOST_POLL_MS: u64 = 500;
 
+#[cfg(any(desktop, test))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Prefs {
     pub(crate) show: bool,
@@ -51,6 +70,7 @@ pub(crate) struct Prefs {
 }
 
 /// What the tray settings mean for this run.
+#[cfg(any(desktop, test))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Behaviour {
     pub(crate) minimize_to_tray: bool,
@@ -60,6 +80,7 @@ pub(crate) struct Behaviour {
 /// The one answerer. `tray_present` is "an icon exists right now", not "the
 /// user asked for one": a request the platform could not honour changes
 /// nothing about how the windows behave.
+#[cfg(any(desktop, test))]
 pub(crate) fn behaviour(prefs: Prefs, tray_present: bool) -> Behaviour {
     let live = prefs.show && tray_present;
     Behaviour {
@@ -78,6 +99,39 @@ pub(crate) fn starts_hidden(behaviour: Behaviour, launch: &crate::cli::LaunchReq
     behaviour.start_hidden && matches!(launch, LaunchRequest::Focus | LaunchRequest::Capture)
 }
 
+/// A cold start that asked for a hidden window but found no tray host yet
+/// (an autostart entry can run before the panel does) waits for one instead of
+/// giving up at once. Only a host that is merely late is worth waiting for: a
+/// missing library or a launch that opens something shows the window now.
+#[cfg(desktop)]
+pub(crate) fn waits_for_host(
+    prefs: Prefs,
+    launch: &crate::cli::LaunchRequest,
+    library_present: bool,
+    tray_present: bool,
+) -> bool {
+    use crate::cli::LaunchRequest;
+    prefs.show
+        && prefs.start_minimized
+        && library_present
+        && !tray_present
+        && matches!(launch, LaunchRequest::Focus | LaunchRequest::Capture)
+}
+
+/// Whether a second launch (or any "bring the app back" request) must reveal
+/// `main`: only when this feature hid it. A window the user minimized
+/// themselves, or left visible, is never touched, so with every tray setting
+/// off a second launch behaves exactly as it did before the tray existed.
+#[cfg(any(desktop, test))]
+pub(crate) fn should_reveal(
+    start_hidden_pending: bool,
+    hidden_by_tray: bool,
+    visible: bool,
+) -> bool {
+    start_hidden_pending || (hidden_by_tray && !visible)
+}
+
+#[cfg(any(desktop, test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ClickAction {
     Present,
@@ -86,6 +140,7 @@ pub(crate) enum ClickAction {
 
 /// A left click on the icon: hide `main` only when it is already visible and
 /// focused, otherwise bring it to the front (unminimize, show, focus).
+#[cfg(any(desktop, test))]
 pub(crate) fn left_click_action(visible: bool, minimized: bool, focused: bool) -> ClickAction {
     if visible && !minimized && focused {
         ClickAction::Hide
@@ -105,9 +160,11 @@ pub(crate) struct TrayStatus {
     pub(crate) problem: Option<String>,
 }
 
+#[cfg(any(desktop, test))]
 pub(crate) const NO_TRAY_HOST: &str = "No system tray was found on this desktop, so the tray \
 options are off for now. Tine stays in the window list.";
 
+#[cfg(any(desktop, test))]
 pub(crate) fn read_prefs(app: &tauri::AppHandle) -> Prefs {
     Prefs {
         show: crate::settings::device_bool(app, SHOW_KEY, false),
@@ -153,6 +210,10 @@ mod desktop {
         /// presented it yet. The frontend reveal and the native fallback
         /// both stand down while this is set.
         start_hidden_pending: AtomicBool,
+        /// `main` was hidden by the tray (minimize to tray, or a left click)
+        /// and has not been shown since: only then does a second launch
+        /// reveal it.
+        hidden_by_tray: AtomicBool,
         main_blurred_at: Mutex<Option<Instant>>,
         problem: Mutex<Option<String>>,
     }
@@ -193,9 +254,22 @@ mod desktop {
         if prefs.show {
             create_icon_noting_problem(handle);
         }
-        let behaviour = behaviour(prefs, tray_present(handle));
+        let launch = crate::cli::launch_request_env();
+        let waiting = wait_wanted(prefs, &launch, tray_present(handle));
+        let behaviour = if waiting {
+            // Provisionally hidden: the host is late, not missing.
+            Behaviour {
+                minimize_to_tray: false,
+                start_hidden: true,
+            }
+        } else {
+            behaviour(prefs, tray_present(handle))
+        };
         state(handle).set_behaviour(behaviour);
-        let hidden = starts_hidden(behaviour, &crate::cli::launch_request_env());
+        let hidden = starts_hidden(behaviour, &launch);
+        if waiting {
+            wait_for_host(handle.clone());
+        }
         state(handle)
             .start_hidden_pending
             .store(hidden, Ordering::SeqCst);
@@ -209,6 +283,64 @@ mod desktop {
     pub(crate) fn main_start_hidden_pending(app: &AppHandle) -> bool {
         state(app).start_hidden_pending.load(Ordering::SeqCst)
     }
+
+    #[cfg(target_os = "linux")]
+    fn wait_wanted(prefs: Prefs, launch: &crate::cli::LaunchRequest, present: bool) -> bool {
+        waits_for_host(
+            prefs,
+            launch,
+            linux_host::library_present().is_ok(),
+            present,
+        )
+    }
+    #[cfg(not(target_os = "linux"))]
+    fn wait_wanted(_: Prefs, _: &crate::cli::LaunchRequest, _: bool) -> bool {
+        false
+    }
+
+    /// Poll for a StatusNotifier host while `main` is held hidden. A host
+    /// that shows up gets the icon; none within [`HOST_WAIT_MS`] shows the
+    /// window, because an invisible app is worse than a visible one.
+    #[cfg(target_os = "linux")]
+    fn wait_for_host(app: AppHandle) {
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_millis(HOST_WAIT_MS);
+            loop {
+                if !read_prefs(&app).show {
+                    break;
+                }
+                if linux_host::check().is_ok() {
+                    let (tx, rx) = mpsc::channel();
+                    let on_main = app.clone();
+                    let queued = app.run_on_main_thread(move || {
+                        create_icon_noting_problem(&on_main);
+                        let _ = tx.send(());
+                    });
+                    if queued.is_ok() {
+                        let _ = rx.recv_timeout(Duration::from_secs(10));
+                    }
+                    if tray_present(&app) {
+                        state(&app).set_behaviour(behaviour(read_prefs(&app), true));
+                        return;
+                    }
+                }
+                if Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(HOST_POLL_MS));
+            }
+            let on_main = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                state(&on_main).set_behaviour(Behaviour::default());
+                if main_start_hidden_pending(&on_main) {
+                    crate::debug::diag("tray-host-wait-expired");
+                    present_main(&on_main);
+                }
+            });
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    fn wait_for_host(_: AppHandle) {}
 
     fn create_icon_noting_problem(app: &AppHandle) {
         match create_icon(app) {
@@ -238,7 +370,7 @@ mod desktop {
             let (tx, rx) = mpsc::channel();
             let queued = app.run_on_main_thread(move || {
                 // Never strand a window that only the icon could bring back.
-                if main_is_hidden(&for_main) {
+                if stranded(&for_main) {
                     present_main(&for_main);
                 }
                 let _ = for_main.remove_tray_by_id(TRAY_ID);
@@ -267,17 +399,26 @@ mod desktop {
         }
     }
 
-    fn main_is_hidden(app: &AppHandle) -> bool {
-        app.get_webview_window("main").is_some_and(|window| {
-            !window.is_visible().unwrap_or(true) || window.is_minimized().unwrap_or(false)
-        })
+    /// `main` is hidden and only the tray could bring it back.
+    fn stranded(app: &AppHandle) -> bool {
+        let visible = app
+            .get_webview_window("main")
+            .is_none_or(|window| window.is_visible().unwrap_or(true));
+        should_reveal(
+            main_start_hidden_pending(app),
+            state(app).hidden_by_tray.load(Ordering::SeqCst),
+            visible,
+        )
     }
 
     /// Show, unminimize and focus `main` (or the first graph window if `main`
-    /// is gone), and take the app back into the dock/taskbar. Only the one
-    /// window is touched: workspace windows and other graph windows stay as
-    /// they are.
+    /// is gone). Only the one window is touched: workspace windows and other
+    /// graph windows stay as they are.
     pub(crate) fn present_main(app: &AppHandle) {
+        state(app)
+            .start_hidden_pending
+            .store(false, Ordering::SeqCst);
+        state(app).hidden_by_tray.store(false, Ordering::SeqCst);
         let window = app.get_webview_window("main").or_else(|| {
             let mut graphs: Vec<_> = app
                 .webview_windows()
@@ -290,37 +431,45 @@ mod desktop {
         let Some(window) = window else {
             return;
         };
-        set_dock_visible(app, true);
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
-        state(app)
-            .start_hidden_pending
-            .store(false, Ordering::SeqCst);
     }
 
-    /// A second launch shows `main` when the tray (or a start-minimized
-    /// launch) hid it; a window that is already up is left to the ordinary
-    /// focus-last-window path.
+    /// A second launch shows `main` only when the tray (or a start-minimized
+    /// launch) hid it; anything else is left to the ordinary
+    /// focus-last-window path, exactly as before the tray existed.
     pub(crate) fn reveal_main_if_hidden(app: &AppHandle) {
-        if main_is_hidden(app) || main_start_hidden_pending(app) {
+        if stranded(app) {
             present_main(app);
         }
     }
 
     fn hide_main(app: &AppHandle) {
         if let Some(window) = app.get_webview_window("main") {
+            state(app).hidden_by_tray.store(true, Ordering::SeqCst);
             let _ = window.hide();
-            set_dock_visible(app, false);
         }
     }
 
-    #[cfg(target_os = "macos")]
-    fn set_dock_visible(app: &AppHandle, visible: bool) {
-        let _ = app.set_dock_visibility(visible);
+    /// The tray host left while Tine was running (the panel quit or crashed):
+    /// nothing can bring a hidden window back any more. Show `main`, drop the
+    /// icon and run without minimize-to-tray / start-hidden until an explicit
+    /// settings apply finds a host again.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn host_lost(app: &AppHandle) {
+        if !tray_present(app) {
+            return;
+        }
+        crate::debug::diag("tray-host-lost");
+        if stranded(app) {
+            present_main(app);
+        }
+        let _ = app.remove_tray_by_id(TRAY_ID);
+        let tray = state(app);
+        tray.set_behaviour(Behaviour::default());
+        tray.set_problem(Some(NO_TRAY_HOST.to_string()));
     }
-    #[cfg(not(target_os = "macos"))]
-    fn set_dock_visible(_app: &AppHandle, _visible: bool) {}
 
     fn left_click(app: &AppHandle) {
         let Some(window) = app.get_webview_window("main") else {
@@ -373,7 +522,6 @@ mod desktop {
             let _ = app.run_on_main_thread(move || {
                 for (label, window) in surface.webview_windows() {
                     if label == "main" || label.starts_with("graph-") {
-                        set_dock_visible(&surface, true);
                         let _ = window.unminimize();
                         let _ = window.show();
                     }
@@ -404,32 +552,29 @@ mod desktop {
             .product_name
             .clone()
             .unwrap_or_else(|| "Tine".to_string());
-        // The Linux AppIndicator backend panics when libayatana-appindicator is
-        // missing; a panic is just "no tray" for this run.
-        let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            TrayIconBuilder::with_id(TRAY_ID)
-                .icon(icon)
-                .tooltip(title)
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_menu_event(menu_event)
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        left_click(tray.app_handle());
-                    }
-                })
-                .build(app)
-        }));
-        match built {
-            Ok(Ok(_)) => Ok(()),
-            Ok(Err(error)) => Err(error.to_string()),
-            Err(_) => Err("the tray library panicked".to_string()),
-        }
+        // Linux: `linux_host::check` has already proved the AppIndicator
+        // library loads, which is what would otherwise make the backend panic.
+        TrayIconBuilder::with_id(TRAY_ID)
+            .icon(icon)
+            .tooltip(title)
+            .menu(&menu)
+            .show_menu_on_left_click(false)
+            .on_menu_event(menu_event)
+            .on_tray_icon_event(|tray, event| {
+                if let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    left_click(tray.app_handle());
+                }
+            })
+            .build(app)
+            .map_err(|error| error.to_string())?;
+        #[cfg(target_os = "linux")]
+        linux_host::watch(app);
+        Ok(())
     }
 
     /// Window-event hook (called for every window before lib.rs's own
@@ -448,7 +593,7 @@ mod desktop {
                 // Any path that shows and focuses main (a second launch, a
                 // link, the tray) leaves it presented.
                 tray.start_hidden_pending.store(false, Ordering::SeqCst);
-                set_dock_visible(app, true);
+                tray.hidden_by_tray.store(false, Ordering::SeqCst);
             }
             tauri::WindowEvent::Focused(false) => {
                 *tray
@@ -502,13 +647,17 @@ mod desktop {
     mod linux_host {
         use gtk::gio;
         use gtk::glib::{ToVariant, VariantTy};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tauri::AppHandle;
 
         const WATCHER: &str = "org.kde.StatusNotifierWatcher";
 
-        pub(super) fn check() -> Result<(), String> {
-            library_present()?;
-            let connection = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE)
-                .map_err(|e| format!("session bus unavailable: {e}"))?;
+        fn session() -> Result<gio::DBusConnection, String> {
+            gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE)
+                .map_err(|e| format!("session bus unavailable: {e}"))
+        }
+
+        fn watcher_owned(connection: &gio::DBusConnection) -> Result<bool, String> {
             let owned = connection
                 .call_sync(
                     Some("org.freedesktop.DBus"),
@@ -522,7 +671,13 @@ mod desktop {
                     gio::Cancellable::NONE,
                 )
                 .map_err(|e| format!("StatusNotifierWatcher lookup failed: {e}"))?;
-            if !owned.child_value(0).get::<bool>().unwrap_or(false) {
+            Ok(owned.child_value(0).get::<bool>().unwrap_or(false))
+        }
+
+        pub(super) fn check() -> Result<(), String> {
+            library_present()?;
+            let connection = session()?;
+            if !watcher_owned(&connection)? {
                 return Err("no StatusNotifierWatcher on the session bus".to_string());
             }
             // A watcher without a registered host shows nothing either. A
@@ -548,8 +703,44 @@ mod desktop {
             Ok(())
         }
 
+        /// Watch the session bus for the StatusNotifierWatcher losing its owner
+        /// (NameOwnerChanged with an empty new owner): the panel that hosted the
+        /// icon quit or crashed. Subscribes once per process, from the GTK main
+        /// thread (the callback runs there), and re-checks right after
+        /// subscribing so a loss between `check` and now is not missed.
+        pub(super) fn watch(app: &AppHandle) {
+            static WATCHING: AtomicBool = AtomicBool::new(false);
+            if WATCHING.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            let Ok(connection) = session() else {
+                return;
+            };
+            let handle = app.clone();
+            let _ = connection.signal_subscribe(
+                Some("org.freedesktop.DBus"),
+                Some("org.freedesktop.DBus"),
+                Some("NameOwnerChanged"),
+                Some("/org/freedesktop/DBus"),
+                Some(WATCHER),
+                gio::DBusSignalFlags::NONE,
+                move |_, _, _, _, _, parameters| {
+                    let new_owner = parameters
+                        .child_value(2)
+                        .get::<String>()
+                        .unwrap_or_default();
+                    if new_owner.is_empty() {
+                        super::host_lost(&handle);
+                    }
+                },
+            );
+            if matches!(watcher_owned(&connection), Ok(false)) {
+                super::host_lost(app);
+            }
+        }
+
         /// The libraries libappindicator-sys loads, in its order.
-        fn library_present() -> Result<(), String> {
+        pub(super) fn library_present() -> Result<(), String> {
             for name in [c"libayatana-appindicator3.so.1", c"libappindicator3.so.1"] {
                 // SAFETY: dlopen of a shared library by soname; the handle is
                 // deliberately kept (the tray library loads the same one).
@@ -678,6 +869,87 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_second_launch_reveals_only_what_the_tray_hid() {
+        // Every setting off: nothing is pending or tray-hidden, so a window the
+        // user minimized (not visible per the WM, or iconified) is left alone.
+        assert!(!should_reveal(false, false, false));
+        assert!(!should_reveal(false, false, true));
+        // The tray hid it and it is still hidden.
+        assert!(should_reveal(false, true, false));
+        // The tray hid it, but something else already showed it.
+        assert!(!should_reveal(false, true, true));
+        // Start-minimized and nobody has presented it yet.
+        assert!(should_reveal(true, false, false));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn only_a_late_host_is_waited_for() {
+        use crate::cli::LaunchRequest;
+        let wait = |prefs, launch: &LaunchRequest, lib, present| {
+            waits_for_host(prefs, launch, lib, present)
+        };
+        assert!(wait(ALL, &LaunchRequest::Focus, true, false));
+        assert!(wait(ALL, &LaunchRequest::Capture, true, false));
+        // Library missing: no host could ever appear.
+        assert!(!wait(ALL, &LaunchRequest::Focus, false, false));
+        // Already present, or the window is not meant to be hidden anyway.
+        assert!(!wait(ALL, &LaunchRequest::Focus, true, true));
+        assert!(!wait(
+            Prefs {
+                start_minimized: false,
+                ..ALL
+            },
+            &LaunchRequest::Focus,
+            true,
+            false
+        ));
+        assert!(!wait(
+            Prefs { show: false, ..ALL },
+            &LaunchRequest::Focus,
+            true,
+            false
+        ));
+        assert!(!wait(
+            ALL,
+            &LaunchRequest::Open("/tmp/g".into()),
+            true,
+            false
+        ));
+    }
+
+    /// Martin/coordinator, 2026-10-06: minimize to tray hides the window only.
+    /// The activation policy (macOS Dock) is never changed, so a graph window
+    /// keeps its Dock icon, menu bar and Cmd-Tab entry while main is hidden.
+    #[test]
+    fn the_tray_never_changes_the_activation_policy() {
+        let source = include_str!("tray.rs");
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        for forbidden in [
+            "set_dock_visibility",
+            "set_activation_policy",
+            "ActivationPolicy",
+        ] {
+            assert!(
+                !code.contains(forbidden),
+                "tray code must not call {forbidden}: hide the window only"
+            );
+        }
+    }
+
+    /// A tray that disappears at runtime must not strand a hidden window: the
+    /// watcher subscription reaches `host_lost`, which shows main.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_linux_tray_watches_for_its_host_leaving() {
+        let source = include_str!("tray.rs");
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        assert!(code.contains("\"NameOwnerChanged\""));
+        assert!(code.contains("super::host_lost(&handle)"));
+        assert!(code.contains("linux_host::watch(app)"));
+    }
+
     /// Quit must not skip the flush: it only issues ordinary close requests
     /// (the frontend's onCloseRequested handler flushes and then exits the
     /// process). Architectural fact enforced by source: no exit call inside
@@ -695,8 +967,9 @@ mod tests {
     /// AGENTS.md section 2: a platform cfg list must name every shipped target
     /// or it silently selects a fallback. The tray's platform split is
     /// `desktop` (Linux, Windows, macOS: tray) versus mobile (Android, iOS:
-    /// nothing); the only per-OS arms are the macOS dock and the Linux host
-    /// probe, each with an explicit counterpart, and no list names a subset.
+    /// nothing); the only per-OS arms are the Linux host probe/watch/wait and
+    /// the macOS minimize check, each with an explicit counterpart, and no
+    /// list names a subset.
     #[test]
     fn tray_cfgs_never_name_a_partial_platform_list() {
         let source = include_str!("tray.rs");

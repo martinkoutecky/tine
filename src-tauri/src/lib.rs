@@ -812,8 +812,18 @@ pub fn run() {
                         }
                     }
                 }
+                tauri::WindowEvent::CloseRequested { .. } => {
+                    app.state::<state::ClosingWindows>().begin(label);
+                }
                 tauri::WindowEvent::Destroyed => {
-                    if state::release_window_graph(&state.graphs, label) {
+                    let closing = app.state::<state::ClosingWindows>();
+                    closing.end(label);
+                    let released = state::release_window_graph(&state.graphs, label);
+                    // The last graph is gone, but a window still flushing
+                    // exits the process itself when it is done.
+                    if released
+                        && closing.others(label, |l| app.get_webview_window(l).is_some()) == 0
+                    {
                         #[cfg(target_os = "linux")]
                         platform::kill_webkit_children();
                         app.exit(0);
@@ -824,6 +834,7 @@ pub fn run() {
         })
         .manage(workspace_windows::Pending::default())
         .manage(workspace_windows::CloseRequests::default())
+        .manage(state::ClosingWindows::default())
         .manage(graph::StartupGraph::default())
         .manage(deep_links::PendingLinks::default())
         .manage(AppState {

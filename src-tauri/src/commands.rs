@@ -1450,7 +1450,19 @@ pub(crate) fn close_graph_window(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::state::AppState>,
 ) -> Result<(), String> {
-    if state.graphs.read().unwrap().len() <= 1 {
+    use tauri::Manager;
+    // The last window to finish takes the process down, never an earlier one:
+    // another window that is still flushing (tray Quit and a manual quit both
+    // close every window at once) keeps the process alive until it is done.
+    let label = window.label();
+    let (own_slot, graph_slots) = {
+        let graphs = state.graphs.read().unwrap();
+        (graphs.slot(label).is_some(), graphs.len())
+    };
+    let others_closing = app
+        .state::<crate::state::ClosingWindows>()
+        .others(label, |other| app.get_webview_window(other).is_some());
+    if crate::state::may_exit(own_slot, graph_slots, others_closing) {
         #[cfg(target_os = "linux")]
         crate::platform::kill_webkit_children();
         app.exit(0);

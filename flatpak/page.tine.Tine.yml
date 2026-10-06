@@ -42,6 +42,12 @@ finish-args:
   - --share=network
   # Desktop notifications (if used at runtime).
   - --talk-name=org.freedesktop.Notifications
+  # System tray (GH #625): lets the tray code see the session's
+  # StatusNotifierWatcher. The runtime has no libayatana-appindicator and no
+  # module here adds it, so a Flatpak build reports "no tray" and shows its
+  # window (the tray options stay off); this permission is the half that is
+  # needed once the library module is added.
+  - --talk-name=org.kde.StatusNotifierWatcher
 
 build-options:
   # Put the SDK-extension toolchains (cargo/rustc, node/npm) on PATH.

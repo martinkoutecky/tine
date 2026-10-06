@@ -9,8 +9,16 @@
 //   - the tray's "Open Tine" shows main, and a block edited there reaches disk;
 //   - minimizing main hides it (no taskbar entry), and "Open Tine" restores it;
 //   - a second launch shows and focuses a hidden main.
-// Scenario 2 -- a desktop WITHOUT a tray host, same settings: the window is
-// shown, Settings is told why, and minimizing is an ordinary minimize.
+//   - the tray host leaving while main is hidden shows main again and turns
+//     minimize-to-tray off (never an invisible app).
+// Scenario 2 -- a desktop WITHOUT a tray host, same settings: after the short
+// autostart wait the window is shown, Settings is told why, and minimizing is
+// an ordinary minimize.
+// Scenario 3 -- the quit race: a hidden, graph-less main plus a graph window
+// holding an unsaved edit; tray Quit must leave that edit on disk (the first
+// window to finish may not exit the process under the other's flush).
+// Scenario 4 -- a tray host that appears a few seconds AFTER launch (autostart
+// before the panel): main stays hidden and the icon registers once it is up.
 // The tray's left click is not delivered by AppIndicator on Linux; it is
 // covered by the decision-function unit tests and the hosted Windows/macOS
 // compilation, not here.
@@ -105,15 +113,16 @@ const wm = spawn(process.env.E2E_WINDOW_MANAGER || "openbox", ["--sm-disable"], 
 await sleep(600);
 if (wm.exitCode != null) throw new Error("window manager exited early");
 
-async function withApp(index, fn) {
+async function withApp(index, fn, { appEnv = env, whileLaunching } = {}) {
   const driverPort = DRIVER_BASE + index * 2;
   const log = fs.openSync(path.join(ARTIFACTS, `tauri-driver-${index}.log`), "w");
   const td = spawn(TD, ["--port", String(driverPort), "--native-port", String(NATIVE_BASE + index * 2), "--native-driver", WD], {
-    env, stdio: ["ignore", log, log], detached: true,
+    env: appEnv, stdio: ["ignore", log, log], detached: true,
   });
   await sleep(2500);
   let browser;
   try {
+    void whileLaunching?.();
     browser = await remote({
       hostname: "127.0.0.1", port: driverPort, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
       capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
@@ -215,6 +224,21 @@ try {
     await until(() => visibleMain(), 20_000, "a second launch did not show the hidden main");
     step("a second launch showed the hidden main");
 
+    // The host leaves while main is hidden in the tray: nothing could bring
+    // the window back, so it must be shown, and minimizing is ordinary again.
+    xdo("windowminimize", visibleMain());
+    await until(() => !visibleMain(), 10_000, "main did not hide before the tray host left");
+    host.close();
+    const rescued = await until(() => visibleMain(), 15_000, "the tray host left while main was hidden and main stayed hidden: an invisible app");
+    shot("04-host-left");
+    step("the tray host leaving showed the hidden main");
+    xdo("windowminimize", rescued);
+    const iconic = await until(() => { const s = mainIds({ visibleOnly: false }).map(wmState); return s.includes("Iconic") ? s : null; }, 10_000,
+      "after the host left, minimize was not an ordinary minimize");
+    step(`after the host left minimize is ordinary (WM_STATE ${iconic.join(",")})`);
+    xdo("windowmap", "--sync", rescued);
+    await until(() => visibleMain(), 10_000, "the window did not come back from the ordinary minimize");
+
     // Close is unchanged: it quits (the flush handler, then the process).
     await browser.execute(() => document.querySelector(".win-close")?.click());
     await until(() => mainIds({ visibleOnly: false }).length === 0, 20_000, "closing main did not quit the app");
@@ -241,6 +265,68 @@ await withApp(1, async (browser) => {
   step(`without a tray host minimize is an ordinary minimize (WM_STATE ${state.join(",")})`);
   xdo("windowmap", "--sync", shown);
 });
+
+// ---------------------------------------------------------------- scenario 3
+// No graph in main (hidden, graph-less) and a second window holding the graph.
+// The edit is typed and the tray's Quit pressed within the save debounce, so
+// the only thing that can save it is the window's own close flush; main has
+// nothing to flush and finishes first.
+seed({ tray_show: true, tray_start_minimized: true });
+const quitHost = await startFakeTrayHost({ hostRegistered: true });
+try {
+  await withApp(2, async (browser) => {
+    const item = await until(() => quitHost.items[0], 15_000, "scenario 3: no status item registered");
+    if (visibleMain()) throw new Error("scenario 3: the graph-less main should start hidden");
+    const mainHandle = await browser.getWindowHandle();
+    const before = await browser.getWindowHandles();
+    await browser.executeAsync((path, done) => {
+      window.__TAURI_INTERNALS__.invoke("open_graph_window", { path }).then(done, (error) => done({ error: String(error) }));
+    }, GRAPH);
+    const graphHandle = await until(async () => (await browser.getWindowHandles()).find((h) => !before.includes(h)), 20_000,
+      "open_graph_window created no graph window");
+    await browser.switchToWindow(graphHandle);
+    await until(async () => (await blockTexts(browser)).includes("tray one"), 30_000, "the graph window did not load the graph");
+    const graphId = await until(() => {
+      const ids = execFileSync(process.env.E2E_XDOTOOL || "xdotool", ["search", "--onlyvisible", "--name", "^Tine — "],
+        { encoding: "utf8", env, stdio: ["ignore", "pipe", "ignore"] }).split(/\s+/).filter(Boolean);
+      return ids[0];
+    }, 15_000, "the graph window is not on screen");
+    step("a hidden graph-less main and a graph window are open");
+    xdo("windowactivate", "--sync", graphId);
+    await editBlock(browser, "tray one");
+    xdo("type", "--delay", "30", " saved-by-quit");
+    clickTrayMenu(item, "Quit", env);
+    await until(() => mainIds({ visibleOnly: false }).length === 0, 30_000, "tray Quit did not end the app");
+    await until(() => disk().includes("- tray one saved-by-quit"), 5_000,
+      `tray Quit exited before the graph window saved its edit: ${JSON.stringify(disk())}`);
+    step("tray Quit left the graph window's unsaved edit on disk");
+    void mainHandle;
+  }, { appEnv: { ...env, TINE_GRAPH: "" } });
+} finally {
+  quitHost.close();
+}
+
+// ---------------------------------------------------------------- scenario 4
+seed({ tray_show: true, tray_minimize: true, tray_start_minimized: true });
+let lateHost;
+try {
+  await withApp(3, async (browser) => {
+    if (visibleMain()) throw new Error("scenario 4: main was shown before any tray host existed (it should wait for the panel)");
+    const item = await until(() => lateHost?.items[0], 20_000, "scenario 4: the late tray host never got a status item");
+    await until(async () => (await blockTexts(browser)).includes("tray one"), 30_000, "scenario 4: the graph did not load");
+    if (visibleMain()) throw new Error("scenario 4: main appeared although the tray came up (start minimized)");
+    step(`a tray host that appeared after launch got the icon (${item.service}) and main stayed hidden`);
+    clickTrayMenu(item, "Open Tine", env);
+    const shown = await until(() => visibleMain(), 15_000, "scenario 4: tray Open Tine did not show main");
+    xdo("windowminimize", shown);
+    await until(() => !visibleMain(), 10_000, "scenario 4: minimize-to-tray was not active after the late host appeared");
+    step("minimize-to-tray works once the late host was found");
+    clickTrayMenu(item, "Open Tine", env);
+    await until(() => visibleMain(), 15_000, "scenario 4: could not restore main");
+  }, { whileLaunching: () => sleep(2500).then(startFakeTrayHost).then((h) => { lateHost = h; }) });
+} finally {
+  lateHost?.close();
+}
 
 console.log(`PASS: tray journey (${steps.length} steps)`);
 try { process.kill(-wm.pid, "SIGKILL"); } catch {}
