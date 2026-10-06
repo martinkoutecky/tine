@@ -13,6 +13,7 @@ on:
   pull_request:
     paths:
       - "flatpak/**"
+      - "scripts/derive-flatpak-identity.mjs"
       - "website/img/**"
       - ".github/workflows/flatpak-metadata.yml"
 
@@ -30,6 +31,17 @@ jobs:
 
       - name: Validate .desktop entry
         run: desktop-file-validate flatpak/page.tine.Tine.desktop
+
+      # Non-released identities are derived from the files above at build time
+      # (scripts/derive-flatpak-identity.mjs); validate what that produces for the
+      # identity this tree ships so a Beta bundle cannot fail only in the real build.
+      - name: Validate the derived metainfo and .desktop for the shipped identity
+        run: |
+          ship=$(node -p 'require("./src-tauri/app-identity.json").ship')
+          [ "$ship" = release ] && { echo "tree ships the released identity: nothing derived"; exit 0; }
+          node scripts/derive-flatpak-identity.mjs --identity "$ship"
+          for f in flatpak/derived/*.metainfo.xml; do appstreamcli validate --explain "$f"; done
+          for f in flatpak/derived/*.desktop; do desktop-file-validate "$f"; done
 
       - name: Screenshot coupling — every metainfo screenshot must exist in website/img/
         run: |

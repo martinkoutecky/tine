@@ -43,10 +43,9 @@ finish-args:
   # Desktop notifications (if used at runtime).
   - --talk-name=org.freedesktop.Notifications
   # System tray (GH #625): lets the tray code see the session's
-  # StatusNotifierWatcher. The runtime has no libayatana-appindicator and no
-  # module here adds it, so a Flatpak build reports "no tray" and shows its
-  # window (the tray options stay off); this permission is the half that is
-  # needed once the library module is added.
+  # StatusNotifierWatcher. The library half is the libayatana-appindicator
+  # module below (the GNOME runtime does not ship it); without either half the
+  # build reports "no tray" and shows its window.
   - --talk-name=org.kde.StatusNotifierWatcher
 
 build-options:
@@ -54,6 +53,10 @@ build-options:
   append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node20/bin
 
 modules:
+  # libayatana-appindicator3 (+ libdbusmenu, ayatana-ido, libayatana-indicator,
+  # intltool), loaded at run time by the tray (src-tauri/src/tray.rs). Vendored
+  # byte-for-byte from flathub/shared-modules; see flatpak/README.md.
+  - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
   - name: tine
     buildsystem: simple
     build-options:

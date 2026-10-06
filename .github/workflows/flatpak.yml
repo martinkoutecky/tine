@@ -3,15 +3,30 @@
 # container, and uploads an installable .flatpak bundle. This is the build-test we
 # can't run locally (the dev sandbox can't nest bwrap / mount proc).
 #
-# It does NOT submit to Flathub. It builds the CURRENTLY CHECKED-OUT tree (which
-# carries the page.tine.Tine identifier) by deriving a `dir`-source manifest from the
-# committed Flathub manifest — so flatpak/page.tine.Tine.yml stays the single source
-# of truth (its git source stays pinned for the real Flathub submission).
+# It does NOT submit to Flathub. It builds the CURRENTLY CHECKED-OUT tree by
+# deriving a `dir`-source manifest from the committed Flathub manifest, so
+# flatpak/page.tine.Tine.yml stays the single source of truth (its git source stays
+# pinned for the real Flathub submission). The committed files carry the released
+# identity; for any other identity scripts/derive-flatpak-identity.mjs derives the
+# app id, name and release list at build time. The `identity` input must name the
+# identity the tree ships (src-tauri/app-identity.json); a mismatch is refused,
+# because the binary takes its data directories from that switch.
 name: Flatpak build test
 
 on:
   workflow_call:
+    inputs:
+      identity:
+        description: Identity to package (release or experiment); must match the tree's ship
+        type: string
+        default: release
   workflow_dispatch:
+    inputs:
+      identity:
+        description: Identity to package (release or experiment); must match the tree's ship
+        type: choice
+        options: [release, experiment]
+        default: release
 
 # The real offline build is expensive. Release calls it as a hard gate; focused
 # Flatpak work can dispatch it manually. Source-manifest drift is covered by the
@@ -36,35 +51,23 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The container image carries python but no node; the derivation script is
+      # node because it shares scripts/lib/app-identity.mjs with the release layout.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Derive a CI manifest that builds the checked-out tree
-        run: |
-          python3 - <<'PY'
-          # Replace the Flathub git source (pinned to a released tag) with a local
-          # `dir` source so CI builds THIS commit. The vendored cargo/node source
-          # files are unchanged (referenced relative to the manifest dir).
-          import json, sys
-          # The Flatpak files carry the released identity (docs/app-identity.md);
-          # an experiment tree must not be packaged under it.
-          if json.load(open("src-tauri/app-identity.json"))["ship"] != "release":
-              sys.exit("Flatpak packages the released identity; this tree ships an experiment identity")
-          src = open("flatpak/page.tine.Tine.yml").read()
-          i = src.index("    sources:")
-          src = src[:i] + (
-              "    sources:\n"
-              "      - type: dir\n"
-              "        path: ..\n"
-              "      - cargo-sources.json\n"
-              "      - node-sources.json\n"
-          )
-          open("flatpak/page.tine.Tine.ci.yml", "w").write(src)
-          print("wrote flatpak/page.tine.Tine.ci.yml")
-          PY
+        id: derive
+        env:
+          FLATPAK_IDENTITY: ${{ inputs.identity }}
+        run: node scripts/derive-flatpak-identity.mjs --identity "$FLATPAK_IDENTITY"
 
       - name: Build
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: tine.flatpak
-          manifest-path: flatpak/page.tine.Tine.ci.yml
+          manifest-path: ${{ steps.derive.outputs.manifest }}
           cache-key: flatpak-builder-${{ github.sha }}
           arch: ${{ matrix.arch }}
           # Validation of appstream metainfo + .desktop is on by default in the

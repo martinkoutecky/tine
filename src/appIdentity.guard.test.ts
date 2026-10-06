@@ -21,8 +21,9 @@ function files(dir: string, keep: RegExp): string[] {
 }
 
 const DERIVED = ["src-tauri/app-identity.json", "src-tauri/tauri.conf.json", "src-tauri/gen/android/app/build.gradle.kts"];
-// The released identity's packaging: Flatpak names its files and ids by it; its
-// workflow refuses an experiment tree (.github/workflows/flatpak.yml).
+// The released identity's packaging: Flatpak names its files and ids by it; other
+// identities are derived from those files at build time
+// (scripts/derive-flatpak-identity.mjs, .github/workflows/flatpak.yml).
 const RELEASE_PACKAGING = /^flatpak\//;
 const FRONT_DOOR = "scripts/lib/app-identity.mjs";
 
@@ -85,7 +86,10 @@ describe("app identity switch", () => {
     expect(IDENTITIES.release.androidApplicationId).toBe("page.tine.app");
     const manifest = fs.readFileSync(path.join(ROOT, "flatpak/page.tine.Tine.yml"), "utf8");
     expect(manifest).toMatch(new RegExp(`^id: ${IDENTITIES.release.identifier.replace(/\./g, "\\.")}$`, "m"));
-    expect(fs.readFileSync(path.join(ROOT, ".github/workflows/flatpak.yml"), "utf8")).toContain('["ship"] != "release"');
+    // The workflow no longer hard-codes the released identity: it passes its `identity`
+    // input to scripts/derive-flatpak-identity.mjs, which refuses any identity the
+    // tree does not ship (covered in src/flatpakPackaging.guard.test.ts).
+    expect(fs.readFileSync(path.join(ROOT, ".github/workflows/flatpak.yml"), "utf8")).toContain("derive-flatpak-identity.mjs --identity");
   });
 
   it("the experiment config seed exists only while the build ships an experiment identity", () => {

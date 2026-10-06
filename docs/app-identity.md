@@ -41,7 +41,7 @@ To flip it, run `node scripts/set-app-identity.mjs release` (or
 | Android `applicationId` (`src-tauri/gen/android/app/build.gradle.kts`) | rewritten by the script; the Kotlin `namespace` stays `page.tine.app` |
 | Deploy destination (`scripts/deploy.sh`) | `~/research/<deployName>` |
 | Native E2E journeys | `scripts/lib/app-identity.mjs` (`APP_ID`, `IDENTITY`) |
-| Flatpak (`.github/workflows/flatpak.yml`) | refuses to build unless `ship` is `release`; the manifest id is the release identifier |
+| Flatpak (`.github/workflows/flatpak.yml`) | `flatpak/` carries the released identity; `scripts/derive-flatpak-identity.mjs` derives the app id, `Name=`, metainfo `<id>`/`<name>`/`<releases>` and every install path for the identity the tree ships (the Beta bundle is `page.tine.TineBeta`, so it installs beside a stable Tine Flatpak with its own `~/.var/app/<id>/` data). The workflow's `identity` input must equal `ship`; a mismatch is refused |
 
 Android release preparation (`scripts/release-workflow-inputs.mjs android-config`)
 uses the committed Gradle Kotlin namespace for Tauri's Java source lookup in the
@@ -57,6 +57,12 @@ name, preserving the binary checksum payload. The workflow's embedded AppImage
 update pattern, Windows portable lookup, APK name, updater manifest and publisher
 all consume the same layout. Beta updates remain restricted to the `beta` release.
 `scripts/test-release-identity.mjs` drives staging and assembly for both ships.
+
+The Beta Flatpak bundle is published with the other Beta assets as
+`Tine-Beta_<version>_x86_64.flatpak` (`flatpak-x64` lane in
+`scripts/release-layout.mjs`; `release.yml` calls `flatpak.yml` with
+`identity: experiment`). It is a manual download: updates mean installing the
+next bundle, and `latest.json` never references it.
 
 A few identity-bearing places need no file of their own:
 

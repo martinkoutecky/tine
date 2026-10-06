@@ -84,8 +84,8 @@ assert.match(releaseWorkflow,
   /lane: windows-x86[\s\S]*?--target i686-pc-windows-msvc[\s\S]*?rust-targets: "i686-pc-windows-msvc"[\s\S]*?win-arch: x86[\s\S]*?win-exe-dir: target\/i686-pc-windows-msvc\/release/,
   "GH #275: release.yml must retain the Windows x86 cross-build");
 
-assert.equal(layout.allAssets.length, 26, "release layout must retain its exact 26-asset inventory");
-assert.equal(layout.platformAssets.length, 25, "release layout must retain its exact platform-asset inventory");
+assert.equal(layout.allAssets.length, 27, "release layout must retain its exact 27-asset inventory");
+assert.equal(layout.platformAssets.length, 26, "release layout must retain its exact platform-asset inventory");
 assert.equal(
   Object.keys(layout.updaterPlatforms).length,
   12,
@@ -103,7 +103,32 @@ assert.match(releaseWorkflow, /release-workflow-inputs.mjs "\$\{\{ matrix\.lane 
   "release workflow must derive bundle names and AppImage update information through the layout door");
 assert.doesNotMatch(releaseWorkflow, /Tine_|appimage-update-info:/,
   "I-12: release.yml must not spell stable asset names; use release-workflow-inputs.mjs");
-assert.doesNotMatch(releaseWorkflow, /\n  flatpak:|check-flatpak-/, "PV1 excludes Flatpak from the Beta required path");
+// Beta ships an installable x86_64 Flatpak bundle: a hard release prerequisite
+// (a build failure blocks assembly), named by the layout and never an updater
+// target. Earlier PV1 scope excluded it (Martin, 2026-10-06 reversed that).
+for (const identity of Object.values(IDENTITIES)) {
+  const names = releaseLayout(version, identity);
+  const product = identity.productName.replace(/\s+/g, "-");
+  assert.deepEqual(names.lanes["flatpak-x64"]?.assets, [`${product}_${version}_x86_64.flatpak`],
+    "the Flatpak bundle is named like the other assets, from the identity switch");
+  assert.deepEqual(names.lanes["flatpak-x64"].platforms, {}, "latest.json must never reference the Flatpak");
+  assert.equal(names.lanes["flatpak-x64"].sourceAssets[`${product}_${version}_x86_64.flatpak`],
+    `${product}_${version}_x86_64.flatpak`, "the staged bundle is already canonical");
+}
+assert.ok(RELEASE_LANES.includes("flatpak-x64"), "assembly must require the Flatpak lane");
+assert.ok(!Object.keys(layout.updaterPlatforms).some((platform) => /flatpak/i.test(platform)),
+  "the updater must not reference the Flatpak");
+assert.match(releaseWorkflow,
+  /\n  flatpak:\n    needs: preflight\n    uses: \.\/\.github\/workflows\/flatpak\.yml\n    with:\n      identity: experiment\n/,
+  "release.yml must call flatpak.yml as a parallel build job with the Beta identity");
+assert.match(releaseWorkflow,
+  /\n  stage-flatpak:\n    needs: \[preflight, flatpak\][\s\S]*?release-workflow-inputs\.mjs flatpak-x64[\s\S]*?stage-release-lane\.mjs flatpak-x64[\s\S]*?name: release-flatpak-x64/,
+  "the Flatpak bundle must be named by the layout and staged like every other lane");
+assert.match(releaseWorkflow, /assemble:\n    needs: \[preflight, build, android, stage-flatpak\]/,
+  "assembly must wait for (and so be blocked by) the Flatpak lane");
+assert.match(flatpakWorkflow, /workflow_call:\n    inputs:\n      identity:/, "flatpak.yml needs an identity input to be callable");
+assert.match(flatpakWorkflow, /derive-flatpak-identity\.mjs --identity "\$FLATPAK_IDENTITY"/,
+  "the Flatpak workflow must derive its manifest through the identity-aware script");
 assert.match(
   releaseWorkflow,
   /name: Verify Linux AppImage update information[\s\S]*?\.\/src-tauri\/\$zsync_name[\s\S]*?readelf --string-dump=\.upd_info "\$appimage"[\s\S]*?gh-releases-zsync\|/,
@@ -275,7 +300,7 @@ assert.match(
 );
 assert.match(
   releaseWorkflow,
-  /assemble:\n    needs: \[preflight, build, android\]/,
+  /assemble:\n    needs: \[preflight, build, android, stage-flatpak\]/,
   "candidate assembly accidentally waits for advisory Windows scenarios"
 );
 assert.match(releaseWorkflow, /name: Upload Windows E2E evidence[\s\S]*?if: always\(\)/);
@@ -495,6 +520,22 @@ try {
     const input = makeInput(base);
     fs.rmSync(path.join(input, "release-android"), { recursive: true });
     assert.throws(() => assemble(input, path.join(base, "output")), /missing release lanes: android/);
+  }
+  {
+    // A missing Flatpak bundle (its lane artifact absent) fails assembly, so a
+    // Flatpak build failure blocks the release like any other platform.
+    const base = path.join(temporary, "missing-flatpak");
+    const input = makeInput(base);
+    fs.rmSync(path.join(input, "release-flatpak-x64"), { recursive: true });
+    assert.throws(() => assemble(input, path.join(base, "output")), /missing release lanes: flatpak-x64/);
+  }
+  {
+    // A lane whose bundle is renamed or absent from its fragment is refused too.
+    const base = path.join(temporary, "wrong-flatpak-name");
+    const input = makeInput(base);
+    const [flatpak] = layout.lanes["flatpak-x64"].assets;
+    fs.renameSync(path.join(input, "release-flatpak-x64", flatpak), path.join(input, "release-flatpak-x64", "other.flatpak"));
+    assert.throws(() => assemble(input, path.join(base, "output")), /ENOENT/);
   }
   {
     const base = path.join(temporary, "missing-signature");

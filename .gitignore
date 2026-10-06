@@ -36,3 +36,8 @@ scripts/app-icon-1024.png
 
 # Private Reddit outreach data — keep locally, never publish
 reddit-backup/
+
+# Flatpak build inputs derived from the released files at build time
+# (scripts/derive-flatpak-identity.mjs); never committed.
+/flatpak/*.ci.yml
+/flatpak/derived/

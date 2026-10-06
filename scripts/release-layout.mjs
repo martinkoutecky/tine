@@ -11,6 +11,7 @@ export const RELEASE_LANES = [
   "windows-x86",
   "windows-arm64",
   "android",
+  "flatpak-x64",
 ];
 
 export function assertReleaseVersion(version) {
@@ -121,11 +122,17 @@ export function releaseLayout(version, identity = IDENTITY) {
       assets: [`${product}_${version}_android-arm64.apk`],
       platforms: {},
     },
+    // The x86_64 Flatpak bundle (flatpak.yml): installed by hand, updated by
+    // downloading the next bundle, so it never enters the updater manifest.
+    "flatpak-x64": {
+      assets: [`${product}_${version}_x86_64.flatpak`],
+      platforms: {},
+    },
   };
   for (const spec of Object.values(lanes)) {
-    // Tauri uses productName verbatim; our own zip/APK are already canonical.
+    // Tauri uses productName verbatim; our own zip/APK/Flatpak are already canonical.
     spec.sourceAssets = Object.fromEntries(spec.assets.map((name) => [name,
-      name.endsWith("-portable.zip") || name.endsWith(".apk") ? name
+      name.endsWith("-portable.zip") || name.endsWith(".apk") || name.endsWith(".flatpak") ? name
         : identity.productName + name.slice(product.length),
     ]));
   }

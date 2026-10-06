@@ -57,6 +57,9 @@ try {
         } else assert.deepEqual(bytes, payload, "signed artifact changed while renaming");
       }
       const inputs = workflowInputs(lane, conf, "owner/repo", identity);
+      if (lane === "flatpak-x64") {
+        assert.equal(inputs.RELEASE_FLATPAK, spec.assets[0], "the workflow names the bundle by the layout");
+      }
       if (lane.startsWith("linux")) {
         assert.equal(inputs.UPDATE_INFORMATION,
           `gh-releases-zsync|owner|repo|beta|${spec.assets[0].replace(version, "*")}.zsync`);

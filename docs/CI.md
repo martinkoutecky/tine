@@ -15,7 +15,7 @@ The frozen release candidate receives the exhaustive pass.
 | Manual `ci`, scope `full` | Linux contracts/tests, Windows compile/tests, Android core compile, same-runner performance A/B | Required exact-SHA release-candidate evidence. |
 | Manual `ci`, focused scope | Only `windows`, `android`, or `performance` | Platform/performance proof while developing relevant changes. A focused run never satisfies the release gate. |
 | Manual `ui-e2e` | Complete or scenario-focused Linux/Windows real-app proof | UI/harness debugging between releases without starting ordinary full CI. |
-| Manual `Flatpak build test` | Real offline Flatpak build | Focused packaging proof. The release workflow calls the same workflow as a hard gate. |
+| Manual `Flatpak build test` | Real offline Flatpak build (`identity` input: `release` or `experiment`, which must match the identity the tree ships) | Focused packaging proof. The release workflow calls the same workflow as a hard gate under the Beta identity and publishes its bundle. |
 | Manual/tagged `release` | Exact-SHA CI evidence check, release preflight, real Flatpak, desktop/Android packages, release E2E, assembly/publish | Expensive release proof. It fails before packaging if the exact candidate lacks successful full CI evidence. |
 
 The lightweight pull-request path is a useful early signal, not release

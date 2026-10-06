@@ -594,6 +594,27 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn desktop_guide_documents_the_beta_flatpak_download() {
+        // The bundle is a manual-update download: the install command, the way to find the app
+        // id, side-by-side coexistence and the update path must be on the page.
+        let platforms = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "**Install as a Flatpak (Linux, Beta).**",
+            "`Tine-Beta_<version>_x86_64.flatpak`",
+            "`flatpak install --user Tine-Beta_<version>_x86_64.flatpak`",
+            "`flatpak list` shows its application id for `flatpak run`",
+            "installs next to a stable Tine Flatpak",
+            "**Updates are manual**",
+            "the Flatpak bundle carries its own",
+        ] {
+            assert!(
+                platforms.contains(outcome),
+                "missing Flatpak Guide outcome: {outcome}"
+            );
+        }
+    }
+
+    #[test]
     fn mobile_guide_names_the_touch_gestures_and_the_one_back_ladder() {
         // GH #501 / #492: a gesture nothing announces reads as missing, so the
         // mobile page has to say what each swipe does and which one is Back.

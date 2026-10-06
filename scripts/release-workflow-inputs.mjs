@@ -20,6 +20,7 @@ export function workflowInputs(lane, conf, repository, identity = IDENTITY) {
   }
   if (find("-portable.zip")) values.RELEASE_PORTABLE = find("-portable.zip");
   if (find(".apk")) values.RELEASE_APK = find(".apk");
+  if (find(".flatpak")) values.RELEASE_FLATPAK = find(".flatpak");
   return values;
 }
 

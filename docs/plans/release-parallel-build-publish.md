@@ -9,13 +9,17 @@ the next explicitly authorized release; no dummy public version was cut.
 
 ## Current Beta contract (PV1, 2026-09-30)
 
-PV1 covers Linux, Windows NSIS, macOS and Android. Flatpak, Flathub,
-F-Droid and iOS are outside this preview: `release.yml` does not require Flatpak
-builds or its manifest checks. Flatpak's separate CI workflow remains available.
-This overrides the historical Flatpak prerequisites below for Beta releases.
+PV1 covers Linux, Windows NSIS, macOS and Android, plus (since 2026-10-06) an
+installable x86_64 Flatpak bundle, `Tine-Beta_<version>_x86_64.flatpak`.
+Flathub, F-Droid and iOS are outside this preview. `release.yml` calls
+`flatpak.yml` as a parallel build job under the Beta identity; its bundle is
+staged as the `flatpak-x64` lane, so a failed Flatpak build blocks assembly like
+any other platform. The bundle is a manual-update download and never appears in
+`latest.json`. `release.yml` still does not run the manifest-source checks
+(`check-flatpak-*`); those stay in `ci`.
 
 `src-tauri/app-identity.json` selects the product. `releaseLayout(version)`
-derives all 22 platform asset names and the 12 updater entries from it; `latest.json`
+derives all 26 platform asset names and the 12 updater entries from it; `latest.json`
 is the 23rd asset. Stable filenames stay unchanged. Product whitespace becomes
 `-` in published names; Tauri source filenames retain the original product name.
 Staging translates source names once and updates zsync Filename/URL headers while
@@ -151,8 +155,7 @@ Each `release-fragment.json` records:
 The staging step fails if an expected installer/signature is absent or if an
 unexpected bundle is selected. Windows jobs create the portable zip in staging,
 not on the release. Android uploads the signed canonical APK as another workflow
-artifact. Flatpak remains a required validation job; adding its bundle to the
-GitHub release is a separate product decision.
+artifact. The Flatpak job's bundle is staged the same way, as `release-flatpak-x64`.
 
 Use distinct artifact names (`release-linux-x64`, `release-windows-arm64`, etc.)
 and short retention. Build jobs need only `contents: read`; only the eventual
