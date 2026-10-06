@@ -1,5 +1,5 @@
 import { externalActivityHeld } from "./externalActivity";
-import { anyWindowVisible, onEachWindow } from "./windowRealm";
+import { anyWindowVisible, mainWindow, onEachWindow } from "./windowRealm";
 
 export interface BackgroundFlushDeps {
   endEdit(): void;
@@ -24,13 +24,17 @@ const triggers = ["visibilitychange", "pagehide", "freeze"] as const;
  *
  * Workspace windows (OG-MULTIWINDOW P5): "hidden" means NO Tine window is
  * visible, so minimizing main while the user types in a workspace window keeps
- * the edit open. The triggers are listened for on every window's document. */
+ * the edit open. The triggers are listened for on every window's document,
+ * and `pagehide` (which fires at the window, not the document) on the window.
+ * Main's own `pagehide` is a reload or navigation that takes every window's
+ * rendering with it, so it flushes even while a workspace window is still
+ * visible (review F2). */
 export function installBackgroundFlush(deps: BackgroundFlushDeps): () => void {
   const isHidden = deps.isHidden ?? (() => !anyWindowVisible());
   const pickerHeld = deps.externalActivityHeld ?? externalActivityHeld;
   let inFlight = false;
-  const flush = () => {
-    if (!isHidden() || inFlight || deps.closeInFlight()) return;
+  const flush = (force = false) => {
+    if ((!force && !isHidden()) || inFlight || deps.closeInFlight()) return;
     inFlight = true;
     try {
       if (!pickerHeld()) deps.endEdit();
@@ -44,12 +48,19 @@ export function installBackgroundFlush(deps: BackgroundFlushDeps): () => void {
   };
   if (deps.addEventListener && deps.removeEventListener) {
     const { addEventListener: add, removeEventListener: remove } = deps;
-    for (const trigger of triggers) add(trigger, flush);
-    return () => { for (const trigger of triggers) remove(trigger, flush); };
+    const onTrigger = () => flush();
+    for (const trigger of triggers) add(trigger, onTrigger);
+    return () => { for (const trigger of triggers) remove(trigger, onTrigger); };
   }
   return onEachWindow((win) => {
     const doc = win.document;
-    for (const trigger of triggers) doc.addEventListener(trigger, flush);
-    return () => { for (const trigger of triggers) doc.removeEventListener(trigger, flush); };
+    const onTrigger = () => flush();
+    const onPageHide = () => flush(win === mainWindow);
+    for (const trigger of triggers) doc.addEventListener(trigger, onTrigger);
+    win.addEventListener("pagehide", onPageHide);
+    return () => {
+      for (const trigger of triggers) doc.removeEventListener(trigger, onTrigger);
+      win.removeEventListener("pagehide", onPageHide);
+    };
   });
 }

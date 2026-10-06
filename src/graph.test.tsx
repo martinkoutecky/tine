@@ -155,12 +155,14 @@ async function loadHarness(
   vi.doMock("./guide", () => ({ maybeShowGuideAnnouncement: vi.fn() }));
   vi.doMock("./workspaces", () => ({ clearWorkspaces: vi.fn() }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
+  const closeAllWorkspaceWindows = vi.fn((_reason: string) => { events.push("close-windows"); });
+  vi.doMock("./workspaceWindows", () => ({ closeAllWorkspaceWindows }));
 
   const { loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange } = await import("./graph");
   return {
     loadGraphPath, switchGraph, createNewGraph, refreshAfterRename, ensureJournalTemplateForDay, applyGraphConfigChange, api, events, resetPageIndex, resetAt, waitForWarmCache,
     drainPdfWork, retirePdfOwnership, activatePdfOwnership, resetTabsToJournals, flushAll, resetStore, unsaved,
-    applyTemplateVars, prepareTemplateVars, openPage,
+    applyTemplateVars, prepareTemplateVars, openPage, closeAllWorkspaceWindows,
   };
 }
 
@@ -565,6 +567,27 @@ describe("PDF graph ownership", () => {
     expect(harness.retirePdfOwnership).not.toHaveBeenCalled();
     expect(harness.resetTabsToJournals).not.toHaveBeenCalled();
     expect(harness.api.loadGraph).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the workspace windows when the switch aborts at the PDF drain or the access prompt (review F11)", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    harness.drainPdfWork.mockResolvedValueOnce(false);
+    await expect(harness.loadGraphPath("/tmp/other-graph")).resolves.toEqual({ kind: "aborted" });
+    harness.api.inspectGraphAccess.mockResolvedValueOnce({ graph_root: "/tmp/other-graph", external_assets_path: "/mnt/x", approved: false });
+    harness.api.confirm.mockResolvedValueOnce(false);
+    await expect(harness.loadGraphPath("/tmp/other-graph")).resolves.toEqual({ kind: "aborted" });
+    expect(harness.closeAllWorkspaceWindows).not.toHaveBeenCalled();
+    // A switch that goes through closes them, after the drain and before binding.
+    harness.events.length = 0;
+    harness.api.loadGraph.mockImplementationOnce(async () => {
+      harness.events.push("load-next");
+      return { kind: "loaded" as const, meta: { ...META, root: "/tmp/other-graph" }, binding_generation: 2 };
+    });
+    await harness.loadGraphPath("/tmp/other-graph");
+    expect(harness.closeAllWorkspaceWindows).toHaveBeenCalledWith("graph-switch");
+    expect(harness.events.indexOf("drain-pdf")).toBeLessThan(harness.events.indexOf("close-windows"));
+    expect(harness.events.indexOf("close-windows")).toBeLessThan(harness.events.indexOf("load-next"));
   });
 
   it("publishes a fresh PDF generation for a same-root force refresh", async () => {

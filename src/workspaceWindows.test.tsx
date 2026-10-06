@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const native = vi.hoisted(() => ({
   calls: [] as { cmd: string; args: unknown }[],
   closeRequested: undefined as ((event: { payload: string }) => void) | undefined,
+  destroyed: undefined as ((event: { payload: string }) => void) | undefined,
   label: 0,
 }));
 vi.mock("./backend", async (importOriginal) => ({ ...(await importOriginal<typeof import("./backend")>()), isTauri: () => true }));
@@ -17,10 +18,16 @@ vi.mock("@tauri-apps/api/core", () => ({
   }),
 }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (_name: string, handler: (event: { payload: string }) => void) => {
-    native.closeRequested = handler;
-    return () => { native.closeRequested = undefined; };
+  listen: vi.fn(async (name: string, handler: (event: { payload: string }) => void) => {
+    const slot = name === "workspace-window-destroyed" ? "destroyed" : "closeRequested";
+    native[slot] = handler;
+    return () => { native[slot] = undefined; };
   }),
+}));
+const zooms = vi.hoisted(() => [] as { label: string; scale: number }[]);
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({ setZoom: async (scale: number) => { zooms.push({ label: "main", scale }); } }),
+  Webview: { getByLabel: async (label: string) => ({ setZoom: async (scale: number) => { zooms.push({ label, scale }); } }) },
 }));
 const saves = vi.hoisted(() => ({ flushAll: vi.fn(async () => true) }));
 vi.mock("./document", async (importOriginal) => ({ ...(await importOriginal<typeof import("./document")>()), flushAll: saves.flushAll }));
@@ -40,6 +47,7 @@ import { installWorkspaceWindowSession } from "./session";
 import { MAIN_WINDOW_ID, MAX_WORKSPACE_WINDOWS, mainWindow, setActiveWindowId, windowById, windowIds } from "./windowRealm";
 import { editingId, startEditing } from "./editorController";
 import { setToasts, toasts } from "./toasts";
+import { interfaceZoom, zoomIn, zoomReset } from "./zoom";
 
 type Realm = Window & typeof globalThis;
 const frames: HTMLIFrameElement[] = [];
@@ -139,6 +147,65 @@ describe("workspace window lifecycle (P4)", () => {
     expect(layoutWindowIds()).not.toContain(id);
     expect(saves.flushAll).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(destroys()).toEqual(["ws-main-1"]));
+  });
+
+  it("a native destroy with no close request and no pagehide still disposes (review F1)", async () => {
+    const { id } = await openReady();
+    await vi.waitFor(() => expect(native.destroyed).toBeTruthy());
+    // The insisted second close (or an OS kill) destroyed the native window;
+    // its document never fired pagehide, and no close request reached JS.
+    native.destroyed!({ payload: "ws-main-1" });
+    expect(workspaceWindowCount()).toBe(0);
+    expect(layoutWindowIds()).not.toContain(id);
+    expect(saves.flushAll).toHaveBeenCalledOnce();
+    native.destroyed!({ payload: "ws-main-1" }); // idempotent
+    expect(saves.flushAll).toHaveBeenCalledOnce();
+  });
+
+  it("a title-bar close settles on the popup's clock while main's is throttled (review F1)", async () => {
+    const { win } = await openReady();
+    await vi.waitFor(() => expect(native.closeRequested).toBeTruthy());
+    // Main minimized: its timers are throttled to seconds (here: never fire).
+    // The popup is the window the user is in, so its own clock runs.
+    const realTimeout = setTimeout;
+    win.setTimeout = ((fn: () => void, ms?: number) => realTimeout(fn, ms)) as unknown as typeof win.setTimeout;
+    const frozen = vi.spyOn(mainWindow, "setTimeout").mockImplementation((() => 0) as unknown as typeof mainWindow.setTimeout);
+    native.closeRequested!({ payload: "ws-main-1" });
+    await new Promise((resolve) => realTimeout(resolve, 600));
+    frozen.mockRestore();
+    expect(workspaceWindowCount()).toBe(0);
+  });
+
+  it("re-mirrors only the stylesheet that changed, in main's order (review F9)", async () => {
+    const a = document.createElement("style"); a.textContent = ".a{}";
+    const b = document.createElement("style"); b.textContent = ".b{}";
+    document.head.append(a, b);
+    cleanups.push(() => { a.remove(); b.remove(); });
+    const { win } = await openReady();
+    const sheets = () => [...win.document.head.querySelectorAll("style")].filter((s) => /^\.[a-z]\{\}$/.test(s.textContent ?? ""));
+    const [copyA, copyB] = sheets();
+    expect([copyA.textContent, copyB.textContent]).toEqual([".a{}", ".b{}"]);
+    // A new sheet in the middle, and a change to b: a's copy is untouched.
+    const c = document.createElement("style"); c.textContent = ".c{}";
+    a.after(c);
+    cleanups.push(() => c.remove());
+    b.textContent = ".d{}";
+    await vi.waitFor(() => expect(sheets().map((s) => s.textContent)).toEqual([".a{}", ".c{}", ".d{}"]));
+    expect(sheets()[0]).toBe(copyA);
+    // A removal drops only that copy.
+    c.remove();
+    await vi.waitFor(() => expect(sheets().map((s) => s.textContent)).toEqual([".a{}", ".d{}"]));
+    expect(sheets()[0]).toBe(copyA);
+  });
+
+  it("mirrors the interface zoom into the window's own webview, now and on change (review F8)", async () => {
+    zooms.length = 0;
+    await openReady();
+    await vi.waitFor(() => expect(zooms).toContainEqual({ label: "ws-main-1", scale: interfaceZoom() }));
+    zoomIn();
+    const zoomed = interfaceZoom();
+    await vi.waitFor(() => expect(zooms).toContainEqual({ label: "ws-main-1", scale: zoomed }));
+    zoomReset(); // restore the stored preference for the other tests
   });
 
   it("a title-bar close lets input already on its way land before the edit ends", async () => {

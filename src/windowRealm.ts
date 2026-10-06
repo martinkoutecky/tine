@@ -21,7 +21,10 @@
  * survive a closed window. Main-realm timers are throttled (not stopped) while
  * main is minimized: the hosted multi-window journey (run 37495725604) saved
  * typing in a workspace window 0.7 s (Linux), 1.3 s (macOS) and 3.1 s (Windows)
- * after main had been minimized for 5.5 minutes.
+ * after main had been minimized for 5.5 minutes. The one exception is a
+ * short poll tied to one window's own open or close (src/workspaceWindows.ts,
+ * sleepOnEitherClock): it races the popup's clock against main's, so main's
+ * fallback still fires if the popup's dies.
  * Animation frames are per window because WebKit stops main-realm frames
  * outright while main is minimized; `requestFrame` re-dispatches a pending frame
  * on the main realm when its window closes, so a callback is never lost.

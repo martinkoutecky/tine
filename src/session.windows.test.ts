@@ -124,4 +124,14 @@ describe("workspace windows in the session (P6)", () => {
     const rust = readFileSync(path.join(__dirname, "..", "src-tauri", "src", "workspace_windows.rs"), "utf8");
     expect(rust).toMatch(new RegExp(`pub\\(crate\\) const MAX_WORKSPACE_WINDOWS: usize = ${MAX_WORKSPACE_WINDOWS};`));
   });
+
+  it("listens for the event names the native side emits", () => {
+    const rust = readFileSync(path.join(__dirname, "..", "src-tauri", "src", "workspace_windows.rs"), "utf8");
+    const js = readFileSync(path.join(__dirname, "workspaceWindows.ts"), "utf8");
+    for (const constant of ["CLOSE_REQUESTED_EVENT", "DESTROYED_EVENT"]) {
+      const name = new RegExp(`pub\\(crate\\) const ${constant}: &str = "([^"]+)";`).exec(rust)?.[1];
+      expect(name, constant).toBeTruthy();
+      expect(js).toContain(`listen<string>("${name}"`);
+    }
+  });
 });

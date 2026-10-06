@@ -36,6 +36,11 @@ pub(crate) const MAX_WORKSPACE_WINDOWS: usize = 8;
 const INSISTED_CLOSE: Duration = Duration::from_secs(3);
 /// The event the opener receives when the user closes one of its popups.
 pub(crate) const CLOSE_REQUESTED_EVENT: &str = "workspace-window-close-requested";
+/// The event the opener receives when one of its popups' native window is
+/// destroyed by any path (its JS disposal is idempotent). Without it a popup
+/// destroyed natively (the insisted second close, an OS kill) whose document
+/// never fired `pagehide` would linger in JS as a ghost window.
+pub(crate) const DESTROYED_EVENT: &str = "workspace-window-destroyed";
 
 /// A saved window rectangle in logical pixels.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -316,7 +321,11 @@ pub(crate) fn take_main_config(
 /// Build `main` from its configuration with the popup door attached. Linux
 /// also carries the YouTube identity extension, retried without it on
 /// failure exactly as the other startup windows are. Never returns an error
-/// (Tauri panics on an error from `.setup`, I-22).
+/// (Tauri panics on an error from `.setup`, I-22). If `main` cannot be built
+/// at all the process exits with a diagnostic, as it did when Tauri built
+/// `main` from the configuration itself: a windowless process would hold the
+/// single-instance lock, so every later launch would forward to it and show
+/// nothing (review F3).
 pub(crate) fn create_main(app: &tauri::App, config: &tauri::utils::config::WindowConfig) {
     let build = |with_identity: bool| -> tauri::Result<tauri::WebviewWindow> {
         let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), config)?;
@@ -337,7 +346,12 @@ pub(crate) fn create_main(app: &tauri::App, config: &tauri::utils::config::Windo
     });
     match built {
         Ok(window) => allow_script_windows(&window),
-        Err(error) => crate::debug::diag_private("startup-window-failed", error.to_string()),
+        Err(error) => {
+            crate::debug::diag_private("startup-window-failed", error.to_string());
+            eprintln!("[tine] the main window could not be created: {error}");
+            // Setup runs before any graph is open: nothing is unsaved.
+            std::process::exit(1);
+        }
     }
 }
 
@@ -387,9 +401,12 @@ pub(crate) fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         }
         tauri::WindowEvent::Destroyed => {
             let app = window.app_handle();
-            if opener_of(label).is_some() {
+            if let Some(opener) = opener_of(label) {
                 if let Ok(mut requests) = app.state::<CloseRequests>().0.lock() {
                     requests.remove(label);
+                }
+                if app.get_webview_window(opener).is_some() {
+                    let _ = app.emit_to(opener, DESTROYED_EVENT, label);
                 }
             } else {
                 destroy_popups_of(app, label);

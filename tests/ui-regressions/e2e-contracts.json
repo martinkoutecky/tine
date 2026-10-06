@@ -179,10 +179,11 @@
       "contracts": [
         { "class": "core-operation", "userOutcome": "Open in new window (page actions menu) opens a separate decorated native window showing that page; text typed and Enter pressed there appears in the main window, and undo pressed there reverts it in the main window.", "blocking": true },
         { "class": "exact-safety-interoperability", "userOutcome": "Text typed in a workspace window immediately before closing it from its native title bar reaches the page file on disk, the window unregisters, and the main window keeps editing and saving.", "blocking": true, "authority": "OG-MULTIWINDOW P4: every close door disposes once and loses no typed text" },
-        { "class": "stateful-ux", "userOutcome": "A workspace window open when the app quits from main's close button stays in the saved session and reopens with its page on the next launch.", "blocking": true }
+        { "class": "stateful-ux", "userOutcome": "A workspace window open when the app quits from main's close button stays in the saved session and reopens with its page on the next launch.", "blocking": true },
+        { "class": "stateful-ux", "userOutcome": "Changing the interface zoom (Ctrl +, Ctrl 0) applies to the workspace window too, not only to main.", "blocking": true }
       ],
       "acceptableVariations": ["Window position and size, title wording, the order windows appear in, and save/restore timing may vary while page content, disk bytes and the restored page remain correct."],
-      "nonRequirements": ["Windows WebView2 or macOS WKWebView certification from a Linux WebKitGTK run (the hosted multiwindow workflow covers those).", "Exact pixels, frame decorations, focus order after a close, or incidental DOM nesting.", "Right sidebar, file drop and IME composition inside a workspace window."],
+      "nonRequirements": ["Windows WebView2 or macOS WKWebView certification from a Linux WebKitGTK run (the hosted multiwindow workflow covers those).", "Exact pixels, frame decorations, focus order after a close, or incidental DOM nesting.", "Right sidebar, file drop and IME composition inside a workspace window.", "The exact zoom factor or viewport width (the journey checks only that the window narrows when zoomed in and returns on reset)."],
       "stability": "stable"
     },
     "scripts/e2e-native-titlebar.mjs": {

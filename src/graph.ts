@@ -168,10 +168,6 @@ export async function loadGraphPath(
     // Retry toast, but a full or unwritable app-data dir must not trap the user here.
     try { await flushSession(); }
     catch { console.warn("Session not saved before graph switch"); }
-    // The saved session lists this graph's workspace windows; on a switch they
-    // close here because their panes belong to the graph being left (a
-    // same-graph refresh keeps them, like main's panes).
-    if (switching) closeAllWorkspaceWindows("graph-switch");
   }
   if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
   if (!(await authorizeGraphAccess(path))) return { kind: "aborted" };
@@ -187,6 +183,12 @@ export async function loadGraphPath(
   if (rebindsPdfOwner) {
     retirePdfOwnership();
   }
+  // The saved session lists this graph's workspace windows; on a switch they
+  // close because their panes belong to the graph being left (a same-graph
+  // refresh keeps them, like main's panes). Here, after the access prompt and
+  // the PDF drain could still abort (review F11), and before the last flush, so
+  // an edit a window's disposal commits is still written.
+  if (hadGraph && switching) closeAllWorkspaceWindows("graph-switch");
   // An edit can land during the awaits since the first flush (session save,
   // access prompt, PDF drain); resetStore would discard it with the old
   // working set. Flush once more as the last await before the binding moves.

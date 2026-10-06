@@ -8,6 +8,7 @@ import type { QueryPublicationRequest } from "../types";
 import { readOr } from "../resourceRead";
 import { initQueryExportBudget, queryExportBudgetBytes } from "../queryExportBudget";
 import { activeWindow, listen } from "../windowRealm";
+import { registerTransientLayer } from "../transientLayers";
 
 /** Review complete owner pages, then publish a graph query leaf as a static
  * site and read-only browser app, preserving/reporting replaced output. The backend rechecks the fingerprint
@@ -67,9 +68,18 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
       if (event.key === "Escape") { event.preventDefault(); closeQueryExport(); }
     };
     onCleanup(listen(activeWindow(), "keydown", key, true));
+    // An open app-level layer pins the overlay window (overlayWindowId), so
+    // focusing another Tine window does not remount the dialog there and
+    // discard its form (review F10).
+    onCleanup(registerTransientLayer({
+      id: "query-export",
+      root: () => overlay ?? null,
+      dismiss: () => { closeQueryExport(); return true; },
+    }));
   });
+  let overlay: HTMLDivElement | undefined;
   return (
-    <div class="modal-overlay" onClick={closeQueryExport}>
+    <div class="modal-overlay" ref={overlay} onClick={closeQueryExport}>
       <div class="export-modal query-export-modal" role="dialog" aria-label="Export query results" onClick={(event) => event.stopPropagation()}>
         <div class="export-head">Export query results</div>
         <div class="export-opts">

@@ -13,7 +13,7 @@
 // `activePane` (ui.ts) — this handler bails when the PDF pane is active, and
 // PdfViewer.onKeyZoom bails when it isn't.
 import { createSignal } from "solid-js";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { Webview, getCurrentWebview } from "@tauri-apps/api/webview";
 import { isTauri } from "./backend";
 import { activePane } from "./ui";
 import { platformKind } from "./platform";
@@ -77,6 +77,17 @@ export function applyZoom(): void {
       document.documentElement.style.zoom = "";
       return getCurrentWebview().setZoom(scale);
     })
+    .catch(() => pushToast("Could not apply interface zoom.", "error"));
+}
+
+/** Apply the stored zoom to workspace window webview `label` (desktop only).
+ * A workspace window is a webview of its own, so main's native zoom does not
+ * reach it; src/workspaceWindows.ts calls this when the window opens and on
+ * every change. Failure toasts. */
+export function applyZoomToWebview(label: string, scale = interfaceZoom()): void {
+  if (!isTauri()) return;
+  void Webview.getByLabel(label)
+    .then((webview) => webview?.setZoom(scale))
     .catch(() => pushToast("Could not apply interface zoom.", "error"));
 }
 

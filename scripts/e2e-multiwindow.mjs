@@ -247,6 +247,18 @@ await withApp(0, async (browser) => {
   await until(async () => !(await mainTexts(browser)).includes("typed in popup"), 10_000, "undo in the new window did not reach main");
   step("undo pressed in the new window reverted the edit in main");
 
+  // Interface zoom reaches the new window's own webview (review F8): the
+  // window's CSS viewport narrows when zoomed in and returns on reset.
+  await browser.switchToWindow(popup);
+  const unzoomed = await browser.execute(() => window.innerWidth);
+  await osKey(popupX, "Escape", "ctrl+equal");
+  await until(async () => (await browser.execute(() => window.innerWidth)) < unzoomed * 0.95, 5_000,
+    `interface zoom did not reach the new window (width stayed ${unzoomed})`);
+  await osKey(popupX, "ctrl+0");
+  await until(async () => Math.abs((await browser.execute(() => window.innerWidth)) - unzoomed) <= 1, 5_000,
+    "resetting the interface zoom did not reach the new window");
+  step("interface zoom changed in the new window applied to that window");
+
   // Type, then close the window natively at once: the text must reach disk.
   await browser.switchToWindow(popup);
   xdo("windowactivate", "--sync", popupX);

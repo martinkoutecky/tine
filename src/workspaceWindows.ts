@@ -13,6 +13,7 @@
 // asks the save engine to flush it, forgets the window's pane tree, and
 // destroys the native window: `popup.close()` alone leaves the native window
 // registered on all three desktop platforms (spike OG-SPIKEMW C7).
+import { createEffect, createRoot } from "solid-js";
 import { clearDelegatedEvents, delegateEvents, DelegatedEvents } from "solid-js/web";
 import { isTauri } from "./backend";
 import { isPublishedExport } from "./publishedBackend";
@@ -31,6 +32,7 @@ import type { PaneSnapshot } from "./router";
 import type { Route } from "./routeTypes";
 import type { ParsedWindow, WindowGeometry, WorkspaceWindowSession } from "./session";
 import { pushToast } from "./toasts";
+import { applyZoomToWebview, interfaceZoom } from "./zoom";
 import { MAX_WORKSPACE_WINDOWS, isHTMLElementNode, mainWindow, registerWindow } from "./windowRealm";
 
 type Realm = Window & typeof globalThis;
@@ -145,27 +147,71 @@ async function launch(entry: Entry, geometry: WindowGeometry | null, activate: b
   }
 }
 
-/** A popup's about:blank Document appears asynchronously; poll on main's timer
- * (main-realm animation frames stop while main is minimized). Bounded. */
+/** Wait `ms` on whichever clock fires first: the popup's own (the window the
+ * user is in, which the engine does not throttle) or main's (the popup's may
+ * stop as it opens or closes). Main's alone is throttled to seconds while main
+ * is minimized (hosted run 37495725604: up to 3 s on Windows), and animation
+ * frames stop entirely there (review F1). */
+function sleepOnEitherClock(popup: Realm, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    let fired = false;
+    const fire = () => { if (!fired) { fired = true; resolve(); } };
+    try { popup.setTimeout(fire, ms); } catch { /* the popup's realm is going away */ }
+    mainWindow.setTimeout(fire, ms);
+  });
+}
+
+/** A popup's about:blank Document appears asynchronously; poll it. Bounded by
+ * elapsed time, not by ticks, so a throttled clock cannot stretch the bound. */
 async function documentReady(popup: Realm): Promise<void> {
-  for (let waited = 0; waited < 5000; waited += 25) {
+  const started = Date.now();
+  while (Date.now() - started < 5000) {
     try { if (popup.document?.body) return; } catch { /* not yet reachable */ }
-    await new Promise<void>((resolve) => mainWindow.setTimeout(resolve, 25));
+    await sleepOnEitherClock(popup, 25);
   }
   throw new Error("workspace window document never appeared");
 }
 
 /** Mirror main's stylesheets and <html>/<body> attributes (theme, accent,
- * platform, zoom) into the popup, now and whenever they change. */
+ * platform) into the popup, now and whenever they change. Interface zoom is a
+ * native per-webview level, not an attribute: mirrorZoom carries it. */
 function mirrorStyles(doc: Document): () => void {
   const source = mainWindow.document;
+  const SHEETS = "link[rel=stylesheet], style";
+  // One copy per source node, replaced only when that node changes (review
+  // F9): re-cloning every sheet on each head mutation re-parsed the whole
+  // theme in every window per keystroke-driven <style> update.
+  const copies = new Map<Element, { copy: Element; signature: string }>();
+  const signature = (node: Element) =>
+    node.tagName === "LINK" ? `${node.outerHTML}|${(node as HTMLLinkElement).href}` : node.outerHTML;
+  const copyOf = (node: Element) => {
+    const copy = node.cloneNode(true) as Element;
+    if (node.tagName === "LINK") (copy as HTMLLinkElement).href = (node as HTMLLinkElement).href;
+    return doc.importNode(copy, true);
+  };
   const mirror = () => {
-    doc.head.querySelectorAll("link[rel=stylesheet], style").forEach((node) => node.remove());
-    source.head.querySelectorAll<HTMLLinkElement | HTMLStyleElement>("link[rel=stylesheet], style").forEach((node) => {
-      const copy = node.cloneNode(true) as HTMLLinkElement | HTMLStyleElement;
-      if (node.tagName === "LINK") (copy as HTMLLinkElement).href = (node as HTMLLinkElement).href;
-      doc.head.append(doc.importNode(copy, true));
-    });
+    const sources = Array.from(source.head.querySelectorAll(SHEETS));
+    const present = new Set(sources);
+    for (const [node, entry] of copies) {
+      if (!present.has(node)) { entry.copy.remove(); copies.delete(node); }
+    }
+    let previous: Element | null = null;
+    for (const node of sources) {
+      const now = signature(node);
+      let entry = copies.get(node);
+      if (!entry || entry.signature !== now) {
+        const copy = copyOf(node);
+        if (entry) entry.copy.replaceWith(copy);
+        entry = { copy, signature: now };
+        copies.set(node, entry);
+      }
+      // Keep main's order; only a new or out-of-place copy moves.
+      if (previous ? previous.nextElementSibling !== entry.copy : !entry.copy.isConnected) {
+        if (previous) previous.after(entry.copy);
+        else doc.head.prepend(entry.copy);
+      }
+      previous = entry.copy;
+    }
     const html = doc.documentElement;
     for (const name of html.getAttributeNames()) html.removeAttribute(name);
     for (const attr of Array.from(source.documentElement.attributes)) html.setAttribute(attr.name, attr.value);
@@ -182,10 +228,20 @@ function mirrorStyles(doc: Document): () => void {
   return () => observer.disconnect();
 }
 
+/** Keep the workspace window's native zoom equal to the interface zoom (review
+ * F8): applied when the window opens and on every change. */
+function mirrorZoom(label: string): () => void {
+  return createRoot((dispose) => {
+    createEffect(() => applyZoomToWebview(label, interfaceZoom()));
+    return dispose;
+  });
+}
+
 function bootstrap(entry: Entry, popup: Realm): void {
   const doc = popup.document;
   doc.title = "Tine";
   entry.teardown.push(mirrorStyles(doc));
+  if (entry.label) entry.teardown.push(mirrorZoom(entry.label));
   delegateEvents([...DelegatedEvents], doc);
   entry.teardown.push(() => clearDelegatedEvents(doc));
   const mount = doc.createElement("div");
@@ -261,8 +317,8 @@ const INPUT_SETTLE_MAX_MS = 1000;
  * title-bar click to the page AFTER Tauri has relayed the close request (the
  * engine queues key events, the close travels another channel), so disposing
  * at once would drop the last characters: the native E2E lost the final
- * letter of text typed immediately before the close. Timers run on main's
- * clock; the popup's may stop as it closes. */
+ * letter of text typed immediately before the close. The poll runs on
+ * whichever clock fires first (sleepOnEitherClock). */
 function inputSettled(popup: Realm): Promise<void> {
   return new Promise((resolve) => {
     let last = Date.now();
@@ -278,11 +334,20 @@ function inputSettled(popup: Realm): Promise<void> {
         for (const name of events) doc?.removeEventListener(name, touch, true);
         resolve();
       } else {
-        mainWindow.setTimeout(check, 25);
+        void sleepOnEitherClock(popup, 25).then(check);
       }
     };
-    mainWindow.setTimeout(check, 25);
+    void sleepOnEitherClock(popup, 25).then(check);
   });
+}
+
+/** The native window named `label` is gone: dispose it now (idempotent; an
+ * already-disposed window is a no-op). Returns false when none matched. */
+export function disposeWorkspaceWindowByLabel(label: string): boolean {
+  for (const entry of live.values()) {
+    if (entry.label === label) return disposeWorkspaceWindow(entry.id, "native");
+  }
+  return false;
 }
 
 /** The window's title-bar close: Rust held the close and named the label
@@ -327,19 +392,29 @@ export function installWorkspaceWindows(
   mainWindow.addEventListener("pagehide", onMainHide);
   stops.push(() => mainWindow.removeEventListener("pagehide", onMainHide));
   if (workspaceWindowsSupported()) {
-    let unlisten: (() => void) | undefined;
+    const unlisten: (() => void)[] = [];
     let stopped = false;
     void import("@tauri-apps/api/event")
-      .then(({ listen }) => listen<string>("workspace-window-close-requested", (event) => {
-        if (!closeWorkspaceWindowByLabel(event.payload)) {
-          // Not ours (already disposed): destroy the stray native window.
-          void nativeInvoke("workspace_window_destroy", { label: event.payload })
-            .catch(() => console.error("workspace window native destroy failed"));
-        }
-      }))
-      .then((stop) => { if (stopped) stop(); else unlisten = stop; })
-      .catch(() => console.error("workspace window close listener failed"));
-    stops.push(() => { stopped = true; unlisten?.(); });
+      .then(({ listen }) => Promise.all([
+        listen<string>("workspace-window-close-requested", (event) => {
+          if (!closeWorkspaceWindowByLabel(event.payload)) {
+            // Not ours (already disposed): destroy the stray native window.
+            void nativeInvoke("workspace_window_destroy", { label: event.payload })
+              .catch(() => console.error("workspace window native destroy failed"));
+          }
+        }),
+        // A native window can be destroyed without a close request reaching
+        // us (the insisted second close, an OS kill, a webview crash) and
+        // without `pagehide` firing in its document: Rust reports every popup
+        // destruction (DESTROYED_EVENT in workspace_windows.rs), so the window
+        // never lingers here as a ghost whose panes nothing renders (review F1).
+        listen<string>("workspace-window-destroyed", (event) => {
+          disposeWorkspaceWindowByLabel(event.payload);
+        }),
+      ]))
+      .then((handles) => { if (stopped) handles.forEach((stop) => stop()); else unlisten.push(...handles); })
+      .catch(() => console.error("workspace window native listeners failed"));
+    stops.push(() => { stopped = true; for (const stop of unlisten.splice(0)) stop(); });
   }
   return () => { for (const stop of stops.splice(0).reverse()) stop(); };
 }

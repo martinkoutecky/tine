@@ -49,3 +49,20 @@ it("offers Settings for the typed asset refusal, without parsing its message", a
   expect(adjust).toBeTruthy(); adjust!.click();
   const { openSettings } = await import("../ui"); expect(openSettings).toHaveBeenCalledWith("graph");
 });
+
+it("pins the overlay window while open, so focusing another window does not remount it (review F10)", async () => {
+  const { registerWindow, setActiveWindowId, MAIN_WINDOW_ID } = await import("../windowRealm");
+  const { overlayWindowId } = await import("../transientLayers");
+  const frame = document.createElement("iframe"); document.body.append(frame);
+  const unregister = registerWindow("ws-f10", frame.contentWindow!);
+  try {
+    setActiveWindowId(MAIN_WINDOW_ID);
+    await dialog();
+    expect(overlayWindowId()).toBe(MAIN_WINDOW_ID);
+    setActiveWindowId("ws-f10");
+    expect(overlayWindowId(), "the dialog stays in the window it was opened in").toBe(MAIN_WINDOW_ID);
+  } finally {
+    setActiveWindowId(MAIN_WINDOW_ID);
+    unregister();
+  }
+});
