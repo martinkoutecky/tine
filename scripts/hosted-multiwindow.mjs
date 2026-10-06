@@ -122,9 +122,22 @@ function windows() {
       return { id, title: title.join("\t"), minimized: iconic === "1" };
     });
   }
-  const names = osa(`tell application "System Events" to tell ${MAC_PROC} to get name of every window`);
-  if (!names) return [];
-  return names.split(", ").filter((title) => title && title !== "Quick Capture").map((title) => ({ id: title, title, minimized: false }));
+  const raw = osa(`tell application "System Events" to tell ${MAC_PROC}
+  set out to ""
+  repeat with w in every window
+    set m to "0"
+    try
+      if value of attribute "AXMinimized" of w then set m to "1"
+    end try
+    set out to out & m & tab & (name of w) & linefeed
+  end repeat
+  return out
+end tell`);
+  return raw.split(/\r?\n/).filter(Boolean).map((line) => {
+    const [iconic, ...rest] = line.split("\t");
+    const title = rest.join("\t");
+    return { id: title, title, minimized: iconic === "1" };
+  }).filter((w) => w.title && w.title !== "Quick Capture");
 }
 
 /** Whether `win` still exists, minimized or not (xdotool's visible-only search
@@ -303,6 +316,23 @@ await check("type-save", async () => {
   return "text typed in the new window was saved to the page file";
 });
 
+/** Type `text` and wait for the page file to equal `lines`; the save latency
+ * in ms. On a miss, keeps waiting (inputs untouched) to record when, if ever,
+ * the text lands, then fails with the 15 s verdict. */
+async function typeAndTime(text, lines, what) {
+  const typedAt = Date.now();
+  typeText(text);
+  try {
+    await expectPage(lines, what);
+    return Date.now() - typedAt;
+  } catch (error) {
+    const landed = await expectPage(lines, "still not saved", 120_000).then(() => true, () => false);
+    log(`${what}: ${landed ? `saved after ${Date.now() - typedAt} ms` : `not saved after ${Date.now() - typedAt} ms`}`);
+    throw error;
+  }
+}
+
+let blockOne = "alpha one hosted";
 await check("main-minimized", async () => {
   if (!popup || !main) throw new Error("no windows");
   // P5: main is minimized while the user keeps typing in the new window. The
@@ -312,20 +342,19 @@ await check("main-minimized", async () => {
   const after = windows();
   log(`after minimizing main: ${JSON.stringify(after)}`);
   debugShot("main-minimized");
-  const typedAt = Date.now();
-  typeText(" minimized");
-  const want = ["alpha one hosted minimized", "alpha two", "alpha three"];
-  try {
-    await expectPage(want, "with main minimized, typing in the new window did not reach disk as typed");
-  } catch (error) {
-    // Diagnose a stalled save: keep the main window minimized and record when
-    // (if ever) the typed text lands without any further input.
-    const landed = await expectPage(want, "still not saved", 120_000).then(() => true, () => false);
-    log(`main-minimized: ${landed ? `saved after ${Date.now() - typedAt} ms` : `not saved after ${Date.now() - typedAt} ms`}`);
-    throw error;
+  blockOne += " minimized";
+  const first = await typeAndTime(" minimized", [blockOne, "alpha two", "alpha three"], "with main minimized, typing in the new window did not reach disk as typed");
+  const timings = [`${first} ms`];
+  // MW_SOAK_MS: stay minimized that long first (hidden-page timer throttling
+  // grows with time), then type again and time the save.
+  const soak = Number(process.env.MW_SOAK_MS || 0);
+  if (soak > 0) {
+    await sleep(soak);
+    blockOne += " later";
+    timings.push(`${await typeAndTime(" later", [blockOne, "alpha two", "alpha three"], `after ${soak} ms minimized, typing did not reach disk as typed`)} ms after ${soak} ms minimized`);
   }
-  const state = after.find((w) => w.id === main.id);
-  return `typing continued and saved while main was minimized${state?.minimized ? " (main reported iconic)" : ""}`;
+  const state = windows().find((w) => w.id === main.id) ?? after.find((w) => w.id === main.id);
+  return `typing continued and saved while main was minimized (save after ${timings.join(", ")})${state?.minimized ? " (main reported minimized)" : ""}`;
 });
 
 await check("close", async () => {
@@ -334,7 +363,7 @@ await check("close", async () => {
   typeText(" closing");
   closeNatively(popup);
   await until(() => !exists(popup), 15_000, "the new window did not close");
-  await expectPage(["alpha one hosted minimized", "alpha two closing", "alpha three"], "text typed just before the native close did not reach disk as typed");
+  await expectPage([blockOne, "alpha two closing", "alpha three"], "text typed just before the native close did not reach disk as typed");
   await sleep(1500);
   if (!alive()) throw new Error(`the app exited when the new window closed (${JSON.stringify(exited)})`);
   if (!exists(main)) throw new Error("main window vanished with the new window");
