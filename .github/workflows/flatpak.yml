@@ -70,6 +70,8 @@ jobs:
           manifest-path: ${{ steps.derive.outputs.manifest }}
           cache-key: flatpak-builder-${{ github.sha }}
           arch: ${{ matrix.arch }}
+          # The explicit upload step below names the artifact; skip the action's own.
+          upload-artifact: false
           # Validation of appstream metainfo + .desktop is on by default in the
           # action; leave it on so we catch Flathub lint failures here.
 
