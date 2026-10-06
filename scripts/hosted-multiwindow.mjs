@@ -66,6 +66,21 @@ public class MwWin {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, UIntPtr e);
+  // Windows grants the foreground only to the process that last had input; a
+  // synthetic Alt press first makes this helper that process.
+  public static bool Activate(IntPtr h) {
+    for (int i = 0; i < 5; i++) {
+      if (IsIconic(h)) ShowWindow(h, 9);
+      keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero);
+      SetForegroundWindow(h);
+      System.Threading.Thread.Sleep(200);
+      if (GetForegroundWindow() == h) return true;
+    }
+    return false;
+  }
   public static List<string> List(uint pid) {
     var r = new List<string>();
     EnumWindows((h, l) => { uint p; GetWindowThreadProcessId(h, out p);
@@ -79,8 +94,8 @@ public class MwWin {
 Add-Type -AssemblyName System.Windows.Forms
 switch ($Action) {
   "list" { [MwWin]::List([uint32]$Arg) | ForEach-Object { $_ } }
-  "activate" { $w = New-Object -ComObject WScript.Shell; if (-not $w.AppActivate($env:MW_TITLE)) { throw "activate failed" }; Start-Sleep -Milliseconds 400 }
-  "minimize" { [void][MwWin]::ShowWindow([IntPtr][long]$Arg, 6) }
+  "activate" { if (-not [MwWin]::Activate([IntPtr][long]$Arg)) { throw "activate failed" }; Start-Sleep -Milliseconds 300 }
+  "minimize" { [void][MwWin]::ShowWindow([IntPtr][long]$Arg, 7) }
   "close" { [void][MwWin]::PostMessage([IntPtr][long]$Arg, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) }
   "keys" { [System.Windows.Forms.SendKeys]::SendWait($env:MW_KEYS) }
 }
@@ -135,7 +150,7 @@ function current(win, required = true) {
 function activate(win) {
   current(win);
   if (process.platform === "linux") run("xdotool", ["windowactivate", "--sync", win.id]);
-  else if (process.platform === "win32") powershell("activate", "");
+  else if (process.platform === "win32") powershell("activate", win.id);
   else osa(`tell application "System Events" to tell ${MAC_PROC}
   set frontmost to true
   perform action "AXRaise" of window ${asStr(win.title)}
@@ -216,21 +231,6 @@ async function editNextBlock() {
   debugShot("editing-next");
 }
 
-/** Back in the new window after its edit ended elsewhere: nothing is being
- * edited, so the same keyboard path as the first edit applies, one block on. */
-async function editBlockAfterReturn() {
-  press("escape");
-  await sleep(500);
-  press("enter");
-  await sleep(500);
-  debugShot("return-selected");
-  press("down");
-  await sleep(400);
-  press("enter");
-  await sleep(500);
-  debugShot("return-editing");
-}
-
 let debugCount = 0;
 const debugShot = (name) => { if (process.env.MW_DEBUG) screenshot(`dbg-${String(++debugCount).padStart(2, "0")}-${name}`); };
 
@@ -288,45 +288,41 @@ await check("open", async () => {
   return `new window "${popup.title}"${popup.title.startsWith("Alpha") ? " (titled after its page)" : " (page title not mirrored natively)"}`;
 });
 
+// Each check asserts the whole page file, so text landing in the wrong block
+// (or a key that split one) fails instead of passing on a substring.
+const expectPage = (lines, what) => until(() => disk() === lines.map((l) => `- ${l}\n`).join(""), 15_000, `${what}: ${JSON.stringify(disk())}`);
+
 await check("type-save", async () => {
   if (!popup) throw new Error("no new window");
   activate(popup);
   await editFirstBlock();
   typeText(" hostedone");
-  await until(() => disk().includes("hostedone"), 15_000, `text typed in the new window never reached disk: ${JSON.stringify(disk())}`);
+  await expectPage(["alpha one hostedone", "alpha two", "alpha three"], "text typed in the new window did not reach disk as typed");
   return "text typed in the new window was saved to the page file";
 });
 
 await check("main-minimized", async () => {
   if (!popup || !main) throw new Error("no windows");
-  // The user's path: go to main (focusing another Tine window ends the new
-  // window's edit by design), minimize it, come back and edit the next block.
-  activate(main);
-  await sleep(800);
-  debugShot("main-active");
+  // P5: main is minimized while the user keeps typing in the new window. The
+  // minimize does not activate anything, so the edit in progress continues.
   minimize(main);
   await sleep(1500);
-  log(`after minimizing main: ${JSON.stringify(windows())}`);
-  activate(popup);
-  await sleep(500);
-  debugShot("popup-back");
-  await editBlockAfterReturn();
-  typeText(" minimizedtwo");
-  await until(() => disk().includes("minimizedtwo"), 15_000, `with main minimized, text typed in the new window never reached disk: ${JSON.stringify(disk())}`);
-  const state = windows().find((w) => w.id === main.id);
-  return `saved while main was minimized${state?.minimized ? " (main reported iconic)" : ""}`;
+  const after = windows();
+  log(`after minimizing main: ${JSON.stringify(after)}`);
+  debugShot("main-minimized");
+  typeText(" minimized");
+  await expectPage(["alpha one hostedone minimized", "alpha two", "alpha three"], "with main minimized, typing in the new window did not reach disk as typed");
+  const state = after.find((w) => w.id === main.id);
+  return `typing continued and saved while main was minimized${state?.minimized ? " (main reported iconic)" : ""}`;
 });
 
 await check("close", async () => {
   if (!popup) throw new Error("no new window");
-  // The new window is still in front and editing from the previous check. (On
-  // hosted Windows, WScript AppActivate of the already-foreground window ended
-  // that edit, committing it; the journey does not re-activate here.)
   await editNextBlock();
-  typeText(" closingthree");
+  typeText(" closingtwo");
   closeNatively(popup);
   await until(() => !exists(popup), 15_000, "the new window did not close");
-  await until(() => disk().includes("closingthree"), 15_000, `text typed just before the native close never reached disk: ${JSON.stringify(disk())}`);
+  await expectPage(["alpha one hostedone minimized", "alpha two closingtwo", "alpha three"], "text typed just before the native close did not reach disk as typed");
   await sleep(1500);
   if (!alive()) throw new Error(`the app exited when the new window closed (${JSON.stringify(exited)})`);
   if (!exists(main)) throw new Error("main window vanished with the new window");
