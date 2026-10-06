@@ -135,10 +135,41 @@ describe("workspace window lifecycle (P4)", () => {
     const { id } = await openReady();
     await vi.waitFor(() => expect(native.closeRequested).toBeTruthy());
     native.closeRequested!({ payload: "ws-main-1" });
-    expect(workspaceWindowCount()).toBe(0);
+    await vi.waitFor(() => expect(workspaceWindowCount()).toBe(0));
     expect(layoutWindowIds()).not.toContain(id);
     expect(saves.flushAll).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(destroys()).toEqual(["ws-main-1"]));
+  });
+
+  it("a title-bar close lets input already on its way land before the edit ends", async () => {
+    const { win } = await openReady();
+    await vi.waitFor(() => expect(native.closeRequested).toBeTruthy());
+    const editor = win.document.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+    editor.focus();
+    startEditing("block-1", 0);
+    native.closeRequested!({ payload: "ws-main-1" });
+    native.closeRequested!({ payload: "ws-main-1" }); // a repeated request is ignored
+    // A keystroke the engine delivers after the close request still finds the editor live.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(workspaceWindowCount()).toBe(1);
+    expect(editingId()).toBe("block-1");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(workspaceWindowCount()).toBe(1);
+    await vi.waitFor(() => expect(workspaceWindowCount()).toBe(0));
+    expect(editingId()).toBeNull();
+    expect(saves.flushAll).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(destroys()).toEqual(["ws-main-1"]));
+  });
+
+  it("another door disposes at once while a title-bar close is settling", async () => {
+    await openReady();
+    await vi.waitFor(() => expect(native.closeRequested).toBeTruthy());
+    native.closeRequested!({ payload: "ws-main-1" });
+    closeAllWorkspaceWindows("quit");
+    expect(workspaceWindowCount()).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(destroys()).toEqual(["ws-main-1"]);
   });
 
   it("main reloading closes every window without a session save", async () => {

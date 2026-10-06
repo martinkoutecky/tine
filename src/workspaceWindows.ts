@@ -52,6 +52,8 @@ interface Entry {
   label: string | null;
   popup: Realm | null;
   disposed: boolean;
+  /** A title-bar close is waiting for in-flight input (closeWorkspaceWindowByLabel). */
+  closing: boolean;
   readonly teardown: (() => void)[];
 }
 
@@ -108,7 +110,7 @@ export function openWorkspaceWindow(spec: OpenWorkspaceWindowSpec): string | nul
   } else {
     return null;
   }
-  const entry: Entry = { id, label: null, popup: null, disposed: false, teardown: [] };
+  const entry: Entry = { id, label: null, popup: null, disposed: false, closing: false, teardown: [] };
   live.set(id, entry);
   if (!spec.restoring) scheduleSessionSave();
   void launch(entry, spec.geometry ?? null, !spec.restoring);
@@ -250,10 +252,54 @@ export function closeAllWorkspaceWindows(reason: WorkspaceCloseReason): void {
   for (const id of [...live.keys()]) disposeWorkspaceWindow(id, reason);
 }
 
-/** The window closed natively from its title bar: Rust held the close and
- * named the label (CLOSE_REQUESTED_EVENT in workspace_windows.rs). */
+/** Input quiet period, and its cap, before a title-bar close disposes. */
+const INPUT_SETTLE_QUIET_MS = 150;
+const INPUT_SETTLE_MAX_MS = 1000;
+
+/** Resolve once `popup` has had no keyboard or text input for the quiet
+ * period (at most the cap). The OS delivers keystrokes typed just before a
+ * title-bar click to the page AFTER Tauri has relayed the close request (the
+ * engine queues key events, the close travels another channel), so disposing
+ * at once would drop the last characters: the native E2E lost the final
+ * letter of text typed immediately before the close. Timers run on main's
+ * clock; the popup's may stop as it closes. */
+function inputSettled(popup: Realm): Promise<void> {
+  return new Promise((resolve) => {
+    let last = Date.now();
+    const started = last;
+    const events = ["keydown", "keyup", "beforeinput", "input", "compositionend"] as const;
+    const touch = () => { last = Date.now(); };
+    let doc: Document | null = null;
+    try { doc = popup.document; } catch { doc = null; }
+    for (const name of events) doc?.addEventListener(name, touch, true);
+    const check = () => {
+      const now = Date.now();
+      if (now - last >= INPUT_SETTLE_QUIET_MS || now - started >= INPUT_SETTLE_MAX_MS) {
+        for (const name of events) doc?.removeEventListener(name, touch, true);
+        resolve();
+      } else {
+        mainWindow.setTimeout(check, 25);
+      }
+    };
+    mainWindow.setTimeout(check, 25);
+  });
+}
+
+/** The window's title-bar close: Rust held the close and named the label
+ * (CLOSE_REQUESTED_EVENT in workspace_windows.rs). Disposal waits for input
+ * already on its way to the window to land (inputSettled); any other door
+ * arriving meanwhile disposes at once. A repeated request while settling is
+ * ignored. Returns false when no open window has that label. */
 export function closeWorkspaceWindowByLabel(label: string): boolean {
-  for (const entry of live.values()) if (entry.label === label) return disposeWorkspaceWindow(entry.id, "native");
+  for (const entry of live.values()) {
+    if (entry.label !== label) continue;
+    if (entry.closing) return true;
+    entry.closing = true;
+    const popup = entry.popup;
+    if (!popup || popup.closed) disposeWorkspaceWindow(entry.id, "native");
+    else void inputSettled(popup).then(() => disposeWorkspaceWindow(entry.id, "native"));
+    return true;
+  }
   return false;
 }
 

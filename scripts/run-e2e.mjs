@@ -102,6 +102,7 @@ const suites = {
     // Needs libfaketime; fails (never skips) naming the remedy when it is absent.
     ["journal-rollover", "scripts/e2e-journal-rollover.mjs", {}],
     ["multigraph", "scripts/e2e-multigraph.mjs", {}],
+    ["multiwindow", "scripts/e2e-multiwindow.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["sheets", "scripts/e2e-sheets.mjs", {}],
     ["formula-builder", "scripts/probe-formula-builder.mjs", {}],
     ["selection-wrap", "scripts/e2e-selectwrap.mjs", {}],

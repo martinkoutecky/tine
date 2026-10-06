@@ -5,7 +5,6 @@ import { TabBar } from "./TabBar";
 import { FailureBoundary } from "./FailureBoundary";
 import { WindowOverlays } from "./WindowOverlays";
 import {
-  currentLayoutWindowId,
   firstPaneId,
   focusedRouterOf,
   layoutHasMultiplePanes,
@@ -25,7 +24,6 @@ import { WindowContext, windowById } from "../windowRealm";
 export function WorkspaceWindowShell(props: { windowId: string }): JSX.Element {
   const id = props.windowId;
   const router = () => focusedRouterOf(id);
-  const here = () => currentLayoutWindowId() === id;
   createEffect(() => {
     const title = routeTitle(router().route());
     const win = windowById(id);
@@ -72,10 +70,8 @@ export function WorkspaceWindowShell(props: { windowId: string }): JSX.Element {
           </header>
           <div class="content-row">
             <div class="drawer-workspace">
-              <Show when={here()}>
-                <PaneEdgeHighlights />
-                <PaneSelectHint />
-              </Show>
+              <PaneEdgeHighlights />
+              <PaneSelectHint />
               <PaneTree node={visibleLayoutNode(id)} path={[]} />
             </div>
           </div>

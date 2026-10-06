@@ -72,6 +72,7 @@ import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls, touch
 import {
   PaneContext,
   closePane,
+  currentLayoutWindowId,
   firstPaneId,
   focusedPaneId,
   layoutHasMultiplePanes,
@@ -457,8 +458,9 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
 // pill is that indicator, and doubles as in-situ docs for the seam/edge tricks.
 export function PaneSelectHint(): JSX.Element {
   const kind = () => paneSel()?.kind ?? null;
+  const here = paneSelectIsHere();
   return (
-    <Show when={paneSel()}>
+    <Show when={here() && paneSel()}>
       <div class="pane-select-hint">
         <span class="pane-select-hint-title">Pane select</span>
         <Show
@@ -497,8 +499,17 @@ export function PaneSelectHint(): JSX.Element {
   );
 }
 
+/** Pane select acts on the window the user is in (currentLayoutWindowId); its
+ * hint and edge tint render only in that window, never in another one too. */
+function paneSelectIsHere(): () => boolean {
+  const windowId = useWindowId();
+  return () => currentLayoutWindowId() === windowId;
+}
+
 export function PaneEdgeHighlights(): JSX.Element {
+  const here = paneSelectIsHere();
   const edge = () => {
+    if (!here()) return null;
     const target = paneSel();
     return target?.kind === "edge" ? target.side : null;
   };

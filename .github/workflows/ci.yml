@@ -28,6 +28,7 @@ on:
           - windows
           - android
           - performance
+          - multiwindow
 
 permissions:
   contents: read
@@ -438,3 +439,51 @@ jobs:
             results.jsonl
             summary.md
           retention-days: 30
+
+  # OG-MULTIWINDOW focused proof (not part of `full`): on each desktop platform,
+  # open a page in a new window, type and save there, keep saving while main is
+  # minimized, and close it natively right after typing. OS keyboard input only
+  # (macOS has no WebDriver); scripts/hosted-multiwindow.mjs writes result.json.
+  multiwindow:
+    name: Focused / multi-window journey
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'multiwindow'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev build-essential libssl-dev xvfb xauth xdotool openbox x11-utils imagemagick
+      - run: npm ci
+      - run: npm run build
+      - run: cargo build --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - name: Linux journey (X11 + openbox)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s '-screen 0 2000x1100x24' dbus-run-session -- bash -c 'openbox > /tmp/openbox.log 2>&1 & node scripts/hosted-multiwindow.mjs'
+      - name: Windows or macOS journey
+        if: runner.os != 'Linux'
+        run: node scripts/hosted-multiwindow.mjs
+      - name: Upload evidence (even on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: multiwindow-${{ matrix.os }}
+          path: test-results/hosted-multiwindow
+          if-no-files-found: warn
