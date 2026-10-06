@@ -49,6 +49,7 @@ mod settings;
 mod spellcheck;
 mod state;
 mod watcher;
+mod workspace_windows;
 mod youtube_identity;
 
 use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
@@ -646,6 +647,9 @@ pub fn run() {
         }
     }
 
+    // Desktop builds `main` in setup so the workspace-window door can attach.
+    #[cfg(desktop)]
+    let main_window = workspace_windows::take_main_config(&mut context);
     #[cfg(target_os = "linux")]
     let youtube_windows = youtube_identity::prepare(&mut context);
     let builder = tauri::Builder::default()
@@ -764,7 +768,9 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        .on_page_load(workspace_windows::page_load)
         .on_window_event(|window, event| {
+            workspace_windows::window_event(window, event);
             let label = window.label();
             if label != "main" && !label.starts_with("graph-") {
                 return;
@@ -799,6 +805,8 @@ pub fn run() {
                 _ => {}
             }
         })
+        .manage(workspace_windows::Pending::default())
+        .manage(workspace_windows::CloseRequests::default())
         .manage(graph::StartupGraph::default())
         .manage(deep_links::PendingLinks::default())
         .manage(AppState {
@@ -819,6 +827,10 @@ pub fn run() {
             diag("setup() begin");
             #[cfg(target_os = "linux")]
             youtube_identity::create_windows(app, &youtube_windows);
+            #[cfg(desktop)]
+            if let Some(config) = &main_window {
+                workspace_windows::create_main(app, config);
+            }
             #[cfg(desktop)]
             if let cli::LaunchRequest::Link(url) = cli::launch_request_env() {
                 deep_links::receive_url(app.handle(), url);
@@ -878,6 +890,8 @@ pub fn run() {
             deep_links::take_tine_links,
             deep_links::handoff_tine_link,
             open_graph_window,
+            workspace_windows::workspace_window_prepare,
+            workspace_windows::workspace_window_destroy,
             startup_graph_path,
             capture_target,
             capture_graph_binding,

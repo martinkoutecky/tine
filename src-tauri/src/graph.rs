@@ -540,9 +540,11 @@ pub(crate) async fn open_graph_window(
             };
             #[cfg(target_os = "linux")]
             let builder = crate::youtube_identity::configure(builder, &app);
+            let builder = crate::workspace_windows::attach(builder, &app, &label);
             let built = builder.build();
             match built {
                 Ok(window) => {
+                    crate::workspace_windows::allow_script_windows(&window);
                     #[cfg(target_os = "linux")]
                     crate::linux_window_identity::apply_to_window(&window);
                     #[cfg(any(target_os = "linux", target_os = "windows"))]

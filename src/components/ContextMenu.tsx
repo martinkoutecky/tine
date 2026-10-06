@@ -1,4 +1,5 @@
 import { boardGroupField as groupFieldForToken, formulaReferenceName } from "../sheet/boardColumns";
+import { openRouteInNewWindow, workspaceWindowsSupported } from "../workspaceWindows";
 import { reportUiFailure } from "../uiFailure";
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openBlockProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
@@ -872,6 +873,7 @@ function PageMenu(props: {
     { id: "open", label: "Open", run: () => openPageTarget(target()) },
     { id: "open-sidebar", label: "Open in sidebar", run: () => openPageInSidebar(target()) },
     { id: "open-new-tab", label: "Open in new tab", run: () => openPageTargetInNewTab(target()) },
+    ...(workspaceWindowsSupported() ? [{ id: "open-new-window", label: "Open in new window", run: () => void openRouteInNewWindow({ ...target(), kind: "page" }) }] : []),
     { id: "favorite-toggle", label: fav() ? "Remove from favorites" : "Add to favorites", run: () => toggleFavorite(props.name, props.pageKind) },
     { id: "copy-link", label: "Copy link", run: () => void copyTineLink({ page: props.name }) },
     { id: "copy-page-ref", label: "Copy page ref", run: () => reportCopy(writeClipboardText(`[[${props.name}]]`), "Copied page ref") },

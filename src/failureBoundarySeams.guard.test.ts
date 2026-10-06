@@ -19,7 +19,10 @@ import { describe, expect, it } from "vitest";
 const REQUIRED_SEAMS: Array<{ file: string; component: string }> = [
   { file: "src/App.tsx", component: "PaneContent" },
   { file: "src/App.tsx", component: "Sidebar" },
-  ...["KeyedPdfViewer", "RightSidebar", "QuickSwitcher", "ContextMenu", "DatePicker", "FormulaEditor", "PageProps", "ExportModal", "UnsavedRecovery", "PdfExportDialog", "QueryExportDialog", "Settings", "HelpPopup", "WelcomeLayer", "Lightbox", "AudioOverlay", "CalendarJump", "WorkspaceSwitcher"].map(component => ({ file: "src/App.tsx", component })),
+  ...["KeyedPdfViewer", "RightSidebar", "UnsavedRecovery", "WelcomeLayer", "CalendarJump", "WorkspaceSwitcher"].map(component => ({ file: "src/App.tsx", component })),
+  // OG-MULTIWINDOW: the app overlays render in whichever window the user is in.
+  ...["QuickSwitcher", "ContextMenu", "DatePicker", "FormulaEditor", "PageProps", "ExportModal", "PdfExportDialog", "QueryExportDialog", "Settings", "HelpPopup", "Lightbox", "AudioOverlay"].map(component => ({ file: "src/components/WindowOverlays.tsx", component })),
+  { file: "src/components/WorkspaceWindowShell.tsx", component: "TabBar" },
   { file: "src/components/RightSidebar.tsx", component: "SidebarItemView" },
   { file: "src/components/Macro.tsx", component: "QueryMacroContent" },
   { file: "src/components/QueryLivePreview.tsx", component: "QueryLivePreviewContent" },
@@ -73,12 +76,25 @@ export function unboundedMountSites(file: string, source: string, component: str
   return offending;
 }
 
+/** Mount sites of `component` in `source`, wrapped or not. */
+function mountCount(file: string, source: string, component: string): number {
+  let count = 0;
+  const visit = (node: ts.Node) => {
+    if (tagName(node) === component) count++;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(parse(file, source), visit);
+  return count;
+}
+
 // App's structural shells coordinate layout/drawers; its independently loaded
 // child surfaces must own a boundary. Scan unknown mounts too, so adding a new
 // dialog without adding a name to REQUIRED_SEAMS still fails (I-20).
 const APP_SHELLS = new Set(["Show", "Suspense", "FailureBoundary", "DrawerBackground",
   "MobileDrawerPanel", "MobileDrawerController", "PaneTree", "PaneEdgeHighlights",
-  "PaneSelectHint", "ResizeGrips", "Toasts"]);
+  "PaneSelectHint", "ResizeGrips", "Toasts",
+  // A container: each surface inside it owns a boundary (REQUIRED_SEAMS above).
+  "WindowOverlays"]);
 export function unboundedAppSurfaces(source: string): string[] {
   const tree = parse("App.tsx", source);
   const names = new Set<string>();
@@ -108,6 +124,8 @@ describe("failure-boundary seams (GH #490/#332)", () => {
   for (const seam of REQUIRED_SEAMS) {
     it(`wraps every <${seam.component}> in ${seam.file}`, () => {
       const source = readFileSync(path.join(REPO_ROOT, seam.file), "utf8");
+      expect(mountCount(seam.file, source, seam.component),
+        `<${seam.component}> is no longer mounted in ${seam.file}; point its seam at the file that mounts it now.`).toBeGreaterThan(0);
       const mounts = unboundedMountSites(seam.file, source, seam.component);
       expect(
         mounts,

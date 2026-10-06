@@ -6,7 +6,6 @@ import { Sidebar } from "./components/Sidebar";
 import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { ConflictOverview } from "./components/ConflictOverview";
-import { QuickSwitcher } from "./components/QuickSwitcher";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
 const KeyedPdfViewer = lazy(() =>
@@ -15,18 +14,14 @@ const KeyedPdfViewer = lazy(() =>
 import { TabBar, tabDropHighlightsPane, tabSplitPreviewSideForPane } from "./components/TabBar";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { TopbarOverflowMenu } from "./components/TopbarOverflowMenu";
-import { ContextMenu } from "./components/ContextMenu";
-import { Toasts, Lightbox } from "./components/Toasts";
-import { AudioOverlay } from "./components/AudioOverlay";
+import { WindowOverlays } from "./components/WindowOverlays";
+import { closeAllWorkspaceWindows } from "./workspaceWindows";
 import { CalendarJump } from "./components/CalendarJump";
 import { ConflictBar } from "./components/ConflictBar";
 import { installReloadOnFocus, refreshingFromDisk, subscribeWatcherFreshness, trackGraphChangeApplication } from "./reloadOnFocus";
 import { subscribeAssetChanges } from "./assetRefresh";
 import { initConflictPolicy } from "./conflictPolicy";
 import { RightSidebar } from "./components/RightSidebar";
-import { HelpPopup } from "./components/HelpShortcuts";
-import { DatePicker } from "./components/DatePicker";
-import { FormulaEditor } from "./components/FormulaEditor";
 import { MobileKeyboardToolbar } from "./components/MobileKeyboardToolbar";
 import {
   DrawerBackground,
@@ -34,11 +29,6 @@ import {
   MobileDrawerPanel,
   dismissDrawerAndRestore,
 } from "./components/MobileDrawerShell";
-import { PageProps } from "./components/PageProps";
-import { ExportModal } from "./components/ExportModal";
-import { PdfExportDialog } from "./components/PdfExportDialog";
-import { QueryExportDialog } from "./components/QueryExportDialog";
-import { queryExportRequest } from "./ui";
 import { InPageFind } from "./components/InPageFind";
 import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
@@ -49,7 +39,7 @@ import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
-import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, settingsOpen, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
+import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
@@ -114,7 +104,6 @@ import { initCodeDisplay } from "./codeDisplay";
 import { initContentWidths } from "./contentWidth";
 import { MAIN_WINDOW_ID, isElementNode, isHTMLElementNode, isNodeValue, mainWindow, newResizeObserver, registeredWindows, requestFrame, useWindowId, windowOf } from "./windowRealm";
 
-const Settings = lazy(() => import("./components/Settings").then((module) => ({ default: module.Settings })));
 
 /** The single persistence transaction used by both desktop close and Android
  * root Back.  Callers choose only the final platform action. */
@@ -939,6 +928,8 @@ export function App(): JSX.Element {
         closeInProgress = true;
         if ((await safeClose.prepare()) !== "accepted") { closeInProgress = false; return; }
         allowClose = true;
+        // The session (saved by prepare) lists the open workspace windows; close them now.
+        closeAllWorkspaceWindows("quit");
         // Close only this graph window. The backend exits the process (including
         // Linux WebKit cleanup) only when this is the final graph window.
         try {
@@ -1349,37 +1340,21 @@ export function App(): JSX.Element {
           <ResizeGrips />
         </Show>
       </DrawerBackground>
-      <FailureBoundary region="Search"><QuickSwitcher /></FailureBoundary>
-      <FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>
-      <FailureBoundary region="The context menu"><ContextMenu /></FailureBoundary>
-      <FailureBoundary region="The date picker"><DatePicker /></FailureBoundary>
-      <FailureBoundary region="The formula editor"><FormulaEditor /></FailureBoundary>
-      <DrawerBackground class="drawer-floating-background" blockedBy="any">
-        <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar /></FailureBoundary>
-      </DrawerBackground>
-      <FailureBoundary region="Page properties"><PageProps /></FailureBoundary>
-      <FailureBoundary region="Export"><ExportModal /></FailureBoundary>
-      <FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>
-      <FailureBoundary region="PDF export"><PdfExportDialog /></FailureBoundary>
-      <FailureBoundary region="Query export"><QueryExportDialog request={queryExportRequest} /></FailureBoundary>
-      <Show when={settingsOpen()}>
-        <Suspense>
-          <FailureBoundary region="Settings"><Settings /></FailureBoundary>
-        </Suspense>
-      </Show>
-      <FailureBoundary region="Help"><HelpPopup /></FailureBoundary>
-      {/* First-run onboarding: covers the (empty) app when no graph is configured.
-          Rendered before Toasts so a "couldn't create graph" toast still shows on top. */}
-      <FailureBoundary region="Welcome"><WelcomeLayer
-        mandatory={(globalThis as any).__FORCE_WELCOME__ === true || (firstLoadDone() && !graphMeta())}
-        optionalOpen={welcomeOpen()}
-        onClose={closeWelcome}
-      /></FailureBoundary>
-      <DrawerBackground class="drawer-floating-background" blockedBy="any">
-        <Toasts />
-      </DrawerBackground>
-      <FailureBoundary region="This image"><Lightbox /></FailureBoundary>
-      <FailureBoundary region="This audio"><AudioOverlay /></FailureBoundary>
+      <WindowOverlays
+        windowId={MAIN_WINDOW_ID}
+        deepLink={<FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>}
+        keyboardToolbar={<DrawerBackground class="drawer-floating-background" blockedBy="any">
+          <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar /></FailureBoundary>
+        </DrawerBackground>}
+        recovery={<FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>}
+        // First-run onboarding covers the (empty) app when no graph is configured;
+        // it renders before Toasts so a "couldn't create graph" toast shows on top.
+        welcome={<FailureBoundary region="Welcome"><WelcomeLayer
+          mandatory={(globalThis as any).__FORCE_WELCOME__ === true || (firstLoadDone() && !graphMeta())}
+          optionalOpen={welcomeOpen()}
+          onClose={closeWelcome}
+        /></FailureBoundary>}
+      />
     </div>
   );
 }

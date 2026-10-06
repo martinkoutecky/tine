@@ -142,6 +142,7 @@ const BOUNDED_COLLECTIONS: Record<string, string> = {
   "src/assetCache.ts#cache": "MAX_CACHE_ENTRIES=128 / MAX_CACHE_BYTES=128MiB retained LRU, plus pending mounted reads",
   "src/assetCache.ts#liveEntries": "active asset leases only; last release deletes the evicted entry; clearAssetBlobCache ends graph reuse",
   "src/render/parse.ts#cache": "CACHE_MAX=8000 LRU",
+  "src/workspaceWindows.ts#live": "one entry per open workspace window, at most MAX_WORKSPACE_WINDOWS (openWorkspaceWindow refuses past it); disposal deletes it, and a graph switch closes them all",
   "src/windowRealm.ts#registry": "one entry per open Tine window: main + at most MAX_WORKSPACE_WINDOWS popups; unregister on close",
   "src/windowRealm.ts#pendingFrames": "one entry per open Tine window with a frame pending; deleted when it fires or its window unregisters",
   "src/windowRealm.ts#hooks": "one entry per live onEachWindow installer (app-lifetime installers + the mounted editor); each remover deletes it",

@@ -4,8 +4,8 @@
  * "The user pressed outside" is a different question from Escape/Back, and
  * `dismissOnOutsidePointer` below is its one producer for the whole app
  * (GH #472, master 8198daf34). */
-import { createEffect, onCleanup } from "solid-js";
-import { documentOf, onEachWindow, queryAllWindows } from "./windowRealm";
+import { createEffect, createMemo, createRoot, createSignal, onCleanup } from "solid-js";
+import { MAIN_WINDOW_ID, activeWindowId, documentOf, onEachWindow, queryAllWindows, windowById, windowIds } from "./windowRealm";
 
 export type TransientDismissReason = "escape" | "back" | "explicit";
 export interface TransientLayer {
@@ -20,6 +20,10 @@ export interface TransientLayer {
 type Entry = TransientLayer & { token: number };
 let serial = 0;
 const layers = new Map<string, Entry>();
+/** Moves whenever a layer registers or unregisters, so the overlay window
+ * below re-reads the registry. */
+const [layerVersion, setLayerVersion] = createSignal(0);
+const bumpLayers = () => setLayerVersion((v) => v + 1);
 
 function containsEventTarget(root: HTMLElement, target: EventTarget | null): boolean {
   try {
@@ -35,6 +39,7 @@ export function registerTransientLayer(layer: TransientLayer): () => void {
   // effect is being disposed).  Keep the entry identity in the disposer.
   const entry: Entry = { ...layer, token: ++serial };
   layers.set(layer.id, entry);
+  bumpLayers();
   // A visible owner can be brought in front of another visible owner without a
   // remount (for example two right-sidebar editors).  Bind this at the actual
   // registered root rather than relying on a registry-only test call.
@@ -58,7 +63,10 @@ export function registerTransientLayer(layer: TransientLayer): () => void {
   });
   return () => {
     stopListening();
-    if (layers.get(layer.id) === entry) layers.delete(layer.id);
+    if (layers.get(layer.id) === entry) {
+      layers.delete(layer.id);
+      bumpLayers();
+    }
   };
 }
 
@@ -134,7 +142,10 @@ export function dismissTopTransient(reason: TransientDismissReason): boolean {
   const top = topTransientLayer();
   if (!top) return false;
   const handled = top.dismiss(reason);
-  if (!handled && layers.get(top.id) === top) layers.delete(top.id);
+  if (!handled && layers.get(top.id) === top) {
+    layers.delete(top.id);
+    bumpLayers();
+  }
   if (handled) queueMicrotask(() => restoreAfterTransientDismissal(top));
   return true;
 }
@@ -184,7 +195,32 @@ function restoreAfterTransientDismissal(top: Entry) {
 export function clearTransientLayersForTest() {
   layers.clear();
   serial = 0;
+  bumpLayers();
 }
+
+/** Is an app-level overlay (a layer whose root is not inside a pane, such as
+ * the switcher, a context menu or a dialog) open? Pane-local popovers do not
+ * count. Reactive; O(layers). */
+function appOverlayOpen(): boolean {
+  layerVersion();
+  for (const entry of layers.values()) {
+    const root = entry.root?.();
+    if (root?.isConnected && !root.closest("[data-pane-id]")) return true;
+  }
+  return false;
+}
+
+/** OG-MULTIWINDOW P1: the Tine window that hosts the app-level overlays
+ * (switcher, menus, dialogs, toasts). It follows the window the user is in,
+ * but holds still while an overlay is open there, so an open dialog is never
+ * torn out of the window it was opened in. Falls back to main when its window
+ * closes. Reactive; O(layers) per change. */
+export const overlayWindowId = createRoot(() => createMemo<string>((previous) => {
+  const active = activeWindowId();
+  const ids = windowIds();
+  if (previous && previous !== active && ids.includes(previous) && appOverlayOpen()) return previous;
+  return windowById(active) ? active : MAIN_WINDOW_ID;
+}));
 
 /** Close a popover when a pointer goes down outside it.
  *

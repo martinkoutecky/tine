@@ -1,4 +1,5 @@
 import { adjustSidebarWidth } from "./sidebarSizing";
+import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
 import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
 // bindings; users override them via config.edn `:shortcuts {:cmd "binding"}`
@@ -43,6 +44,7 @@ import {
   adjustPaneSize,
   focusPane,
   focusedPaneId,
+  focusedRouter,
   layoutHasMultiplePanes,
   layoutPaneIds,
   layoutRoot,
@@ -123,6 +125,8 @@ interface CommandDef {
    *  matched by Block.tsx inside the textarea handler. */
   scope: "global" | "editor";
   run?: () => void;
+  /** Offered in the palette only while this holds (e.g. a desktop-only command). */
+  available?: () => boolean;
   /** A SECOND default chord that runs the same command: a platform convention a
    *  user will certainly try and that Logseq does not bind, so the key reaches
    *  the command it obviously means without displacing Logseq's own binding or
@@ -299,6 +303,7 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/split-down", binding: "mod+alt+shift+\\", label: "Split down", scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
   { id: "pane/close", binding: "", label: "Close pane", scope: "global", run: () => void closePane(focusedPaneId()), global: true },
   { id: "pane/toggle-maximize", binding: "mod+alt+m", label: "Toggle maximize active pane", scope: "global", run: () => { togglePaneMaximize(); }, global: true },
+  { id: "window/open-in-new-window", binding: "", label: "Open current page in new window", scope: "global", available: () => workspaceWindowsSupported(), run: () => { if (workspaceWindowsSupported()) openWorkspaceWindow({ snapshot: focusedRouter().duplicateActiveSnapshot() }); }, global: true },
   { id: "sidebar/grow-width", binding: "", label: "Grow left sidebar width", scope: "global", run: () => adjustSidebarWidth("left", true), global: true },
   { id: "sidebar/shrink-width", binding: "", label: "Shrink left sidebar width", scope: "global", run: () => adjustSidebarWidth("left", false), global: true },
   { id: "right-sidebar/grow-width", binding: "", label: "Grow right sidebar width", scope: "global", run: () => adjustSidebarWidth("right", true), global: true },
@@ -719,7 +724,7 @@ export function editorCommandFor(e: KeyboardEvent): string | null {
 export function paletteCommands(
   focusedPluginBlock: OwnedPluginBlockSnapshot | null = pluginFocusedBlock() ?? null
 ): { id: string; label: string; binding: string; run: () => void }[] {
-  const builtIn = COMMANDS.filter((c) => c.scope === "global" && c.run && c.id !== "go/search")
+  const builtIn = COMMANDS.filter((c) => c.scope === "global" && c.run && c.id !== "go/search" && (!c.available || c.available()))
     .map((c) => ({
       id: c.id,
       label: c.label,

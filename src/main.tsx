@@ -1,6 +1,7 @@
 import { render } from "solid-js/web";
 import { App } from "./App";
 import "./session";
+import { installWorkspaceWindowSession } from "./session";
 import { restoreSession } from "./router";
 import { initParser } from "./render/parse";
 import { applyTheme, applyAccent } from "./ui";
@@ -10,6 +11,8 @@ import { backend, isTauri } from "./backend";
 import { installBackendClock } from "./journal";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { installWorkspaceWindows, installWorkspaceWindowShell } from "./workspaceWindows";
+import { renderWorkspaceWindowShell } from "./components/WorkspaceWindowShell";
 // Full upstream Inter variable fonts retain OpenType stylistic sets/character
 // variants. Fontsource's per-script static subsets stripped them (GH #298).
 import "./styles/inter.css";
@@ -49,6 +52,9 @@ installSystemInsetOwner();
 installEditableEmojiPlatform();
 applyTheme();
 applyAccent();
+// Workspace windows (desktop): wired before the session restore reopens them.
+installWorkspaceWindowShell(renderWorkspaceWindowShell);
+if (!isPublishedExport()) installWorkspaceWindows(installWorkspaceWindowSession);
 if (isPublishedExport()) document.documentElement.classList.add("tine-published");
 const communityExtensionsReady = isPublishedExport() ? Promise.resolve() : startCommunityExtensions()
   .then(({ pluginInitialization }) => {

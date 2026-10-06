@@ -1,6 +1,7 @@
 // Opening / switching the active graph from the UI (native folder picker),
 // persisting the choice so it reopens next launch.
 
+import { closeAllWorkspaceWindows } from "./workspaceWindows";
 import { backend, type GraphConfigChange } from "./backend";
 import { captureBinding, bindingCurrent } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
@@ -167,6 +168,10 @@ export async function loadGraphPath(
     // Retry toast, but a full or unwritable app-data dir must not trap the user here.
     try { await flushSession(); }
     catch { console.warn("Session not saved before graph switch"); }
+    // The saved session lists this graph's workspace windows; on a switch they
+    // close here because their panes belong to the graph being left (a
+    // same-graph refresh keeps them, like main's panes).
+    if (switching) closeAllWorkspaceWindows("graph-switch");
   }
   if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
   if (!(await authorizeGraphAccess(path))) return { kind: "aborted" };

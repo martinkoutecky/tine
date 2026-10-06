@@ -28,6 +28,9 @@
 import { createContext, createSignal, useContext } from "solid-js";
 
 export const MAIN_WINDOW_ID = "main";
+/** Workspace windows one graph window may hold open at once (I-22). The
+ * native side enforces the same bound (src-tauri/src/workspace_windows.rs). */
+export const MAX_WORKSPACE_WINDOWS = 8;
 
 const hasDom = typeof window !== "undefined" && typeof document !== "undefined";
 /** Without a DOM at load (node-pool unit tests) the main window resolves through
