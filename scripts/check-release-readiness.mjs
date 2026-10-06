@@ -4,7 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  auditableSourceFingerprint,
   changelogItems,
   normalizeItemText,
   releaseSection,
@@ -88,27 +87,9 @@ if (section && fs.existsSync(impactPath)) {
       }
     }
   }
-  if (version.startsWith("0.") && version.endsWith(".0")) {
-    if (!impact.focusedAudit || typeof impact.focusedAudit.required !== "boolean" || impact.focusedAudit.reason?.length < 10) {
-      problems.push("minor release impact needs a focusedAudit decision and reason");
-    }
-    const auditPath = path.join(root, `docs/releases/v${version}-audit-attestation.json`);
-    if (!fs.existsSync(auditPath)) problems.push(`missing minor audit attestation ${path.basename(auditPath)}`);
-    else {
-      const attestation = JSON.parse(fs.readFileSync(auditPath, "utf8"));
-      if (attestation.version !== version) problems.push("audit attestation version mismatch");
-      if (attestation.sourceFingerprint !== auditableSourceFingerprint(root)) problems.push("audit attestation is stale for the current source tree");
-      const required = new Set(["data-safety-security-privacy", "behavior-compatibility", "performance-resources"]);
-      if (impact.focusedAudit.required) required.add("focused-change-cluster");
-      for (const id of required) {
-        const area = attestation.areas?.find((value) => value.id === id);
-        if (!area) problems.push(`audit attestation missing ${id}`);
-        else if (area.critical !== 0 || area.high !== 0 || !/^[0-9a-f]{64}$/.test(area.reportSha256 ?? "")) {
-          problems.push(`audit area ${id} is not clean or lacks report digest`);
-        }
-      }
-    }
-  }
+  // Audits are not a release gate (2026-10-06): the maintainer requests them by
+  // kind before a major release. `auditableSourceFingerprint` stays available
+  // for an attestation he asks for.
 }
 
 if (problems.length) {

@@ -147,16 +147,9 @@ local one.
    inspect the live post and comment pages directly rather than moving the work
    to a hosted runner. Run `npm run blog:check` locally when the editorial pass
    is complete.
-2. Run three independent audit areas: data safety/security/privacy;
-   behavioral correctness/Logseq compatibility; performance/resource
-   lifecycle.
-3. Add a focused change-cluster audit only when the release introduces or
-   substantially rewrites a subsystem, write path, platform integration, or
-   broad interaction surface. Record the decision either way.
-4. Fix every verified critical/high finding. Medium/low findings may ship and
-   are recorded for patch-cycle fix/defer/WONTFIX triage.
-5. Freeze the tree and run the final required audits on one identical source
-   fingerprint. Any source fix invalidates the sweep.
+2. Audits are not a checklist gate. The maintainer requests audits by kind
+   before a major release; record any that ran, and their findings, in the
+   release receipt.
 
 ## Fail-closed rules
 
