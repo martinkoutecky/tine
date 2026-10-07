@@ -3102,9 +3102,12 @@ impl Graph {
             let parsed = match read {
                 Ok(content) => {
                     if e.kind == PageKind::Page {
-                        e.name = page_identity::effective_page_name_from_text(
+                        match page_identity::effective_page_name_from_text(
                             &e.path, &e.name, &content,
-                        );
+                        ) {
+                            Ok(name) => e.name = name,
+                            Err(error) => name_failure = Some(error),
+                        }
                     }
                     clock.crlf(line_endings::convention(Some(&content)) == "\r\n");
                     let phase = std::time::Instant::now();

@@ -32,7 +32,10 @@ extensions) throughout the graph, except
 hidden and reserved folders such as `assets/`, `publish/`, and `node_modules/`.
 The graph-relative file path remains the write identity. An ordinary page's
 nonempty preamble `title::` (or Org title directive) is its logical name;
-without one, the configured filename decoder supplies the name. Name lookup,
+without one, the configured filename decoder supplies the name. A file whose
+title cannot be read (the title reader panics on malformed imported
+Markdown/Org) keeps its decoded filename name and is listed as unreadable;
+it never stops the initial load or another page's lookup (GH #644). Name lookup,
 the published inventory, references, and direct page reads use that one
 effective name. A file named for a logical page wins over a second file that
 claims the same name through `title::`. Editing a title rekeys the published

@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Opening pages: a single page whose properties were followed by a blank line and then a `#+` directive (for example `title:: X`, a blank line, `#+description: y`, or an Org file-level property drawer before `#+title:`) made every link and tag fail with "Couldn't open this page: task N panicked with message \"byte range starts at N+1 but ends at N\"" and left `[[` completion with no pages. Such pages now open and keep their title, and a page whose title cannot be read no longer stops the rest of the graph from loading (GH #644, REG-OG-GH644).
 - Saving: a page whose unsaved text already matched the file on disk (for example because a sync tool delivered the same text) counted as saved without making that file durable, and its crash-safe copy was dropped; a power cut right after could lose the text. Such a save now flushes the file to disk before counting as saved (REG-OG-G26-EQUAL-BYTES-DURABLE).
 - Crash-safe copies: when the store of crash-safe copies for a graph could not be read, Tine moved it aside (keeping its bytes) and started an empty one without saying so. It now shows a sticky error naming where the old file went (REG-OG-G37-DRAFT-STORE-SET-ASIDE-REPORTED).
 - Desktop: quitting while several windows are open no longer exits before every window has saved. Previously, a window that finished closing first (for example a main window with no graph open) could end the app while another graph window was still writing its last edit (UI-OG-GH625).

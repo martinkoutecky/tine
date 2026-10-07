@@ -278,6 +278,58 @@ mod cold_index_tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    /// REG-OG-GH644 (I-2): a title-reader panic in one page is that page's
+    /// discovery error. It must not stop the initial load (no `[[`
+    /// completion), any other page's lookup before or after Ready, or the
+    /// poisoned-writer cascade that followed a panic under the store lock.
+    #[test]
+    fn a_title_panic_in_one_page_stays_with_that_page() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("pages")).unwrap();
+        fs::create_dir_all(dir.path().join("journals")).unwrap();
+        fs::write(dir.path().join("pages/Links.md"), "- [[2026_10_05]]\n").unwrap();
+        fs::write(dir.path().join("journals/2026_10_05.md"), "- day\n").unwrap();
+        fs::write(
+            dir.path().join("pages/Bad.md"),
+            format!("{TEST_TITLE_PANIC_SENTINEL}\n- body\n"),
+        )
+        .unwrap();
+        // Before Ready: the file-name listing and the live preamble index.
+        let graph = Graph::open(dir.path());
+        assert!(graph
+            .find_entry_named_file_first("Links", PageKind::Page)
+            .is_some());
+        assert!(graph.find_entry("Links", PageKind::Page).is_some());
+        // The store's load, inventory and page-by-name door.
+        let store = crate::Store::open(dir.path(), Default::default())
+            .unwrap()
+            .0;
+        let view = store
+            .whole_graph()
+            .expect("one page's title panic stopped the initial load");
+        assert!(view
+            .inventory(crate::InventoryScope::All)
+            .0
+            .iter()
+            .any(|entry| entry.name == "Links"));
+        assert!(
+            view.unreadable_files().iter().any(|(id, reason)| {
+                id.as_str() == "pages/Bad.md" && reason.contains("parser panicked")
+            }),
+            "the bad page is reported, not hidden: {:?}",
+            view.unreadable_files()
+        );
+        for (name, kind) in [
+            ("Links", PageKind::Page),
+            ("2026_10_05", PageKind::Journal),
+            ("Bad", PageKind::Page),
+        ] {
+            let read = store.page_named(name, kind);
+            assert!(matches!(read, Ok(Some(_))), "{name}: {:?}", read.err());
+        }
+        store.close();
+    }
+
     #[test]
     fn a_late_title_claimant_seen_by_path_replaces_the_cached_winner() {
         let dir = std::env::temp_dir().join(format!("tine-late-title-{}", std::process::id()));
@@ -509,7 +561,50 @@ pub(crate) fn graph_text_relative_eligible(relative: &str, config: &Config) -> b
 /// during name discovery; the title comes from the same answerer the page
 /// model agrees with. A full parse is still done by the cache builder and
 /// page reader.
+/// A title-reader panic in one file is that file's discovery error, never the
+/// loader's or a lookup's (I-2; in-scope threat: malformed imported
+/// Markdown/Org). Uncontained, one page whose preamble panicked the region
+/// reader stopped the initial load and every later page lookup, so no link,
+/// tag or `[[` completion worked (GH #644). The error is `InvalidData`, the
+/// kind of a name that cannot be read: `unreadable_page_could_own` then
+/// answers from the file's bytes. Not a refusal: the file keeps its decoded
+/// file-name name and its page still opens through `Store::page`'s own
+/// parse isolation.
+fn contain_title_panic<T>(read: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)).unwrap_or_else(|payload| {
+        let detail = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("unknown panic payload");
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("page title could not be read: parser panicked: {detail}"),
+        ))
+    })
+}
+
+#[cfg(test)]
+const TEST_TITLE_PANIC_SENTINEL: &str = "__TINE_TEST_TITLE_PANIC__";
+
+/// The preamble title answer both name readers share.
+fn preamble_title(preamble: &str, format: Format) -> Option<String> {
+    #[cfg(test)]
+    if preamble.contains(TEST_TITLE_PANIC_SENTINEL) {
+        panic!("deterministic test sentinel for a page title panic");
+    }
+    tine_core::model::page_title_from_preamble(preamble, format)
+}
+
 pub(super) fn effective_page_name(
+    path: &Path,
+    stem: &str,
+    name_fmt: FileNameFormat,
+) -> io::Result<String> {
+    contain_title_panic(|| read_effective_page_name(path, stem, name_fmt))
+}
+
+fn read_effective_page_name(
     path: &Path,
     stem: &str,
     name_fmt: FileNameFormat,
@@ -539,7 +634,7 @@ pub(super) fn effective_page_name(
     let title = loop {
         line.clear();
         if reader.read_line(&mut line)? == 0 {
-            break tine_core::model::page_title_from_preamble(&preamble, format);
+            break preamble_title(&preamble, format);
         }
         preamble.push_str(&line);
         if preamble.len() as u64 > PARSE_INPUT_MAX_BYTES {
@@ -563,7 +658,7 @@ pub(super) fn effective_page_name(
                         },
                     ));
                 }
-                break tine_core::model::page_title_from_preamble(&preamble, format);
+                break preamble_title(&preamble, format);
             }
         }
     };
@@ -579,11 +674,7 @@ impl Graph {
         text: Option<&str>,
     ) -> Option<String> {
         let name = match text {
-            Some(text) => Ok(effective_page_name_from_text(
-                path,
-                &decode_page_name(stem, fmt),
-                text,
-            )),
+            Some(text) => effective_page_name_from_text(path, &decode_page_name(stem, fmt), text),
             None => effective_page_name(path, stem, fmt),
         };
         match name {
@@ -802,10 +893,19 @@ pub(crate) type LaunchListing = (
 
 /// An ordinary page's effective name from its whole text: the `title::`
 /// property when the preamble has one, else its decoded file stem. The same
-/// answer [`effective_page_name`] reads from the preamble alone.
-pub(crate) fn effective_page_name_from_text(path: &Path, stem_name: &str, content: &str) -> String {
-    tine_core::model::page_title_from_preamble(content, Format::from_path(path))
-        .unwrap_or_else(|| stem_name.to_owned())
+/// answer [`effective_page_name`] reads from the preamble alone, with the same
+/// panic containment.
+pub(crate) fn effective_page_name_from_text(
+    path: &Path,
+    stem_name: &str,
+    content: &str,
+) -> io::Result<String> {
+    contain_title_panic(|| {
+        Ok(
+            preamble_title(content, Format::from_path(path))
+                .unwrap_or_else(|| stem_name.to_owned()),
+        )
+    })
 }
 
 /// [`walk_graph_page_files`] over every watch-relevant file, saying whether
