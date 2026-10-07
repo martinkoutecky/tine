@@ -1481,6 +1481,10 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     },
     async onAssetChanged(): Promise<() => void> { return () => {}; },
     async onGraphConfigChanged(): Promise<() => void> { return () => {}; },
+    async onCustomCssChanged(): Promise<() => void> { return () => {}; },
+    async editCustomCss(): Promise<void> {
+      // no OS editor in the browser mock
+    },
     async getBackupKeep(): Promise<number> {
       return 12;
     },

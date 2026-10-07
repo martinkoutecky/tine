@@ -58,29 +58,6 @@ import { isPublishedExport, publishedBackend } from "./publishedBackend";
 
 import { nativeTineLinks, type NativeTineLinks } from "./nativeTineLinks";
 
-/** Typed result of `trashAsset`: `referenced` = another reference remains, file kept. */
-export type TrashAssetOutcome = "trashed" | "referenced";
-
-export interface SavePageEntry {
-  id: string;
-  page: PageDto;
-  baseRev: string | null;
-  force: boolean;
-  kinds: EditKinds;
-}
-
-/** Native publication delta, shared by save acknowledgements and watcher events.
- * Values are final counts for only the changed targets; zero clears a badge. */
-export interface GraphAnswersChange {
-  rev: string;
-  inventoryChanged: boolean;
-  blockRefCounts: Record<string, number>;
-}
-
-export type SavePagesResult =
-  | { ok: string[]; changes?: GraphAnswersChange | null }
-  | { failed: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[]; unreadableOwner?: string; operation?: string; osError?: number } };
-
 /** Adapt a one-page intent to the shared request while preserving its refusal.
  * Calls observed with its native answer delta before returning the revision;
  * the observer owns graph-binding validation. Cost follows save plus targets. */
@@ -596,6 +573,14 @@ export interface Backend {
   /** Subscribe to effective config.edn changes for this window. The event
    * carries a fresh graph meta snapshot after the store reloaded the file. */
   onGraphConfigChanged(cb: (change: GraphConfigChange) => void): Promise<() => void>;
+  /** An outside edit of `logseq/custom.css` (editor, Syncthing, another
+   *  window): re-read and re-apply it without reopening the graph. Own writes
+   *  never announce. */
+  onCustomCssChanged(cb: (change: CustomCssChange) => void): Promise<() => void>;
+  /** Settings › Theme "Edit custom.css" (desktop): create `logseq/custom.css`
+   *  through the store's audited create when missing, never rewriting an
+   *  existing one, then open it in the system editor. */
+  editCustomCss(): Promise<void>;
   /** How many launch snapshots to keep. */
   getBackupKeep(): Promise<number>;
   setBackupKeep(keep: number): Promise<void>;
@@ -707,8 +692,8 @@ export interface Backend {
   watcherLatencyRecent(): Promise<unknown[]>;
 }
 
-export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, GraphSourceFile, GraphSources, GraphFolderPickResult, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
-import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange } from "./backendTypes";
+export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, SavePageEntry, GraphAnswersChange, SavePagesResult, GraphSourceFile, GraphSources, GraphFolderPickResult, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
+import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, SavePageEntry, GraphAnswersChange, SavePagesResult } from "./backendTypes";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -1361,6 +1346,8 @@ class TauriBackend implements Backend {
   rescanGraphNow(rebuild?: boolean) { return this.call<number>("rescan_graph_now", rebuild ? { rebuild: true } : undefined); }
   onAssetChanged(cb: (batch: AssetChangedBatch) => void) { return this.on("asset-changed", cb); }
   onGraphConfigChanged(cb: (change: GraphConfigChange) => void) { return this.on("graph-config-changed", cb); }
+  onCustomCssChanged(cb: (change: CustomCssChange) => void) { return this.on("graph-custom-css-changed", cb); }
+  editCustomCss() { return this.call<void>("edit_custom_css"); }
   getBackupKeep() {
     return this.call<number>("get_backup_keep");
   }

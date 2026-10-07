@@ -61,7 +61,7 @@ const REALM_ALLOW: Record<string, string> = {
     "Writes the main window's <head> stylesheet, the single source that src/workspaceWindows.ts mirrors into every workspace window.",
   "src/themeGallery.ts document.getElementById":
     "Writes the main window's <head> stylesheet, the single source that src/workspaceWindows.ts mirrors into every workspace window.",
-  "src/graph.ts document.getElementById":
+  "src/customCss.ts document.getElementById":
     "Writes the main window's <head> stylesheet, the single source that src/workspaceWindows.ts mirrors into every workspace window.",
   "src/App.tsx mainWindow.document.addEventListener":
     "installMobileExternalLinkHandler returns inert on desktop; on iOS/Android main is the only window.",

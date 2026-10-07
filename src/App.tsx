@@ -33,7 +33,7 @@ import { InPageFind } from "./components/InPageFind";
 import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
-import { applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
+import { applyCustomCssChange, applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
 import { installPageIndex } from "./pageIndex";
 import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
@@ -876,6 +876,15 @@ export function App(): JSX.Element {
     let alive = true;
     const owner = ownedWhen(() => alive);
     void readOwnedResource(owner, backend().onGraphConfigChanged(applyGraphConfigChange), (u) => u())
+      .then((result) => { if (result.kind === "current") unsub = result.value; });
+    onCleanup(() => { alive = false; unsub(); });
+  });
+  // `logseq/custom.css` edited outside Tine: re-apply it without reopening.
+  onMount(() => {
+    let unsub = () => {};
+    let alive = true;
+    const owner = ownedWhen(() => alive);
+    void readOwnedResource(owner, backend().onCustomCssChanged(applyCustomCssChange), (u) => u())
       .then((result) => { if (result.kind === "current") unsub = result.value; });
     onCleanup(() => { alive = false; unsub(); });
   });

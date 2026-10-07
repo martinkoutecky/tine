@@ -1,7 +1,8 @@
 /** Plain data shapes carried by `Backend` (diagnostics, backups, graph change
  *  events). Split from `backend.ts` along the type/implementation seam; import
  *  them from `./backend`, which re-exports every one. */
-import type { GraphMeta } from "./types";
+import type { GraphMeta, PageDto } from "./types";
+import type { EditKinds } from "./editKind";
 
 export interface DebugInfo {
   enabled: boolean;
@@ -165,4 +166,33 @@ export interface GraphAccessInspection {
   graph_root: string;
   external_assets_path: string | null;
   approved: boolean;
+}
+
+/** Typed result of `trashAsset`: `referenced` = another reference remains, file kept. */
+export type TrashAssetOutcome = "trashed" | "referenced";
+
+export interface SavePageEntry {
+  id: string;
+  page: PageDto;
+  baseRev: string | null;
+  force: boolean;
+  kinds: EditKinds;
+}
+
+/** Native publication delta, shared by save acknowledgements and watcher events.
+ * Values are final counts for only the changed targets; zero clears a badge. */
+export interface GraphAnswersChange {
+  rev: string;
+  inventoryChanged: boolean;
+  blockRefCounts: Record<string, number>;
+}
+
+export type SavePagesResult =
+  | { ok: string[]; changes?: GraphAnswersChange | null }
+  | { failed: { index: number; family: string; diskRev?: string | null; undoFailed: string[]; publicationErrors?: string[]; unreadableOwner?: string; operation?: string; osError?: number } };
+
+/** `graph-custom-css-changed`: an outside actor created, replaced or deleted
+ *  `logseq/custom.css`. Carries only the binding; the window re-reads it. */
+export interface CustomCssChange {
+  binding_generation?: number;
 }

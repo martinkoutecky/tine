@@ -2,7 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { closeAllWorkspaceWindows } from "./workspaceWindows";
-import { backend, type GraphConfigChange } from "./backend";
+import { backend, type CustomCssChange, type GraphConfigChange } from "./backend";
 import { captureBinding, bindingCurrent } from "./binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "./owned";
 import { setGraphMeta, bumpGraphEpoch, bumpDataRev, graphMeta, graphEpoch } from "./graphSession";
@@ -19,8 +19,7 @@ import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
 import { journalTitle, localDayKey, setJournalTitleFormat, appNow } from "./journal";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { resetPageIndex } from "./pageIndex";
-import { CUSTOM_CSS_STYLE_ID, ensureLsShimStyle } from "./lsShim";
-import { ensureThemeStyle } from "./themeGallery";
+import { applyCustomCss } from "./customCss";
 import { isMobile, platformKind } from "./platform";
 import type { BlockDto, GraphMeta } from "./types";
 import { maybeShowGuideAnnouncement } from "./guide";
@@ -52,6 +51,14 @@ export function applyGraphConfigChange(change: GraphConfigChange): void {
   const meta = change.meta;
   applyConfigDerivedState(meta, previous);
   bumpDataRev();
+}
+
+/** `logseq/custom.css` changed on disk (an editor, Syncthing, another window):
+ *  re-read and re-apply it, no graph reopen. An event from an older graph
+ *  binding is ignored; the read itself is graph-owned. */
+export function applyCustomCssChange(change: CustomCssChange): void {
+  if (change.binding_generation !== undefined && captureBinding().backendGeneration !== change.binding_generation) return;
+  void injectCustomCss();
 }
 
 /** Publish one config snapshot and its derived state (I-12). The journal
@@ -453,7 +460,7 @@ export async function ensureJournalTemplateForDay(
 }
 
 /** Load the graph's logseq/custom.css into a <style> tag (user theming). */
-async function injectCustomCss(): Promise<void> {
+export async function injectCustomCss(): Promise<void> {
   const owner = graphOwner();
   let css = "";
   try {
@@ -464,15 +471,7 @@ async function injectCustomCss(): Promise<void> {
     if (owner()) reportUiFailure("custom-css", error);
   }
   if (!owner()) return;
-  ensureLsShimStyle();
-  ensureThemeStyle();
-  let el = document.getElementById(CUSTOM_CSS_STYLE_ID);
-  if (!el) {
-    el = document.createElement("style");
-    el.id = CUSTOM_CSS_STYLE_ID;
-  }
-  el.textContent = css;
-  document.head.appendChild(el);
+  applyCustomCss(css);
 }
 
 /** Open a graph chosen with the desktop folder picker or Android graph picker.
