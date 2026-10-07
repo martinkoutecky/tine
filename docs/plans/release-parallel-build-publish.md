@@ -20,7 +20,7 @@ any other platform. The bundle is a manual-update download and never appears in
 
 `src-tauri/app-identity.json` selects the product. `releaseLayout(version)`
 derives all 26 platform asset names and the 12 updater entries from it; `latest.json`
-is the 23rd asset. Stable filenames stay unchanged. Product whitespace becomes
+is the 27th asset. Stable filenames stay unchanged. Product whitespace becomes
 `-` in published names; Tauri source filenames retain the original product name.
 Staging translates source names once and updates zsync Filename/URL headers while
 preserving checksum payload and signed bundle bytes. `release-workflow-inputs.mjs`

@@ -11,3 +11,8 @@ export function deriveFlatpak(options: {
   date: string;
   version: string;
 }): DerivedFlatpak;
+export function resolveReleaseDate(options?: {
+  explicit?: string;
+  env?: Record<string, string | undefined>;
+  gitCommitDate?: () => string | null;
+}): string;

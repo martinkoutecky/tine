@@ -283,12 +283,24 @@ pub(crate) async fn copy_image_to_clipboard(
 /// (DMABUF requested but EGL init failed) does NOT show up here — that's detected
 /// in the webview from the WebGL renderer string (llvmpipe/swrast ⇒ software).
 /// `appimage` lets the message steer AppImage users to the deb/rpm, which use the
-/// host graphics stack instead of the bundled one. Env reads are cross-platform
-/// (these vars are simply absent on macOS/Windows ⇒ both false).
+/// host graphics stack instead of the bundled one. `flatpak` is the packaging
+/// answer for the updater: a Flatpak sandbox's `/app` is read-only, so the
+/// in-place update install could only fail and the updater offers a download
+/// instead (see `in_flatpak`). Env reads are cross-platform (these vars are
+/// simply absent on macOS/Windows ⇒ all false).
 #[derive(serde::Serialize)]
 pub(crate) struct GpuEnv {
     software_forced: bool,
     appimage: bool,
+    flatpak: bool,
+}
+
+/// Whether the process runs inside a Flatpak sandbox: Flatpak sets `FLATPAK_ID`
+/// and mounts `/.flatpak-info` in every sandbox, and either one is enough. The
+/// decision is separated from the environment it reads so a test can drive both
+/// signals.
+pub(crate) fn in_flatpak(flatpak_id_set: bool, flatpak_info_present: bool) -> bool {
+    flatpak_id_set || flatpak_info_present
 }
 
 #[tauri::command]
@@ -299,6 +311,10 @@ pub(crate) fn gpu_env() -> GpuEnv {
             || set("WEBKIT_DISABLE_COMPOSITING_MODE")
             || std::env::var("TINE_GPU").as_deref() == Ok("0"),
         appimage: set("APPIMAGE"),
+        flatpak: in_flatpak(
+            set("FLATPAK_ID"),
+            std::path::Path::new("/.flatpak-info").exists(),
+        ),
     }
 }
 
@@ -834,6 +850,17 @@ fn parse_comm_ppid(stat: &str) -> Option<(&str, u32)> {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
+    use super::in_flatpak;
+
+    /// A Flatpak must be told apart from a native build by either sandbox
+    /// signal, so the updater never attempts an in-place install under `/app`.
+    #[test]
+    fn a_flatpak_sandbox_is_recognized_by_either_signal() {
+        assert!(in_flatpak(true, true));
+        assert!(in_flatpak(true, false));
+        assert!(in_flatpak(false, true));
+        assert!(!in_flatpak(false, false));
+    }
     use super::parse_comm_ppid;
 
     #[test]

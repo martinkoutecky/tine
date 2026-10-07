@@ -72,8 +72,8 @@ jobs:
           arch: ${{ matrix.arch }}
           # The explicit upload step below names the artifact; skip the action's own.
           upload-artifact: false
-          # Validation of appstream metainfo + .desktop is on by default in the
-          # action; leave it on so we catch Flathub lint failures here.
+          # The action only composes the appstream data; it does not lint it. The
+          # derived metainfo/.desktop are linted by flatpak-metadata.yml.
 
       - name: Upload .flatpak bundle
         if: always()

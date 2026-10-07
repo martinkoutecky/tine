@@ -8,7 +8,7 @@ const { getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExte
   setAppBoolMock: vi.fn(async () => {}),
   getVersionMock: vi.fn(async () => "0.5.3"),
   copyVersionMock: vi.fn(async (_text: string) => {}),
-  checkNowMock: vi.fn(async (): Promise<{ kind: string; version?: string; current?: string }> => ({ kind: "current", version: "0.5.3" })),
+  checkNowMock: vi.fn(async (): Promise<{ kind: string; version?: string; current?: string; manual?: boolean }> => ({ kind: "current", version: "0.5.3" })),
   isTauriMock: vi.fn(() => false),
   platformKindMock: vi.fn(async (): Promise<"desktop" | "android" | "ios"> => "desktop"),
   openExternalMock: vi.fn(async () => {}),
@@ -148,6 +148,25 @@ describe("AboutTab", () => {
       await flush();
       expect(host.textContent).toContain(`${IDENTITY.productName} 0.6.0 is available — choose Install update in the notification.`);
       expect(host.textContent).not.toContain("downloading");
+    } finally {
+      dispose();
+      host.remove();
+    }
+  });
+
+  it("points a manual-only (Flatpak) update at the Download manually action, not Install update", async () => {
+    isTauriMock.mockReturnValue(true);
+    checkNowMock.mockResolvedValueOnce({ kind: "available", version: "0.6.0", current: "0.5.3", manual: true });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <AboutTab />, host);
+    try {
+      await flush();
+      const button = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Check for updates"));
+      button?.click();
+      await flush();
+      expect(host.textContent).toContain("is available — choose Download manually in the notification.");
+      expect(host.textContent).not.toContain("choose Install update");
     } finally {
       dispose();
       host.remove();

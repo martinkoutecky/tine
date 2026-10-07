@@ -77,7 +77,7 @@ export function AboutTab(): JSX.Element {
     const r = result.value;
     setChecking(false);
     if (r.kind === "current") setStatus(`You're on the latest version (${r.version}).`);
-    else if (r.kind === "available") setStatus(`${APP_PRODUCT_NAME} ${r.version} is available — choose Install update in the notification.`);
+    else if (r.kind === "available") setStatus(`${APP_PRODUCT_NAME} ${r.version} is available — choose ${r.manual ? "Download manually" : "Install update"} in the notification.`);
     else setStatus("Couldn't check right now — see the releases page.");
   };
 

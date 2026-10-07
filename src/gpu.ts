@@ -55,7 +55,7 @@ export async function warnIfSoftwareRendering(): Promise<void> {
     // message (was it forced on purpose? are we in an AppImage?).
     const env = await backend()
       .gpuEnv()
-      .catch(() => ({ software_forced: false, appimage: false }));
+      .catch(() => ({ software_forced: false, appimage: false, flatpak: false }));
 
     if (env.software_forced) {
       // The user (or our TINE_GPU=0 escape hatch) turned GPU compositing off —

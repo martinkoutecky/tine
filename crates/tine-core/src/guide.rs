@@ -605,6 +605,7 @@ mod rename_guide_tests {
             "`flatpak list` shows its application id for `flatpak run`",
             "installs next to a stable Tine Flatpak",
             "**Updates are manual**",
+            "graph folders **inside your home folder only**",
             "the Flatpak bundle carries its own",
         ] {
             assert!(

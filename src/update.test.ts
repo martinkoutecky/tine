@@ -18,6 +18,7 @@ async function loadUpdate(opts: {
   platformReject?: boolean;
   version?: string;
   architecture?: string;
+  packaging?: string;
   updaterReject?: Error;
   updaterUpdate?: object;
 }) {
@@ -34,6 +35,7 @@ async function loadUpdate(opts: {
   const openSettingsMock = vi.fn();
   const diagnosticFrontendEventMock = vi.fn(async () => {});
   const appArchitectureMock = vi.fn(async () => opts.architecture ?? "x86_64");
+  const gpuEnvMock = vi.fn(async () => ({ software_forced: false, appimage: false, flatpak: opts.packaging === "flatpak" }));
   const getVersionMock = vi.fn(async () => opts.version ?? "0.5.3");
   const updaterCheckMock = opts.updaterReject
     ? vi.fn<() => Promise<unknown>>(async () => { throw opts.updaterReject; })
@@ -49,6 +51,7 @@ async function loadUpdate(opts: {
       setAppBool: setAppBoolMock,
       openExternal: openExternalMock,
       appArchitecture: appArchitectureMock,
+      gpuEnv: gpuEnvMock,
       diagnosticFrontendEvent: diagnosticFrontendEventMock,
     }),
   }));
@@ -399,6 +402,45 @@ describe("update checks", () => {
 
     offer?.[2]?.action?.run();
     expect(openExternalMock).toHaveBeenCalledOnce();
+  });
+
+  it("a Flatpak never attempts the in-place install: it offers a manual download and no error (Beta Flatpak review B1)", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const { update, pushToastMock, updaterCheckMock, openExternalMock, diagnosticFrontendEventMock } =
+      await loadUpdate({ platform: "desktop", packaging: "flatpak", version: "0.5.3" });
+
+    await expect(update.checkForUpdateNow()).resolves.toMatchObject({ kind: "available", manual: true });
+    const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0-beta.1 is available"));
+    expect(offer?.[0]).toContain("Flatpak");
+    expect(offer?.[2]).toMatchObject({ sticky: true, action: { label: "Download manually" } });
+    expect(toastCalls(pushToastMock).some(([, , options]) => options?.action?.label === "Install update")).toBe(false);
+
+    offer?.[2]?.action?.run();
+    expect(openExternalMock).toHaveBeenCalledOnce();
+    // Only the version check ran: nothing downloaded, installed or relaunched, nothing failed.
+    expect(updaterCheckMock).toHaveBeenCalledOnce();
+    expect(toastCalls(pushToastMock).some(([, kind]) => kind === "error")).toBe(false);
+    expect(diagnosticFrontendEventMock).not.toHaveBeenCalledWith("updater_failure", expect.anything());
+  });
+
+  it("a stale Install update action on a Flatpak opens the releases page instead of installing", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const { update, updaterCheckMock, openExternalMock, relaunchMock } =
+      await loadUpdate({ platform: "desktop", packaging: "flatpak", version: "0.5.3" });
+    // The exported singleton offer path decides on the probe, so reaching the
+    // installer requires bypassing it; the installer entry itself must also refuse.
+    await update.installUpdateForTest();
+    expect(updaterCheckMock).not.toHaveBeenCalled();
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(openExternalMock).toHaveBeenCalledOnce();
+  });
+
+  it("a native build still offers Install update (the Flatpak branch is not the default)", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const { update } = await loadUpdate({ platform: "desktop", packaging: "native", version: "0.5.3" });
+    const status = await update.checkForUpdateNow();
+    expect(status).toMatchObject({ kind: "available" });
+    expect(status).not.toHaveProperty("manual");
   });
 
   it("records a fixed stage/cause for a failed install and points the user at Diagnostics (GH #343)", async () => {

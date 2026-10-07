@@ -188,6 +188,23 @@ pub(crate) async fn tray_apply(app: tauri::AppHandle) -> Result<TrayStatus, Stri
     }
 }
 
+/// Where the Linux tray icon file must be written for the desktop's
+/// StatusNotifier host to read it. tray-icon writes the PNG to disk and hands
+/// the PATH to libayatana-appindicator, so the host (outside any sandbox) opens
+/// that path itself. Inside a Flatpak, `$XDG_RUNTIME_DIR` is the sandbox's own
+/// directory and the host cannot read it; the one subdirectory shared with the
+/// host at the same path is `$XDG_RUNTIME_DIR/app/$FLATPAK_ID`. `None` outside
+/// a Flatpak keeps tray-icon's default (`$XDG_RUNTIME_DIR/tray-icon`).
+#[cfg(target_os = "linux")]
+pub(crate) fn flatpak_icon_dir(
+    flatpak_id: Option<&str>,
+    runtime_dir: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    let id = flatpak_id.filter(|id| !id.is_empty())?;
+    let runtime = runtime_dir.filter(|dir| dir.is_absolute())?;
+    Some(runtime.join("app").join(id))
+}
+
 #[cfg(desktop)]
 pub(crate) use desktop::{
     init, main_start_hidden_pending, reveal_main_if_hidden, window_event, TrayState,
@@ -554,7 +571,7 @@ mod desktop {
             .unwrap_or_else(|| "Tine".to_string());
         // Linux: `linux_host::check` has already proved the AppIndicator
         // library loads, which is what would otherwise make the backend panic.
-        TrayIconBuilder::with_id(TRAY_ID)
+        let builder = TrayIconBuilder::with_id(TRAY_ID)
             .icon(icon)
             .tooltip(title)
             .menu(&menu)
@@ -569,9 +586,19 @@ mod desktop {
                 {
                     left_click(tray.app_handle());
                 }
-            })
-            .build(app)
-            .map_err(|error| error.to_string())?;
+            });
+        // Inside a Flatpak the icon file must live where the host can read it.
+        #[cfg(target_os = "linux")]
+        let builder = match super::flatpak_icon_dir(
+            std::env::var("FLATPAK_ID").ok().as_deref(),
+            std::env::var_os("XDG_RUNTIME_DIR")
+                .map(std::path::PathBuf::from)
+                .as_deref(),
+        ) {
+            Some(dir) => builder.temp_dir_path(dir),
+            None => builder,
+        };
+        builder.build(app).map_err(|error| error.to_string())?;
         #[cfg(target_os = "linux")]
         linux_host::watch(app);
         Ok(())
@@ -936,6 +963,38 @@ mod tests {
                 "tray code must not call {forbidden}: hide the window only"
             );
         }
+    }
+
+    /// The tray icon is a file the HOST reads by path, so inside a Flatpak it
+    /// must go where the sandbox shares a directory with the host.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_flatpak_tray_icon_is_written_where_the_host_can_read_it() {
+        use std::path::Path;
+        let run = Path::new("/run/user/1000");
+        assert_eq!(
+            flatpak_icon_dir(Some("org.example.App"), Some(run)),
+            Some(Path::new("/run/user/1000/app/org.example.App").to_path_buf())
+        );
+        // Not a Flatpak: tray-icon's own default stays.
+        assert_eq!(flatpak_icon_dir(None, Some(run)), None);
+        assert_eq!(flatpak_icon_dir(Some(""), Some(run)), None);
+        // No usable runtime dir: no guess.
+        assert_eq!(flatpak_icon_dir(Some("org.example.App"), None), None);
+        assert_eq!(
+            flatpak_icon_dir(Some("org.example.App"), Some(Path::new("relative"))),
+            None
+        );
+    }
+
+    /// The builder must actually use the decision (the helper alone proves nothing).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_linux_tray_builder_uses_the_flatpak_icon_dir() {
+        let source = include_str!("tray.rs");
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        assert!(code.contains("super::flatpak_icon_dir("));
+        assert!(code.contains(".temp_dir_path(dir)"));
     }
 
     /// A tray that disappears at runtime must not strand a hidden window: the

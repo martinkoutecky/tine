@@ -19,9 +19,11 @@
 //   flatpak/<id>.ci.yml                      manifest that builds THIS checkout
 //   flatpak/derived/<id>.desktop             (non-released identities only)
 //   flatpak/derived/<id>.metainfo.xml        (non-released identities only)
+// The metainfo release date is the commit date (resolveReleaseDate).
 // and, with $GITHUB_OUTPUT set, `manifest`, `app-id`, `bundle`.
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { ROOT, readSwitch } from "./lib/app-identity.mjs";
 
@@ -99,6 +101,40 @@ export function deriveFlatpak({ root = ROOT, identity, date, version }) {
   };
 }
 
+/**
+ * The metainfo release date: the SOURCE commit's date, never the build date, so
+ * rebuilding one SHA derives the same files. `--date`, then SOURCE_DATE_EPOCH
+ * (the reproducible-builds convention), then the HEAD commit time. Throws when
+ * none is available rather than guessing "today".
+ */
+export function resolveReleaseDate({ explicit, env = process.env, gitCommitDate = () => commitDate() } = {}) {
+  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  if (explicit) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(explicit)) throw new Error(`--date must be YYYY-MM-DD, got "${explicit}"`);
+    return explicit;
+  }
+  const epoch = env.SOURCE_DATE_EPOCH;
+  if (epoch !== undefined && epoch !== "") {
+    if (!/^\d+$/.test(epoch)) throw new Error(`SOURCE_DATE_EPOCH must be whole seconds, got "${epoch}"`);
+    return day(Number(epoch) * 1000);
+  }
+  const committed = gitCommitDate();
+  if (!committed) {
+    throw new Error("no release date: pass --date, set SOURCE_DATE_EPOCH, or run inside the git checkout");
+  }
+  return committed;
+}
+
+function commitDate() {
+  try {
+    // %cs is the committer date as YYYY-MM-DD in the committer's timezone.
+    const out = execFileSync("git", ["show", "-s", "--format=%cs", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+    return /^\d{4}-\d{2}-\d{2}$/.test(out) ? out : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i += 1) {
@@ -114,7 +150,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const args = parseArgs(process.argv.slice(2));
     if (!args.identity) throw new Error("usage: derive-flatpak-identity.mjs --identity <release|experiment> [--date YYYY-MM-DD]");
     const conf = JSON.parse(fs.readFileSync(path.join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
-    const date = args.date ?? new Date().toISOString().slice(0, 10);
+    const date = resolveReleaseDate({ explicit: args.date });
     const derived = deriveFlatpak({ identity: args.identity, date, version: conf.version });
     for (const [file, text] of Object.entries(derived.files)) {
       fs.mkdirSync(path.dirname(path.join(ROOT, file)), { recursive: true });

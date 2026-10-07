@@ -659,7 +659,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return [];
     },
     async gpuEnv() {
-      return { software_forced: false, appimage: false };
+      return { software_forced: false, appimage: false, flatpak: false };
     },
     // A published export has no backend clock; the browser's is the authority.
     async localClock() {

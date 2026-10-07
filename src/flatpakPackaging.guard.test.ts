@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { IDENTITIES, SHIP } from "../scripts/lib/app-identity.mjs";
-import { deriveFlatpak } from "../scripts/derive-flatpak-identity.mjs";
+import { deriveFlatpak, resolveReleaseDate } from "../scripts/derive-flatpak-identity.mjs";
 
 // The Flatpak recipe has ONE source of truth (flatpak/<released id>.yml, .desktop,
 // .metainfo.xml); every other identity is derived from it at build time by
@@ -165,5 +165,32 @@ describe("Flatpak tray library module", () => {
       "libayatana-indicator:git",
       "intltool:archive",
     ]));
+  });
+});
+
+describe("Flatpak metainfo release date", () => {
+  it("is the source commit's date, never the build date, so one SHA derives the same files", () => {
+    // 2026-10-06T23:59:59Z: a build run the next day must still say 2026-10-06.
+    const epoch = String(Date.UTC(2026, 9, 6, 23, 59, 59) / 1000);
+    expect(resolveReleaseDate({ env: { SOURCE_DATE_EPOCH: epoch }, gitCommitDate: () => "1999-01-01" })).toBe("2026-10-06");
+    expect(resolveReleaseDate({ env: {}, gitCommitDate: () => "2026-10-05" })).toBe("2026-10-05");
+    expect(resolveReleaseDate({ explicit: "2026-01-02", env: { SOURCE_DATE_EPOCH: epoch } })).toBe("2026-01-02");
+  });
+
+  it("refuses to guess today's date when no commit date exists, and rejects malformed input", () => {
+    expect(() => resolveReleaseDate({ env: {}, gitCommitDate: () => null })).toThrow(/no release date/);
+    expect(() => resolveReleaseDate({ explicit: "yesterday" })).toThrow(/YYYY-MM-DD/);
+    expect(() => resolveReleaseDate({ env: { SOURCE_DATE_EPOCH: "soon" } })).toThrow(/whole seconds/);
+  });
+
+  it("the CLI no longer reads the clock", () => {
+    expect(read("scripts/derive-flatpak-identity.mjs")).not.toMatch(/new Date\(\)/);
+  });
+});
+
+describe("Flatpak filesystem reach (the Guide says home folder only)", () => {
+  it("the manifest grants exactly the home folder, so the Guide's limit is true", () => {
+    const fs_args = read(`flatpak/${RELEASED}.yml`).match(/^\s*- --filesystem=\S+/gm)?.map((l) => l.trim());
+    expect(fs_args).toEqual(["- --filesystem=home"]);
   });
 });

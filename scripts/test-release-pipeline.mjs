@@ -116,6 +116,8 @@ for (const identity of Object.values(IDENTITIES)) {
     `${product}_${version}_x86_64.flatpak`, "the staged bundle is already canonical");
 }
 assert.ok(RELEASE_LANES.includes("flatpak-x64"), "assembly must require the Flatpak lane");
+assert.doesNotMatch(releaseWorkflow, /check-flatpak-/,
+  "release.yml still does not run the manifest-source drift checks (they stay in ci)");
 assert.ok(!Object.keys(layout.updaterPlatforms).some((platform) => /flatpak/i.test(platform)),
   "the updater must not reference the Flatpak");
 assert.match(releaseWorkflow,

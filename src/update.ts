@@ -75,9 +75,23 @@ async function updateMode(): Promise<UpdateMode> {
   } catch {
     return "unavailable";
   }
-  return browserPlatform(typeof navigator !== "undefined" ? navigator.userAgent : "").manualDesktopUpdate
-    ? "manual"
-    : "self";
+  if (browserPlatform(typeof navigator !== "undefined" ? navigator.userAgent : "").manualDesktopUpdate) return "manual";
+  // A Flatpak's /app is read-only: the in-place install can only fail, so it
+  // updates by downloading the new bundle, like macOS.
+  return (await isFlatpak()) ? "manual" : "self";
+}
+
+/** Whether this binary runs inside a Flatpak sandbox (decided in Rust:
+ * `gpu_env().flatpak`). An unanswerable probe counts as "no": a browser/mock
+ * boundary keeps the established offer. */
+async function isFlatpak(): Promise<boolean> {
+  try {
+    const env = await readOwned(ownedWhen(), backend().gpuEnv());
+    return env.kind === "current" && env.value.flatpak === true;
+  } catch (error) {
+    dbg(`update packaging probe failed: ${String(error)}`);
+    return false;
+  }
 }
 
 export type UpdaterFailureStage =
@@ -202,6 +216,16 @@ function offerManualOnly(version: string): number {
   );
 }
 
+/** The Flatpak's offer: a policy, not a failure, so no diagnostic. The bundle
+ * is installed again from the downloaded file. */
+function offerFlatpakManual(version: string): number {
+  return pushToast(
+    `${APP_PRODUCT_NAME} ${version} is available. The Flatpak cannot update itself: download the new .flatpak bundle and install it again with flatpak install --user.`,
+    "info",
+    { sticky: true, action: { label: "Download manually", run: openReleases } },
+  );
+}
+
 /** Open the GitHub releases page in the system browser (the manual fallback). */
 function openReleases(): void {
   void backend().openExternal(RELEASES_PAGE).catch((error) => reportUiFailure("external-link", error));
@@ -219,6 +243,10 @@ let exitGuard: UpdateExitGuard | null = null;
 export function setUpdateExitGuard(guard: UpdateExitGuard | null): void {
   exitGuard = guard;
 }
+
+/** @internal The toast action's body, exported so a test can prove that a
+ * stale "Install update" action cannot install on a manual-only surface. */
+export const installUpdateForTest = (): Promise<void> => applyUpdateOrOpen();
 
 /** The toast's "Install update" action. Win/Linux packaged app → run the Tauri updater
  *  in place and relaunch; everything else (macOS, browser, or any failure) → open
@@ -303,14 +331,20 @@ let offerGeneration = 0;
  * b80c54f3, ca1b48f5). The optional owner must still allow publication after
  * the architecture probe. O(1) plus one architecture probe.
  * @internal Exported for deterministic concurrency coverage. */
-export async function offerUpdate(version: string, current: string, live: () => boolean = () => true): Promise<void> {
+export async function offerUpdate(version: string, current: string, live: () => boolean = () => true): Promise<{ manual: boolean }> {
   const generation = ++offerGeneration;
   const manualOnly = await isManualOnlyBuild();
-  if (generation !== offerGeneration || !live()) return;
+  const flatpak = manualOnly ? false : await isFlatpak();
+  const manual = manualOnly || flatpak;
+  if (generation !== offerGeneration || !live()) return { manual };
   if (offeredUpdateToastId !== null) dismissToast(offeredUpdateToastId);
   if (manualOnly) {
     offeredUpdateToastId = offerManualOnly(version);
-    return;
+    return { manual };
+  }
+  if (flatpak) {
+    offeredUpdateToastId = offerFlatpakManual(version);
+    return { manual };
   }
   offeredUpdateToastId = pushToast(
     `${APP_PRODUCT_NAME} ${version} is available — you're on ${current}.`,
@@ -320,6 +354,7 @@ export async function offerUpdate(version: string, current: string, live: () => 
       action: { label: "Install update", run: () => void applyUpdateOrOpen() },
     },
   );
+  return { manual };
 }
 
 /** The version the beta channel offers when it is newer than this build,
@@ -369,7 +404,7 @@ export async function checkForUpdate(): Promise<void> {
 
 export type UpdateStatus =
   | { kind: "current"; version: string }
-  | { kind: "available"; version: string; current: string }
+  | { kind: "available"; version: string; current: string; manual?: true }
   | { kind: "unavailable" }; // offline, rate-limited, no Beta release, or not the packaged app
 
 /** The About tab's explicit "Check for updates" button. Unlike `checkForUpdate`
@@ -386,8 +421,8 @@ export async function checkForUpdateNow(): Promise<UpdateStatus> {
     if (!offered) return { kind: "current", version: cur };
     const version = offered;
     const current = cur;
-    await offerUpdate(version, current);
-    return { kind: "available", version, current };
+    const { manual } = await offerUpdate(version, current);
+    return manual ? { kind: "available", version, current, manual: true } : { kind: "available", version, current };
   } catch {
     return { kind: "unavailable" };
   }
