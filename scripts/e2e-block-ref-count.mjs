@@ -56,6 +56,22 @@ async function nativeClipboard(command, text) {
   if (!result.ok) throw new Error(`native clipboard ${command} failed: ${result.error}`);
   return result.out;
 }
+/** Name of the page the active tab of the saved session shows ("" when none yet). */
+function activeSavedRoute() {
+  try {
+    const sessions = fs.readdirSync(`${TMP}/xdg/data`).map((app) => `${TMP}/xdg/data/${app}/sessions`).filter((dir) => fs.existsSync(dir));
+    for (const dir of sessions) {
+      for (const file of fs.readdirSync(dir)) {
+        if (!/^graph-[0-9a-f]+\.json$/.test(file)) continue;
+        const session = JSON.parse(fs.readFileSync(`${dir}/${file}`, "utf8"));
+        const tab = session.tabs?.[session.activeIndex ?? 0];
+        const route = tab?.history?.at(-1);
+        if (route?.kind === "page") return route.name;
+      }
+    }
+  } catch { /* not written yet, or mid-rename */ }
+  return "";
+}
 async function openPage(label) {
   for (const selector of [`a.page-ref=${label}`, `span.page-ref=${label}`, `*=${label}`]) {
     const link = await browser.$(selector);
@@ -197,6 +213,15 @@ try {
   mark("reload badge/panel");
   // A real reload reparses id:: as the normal DTO/store identity. The same
   // durable target must still expose both its badge and its referrer panel.
+  // The window's session (tabs and active route) is written 150 ms after the
+  // last navigation, and Tine has no path that reloads its own window, so a
+  // user never reloads inside that gap. Wait until the opened source page is the
+  // saved active route, as it is by the time anyone could reload; otherwise this
+  // step restores the route saved one navigation earlier ("Tester") when the
+  // whole journey up to here ran faster than the debounce.
+  await browser.waitUntil(() => activeSavedRoute() === "Source Target", {
+    timeout: 10_000, timeoutMsg: "the opened source page never became the saved active route",
+  });
   await browser.refresh();
   mark("reload: refreshed");
   await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Source Target", {
