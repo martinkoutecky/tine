@@ -21,6 +21,7 @@ export type EndEditReason =
   | "delete-block"
   | "delete-selection"
   | "drag-start"
+  | "external-reload"
   | "graph-switch"
   | "page-navigation"
   | "query-builder"

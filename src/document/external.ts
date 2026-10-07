@@ -91,7 +91,8 @@ async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefi
   };
   const loadedName = c.path ? doc.pages.find((page) => page.id === c.path)?.name : undefined;
   const currentName = loadedName ?? c.name;
-  const disp = reloadDisposition(currentName);
+  // `c.path` names the loaded file only when `loadedName` was found by it.
+  const disp = reloadDisposition(currentName, loadedName ? c.path : undefined);
   const markObservedConflict = async () => {
     const id = pageByName(currentName)?.id;
     let revision: string | null | undefined;
