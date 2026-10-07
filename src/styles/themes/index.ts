@@ -1,6 +1,7 @@
 import nordCss from "./nord.css?inline";
 import solarizedCss from "./solarized.css?inline";
 import gruvboxCss from "./gruvbox.css?inline";
+import softCss from "./soft.css?inline";
 
 export interface GalleryTheme {
   id: string;
@@ -39,6 +40,15 @@ export const galleryThemes: GalleryTheme[] = [
     modes: ["light", "dark"],
     css: gruvboxCss,
     thumbnail: "/theme-thumbnails/gruvbox.png",
+  },
+  {
+    id: "soft",
+    name: "Soft",
+    author: "Tine",
+    compat: "full",
+    modes: ["light", "dark"],
+    css: softCss,
+    thumbnail: "/theme-thumbnails/soft.png",
   },
 ];
 
