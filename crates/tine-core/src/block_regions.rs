@@ -338,12 +338,15 @@ fn line_ranges(raw: &str, range: Range) -> Vec<Range> {
         })
         .collect()
 }
+/// `range` without its leading and trailing whitespace. A whitespace-only
+/// range becomes the empty range at its end, never an inverted one: lsdoc
+/// folds a blank line into a property node before a trailing directive
+/// (`a:: 1\n\n#+b: 2`), and slicing that line as `[end + 1..end]` panicked
+/// every page open and the name index (GH #644).
 fn trimmed_range(raw: &str, range: Range) -> Range {
     let s = range.slice(raw);
-    Range(
-        range.0 + s.len() - s.trim_start().len(),
-        range.1 - (s.len() - s.trim_end().len()),
-    )
+    let start = range.0 + (s.len() - s.trim_start().len());
+    Range(start, start + s.trim().len())
 }
 
 /// Parse one raw block with the same boundary used by render. No page work.
