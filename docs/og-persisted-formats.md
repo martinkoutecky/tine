@@ -11,7 +11,7 @@ atomic publication have the same payload as their final name.
 | Page Org | configured pages and journals directories, `.org` | `crates/tine-store/src/transaction.rs:403`, `:739`; `crates/tine-core/src/org.rs:210` |
 | Graph configuration EDN | `logseq/config.edn` | `crates/tine-store/src/store.rs:837`, `:844`; `crates/tine-graph-features/src/config.rs:35`, `:193` |
 | Graph link identity | `logseq/tine-graph-id`, one UUID + LF (37 ASCII bytes), created only on explicit Copy link | `crates/tine-store/src/link_identity.rs::ensure_link_identity`, through the existing guarded `Transaction::create` (ADR 0071; Martin 2026-10-04) |
-| Graph stylesheet | `logseq/custom.css` | `crates/tine-store/src/store.rs:878` (graph seed); `crates/tine-graph-features/src/config.rs:51` reads it |
+| Graph stylesheet | `logseq/custom.css` | `crates/tine-store/src/store.rs:878` (graph seed); `crates/tine-graph-features/src/config.rs::ensure_custom_css` creates a missing file, only, through the guarded `Transaction::create` (GH #610, Settings > Edit custom.css); `crates/tine-graph-features/src/config.rs:51` reads it |
 | Graph assets | configured assets directory, original binary bytes | `crates/tine-graph-features/src/assets.rs:133`, `:137`, `:150`; `crates/tine-store/src/model.rs:4771` |
 | Asset sidecar EDN | assets `*.edn`, including PDF metadata | `crates/tine-graph-features/src/pdf.rs:299`, `:340` |
 | Asset trash | `logseq/.tine-trash/assets/` | `crates/tine-graph-features/src/assets.rs:205`; `crates/tine-store/src/store.rs:1635` |

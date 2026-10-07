@@ -633,7 +633,7 @@ within a column; merged cells are still v2+.
   replaced; markup structure kept) and **re-verified to still reproduce the
   divergence** before it's shown. Copied reports include the Tine version used.
   mldoc is loaded only on demand; nothing is uploaded.
-- Light/dark themes, a built-in theme gallery (Default, Nord, Solarized, Gruvbox),
+- Light/dark themes, a built-in theme gallery (Default, Nord, Solarized, Gruvbox, Soft),
   accent color, custom CSS, wide mode (`t w`), document mode (`t d`). Gallery
   themes are app-level and device-local: Tine stores only the selected theme id in
   its backend settings, applies the theme as a managed `#tine-theme` CSS layer, and
@@ -641,7 +641,11 @@ within a column; merged cells are still v2+.
   variables, so both gallery themes and file-based themes in `logseq/custom.css`
   can recolor backgrounds, text, links, borders, and inline code. The cascade is
   built so your own `logseq/custom.css` loads last and takes priority. This is
-  theme CSS compatibility, not plugin support.
+  theme CSS compatibility, not plugin support. A documented set of `--tine-*`
+  tokens (embed shade, bullet color, content width, fonts, ...) is the stable way
+  to tweak single details (`docs/contracts/theme-tokens.md`, Guide page *Customize
+  Tine's look*); Settings > Appearance > Custom CSS edits `logseq/custom.css`,
+  re-applies it live when it changes on disk, and can disable it for the session.
 - **Developer tools** — `Ctrl+Shift+J`, *Toggle developer tools* in the command
   palette, or right-click → *Inspect Element* opens the WebKit/WebView inspector for
   theme and CSS debugging; the shortcut toggles it closed. Available in release
