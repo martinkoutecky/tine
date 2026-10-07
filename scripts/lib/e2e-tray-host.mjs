@@ -114,13 +114,17 @@ const readString = (body, offset = 0) => {
   return body.toString("utf8", at + 4, at + 4 + length);
 };
 
-function busSocketPath() {
-  const address = process.env.DBUS_SESSION_BUS_ADDRESS || "";
-  const entry = address.split(";")[0].replace(/^unix:/, "");
-  const parts = Object.fromEntries(entry.split(",").map((kv) => kv.split("=")));
-  if (parts.path) return parts.path;
-  if (parts.abstract) return `\0${parts.abstract}`;
-  throw new Error(`unsupported DBUS_SESSION_BUS_ADDRESS ${JSON.stringify(address)}`);
+/** The filesystem socket of the session bus. An abstract address is refused by
+ * name: Node's net.connect cannot reach one and fails with a bare ECONNREFUSED
+ * that reads as a dead bus. The runner's private bus listens on a path
+ * (scripts/lib/e2e-session-bus.conf). */
+export function busSocketPath(address = process.env.DBUS_SESSION_BUS_ADDRESS || "") {
+  for (const candidate of address.split(";")) {
+    const entry = candidate.replace(/^unix:/, "");
+    const parts = Object.fromEntries(entry.split(",").map((kv) => kv.split("=")));
+    if (parts.path) return parts.path;
+  }
+  throw new Error(`the session bus ${JSON.stringify(address)} has no filesystem socket: Node cannot connect to an abstract D-Bus socket; run the journey on the private bus (scripts/lib/e2e-session-bus.mjs)`);
 }
 
 /**

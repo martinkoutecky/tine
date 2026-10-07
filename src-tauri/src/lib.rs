@@ -47,6 +47,8 @@ mod query_ir;
 mod search_workspace;
 mod settings;
 mod spellcheck;
+#[cfg(test)]
+mod startup_window_order_tests;
 mod state;
 mod tray;
 mod watcher;

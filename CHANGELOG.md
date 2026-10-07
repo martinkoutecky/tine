@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - Desktop: quitting while several windows are open no longer exits before every window has saved. Previously, a window that finished closing first (for example a main window with no graph open) could end the app while another graph window was still writing its last edit (UI-OG-GH625).
+- Linux release checks: the multi-window change had made the main window the second window the app creates (after Quick Capture), so WebDriver-driven journeys drove the hidden capture window and 35 of 45 catalog journeys failed; main is created first again. The tray journey's own D-Bus session bus now listens on a filesystem socket so it can connect on Ubuntu runners (REG-OG-CATFIX-MAIN-FIRST, REG-OG-CATFIX-TRAY-BUS).
 
 ## [0.7.0-beta.2] - 2026-10-05
 
