@@ -646,9 +646,11 @@ within a column; merged cells are still v2+.
   to tweak single details (`docs/contracts/theme-tokens.md`, Guide page *Customize
   Tine's look*); Settings > Appearance > Custom CSS edits `logseq/custom.css`,
   re-applies it live when it changes on disk, and can disable it for the session.
-- **Developer tools** — `Ctrl+Shift+J`, *Toggle developer tools* in the command
-  palette, or right-click → *Inspect Element* opens the WebKit/WebView inspector for
-  theme and CSS debugging; the shortcut toggles it closed. Available in release
+- **Developer tools** — `Ctrl+Shift+J` (`Cmd+Shift+J` on macOS), *Toggle developer
+  tools* in the command palette, or Settings > Appearance > Custom CSS > *Developer
+  tools* opens the WebKit/WebView inspector for theme and CSS debugging; the
+  shortcut toggles it closed. (Whether a right-click *Inspect Element* entry exists
+  depends on the platform webview; Tine does not add one.) Available in release
   builds, not just debug. (`Ctrl+Shift+I` / `F12` are captured by WebKitGTK itself,
   so Tine's default is `Ctrl+Shift+J` — remappable under Settings.)
 - ⊕ **Spell checking** in the editor (on by default, like Logseq) with red squiggles
