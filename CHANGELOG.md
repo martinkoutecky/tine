@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- macOS (GH #650): Beta builds are now Developer ID signed and notarized, so macOS no longer refuses to open them with "Apple could not verify…". The Beta release workflow's macOS lane now signs the universal app and DMG, notarizes it, and independently checks the signature, the stapled notarization ticket and Gatekeeper acceptance before the build can be assembled; it fails if a signing secret is missing. Stable builds were already signed.
 - Saving: a page whose unsaved text already matched the file on disk (for example because a sync tool delivered the same text) counted as saved without making that file durable, and its crash-safe copy was dropped; a power cut right after could lose the text. Such a save now flushes the file to disk before counting as saved (REG-OG-G26-EQUAL-BYTES-DURABLE).
 - Crash-safe copies: when the store of crash-safe copies for a graph could not be read, Tine moved it aside (keeping its bytes) and started an empty one without saying so. It now shows a sticky error naming where the old file went (REG-OG-G37-DRAFT-STORE-SET-ASIDE-REPORTED).
 - Desktop: quitting while several windows are open no longer exits before every window has saved. Previously, a window that finished closing first (for example a main window with no graph open) could end the app while another graph window was still writing its last edit (UI-OG-GH625).
