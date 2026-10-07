@@ -16,7 +16,9 @@ fn main_is_built_before_the_other_startup_windows() {
         .expect("setup must build main through workspace_windows::create_main");
     let others = LIB
         .find("youtube_identity::create_windows(app, &youtube_windows)")
-        .expect("setup must build the other startup windows through youtube_identity::create_windows");
+        .expect(
+            "setup must build the other startup windows through youtube_identity::create_windows",
+        );
     assert!(
         main < others,
         "the first window created is the one a WebDriver session attaches to; build `main` before \
