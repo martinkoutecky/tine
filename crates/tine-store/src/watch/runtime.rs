@@ -102,11 +102,19 @@ pub(super) fn run(
                 *pending.lock().unwrap() = Pending::default();
                 continue;
             }
-            let (paths, full, config, first_event_at, assets) = {
+            let (paths, full, config, css, first_event_at, assets) = {
                 let mut pending = pending.lock().unwrap();
                 let config = std::mem::take(&mut pending.config);
+                let css = std::mem::take(&mut pending.custom_css);
                 let (paths, full, first_event_at) = pending.drain();
-                (paths, full, config, first_event_at, pending.assets.drain())
+                (
+                    paths,
+                    full,
+                    config,
+                    css,
+                    first_event_at,
+                    pending.assets.drain(),
+                )
             };
             // A rescan or unusable event may hide a config write: re-check it.
             #[cfg(test)]
@@ -127,6 +135,10 @@ pub(super) fn run(
                     batch,
                 );
             }
+            // A rescan may hide a custom.css write; an event named it.
+            if full || css {
+                core.observe_custom_css();
+            }
             // A rescan/unusable event hides asset changes too: scan them.
             if full || assets.1 || assets_polled || !assets.0.is_empty() {
                 core.observe_assets(&assets.0, full || assets.1 || assets_polled);
@@ -146,6 +158,7 @@ pub(super) fn run(
                     event_paths: 0,
                 };
                 let _ = core.reconcile_batch(None, true, batch);
+                core.observe_custom_css();
                 core.observe_assets(&HashSet::new(), true);
             }
         }

@@ -131,6 +131,20 @@ fn asset_event_payload(change: &Change, binding_generation: u64) -> Option<serde
     Some(serde_json::json!({ "paths": paths, "binding_generation": binding_generation }))
 }
 
+/// The `graph-custom-css-changed` window event: an outside actor created,
+/// replaced or deleted `logseq/custom.css`, so the window re-reads and re-applies
+/// it without reopening the graph. It carries only the graph binding; the window
+/// fetches the bytes through `read_custom_css`, the one answerer. Own writes
+/// carry none (the creating window already knows).
+fn custom_css_event_payload(change: &Change, binding_generation: u64) -> Option<serde_json::Value> {
+    (change.origin == Origin::External
+        && change
+            .files
+            .iter()
+            .any(|(id, _, _)| id.as_str() == "logseq/custom.css"))
+    .then(|| serde_json::json!({ "binding_generation": binding_generation }))
+}
+
 /// Concord's share of one publication: the base ledger records it
 /// off-thread (one channel send here) and the derived conflict queue
 /// re-derives the entries it can affect. Returns whether the queue changed.
@@ -424,6 +438,9 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Chang
     }
     if let Some(payload) = asset_event_payload(&change, binding_generation) {
         let _ = app.emit_to(label, "asset-changed", payload);
+    }
+    if let Some(payload) = custom_css_event_payload(&change, binding_generation) {
+        let _ = app.emit_to(label, "graph-custom-css-changed", payload);
     }
     // Measured once, after the last window event: the flight event and the
     // devtools ring report the same numbers.
@@ -973,6 +990,52 @@ mod tests {
         );
         assert_eq!(page_events, 1, "only pages/P.md is a page event");
         assert!(!conflicts, "an asset is never a conflict copy");
+        drop(slot);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// GH #610: an outside edit of `logseq/custom.css` reaches the window as one
+    /// `graph-custom-css-changed` event carrying the graph binding, so the
+    /// stylesheet re-applies without reopening the graph. The store's own
+    /// creation of the file (Settings "Edit custom.css") sends none.
+    #[test]
+    fn an_external_custom_css_edit_is_announced_and_an_own_write_is_not() {
+        let root = std::env::temp_dir().join(format!("tine-watch-css-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("pages")).unwrap();
+        std::fs::create_dir_all(root.join("journals")).unwrap();
+        std::fs::create_dir_all(root.join("logseq")).unwrap();
+        let store = tine_store::Store::open(
+            &root,
+            tine_store::OpenOptions {
+                approved_external_assets: None,
+                watch: WatchMode::Poll,
+                launch_checkpoint: None,
+            },
+        )
+        .unwrap()
+        .0;
+        let slot = GraphSlot::new(store, root.clone());
+        slot.store.whole_graph().unwrap();
+        let subscription = slot.store.subscribe();
+        atomic_write(&root, "logseq/custom.css", "a { color: red }\n");
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
+        let mut payloads = Vec::new();
+        while let Some(change) = subscription.try_recv().unwrap() {
+            payloads.extend(custom_css_event_payload(&change, 7));
+        }
+        assert_eq!(payloads, [serde_json::json!({ "binding_generation": 7 })]);
+        std::fs::remove_file(root.join("logseq/custom.css")).unwrap();
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
+        while subscription.try_recv().unwrap().is_some() {}
+        tine_graph_features::custom_css::ensure_custom_css(&slot.store).unwrap();
+        slot.store.refresh(tine_store::Depth::Stamps).unwrap();
+        while let Some(change) = subscription.try_recv().unwrap() {
+            assert!(
+                custom_css_event_payload(&change, 7).is_none(),
+                "an own write must not announce"
+            );
+        }
         drop(slot);
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -11,6 +11,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use notify::Watcher;
 
+mod custom_css;
 mod launch;
 mod racy;
 mod rebuild;
@@ -325,15 +326,17 @@ struct Pending {
     first_event_at: Option<Instant>,
     /// An event named `logseq/config.edn`; the next cycle re-checks it.
     config: bool,
+    /// An event named `logseq/custom.css` (see `custom_css.rs`).
+    custom_css: bool,
     /// Asset-lane events (metadata-only external asset observation).
     assets: AssetPending,
 }
 
-/// Whether `path` is the graph's `logseq/config.edn`, compared ASCII
-/// case-insensitively: a case-folding volume reports the on-disk spelling
-/// (`Logseq/Config.edn`) that the open path reaches. A false positive on a
-/// case-sensitive volume costs one config stamp that finds it unchanged.
-fn is_config_event_path(root: &Path, path: &Path) -> bool {
+/// Whether `path` is the graph's `logseq/<name>` (`config.edn` or `custom.css`),
+/// compared ASCII case-insensitively: a case-folding volume reports the on-disk
+/// spelling (`Logseq/Config.edn`) that the open path reaches. A false positive
+/// on a case-sensitive volume costs one stamp that finds it unchanged.
+fn is_logseq_file_event_path(root: &Path, path: &Path, name: &str) -> bool {
     let Ok(relative) = path.strip_prefix(root) else {
         return false;
     };
@@ -341,7 +344,7 @@ fn is_config_event_path(root: &Path, path: &Path) -> bool {
     matches!(
         (parts.next(), parts.next(), parts.next()),
         (Some(Some(dir)), Some(Some(file)), None)
-            if dir.eq_ignore_ascii_case("logseq") && file.eq_ignore_ascii_case("config.edn")
+            if dir.eq_ignore_ascii_case("logseq") && file.eq_ignore_ascii_case(name)
     )
 }
 
@@ -392,12 +395,19 @@ impl Pending {
         }
         // config.edn is not graph text, so the page filters below would drop
         // it (master contract §2); it has its own flag and costs no scan.
-        let is_config = |path: &PathBuf| is_config_event_path(&dirs[0], path);
+        let is_config = |path: &PathBuf| is_logseq_file_event_path(&dirs[0], path, "config.edn");
+        let is_css = |path: &PathBuf| is_logseq_file_event_path(&dirs[0], path, "custom.css");
+        self.custom_css |= event.paths.iter().any(&is_css);
         if event.paths.iter().any(&is_config) {
             self.config = true;
-            if event.paths.iter().all(&is_config) {
-                return true;
-            }
+        }
+        if event
+            .paths
+            .iter()
+            .all(|path| is_config(path) || is_css(path))
+            && !event.paths.is_empty()
+        {
+            return true;
         }
         if let Some(paths) = incremental_paths(&event) {
             self.paths.extend(
@@ -443,6 +453,8 @@ pub(crate) struct Core {
     /// about 2 s later (§5.4; `Core::launch_diff`).
     pub(crate) follow_up: Mutex<Option<Instant>>,
     config_stamp: Mutex<Option<Stamp>>,
+    /// Last observed `logseq/custom.css` (`custom_css.rs`).
+    custom_css_stamp: Mutex<Option<Stamp>>,
     #[cfg(test)]
     full_walk_locked_files: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -713,6 +725,8 @@ impl Core {
             if id.as_str() == "logseq/config.edn" {
                 let _ = self.read_config(&path);
                 *self.config_stamp.lock().unwrap() = current;
+            } else if id.as_str() == "logseq/custom.css" {
+                *self.custom_css_stamp.lock().unwrap() = current;
             }
         }
         raced
@@ -763,6 +777,7 @@ impl WatchHandle {
             Baseline::FromLoad => HashMap::new(),
         };
         let config_stamp = stamp(&graph.root.join("logseq/config.edn"));
+        let graph_root = graph.root.clone();
         let core = Arc::new(Core {
             graph,
             writer,
@@ -776,6 +791,7 @@ impl WatchHandle {
             racy: Mutex::new(HashSet::new()),
             follow_up: Mutex::new(None),
             config_stamp: Mutex::new(config_stamp),
+            custom_css_stamp: Mutex::new(stamp(&graph_root.join("logseq/custom.css"))),
             #[cfg(test)]
             full_walk_locked_files: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
@@ -878,6 +894,7 @@ impl WatchHandle {
         }
         let result = self.core.reconcile(None, true, true, trigger);
         if result.is_ok() {
+            self.core.observe_custom_css();
             self.core.observe_assets(&HashSet::new(), true);
         }
         let _ = self.wake.send(());

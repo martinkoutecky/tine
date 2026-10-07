@@ -122,6 +122,7 @@ fn source_scan_guard_clients_touch_no_path() {
         ("assets", include_str!("../src/assets.rs")),
         ("conflicts", include_str!("../src/conflicts.rs")),
         ("config", include_str!("../src/config.rs")),
+        ("custom_css", include_str!("../src/custom_css.rs")),
         ("journals", include_str!("../src/journals.rs")),
         ("pages", include_str!("../src/pages.rs")),
         ("pdf", include_str!("../src/pdf.rs")),
@@ -147,7 +148,7 @@ fn source_scan_guard_clients_touch_no_path() {
             if name == "guide" && forbidden == "std::path" {
                 continue; // Public API accepts the device parent folder for graph creation.
             }
-            if matches!(name, "assets" | "pages") && forbidden == "std::path" {
+            if matches!(name, "assets" | "pages" | "custom_css") && forbidden == "std::path" {
                 continue; // Existing-file paths are validated OS hand-offs, not graph I/O.
             }
             assert!(
@@ -176,7 +177,7 @@ fn guide_file_name(title: &str, separator: &str) -> String {
     assert!(
         title
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || " /&,-".contains(c)),
+            .all(|c| c.is_ascii_alphanumeric() || " /&,-'".contains(c)),
         "extend the independent file-name oracle for {title:?}"
     );
     format!("{}.md", title.replace('/', separator))
@@ -222,8 +223,8 @@ fn guide_creation_writes_the_bundled_templates_and_chooses_a_folder() {
     let tree = expected_demo_tree();
     assert_eq!(
         tree.len(),
-        26 + 2,
-        "26 Guide pages, config.edn and the screenshot"
+        27 + 2,
+        "27 Guide pages, config.edn and the screenshot"
     );
     for name in [
         "pages/Welcome to Tine.md",

@@ -7,6 +7,7 @@
 pub mod assets;
 pub mod config;
 pub mod conflicts;
+pub mod custom_css;
 pub mod graph_verification;
 pub mod guide;
 pub mod journals;

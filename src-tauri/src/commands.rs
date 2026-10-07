@@ -1123,6 +1123,29 @@ pub(crate) async fn read_custom_css(state: GraphContext<'_>) -> Result<String, S
     .await
 }
 
+/// Create `logseq/custom.css` when it is missing (one guarded no-replace write)
+/// and open it in the OS default editor. Desktop only: the mobile builds have no
+/// editor hand-off, so they refuse before touching the graph. Rust owns the path;
+/// the WebView supplies none. Cost: O(path components) plus one small create.
+#[tauri::command]
+pub(crate) async fn edit_custom_css(state: GraphContext<'_>) -> Result<(), String> {
+    #[cfg(not(desktop))]
+    {
+        let _ = state;
+        Err(
+            "custom.css opens in a desktop editor; edit logseq/custom.css in the graph folder"
+                .into(),
+        )
+    }
+    #[cfg(desktop)]
+    with_config_store(&state, move |store| {
+        let path = tine_graph_features::custom_css::ensure_custom_css(store)
+            .map_err(|error| error.to_string())?;
+        open_page_source_with_os(&path, false)
+    })
+    .await
+}
+
 #[tauri::command]
 pub(crate) async fn search(
     query: String,
