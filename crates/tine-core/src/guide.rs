@@ -149,6 +149,10 @@ pub const GUIDE_TEMPLATES: &[GuideTemplate] = &[
         markdown: include_str!("templates/extend-tine.md"),
     },
     GuideTemplate {
+        title: "Workflows/Customize Tine's look",
+        markdown: include_str!("templates/customize-look.md"),
+    },
+    GuideTemplate {
         title: "Reference/Tine query model",
         markdown: include_str!("templates/query-model.md"),
     },
@@ -954,6 +958,64 @@ mod theme_presentation_guide_tests {
         assert!(plugins.contains("are chosen independently"));
         assert!(plugins.contains("The theme receives neither those tasks"));
         assert!(!plugins.contains("Token themes live under"));
+    }
+}
+
+#[cfg(test)]
+mod customize_look_guide_tests {
+    use super::*;
+
+    const TITLE: &str = "Workflows/Customize Tine's look";
+
+    fn page() -> &'static str {
+        GUIDE_TEMPLATES
+            .iter()
+            .find(|t| t.title == TITLE)
+            .unwrap_or_else(|| panic!("Guide page {TITLE:?} is not bundled"))
+            .markdown
+    }
+
+    /// GH #610: a user who wants to change one visual detail must be able to
+    /// find the page from the Guide index, find the file, open it, recover from
+    /// a broken stylesheet, and inspect an element, using the names the app
+    /// shows. `src/themeTokens.guard.test.ts` checks the token table and the
+    /// control names against the contract and the Settings source.
+    #[test]
+    fn the_customize_page_is_reachable_and_teaches_the_whole_loop() {
+        let index = GUIDE_TEMPLATES
+            .iter()
+            .find(|t| t.title == "Tine Guide")
+            .unwrap()
+            .markdown;
+        assert!(index.contains("[[Workflows/Customize Tine's look]]"));
+        for other in [
+            include_str!("templates/extend-tine.md"),
+            include_str!("templates/plugins.md"),
+        ] {
+            assert!(other.contains("[[Workflows/Customize Tine's look]]"));
+        }
+        let page = page();
+        for needed in [
+            "logseq/custom.css",
+            "Settings",
+            "**Edit custom.css**",
+            "**Disable custom CSS**",
+            "**Developer tools**",
+            "**Ctrl+Shift+J**",
+            "Soft",
+            "--tine-embed-bg: transparent",
+            "--tine-bullet-color",
+            "--tine-content-width",
+            "--tine-content-font",
+            "Nord, Solarized, Gruvbox",
+        ] {
+            assert!(page.contains(needed), "the page must mention {needed}");
+        }
+        assert!(
+            page.matches("```css").count() >= 10,
+            "ten copy-paste recipes"
+        );
+        assert!(page.contains("What you should see"));
     }
 }
 

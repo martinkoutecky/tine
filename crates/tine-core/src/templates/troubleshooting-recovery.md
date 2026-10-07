@@ -86,7 +86,7 @@ icon:: 🛟
 	- 3. What you should see: a local report that you can paste into an issue.
 - ## A graph file could not be read
 	- If **config.edn could not be read** appears, the graph opens read-only so a missing setting cannot send new files to the wrong folder. Read your available pages, repair the file or its permissions in `logseq/config.edn`, then reopen the graph. Settings shows the same problem until that reopen.
-	- If **custom.css could not be read** appears, Tine applies no custom CSS for that open. Repair `logseq/custom.css` or its permissions and reopen the graph to try again.
+	- If **custom.css could not be read** appears, Tine applies no custom CSS for that open. Repair `logseq/custom.css` or its permissions and save it again; Tine re-applies the file when it changes, and reopening the graph tries again too. **Settings → Appearance → Custom CSS → Disable custom CSS** ignores the file for the rest of the session if a stylesheet makes the window hard to use.
 	- A failed journal scan or page discovery does not mean those files are absent. The graph remains open; repair the unreadable file or folder and retry. A failed conflict refresh keeps the last successful conflict list, which may be out of date.
 	- An asset that gained a reference after an orphan scan is kept when you choose Trash. Refresh the orphan scan before trying again. With external editors or sync, wait for their changes to appear in Tine first: a change it has not observed can still race deletion.
 	- Cancelling graph verification makes no report and raises no error message. If a source file is replaced during verification, its report is incomplete; finish syncing or editing and create another report.

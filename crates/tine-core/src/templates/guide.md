@@ -15,6 +15,7 @@ icon:: 🧭
   - [[Workflows/Find and revisit]] — jump back to anything with Ctrl+K and follow links and reference panels.
   - [[Workflows/Research a document]] — bring in a PDF, highlight it, and tie the highlights into your notes beside the source.
   - [[Workflows/Extend Tine]] — install a plugin or theme, see exactly what authority it receives, and disable or remove it safely.
+  - [[Workflows/Customize Tine's look]] — pick a color scheme, then change colors, fonts, widths, bullets, and embed shading with a few lines in `logseq/custom.css`, using documented `--tine-*` tokens and ten copy-paste recipes.
   - [[Features/Sheets]] — create grids, tables, boards, queries, and formulas over ordinary bullets.
   - [[Features/Queries]] — keep live lists of matching blocks and pages with simple or advanced queries.
   - [[Features/Formulas]] — build read-only computed columns with the visual formula editor.
