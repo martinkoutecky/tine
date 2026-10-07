@@ -2,6 +2,12 @@
 // native journey must share a private bus, including direct script invocations.
 // This keeps the journey separate from other tests and from the user's app.
 import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** The bus configuration every journey's private session runs with. Its listen
+ * address is a filesystem socket, because Node cannot connect to an abstract one. */
+export const PRIVATE_BUS_CONFIG = path.join(path.dirname(fileURLToPath(import.meta.url)), "e2e-session-bus.conf");
 
 const PRIVATE_BUS = "TINE_E2E_PRIVATE_SESSION_BUS";
 
@@ -10,7 +16,7 @@ const PRIVATE_BUS = "TINE_E2E_PRIVATE_SESSION_BUS";
 export function privateSessionLaunch(script, args = [], env = process.env) {
   return {
     command: env.DBUS_RUN_SESSION || "dbus-run-session",
-    args: ["--", process.execPath, script, ...args],
+    args: ["--config-file", PRIVATE_BUS_CONFIG, "--", process.execPath, script, ...args],
     env: { ...env, [PRIVATE_BUS]: "1" },
   };
 }

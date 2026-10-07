@@ -6,3 +6,5 @@ export function privateSessionLaunch(
 ): { command: string; args: string[]; env: NodeJS.ProcessEnv };
 /** Re-exec direct Linux runs once; reuse runner-owned sessions; no-op elsewhere. */
 export function ensurePrivateSessionBus(): void;
+/** The bus configuration (a filesystem listen socket) every private session runs with. */
+export const PRIVATE_BUS_CONFIG: string;

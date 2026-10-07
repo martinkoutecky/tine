@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import { ensurePrivateSessionBus, privateSessionLaunch } from "../scripts/lib/e2e-session-bus.mjs";
+import { ensurePrivateSessionBus, privateSessionLaunch, PRIVATE_BUS_CONFIG } from "../scripts/lib/e2e-session-bus.mjs";
 
 vi.mock("node:child_process", () => ({ spawnSync: vi.fn() }));
 afterEach(() => {
@@ -20,7 +20,7 @@ describe("private native E2E session bus", () => {
       DISPLAY: ":55", XDG_DATA_HOME: "/tmp/fixture", DBUS_RUN_SESSION: "/tmp/dbus runner",
     });
     expect(launch.command).toBe("/tmp/dbus runner");
-    expect(launch.args).toEqual(["--", process.execPath, "/tmp/journey with spaces.mjs", "--probe", "a b"]);
+    expect(launch.args).toEqual(["--config-file", PRIVATE_BUS_CONFIG, "--", process.execPath, "/tmp/journey with spaces.mjs", "--probe", "a b"]);
     expect(launch.env).toEqual({
       DISPLAY: ":55", XDG_DATA_HOME: "/tmp/fixture", DBUS_RUN_SESSION: "/tmp/dbus runner",
       TINE_E2E_PRIVATE_SESSION_BUS: "1",
