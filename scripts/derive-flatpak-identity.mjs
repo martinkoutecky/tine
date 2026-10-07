@@ -128,7 +128,12 @@ export function resolveReleaseDate({ explicit, env = process.env, gitCommitDate 
 function commitDate() {
   try {
     // %cs is the committer date as YYYY-MM-DD in the committer's timezone.
-    const out = execFileSync("git", ["show", "-s", "--format=%cs", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+    const out = execFileSync(
+      "git",
+      // The CI container checks out as another user; trust THIS repo for this one read only.
+      ["-c", `safe.directory=${ROOT}`, "show", "-s", "--format=%cs", "HEAD"],
+      { cwd: ROOT, encoding: "utf8" },
+    ).trim();
     return /^\d{4}-\d{2}-\d{2}$/.test(out) ? out : null;
   } catch {
     return null;
