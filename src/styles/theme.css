@@ -6,8 +6,8 @@
   --ls-font-mono: "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco, Consolas,
     "Courier New", monospace;
 
-  --ls-main-content-max-width: 810px;
-  --ls-main-content-max-width-wide: 100%;
+  --ls-main-content-max-width: var(--tine-content-width, 810px);
+  --ls-main-content-max-width-wide: var(--tine-content-width-wide, 100%);
   --ls-left-sidebar-width: 246px;
   --ls-headbar-height: 48px;
   --ls-page-title-size: 28px;
@@ -26,6 +26,27 @@
   /* A restrained semantic cue for block embeds. It follows both built-in and
      custom theme tokens, and custom.css may override this token directly. */
   --block-embed-accent: color-mix(in srgb, var(--accent) 35%, var(--bullet-color));
+
+  /* The public theming tokens (docs/contracts/theme-tokens.md): the small set a
+     user's custom.css may rely on across updates. They are UNSET here
+     (`initial`, the guaranteed-invalid value), so every consumer's
+     `var(--tine-x, <previous value>)` falls through to exactly what Tine drew
+     before the token existed, still following built-in and Logseq-style themes
+     wherever they set the underlying variable. A custom.css rule
+     `:root { --tine-x: ... }` (or any narrower scope) overrides it. */
+  --tine-embed-bg: initial;
+  --tine-embed-accent: initial;
+  --tine-bullet-color: initial;
+  --tine-bullet-size: initial;
+  --tine-tag-color: initial;
+  --tine-highlight-bg: initial;
+  --tine-content-width: initial;
+  --tine-content-width-wide: initial;
+  --tine-page-title-size: initial;
+  --tine-font-size: initial;
+  --tine-content-font: initial;
+  --tine-mono-font: initial;
+  --tine-editable-font: initial;
 
   /* Quiet shared scrollbar vocabulary. These stay semantic so built-in themes,
      Logseq-compatible themes, and custom.css inherit the panel text palette. */

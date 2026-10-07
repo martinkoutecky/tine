@@ -46,7 +46,7 @@
   font-weight: 600;
 }
 .qs-seg-advanced {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   color: var(--text-muted);
   border-bottom: 1px dotted var(--border-color);
 }
@@ -162,7 +162,7 @@
   color: var(--text-primary);
 }
 .qs-anchor-prompt-text code {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 11px;
 }
 .qs-anchor-prompt-actions {
@@ -253,7 +253,7 @@
   flex: 1 1 auto;
 }
 .qs-property-key {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 12px;
   color: var(--text-secondary);
 }
@@ -281,7 +281,7 @@
    diagnostic beside it. Greyed instead of red when disabled — a disabled broken
    condition does not invalidate the query (§3.5). */
 .qs-row-raw .qs-raw-text {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 12px;
   color: #b91c1c;
   overflow: hidden;
@@ -433,7 +433,7 @@
   background: var(--bg-tertiary);
 }
 .qs-row-advanced .qs-advanced {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 12px;
   color: var(--text-muted);
   flex: 1 1 auto;
@@ -466,7 +466,7 @@
   color: var(--text-muted);
 }
 .qs-raw-suggestions code {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
 }
 .qs-raw-edit {
   border: none;
@@ -541,7 +541,7 @@
   border-radius: 999px;
   padding: 2px 10px;
   font-size: 12px;
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   cursor: pointer;
 }
 .qs-try-item:hover {
@@ -798,7 +798,7 @@
   font-size: 12px;
 }
 .query-crossing-notice-changed code {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   word-break: break-word;
 }
 .query-crossing-notice-actions {
@@ -899,7 +899,7 @@
   color: var(--text-muted);
 }
 .query-text-pane-diagnostic-alts code {
-  font-family: var(--ls-font-mono);
+  font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 11px;
 }
 /* "Why is this empty?" (Q14, N19): asked only once a run has come back empty. */
