@@ -27,13 +27,21 @@
      custom theme tokens, and custom.css may override this token directly. */
   --block-embed-accent: color-mix(in srgb, var(--accent) 35%, var(--bullet-color));
 
-  /* The public theming tokens (docs/contracts/theme-tokens.md): the small set a
-     user's custom.css may rely on across updates. They are UNSET here
-     (`initial`, the guaranteed-invalid value), so every consumer's
-     `var(--tine-x, <previous value>)` falls through to exactly what Tine drew
-     before the token existed, still following built-in and Logseq-style themes
-     wherever they set the underlying variable. A custom.css rule
-     `:root { --tine-x: ... }` (or any narrower scope) overrides it. */
+  /* Quiet shared scrollbar vocabulary. These stay semantic so built-in themes,
+     Logseq-compatible themes, and custom.css inherit the panel text palette. */
+  --scrollbar-thumb: color-mix(in srgb, var(--text-secondary) 42%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--text-secondary) 64%, transparent);
+}
+
+/* The public theming tokens (docs/contracts/theme-tokens.md): the small set a
+   user's custom.css may rely on across updates. They are UNSET here
+   (`initial`, the guaranteed-invalid value), so every consumer's
+   `var(--tine-x, <previous value>)` falls through to exactly what Tine drew
+   before the token existed, still following built-in and Logseq-style themes
+   wherever they set the underlying variable. `:where(:root)` has specificity
+   zero, so ANY user rule that sets a token (`:root {...}`, `html {...}`,
+   `body {...}`, a narrower scope) wins, whatever the selector. */
+:where(:root) {
   --tine-embed-bg: initial;
   --tine-embed-accent: initial;
   --tine-bullet-color: initial;
@@ -47,11 +55,9 @@
   --tine-content-font: initial;
   --tine-mono-font: initial;
   --tine-editable-font: initial;
-
-  /* Quiet shared scrollbar vocabulary. These stay semantic so built-in themes,
-     Logseq-compatible themes, and custom.css inherit the panel text palette. */
-  --scrollbar-thumb: color-mix(in srgb, var(--text-secondary) 42%, transparent);
-  --scrollbar-thumb-hover: color-mix(in srgb, var(--text-secondary) 64%, transparent);
+  /* What the user set (or nothing): lets a presentation preset that re-scopes
+     --tine-editable-font fall back to the user's value before its own face. */
+  --tine-editable-font-user: var(--tine-editable-font);
 }
 
 html[data-theme="light"] {

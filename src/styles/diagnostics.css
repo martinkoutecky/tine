@@ -23,7 +23,7 @@
   width: 100%;
   min-height: 20rem;
   resize: vertical;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--tine-mono-font, var(--font-mono, monospace));
   font-size: 0.75rem;
   line-height: 1.45;
 }

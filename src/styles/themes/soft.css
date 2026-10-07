@@ -1,8 +1,8 @@
 /* Soft (GH #649): Medium Light and Medium Dark. The whole surface system moves
    together (page, sidebars, tabs, menus, popovers, code, borders, hover and
    selection, text), at a brightness between the stock white and the stock
-   near-black. Every text role stays at or above WCAG AA 4.5:1 on the surfaces
-   it sits on; src/styles/themes/soft.test.ts computes that from these values. */
+   near-black. Every text role, and the label on a filled accent control, stays at or
+   above WCAG AA 4.5:1 on the surfaces and selection overlays it sits on; src/styles/themes/soft.test.ts computes that from these values. */
 html[data-theme="light"] {
   --ls-active-primary-color: #1a5084;
   --ls-primary-background-color: #e6e0d4;
@@ -12,8 +12,8 @@ html[data-theme="light"] {
   --ls-primary-text-color: #2b2620;
   --ls-secondary-text-color: #463f35;
   --ls-title-text-color: #1d1914;
-  --ls-link-text-color: #1a5084;
-  --ls-link-text-hover-color: #0f3a64;
+  --ls-link-text-color: #17406c;
+  --ls-link-text-hover-color: #0c2e52;
   --ls-link-ref-text-color: var(--ls-link-text-color);
   --ls-block-ref-link-text-color: var(--ls-link-ref-text-color);
   --ls-a-chosen-bg: rgba(26, 80, 132, 0.16);
@@ -23,17 +23,22 @@ html[data-theme="light"] {
   --ls-block-highlight-color: #d8cfba;
   --ls-block-bullet-color: #8a8071;
   --ls-block-bullet-active-color: var(--ls-active-primary-color);
-  --ls-selection-background-color: rgba(26, 80, 132, 0.28);
+  --ls-selection-background-color: rgba(26, 80, 132, 0.24);
   --ls-page-inline-code-bg-color: #d4ccbd;
   --ls-page-inline-code-color: var(--ls-primary-text-color);
   --ls-page-mark-bg-color: #eed27c;
   --ls-page-mark-color: #2a2418;
-  --ls-tag-text-color: #74328f;
+  --ls-tag-text-color: #5e2675;
   /* Tine-only text and rule tones that sit outside the --ls-* vocabulary but on
      the same surfaces. */
-  --text-muted: #5a5246;
+  --text-muted: #4c453a;
+  --marker-color: var(--text-muted);
+  --done-color: var(--text-muted);
+  --bullet-ring: rgba(60, 45, 25, 0.12);
   --guide-hover: rgba(60, 45, 25, 0.34);
   --match-mark-bg: rgba(238, 210, 124, 0.6);
+  /* Label color on a filled accent control (selected segment, primary button). */
+  --on-accent: #ffffff;
 }
 
 html[data-theme="dark"] {
@@ -42,27 +47,31 @@ html[data-theme="dark"] {
   --ls-secondary-background-color: #424348;
   --ls-tertiary-background-color: #4c4d52;
   --ls-quaternary-background-color: #56575c;
-  --ls-primary-text-color: #e6e6e3;
-  --ls-secondary-text-color: #cbcbc8;
-  --ls-title-text-color: #f3f3f1;
-  --ls-link-text-color: #a2cff8;
-  --ls-link-text-hover-color: #c3e0fb;
+  --ls-primary-text-color: #f0f0ee;
+  --ls-secondary-text-color: #e0e0dd;
+  --ls-title-text-color: #f8f8f6;
+  --ls-link-text-color: #b9dafb;
+  --ls-link-text-hover-color: #d3e8fc;
   --ls-link-ref-text-color: var(--ls-link-text-color);
   --ls-block-ref-link-text-color: var(--ls-link-ref-text-color);
-  --ls-a-chosen-bg: rgba(162, 207, 248, 0.20);
+  --ls-a-chosen-bg: rgba(162, 207, 248, 0.14);
   --ls-border-color: #56575c;
   --ls-secondary-border-color: var(--ls-border-color);
   --ls-guideline-color: rgba(255, 255, 255, 0.14);
   --ls-block-highlight-color: #404b59;
   --ls-block-bullet-color: #8a8b90;
   --ls-block-bullet-active-color: var(--ls-active-primary-color);
-  --ls-selection-background-color: rgba(120, 170, 230, 0.42);
+  --ls-selection-background-color: rgba(120, 170, 230, 0.22);
   --ls-page-inline-code-bg-color: #46474c;
   --ls-page-inline-code-color: var(--ls-primary-text-color);
-  --ls-page-mark-bg-color: #6d6230;
-  --ls-page-mark-color: #f3f3f1;
-  --ls-tag-text-color: #e2b8f3;
-  --text-muted: #bbbbb8;
+  --ls-page-mark-bg-color: #574f26;
+  --ls-page-mark-color: #f8f8f6;
+  --ls-tag-text-color: #eed0f9;
+  --text-muted: #d4d4d1;
+  --marker-color: #c4c4c1;
+  --done-color: var(--text-muted);
+  --bullet-ring: rgba(255, 255, 255, 0.12);
   --guide-hover: rgba(255, 255, 255, 0.30);
-  --match-mark-bg: rgba(109, 98, 48, 0.75);
+  --match-mark-bg: rgba(87, 79, 38, 0.75);
+  --on-accent: #1c1d20;
 }

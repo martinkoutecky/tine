@@ -9,7 +9,11 @@
 //       sets every public --tine-* token from a graph's custom.css and asserts
 //       each one reached its element;
 //   node scripts/shot-theme-tokens.mjs soft <distDir> <outDir>
-//       the Soft gallery palette, light and dark.
+//       the Soft gallery palette, light and dark;
+//   node scripts/shot-theme-tokens.mjs overrides <distDir> <outDir>
+//       a token set from `html { }` (lower specificity than :root) still wins;
+//       the public font tokens win under the editorial typography preset; every
+//       monospace surface follows --tine-mono-font.
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
@@ -17,7 +21,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { resolve } from "node:path";
 
 const [, , command, a, b] = process.argv;
-const PORT = 5247;
+// A fixed port let a stale `vite preview` of another build answer; pick a fresh one.
+const PORT = Number(process.env.SHOT_PORT) || 20000 + Math.floor(Math.random() * 20000);
 
 if (command === "compare") {
   let bad = 0;
@@ -157,6 +162,58 @@ try {
     console.log(fontOk ? "OK  " : "FAIL", "body.font-family", got.body?.["font-family"]);
     if (!fontOk) bad++;
     await context.close();
+    if (bad) process.exit(1);
+  } else if (command === "overrides") {
+    // 1. `html { --tine-x }` has lower specificity than the old `:root { --tine-x: initial }`.
+    const htmlRule = `html { --tine-bullet-color: rgb(0, 150, 0); --tine-page-title-size: 40px; }`;
+    const first = await open(browser, htmlRule);
+    await mode(first.page, "light");
+    const viaHtml = await metrics(first.page);
+    await first.context.close();
+    // 2. Fonts under the editorial typography preset, with and without the tokens.
+    const fontRule = `:root { --tine-content-font: Georgia, serif; --tine-editable-font: "Courier New", monospace; --tine-mono-font: "Courier New", monospace; --tine-font-size: 15px; }`;
+    const probeFonts = (page) => page.evaluate(() => {
+      document.documentElement.setAttribute("data-theme-content-typography", "editorial-serif");
+      const section = document.querySelector(".page-section");
+      const cs = getComputedStyle(section);
+      const out = { section: cs.fontFamily, editable: cs.getPropertyValue("--tine-editable-font").trim(), size: cs.fontSize, mono: {} };
+      for (const cls of ["org-timestamp", "journal-conflict-content", "export-preview", "formula-editor-textarea", "today-task-summary"]) {
+        const el = document.createElement("span");
+        el.className = cls;
+        section.appendChild(el);
+        out.mono[cls] = getComputedStyle(el).fontFamily;
+        el.remove();
+      }
+      return out;
+    });
+    const withTokens = await open(browser, fontRule);
+    await mode(withTokens.page, "light");
+    const fonts = await probeFonts(withTokens.page);
+    await withTokens.context.close();
+    const plain = await open(browser);
+    await mode(plain.page, "light");
+    const preset = await probeFonts(plain.page);
+    await plain.context.close();
+    const checks = [
+      ["html{} sets the bullet color", viaHtml.bullet?.["background-color"] === "rgb(0, 150, 0)", viaHtml.bullet?.["background-color"]],
+      ["html{} sets the page title size", viaHtml.title?.["font-size"] === "40px", viaHtml.title?.["font-size"]],
+      ["preset content font follows --tine-content-font", fonts.section.startsWith("Georgia"), fonts.section],
+      ["preset editable font follows --tine-editable-font", fonts.editable.startsWith('"Courier New"'), fonts.editable],
+      ["preset font size follows --tine-font-size", fonts.size === "15px", fonts.size],
+      ["preset alone still draws the serif face", preset.section.startsWith('"Iowan Old Style"'), preset.section],
+      ["preset alone keeps 19px", preset.size === "19px", preset.size],
+      ["preset alone keeps its serif editable face", preset.editable.startsWith('"Iowan Old Style"'), preset.editable],
+      ...Object.entries(fonts.mono)
+        .filter(([cls]) => cls !== "today-task-summary")
+        .map(([cls, family]) => [`.${cls} follows --tine-mono-font`, family.startsWith('"Courier New"'), family]),
+    ];
+    // today-task-summary is body text, not monospace: it follows the content font.
+    checks.push(["today-task-summary follows --tine-content-font", fonts.mono["today-task-summary"].startsWith("Georgia"), fonts.mono["today-task-summary"]]);
+    let bad = 0;
+    for (const [name, ok, actual] of checks) {
+      if (!ok) bad++;
+      console.log(ok ? "OK  " : "FAIL", name, ok ? "" : `(got ${actual})`);
+    }
     if (bad) process.exit(1);
   } else if (command === "soft") {
     const { context, page } = await open(browser);

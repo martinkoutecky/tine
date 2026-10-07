@@ -703,7 +703,7 @@
 }
 .qs-conn.active {
   background: var(--link-color);
-  color: #fff;
+  color: var(--on-accent, #fff);
   border-color: var(--link-color);
 }
 .qs-between {
@@ -827,7 +827,7 @@
 }
 .query-text-pane-input {
   width: 100%;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--tine-mono-font, var(--font-mono, monospace));
   resize: vertical;
 }
 .query-text-pane-input.query-text-pane-invalid {

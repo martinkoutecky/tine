@@ -74,6 +74,27 @@ describe("public theme tokens (GH #610)", () => {
     expect(unused, `${RULE} A documented token must change something: read it with var(--tine-x, <previous value>) in the stylesheet that draws it.`).toEqual([]);
   });
 
+  it("public tokens are declared only under :where(:root), so any selector a user writes can override them", () => {
+    // `:root { --tine-x: initial }` has specificity (0,1,0) and silently beats a
+    // user's `html { --tine-x: ... }` (0,0,1). `:where(:root)` is (0,0,0).
+    // The only other declarations are deliberate component re-scopes, each routed
+    // through the user's token so it still wins: the code and formula editors
+    // always use the monospace face (var(--tine-mono-font, ...)), and the editorial
+    // typography preset falls back to --tine-editable-font-user first.
+    const RESCOPES: Record<string, RegExp[]> = {
+      "--tine-editable-font": [/\.block-editor\.code-edit$/, /^\.formula-editor-textarea,\s*\.calc-wrap \.block-editor$/, /^html\[data-theme-content-typography="editorial-serif"\] \.page-section$/],
+    };
+    const offenders: string[] = [];
+    for (const [, selector, body] of cssText.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      for (const [, name] of body.matchAll(/(--tine-[a-z0-9-]+)\s*:/g)) {
+        if (!publicTokens.has(name) || selector.trim() === ":where(:root)") continue;
+        if (RESCOPES[name]?.some((allowed) => allowed.test(selector.trim()))) continue;
+        offenders.push(`${name} declared under ${selector.trim()}`);
+      }
+    }
+    expect(offenders, `${RULE} Declare public tokens only in the \`:where(:root)\` block of src/styles/theme.css (specificity 0) so \`html { --tine-x: ... }\` in custom.css wins; exemplar --tine-embed-bg.`).toEqual([]);
+  });
+
   it("every --tine-* name in the code is documented as public or internal", () => {
     const documented = new Set([...publicTokens, ...internalTokens]);
     const names = new Set([...declaredInCss, ...usedInCss, ...inCode]);

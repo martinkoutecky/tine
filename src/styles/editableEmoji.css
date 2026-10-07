@@ -42,6 +42,6 @@ textarea {
 .calc-wrap .block-editor {
   /* Keep the emoji face ahead of the generic family here too: a generic may
      resolve to the crashing system color font before CSS considers a later family. */
-  --tine-editable-font: "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco,
-    Consolas, "Courier New", var(--tine-editable-emoji-font), monospace;
+  --tine-editable-font: var(--tine-mono-font, "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco,
+    Consolas, "Courier New", var(--tine-editable-emoji-font), monospace);
 }

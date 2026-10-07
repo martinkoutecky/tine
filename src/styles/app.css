@@ -1629,7 +1629,7 @@ html[data-system-insets="native-viewport"] {
   border-radius: 8px;
   background: var(--bg-secondary, rgba(0, 0, 0, 0.03));
   color: var(--text-primary);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--tine-mono-font, var(--font-mono, ui-monospace, monospace));
   font-size: 12.5px;
   line-height: 1.5;
   white-space: pre;
@@ -1667,7 +1667,7 @@ html[data-system-insets="native-viewport"] {
 .export-indent-btn.active {
   background: var(--link-color);
   border-color: var(--link-color);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .export-toggles {
   gap: 6px 14px;
@@ -1707,7 +1707,7 @@ html[data-system-insets="native-viewport"] {
 .export-btn-primary {
   background: var(--link-color);
   border-color: var(--link-color);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .export-btn-primary:disabled {
   opacity: 0.6;
@@ -2180,7 +2180,7 @@ html[data-system-insets="native-viewport"] {
 }
 .settings-segment button.active {
   background: var(--link-color, #2563eb);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .settings-segment button.active:hover {
   background: var(--link-color, #2563eb);
@@ -2382,7 +2382,7 @@ html[data-system-insets="native-viewport"] {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--tine-mono-font, var(--font-mono, ui-monospace, monospace));
   font-size: 12px;
   color: var(--text-secondary);
   background: var(--bg-secondary);
@@ -2430,7 +2430,7 @@ html[data-system-insets="native-viewport"] {
   background: color-mix(in srgb, #c0392b 12%, transparent);
 }
 .settings-btn-primary {
-  color: #fff;
+  color: var(--on-accent, #fff);
   background: var(--link-color);
   border-color: var(--link-color);
 }
@@ -2536,7 +2536,7 @@ html[data-system-insets="native-viewport"] {
 .sync-merge-seg.active {
   background: var(--link-color);
   border-color: var(--link-color);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .sync-merge-unchanged-tag {
   font-size: 11px;
@@ -2775,7 +2775,7 @@ html[data-system-insets="native-viewport"] {
   transition: transform 0.12s ease, background 0.12s ease;
 }
 .settings-toggle.on .settings-toggle-knob {
-  background: #fff;
+  background: var(--on-accent, #fff);
   transform: translateX(16px);
 }
 
@@ -2804,7 +2804,7 @@ html[data-system-insets="native-viewport"] {
 }
 .improve-tab .seg-btn.on {
   background: var(--link-color);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .improve-run {
   display: flex;
@@ -2817,7 +2817,7 @@ html[data-system-insets="native-viewport"] {
   border: none;
   border-radius: 8px;
   background: var(--link-color);
-  color: #fff;
+  color: var(--on-accent, #fff);
   font-weight: 600;
   cursor: pointer;
 }
@@ -3225,7 +3225,7 @@ html[data-system-insets="native-viewport"] {
   border: none;
   border-radius: 5px;
   background: var(--accent, #4c8bf5);
-  color: #fff;
+  color: var(--on-accent, #fff);
   cursor: pointer;
 }
 .ctx-template-submit:hover {
@@ -3359,7 +3359,7 @@ html[data-system-insets="native-viewport"] {
 
 /* Org inline timestamp: a quiet monospace date chip; inactive (`[…]`) is fainter. */
 .org-timestamp {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--tine-mono-font, var(--font-mono, ui-monospace, monospace));
   font-size: 0.92em;
   color: var(--text-secondary);
   background: var(--bg-tertiary);
@@ -4114,8 +4114,8 @@ html[data-system-insets="native-viewport"] {
 .block-editor.code-edit {
   background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 6px;
   padding: 30px 12px 10px 48px; margin: 4px 0;
-  --tine-editable-font: "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco,
-    Consolas, "Courier New", var(--tine-editable-emoji-font), monospace;
+  --tine-editable-font: var(--tine-mono-font, "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco,
+    Consolas, "Courier New", var(--tine-editable-emoji-font), monospace);
   font-size: 0.86em; line-height: 1.5; white-space: pre;
   overflow-x: auto; overflow-y: hidden; min-height: 0;
 }
@@ -4176,7 +4176,7 @@ html[data-system-insets="native-viewport"] {
   top: 1px;
   width: 4px;
   height: 8px;
-  border: solid #fff;
+  border: solid var(--on-accent, #fff);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -4214,7 +4214,7 @@ html[data-system-insets="native-viewport"] {
   top: 1px;
   width: 4px;
   height: 8px;
-  border: solid #fff;
+  border: solid var(--on-accent, #fff);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -4258,7 +4258,7 @@ html[data-system-insets="native-viewport"] {
   top: 1px;
   width: 3.5px;
   height: 7px;
-  border: solid #fff;
+  border: solid var(--on-accent, #fff);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
@@ -4764,7 +4764,7 @@ mark {
   font-size: 1.05em;
   min-width: 52px;
   background: var(--accent, #4c8bf5);
-  color: #fff;
+  color: var(--on-accent, #fff);
   border-color: transparent;
 }
 .audio-play:hover {
@@ -5017,7 +5017,7 @@ body.file-drop-active::after {
 }
 .dp-cell.selected {
   background: var(--accent, #10b981);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .dp-empty {
   visibility: hidden;
@@ -5185,7 +5185,7 @@ body.file-drop-active::after {
 .formula-editor-textarea {
   min-height: 94px;
   resize: vertical;
-  font-family: var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-family: var(--tine-mono-font, var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace));
 }
 .formula-editor-input.invalid,
 .formula-editor-textarea.invalid {
@@ -5198,7 +5198,7 @@ body.file-drop-active::after {
 }
 .formula-editor-error pre {
   margin: 2px 0 0;
-  font: 12px var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font: 12px var(--tine-mono-font, var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace));
   white-space: pre-wrap;
 }
 .formula-editor-hints {
@@ -5306,7 +5306,7 @@ body.file-drop-active::after {
   border: none;
   background: transparent;
   color: var(--text-primary);
-  font: 12px var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font: 12px var(--tine-mono-font, var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace));
 }
 .formula-builder-raw-inline.invalid,
 .formula-builder-raw-input.invalid {
@@ -5333,7 +5333,7 @@ body.file-drop-active::after {
 .formula-editor-btn.primary {
   background: var(--accent, #4c8bf5);
   border-color: var(--accent, #4c8bf5);
-  color: #fff;
+  color: var(--on-accent, #fff);
 }
 .formula-editor-btn:disabled {
   opacity: 0.5;
