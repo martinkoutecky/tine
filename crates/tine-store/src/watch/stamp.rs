@@ -59,6 +59,12 @@ thread_local! {
     pub(super) static STAMPS_BY_PATH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only: how many whole-file hashes `stamp` took on this thread.
+    pub(super) static STAMP_HASHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub(crate) fn stamp_metadata(path: &Path) -> Option<Stamp> {
     #[cfg(test)]
     STAMPS_BY_PATH.with(|count| count.set(count.get() + 1));

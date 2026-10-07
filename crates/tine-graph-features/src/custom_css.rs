@@ -32,6 +32,7 @@ pub fn ensure_custom_css(store: &Store) -> io::Result<std::path::PathBuf> {
             Err(StoreError::InvalidTarget(_)) => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
+                    // Refusal table: docs/contracts/theme-tokens.md, "a directory, not a file".
                     "logseq/custom.css is not a regular file; not editing it",
                 ));
             }

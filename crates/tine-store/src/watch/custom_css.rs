@@ -25,8 +25,23 @@ impl Core {
             return;
         }
         let path = self.graph.root.join(CUSTOM_CSS);
-        let mut current = stamp(&path);
         let mut previous = self.custom_css_stamp.lock().unwrap();
+        // One stat first: a stylesheet whose metadata is unchanged since the
+        // last observation, and old enough not to be racy (§5.4), is the same
+        // bytes, so a poll cycle or full diff never re-hashes a multi-megabyte
+        // theme (base64 fonts) or an oversized file under the writer lock.
+        let observed = SystemTime::now();
+        let metadata = stamp_metadata(&path);
+        match (previous.as_ref(), metadata.as_ref()) {
+            (None, None) => return,
+            (Some(before), Some(now))
+                if before.rev.is_some() && before.same_metadata(now) && !now.racy_at(observed) =>
+            {
+                return;
+            }
+            _ => {}
+        }
+        let mut current = stamp(&path);
         // A file that vanished or failed to read between its metadata and its
         // bytes (an editor's save-by-rename): look again before calling it gone.
         if (current.is_none() && previous.is_some())
@@ -194,6 +209,49 @@ mod tests {
             css_change(&subscription).is_none(),
             "an own write echoed back as an external custom.css change"
         );
+        store.close();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A poll cycle or full diff must not re-hash an unchanged stylesheet: a
+    /// settled file with the same metadata costs one stat. A real change (even
+    /// to bytes of equal length) still hashes and publishes.
+    #[test]
+    fn an_unchanged_settled_custom_css_is_not_rehashed_on_every_observation() {
+        let root = fs::canonicalize(temp_root("css-hashes")).unwrap();
+        let (store, _, _) = Store::open(&root, OpenOptions::default()).unwrap();
+        store.whole_graph().unwrap();
+        let subscription = store.subscribe();
+        let path = root.join("logseq/custom.css");
+        let settle = |path: &std::path::Path| {
+            let file = fs::File::options().write(true).open(path).unwrap();
+            file.set_modified(SystemTime::now() - Duration::from_secs(3600))
+                .unwrap();
+        };
+
+        fs::write(&path, "aaaa { color: red }\n").unwrap();
+        settle(&path);
+        store.watch.core.observe_custom_css();
+        let (kind, _) = css_change(&subscription).expect("create was never published");
+        assert_eq!(kind, ChangeKind::Created);
+
+        let before = STAMP_HASHES.with(|count| count.get());
+        for _ in 0..5 {
+            store.watch.core.observe_custom_css();
+        }
+        assert_eq!(
+            STAMP_HASHES.with(|count| count.get()) - before,
+            0,
+            "an unchanged, settled custom.css was hashed again by a no-change observation"
+        );
+        assert!(css_change(&subscription).is_none());
+
+        // Same length, different bytes: the metadata moves, so it is hashed.
+        fs::write(&path, "bbbb { color: red }\n").unwrap();
+        settle(&path);
+        store.watch.core.observe_custom_css();
+        let (kind, _) = css_change(&subscription).expect("equal-length edit was never published");
+        assert_eq!(kind, ChangeKind::Modified);
         store.close();
         fs::remove_dir_all(root).unwrap();
     }

@@ -21,9 +21,9 @@ mod runtime;
 use runtime::run;
 pub(crate) use runtime::RACY_FOLLOW_UP;
 mod stamp;
-#[cfg(test)]
-use stamp::STAMPS_BY_PATH;
 pub(crate) use stamp::{stamp_from_metadata, stamp_metadata, RACY_WINDOW};
+#[cfg(test)]
+use stamp::{STAMPS_BY_PATH, STAMP_HASHES};
 
 pub(crate) use launch::{Baseline, Deferred};
 
@@ -100,6 +100,8 @@ pub(crate) type RestoreBaseline = HashMap<PathBuf, Stamp>;
 
 fn stamp(path: &Path) -> Option<Stamp> {
     let mut value = stamp_metadata(path)?;
+    #[cfg(test)]
+    STAMP_HASHES.with(|count| count.set(count.get() + 1));
     value.rev = FileRev::from_file(path).ok();
     Some(value)
 }
@@ -887,6 +889,9 @@ impl WatchHandle {
                 );
                 self.core.load.ready.notify_all();
                 let _ = self.wake.send(());
+                // A stylesheet edited while the load was failed was never seen.
+                drop(_writer);
+                self.core.observe_custom_css();
                 return Ok(());
             }
             LoadStatus::Ready => drop(status),

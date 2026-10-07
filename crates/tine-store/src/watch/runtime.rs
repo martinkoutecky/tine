@@ -62,6 +62,7 @@ pub(super) fn run(
                 // already contain files (or a config.edn) it never reported.
                 // Reconcile once, config included.
                 let _ = core.reconcile(None, true, false, DiffTrigger::WatchInstall);
+                core.observe_custom_css();
             }
         }
         let external_assets = core
