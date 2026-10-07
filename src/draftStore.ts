@@ -27,9 +27,14 @@ const idFor = (name: string) => `${session}:${name}`;
 type Kept = { binding: Binding; written: string | null; risky: boolean; supersedes?: string };
 const atRisk = new Map<string, Kept>();
 let timer: ReturnType<typeof setTimeout> | null = null;
+
 // Pages whose crash-safe write was refused: said once per page until a write
 // for it succeeds again (a refusal of another page is said too).
 const refused = new Set<string>();
+// §8.5 (G37): an unreadable store is set aside with its bytes kept and the
+// store starts empty. Every draft-store call reports that path; say it once per
+// path and graph binding, never silently treat the store as empty.
+const reportedAside = new Set<string>();
 
 // I-21: page queues belong to one binding. A switch preserves already-started
 // capsules for recovery but cannot start their retirement in the next graph.
@@ -38,7 +43,15 @@ clearOnBindingInvalidated(() => {
   timer = null;
   atRisk.clear();
   refused.clear();
+  reportedAside.clear();
 });
+
+function noteSetAside(aside: string | null | undefined): void {
+  if (!aside || reportedAside.has(aside)) return;
+  reportedAside.add(aside);
+  pushToast(`Tine's store of crash-safe copies for this graph could not be read. It was moved aside to ${aside} (nothing was deleted) and a new one was started; copies it held are not offered.`, "error", { sticky: true });
+}
+const stored = (write: Promise<string | null> | undefined) => (write ?? Promise.resolve(null)).then(noteSetAside);
 
 // An earlier session's drafts belong to the graph they were read for.
 const [earlier, setEarlier] = graphScopedSignal<DraftRecord[]>();
@@ -76,7 +89,7 @@ export async function writeAtRisk(): Promise<void> {
       const owner = ownedWhen(() => bindingCurrent(kept.binding));
       await serializeDurable(kept, owner, async () => {
         if (!kept.risky || text === kept.written) return;
-        const written = await writeOwned(owner, backend().storeDraft?.(record) ?? Promise.resolve());
+        const written = await writeOwned(owner, stored(backend().storeDraft?.(record)));
         if (written.kind === "stale" || !owner()) return;
         // Record completion before the queued retirement examines it. Already
         // started writes finish even when the page becomes safe meanwhile.
@@ -106,7 +119,7 @@ async function retire(name: string, kept: Kept) {
     await serializeDurable(kept, owner, async () => {
       if (kept.risky) return;
       if (kept.written !== null) {
-        const retired = await writeOwned(owner, backend().retireDraft?.(idFor(name)) ?? Promise.resolve());
+        const retired = await writeOwned(owner, stored(backend().retireDraft?.(idFor(name))));
         if (retired.kind === "stale" || !owner()) return;
         kept.written = null;
       }
@@ -179,7 +192,7 @@ export function keepAtSwitch(root: string): Promise<string[]> {
       try {
         // The completion belongs to this switch, not to a graph binding (the
         // window's binding has already moved on): nothing can retire it.
-        await writeOwned(ownedWhen(), backend().storeDraft?.(record, root) ?? Promise.resolve());
+        await writeOwned(ownedWhen(), stored(backend().storeDraft?.(record, root)));
         dismissHeldDraft(record.id);
       } catch {
         lost.push(record.page_name);
@@ -194,7 +207,7 @@ export async function dismissEarlierDraft(id: string): Promise<void> {
   // A panel that outlived its graph must not retire a record in the next one.
   if (earlier() === null) return refuseStaleWrite("Dismissing the kept draft");
   try {
-    const result = await writeOwned(bindingOwner(), backend().retireDraft?.(id) ?? Promise.resolve());
+    const result = await writeOwned(bindingOwner(), stored(backend().retireDraft?.(id)));
     if (result.kind === "current") setEarlier(earlierDrafts().filter((r) => r.id !== id));
   } catch (error) {
     pushToast(`Couldn't dismiss the kept draft (${String(error)}). It is still available.`, "error");
@@ -204,10 +217,12 @@ export async function dismissEarlierDraft(id: string): Promise<void> {
 async function offerEarlier() {
   let result;
   try {
-    result = await readOwned(graphOwner(), backend().loadDrafts?.() ?? Promise.resolve([]));
+    result = await readOwned(graphOwner(), (backend().loadDrafts?.() ?? Promise.resolve({ drafts: [], set_aside: null }))
+      .then((load) => { noteSetAside(load.set_aside); return load.drafts; }));
   } catch (error) {
-    // The backend sets an unreadable store aside, so this is a disk error or a
-    // missing app-data dir: opening the graph goes on without earlier drafts.
+    // The backend sets an unreadable store aside (reported above), so this is a
+    // disk error or a missing app-data dir: opening the graph goes on without
+    // earlier drafts.
     pushToast(`Couldn't read drafts kept from an earlier session (${String(error)}).`, "error");
     return;
   }

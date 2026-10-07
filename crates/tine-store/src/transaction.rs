@@ -1067,6 +1067,9 @@ impl<'a> Transaction<'a> {
                     self.verify(&plan.src, old, index)?;
                 }
                 if old == Some(new.as_slice()) {
+                    // Equal bytes are reported as a success, so make them durable
+                    // first: they may be another program's unsynced write.
+                    crate::atomic_file::sync_existing(&src).map_err(failed)?;
                     return Ok(StepResult::Unchanged {
                         file: plan.src.clone(),
                         rev: FileRev::from_bytes(new),

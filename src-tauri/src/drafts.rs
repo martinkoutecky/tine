@@ -26,7 +26,9 @@
 //! malformed or oversized file (past either bound) never blocks opening: it is set aside as
 //! `.unreadable-<n>` and the store starts empty (scenario: crash or power loss
 //! leaving a torn file, disk error, or a sync client delivering another build's
-//! file into app data). The bytes are kept, not deleted.
+//! file into app data). The bytes are kept, not deleted, and every command
+//! reports the set-aside path so the user is told (spec §8.5: a damaged store
+//! is never silently treated as empty; G37).
 //!
 //! **Cost.** Records are written only while a page is at risk, never on an
 //! ordinary save. One write is O(file bytes) ≤ 8 MiB, one file.
@@ -112,24 +114,38 @@ fn decode(bytes: &[u8]) -> Result<Vec<Value>, String> {
     Ok(envelope.drafts)
 }
 
-/// Set an unreadable file aside and start empty (see the module refusals).
-fn set_aside(path: &Path) -> Result<(), String> {
+/// Set an unreadable file aside and start empty (see the module refusals);
+/// returns where its bytes now are.
+fn set_aside(path: &Path) -> Result<String, String> {
     for n in 0u32.. {
         let aside = path.with_extension(format!("json.unreadable-{n}"));
         if aside.exists() {
             continue;
         }
         crate::device_io::move_file_noreplace(path, &aside).map_err(|e| e.to_string())?;
-        return Ok(());
+        return Ok(aside.display().to_string());
     }
     unreachable!("u32 range exhausted")
 }
 
-fn load_unlocked(path: &Path) -> Result<Vec<Value>, String> {
+/// The store's records, plus the path an unreadable file was set aside to
+/// during this load (reported to the user, never silent).
+#[derive(Serialize, Debug, PartialEq)]
+pub(crate) struct Loaded {
+    pub(crate) drafts: Vec<Value>,
+    pub(crate) set_aside: Option<String>,
+}
+
+fn load_unlocked(path: &Path) -> Result<Loaded, String> {
     use std::io::Read;
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Loaded {
+                drafts: Vec::new(),
+                set_aside: None,
+            })
+        }
         Err(error) => return Err(error.to_string()),
     };
     let mut bytes = Vec::new();
@@ -137,11 +153,14 @@ fn load_unlocked(path: &Path) -> Result<Vec<Value>, String> {
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
     match decode(&bytes) {
-        Ok(drafts) => Ok(drafts),
-        Err(_) => {
-            set_aside(path)?;
-            Ok(Vec::new())
-        }
+        Ok(drafts) => Ok(Loaded {
+            drafts,
+            set_aside: None,
+        }),
+        Err(_) => Ok(Loaded {
+            drafts: Vec::new(),
+            set_aside: Some(set_aside(path)?),
+        }),
     }
 }
 
@@ -176,15 +195,19 @@ fn write_unlocked(path: &Path, drafts: Vec<Value>) -> Result<(), String> {
     crate::device_io::atomic_write(path, &bytes).map_err(|e| e.to_string())
 }
 
-pub(crate) fn load_at(path: &Path) -> Result<Vec<Value>, String> {
+pub(crate) fn load_at(path: &Path) -> Result<Loaded, String> {
     let _guard = DRAFTS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     load_unlocked(path)
 }
 
-pub(crate) fn store_at(path: &Path, record: Value) -> Result<(), String> {
+/// Returns the path a damaged store was set aside to, if this call did that.
+pub(crate) fn store_at(path: &Path, record: Value) -> Result<Option<String>, String> {
     let id = record_id(&record)?.to_owned();
     let _guard = DRAFTS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let mut drafts = load_unlocked(path)?;
+    let Loaded {
+        mut drafts,
+        set_aside,
+    } = load_unlocked(path)?;
     match drafts
         .iter_mut()
         .find(|r| record_id(r).ok() == Some(id.as_str()))
@@ -192,18 +215,22 @@ pub(crate) fn store_at(path: &Path, record: Value) -> Result<(), String> {
         Some(existing) => *existing = record,
         None => drafts.push(record),
     }
-    write_unlocked(path, drafts)
+    write_unlocked(path, drafts).map(|()| set_aside)
 }
 
-pub(crate) fn retire_at(path: &Path, id: &str) -> Result<(), String> {
+/// Returns the path a damaged store was set aside to, if this call did that.
+pub(crate) fn retire_at(path: &Path, id: &str) -> Result<Option<String>, String> {
     let _guard = DRAFTS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let mut drafts = load_unlocked(path)?;
+    let Loaded {
+        mut drafts,
+        set_aside,
+    } = load_unlocked(path)?;
     let before = drafts.len();
     drafts.retain(|r| record_id(r).ok() != Some(id));
     if drafts.len() == before {
-        return Ok(());
+        return Ok(set_aside);
     }
-    write_unlocked(path, drafts)
+    write_unlocked(path, drafts).map(|()| set_aside)
 }
 
 fn drafts_path(
@@ -230,7 +257,7 @@ fn drafts_file_name(root: &Path) -> String {
 pub(crate) fn load_drafts(
     app: tauri::AppHandle,
     state: crate::state::GraphContext<'_>,
-) -> Result<Vec<Value>, String> {
+) -> Result<Loaded, String> {
     load_at(&drafts_path(&app, &state)?)
 }
 
@@ -244,7 +271,7 @@ pub(crate) async fn store_draft(
     graph_root: Option<String>,
     app: tauri::AppHandle,
     state: crate::state::GraphContext<'_>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let path = match graph_root {
         Some(root) => {
             crate::state::slot_for_context(&state)?;
@@ -261,7 +288,7 @@ pub(crate) async fn retire_draft(
     id: String,
     app: tauri::AppHandle,
     state: crate::state::GraphContext<'_>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let path = drafts_path(&app, &state)?;
     crate::state::off_ui(move || retire_at(&path, &id)).await
 }
@@ -283,14 +310,17 @@ mod tests {
         store_at(&path, record("s1:P", "first")).unwrap();
         store_at(&path, record("s1:Q", "other")).unwrap();
         store_at(&path, record("s1:P", "second")).unwrap();
-        let loaded = load_at(&path).unwrap();
+        let loaded = load_at(&path).unwrap().drafts;
         assert_eq!(
             loaded,
             vec![record("s1:P", "second"), record("s1:Q", "other")]
         );
         retire_at(&path, "s1:P").unwrap();
         retire_at(&path, "s1:missing").unwrap();
-        assert_eq!(load_at(&path).unwrap(), vec![record("s1:Q", "other")]);
+        assert_eq!(
+            load_at(&path).unwrap().drafts,
+            vec![record("s1:Q", "other")]
+        );
         retire_at(&path, "s1:Q").unwrap();
         assert!(!path.exists());
     }
@@ -305,16 +335,32 @@ mod tests {
             &b"{\"version\":1,\"drafts\":[{\"id\":\"a\",\"kind\":\"other\"}]}"[..],
         ] {
             fs::write(&path, bytes).unwrap();
-            assert!(load_at(&path).unwrap().is_empty());
+            let loaded = load_at(&path).unwrap();
+            assert!(loaded.drafts.is_empty());
             assert!(!path.exists());
+            // §8.5 / G37: the user is told, never a silent empty store.
+            let aside = loaded.set_aside.expect("a set-aside store is reported");
+            assert_eq!(
+                fs::read(&aside).unwrap(),
+                bytes,
+                "reported path holds the kept bytes"
+            );
         }
+        // A write that meets a damaged store reports it too.
+        fs::write(&path, b"torn").unwrap();
+        let reported = store_at(&path, record("s3:P", "x")).unwrap();
+        assert!(reported.is_some_and(|aside| fs::read(aside).unwrap() == b"torn"));
+        fs::remove_file(&path).unwrap();
         let aside: Vec<_> = fs::read_dir(temp.path())
             .unwrap()
             .map(|e| e.unwrap().file_name())
             .collect();
-        assert_eq!(aside.len(), 3, "each unreadable file is kept: {aside:?}");
+        assert_eq!(aside.len(), 4, "each unreadable file is kept: {aside:?}");
         store_at(&path, record("s2:P", "after")).unwrap();
-        assert_eq!(load_at(&path).unwrap(), vec![record("s2:P", "after")]);
+        assert_eq!(
+            load_at(&path).unwrap().drafts,
+            vec![record("s2:P", "after")]
+        );
     }
 
     #[test]
@@ -324,7 +370,7 @@ mod tests {
         let file = fs::File::create(&path).unwrap();
         file.set_len((MAX_BYTES * 16) as u64).unwrap();
         drop(file);
-        assert!(load_at(&path).unwrap().is_empty());
+        assert!(load_at(&path).unwrap().drafts.is_empty());
         assert!(!path.exists());
         let aside = path.with_extension("json.unreadable-0");
         assert_eq!(fs::metadata(aside).unwrap().len(), (MAX_BYTES * 16) as u64);
@@ -339,8 +385,8 @@ mod tests {
         }
         assert!(store_at(&path, record("s:overflow", "x")).is_err());
         assert!(store_at(&path, record("s:0", &"y".repeat(MAX_BYTES))).is_err());
-        assert_eq!(load_at(&path).unwrap().len(), MAX_RECORDS);
-        assert_eq!(load_at(&path).unwrap()[0], record("s:0", "x"));
+        assert_eq!(load_at(&path).unwrap().drafts.len(), MAX_RECORDS);
+        assert_eq!(load_at(&path).unwrap().drafts[0], record("s:0", "x"));
     }
 
     #[test]
@@ -357,14 +403,14 @@ mod tests {
         let bytes = serde_json::to_vec(&json!({ "version": 1, "drafts": drafts })).unwrap();
         assert!(bytes.len() < MAX_BYTES);
         fs::write(&path, &bytes).unwrap();
-        assert!(load_at(&path).unwrap().is_empty());
+        assert!(load_at(&path).unwrap().drafts.is_empty());
         assert!(!path.exists());
         assert_eq!(
             fs::read(path.with_extension("json.unreadable-0")).unwrap(),
             bytes
         );
         store_at(&path, record("s:0", "after")).unwrap();
-        assert_eq!(load_at(&path).unwrap(), vec![record("s:0", "after")]);
+        assert_eq!(load_at(&path).unwrap().drafts, vec![record("s:0", "after")]);
     }
 
     #[test]

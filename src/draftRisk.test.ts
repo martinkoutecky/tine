@@ -34,9 +34,9 @@ beforeEach(() => {
   setToasts([]);
   store.clear();
   const api = backend() as Required<Backend>;
-  vi.spyOn(api, "storeDraft").mockImplementation(async (r) => { store.set(r.id, structuredClone(r)); });
-  vi.spyOn(api, "retireDraft").mockImplementation(async (id) => { store.delete(id); });
-  vi.spyOn(api, "loadDrafts").mockImplementation(async () => records());
+  vi.spyOn(api, "storeDraft").mockImplementation(async (r) => { store.set(r.id, structuredClone(r)); return null; });
+  vi.spyOn(api, "retireDraft").mockImplementation(async (id) => { store.delete(id); return null; });
+  vi.spyOn(api, "loadDrafts").mockImplementation(async () => ({ drafts: records(), set_aside: null }));
   installDraftStore();
 });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -146,7 +146,7 @@ describe("a refused crash-safe write (the store's 64-page / 8 MiB bound, a disk 
     const refusals = toasts().filter((t) => t.message.includes("crash-safe copy"));
     expect(refusals.map((t) => [t.kind, t.sticky, /“(.)”/.exec(t.message)?.[1]])).toEqual([["error", true, "P"], ["error", true, "Q"]]);
     // Room again: the next refresh writes both drafts (they stayed at risk).
-    vi.mocked(backend().storeDraft!).mockImplementation(async (r) => { store.set(r.id, structuredClone(r)); });
+    vi.mocked(backend().storeDraft!).mockImplementation(async (r) => { store.set(r.id, structuredClone(r)); return null; });
     await vi.advanceTimersByTimeAsync(REFRESH_MS);
     expect(records().map((r) => r.page_name).sort()).toEqual(["P", "Q"]);
   });

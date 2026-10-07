@@ -108,6 +108,24 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     res
 }
 
+/// Make the bytes already at `path` durable: fsync the file, then its
+/// directory entry. A save whose bytes equal the disk reports success without
+/// a rename, and success retires the editor's crash copy, so those bytes must
+/// be as durable as a rename would have made them. Scenario: another program
+/// (Syncthing) writes the user's unsaved text without fsync, Tine's save finds
+/// equal bytes, and a power cut then reverts the file (storage.qnt mutant MQ).
+/// Windows needs a writable handle for FlushFileBuffers.
+pub(crate) fn sync_existing(path: &Path) -> io::Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    #[cfg(windows)]
+    let file = fs::OpenOptions::new().write(true).open(path);
+    #[cfg(not(windows))]
+    let file = fs::File::open(path);
+    file.and_then(|file| file.sync_all())
+        .map_err(at("fsync unchanged file"))?;
+    super::directory_durability::sync_directory_entry(dir)
+}
+
 pub(crate) fn atomic_write_with_check(
     path: &Path,
     bytes: &[u8],
