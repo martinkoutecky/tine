@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "./backend";
 import { captureBinding } from "./binding";
-import { applyCustomCss, setCustomCssDisabled } from "./customCss";
-import { applyCustomCssChange } from "./graph";
+import { applyCustomCss, customCssDisabled, setCustomCssDisabled } from "./customCss";
+import { runGlobalCommand } from "./keybindings";
+import { applyCustomCssChange, injectCustomCss } from "./graph";
 import { CUSTOM_CSS_STYLE_ID } from "./lsShim";
 import { CustomCssSettings } from "./components/CustomCssSettings";
 import { setToasts, toasts } from "./toasts";
@@ -55,6 +56,59 @@ describe("custom.css live reload", () => {
   });
 });
 
+describe("custom.css live re-read failures and ordering", () => {
+  const generation = () => ({ binding_generation: captureBinding().backendGeneration });
+
+  it("a transient read failure keeps the last stylesheet, shows no toast, and the retry applies the new text", async () => {
+    applyCustomCss("a { color: red }");
+    const seen: Array<string | null | undefined> = [];
+    const observer = new MutationObserver(() => seen.push(css()));
+    observer.observe(document.head, { childList: true, subtree: true, characterData: true });
+    vi.spyOn(backend(), "readCustomCss")
+      .mockRejectedValueOnce(new Error("sharing violation"))
+      .mockResolvedValue("a { color: blue }");
+    applyCustomCssChange(generation());
+    await tick();
+    expect(css()).toBe("a { color: red }");
+    await vi.waitFor(() => expect(css()).toBe("a { color: blue }"), { timeout: 3000 });
+    observer.disconnect();
+    expect(seen).not.toContain("");
+    expect(toasts()).toEqual([]);
+  });
+
+  it("a read that keeps failing keeps the last stylesheet and reports once", async () => {
+    applyCustomCss("a { color: red }");
+    const read = vi.spyOn(backend(), "readCustomCss").mockRejectedValue(new Error("invalid UTF-8"));
+    applyCustomCssChange(generation());
+    await vi.waitFor(() => expect(toasts()).toHaveLength(1), { timeout: 3000 });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(css()).toBe("a { color: red }");
+  });
+
+  it("when two re-reads overlap, the newer one wins even if the older lands last", async () => {
+    applyCustomCss("a { color: red }");
+    let releaseOld!: (value: string) => void;
+    vi.spyOn(backend(), "readCustomCss")
+      .mockImplementationOnce(() => new Promise<string>((resolve) => { releaseOld = resolve; }))
+      .mockResolvedValue("a { color: new }");
+    applyCustomCssChange(generation());
+    applyCustomCssChange(generation());
+    await vi.waitFor(() => expect(css()).toBe("a { color: new }"));
+    releaseOld("a { color: old }");
+    await tick();
+    await tick();
+    expect(css()).toBe("a { color: new }");
+  });
+
+  it("opening a graph whose custom.css cannot be read applies none of it and says so", async () => {
+    applyCustomCss("a { color: previous-graph }");
+    vi.spyOn(backend(), "readCustomCss").mockRejectedValue(new Error("too large"));
+    await injectCustomCss();
+    expect(css()).toBe("");
+    expect(toasts()).toHaveLength(1);
+  });
+});
+
 describe("Disable custom CSS (session-only safe mode)", () => {
   it("blanks the stylesheet, remembers an outside edit, and restores the latest text when re-enabled", () => {
     applyCustomCss("a { color: red }");
@@ -64,6 +118,16 @@ describe("Disable custom CSS (session-only safe mode)", () => {
     expect(css()).toBe("");
     setCustomCssDisabled(false);
     expect(css()).toBe("a { color: green }");
+  });
+
+  it("is reachable from the command palette even when a stylesheet hides the Settings UI", () => {
+    applyCustomCss("a { color: red }");
+    expect(runGlobalCommand("ui/toggle-custom-css")).toBe(true);
+    expect(customCssDisabled()).toBe(true);
+    expect(css()).toBe("");
+    expect(runGlobalCommand("ui/toggle-custom-css")).toBe(true);
+    expect(customCssDisabled()).toBe(false);
+    expect(css()).toBe("a { color: red }");
   });
 
   it("is not persisted anywhere", () => {

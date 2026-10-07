@@ -58,7 +58,7 @@ export function applyGraphConfigChange(change: GraphConfigChange): void {
  *  binding is ignored; the read itself is graph-owned. */
 export function applyCustomCssChange(change: CustomCssChange): void {
   if (change.binding_generation !== undefined && captureBinding().backendGeneration !== change.binding_generation) return;
-  void injectCustomCss();
+  void injectCustomCss(true);
 }
 
 /** Publish one config snapshot and its derived state (I-12). The journal
@@ -459,19 +459,43 @@ export async function ensureJournalTemplateForDay(
   finally { if (journalTemplateFlight === flight) journalTemplateFlight = null; }
 }
 
-/** Load the graph's logseq/custom.css into a <style> tag (user theming). */
-export async function injectCustomCss(): Promise<void> {
+/** Newest custom.css read: an older read that lands after a newer one is dropped. */
+let customCssRead = 0;
+/** A live re-read that fails once is tried again after this pause, so an editor's
+ *  delete-then-write save (or a Windows editor briefly holding the file) is not
+ *  reported. One retry, not a poll. */
+const CUSTOM_CSS_LIVE_RETRY_MS = 400;
+
+/** Load the graph's logseq/custom.css into a <style> tag (user theming).
+ *  `live` is a re-read after an outside edit: a read that fails keeps the last
+ *  applied stylesheet (it is not blanked), is retried once, and is reported only
+ *  if the retry fails too. The graph-open read blanks on failure (nothing of a
+ *  previous graph may stay applied). Latest read wins. */
+export async function injectCustomCss(live = false): Promise<void> {
+  const seq = ++customCssRead;
   const owner = graphOwner();
-  let css = "";
-  try {
-    const result = await readOwned(owner, backend().readCustomCss());
-    if (result.kind === "stale") return;
-    css = result.value;
-  } catch (error) {
-    if (owner()) reportUiFailure("custom-css", error);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const result = await readOwned(owner, backend().readCustomCss());
+      if (result.kind === "stale") return;
+      if (!owner()) return;
+      if (seq !== customCssRead) return;
+      applyCustomCss(result.value);
+      return;
+    } catch (error) {
+      if (!owner()) return;
+      if (seq !== customCssRead) return;
+      if (live && attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, CUSTOM_CSS_LIVE_RETRY_MS));
+        if (!owner()) return;
+        if (seq !== customCssRead) return;
+        continue;
+      }
+      reportUiFailure("custom-css", error);
+      if (!live) applyCustomCss("");
+      return;
+    }
   }
-  if (!owner()) return;
-  applyCustomCss(css);
 }
 
 /** Open a graph chosen with the desktop folder picker or Android graph picker.

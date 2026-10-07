@@ -12,6 +12,7 @@ import { browserPlatform } from "./browserPlatform";
 
 import { openSwitcher, closeSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, dismissMobileDrawer } from "./ui";
 import { pushToast } from "./toasts";
+import { customCssDisabled, setCustomCssDisabled } from "./customCss";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { zoomReset } from "./zoom";
 import { onEachWindow, queryAllWindows } from "./windowRealm";
@@ -279,6 +280,7 @@ const COMMANDS: CommandDef[] = [
   // devtools shortcut (console) — is NOT grabbed by WebKit, so it works here. A
   // mod-chord, so it fires even while editing; remap it in Settings if you like.
   { id: "ui/toggle-devtools", binding: "mod+shift+j", label: "Toggle developer tools", scope: "global", run: openDevtools, global: true },
+  { id: "ui/toggle-custom-css", binding: "", label: "Toggle custom CSS (safe mode, this session)", scope: "global", run: () => setCustomCssDisabled(!customCssDisabled()), global: true },
   { id: "go/journals", binding: "g j", label: "Go to journals", scope: "global", run: openJournals },
   { id: "go/home", binding: "g h", label: "Go to home page", scope: "global", run: goHome },
   { id: "go/journal-next", binding: "g n", label: "Go to next journal day", scope: "global", run: () => goAdjacentJournal(1) },

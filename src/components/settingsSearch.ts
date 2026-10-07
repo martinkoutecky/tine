@@ -8,8 +8,8 @@ export type SettingSearchEntry = { tab: Tab; label: string; description: string;
 export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: "Theme mode", description: "light dark system" },
   { tab: "appearance", label: "Style", description: "typography journal headings presentation theme" },
-  { tab: "appearance", label: "Color scheme", description: "default nord solarized gruvbox theme gallery package colors" },
-  { tab: "appearance", label: "Edit custom.css", description: "logseq custom.css stylesheet theming tokens CSS variables recipes open editor" },
+  { tab: "appearance", label: "Color scheme", description: "default nord solarized gruvbox soft medium light dark theme gallery package colors" },
+  { tab: "appearance", label: "Edit custom.css", description: "logseq custom.css stylesheet theming tokens CSS variables recipes open default app editor" },
   { tab: "appearance", label: "Disable custom CSS", description: "safe mode broken stylesheet unreadable session" },
   { tab: "appearance", label: "Developer tools", description: "inspector inspect element styles devtools" },
   { tab: "appearance", label: "Accent color", description: "interface highlight color" },

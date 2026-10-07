@@ -4,13 +4,14 @@ import { customCssDisabled, setCustomCssDisabled } from "../customCss";
 import { bindingOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { platformKind } from "../platform";
 import { pushToast } from "../toasts";
+import { isMac } from "../nativeChrome";
 import { openDevtools } from "../ui";
 import { Field, Toggle } from "./settingsField";
 
 /** Settings > Appearance > Custom CSS (GH #610): the three affordances that
  *  make `logseq/custom.css` discoverable and recoverable.
  *  - Edit custom.css (desktop): create the file through the store's audited
- *    create when missing, then open it in the system editor. Android has no
+ *    create when missing, then hand it to the system's default app for .css. Android has no
  *    editor hand-off, so it keeps the file path hint instead.
  *  - Live reload needs no control: the watcher re-applies outside edits.
  *  - Disable custom CSS: a session-only safe mode (never persisted).
@@ -29,7 +30,7 @@ export function CustomCssSettings(): JSX.Element {
     setBusy(true);
     try {
       const result = await writeOwned(bindingOwner(), backend().editCustomCss());
-      if (alive && result.kind === "current") pushToast("Opened logseq/custom.css in your editor. Saving it applies the changes here at once.", "info");
+      if (alive && result.kind === "current") pushToast("Asked your system to open logseq/custom.css with its default app for .css files. Saving the file applies the changes here at once.", "info");
     } catch (error) {
       pushToast(`Could not open logseq/custom.css: ${String(error)}`, "error");
     } finally {
@@ -42,7 +43,7 @@ export function CustomCssSettings(): JSX.Element {
       <Show when={desktop()}>
         <Field
           label="Edit custom.css"
-          hint={<>Opens <code>logseq/custom.css</code> in your editor, creating a starter file if the graph has none. Changes apply here as soon as you save; no restart. See the Guide page "Customize Tine's look" for the supported <code>--tine-*</code> tokens and recipes.</>}
+          hint={<>Creates <code>logseq/custom.css</code> with a starter if the graph has none, then opens it with your system's default app for <code>.css</code> files (that may be a browser or viewer: set a text editor as the default for <code>.css</code>, or open the file from your graph folder). Changes apply here as soon as you save; no restart. See the Guide page "Customize Tine's look" for the supported <code>--tine-*</code> tokens and recipes.</>}
         >
           <button class="settings-btn" disabled={busy()} onClick={() => void edit()}>
             {busy() ? "Opening…" : "Edit custom.css"}
@@ -51,7 +52,7 @@ export function CustomCssSettings(): JSX.Element {
       </Show>
       <Show when={!desktop()}>
         <div class="settings-hint theme-gallery-hint">
-          Edit <code>logseq/custom.css</code> in your graph folder with any editor; Tine re-applies it when the file changes. See the Guide page "Customize Tine's look".
+          Edit <code>logseq/custom.css</code> in your graph folder with any text editor (Android and iOS have no editor hand-off); Tine re-applies it when the file changes. See the Guide page "Customize Tine's look".
         </div>
       </Show>
       <Field
@@ -63,7 +64,7 @@ export function CustomCssSettings(): JSX.Element {
       <Show when={desktop()}>
         <Field
           label="Developer tools"
-          hint={<>Opens the inspector to see which rules style an element (also <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd>).</>}
+          hint={<>Opens the inspector to see which rules style an element (also <kbd>{isMac ? "Cmd" : "Ctrl"}</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd>).</>}
         >
           <button class="settings-btn" onClick={() => openDevtools()}>Open developer tools</button>
         </Field>

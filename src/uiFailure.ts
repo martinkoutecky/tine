@@ -41,7 +41,7 @@ export type UiFailureFamily =
   | "sheet-export";
 
 const MESSAGES: Record<UiFailureFamily, string> = {
-  "custom-css": "Couldn't read custom.css. No custom CSS was applied.",
+  "custom-css": "Couldn't read custom.css. No custom CSS was applied; if you just edited it, the previous version is still in effect. Fix the file and save it again.",
   "asset-read": "Couldn't read a file from this graph's assets. It may be unreadable.",
   "page-refresh": "Couldn't refresh a page after a change. Reopen it to see the latest.",
   "logbook": "Couldn't read or update a time-tracking entry.",
