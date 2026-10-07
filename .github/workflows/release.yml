@@ -2,6 +2,12 @@
 # writes workflow artifacts only. The sole publisher is constrained to the
 # beta tag, marks it prerelease, and explicitly never marks it latest.
 # The stable master workflow is independent and is not changed by this lane.
+#
+# Signing: the macOS lane fails closed unless it can sign with Tine's Developer
+# ID certificate, notarize with a short-lived App Store Connect API token, and
+# validate the stapled ticket (GH #650: unsigned Beta builds were refused by
+# Gatekeeper). It uses the same repository secrets as the stable workflow.
+# Windows installers remain unsigned for now.
 name: release
 
 on:
@@ -173,7 +179,75 @@ jobs:
         shell: bash
         run: node scripts/release-workflow-inputs.mjs "${{ matrix.lane }}" >> "$GITHUB_ENV"
 
-      - name: Build signed Tauri bundles
+      - name: Prepare macOS signing and notarization credentials
+        if: matrix.lane == 'macos-universal'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+            APPLE_TEAM_ID APPLE_API_KEY APPLE_API_ISSUER APPLE_API_PRIVATE_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::required macOS signing secret $name is missing"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+          # macOS 26 no longer reliably infers PKCS#12 input when Tauri asks
+          # `security import` to install APPLE_CERTIFICATE itself. Import the
+          # Developer ID identity explicitly into a temporary keychain, just as
+          # the iOS lane does for its distribution identity, and do not expose
+          # APPLE_CERTIFICATE to the later Tauri process.
+          keychain="$RUNNER_TEMP/tine-macos-signing.keychain-db"
+          p12="$RUNNER_TEMP/tine-macos-developer-id.p12"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          # App notarization is an external queue and has legitimately taken
+          # longer than an hour.  Keep the ephemeral keychain unlocked for the
+          # whole maximum job lifetime so the later DMG signature cannot block
+          # on an invisible password prompt after the app was accepted.
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$p12" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 \
+            -k "$keychain"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: -s \
+            -k "$keychain_password" "$keychain"
+
+          keychains=("$keychain")
+          while IFS= read -r listed; do
+            listed="${listed//\"/}"
+            listed="${listed#"${listed%%[![:space:]]*}"}"
+            [ -n "$listed" ] && keychains+=("$listed")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "${keychains[@]}"
+          security find-identity -v -p codesigning "$keychain" |
+            grep -Fq "$APPLE_SIGNING_IDENTITY"
+          rm -f "$p12"
+          echo "MACOS_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
+          key_dir="$RUNNER_TEMP/app-store-connect-private-keys"
+          key_path="$key_dir/AuthKey_${APPLE_API_KEY}.p8"
+          install -d -m 700 "$key_dir"
+          umask 077
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Build Tauri bundles
+        if: matrix.lane != 'macos-universal'
         env:
           # Updater signing (minisign) — the app-update root of trust, SEPARATE from
           # OS code-signing. REQUIRED once `bundle.createUpdaterArtifacts` is true:
@@ -184,19 +258,71 @@ jobs:
           # updater artifacts are produced).
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # macOS/Windows builds are UNSIGNED for now (that's OS code-signing, not
-          # the updater key above). Do NOT set the APPLE_* signing env vars here
-          # while the secrets are empty — the macOS bundler can interpret an empty
-          # APPLE_CERTIFICATE as "signing requested" and fail on `security import`.
-          # To enable notarized macOS builds later, add these repo secrets AND
-          # re-add the matching env lines:
-          #   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
-          #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID.
           # linuxdeploy-plugin-appimage passes this to appimagetool, which embeds
           # the .upd_info section and creates the matching .zsync metadata.
           # Newer plugin builds read LDAI_UPDATE_INFORMATION and only warn on the
           # deprecated UPDATE_INFORMATION; set both so any plugin version embeds it.
         run: node scripts/build-release-bundles.mjs -- ${{ matrix.args }}
+
+      # OS code-signing and notarization, isolated to the macOS lane. The
+      # identity is installed explicitly by the preparation step above, so
+      # APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD are deliberately NOT
+      # passed here: with them set the Tauri bundler would re-import the PKCS#12
+      # itself (unreliable on macOS 26), and an EMPTY APPLE_CERTIFICATE makes it
+      # attempt `security import` and fail. The preparation step already refuses
+      # to continue when any secret is empty. Notarization reads APPLE_API_KEY,
+      # APPLE_API_ISSUER and APPLE_API_KEY_PATH (exported by that step);
+      # APPLE_SIGNING_IDENTITY selects the Developer ID Application identity.
+      - name: Build signed and notarized macOS bundles
+        if: matrix.lane == 'macos-universal'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: node scripts/build-release-bundles.mjs -- ${{ matrix.args }}
+
+      - name: Verify macOS signature and stapled notarization ticket
+        if: matrix.lane == 'macos-universal'
+        shell: bash
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          dmg=$(find target -type f -path '*/bundle/dmg/*.dmg' -print -quit)
+          if [ -z "$dmg" ]; then
+            echo "::error::signed macOS DMG is missing"
+            exit 1
+          fi
+
+          # Tauri's DMG bundler deliberately removes its temporary standalone
+          # .app after embedding it. Verify the actual shipped application,
+          # not that transient build path.
+          hdiutil verify "$dmg"
+          mount="$RUNNER_TEMP/tine-release-dmg"
+          mkdir -p "$mount"
+          mounted=0
+          cleanup_dmg() {
+            if [ "$mounted" -eq 1 ]; then
+              hdiutil detach "$mount" || true
+            fi
+          }
+          trap cleanup_dmg EXIT
+          hdiutil attach "$dmg" -mountpoint "$mount" -nobrowse -readonly
+          mounted=1
+          app=$(find "$mount" -maxdepth 2 -type d -name '*.app' -print -quit)
+          if [ -z "$app" ]; then
+            echo "::error::signed macOS app is missing from the release DMG"
+            exit 1
+          fi
+
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv --verbose=4 "$app" 2> "$RUNNER_TEMP/tine-codesign.txt"
+          grep -Fq 'Authority=Developer ID Application:' "$RUNNER_TEMP/tine-codesign.txt"
+          grep -Fq "TeamIdentifier=$APPLE_TEAM_ID" "$RUNNER_TEMP/tine-codesign.txt"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
 
       - name: Verify Linux AppImage update information
         if: startsWith(matrix.platform, 'ubuntu-')
@@ -323,6 +449,17 @@ jobs:
           if-no-files-found: error
           retention-days: 3
           compression-level: 0
+
+      - name: Remove macOS signing material
+        if: always() && matrix.lane == 'macos-universal'
+        shell: bash
+        run: |
+          if [ -n "${MACOS_SIGNING_KEYCHAIN:-}" ]; then
+            security delete-keychain "$MACOS_SIGNING_KEYCHAIN" || true
+          fi
+          rm -rf "$RUNNER_TEMP/app-store-connect-private-keys"
+          rm -f "$RUNNER_TEMP/tine-macos-developer-id.p12"
+          rm -f "$RUNNER_TEMP/tine-codesign.txt"
 
   # Advisory Windows scenarios consume the already-staged portable x64 binary.
   # They run on independent hosts and in parallel with candidate assembly, so a

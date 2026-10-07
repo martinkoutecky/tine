@@ -279,6 +279,55 @@ assert.match(
   "candidate assembly accidentally waits for advisory Windows scenarios"
 );
 assert.match(releaseWorkflow, /name: Upload Windows E2E evidence[\s\S]*?if: always\(\)/);
+
+// GH #650: Beta macOS builds were unsigned and Gatekeeper refused to open them.
+// The macOS lane is fail-closed Developer ID signing plus notarization, with the
+// same shape as the stable workflow; every other lane never sees an APPLE_* secret.
+assert.match(
+  releaseWorkflow,
+  /name: Prepare macOS signing and notarization credentials[\s\S]*?if: matrix\.lane == 'macos-universal'[\s\S]*?APPLE_CERTIFICATE: \$\{\{ secrets\.APPLE_CERTIFICATE \}\}[\s\S]*?APPLE_API_PRIVATE_KEY: \$\{\{ secrets\.APPLE_API_PRIVATE_KEY \}\}[\s\S]*?security create-keychain[\s\S]*?security set-keychain-settings -lut 21600[\s\S]*?security import "\$p12"[\s\S]*?-f pkcs12[\s\S]*?security find-identity[\s\S]*?chmod 600 "\$key_path"[\s\S]*?APPLE_API_KEY_PATH=\$key_path/,
+  "macOS release signing does not explicitly install the Developer ID identity or protect the temporary App Store Connect key"
+);
+assert.match(
+  releaseWorkflow,
+  /\[ -z "\$\{!name:-\}" \][\s\S]*?required macOS signing secret \$name is missing/,
+  "the macOS lane must refuse to build when a signing secret is empty (an empty APPLE_* value breaks codesign)"
+);
+assert.match(
+  releaseWorkflow,
+  /name: Build Tauri bundles\n\s+if: matrix\.lane != 'macos-universal'[\s\S]*?run: node scripts\/build-release-bundles\.mjs -- \$\{\{ matrix\.args \}\}\n[\s\S]*?name: Build signed and notarized macOS bundles\n\s+if: matrix\.lane == 'macos-universal'[\s\S]*?APPLE_SIGNING_IDENTITY: \$\{\{ secrets\.APPLE_SIGNING_IDENTITY \}\}[\s\S]*?APPLE_API_ISSUER: \$\{\{ secrets\.APPLE_API_ISSUER \}\}[\s\S]*?run: node scripts\/build-release-bundles\.mjs -- \$\{\{ matrix\.args \}\}/,
+  "Apple signing secrets are not isolated to the macOS release lane, or a lane bypasses the Beta packaging guard"
+);
+const macosBuildBlock = releaseWorkflow.match(
+  /name: Build signed and notarized macOS bundles[\s\S]*?run: node scripts\/build-release-bundles\.mjs -- \$\{\{ matrix\.args \}\}/
+)?.[0] ?? "";
+assert.doesNotMatch(
+  macosBuildBlock.replace(/^\s*#.*$/gm, ""),
+  /APPLE_CERTIFICATE(?:_PASSWORD)?:/,
+  "the macOS Tauri build must use the explicitly installed identity instead of re-importing the PKCS#12 file"
+);
+assert.match(
+  releaseWorkflow,
+  /name: Verify macOS signature and stapled notarization ticket[\s\S]*?hdiutil verify[\s\S]*?hdiutil attach[\s\S]*?find "\$mount"[\s\S]*?codesign --verify --deep --strict[\s\S]*?Authority=Developer ID Application:[\s\S]*?TeamIdentifier=\$APPLE_TEAM_ID[\s\S]*?xcrun stapler validate[\s\S]*?spctl --assess/,
+  "the macOS lane must mount the shipped DMG and prove its app signing, notarization, and Gatekeeper acceptance"
+);
+assert.ok(
+  releaseWorkflow.indexOf("name: Build signed and notarized macOS bundles")
+    < releaseWorkflow.indexOf("name: Verify macOS signature and stapled notarization ticket")
+    && releaseWorkflow.indexOf("name: Verify macOS signature and stapled notarization ticket")
+      < releaseWorkflow.indexOf("name: Stage immutable release artifact"),
+  "the macOS signature and ticket must be verified before the lane is staged for assembly"
+);
+assert.match(
+  releaseWorkflow,
+  /name: Remove macOS signing material\n\s+if: always\(\) && matrix\.lane == 'macos-universal'[\s\S]*?security delete-keychain[\s\S]*?app-store-connect-private-keys/,
+  "temporary macOS signing material is not cleaned after failures"
+);
+assert.doesNotMatch(
+  releaseWorkflow.replace(/^\s*#.*$/gm, ""),
+  /\n {0,8}APPLE_[A-Z_]+:/,
+  "an APPLE_* variable must only be set at step level (never job- or workflow-level) so non-macOS lanes never receive it"
+);
 assert.match(
   e2eRunner,
   /if \(process\.platform === "linux"\) \{\n      env\.WEBKIT_DRIVER = process\.env\.WEBKIT_DRIVER \|\| "\/usr\/bin\/WebKitWebDriver";/,
