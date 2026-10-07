@@ -854,7 +854,7 @@ pub fn run() {
             }
             diag("setup() begin");
             #[cfg(target_os = "linux")]
-            youtube_identity::create_windows(app, &youtube_windows);
+            youtube_identity::install_extension(app);
             // The tray decides first whether main is created hidden
             // (start-minimized); a tray that cannot be created never hides it.
             #[cfg(desktop)]
@@ -863,6 +863,11 @@ pub fn run() {
             if let Some(config) = &main_window {
                 workspace_windows::create_main(app, config, start_hidden);
             }
+            // After main: the first window the process creates is the one a
+            // WebDriver session attaches to (GH og-catfix; the order main,
+            // capture, about is what every native journey assumes).
+            #[cfg(target_os = "linux")]
+            youtube_identity::create_windows(app, &youtube_windows);
             #[cfg(desktop)]
             if let cli::LaunchRequest::Link(url) = cli::launch_request_env() {
                 deep_links::receive_url(app.handle(), url);
