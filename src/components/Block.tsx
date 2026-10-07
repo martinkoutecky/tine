@@ -35,7 +35,7 @@ import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
-import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, type OutlineScope, node as docNode } from "../document";
+import { pageByName, blockPageReadOnly, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, type OutlineScope, node as docNode } from "../document";
 import { openDurableBlock } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
@@ -1894,10 +1894,20 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // commit at compositionend instead.
   let compositionActive = false;
   let compositionEndValue: string | null = null;
+  // The composing text is not in the store yet, so a page reload from disk must
+  // wait for it: hold the page for the composition (a deferred reload replays
+  // when the hold is released).
+  let releaseCompositionHold: (() => void) | null = null;
+  const endCompositionHold = () => {
+    releaseCompositionHold?.();
+    releaseCompositionHold = null;
+  };
+  onCleanup(endCompositionHold);
   const beginComposition = () => {
     compositionActive = true;
     compositionEndValue = null;
     clearTimeout(acTimer);
+    releaseCompositionHold ??= pinPageWhileDrafting(() => docNode(props.id)?.page ?? null);
   };
   const onCompositionStart = () => beginComposition();
   const onInput = (e: InputEvent) => {
@@ -2002,6 +2012,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     applyFullWidthRefReplace();
     compositionEndValue = ref.value;
     commit(ref.value);
+    endCompositionHold();
     autosize();
     refreshAutocompleteAfterInput();
   };

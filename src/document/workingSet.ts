@@ -1,6 +1,7 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
 import { untombstone, setBaseRev, baseRevFor, activatePageInstance, forgetSaveState, rekeyPageSaveState, clearConflict, retirePageInstance, pageInstanceGeneration, isDirty, isSaving, isConflicted, conflictReason, flushPage, tombstone, dirtyPages, conflicts, resetSaveState, pageInstanceGenerations, deletePageOnDisk, group, groupedPages, savingPages, releaseGroup, reserveGroupMemberDeletion } from "./save/engine";
 import { clearCollapseEpochs, doc, setDoc, FeedPage, pageByName } from "./model";
+import { batch } from "solid-js";
 import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, emptyPage } from "./convert";
 import { invalidateAllMatrixDimensions, clearMatrixDimensionCache } from "../sheet/matrix";
@@ -12,7 +13,8 @@ import { removeDeletedPageFromNavigation, rightSidebar } from "../ui";
 import { bumpDataRev, bumpPageInventoryRev } from "../graphSession";
 import { type Route } from "../routeTypes";
 import { type PageTarget } from "../routeTypes";
-import { editingId, endEdit } from "../editorController";
+import { captureHistoryEditorContext, editingId, endEdit, restoreHistoryEditorContext, startEditing } from "../editorController";
+import { existingBlockId } from "../blockIdentity";
 import { clearSeededFacets } from "../render/facets";
 import { notifyModeReset } from "../modeHooks";
 import { deferExternalReload, replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";
@@ -77,20 +79,78 @@ function upsertPage(dto: PageDto & { id?: string }) {
   // is stale — replaying it would clobber the just-loaded (external) version, so
   // drop those entries. (A first load has no prior entries → no-op.)
   const replacing = !!existing;
+  // An editor open on this page holds no unsaved input here (every keystroke is
+  // already in the store, so unsaved text answers "conflict" before a reload is
+  // reached; an IME composition pins the page). Carry it across the reload:
+  // close it on the old block and reopen it on the same block in the new copy,
+  // caret clamped. Without this the page stayed stale for as long as a block on
+  // it was open in the editor (Syncthing while Tine was in the background).
+  const carried = existing ? editorOnPage(dto) : null;
   // Record the load baseline (the on-disk rev) so saves conflict against it.
   setBaseRev(dto.name, dto.rev ?? null);
-  setDoc(
-    produce((s) => {
-      purgePageNodes(s, dto.name);
-      const fp = toFeedPage(dto, s.byId);
-      const i = s.pages.findIndex((p) => p.name === dto.name);
-      if (i >= 0) s.pages[i] = fp;
-      else s.pages.push(fp);
-    })
-  );
+  batch(() => {
+    if (carried) endEdit("external-reload");
+    setDoc(
+      produce((s) => {
+        purgePageNodes(s, dto.name);
+        const fp = toFeedPage(dto, s.byId);
+        const i = s.pages.findIndex((p) => p.name === dto.name);
+        if (i >= 0) s.pages[i] = fp;
+        else s.pages.push(fp);
+      })
+    );
+    if (carried) reopenEditor(dto.name, carried);
+  });
   activatePageInstance(dto.name);
   invalidateAllMatrixDimensions();
   if (replacing) invalidateUndoForPage(dto.name);
+}
+
+type CarriedEditor = { context: ReturnType<typeof captureHistoryEditorContext>; ownId: string | null; path: number[] };
+
+/** The open editor on loaded page `dto.name` and how to find its block again
+ *  after the page is replaced: by its authored `id::`, else by its outline
+ *  position. O(depth). */
+function editorOnPage(dto: PageDto & { id?: string }): CarriedEditor | null {
+  const ed = editingId();
+  const node = ed ? doc.byId[ed] : undefined;
+  const page = doc.pages.find((p) => p.name === dto.name);
+  if (!ed || !node || !page || node.page !== dto.name) return null;
+  // Null without a mounted editor surface (no caret to keep): reopen at the start.
+  const context = captureHistoryEditorContext();
+  const path: number[] = [];
+  for (let id: string | null = ed; id !== null; id = doc.byId[id].parent) {
+    const parent = doc.byId[id].parent;
+    path.unshift((parent === null ? page.roots : doc.byId[parent].children).indexOf(id));
+  }
+  return { context, ownId: existingBlockId(node.raw, page.format), path };
+}
+
+/** Reopen a carried editor in the replaced page: on the block with the same
+ *  `id::` (none: it was deleted, the editor stays closed), else on the block at
+ *  the same outline position, if any. O(page) for an `id::` search, else O(depth). */
+function reopenEditor(pageName: string, carried: CarriedEditor): void {
+  const page = doc.pages.find((p) => p.name === pageName);
+  if (!page) return;
+  let id: string | undefined;
+  if (carried.ownId) {
+    const stack = [...page.roots];
+    while (stack.length && !id) {
+      const next = stack.pop()!;
+      if (existingBlockId(doc.byId[next].raw, page.format) === carried.ownId) id = next;
+      else stack.push(...doc.byId[next].children);
+    }
+  } else {
+    let level = page.roots;
+    for (const i of carried.path) {
+      id = level[i];
+      if (!id) return;
+      level = doc.byId[id].children;
+    }
+  }
+  if (!id) return;
+  if (carried.context) restoreHistoryEditorContext({ ...carried.context, blockId: id }, doc.byId[id].raw.length);
+  else startEditing(id, 0);
 }
 
 /** Whether a reload DTO carries the SAME content (page-property pre-block + every
@@ -406,7 +466,7 @@ export function reloadPage(dto: PageDto & { id?: string }) {
 /** A watcher result may arrive after the user starts editing. Keep the explicit
  * conflict-bar reload above as the only unconditional replacement. */
 export function reloadPageIfStillSafe(name: string, dto: PageDto & { id?: string }): boolean {
-  if (reloadDisposition(name) !== "reload") return false;
+  if (reloadDisposition(name, dto.id ?? null) !== "reload") return false;
   upsertPage(dto);
   return true;
 }
@@ -497,7 +557,7 @@ export function resetStore() {
 function upsertUnlessDirty(dto: PageDto & { id?: string }): PageLoadRefusal | null {
   const refusal = slotRefusal(dto);
   if (refusal) return refusal;
-  const disp = pageByName(dto.name) ? reloadDisposition(dto.name) : "reload";
+  const disp = pageByName(dto.name) ? reloadDisposition(dto.name, dto.id ?? null) : "reload";
   // A held page ("skip") keeps its loaded copy, and the declined read replays
   // through the watcher's deferred reload once the hold releases, so a feed or
   // navigation read landing mid-hold is never silently dropped (master
@@ -513,22 +573,28 @@ export type ReloadDisposition = "reload" | "conflict" | "skip";
  *  branches in Page.tsx can't diverge:
  *  - `"conflict"` — it has unsaved edits / an open conflict: surface a conflict,
  *    NEVER clobber the in-memory edit with the disk version.
- *  - `"skip"` — a block on it is being edited (don't yank the caret), a block
- *    move is mid-flight (the textarea is transiently blurred), or a component
- *    draft pinned it (`pinPageWhileDrafting`): leave it alone.
+ *  - `"skip"` — a block move is mid-flight (the textarea is transiently
+ *    blurred), a component draft pinned it (`pinPageWhileDrafting`, which an
+ *    IME composition also takes), or a block on it is open in the editor and the
+ *    incoming read is not known to be the same file (`incomingFile`, its path):
+ *    leave it alone. A same-file read reloads and keeps the editor on its block.
  *  - `"reload"` — safe to replace the loaded copy with the disk version.
  *  Every replacement of a loaded instance except the user's explicit "use disk"
  *  asks this: the watcher, navigation/feed loads (`upsertUnlessDirty`),
  *  `ensurePageLoaded`, and `reloadHlsIfLoaded`. */
-export function reloadDisposition(name: string): ReloadDisposition {
+export function reloadDisposition(name: string, incomingFile?: string | null): ReloadDisposition {
   // `isSaving` too: `doSave` clears `dirty` BEFORE the `await savePages`, so during the
   // save IPC the page is no longer dirty but its edit isn't durable. Reloading then
   // would clobber the in-memory edit + drop its undo, and the in-flight save would
   // conflict — silent loss (audit H1). The in-flight save's baseRev check surfaces the
   // real conflict.
   if (isDirty(name) || isConflicted(name) || isSaving(name) || group(name)) return "conflict";
+  if (isBlockMoving() || draftPinned(name)) return "skip";
+  // An open editor holds the page against a different file taking its name or
+  // the page leaving the working set. A new read of the SAME file (`incomingFile`
+  // is its path) is no reason to wait: `upsertPage` carries the editor across.
   const ed = editingId();
-  if ((ed && doc.byId[ed]?.page === name) || isBlockMoving() || draftPinned(name)) return "skip";
+  if (ed && doc.byId[ed]?.page === name && (incomingFile === undefined || (pageByName(name)?.id ?? null) !== incomingFile)) return "skip";
   return "reload";
 }
 

@@ -417,6 +417,8 @@ fn guide_explains_query_sort_search_retry_and_print_refusal() {
     assert!(page("Reference/Files, external edits, and backups").contains("**Print query limit**"));
     assert!(page("Reference/Files, external edits, and backups")
         .contains("supersedes the pending export"));
+    assert!(page("Reference/Files, external edits, and backups")
+        .contains("also while one of its blocks is open in the editor"));
 }
 
 #[test]

@@ -11,7 +11,7 @@ import { backend } from "../backend";
 import { ensurePageLoaded, flushAll, isDirty, loadFeed, pageByName, pinPageWhileDrafting, resetStore, setRaw } from "./index";
 import { loadSingle, reloadDisposition, reloadPageIfStillSafe, registerPaneRouteProvider } from "./workingSet";
 import { doc } from "./model";
-import { endEdit, startEditing } from "../editorController";
+import { editingId, endEdit, startEditing } from "../editorController";
 import type { BlockDto, PageDto } from "../types";
 import type { Route } from "../routeTypes";
 
@@ -36,11 +36,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** The kinds of uncommitted input a loaded page can hold. */
+/** The kinds of uncommitted input a loaded page can hold. An IME composition
+ *  takes the component-local draft pin (Block.tsx). */
 const drafts: Array<[string, (name: string) => void]> = [
-  ["an active block editor", (name) => startEditing(pageByName(name)!.roots[0], 0)],
-  ["a component-local draft (title rename, sheet cell)", (name) => { unpin = pinPageWhileDrafting(() => name); }],
+  ["a component-local draft (title rename, sheet cell, IME composition)", (name) => { unpin = pinPageWhileDrafting(() => name); }],
   ["an unsaved edit", (name) => setRaw(pageByName(name)!.roots[0], "typed but not saved")],
+];
+/** Holds of the name slot and the working set, not of the file's content: an
+ *  open editor (its typing is already in the store) is one too. */
+const slotHolds: Array<[string, (name: string) => void]> = [
+  ...drafts,
+  ["an active block editor", (name) => startEditing(pageByName(name)!.roots[0], 0)],
 ];
 
 describe.each(drafts)("a page holding %s is never replaced", (_label, hold) => {
@@ -62,6 +68,15 @@ describe.each(drafts)("a page holding %s is never replaced", (_label, hold) => {
     expect(raws("P")).not.toEqual(["disk"]);
   });
 
+  it("by a journal feed refresh", () => {
+    loadFeed([page("Day", ["mine"])]);
+    hold("Day");
+    loadFeed([page("Day", ["disk"])], { endEdit: false });
+    expect(raws("Day")).not.toEqual(["disk"]);
+  });
+});
+
+describe.each(slotHolds)("a page holding %s keeps its name slot and stays loaded", (_label, hold) => {
   it("by a same-named file from another path (GH #304)", () => {
     loadFeed([page("Journal", ["j"])]);
     ensurePageLoaded(page("P", ["mine"]));
@@ -69,13 +84,6 @@ describe.each(drafts)("a page holding %s is never replaced", (_label, hold) => {
     ensurePageLoaded(page("P", ["other file"], "pages/elsewhere/P.md"));
     expect(pageByName("P")!.id).toBe("pages/P.md");
     expect(raws("P")).not.toEqual(["other file"]);
-  });
-
-  it("by a journal feed refresh", () => {
-    loadFeed([page("Day", ["mine"])]);
-    hold("Day");
-    loadFeed([page("Day", ["disk"])], { endEdit: false });
-    expect(raws("Day")).not.toEqual(["disk"]);
   });
 
   it("by working-set eviction", () => {
@@ -95,6 +103,51 @@ describe.each(drafts)("a page holding %s is never replaced", (_label, hold) => {
     routes = []; // the pane closed; its page is no longer routed anywhere
     for (let i = 0; i < 90; i++) ensurePageLoaded(page(`Filler ${i}`, ["x"]));
     expect(pageByName("P")).toBeDefined();
+  });
+});
+
+// A page changed on disk while one of its blocks is open in the editor (Syncthing
+// delivering while Tine is in the background). Every keystroke is already in the
+// store, so the editor holds no input the disk version could clobber: the page
+// reloads and the editor stays on the same block.
+describe("a same-file reload while a block is open in the editor", () => {
+  const ID = "6f1f0c1e-0000-4000-8000-000000000652";
+  const open = (raws: string[], at: number) => {
+    loadFeed([page("Journal", ["j"])]);
+    ensurePageLoaded(page("P", raws));
+    startEditing(pageByName("P")!.roots[at], 1);
+  };
+  const editingRaw = () => { const id = editingId(); return id ? doc.byId[id]?.raw : null; };
+
+  it.each([
+    ["an external-change reload", () => reloadPageIfStillSafe("P", page("P", ["a", "b on disk"]))],
+    ["navigation to the same page", () => loadSingle(page("P", ["a", "b on disk"]), { endEdit: false })],
+  ])("applies %s and reopens the editor at the same outline position", (_label, apply) => {
+    open(["a", "b"], 1);
+    apply();
+    expect(raws("P")).toEqual(["a", "b on disk"]);
+    expect(editingRaw()).toBe("b on disk");
+  });
+
+  it("follows a block's id:: when the outline around it changed", () => {
+    open(["a", `b\nid:: ${ID}`], 1);
+    reloadPageIfStillSafe("P", page("P", [`b\nid:: ${ID}`, "new", "a"]));
+    expect(raws("P")).toEqual([`b\nid:: ${ID}`, "new", "a"]);
+    expect(editingId()).toBe(pageByName("P")!.roots[0]);
+  });
+
+  it("closes the editor when its block is gone", () => {
+    open(["a", `b\nid:: ${ID}`], 1);
+    reloadPageIfStillSafe("P", page("P", ["a"]));
+    expect(raws("P")).toEqual(["a"]);
+    expect(editingId()).toBeNull();
+  });
+
+  it("still waits for an IME composition (the page is pinned)", () => {
+    open(["a", "b"], 1);
+    unpin = pinPageWhileDrafting(() => "P");
+    expect(reloadPageIfStillSafe("P", page("P", ["a", "b on disk"]))).toBe(false);
+    expect(raws("P")).toEqual(["a", "b"]);
   });
 });
 
