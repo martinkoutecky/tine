@@ -41,9 +41,9 @@ beforeEach(() => {
   store.clear();
   saveFails = true;
   api = backend() as Required<Backend>;
-  vi.spyOn(api, "storeDraft").mockImplementation(async (r) => { store.set(r.id, structuredClone(r)); });
-  vi.spyOn(api, "retireDraft").mockImplementation(async (id) => { store.delete(id); });
-  vi.spyOn(api, "loadDrafts").mockImplementation(async () => records());
+  vi.spyOn(api, "storeDraft").mockImplementation(async (r) => { store.set(r.id, structuredClone(r)); return null; });
+  vi.spyOn(api, "retireDraft").mockImplementation(async (id) => { store.delete(id); return null; });
+  vi.spyOn(api, "loadDrafts").mockImplementation(async () => ({ drafts: records(), set_aside: null }));
   // Another editor wrote r2 after the page loaded at r1: every guarded save refuses.
   vi.spyOn(api, "savePages").mockImplementation(async (entries) => saveFails
     ? { failed: { index: 0, family: "conflict", diskRev: "r2", undoFailed: [] } }
@@ -224,7 +224,7 @@ describe("Concord live-draft conflicts (og 8e)", () => {
     await killAndReopen(page("r2", "disk"));
     vi.spyOn(api, "resolveLiveConflict").mockImplementation(async (_p, draft) => ({ ...draft, rev: "r3" }));
     let finish!: () => void;
-    vi.mocked(api.retireDraft).mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    vi.mocked(api.retireDraft).mockImplementationOnce(() => new Promise<string | null>((resolve) => { finish = () => resolve(null); }));
     installExternalChangeUiHandler(() => ({ pageOpen: () => true, journalsOpen: false, leaveRemovedPage() {}, restartJournalFeed() {} }));
     vi.spyOn(api, "getPage").mockResolvedValue(page("r2", "B disk"));
     const { host, dispose } = mount(liveConflictForPage("P", PATH)!);

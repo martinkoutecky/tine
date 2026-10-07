@@ -24,9 +24,9 @@ beforeEach(() => {
   store.clear();
   failing = true;
   const api = backend() as Required<Backend>;
-  vi.spyOn(api, "storeDraft").mockImplementation(async (r) => { store.set(r.id, structuredClone(r)); });
-  vi.spyOn(api, "retireDraft").mockImplementation(async (id) => { store.delete(id); });
-  vi.spyOn(api, "loadDrafts").mockImplementation(async () => records());
+  vi.spyOn(api, "storeDraft").mockImplementation(async (r) => { store.set(r.id, structuredClone(r)); return null; });
+  vi.spyOn(api, "retireDraft").mockImplementation(async (id) => { store.delete(id); return null; });
+  vi.spyOn(api, "loadDrafts").mockImplementation(async () => ({ drafts: records(), set_aside: null }));
   vi.spyOn(backend(), "savePages").mockImplementation(async (entries) => {
     if (failing) throw new Error("disk full");
     return { ok: entries.map((_, i) => `saved-${i}`) };
@@ -105,6 +105,7 @@ describe("crash-surviving drafts (og ADR 0061)", () => {
     vi.mocked(backend().storeDraft!).mockImplementationOnce(async (record) => {
       await new Promise<void>((resolve) => { finish = resolve; });
       store.set(record.id, structuredClone(record));
+      return null;
     });
     setRaw("p1", "mine");
     markConflict("P");
@@ -150,6 +151,23 @@ describe("crash-surviving drafts (og ADR 0061)", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(earlierDrafts().map((r) => r.page.blocks[0].raw)).toEqual(["typed while the next graph loaded"]);
     setGraphMeta(null);
+  });
+
+  it("a damaged store set aside at open is reported, not offered as empty in silence (§8.5, G37)", async () => {
+    vi.mocked(backend().loadDrafts!).mockResolvedValue({ drafts: [], set_aside: "/data/drafts/g.v1.json.unreadable-0" });
+    setGraphMeta({ root: "/g", name: "g" } as unknown as GraphMeta);
+    bumpGraphEpoch();
+    await vi.advanceTimersByTimeAsync(0);
+    const told = toasts().filter((t) => t.kind === "error" && t.sticky && t.message.includes("g.v1.json.unreadable-0"));
+    expect(told, "the user must learn the crash-safe copies were set aside").toHaveLength(1);
+    setGraphMeta(null);
+  });
+
+  it("a damaged store set aside by a draft write is reported too (§8.5, G37)", async () => {
+    vi.mocked(backend().storeDraft!).mockImplementation(async (r) => { store.set(r.id, structuredClone(r)); return "/data/drafts/g.v1.json.unreadable-1"; });
+    setRaw("p1", "typed");
+    await settle();
+    expect(toasts().some((t) => t.kind === "error" && t.sticky && t.message.includes("g.v1.json.unreadable-1"))).toBe(true);
   });
 
   it("a draft store that cannot be read never blocks open", async () => {

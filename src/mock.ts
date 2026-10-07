@@ -6,7 +6,7 @@ import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, DraftRecord, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, DraftRecord, BlockPreview, DraftLoad, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { previewDtoSubtree } from "./previewProjection";
 import { hlsPageName } from "./pdf";
@@ -1514,14 +1514,16 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async saveSession(data: string): Promise<void> {
       mockSession = data;
     },
-    async loadDrafts(): Promise<DraftRecord[]> {
-      return [...mockDrafts.values()].map((record) => structuredClone(record));
+    async loadDrafts(): Promise<DraftLoad> {
+      return { drafts: [...mockDrafts.values()].map((record) => structuredClone(record)), set_aside: null };
     },
-    async storeDraft(record: DraftRecord, _graphRoot?: string): Promise<void> {
+    async storeDraft(record: DraftRecord, _graphRoot?: string): Promise<string | null> {
       mockDrafts.set(record.id, structuredClone(record));
+      return null;
     },
-    async retireDraft(id: string): Promise<void> {
+    async retireDraft(id: string): Promise<string | null> {
       mockDrafts.delete(id);
+      return null;
     },
     async loadWorkspaces(): Promise<string> {
       if (!mockWorkspaces) {

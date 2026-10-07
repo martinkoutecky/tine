@@ -47,7 +47,7 @@ import type {
   QueryPublicationRequest,
   QueryPublicationPlan,
   PublicationReceipt,
-  DraftRecord,
+  DraftRecord, DraftLoad,
 } from "./types";
 import type { GraphSources, GraphFolderPickResult, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection, TrayStatus } from "./backendTypes";
 import { dbg } from "./debug";
@@ -620,14 +620,14 @@ export interface Backend {
   loadSession(): Promise<string | null>;
   /** Persist the UI session JSON. */
   saveSession(data: string): Promise<void>;
-  /** This graph's crash-surviving draft records (og ADR 0061). A corrupt store
-   *  loads empty; absent where drafts cannot be kept (published export). */
-  loadDrafts?(): Promise<DraftRecord[]>;
-  /** Replace one draft record; refused past the store's bound. `graphRoot`
-   *  names another graph's store (a graph switch keeping the old graph's edit). */
-  storeDraft?(record: DraftRecord, graphRoot?: string): Promise<void>;
-  /** Remove one draft record by id; a missing id is not an error. */
-  retireDraft?(id: string): Promise<void>;
+  /** This graph's crash-surviving draft records (og ADR 0061); absent where drafts cannot be
+   *  kept (published export). `set_aside`: where an unreadable store's bytes went (§8.5). */
+  loadDrafts?(): Promise<DraftLoad>;
+  /** Replace one draft record; refused past the store's bound. `graphRoot` names another
+   *  graph's store (a graph switch). Resolves to a set-aside path, as for `loadDrafts`. */
+  storeDraft?(record: DraftRecord, graphRoot?: string): Promise<string | null>;
+  /** Remove one draft record by id (a missing id is no error); a set-aside path as above. */
+  retireDraft?(id: string): Promise<string | null>;
   /** Load the current graph's device-local named-workspace registry JSON. */
   loadWorkspaces(): Promise<string>;
   /** Replace the registry atomically. A failed post-rename directory sync reports
@@ -1395,13 +1395,13 @@ class TauriBackend implements Backend {
     return this.call<void>("save_session", { data });
   }
   loadDrafts() {
-    return this.call<DraftRecord[]>("load_drafts");
+    return this.call<DraftLoad>("load_drafts");
   }
   storeDraft(record: DraftRecord, graphRoot?: string) {
-    return this.call<void>("store_draft", graphRoot === undefined ? { record } : { record, graphRoot });
+    return this.call<string | null>("store_draft", graphRoot === undefined ? { record } : { record, graphRoot });
   }
   retireDraft(id: string) {
-    return this.call<void>("retire_draft", { id });
+    return this.call<string | null>("retire_draft", { id });
   }
   loadWorkspaces() {
     return this.call<string>("load_workspaces");

@@ -983,3 +983,38 @@ fn g6b_base_indented_file_keeps_its_outline_and_bytes() {
     );
     store.close();
 }
+
+/// G26 (storage.qnt mutant MQ, I-2): a save whose bytes equal the disk reports
+/// success, and success retires the editor's crash copy. Those bytes may be
+/// another program's unsynced write of the same text (Syncthing delivering the
+/// user's own edit), so the save must make them durable before it answers:
+/// otherwise a power cut reverts the file and the text has no copy left.
+#[test]
+fn unchanged_save_makes_the_equal_bytes_durable() {
+    let fixture = Fixture::new();
+    let store = Store::open(&fixture.0, Default::default()).unwrap().0;
+    let id = PageId::from("pages/Equal.md");
+    let doc = fresh("Equal", PageKind::Page);
+    let SaveOutcome::Saved(rev) = store.save(
+        tine_store::EditKind::ReplacePage,
+        &id,
+        SaveBase::CreateNew,
+        &doc,
+    ) else {
+        panic!("create")
+    };
+    tine_store::directory_durability::take_synced_directories();
+    let outcome = store.save(
+        tine_store::EditKind::ReplacePage,
+        &id,
+        SaveBase::Existing(rev),
+        &doc,
+    );
+    assert!(matches!(outcome, SaveOutcome::Unchanged(_)), "{outcome:?}");
+    let synced = tine_store::directory_durability::take_synced_directories();
+    assert!(
+        synced.iter().any(|dir| dir.ends_with("pages")),
+        "an Unchanged save reported success without syncing the page's directory (G26, mutant MQ); synced: {synced:?}"
+    );
+    store.close();
+}

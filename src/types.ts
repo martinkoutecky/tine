@@ -130,6 +130,13 @@ export interface DraftRecord {
   observed_rev?: string | null;
 }
 
+/** The draft store's records; `set_aside` names where an unreadable store's
+ *  bytes were moved when this load set it aside (§8.5: reported, never silent). */
+export interface DraftLoad {
+  drafts: DraftRecord[];
+  set_aside: string | null;
+}
+
 /** A page loaded from one concrete file. Its identity is returned unchanged on save. */
 export interface PageRead extends PageDto {
   id: string;
