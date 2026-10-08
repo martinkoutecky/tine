@@ -37,6 +37,9 @@ icon:: 📱
   - Any folder on your disk can be a graph — choose it with the ordinary folder picker; there is no sandboxed document picker.
   - **On macOS, Tine draws its window with the system's web engine** — the same one Safari uses — and needs the engine of **Safari 15.4 or later**, which means **macOS 12.3 (Monterey) or later**. Apps get the engine that came with macOS: updating the Safari app on an older Mac leaves the one Tine uses unchanged, so the app bundle declares 12.3 as its minimum system version. If the web engine is too old, Tine explains this at startup instead of opening half-working. Opening PDFs needs Safari 17.4 or later; the rest of Tine does not.
 - ## iOS today
-  - iOS is being scoped and there is no public iOS build yet. Nothing on this page promises one.
+  - A **public beta** is on [TestFlight](https://testflight.apple.com/join/rpGGpTVW): install Apple's TestFlight app, then open that link. There is no App Store listing yet.
+  - **Graphs live in the app's own folders.** Open or create a graph inside **On My iPhone → TineOutline** or **iCloud Drive → TineOutline**; Tine refuses folders from other Files providers for now and says so. An iCloud graph is downloaded to the device before it opens, and a remembered graph reopens after an app update.
+  - The iPhone and iPad app uses the same mobile interface as Android, so the notes above about one route at a time, bullet context menus and desktop-only features apply there too.
+  - **Plugins do not run on iOS yet.** Themes work; downloadable WebAssembly plugins stay off until Tine has the extra review surface Apple requires for them.
 - ## Where next
   - [[Workflows/Keep context visible]] for tabs, panes, sidebars and workspaces (desktop), [[Features/Quick capture]] for the desktop capture window, [[Workflows/Extend Tine]] for the plugin and theme lifecycle, and [[Features/PDF annotation]] for the full reader tour.
