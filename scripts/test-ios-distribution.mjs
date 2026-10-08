@@ -35,8 +35,11 @@ function yamlNamedStep(lines, name) {
   return lines.slice(start, end);
 }
 
-assert.equal(IDENTITIES.release.identifier, "page.tine.Tine",
-  "the TestFlight record, provisioning profile and iCloud container belong to page.tine.Tine");
+// The TestFlight record, provisioning profile and iCloud container belong to
+// the release identity; the workflow's identity guard must name that same id.
+const workflowIdentity = /s\.identities\.release\.identifier !== '([^']+)'/.exec(iosTestFlightWorkflow)?.[1];
+assert.equal(workflowIdentity, IDENTITIES.release.identifier,
+  "ios-testflight.yml must guard the release identity from src-tauri/app-identity.json");
 assert.match(
   iosTestFlightWorkflow,
   /name: Require the stable app identity[\s\S]*?app-identity\.json[\s\S]*?s\.ship !== 'release'[\s\S]*?process\.exit\(1\)[\s\S]*?name: Require iOS distribution secrets/,
@@ -140,7 +143,7 @@ for (const entitlement of [
   "com.apple.developer.icloud-services",
   "CloudDocuments",
   "com.apple.developer.ubiquity-container-identifiers",
-  "iCloud.page.tine.Tine",
+  `iCloud.${IDENTITIES.release.identifier}`,
 ]) {
   assert.ok(iosEntitlements.includes(entitlement), `iOS entitlements are missing ${entitlement}`);
 }

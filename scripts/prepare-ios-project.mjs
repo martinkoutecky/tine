@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import { execFileSync } from "node:child_process";
 import { assertOpaquePng } from "./lib/opaque-png.mjs";
+import { IDENTITIES } from "./lib/app-identity.mjs";
 
 const root = process.cwd();
 const source = path.join(root, "src-tauri", "Tine.ios.entitlements");
@@ -145,7 +146,7 @@ if (signingValues.length === 3) {
   <string>Apple Distribution</string>
   <key>provisioningProfiles</key>
   <dict>
-    <key>page.tine.Tine</key>
+    <key>${xml(IDENTITIES.release.identifier)}</key>
     <string>${xml(signing.profileUuid)}</string>
   </dict>
 </dict>

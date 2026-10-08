@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { createPrivateKey, sign } from "node:crypto";
+import { IDENTITIES } from "./lib/app-identity.mjs";
 
 const API = "https://api.appstoreconnect.apple.com/v1";
-const bundleId = process.env.APP_BUNDLE_ID || "page.tine.Tine";
+const bundleId = process.env.APP_BUNDLE_ID || IDENTITIES.release.identifier;
 const command = process.argv[2] || "inspect";
 const wantedVersion = process.env.TESTFLIGHT_BUILD_NUMBER || "";
 const groupName = process.env.TESTFLIGHT_GROUP_NAME || "Tine iOS Public Beta";

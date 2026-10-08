@@ -22,8 +22,11 @@ function files(dir: string, keep: RegExp): string[] {
 
 const DERIVED = ["src-tauri/app-identity.json", "src-tauri/tauri.conf.json", "src-tauri/gen/android/app/build.gradle.kts"];
 // The released identity's packaging: Flatpak names its files and ids by it; its
-// workflow refuses an experiment tree (.github/workflows/flatpak.yml).
-const RELEASE_PACKAGING = /^flatpak\//;
+// workflow refuses an experiment tree (.github/workflows/flatpak.yml). The iOS
+// Info.ios.plist names the iCloud container Apple registered for the release
+// identity; ios-testflight.yml refuses an experiment tree before signing, and
+// scripts/test-ios-distribution.mjs pins that guard to app-identity.json.
+const RELEASE_PACKAGING = /^(flatpak\/|src-tauri\/Info\.ios\.plist$)/;
 const FRONT_DOOR = "scripts/lib/app-identity.mjs";
 
 function identityLiterals(): RegExp {
