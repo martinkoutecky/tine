@@ -396,6 +396,7 @@ fn guide_explains_missing_links_and_old_web_engines() {
     assert!(links.contains("dotted underline") && links.contains("create the page"));
     assert!(platforms.contains("too old") && platforms.contains("startup"));
     assert!(platforms.contains("macOS 12.3") && platforms.contains("updating the Safari app"));
+    assert!(platforms.contains("signed and notarized") && !platforms.contains("unsigned"));
 }
 
 #[test]
