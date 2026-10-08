@@ -25,7 +25,23 @@ icon:: 📅
   - You may also type a planning line anywhere in the block: on leaving the editor it moves to its canonical spot — right after the first line, before any properties, SCHEDULED before DEADLINE — like Logseq. A `SCHEDULED:` inside inline code or a code fence stays literal content and is never moved.
   - The same chips and pickers appear wherever the block does — in linked references, query results, and embeds.
 - ## Agenda
-  - The first day of the Journals feed (today) ends with a **Scheduled & Deadline** list of *open* items whose date falls inside the Agenda window — by default 7 days back and 7 ahead, adjustable in Settings → **Journals** → **Agenda window** (days back and days ahead; kept on this device). It disappears entirely when nothing matches.
+  - Today's journal ends with a **Scheduled & Deadline** list of *open* items whose date falls inside the Agenda window — by default 7 days back and 7 ahead. Settings → **Journals** → **Agenda window** adjusts both on this device; `:scheduled/future-days` in `logseq/config.edn`, when set, controls days ahead for the whole graph instead. The list disappears when nothing matches. Set `:feature/disable-scheduled-and-deadline-query? true` to hide it.
+  - `:default-queries {:journals [...]}` adds queries beneath today's blocks, before the agenda, in the order written. Each uses the same query renderer as a query block; a failing or unsupported query shows its own error while its neighbours remain usable. String titles and static text in hiccup vectors appear as plain text. `:collapsed? true` starts a query folded. Config edits apply live; malformed journal settings show a config diagnostic. Graph code is never executed; supported advanced query shapes match [[Reference/Queries]].
+  - Add these entries inside the existing config map (use `false` to keep the built-in agenda):
+    ```clojure
+    :feature/disable-scheduled-and-deadline-query? false
+    :scheduled/future-days 7
+    :default-queries
+    {:journals
+     [{:title "Priority A tasks"
+       :query (and (task TODO DOING) (priority A))
+       :collapsed? false}
+      {:title [:span "Open tasks"]
+       :query [:find (pull ?b [*])
+               :where [?b :block/marker "TODO"]]
+       :inputs []
+       :collapsed? true}]}
+    ```
   - Keyed off the scheduled/deadline date itself, not the page's journal day, over the whole graph: an unfinished item on an old page still shows while its date is in range. The underlying query is `(and (or (between scheduled -7d +7d) (between deadline -7d +7d)) (not (task DONE CANCELED CANCELLED)))`.
   - Finished tasks (`DONE`, `CANCELED`, `CANCELLED`) never appear, matching Logseq.
 - ## Time tracking and the logbook

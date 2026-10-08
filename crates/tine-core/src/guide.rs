@@ -282,6 +282,27 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn journal_logseq_query_config_is_documented_with_examples() {
+        let text = include_str!("templates/journals-tasks-scheduling.md");
+        for required in [
+            ":default-queries",
+            ":journals",
+            ":scheduled/future-days 7",
+            ":feature/disable-scheduled-and-deadline-query?",
+            ":inputs []",
+            ":collapsed? true",
+            "Priority A tasks",
+            "Config edits apply live",
+            "Graph code is never executed",
+        ] {
+            assert!(
+                text.contains(required),
+                "missing journal config guidance: {required}"
+            );
+        }
+    }
+
+    #[test]
     fn sidebar_and_direct_search_actions_are_documented() {
         let tips = include_str!("templates/tips.md");
         for control in [

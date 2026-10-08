@@ -496,7 +496,8 @@ export function setAgendaDaysAhead(n: number) {
  */
 export function agendaQuery(): string {
   const lo = `-${agendaDaysBack()}d`;
-  const hi = `+${agendaDaysAhead()}d`;
+  const ahead = graphMeta()?.scheduled_future_days ?? agendaDaysAhead();
+  const hi = `${ahead < 0 ? "" : "+"}${ahead}d`;
   const window = `(or (between scheduled ${lo} ${hi}) (between deadline ${lo} ${hi}))`;
   return `query (and ${window} (not (task DONE CANCELED CANCELLED)))`;
 }

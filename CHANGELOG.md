@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Logseq journal configuration: `:default-queries {:journals [...]}` renders beneath today's blocks with independent query errors; `:feature/disable-scheduled-and-deadline-query?` hides the agenda and `:scheduled/future-days` controls its horizon. Config edits apply live (GH #223, GH #629).
 - Deleting referenced blocks shows how many references are now broken, with **Undo** to restore the blocks and their ids (GH #635).
 - Merging blocks with Backspace/Delete shows how many references now point to the surviving block, or broke when both blocks had ids, with **Undo** (GH #652).
 - Linked and Unlinked References: click a breadcrumb ancestor to show its subtree inline while keeping your place; Shift+click opens it in the right sidebar. Inline context resets when the reference group closes (GH #526).

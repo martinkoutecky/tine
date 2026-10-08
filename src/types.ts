@@ -541,6 +541,10 @@ export interface AdvancedQueryResult {
 }
 
 export interface GraphMeta {
+  default_journal_queries?: { title: string | null; body: string; error: string | null }[];
+  disable_scheduled_and_deadline_query?: boolean;
+  scheduled_future_days?: number | null;
+  journal_config_diagnostics?: string[];
   root: string;
   journals_dir: string;
   pages_dir: string;

@@ -970,10 +970,11 @@ function JournalsTab(props: { search: string }): JSX.Element {
           min="0"
           max="3650"
           class="settings-num"
-          value={agendaDaysAhead()}
+          value={graphMeta()?.scheduled_future_days ?? agendaDaysAhead()}
+          disabled={graphMeta()?.scheduled_future_days != null}
           onChange={(e) => setAgendaDaysAhead(Number(e.currentTarget.value))}
         />
-        <span class="settings-hint">days ahead</span>
+        <span class="settings-hint">{graphMeta()?.scheduled_future_days != null ? "days ahead · set by :scheduled/future-days in config.edn" : "days ahead"}</span>
       </Field>
     </>
   );

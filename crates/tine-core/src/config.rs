@@ -13,6 +13,15 @@ use std::collections::HashMap;
 #[deny(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// OG queries rendered below today's journal, in authored order.
+    pub default_journal_queries: Vec<JournalQuery>,
+    /// OG agenda opt-out; only literal true disables it.
+    pub disable_scheduled_and_deadline_query: bool,
+    /// OG agenda horizon (signed integers are accepted by OG). None when
+    /// config.edn omits it: the device's Settings value (default 7) applies.
+    pub scheduled_future_days: Option<i32>,
+    /// Visible diagnostics for malformed journal configuration values.
+    pub journal_config_diagnostics: Vec<String>,
     /// Configured journal directory, relative to the graph root.
     pub journals_dir: String,
     /// Configured ordinary-page directory, relative to the graph root.
@@ -131,6 +140,17 @@ pub struct Config {
     pub guide_announced: bool,
 }
 
+/// A read-only configured query, sent through the ordinary macro renderer.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct JournalQuery {
+    /// Plain text from a string or static hiccup title; never executable code.
+    pub title: Option<String>,
+    /// Macro body preserving the Logseq query and its inputs/options.
+    pub body: String,
+    /// Invalid entry diagnostic, isolated from adjacent queries.
+    pub error: Option<String>,
+}
+
 /// OG's default when `:ref/linked-references-collapsed-threshold` is absent;
 /// the one declaration the `Config` default and the graph-meta DTO share.
 pub const DEFAULT_LINKED_REFERENCES_COLLAPSED_THRESHOLD: u32 = 100;
@@ -178,6 +198,10 @@ pub struct LogbookSettings {
 impl Default for Config {
     fn default() -> Self {
         Config {
+            default_journal_queries: Vec::new(),
+            disable_scheduled_and_deadline_query: false,
+            scheduled_future_days: None,
+            journal_config_diagnostics: Vec::new(),
             journals_dir: "journals".into(),
             pages_dir: "pages".into(),
             hidden: Vec::new(),
@@ -230,6 +254,11 @@ impl Config {
         // Locate only direct root entries, as the graph-feature setters do.
         // Arbitrary unrelated forms need not fit the small sidecar value model.
         let mut cfg = Config::default();
+        let journal = parse_journal_settings(edn);
+        cfg.default_journal_queries = journal.queries;
+        cfg.disable_scheduled_and_deadline_query = journal.disable;
+        cfg.scheduled_future_days = journal.future_days;
+        cfg.journal_config_diagnostics = journal.diagnostics;
         if let Some(v) = string_value(edn, ":journals-directory") {
             cfg.journals_dir = v;
         }
@@ -539,6 +568,110 @@ fn read_string_at(s: &str, open: usize) -> Option<String> {
         crate::edn::Edn::Str(value) => Some(value),
         _ => None,
     }
+}
+
+/// Read a direct root setting with the shared selector and EDN decoder.
+fn journal_setting_value(edn: &str, key: &str) -> Option<Option<crate::edn::Edn>> {
+    let start = read_keyword(edn, key)?;
+    let from = skip_blank(edn, start + key.len());
+    Some(if from < edn.len() {
+        crate::edn::parse_strict(&edn[from..form_end(edn, from)])
+    } else {
+        None
+    })
+}
+
+// OG query-title accepts vectors as hiccup. Extract only static text children;
+// attributes, symbols, lists and tags can never become markup or graph code.
+fn journal_title(value: &crate::edn::Edn) -> Option<String> {
+    use crate::edn::Edn;
+    match value {
+        Edn::Str(s) => Some(s.clone()),
+        Edn::Int(n) => Some(n.to_string()),
+        Edn::Float(n) => Some(n.to_string()),
+        Edn::Vec(children) if matches!(children.first(), Some(Edn::Keyword(_) | Edn::Str(_))) => {
+            Some(children.iter().skip(1).filter_map(journal_title).collect())
+        }
+        _ => None,
+    }
+}
+
+/// The three Logseq journal keys, returned rather than written into a `Config`
+/// so the checkpoint-key guard does not count this parser as a build reader.
+#[derive(Default)]
+struct JournalSettings {
+    queries: Vec<JournalQuery>,
+    disable: bool,
+    future_days: Option<i32>,
+    diagnostics: Vec<String>,
+}
+
+fn parse_journal_settings(edn: &str) -> JournalSettings {
+    let mut cfg = JournalSettings::default();
+    use crate::edn::{self, Edn};
+    let horizon = ":scheduled/future-days";
+    if let Some(value) = journal_setting_value(edn, horizon) {
+        match value {
+            Some(Edn::Int(n)) if i32::try_from(n).is_ok() => cfg.future_days = Some(n as i32),
+            _ => cfg.diagnostics.push(format!(
+                "{horizon} must be an integer; using the Settings value."
+            )),
+        }
+    }
+    let disable = ":feature/disable-scheduled-and-deadline-query?";
+    if let Some(value) = journal_setting_value(edn, disable) {
+        match value {
+            Some(Edn::Bool(b)) => cfg.disable = b,
+            _ => cfg
+                .diagnostics
+                .push(format!("{disable} must be true or false; using false.")),
+        }
+    }
+    let Some(value) = journal_setting_value(edn, ":default-queries") else {
+        return cfg;
+    };
+    let Some(Edn::Map(_)) = value.as_ref() else {
+        cfg.diagnostics
+            .push(":default-queries must be a map.".into());
+        return cfg;
+    };
+    let Some(journals) = value.as_ref().and_then(|v| v.get("journals")) else {
+        return cfg;
+    };
+    let Edn::Vec(queries) = journals else {
+        cfg.diagnostics
+            .push(":default-queries :journals must be a vector.".into());
+        return cfg;
+    };
+    for (index, entry) in queries.iter().enumerate() {
+        let title = entry.get("title").and_then(journal_title);
+        let mut query = JournalQuery {
+            title,
+            body: String::new(),
+            error: None,
+        };
+        match (entry, entry.get("query")) {
+            (Edn::Map(pairs), Some(form @ (Edn::List(_) | Edn::Str(_) | Edn::Vec(_)))) => {
+                // Hiccup has already been reduced to text; leave executable
+                // options to the existing query parser's refusal boundary.
+                let options: Vec<_> = pairs.iter().filter(|(k, _)| !matches!(k, Edn::Keyword(s) if s == "title" || s == "query")).cloned().collect();
+                query.body = if matches!(form, Edn::Vec(_)) {
+                    let mut advanced = options;
+                    advanced.insert(0, (Edn::Keyword("query".into()), form.clone()));
+                    format!("query {}", edn::to_string(&Edn::Map(advanced)))
+                } else {
+                    let source = match form { Edn::Str(s) => s.clone(), _ => edn::to_string(form) };
+                    format!("query {source} {}", edn::to_string(&Edn::Map(options)))
+                };
+                if entry.get("title").is_some_and(|v| !matches!(v, Edn::Nil) && journal_title(v).is_none()) {
+                    cfg.diagnostics.push(format!(":default-queries :journals entry {} has no plain-text title.", index + 1));
+                }
+            }
+            _ => query.error = Some(format!("Invalid default journal query {}: expected a map with :query (a string, list or vector).", index + 1)),
+        }
+        cfg.queries.push(query);
+    }
+    cfg
 }
 
 /// String value following `key`, e.g. `:journals-directory "journals"`.
@@ -955,6 +1088,110 @@ fn parse_macros(edn: &str) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn journal_query_settings_preserve_logseq_forms_and_defaults() {
+        let cfg = Config::parse(
+            r#"{:scheduled/future-days -2
+          :feature/disable-scheduled-and-deadline-query? true
+          :default-queries {:journals [{:title [:b "Tasks " [:span "today"]]
+            :query (task TODO) :collapsed? true}
+            {:title "Advanced" :query [:find ?b :in $ ?day :where [?b :block/scheduled ?day]] :inputs [:today]}]}}"#,
+        );
+        assert_eq!(cfg.scheduled_future_days, Some(-2));
+        assert!(cfg.disable_scheduled_and_deadline_query);
+        assert_eq!(cfg.default_journal_queries.len(), 2);
+        assert_eq!(
+            cfg.default_journal_queries[0].title.as_deref(),
+            Some("Tasks today")
+        );
+        assert!(cfg.default_journal_queries[0].body.contains("(task TODO)"));
+        assert!(cfg.default_journal_queries[1]
+            .body
+            .contains(":inputs [:today]"));
+        assert_eq!(Config::default().scheduled_future_days, None);
+        let title = Config::parse(
+            r#"{:default-queries {:journals [{:title ["span" {:onclick "ignored"} "Count " 2 (graph-code)] :query (task TODO)}]}}"#,
+        );
+        assert_eq!(
+            title.default_journal_queries[0].title.as_deref(),
+            Some("Count 2")
+        );
+    }
+
+    #[test]
+    fn journal_query_bad_entries_are_diagnosed_without_losing_neighbors() {
+        let cfg = Config::parse(
+            r#"{:scheduled/future-days 2.5
+          :feature/disable-scheduled-and-deadline-query? "yes"
+          :default-queries {:journals [{:query (task TODO)} 42 {:query (task DOING)}]}}"#,
+        );
+        assert_eq!(cfg.scheduled_future_days, None);
+        assert!(!cfg.disable_scheduled_and_deadline_query);
+        assert_eq!(cfg.default_journal_queries.len(), 3);
+        assert!(cfg.default_journal_queries[1].error.is_some());
+        assert!(!cfg.journal_config_diagnostics.is_empty());
+        let nested = Config::parse(
+            r#"{:other {:scheduled/future-days 99 :default-queries {:journals []}}}"#,
+        );
+        assert_eq!(nested.scheduled_future_days, None);
+    }
+
+    #[test]
+    fn configured_queries_use_the_shared_macro_parser_and_metadata() {
+        use crate::query::{parse_query_input, QueryInput};
+        let cfg = Config::parse(
+            r#"{:default-queries {:journals [
+            {:query (and (task TODO DOING) (priority A)) :collapsed? true}
+            {:query [:find (pull ?b [*]) :where [?b :block/marker "TODO"]] :inputs []}
+            {:query [:find ?b :where (graph-code ?b)]}]}}"#,
+        );
+        let today = crate::date::JournalDate {
+            year: 2026,
+            month: 10,
+            day: 8,
+        };
+        let registry =
+            crate::query::registry::Registry::empty(&crate::query::atom::ParseConfig::default());
+        for (i, configured) in cfg.default_journal_queries.iter().enumerate() {
+            let argument = configured.body.strip_prefix("query ").unwrap();
+            let (query, _) = parse_query_input(argument, QueryInput::MacroQuery, today, &registry);
+            if i == 0 {
+                assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+            }
+            if i == 1 {
+                assert!(matches!(
+                    query.source,
+                    crate::query::ir::Source::Advanced { .. }
+                ));
+                let resolved = crate::query::resolve_for_execution(
+                    &query,
+                    &crate::query::ir::ExecutionContext::default(),
+                    today,
+                );
+                assert!(
+                    !resolved.query().is_invalid(),
+                    "{:?}",
+                    resolved.query().diagnostics
+                );
+            }
+            if i == 2 {
+                let resolved = crate::query::resolve_for_execution(
+                    &query,
+                    &crate::query::ir::ExecutionContext::default(),
+                    today,
+                );
+                assert!(resolved.query().is_invalid());
+            }
+        }
+        let meta = crate::model::GraphMeta::from_config(
+            String::new(),
+            &cfg,
+            &crate::date::JournalFormat::new(None, None),
+        );
+        assert_eq!(meta.default_journal_queries.len(), 3);
+        assert_eq!(meta.scheduled_future_days, None);
+    }
 
     #[test]
     fn accent_removal_defaults_on_and_only_explicit_false_disables_it() {
