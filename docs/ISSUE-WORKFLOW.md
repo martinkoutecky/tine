@@ -30,8 +30,9 @@ fail-before test, implementation, deployment, and release lifecycle.
    issue, so Done is reserved for the release-time close.
 5. After the relevant platform artifact is published, comment “closing, should
    be fixed in vX; please report back here if not,” link the release, and close a
-   wholly addressed issue. A new non-maintainer comment automatically reopens a
-   closed issue with `needs-triage`.
+   wholly addressed issue. A later comment on a closed issue from someone other
+   than the person who closed it adds `needs-triage`; the issue stays closed.
+   The agent's sweep reopens it only for a real regression.
 
 ## Feature requests
 

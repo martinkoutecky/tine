@@ -918,8 +918,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setGuideAnnounced(announced: boolean): Promise<void> {
       mockGuideAnnounced = announced;
     },
-    async createGraph(_dir: string): Promise<string> {
-      return "/mock/new-graph"; // no real scaffolding in the browser mock
+    async suggestGraphName(_dir: string): Promise<string> { return "notes"; },
+    async createGraph(dir: string, name: string): Promise<string> {
+      return `${dir.replace(/[\\/]$/, "")}/${name.trim()}`; // no real scaffolding in the browser mock
     },
     async getBacklinks(name: string): Promise<RefGroup[]> {
       const n = name.toLowerCase();

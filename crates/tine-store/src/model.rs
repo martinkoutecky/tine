@@ -16,10 +16,10 @@ mod page_parse;
 mod parse_depth;
 pub(crate) mod shape_stats;
 mod transaction_publish;
-pub(crate) use page_identity::configured_hidden;
 #[cfg(test)]
 use page_identity::effective_page_name;
 use page_identity::list_graph_pages;
+pub(crate) use page_identity::{configured_hidden, portable_component};
 pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
     graph_text_watch_relevant,

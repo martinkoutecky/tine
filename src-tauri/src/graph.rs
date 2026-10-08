@@ -639,39 +639,38 @@ impl LoadGraphResult {
 }
 
 /// Create a brand-new demo graph (the onboarding "Create a new graph" path) and
-/// return its root path for the frontend to open. Scaffolds in `dir` if that
-/// folder is empty; otherwise creates a fresh `tine-demo` subfolder so we never
-/// write into a user's existing files. Does NOT load the graph — the frontend
+/// return its root path for the frontend to open. Creates the named child of
+/// `dir`, reusing only an empty directory. Does NOT load the graph — the frontend
 /// calls `load_graph` with the returned path (matching the "open existing" flow).
 #[tauri::command]
-pub(crate) async fn create_graph(dir: String) -> Result<String, String> {
+pub(crate) async fn create_graph(dir: String, name: String) -> Result<String, String> {
     // Writes and fsyncs every demo page (R3): off the main thread.
-    crate::state::off_ui(move || create_graph_blocking(dir)).await
+    crate::state::off_ui(move || create_graph_blocking(dir, name)).await
 }
 
-fn create_graph_blocking(dir: String) -> Result<String, String> {
-    let dir = dir.trim();
+#[tauri::command]
+pub(crate) async fn suggest_graph_name(dir: String) -> Result<String, String> {
+    crate::state::off_ui(move || {
+        tine_store::Store::suggest_graph_name(Path::new(&dir)).map_err(graph_creation_error)
+    })
+    .await
+}
+
+fn graph_creation_error(error: OpenError) -> String {
+    match error {
+        OpenError::NotAFolder(path) => format!("{} is not a folder", path.display()),
+        OpenError::CreateFailed { cause, .. } | OpenError::Io(cause) => cause.message,
+        other => format!("Couldn't create the graph: {other}"),
+    }
+}
+
+fn create_graph_blocking(dir: String, name: String) -> Result<String, String> {
+    let dir = dir.as_str();
     if dir.is_empty() {
         return Err("no folder was chosen".into());
     }
-    let root =
-        tine_graph_features::guide::create_demo_graph(Path::new(dir)).map_err(
-            |error| match error {
-                OpenError::NotAFolder(_) => format!("{dir} is not a folder"),
-                OpenError::CreateFailed { path, cause }
-                    if path.parent() == Some(Path::new(dir))
-                        && path.file_name().is_some_and(|name| {
-                            name.to_string_lossy().starts_with("tine-demo")
-                        }) =>
-                {
-                    format!("couldn't create folder: {}", cause.message)
-                }
-                OpenError::CreateFailed { cause, .. } | OpenError::Io(cause) => {
-                    format!("couldn't create the demo graph: {}", cause.message)
-                }
-                other => format!("couldn't create the demo graph: {other}"),
-            },
-        )?;
+    let root = tine_graph_features::guide::create_demo_graph(Path::new(dir), &name)
+        .map_err(graph_creation_error)?;
     Ok(root.display().to_string())
 }
 

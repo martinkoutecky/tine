@@ -8,6 +8,10 @@ icon:: 📂
 	- 3. On desktop, from the command line, `tine /path/to/graph` (or `tine open /path/to/graph`, or `TINE_GRAPH=/path/to/graph`) opens a graph directly.
 	- 4. What you should see: the same pages and journals Logseq finds. Existing Markdown and Org pages may be at the graph root or in nested folders, not only under `pages/` and `journals/`.
 	- If the graph you used last time cannot be opened at launch — the folder moved, a drive is unplugged, a file is unreadable — the Welcome screen says so in a card that names the graph and the reason, with **Try again** and **Copy details** buttons. Nothing was changed on disk; you can also open another graph from the same screen.
+- ## Create a new graph
+	- Choose **Create a new graph** on Welcome, or **New graph…** in the sidebar graph menu. Choose its parent folder on desktop or iOS; Android uses its default graph location.
+	- Enter a **Graph name**. Tine suggests the first unused name: `notes`, `notes-2`, `notes-3`, and so on. The graph is always a child folder of that name, even when the parent is empty. Cancel creates nothing.
+	- An existing empty child folder can be used. A nonempty folder is refused without replacing its files; the name prompt stays open so you can choose another name. Names must be one portable folder name, without path separators, Windows device names, invalid characters, or a trailing dot or space.
 - ## What Tine reads
 	- The usual layout is `pages/`, `journals/`, `assets/`, and `logseq/config.edn`, but Tine also finds eligible `.md`, `.markdown`, and `.org` pages elsewhere inside the graph.
 	- Root-level and nested pages are named from their file names (or their `title::`) and save back to their exact existing paths. Tine skips hidden/internal trees, assets, publish output, and sync-provider conflict copies; `:hidden` prefixes in `config.edn` are honored too.

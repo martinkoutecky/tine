@@ -18,6 +18,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- **Create a new graph** asks for its name, suggesting `notes`, then `notes-2`, and so on when taken. The graph is always created in a named child folder; invalid names and nonempty existing folders show an inline refusal so you can choose another name (GH #621).
+
 - Security: updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.
 
 - Bare `(task)` queries now include every unfinished task, including WAITING, WAIT, STARTED, and IN-PROGRESS, using the same rule as carry-over and the agenda. DONE and both CANCELED spellings stay excluded; queries with explicit markers are unchanged (GH #422).

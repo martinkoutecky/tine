@@ -166,8 +166,10 @@ export interface Backend {
   openDevtools(): Promise<void>;
   /** Scaffold a brand-new demo graph (onboarding "create new graph"); returns
    *  the created graph's root path to then `loadGraph`. Creates the graph in
-   *  `dir` if empty, else in a fresh `tine-demo` subfolder. */
-  createGraph(dir: string): Promise<string>;
+   *  the named child of `dir`, reusing only an empty directory. */
+  createGraph(dir: string, name: string): Promise<string>;
+  /** First unused notes, notes-2, … child name, supplied by Rust. */
+  suggestGraphName(dir: string): Promise<string>;
   /** The whole name inventory (physical pages/journals, aliases, reference-only
    *  names), each with the backend's resolved target. Cached only by
    *  `pageIndex.ts` holds the full inventory; `store.ts` separately indexes
@@ -915,9 +917,10 @@ class TauriBackend implements Backend {
   defaultGraphParent() {
     return this.call<string>("default_graph_parent");
   }
-  createGraph(dir: string) {
-    return this.call<string>("create_graph", { dir });
+  createGraph(dir: string, name: string) {
+    return this.call<string>("create_graph", { dir, name });
   }
+  suggestGraphName(dir: string) { return this.call<string>("suggest_graph_name", { dir }); }
   pageInventory() {
     return this.call<import("./types").PageInventory>("page_inventory");
   }

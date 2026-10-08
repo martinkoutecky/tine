@@ -47,8 +47,8 @@ fn main() {
         }
     }
     let temp = tempfile::tempdir().expect("temporary Guide graph");
-    create_demo_graph(temp.path()).expect("scaffold Guide graph");
-    let (store, _, _) = Store::open(temp.path(), Default::default()).expect("open Guide graph");
+    let root = create_demo_graph(temp.path(), "notes").expect("scaffold Guide graph");
+    let (store, _, _) = Store::open(&root, Default::default()).expect("open Guide graph");
     if let Some(dump) = dump {
         let inputs = sheet_export_inputs(&store, None, None).expect("collect sheet inputs");
         fs::write(

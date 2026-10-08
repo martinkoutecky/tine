@@ -31,7 +31,7 @@ async function loadHarness(
   warm = false,
   onEpoch?: () => void,
   journal?: { journalTitle: () => string; setJournalTitleFormat: (format: string | null | undefined) => void },
-  mobile: { platform?: "android" | "ios" | "desktop"; pickerResult?: GraphFolderPickResult } = {},
+  mobile: { platform?: "android" | "ios" | "desktop"; pickerResult?: GraphFolderPickResult; namePrompt?: boolean } = {},
 ) {
   const platform = mobile.platform ?? "desktop";
   vi.resetModules();
@@ -46,6 +46,7 @@ async function loadHarness(
     pickGraphFolder: vi.fn(async (): Promise<GraphFolderPickResult> => mobile.pickerResult ?? { status: "cancelled" }),
     prepareGraphFolder: vi.fn(async (_path: string): Promise<PreparedGraphFolder> => ({ status: "ready", location: "local" })),
     defaultGraphParent: vi.fn(async () => "/tmp"),
+    suggestGraphName: vi.fn(async () => "notes"),
     createGraph: vi.fn(async () => META.root),
     getPage: vi.fn(async () => existing),
     resolvePage: vi.fn(async () => ({ kind: "absent" as const, id: "journals/2026_07_10.md" })),
@@ -83,6 +84,10 @@ async function loadHarness(
   const resetStore = vi.fn(() => { unsaved.length = 0; });
 
   vi.doMock("./backend", () => ({ backend: () => api }));
+  if (mobile.namePrompt) vi.doUnmock("./graphNamePrompt");
+  else vi.doMock("./graphNamePrompt", () => ({ askGraphName: async (_suggestion: string, create: (name: string) => Promise<string | null>) => {
+    try { return await create("notes"); } catch { return null; }
+  } }));
   vi.doMock("./ui", () => ({
     setGraphMeta: (next: GraphMeta | null) => { meta = next; },
     graphMeta: () => meta,
@@ -226,7 +231,7 @@ describe("mobile graph folder picker", () => {
     expect(harness.api.pickGraphFolder).toHaveBeenCalledOnce();
     expect(harness.api.defaultGraphParent).not.toHaveBeenCalled();
     expect(harness.api.prepareGraphFolder).toHaveBeenNthCalledWith(1, META.root);
-    expect(harness.api.createGraph).toHaveBeenCalledWith(META.root);
+    expect(harness.api.createGraph).toHaveBeenCalledWith(META.root, "notes");
   });
 
   it("refuses an iOS graph before native graph inspection when its container is outside scope", async () => {
@@ -318,10 +323,55 @@ describe("GH #621 graph creation messages", () => {
     h.api.createGraph.mockRejectedValue(new Error("Disk full"));
     await expect(h.createNewGraph()).resolves.toEqual({ kind: "aborted" });
     const { toasts } = await import("./toasts");
-    expect(toasts().at(-1)?.message).toContain("Couldn't create the graph. The current graph is still open.");
+    // The prompt owns creation refusals; cancelling it leaves the graph alone.
+    expect(toasts().at(-1)?.message ?? "").not.toContain("Created the graph");
     expect(h.api.loadGraph).not.toHaveBeenCalled();
     const { graphMeta } = await import("./graphSession");
     expect(graphMeta()?.root).toBe(META.root);
+  });
+});
+
+describe("GH #621 graph name prompt flow", () => {
+  it("uses Rust's mobile suggestion and cancels without creating or opening", async () => {
+    const h = await loadHarness(null, undefined, true, false, undefined, undefined, { platform: "android", namePrompt: true });
+    h.api.suggestGraphName.mockResolvedValue("notes-3");
+    const { render } = await import("solid-js/web");
+    const { GraphNamePrompt } = await import("./components/GraphNamePrompt");
+    const host = document.createElement("div"); document.body.append(host);
+    const dispose = render(() => <GraphNamePrompt />, host);
+    try {
+      const creating = h.createNewGraph();
+      for (let i = 0; i < 25; i++) await Promise.resolve();
+      expect(h.api.suggestGraphName).toHaveBeenCalledWith("/tmp");
+      expect(host.querySelector("input")?.value).toBe("notes-3");
+      [...host.querySelectorAll("button")].find(b => b.textContent === "Cancel")!.click();
+      await expect(creating).resolves.toEqual({ kind: "aborted" });
+      expect(h.api.createGraph).not.toHaveBeenCalled();
+      expect(h.api.loadGraph).not.toHaveBeenCalled();
+    } finally { dispose(); host.remove(); }
+  });
+
+  it("keeps a desktop Rust refusal open and opens only the retried graph", async () => {
+    const h = await loadHarness(null, undefined, true, false, undefined, undefined, { namePrompt: true });
+    h.api.createGraph.mockRejectedValueOnce(new Error("Folder is not empty; choose another name."));
+    const { render } = await import("solid-js/web");
+    const { GraphNamePrompt } = await import("./components/GraphNamePrompt");
+    const host = document.createElement("div"); document.body.append(host);
+    const dispose = render(() => <GraphNamePrompt />, host);
+    try {
+      const creating = h.createNewGraph();
+      for (let i = 0; i < 25; i++) await Promise.resolve();
+      expect(host.querySelector("input")?.value).toBe("notes");
+      host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      for (let i = 0; i < 25; i++) await Promise.resolve();
+      expect(host.querySelector('[role="alert"]')?.textContent).toBe("Folder is not empty; choose another name.");
+      expect(h.api.loadGraph).not.toHaveBeenCalled();
+      const input = host.querySelector("input")!; input.value = "Research";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await expect(creating).resolves.toEqual({ kind: "loaded", root: META.root });
+      expect(h.api.createGraph).toHaveBeenLastCalledWith("/tmp", "Research");
+    } finally { dispose(); host.remove(); }
   });
 });
 

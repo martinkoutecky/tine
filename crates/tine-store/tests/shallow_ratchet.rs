@@ -894,6 +894,10 @@ fn public_paths_are_only_inputs_and_handoffs() {
         ),
         ("store::Store::open", "user-chosen root input"),
         (
+            "store::Store::suggest_graph_name",
+            "user-chosen parent folder input; read-only suggestion before graph creation",
+        ),
+        (
             "link_identity::Store::read_link_identity_at",
             "known graph root input, read-only identity lookup before open",
         ),

@@ -10,6 +10,7 @@ import { PageProps } from "./PageProps";
 import { ExportModal } from "./ExportModal";
 import { PdfExportDialog } from "./PdfExportDialog";
 import { QueryExportDialog } from "./QueryExportDialog";
+import { GraphNamePrompt } from "./GraphNamePrompt";
 import { FailureBoundary } from "./FailureBoundary";
 import { DrawerBackground } from "./MobileDrawerShell";
 import { queryExportRequest, settingsOpen } from "../ui";
@@ -50,6 +51,7 @@ export function WindowOverlays(props: {
       <Show when={here()}>
         <FailureBoundary region="PDF export"><PdfExportDialog /></FailureBoundary>
         <FailureBoundary region="Query export"><QueryExportDialog request={queryExportRequest} /></FailureBoundary>
+        <FailureBoundary region="Graph creation"><GraphNamePrompt /></FailureBoundary>
         <Show when={settingsOpen()}>
           <Suspense>
             <FailureBoundary region="Settings"><Settings /></FailureBoundary>

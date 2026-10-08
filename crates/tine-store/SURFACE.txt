@@ -17,7 +17,10 @@
 # sections and printed with TINE_SHALLOW_PRINT=1; they are not targets.
 # History: honest baseline 50 ops / 26 questions / 56 types (og-surface step 1,
 # 2026-10-05); after the og-surface cut 40 / 23 / 59.
-## Lifecycle (ceiling: 19)
+# GH #621: create_graph writes a graph and cannot suggest a name for a
+# cancellable prompt without creating anything. suggest_graph_name is the
+# read-only question about the user-picked parent, approved 2026-10-08.
+## Lifecycle (ceiling: 20)
 enum store::WatchMode
 enum store::OpenError
 field store::GraphAccessInspection.external_assets
@@ -27,6 +30,7 @@ field store::OpenOptions.launch_checkpoint
 field store::OpenOptions.watch
 fn store::Store::close
 fn store::Store::create_graph
+fn store::Store::suggest_graph_name
 fn store::Store::inspect
 fn store::Store::canonical_root
 fn store::GraphAccessInspection::approves_external_assets
@@ -277,4 +281,3 @@ use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
 use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SaveOutcome,SavePagesOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}
-

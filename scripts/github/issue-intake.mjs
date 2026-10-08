@@ -1,16 +1,16 @@
 const collaborators = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
-export const CLOSE_COMMENT_WINDOW_MS = 30_000;
 
-export function shouldReopen(event, issue, timeline) {
+// A comment on a closed issue is flagged for the agent sweep, never reopened:
+// a reporter's "fixed, thanks" must not undo their own close. The person who
+// closed an issue can reopen it themselves, so their comments are not flagged.
+export function needsTriage(event, issue, timeline) {
   const comment = event.comment;
   if (event.action !== "created" || issue.pull_request || issue.state !== "closed" ||
       !comment || comment.user?.type === "Bot" ||
       collaborators.has(comment.author_association)) return false;
 
-  // Use API times, not webhook delivery/run times. Close-with-comment can record
-  // either operation first, with second-resolution timestamps. Thirty seconds
-  // covers the reported seconds-long race without suppressing later follow-ups.
-  // Sort explicitly: don't depend on webhook or timeline response ordering.
+  // Use API times, not webhook delivery/run times; sort explicitly rather than
+  // depend on webhook or timeline response ordering.
   const transitions = timeline.filter((entry) =>
     entry.event === "closed" || entry.event === "reopened")
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id - b.id);
@@ -19,11 +19,9 @@ export function shouldReopen(event, issue, timeline) {
   const closeTime = Date.parse(close?.created_at);
   if (close?.event !== "closed" || !Number.isFinite(commentTime) ||
       !Number.isFinite(closeTime) || !close.actor?.id || !comment.user?.id) return false;
-  const elapsed = commentTime - closeTime;
-  if (close.actor.id === comment.user.id &&
-      Math.abs(elapsed) <= CLOSE_COMMENT_WINDOW_MS) return false;
-  // A delayed delivery from before the current close must not undo that close.
-  return elapsed >= 0;
+  if (close.actor.id === comment.user.id) return false;
+  // A delayed delivery from before the current close was seen by the closer.
+  return commentTime >= closeTime;
 }
 
 function labelNames(issue) {
@@ -59,7 +57,7 @@ export function classificationLabel(issue) {
 }
 
 // github-script supplies Octokit and context; importing this file performs no I/O.
-export async function reopenFollowup({ github, context }) {
+export async function flagFollowup({ github, context }) {
   const event = context.payload;
   if (event.action !== "created" || event.issue.pull_request ||
       event.comment.user.type === "Bot" ||
@@ -70,13 +68,11 @@ export async function reopenFollowup({ github, context }) {
   const timeline = await github.paginate(github.rest.issues.listEventsForTimeline, {
     ...params, per_page: 100,
   });
-  if (!shouldReopen(event, issue, timeline)) return;
-  // Label first: if reopening fails, retry can finish; after success repeated
-  // delivery sees an open issue and makes no writes. Never replace other labels.
+  if (!needsTriage(event, issue, timeline)) return;
+  // Label only; the issue stays closed. Never replace other labels.
   if (!labelNames(issue).includes("needs-triage")) {
     await github.rest.issues.addLabels({ ...params, labels: ["needs-triage"] });
   }
-  await github.rest.issues.update({ ...params, state: "open" });
 }
 
 export async function labelOpenedIssue({ github, context }) {

@@ -24,9 +24,9 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - name: Reopen reporter follow-up for triage
+      - name: Flag reporter follow-up for triage (never reopens)
         uses: actions/github-script@v8
         with:
           script: |
-            const { reopenFollowup } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/github/issue-intake.mjs`);
-            await reopenFollowup({ github, context });
+            const { flagFollowup } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/github/issue-intake.mjs`);
+            await flagFollowup({ github, context });

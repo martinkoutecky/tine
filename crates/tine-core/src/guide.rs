@@ -665,6 +665,21 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn new_graph_naming_is_documented() {
+        let guide = include_str!("templates/bring-existing-graph.md");
+        for detail in [
+            "**Graph name**",
+            "`notes`, `notes-2`, `notes-3`",
+            "even when the parent is empty",
+            "Cancel creates nothing",
+            "name prompt stays open",
+            "existing empty child folder",
+        ] {
+            assert!(guide.contains(detail), "missing creation detail: {detail}");
+        }
+    }
+
+    #[test]
     fn ios_guide_says_where_graphs_live_and_that_plugins_stay_off() {
         // The iOS picker opens only the app's own On My iPhone / iCloud Drive
         // folders (src/graph.ts switchGraph) and Settings hides Plugins on iOS.
