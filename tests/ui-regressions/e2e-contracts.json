@@ -320,6 +320,14 @@
       "nonRequirements": ["Exact sheet or popover geometry, animation, or the order of fields in the chooser."],
       "stability": "burn-in"
     },
+    "scripts/e2e-query-nested-rows.mjs": {
+      "contracts": [
+        { "class": "core-operation", "userOutcome": "A query's Table, Board, List and result count answer one membership: a task nested under a task that also matches is not a row of its own (it shows inside its parent in the List), and a task nested under a block that does not match is its own row, including after the query is narrowed so its parent stops matching.", "blocking": true, "authority": "OG tree/filter-top-level-blocks as applied by query/result.cljs to table and list alike; ADR 0042; GH #651" }
+      ],
+      "acceptableVariations": ["Row and card order, column set and the way the List draws a parent's children may evolve while the set of result blocks and the count stay one answer for every presentation."],
+      "nonRequirements": ["Exact sheet geometry, cell DOM structure or the order of rows."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-rename.mjs": {
       "contracts": [
         { "class": "core-operation", "userOutcome": "Renaming a page updates the real graph and keeps linked-reference behavior coherent.", "blocking": true },
