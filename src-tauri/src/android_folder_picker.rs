@@ -37,7 +37,12 @@ pub(crate) async fn pick_graph_folder<R: Runtime>(
     picker.pick_graph_folder()
 }
 
-#[cfg(not(target_os = "android"))]
+// iOS must be excluded here, not just at the registration site in lib.rs:
+// `#[tauri::command]` emits crate-root `__cmd__*` / `__tauri_command_name_*`
+// macros at the point of DEFINITION, so an iOS-compiled stub here collides with
+// `ios_folder_picker::pick_graph_folder` (E0428) even though only one of them is
+// ever registered (master 963cd2fd0).
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tauri::command]
 pub(crate) async fn pick_graph_folder() -> Result<GraphFolderPickResult, String> {
     Err("Android folder picker is unsupported on this platform".to_string())

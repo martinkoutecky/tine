@@ -64,6 +64,12 @@ tine-store = { path = "../crates/tine-store", features = ["test-faults"] }
 [target.'cfg(any(target_os = "android", target_os = "ios", target_os = "windows"))'.dependencies]
 tauri-plugin-opener = "2"
 
+# iOS graph-folder picker (UIDocumentPicker over Tine's own Documents and iCloud
+# containers). Build-only crate: its build script compiles the Swift package;
+# src/ios_folder_picker.rs keeps its rlib in the link graph.
+[target.'cfg(target_os = "ios")'.dependencies]
+tine-ios-folder-picker-native = { path = "ios-folder-picker-native" }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console"] }
 # Windows uses Schannel through native-tls: the default rustls transport does

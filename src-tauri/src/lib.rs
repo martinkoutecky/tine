@@ -30,6 +30,8 @@ mod flight;
 mod flight_store;
 mod graph;
 mod graph_verification;
+#[cfg(target_os = "ios")]
+mod ios_folder_picker;
 #[cfg(target_os = "linux")]
 mod linux_window_identity;
 #[cfg(test)]
@@ -747,6 +749,8 @@ pub fn run() {
     // (src/edgeSwipe.ts). src/androidBack.test.ts pins this set.
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_safe_back::init());
+    #[cfg(target_os = "ios")]
+    let builder = builder.plugin(ios_folder_picker::init());
     // Mobile has no xdg-open/open/explorer, so `open_external` routes URL opens
     // through this plugin's platform Intent instead (GH #49). Windows uses it
     // for ShellExecute, because `explorer <url>` opens a File Explorer window
@@ -882,7 +886,12 @@ pub fn run() {
             app_platform,
             local_clock,
             default_graph_parent,
+            #[cfg(not(target_os = "ios"))]
             android_folder_picker::pick_graph_folder,
+            #[cfg(target_os = "ios")]
+            ios_folder_picker::pick_graph_folder,
+            #[cfg(target_os = "ios")]
+            ios_folder_picker::prepare_graph_folder,
             android_media::capture_photo,
             android_media::start_recording,
             android_media::stop_recording,

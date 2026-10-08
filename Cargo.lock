@@ -5112,6 +5112,7 @@ dependencies = [
  "tempfile",
  "tine-core",
  "tine-graph-features",
+ "tine-ios-folder-picker-native",
  "tine-store",
  "webkit2gtk",
  "windows-sys 0.61.2",
@@ -5151,6 +5152,14 @@ dependencies = [
  "time",
  "tine-core",
  "tine-store",
+]
+
+[[package]]
+name = "tine-ios-folder-picker-native"
+version = "0.7.0"
+dependencies = [
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

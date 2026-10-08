@@ -57,7 +57,7 @@
     "targets": ["appimage", "deb", "rpm", "nsis", "dmg"],
     "createUpdaterArtifacts": true,
     "macOS": { "infoPlist": "Info.plist" },
-    "iOS": { "infoPlist": "Info.plist" },
+    "iOS": { "infoPlist": "Info.plist", "minimumSystemVersion": "15.4" },
     "windows": { "nsis": { "installerHooks": "tine-url-hooks.nsh" } },
     "android": {
       "versionCode": 7000
