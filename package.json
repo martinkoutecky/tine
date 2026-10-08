@@ -66,14 +66,14 @@
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@twemoji/svg": "^15.0.0",
     "chrono-node": "2.2.4",
-    "dompurify": "^3.4.11",
+    "dompurify": "^3.4.16",
     "emoji-regex": "^10.6.0",
     "highlight.js": "^11.11.1",
     "inter-ui": "4.1.1",
     "katex": "^0.16.47",
     "lenis": "^1.3.25",
     "pdfjs-dist": "^4.10.38",
-    "solid-js": "^1.9.3",
+    "solid-js": "^1.9.17",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2"
   },
@@ -87,6 +87,6 @@
     "vite": "^6.4.3",
     "vite-plugin-solid": "^2.11.0",
     "vitest": "^3.2.7",
-    "webdriverio": "^9.29.0"
+    "webdriverio": "^9.32.0"
   }
 }
