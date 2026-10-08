@@ -92,6 +92,7 @@ mod link_identity;
 mod no_replace;
 #[cfg(test)]
 mod no_replace_tests;
+mod page_state;
 mod path_identity;
 mod platform_step;
 #[cfg(test)]
