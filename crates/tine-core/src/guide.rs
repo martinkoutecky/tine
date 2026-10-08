@@ -214,7 +214,9 @@ mod journal_guide_tests {
     #[test]
     fn reference_change_notices_offer_undo() {
         let reference = include_str!("templates/pages-links-references-search.md");
-        assert!(reference.contains("Deleting referenced blocks or merging them with Backspace/Delete"));
+        assert!(
+            reference.contains("Deleting referenced blocks or merging them with Backspace/Delete")
+        );
         assert!(reference.contains("with **Undo** to restore the blocks and their ids"));
     }
 
@@ -634,7 +636,10 @@ mod rename_guide_tests {
             "Cloud document providers",
             "sync-to-local-folder",
         ] {
-            assert!(mobile.contains(outcome), "missing Android Guide outcome: {outcome}");
+            assert!(
+                mobile.contains(outcome),
+                "missing Android Guide outcome: {outcome}"
+            );
         }
     }
 
