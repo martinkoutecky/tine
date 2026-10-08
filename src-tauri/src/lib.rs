@@ -2,6 +2,7 @@
 //! graph open/create/warm cache; backup snapshots; settings/session prefs;
 //! spellcheck WebKit integration; platform OS bridges; commands thin IPC.
 
+mod android_clipboard;
 mod android_folder_picker;
 mod android_media;
 mod android_safe_back;
@@ -764,6 +765,8 @@ pub fn run() {
     let builder = builder.plugin(android_folder_picker::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_media::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_clipboard::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_system_bars::init());
     // Android's permanent Back owner (see android_safe_back.rs). The other four
