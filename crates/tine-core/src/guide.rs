@@ -872,6 +872,23 @@ mod query_guide_tests {
         }
     }
 
+    /// GH #651: the Guide says why a task nested under a matching task has no
+    /// row of its own in the Table (OG's top-level-result rule, ADR 0042).
+    #[test]
+    fn gh651_guide_states_the_nested_match_rule() {
+        let queries = include_str!("templates/queries.md");
+        assert!(
+            queries.contains(
+                "A block that matches directly under another block that also matches is not a result of its own, as in Logseq"
+            ),
+            "queries.md must state the nested-match rule"
+        );
+        assert!(
+            queries.contains("a match under a block that does not match is its own result"),
+            "queries.md must say a match below a non-matching block is its own result"
+        );
+    }
+
     /// GH #542 (master c1b14a859): the Guide's advanced-query example is one
     /// Tine runs whole, and the page states the disclosed-superset rule.
     #[test]
