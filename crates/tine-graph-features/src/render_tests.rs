@@ -10,6 +10,66 @@ mod tests {
     use super::*;
 
     #[test]
+    fn current_page_query_map_preserves_source_and_cache_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("pages")).unwrap();
+        for (page, body) in [
+            ("Public", "- owner\n"),
+            ("Second", "- TODO from second [[Public]]\n"),
+            ("Third", "- TODO from third [[Second]]\n"),
+        ] {
+            fs::write(dir.path().join(format!("pages/{page}.md")), body).unwrap();
+        }
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let whole = store.whole_graph().unwrap();
+        let corpus = whole.corpus();
+        let graph = RenderGraph::new(&corpus, &whole, &store, None);
+        let refs = no_refs();
+        let cache = RefCell::new(QueryCache::default());
+        let argument = "{:query [:find (pull ?b [*]) :in $ ?current-page :where [?p :block/name ?current-page] [?b :block/refs ?p] [?b :block/marker \"TODO\"]] :inputs [:current-page]}";
+        for org in [false, true] {
+            for owner in ["Public", "Second", "Public"] {
+                let ctx = Ctx {
+                    refs: &refs,
+                    reverse_refs: None,
+                    graph: Some(&graph),
+                    slugs: None,
+                    inline_assets: false,
+                    print_asset_budget: None,
+                    query_cache: Some(&cache),
+                    pages: None,
+                    current_page: Some(owner),
+                };
+                // The cache's direct parse/run already receives complete EDN.
+                let bounded =
+                    graph.query_bounded(argument, QueryTextDialect::MacroQuery, Some(owner));
+                assert_eq!(bounded.total, 1);
+                // Exercise the same body/decorator path used by list, embed,
+                // query-result and print rendering, including UTF-8 offsets.
+                let mut html = String::new();
+                emit_block_inner(
+                    &format!("  é Before {{{{query {argument}}}}} after"),
+                    org,
+                    &mut html,
+                    &ctx,
+                    0,
+                );
+                let (wanted, excluded) = if owner == "Public" {
+                    ("from second", "from third")
+                } else {
+                    ("from third", "from second")
+                };
+                assert!(html.contains(wanted), "{html}");
+                assert!(!html.contains(excluded), "{html}");
+                assert!(html.contains(" after"), "{html}");
+                assert!(!html.contains("} after"), "{html}");
+            }
+        }
+        assert_eq!(cache.borrow().entries.len(), 2);
+        store.close();
+    }
+
+    #[test]
     fn published_alias_links_and_authored_anchors_resolve() {
         let dir =
             std::env::temp_dir().join(format!("tine-publish-alias-anchor-{}", std::process::id()));

@@ -732,7 +732,9 @@ fn publish_malformed_begin_query_is_inert_and_hides_its_payload() {
     fs::create_dir_all(dir.join("logseq")).unwrap();
     fs::write(
             dir.join("pages/Dashboard.md"),
-            "public:: true\n- #+BEGIN_QUERY\n  {:title \"MALFORMED_BEGIN_QUERY_PAYLOAD\" :query (task TODO)}\n  #+END_QUERY\n",
+            // A simple :query list is supported (OG docs example 17).
+            // This map is genuinely malformed: :query has no value.
+            "public:: true\n- #+BEGIN_QUERY\n  {:title \"MALFORMED_BEGIN_QUERY_PAYLOAD\" :query}\n  #+END_QUERY\n",
         )
         .unwrap();
 
@@ -752,6 +754,42 @@ fn publish_malformed_begin_query_is_inert_and_hides_its_payload() {
     assert!(!dashboard.contains("#+BEGIN_QUERY"), "{dashboard}");
     assert!(!dashboard.contains("#+END_QUERY"), "{dashboard}");
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn publish_simple_begin_query_map_returns_task_rows() {
+    // https://github.com/logseq/docs/blob/master/pages/Advanced%20Queries.md
+    // Example 17 embeds the simple query DSL in a BEGIN_QUERY map.
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("pages")).unwrap();
+    fs::write(
+        dir.path().join("pages/Dashboard.md"),
+        "public:: true\n- #+BEGIN_QUERY\n  {:title \"Simple tasks\" :query (task TODO)}\n  #+END_QUERY\n",
+    ).unwrap();
+    fs::write(
+        dir.path().join("pages/Tasks.md"),
+        "public:: true\n- TODO SIMPLE_BEGIN_QUERY_TARGET\n- DONE SIMPLE_BEGIN_QUERY_EXCLUDED\n",
+    )
+    .unwrap();
+    let graph = Store::open(dir.path(), Default::default()).unwrap().0;
+    let (outdir, _) = publish_graph(&graph).unwrap();
+    let dashboard =
+        fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
+    assert!(dashboard.contains("Simple tasks"), "{dashboard}");
+    assert!(
+        dashboard.contains("SIMPLE_BEGIN_QUERY_TARGET"),
+        "{dashboard}"
+    );
+    assert!(
+        !dashboard.contains("SIMPLE_BEGIN_QUERY_EXCLUDED"),
+        "{dashboard}"
+    );
+    assert!(
+        !dashboard.contains("begin-query-unsupported"),
+        "{dashboard}"
+    );
+    assert!(!dashboard.contains("#+BEGIN_QUERY"), "{dashboard}");
+    graph.close();
 }
 
 #[test]

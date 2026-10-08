@@ -20,6 +20,8 @@ use tine_store::{Area, Store, WholeGraph};
 mod render_facets;
 #[path = "render_lookups.rs"]
 mod render_lookups;
+#[path = "render_query_source.rs"]
+mod render_query_source;
 #[path = "render_sheets.rs"]
 mod render_sheets;
 use render_facets::{emit_header_facets, emit_trailer_facets, Ordinal};
@@ -819,10 +821,13 @@ fn ast_plain_text(blocks: &[Block]) -> String {
 /// Parse + property/planning-filter one block body the way `render_block` does — the
 /// shared front of the render and search-index paths (one lsdoc parse per call).
 fn body_blocks(raw: &str, org: bool) -> Vec<Block> {
-    tine_core::doc::strip_planning_lines(tine_core::render::parse_block(raw, org), raw)
-        .into_iter()
-        .filter(|b| !matches!(b, Block::Properties { .. }))
-        .collect()
+    let mut blocks: Vec<_> =
+        tine_core::doc::strip_planning_lines(tine_core::render::parse_block(raw, org), raw)
+            .into_iter()
+            .filter(|b| !matches!(b, Block::Properties { .. }))
+            .collect();
+    render_query_source::restore(&mut blocks, raw);
+    blocks
 }
 
 struct BeginQuery {
