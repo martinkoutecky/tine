@@ -5,8 +5,7 @@ import { describe, expect, it } from "vitest";
 // because `tauri-plugin-clipboard-manager` 2.x implements mobile `write_image`
 // as `Err("Unsupported on this platform")`. Android publishes the image through
 // its own plugin (staged PNG + FileProvider content URI). The Android runtime
-// cannot run in this suite, so these pins hold the three seams together; the
-// staging itself is tested in src-tauri/src/android_clipboard.rs.
+// cannot run in this suite, so these pins hold the three seams together.
 const read = (path: string) => readFileSync(path, "utf8");
 const KOTLIN = "src-tauri/gen/android/app/src/main/java/page/tine/app/ClipboardImagePlugin.kt";
 
@@ -16,7 +15,7 @@ describe("Android image copy (GH #654)", () => {
     const body = platform.slice(platform.indexOf("pub(crate) async fn copy_image_to_clipboard"));
     const command = body.slice(0, body.indexOf("\n}\n"));
     const android = command.indexOf('#[cfg(target_os = "android")]');
-    const route = command.indexOf("crate::android_clipboard::copy_png(&app, &bytes)");
+    const route = command.indexOf("crate::android_clipboard::copy_png(&app, &bytes_b64)");
     const others = command.indexOf('#[cfg(not(target_os = "android"))]');
     const pluginWrite = command.indexOf(".write_image(");
     expect(android).toBeGreaterThan(-1);
@@ -35,21 +34,26 @@ describe("Android image copy (GH #654)", () => {
     const bridge = read("src-tauri/src/android_clipboard.rs");
     expect(bridge).toContain('register_android_plugin(PLUGIN_IDENTIFIER, "ClipboardImagePlugin")');
     expect(bridge).toContain('"copyImage"');
-    expect(bridge).toContain("stage_clipboard_png(&cache, png)");
+    expect(bridge).toContain("bytes_b64");
   });
 
-  it("publishes only a staged cache PNG, as a FileProvider URI clip", () => {
+  it("stages a decodable image as the one tine_clip PNG in the app cache and publishes a FileProvider URI clip", () => {
     const kotlin = read(KOTLIN);
     expect(kotlin).toMatch(/class ClipboardImagePlugin\(private val activity: Activity\) : Plugin\(activity\)/);
     expect(kotlin).toMatch(/@Command\s+fun copyImage\(invoke: Invoke\)/);
-    expect(kotlin).toContain("activity.cacheDir.canonicalFile");
-    expect(kotlin).toContain('startsWith("tine_clip_")');
+    expect(kotlin).toContain('getString("bytesB64")');
+    expect(kotlin).toContain("inJustDecodeBounds = true");
+    expect(kotlin).toMatch(/MAX_CLIP_BYTES/);
+    expect(kotlin).toMatch(/startsWith\("tine_clip_"\)[\s\S]*forEach \{ it\.delete\(\) \}/);
+    expect(kotlin).toContain('File.createTempFile("tine_clip_", ".png", activity.cacheDir)');
     expect(kotlin).toContain('"${activity.packageName}.fileprovider"');
     expect(kotlin).toMatch(/setPrimaryClip\(ClipData\.newUri\(/);
-    // Same prefix on both sides of the bridge.
-    expect(read("src-tauri/src/android_clipboard.rs")).toContain('STAGED_PREFIX: &str = "tine_clip_"');
+    // A failure after staging removes the file it staged.
+    expect(kotlin).toMatch(/catch \(ex: Exception\) \{\s*staged\?\.delete\(\)/);
     // The manifest's FileProvider must still cover the app cache directory.
     const paths = read("src-tauri/gen/android/app/src/main/res/xml/file_paths.xml");
     expect(paths).toMatch(/<cache-path[^>]*path="\."/);
+    // Not a new Rust writer site (OG-RULES Rule 8): the Rust bridge writes nothing.
+    expect(read("src-tauri/src/android_clipboard.rs")).not.toMatch(/std::fs|File::create|write_all|create_new/);
   });
 });
