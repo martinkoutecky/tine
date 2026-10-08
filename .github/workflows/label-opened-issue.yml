@@ -1,0 +1,28 @@
+name: label-opened-issue
+
+on:
+  issues:
+    types: [opened]
+
+permissions: {}
+
+concurrency:
+  group: issue-classification-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Apply the issue form classification
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { labelOpenedIssue } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/github/issue-intake.mjs`);
+            await labelOpenedIssue({ github, context });
