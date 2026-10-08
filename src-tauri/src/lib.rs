@@ -1184,9 +1184,17 @@ mod packaged_csp_tests {
         let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
         let source: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
-        let embedded = context.config().app.security.csp.as_ref()
+        let embedded = context
+            .config()
+            .app
+            .security
+            .csp
+            .as_ref()
             .expect("packaged CSP");
-        assert!(!tauri::is_dev(), "test must exercise the production protocol");
+        assert!(
+            !tauri::is_dev(),
+            "test must exercise the production protocol"
+        );
         assert_eq!(
             serde_json::to_value(embedded).unwrap(),
             source["app"]["security"]["csp"],
