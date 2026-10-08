@@ -8,9 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
-### Security
+## [0.7.1] - 2026-10-08
 
-- Updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.
+### Changed
+
+- Security: updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.
 
 ## [0.7.0] - 2026-10-08
 

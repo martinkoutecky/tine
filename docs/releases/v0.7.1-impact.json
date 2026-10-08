@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "version": "0.7.1",
+  "baseTag": "v0.7.0",
+  "focusedAudit": {
+    "required": false,
+    "reason": "0.7.1 is 0.7.0 plus patch-level dependency security updates (discussion #564) and a restored F-Droid description; no product code changed. Full suites and hosted CI ran on the candidate."
+  },
+  "items": [
+    {
+      "section": "Changed",
+      "text": "Security: updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.",
+      "userVisible": false,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "not-applicable",
+        "reason": "Dependency versions only; the packaged CSP test added with the update and the full Rust/TS suites cover behaviour.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No workflow or UI change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "No user-facing change to describe.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "Patch release; no announcement.",
+        "refs": []
+      }
+    }
+  ]
+}
