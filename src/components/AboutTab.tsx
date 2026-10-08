@@ -14,8 +14,8 @@ const REPO = "https://github.com/martinkoutecky/tine";
 const ISSUES = "https://github.com/martinkoutecky/tine/issues";
 const CHANGELOG = "https://github.com/martinkoutecky/tine/blob/HEAD/CHANGELOG.md";
 const KOFI = "https://ko-fi.com/martinkoutecky";
-
-
+const PRIVACY = "https://tine.page/privacy.html";
+const SUPPORT_EMAIL = "mailto:support@tine.page";
 
 // Build-time constants (vite.config.ts). __GIT_COMMIT__ is "" outside a git
 // checkout — the commit row is hidden then.
@@ -44,21 +44,21 @@ export function AboutTab(): JSX.Element {
   onCleanup(() => { alive = false; });
   const owner = ownedWhen(() => alive);
   const [checking, setChecking] = createSignal(false);
-  const [updatePlatform, setUpdatePlatform] = createSignal<"loading" | "desktop" | "mobile" | "unavailable">(
+  const [nativePlatform, setNativePlatform] = createSignal<"loading" | "desktop" | "android" | "ios" | "unavailable">(
     isTauri() ? "loading" : "unavailable"
   );
 
   onMount(async () => {
     if (!isTauri()) return;
     try {
-      const desktop = (await platformKind()) === "desktop";
+      const platform = await platformKind();
       if (!owner()) return;
-      if (desktop) await initUpdateSettings();
+      if (platform === "desktop") await initUpdateSettings();
       if (!owner()) return;
-      setUpdatePlatform(desktop ? "desktop" : "mobile");
+      setNativePlatform(platform);
     } catch {
       // Fail closed: an unknown native platform must not expose the desktop updater.
-      if (owner()) setUpdatePlatform("unavailable");
+      if (owner()) setNativePlatform("unavailable");
     }
     try {
       const { getVersion } = await import("@tauri-apps/api/app");
@@ -104,13 +104,13 @@ export function AboutTab(): JSX.Element {
         <Show when={__GIT_COMMIT__}>
           <span class="about-commit mono">· {__GIT_COMMIT__}</span>
         </Show>
-        <Show when={updatePlatform() === "desktop"}>
+        <Show when={nativePlatform() === "desktop"}>
           <button class="btn-secondary about-check" onClick={check} disabled={checking()}>
             {checking() ? "Checking…" : "Check for updates"}
           </button>
         </Show>
       </div>
-      <Show when={updatePlatform() === "desktop"}>
+      <Show when={nativePlatform() === "desktop"}>
         <div class="settings-row">
           <span class="settings-label">Check for updates automatically</span>
           <button class="settings-toggle" classList={{ on: checkForUpdatesAutomatically() }}
@@ -121,7 +121,7 @@ export function AboutTab(): JSX.Element {
         </div>
         <div class="settings-hint">Applies to this device. Manual checks remain available when turned off.</div>
       </Show>
-      <Show when={updatePlatform() === "mobile"}>
+      <Show when={nativePlatform() === "android" || nativePlatform() === "ios"}>
         <div class="settings-hint about-status">
           Updates arrive through your app's distribution channel.
         </div>
@@ -152,21 +152,27 @@ export function AboutTab(): JSX.Element {
           <span class="about-link-url">GitHub</span>
         </button>
 
-        <button class="about-link" onClick={() => openExternal(KOFI)}>
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
-            <path d="M4 8h13v5a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z" />
-            <path d="M17 9h1.8a2.2 2.2 0 0 1 0 4.4H17" />
-            <path d="M8 3.2c-.6.7-.6 1.4 0 2.1M11.5 3.2c-.6.7-.6 1.4 0 2.1" stroke-linecap="round" />
-          </svg>
-          <span>Support Tine</span>
-          <span class="about-link-url">Ko-fi</span>
-        </button>
+        <Show when={!isTauri() || nativePlatform() === "desktop" || nativePlatform() === "android"}>
+          <button class="about-link" onClick={() => openExternal(KOFI)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
+              <path d="M4 8h13v5a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z" />
+              <path d="M17 9h1.8a2.2 2.2 0 0 1 0 4.4H17" />
+              <path d="M8 3.2c-.6.7-.6 1.4 0 2.1M11.5 3.2c-.6.7-.6 1.4 0 2.1" stroke-linecap="round" />
+            </svg>
+            <span>Support Tine</span>
+            <span class="about-link-url">Ko-fi</span>
+          </button>
+        </Show>
       </div>
 
       <div class="about-meta">
         <button class="about-linkbtn" onClick={() => openExternal(CHANGELOG)}>Changelog</button>
         <span class="about-dot">·</span>
         <button class="about-linkbtn" onClick={() => openExternal(ISSUES)}>Report an issue</button>
+        <span class="about-dot">·</span>
+        <button class="about-linkbtn" onClick={() => openExternal(PRIVACY)}>Privacy</button>
+        <span class="about-dot">·</span>
+        <button class="about-linkbtn" onClick={() => openExternal(SUPPORT_EMAIL)}>Email support</button>
         <span class="about-dot">·</span>
         <span>License: AGPL-3.0-only</span>
       </div>
