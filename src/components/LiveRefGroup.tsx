@@ -1,17 +1,19 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { blockProperty, collapseEpochOf, ensurePageLoaded, pageByName, setBlockProperty, node as docNode } from "../document";
+import { blockProperty, blockRef, collapseEpochOf, ensurePageLoaded, pageByName, setBlockProperty, node as docNode } from "../document";
 import { Block, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
 import { graphEpoch, graphMeta } from "../graphSession";
-import { OccurrenceControls, occurrenceSelection } from "./ReferenceEvidence";
+import { OccurrenceControls, ReferenceExcerptBlocks, occurrenceSelection } from "./ReferenceEvidence";
 import { startEditing } from "../editorController";
 import { visibleBody } from "../render/block";
 import { LinkDepthContext } from "./linkDepth";
 import { readOr } from "../resourceRead";
+import { openBlockInSidebar } from "../ui";
+import "./LiveRefGroup.css";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
 // use it too) — see src/lazyObserve.ts.
@@ -43,6 +45,8 @@ interface LiveRefGroupProps {
   showBreadcrumb?: boolean;
   surface: "ref" | "query" | "embed";
   evidence?: ReferenceBlockEvidence[];
+  /** Unlinked mentions retain their bounded excerpt UI until context is pulled in. */
+  excerpt?: boolean;
   /** The caller already gated this group on viewport proximity (a query group that mounted its header): mount the
    *  rows with it. A second, independent IntersectionObserver gate would let the header render with no rows
    *  whenever the two observers disagree (the header gate fires, the row gate never does). */
@@ -141,10 +145,40 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
     ].map(([, l]) => l);
     return { ids: ordered.flat(), starts: new Set(ordered.map((l) => l[0])) };
   });
-  const groupedIds = () => grouping().ids;
+  // A breadcrumb changes only its parent group's root. This presentation state
+  // belongs to this mounted occurrence, never to the source page or session.
+  const [contextRoots, setContextRoots] = createSignal<Record<string, string>>({});
+  const contextRootIds = createMemo(() => new Set(Object.values(contextRoots())));
+  createEffect(() => {
+    const keys = new Set(grouping().ids.map(parentKey));
+    untrack(() => setContextRoots((roots) => {
+      const entries = Object.entries(roots).filter(([key]) => keys.has(key));
+      return entries.length === Object.keys(roots).length ? roots : Object.fromEntries(entries);
+    }));
+  });
+  const displayed = createMemo(() => {
+    const ids: string[] = [];
+    const starts = new Map<string, string>();
+    for (const id of grouping().ids) {
+      const key = parentKey(id);
+      const root = contextRoots()[key];
+      if (root && docNode(root)) {
+        if (grouping().starts.has(id)) {
+          ids.push(root);
+          starts.set(root, key);
+        }
+      } else {
+        ids.push(id);
+        if (grouping().starts.has(id)) starts.set(id, key);
+      }
+    }
+    return { ids, starts };
+  });
+  const groupedIds = () => displayed().ids;
   /** True when `id` starts a parent group, i.e. its breadcrumb is not a repeat. */
-  const startsParentGroup = (id: string): boolean => grouping().starts.has(id);
-  const liveBreadcrumb = (id: string): string[] | null => {
+  const startsParentGroup = (id: string): boolean => displayed().starts.has(id);
+  interface Crumb { label: string; id?: string }
+  const liveBreadcrumb = (id: string): Crumb[] | null => {
     if (!ready() || !docNode(id)) return null;
 
     // The loaded source page is authoritative after hydration. Walk only the
@@ -152,7 +186,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
     // that an ellipsis is needed. This keeps breadcrumb work O(1) per hit even
     // for malformed or unusually deep outlines, and never invents ancestor IDs
     // from result-row labels.
-    const nearest: string[] = [];
+    const nearest: Crumb[] = [];
     const seen = new Set([id]);
     let parent = docNode(id).parent;
     while (parent !== null && nearest.length < 4) {
@@ -162,11 +196,11 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
       seen.add(parent);
       const line = (visibleBody(ancestor.raw)[0] ?? "").trim();
       const chars = [...line];
-      nearest.push(chars.length > 60 ? `${chars.slice(0, 60).join("")}…` : line);
+      nearest.push({ id: parent, label: chars.length > 60 ? `${chars.slice(0, 60).join("")}…` : line });
       parent = ancestor.parent;
     }
     const tail = nearest.slice(0, 3).reverse();
-    return nearest.length > 3 ? ["…", ...tail] : tail;
+    return nearest.length > 3 ? [{ label: "…" }, ...tail] : tail;
   };
   // A ref/query/embed group can render a block that ALSO lives in the main outline
   // of the same page (e.g. the journal agenda re-lists today's scheduled/deadline
@@ -176,7 +210,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   // copy wins, stealing the caret and scrolling the viewport to it. Same mechanism
   // as the right sidebar (see startEditing / focusSurfaceFor). One key per group.
   const surface = `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId();
-  const resultRootIds = createMemo(() => new Set(props.blocks.map((block) => block.id)));
+  const resultRootIds = createMemo(() => new Set(groupedIds()));
   const initialCollapsed = new Map<string, boolean>();
   // Local fold rows. The embedded ROOT has a durable occurrence-owned override on
   // its macro host (GH #360); nested rows remain local presentation state whose
@@ -208,6 +242,18 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   const defaultCollapsed = (id: string, stored: boolean): boolean => {
     // Embeds are live and source-authoritative (GH #360): never snapshot.
     if (isEmbed()) return stored;
+    // Pulled-in context respects descendant source folds. The selected root
+    // itself is forced open by Block, just like a parked sidebar block.
+    if (contextRootIds().size > 0) {
+      let current: ReturnType<typeof docNode> | undefined = docNode(id);
+      const seen = new Set<string>();
+      while (current && !seen.has(current.id)) {
+        if (contextRootIds().has(current.id)) return stored;
+        if (resultRootIds().has(current.id)) break;
+        seen.add(current.id);
+        current = current.parent ? docNode(current.parent) : undefined;
+      }
+    }
     const previous = initialCollapsed.get(id);
     if (previous !== undefined) return previous;
     const depth = relativeDepth(id);
@@ -304,16 +350,16 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
             navOnly keeps structural mutations (merges/indents/moves) on page order. */}
         <OutlineScopeContext.Provider value={{
           get roots() { return groupedIds(); },
-          collapsed: (id, stored) => collapseSurface.collapsed(id, stored),
+          collapsed: (id, stored) => contextRootIds().has(id) ? false : collapseSurface.collapsed(id, stored),
           navOnly: true,
         }}>
         <LinkDepthContext.Provider value={linkDepth + 1}>
         <For each={groupedIds()}>
           {(id) => {
             const crumb = () => {
-              const all = liveBreadcrumb(id) ?? dtoById(id)?.breadcrumb ?? [];
+              const all = liveBreadcrumb(id) ?? (dtoById(id)?.breadcrumb ?? []).map((label) => ({ label } as Crumb));
               const tail = all.slice(-3);
-              return all.length > 3 ? ["…", ...tail] : tail;
+              return all.length > 3 ? [{ label: "…" }, ...tail] : tail;
             };
             return (
               <>
@@ -325,17 +371,29 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
                           <Show when={i() > 0}>
                             <span class="ref-crumb-sep">›</span>
                           </Show>
-                          <span class="ref-crumb">{c}</span>
+                          <Show when={c.id && props.surface !== "embed"} fallback={<span class="ref-crumb">{c.label}</span>}>
+                            <button type="button" class="ref-crumb" onClick={(event) => {
+                              event.stopPropagation();
+                              if (!c.id || !docNode(c.id)) return;
+                              if (event.shiftKey) openBlockInSidebar(blockRef(c.id));
+                              else {
+                                const key = displayed().starts.get(id);
+                                if (key !== undefined) setContextRoots((roots) => ({ ...roots, [key]: c.id! }));
+                              }
+                            }}>{c.label}</button>
+                          </Show>
                         </>
                       )}
                     </For>
                   </div>
                 </Show>
                 <Show
-                  when={ready() && docNode(id)}
+                  when={ready() && docNode(id) && (!props.excerpt || contextRootIds().has(id))}
                   fallback={
                     <Show when={dtoById(id)}>
-                      {(d) => <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} />}
+                      {(d) => props.excerpt
+                        ? <ReferenceExcerptBlocks blocks={[d()]} evidence={evidenceById().has(id) ? [evidenceById().get(id)!] : []} page={props.page} kind={props.kind} path={props.path} />
+                        : <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} />}
                     </Show>
                   }
                 >
@@ -354,7 +412,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
                       </div>
                     )}
                   </Show>
-                  <Block id={id} hideRefCount={!!props.embedId && id === props.embedId}
+                  <Block id={id} forceExpanded={contextRootIds().has(id)} hideRefCount={!!props.embedId && id === props.embedId}
                     dragHostId={props.surface === "embed" && id === props.embedId ? props.hostBlockId : undefined} />
                 </Show>
               </>

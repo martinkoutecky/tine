@@ -8,6 +8,9 @@ import { loadSingle } from "../document/workingSet";
 import { doc, setDoc } from "../document/model";
 import type { BlockDto, PageDto, PageRead } from "../types";
 import { LiveRefGroup } from "./LiveRefGroup";
+import { applySidebarSession, rightSidebar, setRightSidebar } from "../ui";
+import { route } from "../router";
+import { UnlinkedReferences } from "./UnlinkedReferences";
 
 beforeAll(async () => {
   await initParser();
@@ -16,6 +19,8 @@ beforeAll(async () => {
 afterEach(() => {
   vi.restoreAllMocks();
   resetStore();
+  setRightSidebar([]);
+  applySidebarSession({ right: false, items: [] });
   document.body.innerHTML = "";
 });
 
@@ -72,6 +77,93 @@ function hierarchy(): { page: PageDto; result: BlockDto; sourceHit: BlockDto } {
 }
 
 describe("LiveRefGroup reference context", () => {
+  it("expands an Unlinked References breadcrumb while retaining excerpts before expansion (GH #526)", async () => {
+    const { page, result } = hierarchy();
+    loadSingle(page);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([{ page: page.name, kind: page.kind, blocks: [result] }]);
+    const { root, dispose } = mount(() => <UnlinkedReferences name="Unlinked context target" />);
+    try {
+      root.querySelector<HTMLElement>(".references-header")!.click();
+      await expect.poll(() => root.textContent).toContain("Root");
+      expect(root.querySelector(".reference-show-full")?.textContent).toBe("Show full block");
+      const crumb = [...root.querySelectorAll<HTMLElement>(".ref-crumb")].find((c) => c.textContent === "Five");
+      expect(crumb).toBeDefined();
+      crumb!.click();
+      await expect.poll(() => root.querySelector(".ls-block")?.getAttribute("data-block-id")).toBe("ancestor-5");
+      expect(root.textContent).toContain("Root");
+    } finally {
+      dispose();
+    }
+  });
+
+  it.each(["ref", "query"] as const)("expands ancestors per parent group on %s surfaces, resets on unmount, and Shift-click parks context (GH #526)", async (surface) => {
+    const leaf = (id: string, raw: string): BlockDto => ({ id, raw, collapsed: false, children: [] });
+    const first = leaf("hit-a", "First hit [[Target]]");
+    const second = leaf("hit-b", "Second hit [[Target]]");
+    const page: PageDto = {
+      name: "Context", title: "Context", kind: "page", pre_block: null,
+      blocks: [{ id: "outer", raw: "Outer context", collapsed: true, children: [
+        { id: "parent-a", raw: "Parent A", collapsed: true, children: [first, leaf("sibling", "Nonmatching sibling")] },
+        { id: "parent-b", raw: "Parent B", collapsed: false, children: [second] },
+      ] }],
+    };
+    loadSingle(page);
+    const save = vi.spyOn(backend(), "savePages");
+    const renderGroup = () => <LiveRefGroup page={page.name} kind="page" blocks={[first, second]} surface={surface} showBreadcrumb eager />;
+    let view = mount(renderGroup);
+    const clickCrumb = (text: string, shiftKey = false) => {
+      const crumb = [...view.root.querySelectorAll<HTMLElement>(".ref-crumb")].find((c) => c.textContent === text);
+      expect(crumb).toBeDefined();
+      crumb!.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey }));
+    };
+    try {
+      await expect.poll(() => view.root.textContent).toContain("First hit");
+      const currentRoute = route();
+      clickCrumb("Parent A", true);
+      expect(rightSidebar()[0]).toMatchObject({ kind: "block", uuid: "parent-a", page: page.name });
+      expect(view.root.textContent).not.toContain("Nonmatching sibling");
+      clickCrumb("Parent A");
+      await expect.poll(() => view.root.textContent).toContain("Nonmatching sibling");
+      expect([...view.root.querySelectorAll(".ls-block")].map((b) => b.getAttribute("data-block-id")))
+        .toEqual(["parent-a", "hit-a", "sibling", "hit-b"]);
+      expect(doc.byId["parent-a"].collapsed).toBe(true);
+      clickCrumb("Outer context");
+      await expect.poll(() => view.root.querySelector('[data-block-id="outer"]')).not.toBeNull();
+      // The expanded root is open; its collapsed descendant stays folded.
+      expect(view.root.textContent).not.toContain("Nonmatching sibling");
+      expect(view.root.querySelector('[data-block-id="parent-a"]')).not.toBeNull();
+      expect(doc.byId["outer"].collapsed).toBe(true);
+      expect(route()).toEqual(currentRoute);
+      expect(save).not.toHaveBeenCalled();
+      view.dispose();
+      view = mount(renderGroup);
+      await expect.poll(() => view.root.textContent).toContain("First hit");
+      expect(view.root.querySelector('[data-block-id="parent-a"]')).toBeNull();
+      expect(view.root.querySelector('[data-block-id="outer"]')).toBeNull();
+    } finally {
+      view.dispose();
+    }
+  });
+
+  it("plain-clicks a hydrated ancestor without navigating or opening a sidebar (GH #526)", async () => {
+    const { page, result } = hierarchy();
+    loadSingle(page);
+    const { root, dispose } = mount(() => (
+      <LiveRefGroup page={page.name} kind={page.kind} blocks={[result]} surface="ref" showBreadcrumb eager />
+    ));
+    try {
+      await expect.poll(() => root.textContent).toContain("Root");
+      const before = route();
+      [...root.querySelectorAll<HTMLElement>(".ref-crumb")].find((c) => c.textContent === "Five")!.click();
+      await expect.poll(() => root.querySelector(".ls-block")?.getAttribute("data-block-id")).toBe("ancestor-5");
+      expect(root.textContent).toContain("Root");
+      expect(route()).toEqual(before);
+      expect(rightSidebar()).toEqual([]);
+    } finally {
+      dispose();
+    }
+  });
+
   it("drops a source page read after its group unmounts", async () => {
     const { page, result } = hierarchy();
     let finish!: (value: PageRead) => void;

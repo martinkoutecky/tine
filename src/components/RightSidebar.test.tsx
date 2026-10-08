@@ -9,6 +9,7 @@ import { doc } from "../document/model";
 import type { PageDto, PageRead } from "../types";
 import { applySidebarSession, openBlockInSidebar, rightSidebar, setRightSidebar } from "../ui";
 import { RightSidebar } from "./RightSidebar";
+import { route } from "../router";
 
 const page: PageDto = {
   name: "Sidebar test",
@@ -56,6 +57,32 @@ function mount(items = [
 }
 
 describe("right sidebar collection disclosures", () => {
+  it("names the source page above an opened block (GH #640)", async () => {
+    const { root, dispose } = mount([
+      { kind: "block", uuid: "sidebar-second", page: page.name, pageKind: "page" },
+    ]);
+    try {
+      await expect.poll(() => root.querySelector(".rs-item-title")?.textContent).toBe(page.name);
+      expect(root.textContent).toContain("Second block");
+      root.querySelector<HTMLElement>(".rs-item-title")!.click();
+      expect(route()).toMatchObject({ kind: "page", name: page.name });
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps the page label and missing-block notice for a deleted sidebar target (GH #640)", async () => {
+    const { root, dispose } = mount([
+      { kind: "block", uuid: "deleted-block", page: page.name, pageKind: "page" },
+    ]);
+    try {
+      await expect.poll(() => root.textContent).toContain("This block is no longer available.");
+      expect(root.querySelector(".rs-item-title")?.textContent).toBe(page.name);
+    } finally {
+      dispose();
+    }
+  });
+
   it("opening a fresh block in the sidebar writes nothing and stores its position, not an id", () => {
     const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["rev-sidebar"] });
     loadSingle({

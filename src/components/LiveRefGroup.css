@@ -1,0 +1,13 @@
+.ref-breadcrumb button.ref-crumb {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.ref-breadcrumb button.ref-crumb:hover {
+  color: var(--link-color);
+  text-decoration: underline;
+}

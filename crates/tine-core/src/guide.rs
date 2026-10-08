@@ -1370,6 +1370,22 @@ mod external_link_guide_tests {
             );
         }
     }
+
+    #[test]
+    fn guide_explains_reference_breadcrumb_context() {
+        // GH #526: a clickable breadcrumb nobody is told about reads as missing.
+        let guide = include_str!("templates/find-and-revisit.md");
+        for outcome in [
+            "Click an ancestor in a **Linked References** or **Unlinked References** breadcrumb",
+            "**Shift+click** opens the ancestor in the right sidebar",
+            "leaving and returning resets it",
+        ] {
+            assert!(
+                guide.contains(outcome),
+                "GH #526 Guide is missing {outcome}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
