@@ -36,9 +36,16 @@ function identityLiterals(): RegExp {
 }
 
 describe("app identity switch", () => {
-  it("ships the Beta identity while retaining the stable seed source and local deploy name", () => {
+  it("the Beta identity is fixed, and the shipped identity matches the updater channel", () => {
     expect(IDENTITIES.experiment).toEqual({ identifier: "page.tine.TineBeta", productName: "Tine Beta", androidApplicationId: "page.tine.beta", deployName: "tine-og" });
-    expect(SHIP).toBe("experiment");
+    // The Beta identity updates only from the beta release and stable Tine only
+    // from the latest stable release (scripts/release-policy.mjs releaseChannel).
+    const conf = JSON.parse(fs.readFileSync(path.join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
+    const endpoints = conf.plugins?.updater?.endpoints;
+    expect(endpoints).toEqual([SHIP === "experiment"
+      ? "https://github.com/martinkoutecky/tine/releases/download/beta/latest.json"
+      : "https://github.com/martinkoutecky/tine/releases/latest/download/latest.json"]);
+    expect(/-beta\.\d+$/.test(conf.version)).toBe(SHIP === "experiment");
   });
   it("every derived file matches the switch (run `node scripts/set-app-identity.mjs <ship>`)", () => {
     for (const [file, text] of Object.entries(deriveIdentityFiles(ROOT, SHIP))) {
