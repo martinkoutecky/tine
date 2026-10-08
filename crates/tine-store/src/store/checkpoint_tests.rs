@@ -848,7 +848,27 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
     use tine_core::config::Config;
     const BASE: &str = ":preferred-format :markdown";
     // (field, the edited config's entries, keyed)
-    let cases: [(&str, String, bool); 31] = [
+    let cases: [(&str, String, bool); 35] = [
+        (
+            "default_journal_queries",
+            format!("{BASE} :default-queries {{:journals [{{:query (task TODO)}}]}}"),
+            false,
+        ),
+        (
+            "scheduled_future_days",
+            format!("{BASE} :scheduled/future-days 14"),
+            false,
+        ),
+        (
+            "disable_scheduled_and_deadline_query",
+            format!("{BASE} :feature/disable-scheduled-and-deadline-query? true"),
+            false,
+        ),
+        (
+            "journal_config_diagnostics",
+            format!("{BASE} :scheduled/future-days nope"),
+            false,
+        ),
         (
             "journals_dir",
             format!("{BASE} :journals-directory \"days\""),

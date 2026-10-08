@@ -633,12 +633,23 @@ export function PageView(): JSX.Element {
       <Show when={zoomValid()} fallback={
         <div class="page">
           <For each={pagesToRender()}>
-            {(p, i) => (
+            {(p) => (
               <PageSection page={p}>
-                {/* Agenda sits at the bottom of today's (the first) day, like OG.
-                    Window is configurable (Settings → Journal) and keyed off the
-                    item's scheduled/deadline date over the whole graph. */}
-                <Show when={i() === 0 && currentRoute().kind === "journals"}>
+                {/* OG page/today-queries and journal: queries precede agenda. */}
+                <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
+                  <For each={graphMeta()?.journal_config_diagnostics ?? []}>
+                    {(message) => <div class="config-diagnostic" role="status">config.edn: {message}</div>}
+                  </For>
+                  <div class="today-queries">
+                    <For each={graphMeta()?.default_journal_queries ?? []}>
+                      {(query) => <div class="default-journal-query">
+                        <Show when={!query.error} fallback={<div class="query-error" role="alert">{query.title ?? "Query"}: {query.error}</div>}>
+                          <QueryMacro body={query.body} title={query.title ?? undefined} currentPage={p.name} />
+                        </Show>
+                      </div>}
+                    </For>
+                  </div>
+                  <Show when={!graphMeta()?.disable_scheduled_and_deadline_query}>
                   <div class="agenda-block">
                     <QueryMacro
                       body={agendaQuery()}
@@ -646,6 +657,7 @@ export function PageView(): JSX.Element {
                       hideWhenEmpty
                     />
                   </div>
+                  </Show>
                 </Show>
                 <Show when={currentRoute().kind === "journals"}>
                   <JournalLinkedReferences name={p.name} />
