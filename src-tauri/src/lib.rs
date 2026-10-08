@@ -2,6 +2,7 @@
 //! graph open/create/warm cache; backup snapshots; settings/session prefs;
 //! spellcheck WebKit integration; platform OS bridges; commands thin IPC.
 
+#[cfg(target_os = "android")]
 mod android_clipboard;
 mod android_folder_picker;
 mod android_media;
