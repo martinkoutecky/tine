@@ -307,11 +307,7 @@ mod cold_index_tests {
         let view = store
             .whole_graph()
             .expect("one page's title panic stopped the initial load");
-        assert!(view
-            .inventory()
-            .0
-            .iter()
-            .any(|entry| entry.name == "Links"));
+        assert!(view.inventory().0.iter().any(|entry| entry.name == "Links"));
         assert!(
             view.unreadable_files().iter().any(|(id, reason)| {
                 id.as_str() == "pages/Bad.md" && reason.contains("parser panicked")
