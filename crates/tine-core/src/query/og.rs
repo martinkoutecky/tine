@@ -698,12 +698,11 @@ impl<'a> OgParse<'a> {
                 // OG drops `(task)` with no markers; Tine's shipped behaviour
                 // reads it as "any open task" and the corpus depends on it.
                 let markers = if markers.is_empty() {
-                    vec![
-                        "TODO".to_string(),
-                        "DOING".to_string(),
-                        "NOW".to_string(),
-                        "LATER".to_string(),
-                    ]
+                    crate::doc::MARKERS
+                        .iter()
+                        .filter(|marker| !crate::doc::DONE_MARKERS.contains(marker))
+                        .map(|marker| (*marker).to_string())
+                        .collect()
                 } else {
                     markers
                 };
@@ -1368,6 +1367,39 @@ mod tests {
                 direct.normalized().filter,
                 "{form:?} rewrote to {:?}",
                 pre_transform(form)
+            );
+        }
+    }
+
+    /// GH #422: intentionally differs from OG Logseq, which drops bare `(task)`.
+    #[test]
+    fn bare_task_intentionally_differs_from_og_and_selects_every_open_marker() {
+        let open = vec![
+            "TODO",
+            "DOING",
+            "NOW",
+            "LATER",
+            "WAITING",
+            "WAIT",
+            "STARTED",
+            "IN-PROGRESS",
+        ];
+        for form in ["(task)", "(todo)"] {
+            let query = parse(form);
+            assert_eq!(query.anchor, Anchor::Block);
+            assert_eq!(
+                query.filter,
+                Filter::attr(
+                    Attr::Task,
+                    CmpOp::In,
+                    text_list(open.iter().map(|m| m.to_string()).collect())
+                )
+            );
+        }
+        for marker in crate::doc::MARKERS {
+            assert_eq!(
+                parse(&format!("(task {marker})")).filter,
+                Filter::attr(Attr::Task, CmpOp::In, text_list(vec![marker.to_string()]))
             );
         }
     }

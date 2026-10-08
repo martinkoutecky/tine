@@ -25,6 +25,7 @@ icon:: 🔎
 - ## Simple queries
 	- The simple query language is Logseq's. Combine filters with `(and …)`, `(or …)` and `(not …)`:
 		- `(task TODO DOING)` — blocks with one of these task markers; `(priority A)` — by priority.
+		- Bare `(task)` matches every block that has a task marker except `DONE`, `CANCELED`, or `CANCELLED`, the same open-task rule as carry-over and the agenda. This includes `TODO`, `DOING`, `NOW`, `LATER`, `WAITING`, `WAIT`, `STARTED`, and `IN-PROGRESS`. This intentionally differs from OG Logseq, which drops the bare task filter; explicit marker lists such as `(task TODO)` or `(task DONE)` keep their usual meaning.
 		- `[[Page]]`, `(page-ref Page)`, `#tag` — blocks that reference a page.
 		- `(page "Page")` — blocks on a page; `(namespace Project)` — blocks on the pages directly under a namespace (`Project/Alpha`, but not `Project/Alpha/Beta`; an advanced query's `namespace` clause matches every depth).
 		- `(property status active)`, `(page-property type book)`, `(page-tags public)` — by block or page properties and tags. `(all-page-tags)` lists the pages that some page uses as a tag. A page-level filter returns pages, not blocks.

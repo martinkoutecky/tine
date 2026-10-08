@@ -31,6 +31,15 @@ describe("task markers (single source of truth)", () => {
     expect(DONE_MARKERS.has("CANCELLED")).toBe(true);
   });
 
+  it("finished markers match Rust so bare (task) and carry-over cannot drift", () => {
+    const source = readFileSync("crates/tine-core/src/doc.rs", "utf8");
+    const block = /pub const DONE_MARKERS: &\[&str\] = &\[([^\]]*)\];/.exec(source)?.[1];
+    expect(block).toBeDefined();
+    const rust = [...block!.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect([...DONE_MARKERS].sort()).toEqual(rust.sort());
+    expect([...OPEN_MARKERS].sort()).toEqual(MARKERS.filter((m) => !rust.includes(m)).sort());
+  });
+
   it("taskCheckboxState: DONE checked, open markers unchecked, canceled/none none (OG block-checkbox)", () => {
     expect(taskCheckboxState("DONE")).toBe(true);
     for (const m of ["TODO", "DOING", "NOW", "LATER", "WAITING", "WAIT", "STARTED", "IN-PROGRESS"]) {

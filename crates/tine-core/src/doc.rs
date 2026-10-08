@@ -29,6 +29,10 @@ pub const MARKERS: &[&str] = &[
     "IN-PROGRESS",
 ];
 
+/// Finished task markers, excluded from open-task queries and carry-over.
+/// `src/markers.test.ts` checks parity with the frontend's finished-marker set.
+pub const DONE_MARKERS: &[&str] = &["DONE", "CANCELED", "CANCELLED"];
+
 /// A parsed Markdown or Org document: an optional page-property pre-block plus a forest
 /// of blocks.
 #[deny(missing_docs)]

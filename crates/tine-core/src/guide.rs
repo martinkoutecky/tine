@@ -214,7 +214,9 @@ mod journal_guide_tests {
     #[test]
     fn reference_change_notices_offer_undo() {
         let reference = include_str!("templates/pages-links-references-search.md");
-        assert!(reference.contains("Deleting referenced blocks or merging them with Backspace/Delete"));
+        assert!(
+            reference.contains("Deleting referenced blocks or merging them with Backspace/Delete")
+        );
         assert!(reference.contains("with **Undo** to restore the blocks and their ids"));
     }
 
@@ -634,7 +636,10 @@ mod rename_guide_tests {
             "Cloud document providers",
             "sync-to-local-folder",
         ] {
-            assert!(mobile.contains(outcome), "missing Android Guide outcome: {outcome}");
+            assert!(
+                mobile.contains(outcome),
+                "missing Android Guide outcome: {outcome}"
+            );
         }
     }
 
@@ -1160,6 +1165,27 @@ mod og_20d_guide_tests {
         }
         assert!(page("Tine Guide").contains("[[Reference/Tine query model]]"));
         assert!(page("Features/Queries").contains("[[Reference/Tine query model]]"));
+    }
+
+    #[test]
+    fn queries_document_bare_task_open_rule_and_og_difference() {
+        let queries = page("Features/Queries");
+        for detail in [
+            "`(task)`",
+            "has a task marker",
+            "`DONE`",
+            "`CANCELED`",
+            "`CANCELLED`",
+            "`WAITING`",
+            "`IN-PROGRESS`",
+            "OG Logseq",
+            "explicit marker lists",
+        ] {
+            assert!(
+                queries.contains(detail),
+                "missing bare task detail: {detail}"
+            );
+        }
     }
 
     /// og-D D4 (master e7af4db9c): the command-line reference names every shipped

@@ -14,6 +14,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Merging blocks with Backspace/Delete shows how many references now point to the surviving block, or broke when both blocks had ids, with **Undo** (GH #652).
 - Linked and Unlinked References: click a breadcrumb ancestor to show its subtree inline while keeping your place; Shift+click opens it in the right sidebar. Inline context resets when the reference group closes (GH #526).
 
+### Changed
+
+- Bare `(task)` queries now include every unfinished task, including WAITING, WAIT, STARTED, and IN-PROGRESS, using the same rule as carry-over and the agenda. DONE and both CANCELED spellings stay excluded; queries with explicit markers are unchanged (GH #422).
+
 ### Fixed
 
 - New graph messages describe whether the graph opened, was already open, or was created but could not be opened; the last case names the folder and offers Open graph to try again (GH #621).
