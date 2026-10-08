@@ -212,6 +212,13 @@ pub fn rewrite_bundled_guide_links(markdown: &str, renames: &HashMap<String, Str
 #[cfg(test)]
 mod journal_guide_tests {
     #[test]
+    fn reference_change_notices_offer_undo() {
+        let reference = include_str!("templates/pages-links-references-search.md");
+        assert!(reference.contains("Deleting referenced blocks or merging them with Backspace/Delete"));
+        assert!(reference.contains("with **Undo** to restore the blocks and their ids"));
+    }
+
+    #[test]
     fn search_workspace_and_find_explain_visible_views_and_destinations() {
         let reference = include_str!("templates/pages-links-references-search.md");
         let tips = include_str!("templates/tips.md");

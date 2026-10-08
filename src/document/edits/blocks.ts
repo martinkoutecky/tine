@@ -9,7 +9,7 @@ export function revealNode(id: string): void {
 }
 import { applyMarkerTransition } from "../../logbook";
 import { timetrackingEnabled, logbookWithSecondSupport, logicalOutdenting, removeDeletedBlocksFromSidebar } from "../../ui";
-import { pushRawUndo, pushUndo } from "../history";
+import { pushRawUndo, pushUndo, undo, undoTopTag } from "../history";
 import { markDirty, noteTitleIdentityIntent } from "../save/engine";
 import { produce } from "solid-js/store";
 import { OUTLINE_MAX_DEPTH, outlineDepth, type OutlineNode } from "../../editor/outline";
@@ -19,8 +19,43 @@ import { batch } from "solid-js";
 import type { EditKind, EditKinds } from "../../editKind";
 import { isBlockMoving, setBlockMoving } from "./moves";
 import { depthOf, existingSubtreeFits, indexInSiblings, rootsOf, OutlineScope, prevVisible, nextVisible } from "../tree";
-import { existingBlockId } from "./identity";
-import { pushToast } from "../../toasts";
+import { blockExternalId, existingBlockId, isBlockRefUuid } from "./identity";
+import { captureReferenceChangeCount, pushReferenceChangeNotice, pushToast } from "../../toasts";
+import { graphEpoch } from "../../graphSession";
+import { blockRefsInText } from "../../render/pageRefs";
+
+let referenceEditSeq = 0;
+/** Capture the edit's targets before mutation, then publish against its existing
+ * undo unit. Work is bounded by the removed subtree and its reference targets. */
+export function prepareReferenceChangeNotice(roots: readonly string[], subtree: boolean, transferred = false): { tag: string; show: () => void } {
+  const removed = new Set<string>();
+  const visit = (id: string) => {
+    if (removed.has(id) || !doc.byId[id]) return;
+    removed.add(id);
+    if (subtree) doc.byId[id].children.forEach(visit);
+  };
+  roots.forEach(visit);
+  const targets = new Set([...removed].map((id) => blockExternalId(id)).filter((id): id is string => !!id && isBlockRefUuid(id)));
+  // A reference removed with its source is not left broken. Each source counts
+  // once per target, matching blockRefCounts (repeated ((id)) is one referrer).
+  let removedReferences = 0;
+  if (subtree) for (const id of removed) {
+    for (const target of new Set(blockRefsInText(doc.byId[id].raw, formatForBlock(id)))) {
+      if (targets.has(target)) removedReferences++;
+    }
+  }
+  const count = captureReferenceChangeCount([...targets]);
+  const epoch = graphEpoch();
+  const tag = `reference-edit:${++referenceEditSeq}`;
+  const showCount = (count: number | null | undefined) => {
+    if (count === undefined) return; // A failed count read cannot prove any reference was affected.
+    if (graphEpoch() !== epoch || undoTopTag() !== tag) return;
+    pushReferenceChangeNotice(count === null ? null : Math.max(0, count - removedReferences), transferred, () => {
+      if (graphEpoch() === epoch && undoTopTag() === tag) undo();
+    });
+  };
+  return { tag, show: () => { if (count === undefined || count === null || typeof count === "number") showCount(count); else void count.then(showCount); } };
+}
 
 // ---------------------------------------------------------------------------
 // Mutations (each schedules a debounced save of the affected page)
@@ -407,7 +442,6 @@ function absorbInto(survivor: string, absorbed: string, editingSurface: string |
       return false;
     }
   }
-  pushUndo("merge", [node.page]);
   const fmt = formatForBlock(absorbed); // same page (checked above) → same format
   // Merge visible content only; keep the survivor's hidden props (it keeps its
   // identity) and drop the absorbed block's — otherwise the id::/collapsed::
@@ -430,6 +464,9 @@ function absorbInto(survivor: string, absorbed: string, editingSurface: string |
     hidden = hidden ? `${hidden}\n${absorbedId}` : absorbedId;
   }
 
+  const notice = prepareReferenceChangeNotice([absorbed], false, !survivorHasId && absorbedId !== null);
+  pushUndo(notice.tag, [node.page]);
+
   setDoc(
     produce((s) => {
       s.byId[survivor].raw = joinProps(keepSplit.visible + goneSplit.visible, hidden, fmt);
@@ -444,6 +481,7 @@ function absorbInto(survivor: string, absorbed: string, editingSurface: string |
   );
   startEditing(survivor, joinOffset, null, editingSurface);
   markDirty(pageName, ["save-block", "move-blocks", "delete-blocks"]);
+  notice.show();
   return true;
 }
 
@@ -555,8 +593,10 @@ function deleteBlockInternal(id: string) {
 
 export function deleteBlock(id: string) {
   if (!blockWritable(id)) return;
-  pushUndo("delete", [doc.byId[id].page]);
+  const notice = prepareReferenceChangeNotice([id], true);
+  pushUndo(notice.tag, [doc.byId[id].page]);
   deleteBlockInternal(id);
+  notice.show();
 }
 
 /** Re-seed the phantom empty bullet on a page emptied of its last block. Explicit

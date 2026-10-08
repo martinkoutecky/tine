@@ -1,5 +1,6 @@
 import { revealOutlineBlock } from "../../outlineViewport";
 import { removeSubtree } from "./subtree";
+import { prepareReferenceChangeNotice } from "./blocks";
 import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf, existingSubtreeFits } from "../tree";
 import { doc, setDoc, bumpCollapseEpochs, type DocState } from "../model";
 import { createSignal, createRoot, createMemo } from "solid-js";
@@ -397,7 +398,8 @@ export function deleteSelection() {
     const n = doc.byId[id];
     if (n) pages.add(n.page);
   }
-  pushUndo("delete-sel", [...pages]);
+  const notice = prepareReferenceChangeNotice(ids, true);
+  pushUndo(notice.tag, [...pages]);
   // One produce for the whole selection — deleting each block separately fires a
   // reactive update per block (15 reflows for 15 bullets); batching collapses it
   // to a single update so the cut feels instant.
@@ -422,6 +424,7 @@ export function deleteSelection() {
   if (pages.size > 1) void persistTogether(pages, "delete-blocks");
   else for (const p of pages) markDirty(p, "delete-blocks");
   reselectSurvivingBlock(survivor);
+  notice.show();
 }
 
 /** Public clipboard text for the selected roots; O(visible-order resolution + selected subtree bytes).

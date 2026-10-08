@@ -1,5 +1,16 @@
 import { createSignal } from "solid-js";
 
+type ReferenceChangeCounter = (ids: readonly string[]) => number | null | undefined | Promise<number | null | undefined>;
+let referenceChangeCounter: ReferenceChangeCounter = () => undefined;
+/** The count service installs its reader here: document edits can request a
+ * notice without importing the graph count service back into the document. */
+export function installReferenceChangeCounter(read: ReferenceChangeCounter): void {
+  referenceChangeCounter = read;
+}
+export function captureReferenceChangeCount(ids: readonly string[]): ReturnType<ReferenceChangeCounter> {
+  return ids.length ? referenceChangeCounter(ids) : 0;
+}
+
 export interface Toast {
   id: number;
   message: string;
@@ -61,6 +72,19 @@ export function dismissToast(id: number) {
   const toast = toasts().find((t) => t.id === id);
   toast?.onDismiss?.();
   setToasts(toasts().filter((t) => t.id !== id));
+}
+
+/** One notice vocabulary for deletion and both keyboard merge directions. */
+export function pushReferenceChangeNotice(count: number | null, transferred: boolean, undo: () => void): number | null {
+  if (count === 0) return null;
+  const message = count === null
+    ? transferred ? "References may now point to this block" : "References may now be broken"
+    : transferred
+      ? `${count} ${count === 1 ? "reference now points" : "references now point"} to this block`
+      : `${count} ${count === 1 ? "reference is" : "references are"} now broken`;
+  let id = 0;
+  id = pushToast(message, "warn", { sticky: true, action: { label: "Undo", run: () => { undo(); dismissToast(id); } } });
+  return id;
 }
 
 // Full-screen image lightbox (click an inline image to zoom).
