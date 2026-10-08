@@ -20,7 +20,7 @@ icon:: 🧭
 	- **A single word finds every block containing it.** Logseq's desktop app runs a search instead and shows its top 30 hits.
 	- **`(sort-by …)` knows built-in fields**: priority, page, scheduled and deadline as well as any property. Logseq sorts only by a property of that name.
 - ## The one place Tine finds less
-	- **`(task)` with no marker means open tasks, and `(priority)` with no level means A, B or C.** In Logseq both drop the filter and return every block, which nobody writes on purpose. Existing Tine graphs rely on the shorter form.
+	- **`(task)` with no marker means open tasks, and `(priority)` with no level means A, B or C.** An open task has a task marker other than `DONE`, `CANCELED`, or `CANCELLED`, including `WAITING`, `WAIT`, `STARTED`, and `IN-PROGRESS`, just like carry-over and the agenda. This intentionally differs from OG Logseq: both bare forms drop the filter there and return every block. Existing Tine graphs rely on the shorter form; explicit marker lists are unchanged.
 - ## What Tine does not run
 	- **There is no datalog engine.** An advanced query runs only if Tine understands every clause: task markers, priorities, page references, properties, pages, namespaces, page tags, scheduled and deadline, and journal dates. If any clause is outside that, the whole query is refused and the notice names the clauses — half an answer would look complete and be wrong.
 	- **`:view` and `:result-transform` never run**, because they are ClojureScript functions. Tine will not run them. Its own Display choices (List, Table, Board, grouping, totals) cover the common uses.

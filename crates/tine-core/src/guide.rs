@@ -1162,6 +1162,27 @@ mod og_20d_guide_tests {
         assert!(page("Features/Queries").contains("[[Reference/Tine query model]]"));
     }
 
+    #[test]
+    fn queries_document_bare_task_open_rule_and_og_difference() {
+        let queries = page("Features/Queries");
+        for detail in [
+            "`(task)`",
+            "has a task marker",
+            "`DONE`",
+            "`CANCELED`",
+            "`CANCELLED`",
+            "`WAITING`",
+            "`IN-PROGRESS`",
+            "OG Logseq",
+            "explicit marker lists",
+        ] {
+            assert!(
+                queries.contains(detail),
+                "missing bare task detail: {detail}"
+            );
+        }
+    }
+
     /// og-D D4 (master e7af4db9c): the command-line reference names every shipped
     /// command and og's create-only export contract, and the guide index links it.
     #[test]

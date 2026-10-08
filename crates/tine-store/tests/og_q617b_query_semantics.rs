@@ -135,6 +135,46 @@ fn task_accepts_the_vector_form_like_og() {
     assert_eq!(set(&graph, "(todo [todo doing])"), two);
 }
 
+/// GH #422: Tine intentionally differs from OG Logseq's dropped bare task filter.
+#[test]
+fn bare_task_intentionally_differs_from_og_in_markdown_and_org() {
+    let open = [
+        "TODO",
+        "DOING",
+        "NOW",
+        "LATER",
+        "WAITING",
+        "WAIT",
+        "STARTED",
+        "IN-PROGRESS",
+    ];
+    let finished = ["DONE", "CANCELED", "CANCELLED"];
+    for (extension, bullet) in [("md", "-"), ("org", "*")] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("pages")).unwrap();
+        let mut text = String::new();
+        for marker in open.iter().chain(finished.iter()) {
+            text.push_str(&format!("{bullet} {marker} work\n"));
+        }
+        text.push_str(&format!(
+            "{bullet} ordinary prose\n{bullet} TODO: not a task\n"
+        ));
+        std::fs::write(dir.path().join(format!("pages/Tasks.{extension}")), text).unwrap();
+        let store = Store::open(dir.path(), Default::default()).unwrap().0;
+        let graph = store.whole_graph().unwrap();
+        let expected = open.iter().map(|m| format!("{m} work")).collect();
+        assert_eq!(set(&graph, "(task)"), expected, "{extension}");
+        assert_eq!(set(&graph, "(todo)"), expected, "{extension} alias");
+        for marker in open.iter().chain(finished.iter()) {
+            assert_eq!(
+                set(&graph, &format!("(task {marker})")),
+                BTreeSet::from([format!("{marker} work")]),
+                "{extension}: {marker}"
+            );
+        }
+    }
+}
+
 #[test]
 fn page_tags_accepts_the_vector_form_like_og() {
     let (_dir, graph) = fixture();
