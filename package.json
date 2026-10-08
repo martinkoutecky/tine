@@ -90,6 +90,6 @@
     "vite": "^6.4.3",
     "vite-plugin-solid": "^2.11.0",
     "vitest": "^3.2.7",
-    "webdriverio": "^9.32.0"
+    "webdriverio": "9.29.0"
   }
 }
