@@ -301,10 +301,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // controls produces two consecutive bullets. Keep the referenced root controls
   // (they own collapse/zoom/sidebar behavior) and suppress only the macro host.
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
-  const blockEmbedHost = createMemo(() => {
-    const m = macro();
-    return m?.kind === "embed" && /^embed\s*\(\([^)]+\)\)\s*$/i.test(m.inner);
-  });
+  const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
 
   return (
     <div
@@ -555,6 +552,12 @@ function templateToOutline(
 }
 // Block editor for `props.id`. Inside quick capture, CaptureCtx repurposes
 // Enter/Escape when autocomplete is closed to commit or dismiss the capture.
+/** A host whose whole body is `{{embed ((uuid))}}`: the block-embed shape whose
+ *  macro host is suppressed and whose folded root ends at the host (GH #642). */
+function isBlockEmbedMacro(m: ReturnType<typeof detectMacro>): boolean {
+  return m?.kind === "embed" && /^embed\s*\(\([^)]+\)\)\s*$/i.test(m.inner);
+}
+
 export function Editor(props: { id: string; propertySession?: ReturnType<typeof propertyEditorSession> }): JSX.Element {
   const propertySession = props.propertySession ?? propertyEditorSession();
   // Non-null only inside the quick-capture window (see CaptureCtx).
@@ -565,6 +568,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const surfaceKey = useContext(SurfaceContext);
   const outlineScope = useContext(OutlineScopeContext);
   const embedNavExit = useContext(EmbedNavExitContext);
+  const collapseSurface = useContext(CollapseSurfaceContext);
   // Ref/query arrow navigation stays in the rendered result surface (master
   // GH #341), while structural edits still target the source outline: a
   // split/merge destination need not remain a query or backlink result. Embeds
@@ -2150,9 +2154,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     "editor/cycle-todo": (e) => { e.preventDefault(); cycleTodoCmd(); return true; },
     "editor/indent": (e) => {
       e.preventDefault();
-      // On an in-block list line, Tab nests the LIST ITEM (intra-block), not the block.
+      // First-line Markdown markers keep OG outline Tab semantics (GH #632).
+      // Later in-block list lines and Org retain their list-item nudges.
       const ll = listLine(ref.value, ref.selectionStart);
-      if (ll) { nudgeListItem(ll, +2); return true; }
+      if (ll && (pageFmt() === "org" || ll.lineStart > 0)) { nudgeListItem(ll, +2); return true; }
       if (!outlineScope?.navOnly && outlineScope?.roots.includes(props.id)) return true;
       const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
       commit(ref.value);
@@ -2162,7 +2167,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     "editor/outdent": (e) => {
       e.preventDefault();
       const ll = listLine(ref.value, ref.selectionStart);
-      if (ll && ll.indent.length > 0) { nudgeListItem(ll, -2); return true; }
+      if (ll && (pageFmt() === "org" || ll.lineStart > 0) && ll.indent.length > 0) { nudgeListItem(ll, -2); return true; }
       if (outlineScope?.forceExpandedRoot === docNode(props.id)?.parent) return true;
       const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
       commit(ref.value); outdentBlock(props.id, selection, editSurface()); return true;
@@ -2553,6 +2558,22 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       e.key === "Enter" && !e.ctrlKey && !e.metaKey &&
       (!e.shiftKey || (docModeEnterForNewLine && !e.altKey))
     ) {
+      // A folded embed's displayed root is the host's keyboard boundary. Use
+      // occurrence collapse, not source collapse; source editors and descendants
+      // retain their ordinary structural Enter behavior (GH #642).
+      const hostMacro = embedNavExit
+        ? detectMacro(docNode(embedNavExit.hostBlockId)?.raw ?? "", formatForBlockId(embedNavExit.hostBlockId)) : null;
+      const foldedEmbedHost = embedNavExit && props.id === embedNavExit.firstRoot()
+        && isBlockEmbedMacro(hostMacro)
+        && collapseSurface?.collapsed(props.id, node().collapsed)
+        ? embedNavExit.hostBlockId : null;
+      if (foldedEmbedHost && start === end && end === raw.length) {
+        e.preventDefault();
+        commit(raw);
+        const newId = insertOutlineAfter(foldedEmbedHost, [{ raw: "", children: [] }]);
+        if (newId) startEditing(newId, 0);
+        return;
+      }
       const inFence = !isAnnot() && caretInFence(raw, start, pageFmt());
       // GH #278: a multi-line `$$ … $$` environment behaves like a fence for
       // Enter. See caretInDisplayMath — a deliberate divergence from OG.
