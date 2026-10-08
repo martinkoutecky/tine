@@ -71,9 +71,9 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
         "src-tauri/src/graph.rs",
         "spawn_blocking(",
-        2,
-        "load_graph / open_graph_window command future",
-        "caller awaits the graph open; a window closed meanwhile releases only that open's binding",
+        3,
+        "load_graph / open_graph_window command future (and load_graph's iOS Simulator Guide-copy probe)",
+        "caller awaits the graph open or the probe's copy; a window closed meanwhile releases only that open's binding",
     ),
     (
         "src-tauri/src/graph.rs",
