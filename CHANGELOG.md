@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Children nested under a page-properties block stay reachable for deletion or moving into the outline; repaired pages save normally, and Tab no longer nests the first body block under a transient page header (GH #638).
 - New graph messages describe whether the graph opened, was already open, or was created but could not be opened; the last case names the folder and offers Open graph to try again (GH #621).
 - Android: choosing a cloud provider folder now explains that Tine needs a folder on the device's own storage and suggests syncing to a local folder, then opening it (GH #630).
 - A block opened in the right sidebar now shows its source page name in the header (GH #640).

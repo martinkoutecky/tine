@@ -840,7 +840,11 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     // as a properties-only block before its value is typed; hiding it at the
     // second colon unmounted the textarea and discarded the rest of the user's
     // keystrokes (GH #62's regression after the GH #86 presentation change).
-    return id && editingId() !== id && docNode(id) && isPropertiesOnly(docNode(id).raw) ? id : null;
+    // GH #638: hiding this root also hides its subtree. A childed header draft
+    // must stay in the outline so its children can be selected/deleted/outdented;
+    // pageToDto still refuses to serialize a marked header until it is repaired.
+    const first = docNode(id);
+    return id && editingId() !== id && first && first.children.length === 0 && isPropertiesOnly(first.raw) ? id : null;
   };
   // The page header shows the same answerer the properties panel lists; a first
   // root rendered as an ordinary block (being edited, or not a header) is excluded.

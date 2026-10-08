@@ -350,6 +350,7 @@ export function indentSelection() {
   const fi = sibs.indexOf(first);
   if (fi <= 0) return;
   const newParent = sibs[fi - 1];
+  if (doc.byId[newParent].originatedFromPageHeader) return;
   if (activeSelectionScope && !scopedVisibleOrder(activeSelectionScope).includes(newParent)) return;
   // Structural indent is single-page ONLY. The target (newParent) is on first's
   // page; moving a block from another feed day under it would be a cross-page

@@ -315,6 +315,9 @@ export function indentBlock(id: string, caretOffset: number | EditorSelection, e
   if (i <= 0) return;
   const sibs = rootsOf(id);
   const newParent = sibs[i - 1];
+  // A materialized page preamble is not an outline parent (GH #638). Keep the
+  // first body block a root; an ordinary imported properties block may nest.
+  if (doc.byId[newParent].originatedFromPageHeader) return;
   if (!existingSubtreeFits(id, newParent)) return false;
   pushUndo("indent", [doc.byId[id].page]);
   const pageName = doc.byId[id].page;

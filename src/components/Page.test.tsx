@@ -5,12 +5,13 @@ import { backend } from "../backend";
 import { PUBLISHED_META_NAME } from "../publishedBackend";
 import { invalidateBinding } from "../binding";
 import { initParser } from "../render/parse";
-import { installExternalChangeUiHandler, pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, undo, moveBlockFeed } from "../document";
+import { installExternalChangeUiHandler, pageByName, readPageProperty, resetStore, setRaw, extendFeedForScroll, flushPage, isDirty, undo, redo, moveBlockFeed, moveBlock, selectedIds, deleteSelection, finishPageHeaderEdit, indentBlock, indentSelection, selectBlock } from "../document";
+import { installKeybindings } from "../keybindings";
 import { setBlockMoving } from "../document/edits/moves";
 import { pageToDto } from "../document/convert";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
-import { loadSingle, pinPageWhileDrafting } from "../document/workingSet";
+import { loadSingle, pinPageWhileDrafting, reloadPageIfStillSafe } from "../document/workingSet";
 import { editingId, editingOwner, activeSurface, endEdit, startEditing } from "../editorController";
 import { journalTitle } from "../journal";
 import type { JournalFeedPage, PageDto, PageRead, RefGroup } from "../types";
@@ -1924,6 +1925,110 @@ describe("page properties", () => {
 });
 
 describe("Markdown preamble content", () => {
+  it.each(["delete", "outdent", "move"])("repairs a marked header's child through ordinary %s editing (GH #638)", async (repair) => {
+    const header = "header-638", child = "child-638", body = "body-638";
+    const properties = "tags:: books\nalias:: Book";
+    const childRaw = repair === "delete" ? "" : "Keep this child";
+    const bodyRaw = "Unrelated body  \nsecond line";
+    const dto: PageDto = {
+      name: "Repair header", kind: "page", title: "Repair header", pre_block: null, format: "md",
+      blocks: [
+        { id: header, raw: properties, collapsed: false, children: [{ id: child, raw: childRaw, collapsed: false, children: [] }] },
+        { id: body, raw: bodyRaw, collapsed: false, children: [] },
+      ],
+    };
+    loadSingle(dto);
+    setToasts([]);
+    // The reporter's transient topology; a file DTO does not carry this flag.
+    setDoc("byId", header, "originatedFromPageHeader", true);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Repair header.md" });
+    const save = vi.spyOn(backend(), "savePages").mockResolvedValue({ ok: ["repaired"] });
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      expect(pageToDto(dto.name)).toBeNull();
+      finishPageHeaderEdit(header);
+      expect(toasts().some((toast) => toast.message.includes("Page-header properties must contain only valid key:: value lines"))).toBe(true);
+      const face = root.querySelector<HTMLElement>(`[data-block-id="${child}"] .block-content-wrapper`);
+      expect(face).not.toBeNull();
+      face!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+      await tick();
+      expect(editingId()).toBe(child);
+      const editor = root.querySelector<HTMLTextAreaElement>(`[data-block-id="${child}"] textarea`)!;
+      if (repair === "delete" || repair === "move") {
+        editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        expect(selectedIds()).toEqual([child]);
+        if (repair === "delete") deleteSelection();
+        else expect(await moveBlock(child, null, 1)).toBe(true);
+      } else {
+        editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+        expect(doc.byId[child].parent).toBeNull();
+      }
+      await tick();
+      expect(doc.byId[header].raw).toBe(properties);
+      expect(pageToDto(dto.name)).toMatchObject({
+        pre_block: properties,
+        blocks: repair === "delete" ? [{ raw: bodyRaw }] : [{ raw: childRaw }, { raw: bodyRaw }],
+      });
+      const repaired = pageToDto(dto.name)!;
+      await flushPage(dto.name);
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(save.mock.calls[0][0][0].page).toEqual(repaired);
+      expect(isDirty(dto.name)).toBe(false);
+      undo();
+      await tick();
+      expect(doc.byId[header].children).toEqual([child]);
+      expect(doc.byId[child].raw).toBe(childRaw);
+      expect(pageToDto(dto.name)).toBeNull();
+      expect(isDirty(dto.name)).toBe(true);
+      expect(root.querySelector(`[data-block-id="${child}"]`)).not.toBeNull();
+      await flushPage(dto.name);
+      expect(save).toHaveBeenCalledTimes(1); // Undo's invalid draft stays local.
+      redo();
+      expect(pageToDto(dto.name)?.pre_block).toBe(properties);
+    } finally { dispose(); disposeKeys(); }
+  });
+
+  it.each(["import", "external reload"])("keeps a properties-only root's subtree reachable after %s without reinterpreting the file (GH #638)", async (source) => {
+    const dto: PageDto = {
+      name: "Imported child", kind: "page", title: "Imported child", pre_block: null, format: "md",
+      blocks: [{ id: "import-header", raw: "tags:: books\nalias:: Book", collapsed: false,
+        children: [{ id: "import-child", raw: "", collapsed: false, children: [] }] },
+        { id: "import-body", raw: "Unrelated body", collapsed: false, children: [] }],
+    };
+    if (source === "import") loadSingle(dto);
+    else {
+      loadSingle({ ...dto, blocks: dto.blocks.map((block) => ({ ...block, children: [] })) });
+      expect(reloadPageIfStillSafe(dto.name, dto)).toBe(true);
+    }
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      expect(root.querySelector('[data-block-id="import-child"]')).not.toBeNull();
+      expect(pageToDto(dto.name)?.blocks).toEqual(dto.blocks);
+      expect(readPageProperty(dto.name, "tags")).toBe("books");
+    } finally { dispose(); }
+  });
+
+  it.each(["editor", "selection"])("does not Tab-indent a body into a transient page header via %s (GH #638)", async (mode) => {
+    const dto: PageDto = { name: "Tab header", kind: "page", title: "Tab header", pre_block: null, format: "md",
+      blocks: [{ id: "tab-header", raw: "tags:: books", collapsed: false, children: [] },
+        { id: "tab-body", raw: "Body", collapsed: false, children: [] }] };
+    loadSingle(dto);
+    setDoc("byId", "tab-header", "originatedFromPageHeader", true);
+    if (mode === "editor") indentBlock("tab-body", 0);
+    else { selectBlock("tab-body"); indentSelection(); }
+    expect(doc.byId["tab-body"].parent).toBeNull();
+    expect(doc.byId["tab-header"].children).toEqual([]);
+    expect(pageToDto(dto.name)?.pre_block).toBe("tags:: books");
+  });
+
   it("opens canonical page-header properties in the ordinary editor without dirtying on entry", async () => {
     const bodyId = "33333333-3333-4333-8333-333333333333";
     const dto = {
