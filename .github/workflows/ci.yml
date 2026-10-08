@@ -179,6 +179,18 @@ jobs:
       - name: Rust core tests
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
 
+      # The app crate's own tests (commands, query wiring, IPC guards) ran
+      # nowhere until GH #628 broke one unnoticed; they need the WebKitGTK headers.
+      - name: App crate native dependencies
+        run: |
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev build-essential libssl-dev
+
+      - name: App crate tests
+        run: |
+          npm run build
+          cargo test --no-fail-fast -p tine --lib
+
       - name: Standalone plugin template builds and conforms
         run: npm run plugin:template-check
 
